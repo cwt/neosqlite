@@ -16,6 +16,9 @@ except ImportError:  # pragma: no cover Python >= 3.0
 class MalformedQueryException(Exception):
     pass
 
+class MalformedDocument(Exception):
+    pass
+
 
 class Connection(object):
     """
@@ -120,7 +123,12 @@ class Collection(object):
         :returns: inserted document with id
         """
         if '_id' in document:
-            return self.update(document)
+            return self.update({'_id': document['_id']},
+                               document)
+
+        # Check if document is a dict
+        if type(document) != dict:
+            raise MalformedDocument('document must be a dictionary, not a %s' % type(document))
 
         # Create it and return a modified one with the id
         cursor = self.db.execute("""
