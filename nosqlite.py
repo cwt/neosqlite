@@ -130,22 +130,24 @@ class Collection(object):
         document['_id'] = cursor.lastrowid
         return document
 
-    def update(self, document):
+    def update(self, spec, document):
         """
+        DEPRECATED in pymongo
         Updates a document stored in this collection. If the document does not
         already have an '_id' value, it will be created
         """
-        if '_id' not in document:
-            return self.insert(document)
+        #spec = {'key': 'value'}
+        to_update = self.find(query=spec, skip=0, limit=1)
+        if to_update: to_update = to_update[0]
+        else: return None
 
-        # Update the stored document, removing the id
-        copy = document.copy()
-        del copy['_id']
+        _id = to_update['_id']
 
         self.db.execute("""
             update %s set data = ? where id = ?
-        """ % self.name, (json.dumps(copy), document['_id']))
+        """ % self.name, (json.dumps(document), _id))
 
+        document['_id'] = _id
         return document
 
     def remove(self, document):
@@ -179,12 +181,13 @@ class Collection(object):
         document['_id'] = id
         return document
 
-    def find(self, query=None, limit=None):
+    def find(self, query=None, skip=None, limit=None):
         """
         Returns a list of documents in this collection that match a given query
         """
         results = []
         query = query or {}
+        if skip == None: skip = 0
 
         # TODO: When indexes are implemented, we'll need to intelligently hit one of the
         # index stores so we don't do a full table scan
@@ -192,7 +195,10 @@ class Collection(object):
         apply = partial(self._apply_query, query)
 
         for match in filter(apply, starmap(self._load, cursor.fetchall())):
-            results.append(match)
+            if skip > 0: #Discard match before skip
+                skip =- 1
+            else:
+                results.append(match)
 
             # Just return if we already reached the limit
             if limit and len(results) == limit:
