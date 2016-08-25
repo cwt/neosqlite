@@ -158,7 +158,7 @@ class Collection(object):
         document['_id'] = _id
         return document
 
-    def remove(self, document):
+    def _remove(self, document):
         """
         Removes a document from this collection. This will raise AssertionError if the
         document does not have an _id attribute
@@ -174,9 +174,22 @@ class Collection(object):
 
     def delete(self, document):
         """
+        DEPRECATED
         Alias for ``remove``
         """
-        return self.remove(document)
+        return self._remove(document)
+
+    def delete_one(self, filter):
+        """
+        Delete only the first document according the filter
+        Params:
+            - filter: dict with the condition ({'foo':'bar'})
+        """
+        try:
+            document = self.find(query=filter, limit=1)[0]
+        except:
+            return None
+        return self._remove(document)
 
     def _load(self, id, data):
         """
