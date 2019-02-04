@@ -136,6 +136,8 @@ class Collection(object):
         """ % self.name, (json.dumps(document),))
 
         document['_id'] = cursor.lastrowid
+        [self.reindex(table=index, documents=[document])
+         for index in self.list_indexes()]
         return document
 
     def update(self, spec, document):
@@ -156,6 +158,8 @@ class Collection(object):
         """ % self.name, (json.dumps(document), _id))
 
         document['_id'] = _id
+        [self.reindex(table=index, documents=[document])
+         for index in self.list_indexes()]
         return document
 
     def _remove(self, document):
@@ -170,7 +174,7 @@ class Collection(object):
         """
         Alias for ``update``
         """
-        return self.update(document)
+        return self.update({'_id': document.pop('_id')}, document)
 
     def delete(self, document):
         """
@@ -426,14 +430,17 @@ class Collection(object):
         """
         self.create_index(key, reindex=False, sparse=False)
 
-    def reindex(self, table, sparse=False):
-        index = re.findall(r'^\[.*\{(.*)\}\]$', table)[0].split(',')
+    def __table_name_as_keys(self, table):
+        return re.findall(r'^\[.*\{(.*)\}\]$', table)[0].split(',')
+
+    def reindex(self, table, sparse=False, documents=None):
+        index = self.__table_name_as_keys(table)
         update = "update {table} set {key} = ? where id = ?"
         insert = "insert into {table}({index}) values({q})"
         count = "select count(1) from {table} where id = ?"
         qs = ('?,' * len(index)).rstrip(',')
 
-        for document in self.find():
+        for document in (documents or self.find()):
             # Ensure there's a row before we update
             row = self.db.execute(count.format(table=table), (document['_id'],)).fetchone()
             if int(row[0]) == 0:
@@ -448,10 +455,18 @@ class Collection(object):
                 self.db.execute(update.format(table=table, key=key),
                                 (document.get(key, None), document['_id']))
 
-    def list_indexes(self):
-        cmd = "SELECT name FROM sqlite_master WHERE type='table' and name like '{name}{{%}}'"
-        return ['[{index}]'.format(index=t[0])
-                for t in self.db.execute(cmd.format(name=self.name)).fetchall()]
+    def list_indexes(self, as_keys=False):
+        cmd = ("SELECT name FROM sqlite_master "
+               "WHERE type='table' and name like '{name}{{%}}'")
+        if as_keys:
+            return [
+                self.__table_name_as_keys('[{index}]'.format(index=t[0]))
+                for t in self.db.execute(cmd.format(name=self.name)).fetchall()
+            ]
+        return [
+            '[{index}]'.format(index=t[0])
+            for t in self.db.execute(cmd.format(name=self.name)).fetchall()
+        ]
 
     def drop_index(self, index):
         cmd = "DROP TABLE {index}"
