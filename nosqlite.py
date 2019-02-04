@@ -210,9 +210,19 @@ class Collection(object):
         query = query or {}
         if skip == None: skip = 0
 
-        # TODO: When indexes are implemented, we'll need to intelligently hit one of the
-        # index stores so we don't do a full table scan
-        cursor = self.db.execute("select id, data from %s" % self.name)
+        where = ''
+        keys = [key for key in query if not key.startswith('$')]
+        if keys:
+            index_name = '[%s{%s}]' % (self.name, ','.join(keys))
+            if index_name in self.list_indexes():
+                index_query = ' and '.join(
+                    ['%s=%s' % (key, query[key]) for key in keys]
+                )
+                where = 'where id in (select id from %s where %s)' % (
+                    index_name, index_query
+                )
+        cmd = "select id, data from %s %s" % (self.name, where)
+        cursor = self.db.execute(cmd)
         apply = partial(self._apply_query, query)
 
         for match in filter(apply, starmap(self._load, cursor.fetchall())):
@@ -375,7 +385,6 @@ class Collection(object):
         """
         Creates an index if it does not exist then performs a full reindex for this collection
         """
-        warnings.warn('Index support is currently very alpha and is not guaranteed')
         if isinstance(key, (list, tuple)):
             index_name = ','.join(key)
             index_columns = ', '.join('%s text' % f for f in key)
@@ -409,7 +418,7 @@ class Collection(object):
         ))
 
         if reindex:
-            self.reindex(key)
+            self.reindex(table_name)
 
     def ensure_index(self, key, sparse=False):
         """
@@ -418,7 +427,6 @@ class Collection(object):
         self.create_index(key, reindex=False, sparse=False)
 
     def reindex(self, table, sparse=False):
-        warnings.warn('Index support is currently very alpha and is not guaranteed')
         index = re.findall(r'^\[.*\{(.*)\}\]$', table)[0].split(',')
         update = "update {table} set {key} = ? where id = ?"
         insert = "insert into {table}({index}) values({q})"
@@ -429,7 +437,7 @@ class Collection(object):
             # Ensure there's a row before we update
             row = self.db.execute(count.format(table=table), (document['_id'],)).fetchone()
             if int(row[0]) == 0:
-                self.db.execute(insert.format(table=table, index=index, q=qs),
+                self.db.execute(insert.format(table=table, index=','.join(index), q=qs),
                                 [None for x in index])
 
             for key in index:
@@ -440,16 +448,20 @@ class Collection(object):
                 self.db.execute(update.format(table=table, key=key),
                                 (document.get(key, None), document['_id']))
 
-    def drop_index(self):
-        warnings.warn('Index support is currently very alpha and is not guaranteed')
-        pass
+    def list_indexes(self):
+        cmd = "SELECT name FROM sqlite_master WHERE type='table' and name like '{name}{{%}}'"
+        return ['[{index}]'.format(index=t[0])
+                for t in self.db.execute(cmd.format(name=self.name)).fetchall()]
+
+    def drop_index(self, index):
+        cmd = "DROP TABLE {index}"
+        self.db.execute(cmd.format(index=index))
 
     def drop_indexes(self):
         """
         Drop all indexes for this collection
         """
-        warnings.warn('Index support is currently very alpha and is not guaranteed')
-        pass
+        [self.drop_index(index) for index in self.list_indexes()]
 
 
 # BELOW ARE OPERATIONS FOR LOOKUPS
