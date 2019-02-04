@@ -123,8 +123,7 @@ class Collection(object):
         :returns: inserted document with id
         """
         if '_id' in document:
-            return self.update({'_id': document['_id']},
-                               document)
+            return self.save(document)
 
         # Check if document is a dict
         if type(document) != dict:
@@ -140,16 +139,19 @@ class Collection(object):
          for index in self.list_indexes()]
         return document
 
-    def update(self, spec, document):
+    def update(self, spec, document, upsert=False):
         """
         DEPRECATED in pymongo
-        Updates a document stored in this collection. If the document does not
-        already have an '_id' value, it will be created
+        Updates a document stored in this collection.
         """
         #spec = {'key': 'value'}
         to_update = self.find(query=spec, skip=0, limit=1)
-        if to_update: to_update = to_update[0]
-        else: return None
+        if to_update:
+            to_update = to_update[0]
+        else:
+            if upsert:
+                return self.insert(document)
+            return None
 
         _id = to_update['_id']
 
@@ -172,9 +174,9 @@ class Collection(object):
 
     def save(self, document):
         """
-        Alias for ``update``
+        Alias for ``update`` with upsert=True
         """
-        return self.update({'_id': document.pop('_id')}, document)
+        return self.update({'_id': document.pop('_id', None)}, document, upsert=True)
 
     def delete(self, document):
         """
@@ -360,7 +362,7 @@ class Collection(object):
 
         for document in self.find(query=query):
             document.update(update)
-            self.update(document)
+            self.save(document)
 
     def count(self, query=None):
         """

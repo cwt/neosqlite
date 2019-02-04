@@ -106,12 +106,12 @@ class TestCollection(object):
         self.collection.create()
         assert self.collection.exists()
 
-    def test_insert_actually_updates(self):
+    def test_insert_actually_save(self):
         doc = {'_id': 1, 'foo': 'bar'}
 
-        self.collection.update = Mock()
+        self.collection.save = Mock()
         self.collection.insert(doc)
-        self.collection.update.assert_called_with(doc)
+        self.collection.save.assert_called_with(doc)
 
     def test_insert(self):
         doc = {'foo': 'bar'}
@@ -120,46 +120,140 @@ class TestCollection(object):
         inserted = self.collection.insert(doc)
         assert inserted['_id'] == 1
 
+    def test_insert_non_dict_raise(self):
+        doc = "{'foo': 'bar'}"
+
+        self.collection.create()
+        with raises(nosqlite.MalformedDocument):
+            inserted = self.collection.insert(doc)
+
+    def test_update_without_upsert(self):
+        doc = {'foo': 'bar'}
+
+        self.collection.create()
+        updated = self.collection.update({}, doc)
+        assert updated is None
+
+    def test_update_with_upsert(self):
+        doc = {'foo': 'bar'}
+
+        self.collection.create()
+        updated = self.collection.update({}, doc, upsert=True)
+        assert isinstance(updated, dict)
+        assert updated['_id'] == 1
+        assert updated['foo'] == doc['foo'] == 'bar'
+
     def test_save_calls_update(self):
         with patch.object(self.collection, 'update'):
             doc = {'foo': 'bar'}
             self.collection.save(doc)
-            self.collection.update.assert_called_with(doc)
+            self.collection.update.assert_called_with(
+                {'_id':doc.pop('_id', None)},doc, upsert=True
+            )
 
-    def test_update_actually_inserts(self):
-        doc = {'foo': 'bar'}
-
-        self.collection.insert = Mock()
-        self.collection.update(doc)
-        self.collection.insert.assert_called_with(doc)
-
-    def test_update(self):
+    def test_save(self):
         doc = {'foo': 'bar'}
 
         self.collection.create()
         doc = self.collection.insert(doc)
         doc['foo'] = 'baz'
 
-        updated = self.collection.update(doc)
+        updated = self.collection.save(doc)
         assert updated['foo'] == 'baz'
 
     def test_delete_calls_remove(self):
-        with patch.object(self.collection, 'remove'):
+        with patch.object(self.collection, '_remove'):
             doc = {'foo': 'bar'}
             self.collection.delete(doc)
-            self.collection.remove.assert_called_with(doc)
+            self.collection._remove.assert_called_with(doc)
 
     def test_remove_raises_when_no_id(self):
         with raises(AssertionError):
-            self.collection.remove({'foo': 'bar'})
+            self.collection._remove({'foo': 'bar'})
 
     def test_remove(self):
         self.collection.create()
         doc = self.collection.insert({'foo': 'bar'})
         assert 1 == int(self.collection.db.execute("select count(1) from foo").fetchone()[0])
 
-        self.collection.remove(doc)
+        self.collection._remove(doc)
         assert 0 == int(self.collection.db.execute("select count(1) from foo").fetchone()[0])
+
+    def test_delete_one(self):
+        self.collection.create()
+        doc = {'foo':'bar'}
+        self.collection.insert(doc)
+        assert 1 == int(self.collection.db.execute("select count(1) from foo").fetchone()[0])
+
+        self.collection.delete_one(doc)
+        assert 0 == int(self.collection.db.execute("select count(1) from foo").fetchone()[0])
+
+        assert self.collection.delete_one(doc) is None
+
+    def test_create_index(self):
+        self.collection.create()
+        doc = {'foo':'bar'}
+        self.collection.insert(doc)
+        self.collection.create_index('foo', reindex=False)
+        cmd = ("SELECT name FROM sqlite_master " 
+               "WHERE type='table' and name like '{name}{{%}}'") 
+        index_name = '%s{%s}' % (self.collection.name, 'foo')
+        assert index_name == self.collection.db.execute(
+            cmd.format(name=self.collection.name)
+        ).fetchone()[0]
+
+    def test_reindex(self):
+        self.test_create_index()
+        index_name = '%s{%s}' % (self.collection.name, 'foo')
+        self.collection.reindex('[%s]' % index_name)
+        cmd = ("SELECT id, foo FROM [%s]" % index_name)
+        assert (1, 'bar') == self.collection.db.execute(cmd).fetchone()
+    
+    def test_insert_auto_index(self):
+        self.test_reindex()
+        self.collection.insert({'foo':'baz'})
+        index_name = '%s{%s}' % (self.collection.name, 'foo')
+        cmd = ("SELECT id, foo FROM [%s]" % index_name)
+        assert (1, 'bar') in self.collection.db.execute(cmd).fetchall()
+        assert (2, 'baz') in self.collection.db.execute(cmd).fetchall()
+
+    def test_create_compond_index(self):
+        self.collection.create()
+        doc = {'foo':'bar', 'far':'boo'}
+        self.collection.insert(doc)
+        self.collection.create_index(('foo','far'))
+        cmd = ("SELECT name FROM sqlite_master " 
+               "WHERE type='table' and name like '{name}{{%}}'") 
+        assert '%s{%s}' % (self.collection.name, 'foo,far') == self.collection.db.execute(
+            cmd.format(name=self.collection.name)
+        ).fetchone()[0]
+ 
+    def test_list_indexes(self):
+        self.test_create_index()
+        assert isinstance(self.collection.list_indexes(), list)
+        assert isinstance(self.collection.list_indexes()[0], str)
+        assert '[%s{%s}]' % (self.collection.name, 'foo') == self.collection.list_indexes()[0]
+
+    def test_list_indexes_as_keys(self):
+        self.test_create_index()
+        assert isinstance(self.collection.list_indexes(as_keys=True), list)
+        assert isinstance(self.collection.list_indexes(as_keys=True)[0], list)
+        assert ['foo'] == self.collection.list_indexes(as_keys=True)[0]
+
+    def test_drop_index(self):
+        self.test_create_index()
+        index_name = '[%s{%s}]' % (self.collection.name, 'foo')
+        self.collection.drop_index(index_name)
+        cmd = ("SELECT name FROM sqlite_master " 
+               "WHERE type='table' and name like '{name}{{%}}'") 
+        assert self.collection.db.execute(cmd.format(name=self.collection.name)).fetchone() is None
+
+    def test_drop_indexes(self):
+        self.test_create_index()
+        self.collection.drop_indexes()
+        cmd = ("SELECT name FROM sqlite_master " 
+               "WHERE type='table' and name like '{name}{{%}}'") 
+        assert self.collection.db.execute(cmd.format(name=self.collection.name)).fetchone() is None
 
     @mark.parametrize('strdoc,doc', [
         ('{"foo": "bar"}', {'_id': 1, 'foo': 'bar'}),
@@ -375,10 +469,10 @@ class TestCollection(object):
             {'baz': 'qux'},
         ]
         with patch.object(self.collection, 'find'):
-            with patch.object(self.collection, 'update'):
+            with patch.object(self.collection, 'save'):
                 self.collection.find.return_value = docs
                 self.collection.find_and_modify(update=update)
-                self.collection.update.assert_has_calls([
+                self.collection.save.assert_has_calls([
                     call({'foo': 'bar'}),
                     call({'foo': 'bar', 'baz': 'qux'}),
                 ])
