@@ -136,8 +136,12 @@ class Collection(object):
         """ % self.name, (json.dumps(document),))
 
         document['_id'] = cursor.lastrowid
-        [self.reindex(table=index, documents=[document])
-         for index in self.list_indexes()]
+        try:
+            [self.reindex(table=index, documents=[document])
+             for index in self.list_indexes()]
+        except sqlite3.IntegrityError as ie:
+            self.delete_one({'_id': document['_id']})
+            raise ie
         return document
 
     def update(self, spec, document, upsert=False):
@@ -161,8 +165,12 @@ class Collection(object):
         """ % self.name, (json.dumps(document), _id))
 
         document['_id'] = _id
-        [self.reindex(table=index, documents=[document])
-         for index in self.list_indexes()]
+        try:
+            [self.reindex(table=index, documents=[document])
+             for index in self.list_indexes()]
+        except sqlite3.IntegrityError as ie:
+            self.save(to_update)
+            raise ie
         return document
 
     def _remove(self, document):
@@ -391,7 +399,7 @@ class Collection(object):
         """
         return set(d[key] for d in filter(lambda d: key in d, self.find()))
 
-    def create_index(self, key, reindex=True, sparse=False):
+    def create_index(self, key, reindex=True, sparse=False, unique=False):
         """
         Creates an index if it does not exist then performs a full reindex for this collection
         """
@@ -424,15 +432,22 @@ class Collection(object):
 
         # Create the index
         self.db.execute("""
-            create index if not exists [idx.{collection}{{index}}] on {table}({index})
+            create {unique} index
+            if not exists [idx.{collection}{{index}}]
+            on {table}({index})
         """.format(
+            unique='unique' if unique else '',
             collection=self.name,
             index=index_name,
             table=table_name,
         ))
 
         if reindex:
-            self.reindex(table_name)
+            try:
+                self.reindex(table_name)
+            except sqlite3.IntegrityError as ie:
+                self.drop_index(table_name)
+                raise ie
 
     def ensure_index(self, key, sparse=False):
         """
@@ -446,18 +461,21 @@ class Collection(object):
     def reindex(self, table, sparse=False, documents=None):
         index = self.__table_name_as_keys(table)
         update = "update {table} set {key} = ? where id = ?"
-        insert = "insert into {table}({index}) values({q})"
+        insert = "insert into {table}({index},id) values({q},{_id})"
+        delete = "delete from {table} where id = {_id}"
         count = "select count(1) from {table} where id = ?"
         qs = ('?,' * len(index)).rstrip(',')
 
         for document in (documents or self.find()):
-            # Ensure there's a row before we update
-            row = self.db.execute(count.format(table=table), (document['_id'],)).fetchone()
-            if int(row[0]) == 0:
-                self.db.execute(insert.format(table=table, index=','.join(index), q=qs),
-                                [None for x in index])
-
             _id = document['_id']
+            # Ensure there's a row before we update
+            row = self.db.execute(count.format(table=table), (_id,)).fetchone()
+            if int(row[0]) == 0:
+                self.db.execute(
+                    insert.format(
+                        table=table, index=','.join(index), q=qs, _id=_id
+                    ), [None for x in index]
+                )
             for key in index:
                 doc = deepcopy(document)
                 for k in key.split('_'):
@@ -466,7 +484,15 @@ class Collection(object):
                         if k not in doc and sparse:
                             continue
                         doc = doc.get(k, None)
-                self.db.execute(update.format(table=table, key=key), (json.dumps(doc), _id))
+                try:
+                    self.db.execute(
+                        update.format(
+                            table=table, key=key
+                        ), (json.dumps(doc), _id)
+                    )
+                except sqlite3.IntegrityError as ie:
+                    self.db.execute(delete.format(table=table, _id=_id))
+                    raise ie
 
     def list_indexes(self, as_keys=False):
         cmd = ("SELECT name FROM sqlite_master "

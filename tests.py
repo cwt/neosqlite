@@ -249,7 +249,57 @@ class TestCollection(object):
         assert '%s{%s}' % (self.collection.name, 'foo,far') == self.collection.db.execute(
             cmd.format(name=self.collection.name)
         ).fetchone()[0]
- 
+
+    def test_create_unique_index(self):
+        self.collection.create()
+        doc = {'foo':'bar'}
+        self.collection.insert(doc)
+        self.collection.create_index('foo', reindex=False, unique=True)
+        cmd = ("SELECT name FROM sqlite_master "
+               "WHERE type='table' and name like '{name}{{%}}'")
+        index_name = '%s{%s}' % (self.collection.name, 'foo')
+        assert index_name == self.collection.db.execute(
+            cmd.format(name=self.collection.name)
+        ).fetchone()[0]
+
+    def test_reindex_unique_index(self):
+        self.test_create_unique_index()
+        index_name = '%s{%s}' % (self.collection.name, 'foo')
+        self.collection.reindex('[%s]' % index_name)
+        cmd = ("SELECT id, foo FROM [%s]" % index_name)
+        assert (1, '"bar"') == self.collection.db.execute(cmd).fetchone()
+
+    def test_uniqueness(self):
+        self.test_reindex_unique_index()
+        doc = {'foo':'bar'}
+        index_name = '%s{%s}' % (self.collection.name, 'foo')
+        cmd = ("SELECT id, foo FROM [%s]" % index_name)
+        assert [(1, '"bar"')] == self.collection.db.execute(cmd).fetchall()
+        with raises(sqlite3.IntegrityError):
+            self.collection.insert(doc)
+        assert [(1, '"bar"')] == self.collection.db.execute(cmd).fetchall()
+
+    def test_update_to_break_uniqueness(self):
+        self.test_uniqueness()
+        doc = {'foo':'baz'}
+        self.collection.insert(doc)
+        index_name = '%s{%s}' % (self.collection.name, 'foo')
+        cmd = ("SELECT id, foo FROM [%s]" % index_name)
+        assert [(1, '"bar"'),(3, '"baz"')] == self.collection.db.execute(cmd).fetchall()
+        doc = {'foo':'bar', '_id':3}
+        with raises(sqlite3.IntegrityError):
+            self.collection.save(doc)
+        assert [(1, '"bar"'),(3, '"baz"')] == self.collection.db.execute(cmd).fetchall()
+
+    def test_create_unique_index_on_non_unique_collection(self):
+        self.collection.create()
+        self.collection.insert({'foo':'bar','a':1})
+        self.collection.insert({'foo':'bar','a':2})
+        assert 2 == self.collection.count({'foo':'bar'})
+        with raises(sqlite3.IntegrityError):
+            self.collection.create_index('foo', unique=True)
+        assert 0 == len(self.collection.list_indexes())
+
     def test_list_indexes(self):
         self.test_create_index()
         assert isinstance(self.collection.list_indexes(), list)
