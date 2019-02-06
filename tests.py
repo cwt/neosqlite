@@ -202,22 +202,44 @@ class TestCollection(object):
             cmd.format(name=self.collection.name)
         ).fetchone()[0]
 
+    def test_create_index_on_nested_keys(self):
+        self.collection.create()
+        doc = {'foo':{'bar':'zzz'},'bok':'bak'}
+        self.collection.insert(doc)
+        self.collection.insert({'a':1,'b':2})
+        self.collection.create_index('foo.bar', reindex=True)
+        index = '[%s{%s}]' % (self.collection.name, 'foo_bar')
+        assert index in self.collection.list_indexes()
+        self.collection.create_index(['foo_bar','bok'], reindex=True)
+        index = '[%s{%s}]' % (self.collection.name, 'foo_bar,bok')
+        assert index in self.collection.list_indexes()
+
+    def test_index_on_nested_keys(self):
+        self.test_create_index_on_nested_keys()
+        index_name = '%s{%s}' % (self.collection.name, 'foo_bar')
+        cmd = ("SELECT id, foo_bar FROM [%s]" % index_name)
+        assert (1, '"zzz"') == self.collection.db.execute(cmd).fetchone()
+
+        index_name = '%s{%s}' % (self.collection.name, 'foo_bar,bok')
+        cmd = ("SELECT * FROM [%s]" % index_name)
+        assert (1, '"zzz"', '"bak"') == self.collection.db.execute(cmd).fetchone()
+
     def test_reindex(self):
         self.test_create_index()
         index_name = '%s{%s}' % (self.collection.name, 'foo')
         self.collection.reindex('[%s]' % index_name)
         cmd = ("SELECT id, foo FROM [%s]" % index_name)
-        assert (1, 'bar') == self.collection.db.execute(cmd).fetchone()
+        assert (1, '"bar"') == self.collection.db.execute(cmd).fetchone()
     
     def test_insert_auto_index(self):
         self.test_reindex()
         self.collection.insert({'foo':'baz'})
         index_name = '%s{%s}' % (self.collection.name, 'foo')
         cmd = ("SELECT id, foo FROM [%s]" % index_name)
-        assert (1, 'bar') in self.collection.db.execute(cmd).fetchall()
-        assert (2, 'baz') in self.collection.db.execute(cmd).fetchall()
+        assert (1, '"bar"') in self.collection.db.execute(cmd).fetchall()
+        assert (2, '"baz"') in self.collection.db.execute(cmd).fetchall()
 
-    def test_create_compond_index(self):
+    def test_create_compound_index(self):
         self.collection.create()
         doc = {'foo':'bar', 'far':'boo'}
         self.collection.insert(doc)

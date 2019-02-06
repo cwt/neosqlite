@@ -4,6 +4,7 @@ import sqlite3
 import sys
 import warnings
 
+from copy import deepcopy
 from functools import partial
 from itertools import starmap
 
@@ -217,12 +218,15 @@ class Collection(object):
         if skip == None: skip = 0
 
         where = ''
-        keys = [key for key in query if not key.startswith('$')]
+        keys = [key.replace('.', '_')
+                for key in query
+                if not key.startswith('$')]
         if keys:
             index_name = '[%s{%s}]' % (self.name, ','.join(keys))
             if index_name in self.list_indexes():
                 index_query = ' and '.join(
-                    ['%s=%s' % (key, query[key]) for key in keys]
+                    ["%s='%s'" % (key, json.dumps(query[key.replace('_', '.')]))
+                     for key in keys]
                 )
                 where = 'where id in (select id from %s where %s)' % (
                     index_name, index_query
@@ -398,6 +402,10 @@ class Collection(object):
             index_name = key
             index_columns = '%s text' % key
 
+        # Allow dot notation, but save it as underscore
+        index_name = index_name.replace('.', '_')
+        index_columns = index_columns.replace('.', '_')
+
         table_name = '[%s{%s}]' % (self.name, index_name)
         reindex = reindex or not self._object_exists('table', table_name)
 
@@ -449,13 +457,16 @@ class Collection(object):
                 self.db.execute(insert.format(table=table, index=','.join(index), q=qs),
                                 [None for x in index])
 
+            _id = document['_id']
             for key in index:
-                # Ignore this document if it doesn't have the key
-                if key not in document and sparse:
-                    continue
-
-                self.db.execute(update.format(table=table, key=key),
-                                (document.get(key, None), document['_id']))
+                doc = deepcopy(document)
+                for k in key.split('_'):
+                    if isinstance(doc, dict):
+                        # Ignore this document if it doesn't have the key
+                        if k not in doc and sparse:
+                            continue
+                        doc = doc.get(k, None)
+                self.db.execute(update.format(table=table, key=key), (json.dumps(doc), _id))
 
     def list_indexes(self, as_keys=False):
         cmd = ("SELECT name FROM sqlite_master "
