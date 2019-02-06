@@ -345,6 +345,70 @@ class TestCollection(object):
                "WHERE type='table' and name like '{name}{{%}}'") 
         assert self.collection.db.execute(cmd.format(name=self.collection.name)).fetchone() is None
 
+    def test_find_with_sort(self):
+        self.collection.create()
+        self.collection.save({'a':1, 'b':'c'})
+        self.collection.save({'a':1, 'b':'a'})
+        self.collection.save({'a':5, 'b':'x'})
+        self.collection.save({'a':3, 'b':'x'})
+        self.collection.save({'a':4, 'b':'z'})
+        assert [
+            {'a':1, 'b':'c', '_id':1},
+            {'a':1, 'b':'a', '_id':2},
+            {'a':5, 'b':'x', '_id':3},
+            {'a':3, 'b':'x', '_id':4},
+            {'a':4, 'b':'z', '_id':5},
+        ] == self.collection.find()
+        assert [
+            {'a':1, 'b':'c', '_id':1},
+            {'a':1, 'b':'a', '_id':2},
+            {'a':3, 'b':'x', '_id':4},
+            {'a':4, 'b':'z', '_id':5},
+            {'a':5, 'b':'x', '_id':3},
+        ] == self.collection.find(sort={'a':nosqlite.ASCENDING})
+        assert [
+            {'a':1, 'b':'a', '_id':2},
+            {'a':1, 'b':'c', '_id':1},
+            {'a':5, 'b':'x', '_id':3},
+            {'a':3, 'b':'x', '_id':4},
+            {'a':4, 'b':'z', '_id':5},
+        ] == self.collection.find(sort={'b':nosqlite.ASCENDING})
+        assert [
+            {'a':5, 'b':'x', '_id':3},
+            {'a':4, 'b':'z', '_id':5},
+            {'a':3, 'b':'x', '_id':4},
+            {'a':1, 'b':'c', '_id':1},
+            {'a':1, 'b':'a', '_id':2},
+        ] == self.collection.find(sort={'a':nosqlite.DESCENDING})
+        assert [
+            {'a':4, 'b':'z', '_id':5},
+            {'a':5, 'b':'x', '_id':3},
+            {'a':3, 'b':'x', '_id':4},
+            {'a':1, 'b':'c', '_id':1},
+            {'a':1, 'b':'a', '_id':2},
+        ] == self.collection.find(sort={'b':nosqlite.DESCENDING})
+        assert [
+            {'a':1, 'b':'a', '_id':2},
+            {'a':1, 'b':'c', '_id':1},
+            {'a':3, 'b':'x', '_id':4},
+            {'a':4, 'b':'z', '_id':5},
+            {'a':5, 'b':'x', '_id':3},
+        ] == self.collection.find(sort={'a':nosqlite.ASCENDING, 'b':nosqlite.ASCENDING})
+        assert [
+            {'a':5, 'b':'x', '_id':3},
+            {'a':4, 'b':'z', '_id':5},
+            {'a':3, 'b':'x', '_id':4},
+            {'a':1, 'b':'a', '_id':2},
+            {'a':1, 'b':'c', '_id':1},
+        ] == self.collection.find(sort={'a':nosqlite.DESCENDING, 'b':nosqlite.ASCENDING})
+        assert [
+            {'a':5, 'b':'x', '_id':3},
+            {'a':4, 'b':'z', '_id':5},
+            {'a':3, 'b':'x', '_id':4},
+            {'a':1, 'b':'c', '_id':1},
+            {'a':1, 'b':'a', '_id':2},
+        ] == self.collection.find(sort={'a':nosqlite.DESCENDING, 'b':nosqlite.DESCENDING})
+
     @mark.parametrize('strdoc,doc', [
         ('{"foo": "bar"}', {'_id': 1, 'foo': 'bar'}),
         (u'{"foo": "☃"}', {'_id': 1, 'foo': u'☃'}),

@@ -7,12 +7,16 @@ import warnings
 from copy import deepcopy
 from functools import partial
 from itertools import starmap
+from operator import itemgetter
 
 try:
     from itertools import ifilter as filter, imap as map
 except ImportError:  # pragma: no cover Python >= 3.0
     pass
 
+
+ASCENDING = False
+DESCENDING = True
 
 class MalformedQueryException(Exception):
     pass
@@ -217,7 +221,7 @@ class Collection(object):
         document['_id'] = id
         return document
 
-    def find(self, query=None, skip=None, limit=None, hint=None):
+    def find(self, query=None, skip=None, limit=None, hint=None, sort=None):
         """
         Returns a list of documents in this collection that match a given query
         """
@@ -255,10 +259,15 @@ class Collection(object):
                 results.append(match)
 
             # Just return if we already reached the limit
-            if limit and len(results) == limit:
-                return results
+            if limit and len(results) == limit and sort is None:
+                break
+        if sort:  # sort={key1:direction1, key2:direction2, ...}
+            sort_keys = list(sort.keys())
+            sort_keys.reverse()  # sort from right to left
+            for key in sort_keys:
+                results = sorted(results, key=itemgetter(key), reverse=sort[key])
 
-        return results
+        return results[:limit] if isinstance(limit, int) else results
 
     def _apply_query(self, query, document):
         """
