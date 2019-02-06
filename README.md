@@ -23,17 +23,16 @@ Indexes
   foo_collection.insert({'a':1, 'b':2, 'c':10})
   foo_collection.insert({'a':1, 'b':3, 'c':20})
   foo_collection.insert({'x':{'y':100}, 'z':200})
-  foo_collection.create_index('a')  # single key
+  foo_collection.create_index('a')        # single key
   foo_collection.create_index(['a','b'])  # compound key
-  foo_collection.create_index('x.y')  # nested key
+  foo_collection.create_index('x.y')      # nested key
   ```
 
 - Index is actually being used in `find` operation.
   e.g. `foo_collection.find({'a':1, 'b':3})` the library will put them in `where`
   clause as a subquery to search `_id` on index with `a=1` and `b=3` which result
   is a subset of `_id` on the collection, so searching on the collection will use
-  its primary key instead of a whole table scan.
-  
+  its primary key instead of a whole table scan.  
   - *however, the other operations like `$gt` or `$lt` still use table scan*
 
 - Unique index is supported and force contraint on `insert`, `save` (`update`).
@@ -42,7 +41,17 @@ Indexes
   - Any attempt above will raise an `IntegrityError` and the document will not be
     inserted or updated.
 
- - Reindex with only a subset of documents is supported.
+- Reindex with only a subset of documents is supported.
+
+- Find with hint index is supported e.g. you don't have index on `('a', 'c')` but
+  already have index on `'a'`.
+
+  ```python
+  foo_collection.find({'a':1, 'c':20})  # use table scan
+  foo_collection.find({'a':1, 'c':20},
+      hint='[foo_collection{a}]'        # use index to narrow down rows with a=1
+  )
+  ```
 
 TODOs
 -----
