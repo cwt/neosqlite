@@ -53,6 +53,15 @@ Indexes
   )
   ```
 
+Sorting
+-------
+- Result documents from `find()` can be sorted by any key
+  ```python
+  foo_collection.find({'a':1}, sort={'c':nosqlite.DESCENDING})
+  foo_collection.find({'a':1}, sort={'b':nosqlite.ASCENDING,
+                                     'c':nosqlite.DESCENDING})
+  ```
+
 TODOs
 -----
 - Support using index on other operations.
