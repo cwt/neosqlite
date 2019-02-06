@@ -144,13 +144,13 @@ class Collection(object):
             raise ie
         return document
 
-    def update(self, spec, document, upsert=False):
+    def update(self, spec, document, upsert=False, hint=None):
         """
         DEPRECATED in pymongo
         Updates a document stored in this collection.
         """
         #spec = {'key': 'value'}
-        to_update = self.find(query=spec, skip=0, limit=1)
+        to_update = self.find(query=spec, skip=0, limit=1, hint=hint)
         if to_update:
             to_update = to_update[0]
         else:
@@ -194,14 +194,14 @@ class Collection(object):
         """
         return self._remove(document)
 
-    def delete_one(self, filter):
+    def delete_one(self, filter, hint=None):
         """
         Delete only the first document according the filter
         Params:
             - filter: dict with the condition ({'foo':'bar'})
         """
         try:
-            document = self.find(query=filter, limit=1)[0]
+            document = self.find(query=filter, limit=1, hint=hint)[0]
         except:
             return None
         return self._remove(document)
@@ -217,7 +217,7 @@ class Collection(object):
         document['_id'] = id
         return document
 
-    def find(self, query=None, skip=None, limit=None):
+    def find(self, query=None, skip=None, limit=None, hint=None):
         """
         Returns a list of documents in this collection that match a given query
         """
@@ -225,20 +225,25 @@ class Collection(object):
         query = query or {}
         if skip == None: skip = 0
 
+        index_name = ''
         where = ''
-        keys = [key.replace('.', '_')
-                for key in query
-                if not key.startswith('$')]
-        if keys:
-            index_name = '[%s{%s}]' % (self.name, ','.join(keys))
-            if index_name in self.list_indexes():
-                index_query = ' and '.join(
-                    ["%s='%s'" % (key, json.dumps(query[key.replace('_', '.')]))
-                     for key in keys]
-                )
-                where = 'where id in (select id from %s where %s)' % (
-                    index_name, index_query
-                )
+        if hint:
+            keys = self.__table_name_as_keys(hint)
+            index_name = hint
+        else:
+            keys = [key.replace('.', '_')
+                    for key in query
+                    if not key.startswith('$')]
+            if keys:
+                index_name = '[%s{%s}]' % (self.name, ','.join(keys))
+        if index_name in self.list_indexes():
+            index_query = ' and '.join(
+                ["%s='%s'" % (key, json.dumps(query[key.replace('_', '.')]))
+                for key in keys]
+            )
+            where = 'where id in (select id from %s where %s)' % (
+                index_name, index_query
+            )
         cmd = "select id, data from %s %s" % (self.name, where)
         cursor = self.db.execute(cmd)
         apply = partial(self._apply_query, query)
@@ -357,30 +362,30 @@ class Collection(object):
         except AttributeError:
             raise MalformedQueryException("Operator '%s' is not currently implemented" % op)
 
-    def find_one(self, query=None):
+    def find_one(self, query=None, hint=None):
         """
         Equivalent to ``find(query, limit=1)[0]``
         """
         try:
-            return self.find(query=query, limit=1)[0]
+            return self.find(query=query, limit=1, hint=hint)[0]
         except (sqlite3.OperationalError, IndexError):
             return None
 
-    def find_and_modify(self, query=None, update=None):
+    def find_and_modify(self, query=None, update=None, hint=None):
         """
         Finds documents in this collection that match a given query and updates them
         """
         update = update or {}
 
-        for document in self.find(query=query):
+        for document in self.find(query=query, hint=hint):
             document.update(update)
             self.save(document)
 
-    def count(self, query=None):
+    def count(self, query=None, hint=None):
         """
         Equivalent to ``len(find(query))``
         """
-        return len(self.find(query=query))
+        return len(self.find(query=query, hint=hint))
 
     def rename(self, new_name):
         """

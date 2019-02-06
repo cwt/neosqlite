@@ -300,6 +300,24 @@ class TestCollection(object):
             self.collection.create_index('foo', unique=True)
         assert 0 == len(self.collection.list_indexes())
 
+    def test_hint_index(self):
+        self.collection.create()
+        self.collection.insert({'foo':'bar','a':1})
+        self.collection.insert({'foo':'bar','a':2})
+        self.collection.insert({'fox':'baz','a':3})
+        self.collection.insert({'fox':'bar','a':4})
+        self.collection.create_index('foo')
+        self.collection.db = Mock(wraps=self.db)
+        docs_without_hint = self.collection.find({'foo':'bar', 'a':2})
+        self.collection.db.execute.assert_any_call(
+            'select id, data from foo '
+        )
+        docs_with_hint = self.collection.find({'foo':'bar', 'a':2}, hint='[foo{foo}]')
+        self.collection.db.execute.assert_any_call(
+            'select id, data from foo where id in (select id from [foo{foo}] where foo=\'"bar"\')'
+        )
+        assert docs_without_hint == docs_with_hint
+
     def test_list_indexes(self):
         self.test_create_index()
         assert isinstance(self.collection.list_indexes(), list)
