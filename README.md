@@ -55,11 +55,12 @@ Indexes
 
 Sorting
 -------
-- Result documents from `find()` can be sorted by any key
+- Result documents from `find()` can be sorted by any key and also nested key
   ```python
   foo_collection.find({'a':1}, sort={'c':nosqlite.DESCENDING})
   foo_collection.find({'a':1}, sort={'b':nosqlite.ASCENDING,
                                      'c':nosqlite.DESCENDING})
+  foo_collection.find(sort={'x.y':nosqlite.DESCENDING})
   ```
 
 TODOs
