@@ -409,6 +409,22 @@ class TestCollection(object):
             {'a':1, 'b':'a', '_id':2},
         ] == self.collection.find(sort={'a':nosqlite.DESCENDING, 'b':nosqlite.DESCENDING})
 
+    def test_find_with_sort_on_nested_key(self):
+        self.collection.create()
+        self.collection.save({'a':{'b':5}, 'c':'B'})
+        self.collection.save({'a':{'b':9}, 'c':'A'})
+        self.collection.save({'a':{'b':7}, 'c':'C'})
+        assert [
+            {'a':{'b':5}, 'c':'B', '_id':1},
+            {'a':{'b':7}, 'c':'C', '_id':3},
+            {'a':{'b':9}, 'c':'A', '_id':2},
+        ] == self.collection.find(sort={'a.b':nosqlite.ASCENDING})
+        assert [
+            {'a':{'b':9}, 'c':'A', '_id':2},
+            {'a':{'b':7}, 'c':'C', '_id':3},
+            {'a':{'b':5}, 'c':'B', '_id':1},
+        ] == self.collection.find(sort={'a.b':nosqlite.DESCENDING})
+
     @mark.parametrize('strdoc,doc', [
         ('{"foo": "bar"}', {'_id': 1, 'foo': 'bar'}),
         (u'{"foo": "☃"}', {'_id': 1, 'foo': u'☃'}),

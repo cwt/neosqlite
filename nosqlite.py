@@ -7,7 +7,6 @@ import warnings
 from copy import deepcopy
 from functools import partial
 from itertools import starmap
-from operator import itemgetter
 
 try:
     from itertools import ifilter as filter, imap as map
@@ -221,6 +220,11 @@ class Collection(object):
         document['_id'] = id
         return document
 
+    def __get_val(self, item, key):
+        for k in key.split('.'):
+            item = item.get(k)
+        return item
+
     def find(self, query=None, skip=None, limit=None, hint=None, sort=None):
         """
         Returns a list of documents in this collection that match a given query
@@ -261,11 +265,13 @@ class Collection(object):
             # Just return if we already reached the limit
             if limit and len(results) == limit and sort is None:
                 break
+
         if sort:  # sort={key1:direction1, key2:direction2, ...}
             sort_keys = list(sort.keys())
             sort_keys.reverse()  # sort from right to left
             for key in sort_keys:
-                results = sorted(results, key=itemgetter(key), reverse=sort[key])
+                get_val = partial(self.__get_val, key=key)
+                results = sorted(results, key=get_val, reverse=sort[key])
 
         return results[:limit] if isinstance(limit, int) else results
 
