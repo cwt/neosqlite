@@ -1,12 +1,11 @@
+from copy import deepcopy
+from functools import partial
+from itertools import starmap
 import json
 import re
 import sqlite3
 import sys
-import warnings
 
-from copy import deepcopy
-from functools import partial
-from itertools import starmap
 
 try:
     from itertools import ifilter as filter, imap as map
