@@ -6,18 +6,18 @@ import re
 import sqlite3
 import sys
 
-
 try:
     from itertools import ifilter as filter, imap as map
 except ImportError:  # pragma: no cover Python >= 3.0
     pass
 
-
 ASCENDING = False
 DESCENDING = True
 
+
 class MalformedQueryException(Exception):
     pass
+
 
 class MalformedDocument(Exception):
     pass
@@ -151,7 +151,7 @@ class Collection(object):
         DEPRECATED in pymongo
         Updates a document stored in this collection.
         """
-        #spec = {'key': 'value'}
+        # spec = {'key': 'value'}
         to_update = self.find(query=spec, skip=0, limit=1, hint=hint)
         if to_update:
             to_update = to_update[0]
@@ -256,8 +256,8 @@ class Collection(object):
         apply = partial(self._apply_query, query)
 
         for match in filter(apply, starmap(self._load, cursor.fetchall())):
-            if skip > 0: #Discard match before skip
-                skip =- 1
+            if skip > 0:  # Discard match before skip
+                skip = -1
             else:
                 results.append(match)
 
