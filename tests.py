@@ -190,6 +190,19 @@ class TestCollection(object):
 
         assert self.collection.delete_one(doc) is None
 
+    def test_insert_bulk_documents_on_a_transaction(self):
+        self.collection.create()
+        self.collection.begin()
+        self.collection.save({'a':1, 'b':'c'})
+        self.collection.save({'a':1, 'b':'a'})
+        self.collection.rollback()
+        assert 0 == self.collection.count({'a':1})
+        self.collection.begin()
+        self.collection.save({'a':1, 'b':'c'})
+        self.collection.save({'a':1, 'b':'a'})
+        self.collection.commit()
+        assert 2 == self.collection.count({'a':1})
+
     def test_create_index(self):
         self.collection.create()
         doc = {'foo':'bar'}

@@ -46,6 +46,8 @@ class Connection(object):
         Terminate the connection to the sqlite database
         """
         if self.db is not None:
+            if self.db.in_transaction:
+                self.db.commit()
             self.db.close()
 
     def __getitem__(self, name):
@@ -86,6 +88,18 @@ class Collection(object):
 
         if create:
             self.create()
+
+    def begin(self):
+        if not self.db.in_transaction:
+            self.db.execute('begin')
+
+    def commit(self):
+        if self.db.in_transaction:
+            self.db.commit()
+
+    def rollback(self):
+        if self.db.in_transaction:
+            self.db.rollback()
 
     def clear(self):
         """
