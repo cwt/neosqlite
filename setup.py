@@ -1,6 +1,6 @@
 from setuptools import setup
 
-version = '0.0.3'
+version = '0.0.4'
 
 setup(name="nosqlite",
       version=version,
@@ -11,9 +11,9 @@ setup(name="nosqlite",
                    'Programming Language :: Python :: 3',
                    'Topic :: Software Development :: Libraries :: Python Modules'],
       keywords='nosql sqlite nosqlite',
-      author='Shaun Duncan',
-      author_email='shaun.duncan@gmail.com',
-      url='https://github.com/shaunduncan/nosqlite',
+      author='Chaiwat Suttipongsakul',
+      author_email='cwt@bashell.com',
+      url='https://hg.sr.ht/~cwt/nosqlite',
       license='MIT',
       py_modules=['nosqlite'],
       include_package_data=True,

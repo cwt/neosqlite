@@ -71,5 +71,11 @@ TODOs
 
 Contribution and License
 ------------------------
-Developed by Shaun Duncan <shaun.duncan@gmail.com> and is licensed under the
-terms of a MIT license. Contributions are welcomed and appreciated.
+This project was originally developed by Shaun Duncan <shaun[dot]duncan[at]gmail[dot]com>
+and is now maintained by Chaiwat Suttipongsakul <cwt[at]bashell[dot]com>.
+It is licensed under the MIT license, which means you are free to use, modify,
+and distribute the code for your own purposes.
+
+Contributions to the project are highly encouraged and greatly appreciated.
+If you find a bug, have an enhancement in mind, or want to suggest a new feature,
+please feel free to contribute.
