@@ -36,6 +36,7 @@ class Connection:
         """
         self.db = sqlite3.connect(*args, **kwargs)
         self.db.isolation_level = None
+        self.db.execute("PRAGMA journal_mode=WAL")  # Set the journal mode to WAL
 
     def close(self):
         """
