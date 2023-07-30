@@ -203,6 +203,18 @@ class TestCollection:
         self.collection.commit()
         assert 2 == self.collection.count({'a':1})
 
+    def test_ensure_index(self):
+        self.collection.create()
+        doc = {'foo':'bar'}
+        self.collection.insert(doc)
+        self.collection.ensure_index('foo')
+        cmd = ("SELECT name FROM sqlite_master "
+               "WHERE type='table' and name like '{name}{{%}}'")
+        index_name = '%s{%s}' % (self.collection.name, 'foo')
+        assert index_name == self.collection.db.execute(
+            cmd.format(name=self.collection.name)
+        ).fetchone()[0]
+
     def test_create_index(self):
         self.collection.create()
         doc = {'foo':'bar'}
