@@ -20,7 +20,7 @@ def collection(db, request):
     return nosqlite.Collection(db, 'foo', create=False)
 
 
-class TestConnection(object):
+class TestConnection:
 
     def test_connect(self):
         conn = nosqlite.Connection(':memory:')
@@ -61,18 +61,18 @@ class TestConnection(object):
     def test_getattr_returns_attribute(self, sqlite):
         conn = nosqlite.Connection()
 
-        assert conn.__getattr__('db') in conn.__dict__.values()
+        assert conn.__getattr__('db') in list(conn.__dict__.values())
 
     @patch('nosqlite.sqlite3')
     def test_getattr_returns_collection(self, sqlite):
         conn = nosqlite.Connection()
         foo = conn.__getattr__('foo')
 
-        assert foo not in conn.__dict__.values()
+        assert foo not in list(conn.__dict__.values())
         assert isinstance(foo, nosqlite.Collection)
 
 
-class TestCollection(object):
+class TestCollection:
 
     def setup(self):
         self.db = sqlite3.connect(':memory:')
@@ -440,7 +440,7 @@ class TestCollection(object):
 
     @mark.parametrize('strdoc,doc', [
         ('{"foo": "bar"}', {'_id': 1, 'foo': 'bar'}),
-        (u'{"foo": "☃"}', {'_id': 1, 'foo': u'☃'}),
+        ('{"foo": "☃"}', {'_id': 1, 'foo': '☃'}),
     ])
     def test_load(self, strdoc, doc):
         assert doc == self.collection._load(1, strdoc)
@@ -573,7 +573,7 @@ class TestCollection(object):
     def test_apply_query_all_operator(self):
         query = {'foo': {'$all': [1, 2, 3]}}
 
-        assert self.collection._apply_query(query, {'foo': range(10)})
+        assert self.collection._apply_query(query, {'foo': list(range(10))})
         assert not self.collection._apply_query(query, {'foo': ['bar', 'baz']})
         assert not self.collection._apply_query(query, {'foo': 3})
 
@@ -662,7 +662,7 @@ class TestCollection(object):
 
     def test_count(self):
         with patch.object(self.collection, 'find'):
-            self.collection.find.return_value = range(10)
+            self.collection.find.return_value = list(range(10))
             assert self.collection.count() == 10
 
     def test_distinct(self):
@@ -694,7 +694,7 @@ class TestCollection(object):
         assert not nosqlite.Collection(self.db, 'foo', create=False).exists()
 
 
-class TestFindOne(object):
+class TestFindOne:
 
     def test_returns_None_if_collection_does_not_exist(self, collection):
         assert collection.find_one({}) is None

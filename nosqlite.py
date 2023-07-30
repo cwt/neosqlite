@@ -6,10 +6,6 @@ import re
 import sqlite3
 import sys
 
-try:
-    from itertools import ifilter as filter, imap as map
-except ImportError:  # pragma: no cover Python >= 3.0
-    pass
 
 ASCENDING = False
 DESCENDING = True
@@ -23,7 +19,7 @@ class MalformedDocument(Exception):
     pass
 
 
-class Connection(object):
+class Connection:
     """
     The high-level connection to a sqlite database. Creating a connection accepts
     the same args and keyword args as the ``sqlite3.connect`` method
@@ -77,7 +73,7 @@ class Connection(object):
         self.db.execute("drop table if exists %s" % name)
 
 
-class Collection(object):
+class Collection:
     """
     A virtual database table that holds JSON-type documents
     """
@@ -143,7 +139,7 @@ class Collection(object):
             return self.save(document)
 
         # Check if document is a dict
-        if type(document) != dict:
+        if not isinstance(document, dict):
             raise MalformedDocument('document must be a dictionary, not a %s' % type(document))
 
         # Create it and return a modified one with the id
@@ -244,7 +240,8 @@ class Collection(object):
         """
         results = []
         query = query or {}
-        if skip == None: skip = 0
+        if skip is None:
+            skip = 0
 
         index_name = ''
         where = ''
@@ -331,7 +328,7 @@ class Collection(object):
         matches = []  # A list of booleans
         reapply = lambda q: self._apply_query(q, document)
 
-        for field, value in query.items():
+        for field, value in list(query.items()):
             # A more complex query type $and, $or, etc
             if field == '$and':
                 matches.append(all(map(reapply, value)))
@@ -344,7 +341,7 @@ class Collection(object):
 
             # Invoke a query operator
             elif isinstance(value, dict):
-                for operator, arg in value.items():
+                for operator, arg in list(value.items()):
                     if not self._get_operator_fn(operator)(field, arg, document):
                         matches.append(False)
                         break
@@ -430,7 +427,7 @@ class Collection(object):
         Get a set of distinct values for the given key excluding an implicit
         None for documents that do not contain the key
         """
-        return set(d[key] for d in filter(lambda d: key in d, self.find()))
+        return set(d[key] for d in [d for d in self.find() if key in d])
 
     def create_index(self, key, reindex=True, sparse=False, unique=False):
         """
@@ -559,7 +556,7 @@ def _eq(field, value, document):
     """
     try:
         return document.get(field, None) == value
-    except TypeError:  # pragma: no cover Python < 3.0
+    except TypeError:
         return False
 
 
@@ -569,7 +566,7 @@ def _gt(field, value, document):
     """
     try:
         return document.get(field, None) > value
-    except TypeError:  # pragma: no cover Python < 3.0
+    except TypeError:
         return False
 
 
@@ -579,7 +576,7 @@ def _lt(field, value, document):
     """
     try:
         return document.get(field, None) < value
-    except TypeError:  # pragma: no cover Python < 3.0
+    except TypeError:
         return False
 
 
@@ -590,7 +587,7 @@ def _gte(field, value, document):
     """
     try:
         return document.get(field, None) >= value
-    except TypeError:  # pragma: no cover Python < 3.0
+    except TypeError:
         return False
 
 
@@ -601,7 +598,7 @@ def _lte(field, value, document):
     """
     try:
         return document.get(field, None) <= value
-    except TypeError:  # pragma: no cover Python < 3.0
+    except TypeError:
         return False
 
 
@@ -671,7 +668,7 @@ def _mod(field, value, document):
     cannot be converted to an integer, this will return False.
     """
     try:
-        divisor, remainder = map(int, value)
+        divisor, remainder = list(map(int, value))
     except (TypeError, ValueError):
         raise MalformedQueryException("'$mod' must accept an iterable: [divisor, remainder]")
 
