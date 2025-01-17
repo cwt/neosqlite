@@ -302,7 +302,7 @@ class Collection:
 
         for match in filter(apply, starmap(self._load, cursor.fetchall())):
             if skip > 0:  # Discard match before skip
-                skip = -1
+                skip -= 1
             else:
                 results.append(match)
 
