@@ -388,24 +388,13 @@ class Collection:
                     matches.append(True)
 
             # Standard
-            elif value != document.get(field, None):
-                # check if field contains a dot
-                if "." in field:
-                    nodes = field.split(".")
-                    document_section = document
-
-                    try:
-                        for path in nodes[:-1]:
-                            document_section = document_section.get(path, None)
-                    except AttributeError:
-                        document_section = None
-
-                    if document_section is None:
-                        matches.append(False)
-                    else:
-                        if value != document_section.get(nodes[-1], None):
-                            matches.append(False)
-                else:
+            else:
+                doc_value = document
+                for path in field.split("."):
+                    if doc_value is None:
+                        break
+                    doc_value = doc_value.get(path, None)
+                if value != doc_value:
                     matches.append(False)
 
         return all(matches)
