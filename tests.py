@@ -470,6 +470,39 @@ class TestCollection:
             sort={"a": nosqlite.DESCENDING, "b": nosqlite.DESCENDING}
         )
 
+    def test_find_with_skip_and_limit(self):
+        self.collection.create()
+        self.collection.save({"a": 1, "b": "c"})
+        self.collection.save({"a": 1, "b": "a"})
+        self.collection.save({"a": 5, "b": "x"})
+        self.collection.save({"a": 3, "b": "x"})
+        self.collection.save({"a": 4, "b": "z"})
+        assert [
+            {"a": 1, "b": "c", "_id": 1},
+            {"a": 1, "b": "a", "_id": 2},
+            {"a": 5, "b": "x", "_id": 3},
+            {"a": 3, "b": "x", "_id": 4},
+            {"a": 4, "b": "z", "_id": 5},
+        ] == self.collection.find(skip=0, limit=5)
+        assert [
+            {"a": 1, "b": "a", "_id": 2},
+            {"a": 5, "b": "x", "_id": 3},
+            {"a": 3, "b": "x", "_id": 4},
+            {"a": 4, "b": "z", "_id": 5},
+        ] == self.collection.find(skip=1, limit=5)
+        assert [
+            {"a": 1, "b": "a", "_id": 2},
+            {"a": 5, "b": "x", "_id": 3},
+            {"a": 3, "b": "x", "_id": 4},
+            {"a": 4, "b": "z", "_id": 5},
+        ] == self.collection.find(skip=1, limit=4)
+        assert [
+            {"a": 1, "b": "a", "_id": 2},
+            {"a": 5, "b": "x", "_id": 3},
+            {"a": 3, "b": "x", "_id": 4},
+        ] == self.collection.find(skip=1, limit=3)
+        assert [] == self.collection.find(limit=0)
+
     def test_find_with_sort_on_nested_key(self):
         self.collection.create()
         self.collection.save({"a": {"b": 5}, "c": "B"})
