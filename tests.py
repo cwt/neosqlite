@@ -728,6 +728,10 @@ class TestCollection:
         document = {"foo": 5}
         assert not nosqlite._eq("foo", "bar", document)
 
+    def test_eq_attribute_error(self):
+        document = None  # This will trigger AttributeError in _eq function
+        assert not nosqlite._eq("foo", "bar", document)
+
     def test_gt_type_error(self):
         document = {"foo": "bar"}
         assert not nosqlite._gt("foo", 5, document)

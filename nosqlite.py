@@ -614,7 +614,7 @@ def _eq(field: str, value: Any, document: Dict[str, Any]) -> bool:
     """
     try:
         return document.get(field, None) == value
-    except TypeError:
+    except (TypeError, AttributeError):
         return False
 
 
