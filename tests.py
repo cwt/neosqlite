@@ -305,6 +305,15 @@ class TestCollection:
         cmd = f"SELECT id, foo FROM [{index_name}]"
         assert (1, '"bar"') == self.collection.db.execute(cmd).fetchone()
 
+    def test_reindex_skips_sparse_documents(self):
+        self.collection.create()
+        self.collection.create_index("foo")
+        self.collection.insert({"a": 1})
+        self.collection.insert({"foo": "bar"})
+        index_name = f"{self.collection.name}{{foo}}"
+        self.collection.reindex(f"[{index_name}]", sparse=True)
+        assert 1 == len(self.collection.db.execute(f"SELECT COUNT(1) FROM [{index_name}]").fetchone())
+
     def test_uniqueness(self):
         self.test_reindex_unique_index()
         doc = {"foo": "bar"}
@@ -683,7 +692,6 @@ class TestCollection:
                 {"foo": {"$gt": 10, "$mod": [2, 1]}},
             ],
         }
-
         assert self.collection._apply_query(query, {"bar": "baz", "foo": 4})
         assert self.collection._apply_query(query, {"bar": "baz", "foo": 15})
         assert not self.collection._apply_query(
@@ -705,6 +713,32 @@ class TestCollection:
         query = {"foo": {"$exists": "foo"}}
         with raises(nosqlite.MalformedQueryException):
             self.collection._apply_query(query, {"foo": "bar"})
+
+    def test_apply_query_handle_none(self):
+        query = {"foo": "bar"}
+        document = None
+        assert not self.collection._apply_query(query, document)
+
+    def test_apply_query_sparse_index(self):
+        query = {"foo": {"$exists": True}}
+        document = {"bar": "baz"}
+        assert not self.collection._apply_query(query, document)
+
+    def test_eq_type_error(self):
+        document = {"foo": 5}
+        assert not nosqlite._eq("foo", "bar", document)
+
+    def test_gt_type_error(self):
+        document = {"foo": "bar"}
+        assert not nosqlite._gt("foo", 5, document)
+
+    def test_lt_type_error(self):
+        document = {"foo": "bar"}
+        assert not nosqlite._lt("foo", 5, document)
+
+    def test_lte_type_error(self):
+        document = {"foo": "bar"}
+        assert not nosqlite._lte("foo", 5, document)
 
     def test_get_operator_fn_improper_op(self):
         with raises(nosqlite.MalformedQueryException):
