@@ -235,7 +235,7 @@ class Connection:
 
     def __getitem__(self, name: str) -> "Collection":
         if name not in self._collections:
-            self._collections[name] = Collection(self.db, name)
+            self._collections[name] = Collection(self.db, name, database=self)
         return self._collections[name]
 
     def __getattr__(self, name: str) -> Any:
@@ -268,9 +268,16 @@ class Connection:
 
 
 class Collection:
-    def __init__(self, db: sqlite3.Connection, name: str, create: bool = True):
+    def __init__(
+        self,
+        db: sqlite3.Connection,
+        name: str,
+        create: bool = True,
+        database=None,
+    ):
         self.db = db
         self.name = name
+        self._database = database
         if create:
             self.create()
 
@@ -1323,6 +1330,15 @@ class Collection:
             pass
 
         return info
+
+    @property
+    def database(self):
+        """
+        Get the database that this collection is a part of.
+
+        :return: The database object.
+        """
+        return self._database
 
     def _object_exists(self, type: str, name: str) -> bool:
         if type == "table":
