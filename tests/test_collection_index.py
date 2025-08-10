@@ -7,7 +7,7 @@ import neosqlite
 def test_create_index(collection):
     collection.insert_one({"foo": "bar"})
     collection.create_index("foo")
-    assert f"[{collection.name}{{foo}}]" in collection.list_indexes()
+    assert "idx_foo_foo" in collection.list_indexes()
 
 
 def test_create_index_on_nested_keys(collection):
@@ -15,17 +15,14 @@ def test_create_index_on_nested_keys(collection):
         [{"foo": {"bar": "zzz"}, "bok": "bak"}, {"a": 1, "b": 2}]
     )
     collection.create_index("foo.bar")
-    assert f"[{collection.name}{{foo_bar}}]" in collection.list_indexes()
+    assert "idx_foo_foo_bar" in collection.list_indexes()
 
 
 def test_reindex(collection):
     collection.create_index("foo")
     collection.insert_one({"foo": "bar"})
-    collection.reindex(f"[{collection.name}{{foo}}]")
-
-    index_name = f"[{collection.name}{{foo}}]"
-    cmd = f"SELECT id, foo FROM {index_name}"
-    assert (1, '"bar"') == collection.db.execute(cmd).fetchone()
+    # With native JSON indexing, reindex does nothing but should not fail
+    collection.reindex("idx_foo_foo")
 
 
 def test_insert_auto_index(collection):
@@ -33,17 +30,15 @@ def test_insert_auto_index(collection):
     collection.insert_one({"foo": "bar"})
     collection.insert_one({"foo": "baz"})
 
-    index_name = f"[{collection.name}{{foo}}]"
-    cmd = f"SELECT id, foo FROM {index_name}"
-    results = collection.db.execute(cmd).fetchall()
-    assert (1, '"bar"') in results
-    assert (2, '"baz"') in results
+    # With native JSON indexing, we can't directly query the index table
+    # but we can verify the index exists by checking the index list
+    assert "idx_foo_foo" in collection.list_indexes()
 
 
 def test_create_compound_index(collection):
     collection.insert_one({"foo": "bar", "far": "boo"})
     collection.create_index(["foo", "far"])
-    assert f"[{collection.name}{{foo,far}}]" in collection.list_indexes()
+    assert "idx_foo_foo_far" in collection.list_indexes()
 
 
 def test_create_unique_index_violation(collection):
@@ -74,9 +69,7 @@ def test_hint_index(collection):
     # We can't easily mock the execute call in the same way.
     # We'll trust the implementation detail that hint is used.
     docs_with_hint = list(
-        collection.find(
-            {"foo": "bar", "a": 2}, hint=f"[{collection.name}{{foo}}]"
-        )
+        collection.find({"foo": "bar", "a": 2}, hint=f"idx_foo_foo")
     )
     assert len(docs_with_hint) == 1
     assert docs_with_hint[0]["a"] == 2
@@ -86,13 +79,13 @@ def test_list_indexes(collection):
     collection.create_index("foo")
     indexes = collection.list_indexes()
     assert isinstance(indexes, list)
-    assert f"[{collection.name}{{foo}}]" in indexes
+    assert "idx_foo_foo" in indexes
 
 
 def test_drop_index(collection):
     collection.create_index("foo")
-    collection.drop_index(f"[{collection.name}{{foo}}]")
-    assert f"[{collection.name}{{foo}}]" not in collection.list_indexes()
+    collection.drop_index("foo")
+    assert "idx_foo_foo" not in collection.list_indexes()
 
 
 def test_drop_indexes(collection):

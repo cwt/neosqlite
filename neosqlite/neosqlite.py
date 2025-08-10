@@ -288,12 +288,9 @@ class Collection:
             raise sqlite3.Error("Failed to get last row id.")
         document["_id"] = inserted_id
 
-        try:
-            for index in self.list_indexes():
-                self.reindex(table=index, documents=[document])
-        except sqlite3.IntegrityError as ie:
-            self.delete_one({"_id": inserted_id})
-            raise ie
+        # With native JSON indexing, SQLite handles index updates automatically
+        # No need to manually reindex
+
         return inserted_id
 
     def insert_one(self, document: Dict[str, Any]) -> InsertOneResult:
@@ -363,16 +360,9 @@ class Collection:
             (json.dumps(doc_to_update), doc_id),
         )
 
-        try:
-            doc_to_update["_id"] = doc_id
-            for index in self.list_indexes():
-                self.reindex(table=index, documents=[doc_to_update])
-        except sqlite3.IntegrityError as ie:
-            self.db.execute(
-                f"UPDATE {self.name} SET data = ? WHERE id = ?",
-                (json.dumps(original_doc), doc_id),
-            )
-            raise ie
+        # With native JSON indexing, SQLite handles index updates automatically
+        # No need to manually reindex
+
         return doc_to_update
 
     def _internal_replace(self, doc_id: int, replacement: Dict[str, Any]):
@@ -380,12 +370,8 @@ class Collection:
             f"UPDATE {self.name} SET data = ? WHERE id = ?",
             (json.dumps(replacement), doc_id),
         )
-        try:
-            replacement["_id"] = doc_id
-            for index in self.list_indexes():
-                self.reindex(table=index, documents=[replacement])
-        except sqlite3.IntegrityError as ie:
-            raise ie
+        # With native JSON indexing, SQLite handles index updates automatically
+        # No need to manually reindex
 
     def _internal_delete(self, doc_id: int):
         self.db.execute(f"DELETE FROM {self.name} WHERE id = ?", (doc_id,))
@@ -890,43 +876,35 @@ class Collection:
         sparse: bool = False,
         unique: bool = False,
     ):
-        if isinstance(key, (list, tuple)):
-            index_name = ",".join(key)
-            index_columns = ", ".join(f"{f} text" for f in key)
+        # For single key indexes, we can use SQLite's native JSON indexing
+        if isinstance(key, str):
+            # Create index name (replace dots with underscores for valid identifiers)
+            index_name = key.replace(".", "_")
+
+            # Create the index using json_extract
+            self.db.execute(
+                f"""
+                CREATE {'UNIQUE ' if unique else ''}INDEX
+                IF NOT EXISTS [idx_{self.name}_{index_name}]
+                ON {self.name}(json_extract(data, '$.{key}'))
+                """
+            )
         else:
-            index_name = key
-            index_columns = f"{key} text"
+            # For compound indexes, we still need to handle them differently
+            # This is a simplified implementation - we could expand on this later
+            index_name = "_".join(key).replace(".", "_")
 
-        index_name = index_name.replace(".", "_")
-        index_columns = index_columns.replace(".", "_")
-        table_name = f"[{self.name}{{{index_name}}}]"
-        reindex = reindex or not self._object_exists("table", table_name)
-
-        self.db.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS {table_name} (
-                id INTEGER PRIMARY KEY,
-                {index_columns},
-                FOREIGN KEY(id) REFERENCES {self.name}(id)
-                ON DELETE CASCADE ON UPDATE CASCADE
-            )"""
-        )
-        self.db.execute(
-            f"""
-            CREATE {'UNIQUE ' if unique else ''}INDEX
-            IF NOT EXISTS [idx.{self.name}{{{index_name}}}]
-            ON {table_name}({index_name})
-            """
-        )
-        if reindex:
-            try:
-                self.reindex(table_name)
-            except sqlite3.IntegrityError as ie:
-                self.drop_index(table_name)
-                raise ie
-
-    def _table_name_as_keys(self, table: str) -> List[str]:
-        return re.findall(r"^\[.*\{(.*)\}\]$", table)[0].split(",")
+            # Create the compound index using multiple json_extract calls
+            index_columns = ", ".join(
+                f"json_extract(data, '$.{k}')" for k in key
+            )
+            self.db.execute(
+                f"""
+                CREATE {'UNIQUE ' if unique else ''}INDEX
+                IF NOT EXISTS [idx_{self.name}_{index_name}]
+                ON {self.name}({index_columns})
+                """
+            )
 
     def reindex(
         self,
@@ -934,47 +912,9 @@ class Collection:
         sparse: bool = False,
         documents: List[Dict[str, Any]] | None = None,
     ):
-        index_keys = self._table_name_as_keys(table)
-        update_sql = "UPDATE {table} SET {key} = ? WHERE id = ?"
-        insert_sql = "INSERT INTO {table}({index},id) VALUES({q},{_id})"
-        delete_sql = "DELETE FROM {table} WHERE id = {_id}"
-        count_sql = "SELECT COUNT(1) FROM {table} WHERE id = ?"
-        qs = ("?," * len(index_keys)).rstrip(",")
-
-        docs_to_index = documents or self.find()
-
-        for document in docs_to_index:
-            _id = document["_id"]
-            row = self.db.execute(
-                count_sql.format(table=table), (_id,)
-            ).fetchone()
-            if row and int(row[0]) == 0:
-                self.db.execute(
-                    insert_sql.format(
-                        table=table, index=",".join(index_keys), q=qs, _id=_id
-                    ),
-                    [None for _ in index_keys],
-                )
-            for key in index_keys:
-                doc = deepcopy(document)
-                val: Any = doc
-                for k in key.split("_"):
-                    if isinstance(val, dict):
-                        if k not in val and sparse:
-                            val = None
-                            break
-                        val = val.get(k, None)
-                    else:
-                        val = None
-                        break
-                try:
-                    self.db.execute(
-                        update_sql.format(table=table, key=key),
-                        (json.dumps(val), _id),
-                    )
-                except sqlite3.IntegrityError as ie:
-                    self.db.execute(delete_sql.format(table=table, _id=_id))
-                    raise ie
+        # With native JSON indexing, reindexing is handled automatically by SQLite
+        # This method is kept for API compatibility but does nothing
+        pass
 
     @overload
     def list_indexes(self, as_keys: Literal[True]) -> List[List[str]]: ...
@@ -983,35 +923,63 @@ class Collection:
     def list_indexes(
         self, as_keys: bool = False
     ) -> List[str] | List[List[str]]:
+        # Get indexes that match our naming convention
         cmd = (
-            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE ?"
+            "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE ?"
         )
-        like_pattern = f"{self.name}{{{'%'}}}"
+        like_pattern = f"idx_{self.name}_%"
         if as_keys:
-            return [
-                self._table_name_as_keys(f"[{t[0]}]")
-                for t in self.db.execute(cmd, (like_pattern,)).fetchall()
-            ]
+            # Extract key names from index names
+            indexes = self.db.execute(cmd, (like_pattern,)).fetchall()
+            result = []
+            for idx in indexes:
+                # Extract key name from index name (idx_collection_key -> key)
+                key_name = idx[0][len(f"idx_{self.name}_") :]
+                # Convert underscores back to dots for nested keys
+                key_name = key_name.replace("_", ".")
+                result.append([key_name])
+            return result
+        # Return index names
         return [
-            f"[{t[0]}]"
-            for t in self.db.execute(cmd, (like_pattern,)).fetchall()
+            idx[0] for idx in self.db.execute(cmd, (like_pattern,)).fetchall()
         ]
 
     def drop_index(self, index: str):
-        self.db.execute(f"DROP TABLE {index}")
+        # With native JSON indexing, we just need to drop the index
+        if isinstance(index, str):
+            # For single indexes
+            index_name = index.replace(".", "_")
+            self.db.execute(
+                f"DROP INDEX IF EXISTS idx_{self.name}_{index_name}"
+            )
+        else:
+            # For compound indexes
+            index_name = "_".join(index).replace(".", "_")
+            self.db.execute(
+                f"DROP INDEX IF EXISTS idx_{self.name}_{index_name}"
+            )
 
     def drop_indexes(self):
         indexes = self.list_indexes()
         for index in indexes:
-            if isinstance(index, str):
-                self.drop_index(index)
+            # Extract the actual index name from the full name
+            self.db.execute(f"DROP INDEX IF EXISTS {index}")
 
     def _object_exists(self, type: str, name: str) -> bool:
-        row = self.db.execute(
-            "SELECT COUNT(1) FROM sqlite_master WHERE type = ? AND name = ?",
-            (type, name.strip("[]")),
-        ).fetchone()
-        return bool(row and int(row[0]) > 0)
+        if type == "table":
+            row = self.db.execute(
+                "SELECT COUNT(1) FROM sqlite_master WHERE type = ? AND name = ?",
+                (type, name.strip("[]")),
+            ).fetchone()
+            return bool(row and int(row[0]) > 0)
+        elif type == "index":
+            # For indexes, check if it exists with our naming convention
+            row = self.db.execute(
+                "SELECT COUNT(1) FROM sqlite_master WHERE type = ? AND name = ?",
+                (type, name),
+            ).fetchone()
+            return bool(row and int(row[0]) > 0)
+        return False
 
 
 # Query operators
