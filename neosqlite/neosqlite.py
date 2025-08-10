@@ -446,12 +446,56 @@ class Collection:
                         f"{path}, json_extract(data, {path}) + ?"
                     )
                     params.append(field_val)
+            elif op == "$mul":
+                for field, field_val in value.items():
+                    path = f"'$.{field}'"
+                    set_clauses.append(
+                        f"{path}, json_extract(data, {path}) * ?"
+                    )
+                    params.append(field_val)
+            elif op == "$min":
+                for field, field_val in value.items():
+                    path = f"'$.{field}'"
+                    set_clauses.append(
+                        f"{path}, min(json_extract(data, {path}), ?)"
+                    )
+                    params.append(field_val)
+            elif op == "$max":
+                for field, field_val in value.items():
+                    path = f"'$.{field}'"
+                    set_clauses.append(
+                        f"{path}, max(json_extract(data, {path}), ?)"
+                    )
+                    params.append(field_val)
+            elif op == "$unset":
+                # For $unset, we use json_remove
+                for field in value:
+                    path = f"'$.{field}'"
+                    set_clauses.append(path)
+                # json_remove has a different syntax
+                if set_clauses:
+                    return (
+                        f"data = json_remove(data, {', '.join(set_clauses)})",
+                        params,
+                    )
+                else:
+                    # No fields to unset
+                    return None
+            elif op == "$rename":
+                # $rename is complex to do in SQL, so we'll fall back to the Python implementation
+                return None
             else:
                 return None  # Fallback for unsupported operators
 
         if not set_clauses:
             return None
-        return f"data = json_set(data, {', '.join(set_clauses)})", params
+
+        # For $unset, we already returned above
+        if "$unset" not in update:
+            return f"data = json_set(data, {', '.join(set_clauses)})", params
+        else:
+            # This case should have been handled above
+            return None
 
     def replace_one(
         self,
