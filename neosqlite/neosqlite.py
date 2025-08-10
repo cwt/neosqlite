@@ -1184,6 +1184,27 @@ class Collection:
             # Extract the actual index name from the full name
             self.db.execute(f"DROP INDEX IF EXISTS {index}")
 
+    def rename(self, new_name: str) -> None:
+        """
+        Rename this collection.
+
+        :param new_name: The new name for this collection.
+        :raises sqlite3.Error: If the rename operation fails.
+        """
+        # If the new name is the same as the current name, do nothing
+        if new_name == self.name:
+            return
+
+        # Check if a collection with the new name already exists
+        if self._object_exists("table", new_name):
+            raise sqlite3.Error(f"Collection '{new_name}' already exists")
+
+        # Rename the table
+        self.db.execute(f"ALTER TABLE {self.name} RENAME TO {new_name}")
+
+        # Update the collection name
+        self.name = new_name
+
     def _object_exists(self, type: str, name: str) -> bool:
         if type == "table":
             row = self.db.execute(
