@@ -149,39 +149,21 @@ class Cursor:
         return self
 
     def _execute_query(self) -> Iterator[Dict[str, Any]]:
-        query = self._filter
+        where_result = self._collection._build_simple_where_clause(self._filter)
 
-        index_name = ""
-        where = ""
-        if self._hint:
-            keys = self._collection._table_name_as_keys(self._hint)
-            index_name = self._hint
+        if where_result is not None:
+            where_clause, params = where_result
+            cmd = f"SELECT id, data FROM {self._collection.name} {where_clause}"
+            db_cursor = self._collection.db.execute(cmd, params)
+            docs = starmap(self._collection._load, db_cursor.fetchall())
+            filtered_docs = docs
         else:
-            keys = [
-                key.replace(".", "_")
-                for key in query
-                if not key.startswith("$")
-            ]
-            if keys:
-                index_name = f'[{self._collection.name}{{{",".join(keys)}}}]'
-
-        if index_name in self._collection.list_indexes():
-            index_query = " AND ".join(
-                [
-                    f"{key}='{json.dumps(query[key.replace('_', '.')])}'"
-                    for key in keys
-                ]
-            )
-            where = (
-                f"WHERE id IN (SELECT id FROM {index_name} WHERE {index_query})"
-            )
-
-        cmd = f"SELECT id, data FROM {self._collection.name} {where}"
-        db_cursor = self._collection.db.execute(cmd)
-        apply = partial(self._collection._apply_query, query)
-
-        all_docs = starmap(self._collection._load, db_cursor.fetchall())
-        filtered_docs: Iterable[Dict[str, Any]] = filter(apply, all_docs)
+            # Fallback to old method for complex queries
+            cmd = f"SELECT id, data FROM {self._collection.name}"
+            db_cursor = self._collection.db.execute(cmd)
+            apply = partial(self._collection._apply_query, self._filter)
+            all_docs = starmap(self._collection._load, db_cursor.fetchall())
+            filtered_docs = filter(apply, all_docs)
 
         if self._sort:
             sort_keys = list(self._sort.keys())
@@ -190,7 +172,7 @@ class Cursor:
                 get_val = partial(self._collection._get_val, key=key)
                 reverse = self._sort[key] == DESCENDING
                 filtered_docs = sorted(
-                    filtered_docs, key=get_val, reverse=reverse
+                    list(filtered_docs), key=get_val, reverse=reverse
                 )
 
         skipped_docs = list(filtered_docs)[self._skip :]
@@ -680,6 +662,26 @@ class Collection:
         if not include_id and "_id" in doc:
             doc.pop("_id", None)
         return doc
+
+    def _build_simple_where_clause(
+        self, query: Dict[str, Any]
+    ) -> tuple[str, List[Any]] | None:
+        clauses = []
+        params = []
+
+        for field, value in query.items():
+            if isinstance(value, dict) or "." in field:
+                return None  # Fallback for complex queries
+            if field == "_id":
+                clauses.append("id = ?")
+                params.append(value)
+            else:
+                clauses.append(f"json_extract(data, '$.{field}') = ?")
+                params.append(value)
+
+        if not clauses:
+            return "", []
+        return "WHERE " + " AND ".join(clauses), params
 
     def _apply_query(
         self, query: Dict[str, Any], document: Dict[str, Any]
