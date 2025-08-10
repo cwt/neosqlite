@@ -1205,6 +1205,65 @@ class Collection:
         # Update the collection name
         self.name = new_name
 
+    def options(self) -> Dict[str, Any]:
+        """
+        Get the options set on this collection.
+
+        :return: A dictionary of collection options.
+        """
+        # For SQLite, we can provide information about the table structure
+        options: Dict[str, Any] = {
+            "name": self.name,
+        }
+
+        # Get table information
+        try:
+            # Get table info
+            table_info = self.db.execute(
+                f"PRAGMA table_info({self.name})"
+            ).fetchall()
+            options["columns"] = [
+                {
+                    "name": str(col[1]),
+                    "type": str(col[2]),
+                    "notnull": bool(col[3]),
+                    "default": col[4],
+                    "pk": bool(col[5]),
+                }
+                for col in table_info
+            ]
+
+            # Get index information
+            indexes = self.db.execute(
+                "SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name=?",
+                (self.name,),
+            ).fetchall()
+            options["indexes"] = [
+                {
+                    "name": str(idx[0]),
+                    "definition": str(idx[1]) if idx[1] is not None else "",
+                }
+                for idx in indexes
+            ]
+
+            # Get row count
+            count_row = self.db.execute(
+                f"SELECT COUNT(*) FROM {self.name}"
+            ).fetchone()
+            options["count"] = (
+                int(count_row[0])
+                if count_row and count_row[0] is not None
+                else 0
+            )
+
+        except sqlite3.Error:
+            # If we can't get detailed information, return basic info
+            options["columns"] = []
+            options["indexes"] = []
+            options["count"] = 0
+
+        return options
+
     def _object_exists(self, type: str, name: str) -> bool:
         if type == "table":
             row = self.db.execute(
