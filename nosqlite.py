@@ -1,14 +1,15 @@
 from copy import deepcopy
 from functools import partial
 from itertools import starmap
+from typing import Any, Dict, List, Iterator, Iterable, overload
+from typing_extensions import Literal
 import json
 import re
 import sqlite3
 import sys
-from typing import Any, Dict, List, Optional, Union
 
-ASCENDING = False
-DESCENDING = True
+ASCENDING = 1
+DESCENDING = -1
 
 
 class MalformedQueryException(Exception):
@@ -19,39 +20,163 @@ class MalformedDocument(Exception):
     pass
 
 
-class Connection:
-    """
-    The high-level connection to a sqlite database. Creating a connection
-    accepts the same args and keyword args as the ``sqlite3.connect`` method
-    """
+class InsertOneResult:
+    def __init__(self, inserted_id: int):
+        self._inserted_id = inserted_id
 
-    def __init__(self, *args, **kwargs):
-        self._collections = {}
+    @property
+    def inserted_id(self) -> int:
+        return self._inserted_id
+
+
+class InsertManyResult:
+    def __init__(self, inserted_ids: List[int]):
+        self._inserted_ids = inserted_ids
+
+    @property
+    def inserted_ids(self) -> List[int]:
+        return self._inserted_ids
+
+
+class UpdateResult:
+    def __init__(
+        self,
+        matched_count: int,
+        modified_count: int,
+        upserted_id: int | None,
+    ):
+        self._matched_count = matched_count
+        self._modified_count = modified_count
+        self._upserted_id = upserted_id
+
+    @property
+    def matched_count(self) -> int:
+        return self._matched_count
+
+    @property
+    def modified_count(self) -> int:
+        return self._modified_count
+
+    @property
+    def upserted_id(self) -> int | None:
+        return self._upserted_id
+
+
+class DeleteResult:
+    def __init__(self, deleted_count: int):
+        self._deleted_count = deleted_count
+
+    @property
+    def deleted_count(self) -> int:
+        return self._deleted_count
+
+
+class Cursor:
+    def __init__(
+        self,
+        collection: "Collection",
+        filter: Dict[str, Any] | None = None,
+        hint: str | None = None,
+    ):
+        self._collection = collection
+        self._filter = filter or {}
+        self._hint = hint
+        self._skip = 0
+        self._limit: int | None = None
+        self._sort: Dict[str, int] | None = None
+
+    def __iter__(self) -> Iterator[Dict[str, Any]]:
+        return self._execute_query()
+
+    def limit(self, limit: int) -> "Cursor":
+        self._limit = limit
+        return self
+
+    def skip(self, skip: int) -> "Cursor":
+        self._skip = skip
+        return self
+
+    def sort(
+        self,
+        key_or_list: str | List[tuple],
+        direction: int | None = None,
+    ) -> "Cursor":
+        if isinstance(key_or_list, str):
+            self._sort = {key_or_list: direction or ASCENDING}
+        else:
+            self._sort = dict(key_or_list)
+        return self
+
+    def _execute_query(self) -> Iterator[Dict[str, Any]]:
+        query = self._filter
+
+        index_name = ""
+        where = ""
+        if self._hint:
+            keys = self._collection._table_name_as_keys(self._hint)
+            index_name = self._hint
+        else:
+            keys = [
+                key.replace(".", "_")
+                for key in query
+                if not key.startswith("$")
+            ]
+            if keys:
+                index_name = f'[{self._collection.name}{{{",".join(keys)}}}]'
+
+        if index_name in self._collection.list_indexes():
+            index_query = " AND ".join(
+                [
+                    f"{key}='{json.dumps(query[key.replace('_', '.')])}'"
+                    for key in keys
+                ]
+            )
+            where = (
+                f"WHERE id IN (SELECT id FROM {index_name} WHERE {index_query})"
+            )
+
+        cmd = f"SELECT id, data FROM {self._collection.name} {where}"
+        db_cursor = self._collection.db.execute(cmd)
+        apply = partial(self._collection._apply_query, query)
+
+        all_docs = starmap(self._collection._load, db_cursor.fetchall())
+        filtered_docs: Iterable[Dict[str, Any]] = filter(apply, all_docs)
+
+        if self._sort:
+            sort_keys = list(self._sort.keys())
+            sort_keys.reverse()
+            for key in sort_keys:
+                get_val = partial(self._collection._get_val, key=key)
+                reverse = self._sort[key] == DESCENDING
+                filtered_docs = sorted(
+                    filtered_docs, key=get_val, reverse=reverse
+                )
+
+        skipped_docs = list(filtered_docs)[self._skip :]
+
+        if self._limit is not None:
+            yield from skipped_docs[: self._limit]
+        else:
+            yield from skipped_docs
+
+
+class Connection:
+    def __init__(self, *args: Any, **kwargs: Any):
+        self._collections: Dict[str, "Collection"] = {}
         self.connect(*args, **kwargs)
 
-    def connect(self, *args, **kwargs):
-        """
-        Connect to a sqlite database only if no connection exists. Isolation
-        level for the connection is automatically set to autocommit
-        """
+    def connect(self, *args: Any, **kwargs: Any):
         self.db = sqlite3.connect(*args, **kwargs)
         self.db.isolation_level = None
-        self.db.execute("PRAGMA journal_mode=WAL")  # Set WAL journal mode
+        self.db.execute("PRAGMA journal_mode=WAL")
 
     def close(self):
-        """
-        Terminate the connection to the sqlite database
-        """
         if self.db is not None:
             if self.db.in_transaction:
                 self.db.commit()
             self.db.close()
 
     def __getitem__(self, name: str) -> "Collection":
-        """
-        A pymongo-like behavior for dynamically obtaining a collection of
-        documents
-        """
         if name not in self._collections:
             self._collections[name] = Collection(self.db, name)
         return self._collections[name]
@@ -64,65 +189,24 @@ class Connection:
     def __enter__(self) -> "Connection":
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_traceback) -> bool:
+    def __exit__(
+        self, exc_type: Any, exc_val: Any, exc_traceback: Any
+    ) -> Literal[False]:
         self.close()
         return False
 
     def drop_collection(self, name: str):
-        """
-        Drops a collection permanently if it exists
-        """
         self.db.execute(f"DROP TABLE IF EXISTS {name}")
 
 
 class Collection:
-    """
-    A virtual database table that holds JSON-type documents
-    """
-
     def __init__(self, db: sqlite3.Connection, name: str, create: bool = True):
         self.db = db
         self.name = name
-
         if create:
             self.create()
 
-    def begin(self):
-        if not self.db.in_transaction:
-            self.db.execute("BEGIN")
-
-    def commit(self):
-        if self.db.in_transaction:
-            self.db.commit()
-
-    def rollback(self):
-        if self.db.in_transaction:
-            self.db.rollback()
-
-    def clear(self):
-        """
-        Clears all stored documents in this database. THERE IS NO GOING BACK
-        """
-        self.db.execute(f"DELETE FROM {self.name}")
-
-    def exists(self) -> bool:
-        """
-        Checks if this collection exists
-        """
-        return self._object_exists("table", self.name)
-
-    def _object_exists(self, type: str, name: str) -> bool:
-        row = self.db.execute(
-            "SELECT COUNT(1) FROM sqlite_master WHERE type = ? AND name = ?",
-            (type, name.strip("[]")),
-        ).fetchone()
-
-        return int(row[0]) > 0
-
     def create(self):
-        """
-        Creates the collections database only if it does not already exist
-        """
         self.db.execute(
             f"""
             CREATE TABLE IF NOT EXISTS {self.name} (
@@ -131,244 +215,240 @@ class Collection:
             )"""
         )
 
-    def insert(self, document: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Inserts a document into this collection. If a document already has an
-        '_id' value it will be updated
+    def _load(self, id: int, data: str | bytes) -> Dict[str, Any]:
+        if isinstance(data, bytes):
+            data = data.decode("utf-8")
+        document: Dict[str, Any] = json.loads(data)
+        document["_id"] = id
+        return document
 
-        :returns: inserted document with id
-        """
-        if "_id" in document:
-            return self.save(document)
+    def _get_val(self, item: Dict[str, Any], key: str) -> Any:
+        val: Any = item
+        for k in key.split("."):
+            if val is None:
+                return None
+            val = val.get(k)
+        return val
 
-        # Check if document is a dict
+    def _internal_insert(self, document: Dict[str, Any]) -> int:
         if not isinstance(document, dict):
             raise MalformedDocument(
                 f"document must be a dictionary, not a {type(document)}"
             )
 
-        # Create it and return a modified one with the id
+        doc_to_insert = deepcopy(document)
+        doc_to_insert.pop("_id", None)
+
         cursor = self.db.execute(
             f"INSERT INTO {self.name}(data) VALUES (?)",
-            (json.dumps(document),),
+            (json.dumps(doc_to_insert),),
         )
+        inserted_id = cursor.lastrowid
+        if inserted_id is None:
+            raise sqlite3.Error("Failed to get last row id.")
+        document["_id"] = inserted_id
 
-        document["_id"] = cursor.lastrowid
         try:
-            [
+            for index in self.list_indexes():
                 self.reindex(table=index, documents=[document])
-                for index in self.list_indexes()
-            ]
         except sqlite3.IntegrityError as ie:
-            self.delete_one({"_id": document["_id"]})
+            self.delete_one({"_id": inserted_id})
             raise ie
-        return document
+        return inserted_id
 
-    def update(
+    def insert_one(self, document: Dict[str, Any]) -> InsertOneResult:
+        inserted_id = self._internal_insert(document)
+        return InsertOneResult(inserted_id)
+
+    def insert_many(self, documents: List[Dict[str, Any]]) -> InsertManyResult:
+        inserted_ids = [self._internal_insert(doc) for doc in documents]
+        return InsertManyResult(inserted_ids)
+
+    def _internal_update(
         self,
-        spec: Dict[str, Any],
-        document: Dict[str, Any],
-        upsert: bool = False,
-        hint: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
-        """
-        DEPRECATED in pymongo
-        Updates a document stored in this collection.
-        """
-        to_update = self.find(query=spec, skip=0, limit=1, hint=hint)
-        if to_update:
-            to_update = to_update[0]
-        else:
-            if upsert:
-                return self.insert(document)
-            return None
+        doc_id: int,
+        update_spec: Dict[str, Any],
+        original_doc: Dict[str, Any],
+    ):
+        doc_to_update = deepcopy(original_doc)
 
-        _id = to_update["_id"]
+        for op, value in update_spec.items():
+            if op == "$set":
+                doc_to_update.update(value)
+            elif op == "$unset":
+                for k in value:
+                    doc_to_update.pop(k, None)
+            elif op == "$inc":
+                for k, v in value.items():
+                    doc_to_update[k] = doc_to_update.get(k, 0) + v
+            else:
+                raise MalformedQueryException(
+                    f"Update operator '{op}' not supported"
+                )
 
         self.db.execute(
             f"UPDATE {self.name} SET data = ? WHERE id = ?",
-            (json.dumps(document), _id),
+            (json.dumps(doc_to_update), doc_id),
         )
 
-        document["_id"] = _id
         try:
-            [
-                self.reindex(table=index, documents=[document])
-                for index in self.list_indexes()
-            ]
+            doc_to_update["_id"] = doc_id
+            for index in self.list_indexes():
+                self.reindex(table=index, documents=[doc_to_update])
         except sqlite3.IntegrityError as ie:
-            self.save(to_update)
+            self.db.execute(
+                f"UPDATE {self.name} SET data = ? WHERE id = ?",
+                (json.dumps(original_doc), doc_id),
+            )
             raise ie
-        return document
+        return doc_to_update
 
-    def _remove(self, document: Dict[str, Any]):
-        """
-        Removes a document from this collection. This will raise AssertionError
-        if the document does not have an _id attribute
-        """
-        assert "_id" in document, "Document must have an id"
+    def _internal_replace(self, doc_id: int, replacement: Dict[str, Any]):
         self.db.execute(
-            f"DELETE FROM {self.name} WHERE id = ?",
-            (document["_id"],)
+            f"UPDATE {self.name} SET data = ? WHERE id = ?",
+            (json.dumps(replacement), doc_id),
         )
-
-    def save(self, document: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Alias for ``update`` with upsert=True
-        """
-        return self.update(
-            {"_id": document.pop("_id", None)}, document, upsert=True
-        )
-
-    def delete(self, document: Dict[str, Any]):
-        """
-        DEPRECATED
-        Alias for ``remove``
-        """
-        return self._remove(document)
-
-    def delete_one(
-        self, filter: Dict[str, Any], hint: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Delete only the first document according the filter
-        Params:
-            - filter: dict with the condition ({'foo':'bar'})
-        """
         try:
-            document = self.find(query=filter, limit=1, hint=hint)[0]
-        except:
-            return None
-        return self._remove(document)
+            replacement["_id"] = doc_id
+            for index in self.list_indexes():
+                self.reindex(table=index, documents=[replacement])
+        except sqlite3.IntegrityError as ie:
+            raise ie
 
-    def _load(self, id: int, data: Union[str, bytes]) -> Dict[str, Any]:
-        """
-        Loads a JSON document taking care to apply the document id
-        """
-        if isinstance(data, bytes):  # pragma: no cover Python >= 3.0
-            data = data.decode("utf-8")
+    def update_one(
+        self,
+        filter: Dict[str, Any],
+        update: Dict[str, Any],
+        upsert: bool = False,
+    ) -> UpdateResult:
+        doc = self.find_one(filter)
+        if doc:
+            self._internal_update(doc["_id"], update, doc)
+            return UpdateResult(
+                matched_count=1, modified_count=1, upserted_id=None
+            )
 
-        document = json.loads(data)
-        document["_id"] = id
-        return document
+        if upsert:
+            new_doc: Dict[str, Any] = {}
+            self._internal_update(0, update, new_doc)
+            inserted_id = self.insert_one(new_doc).inserted_id
+            return UpdateResult(
+                matched_count=0, modified_count=0, upserted_id=inserted_id
+            )
 
-    def __get_val(self, item: Dict[str, Any], key: str) -> Any:
-        for k in key.split("."):
-            item = item.get(k)
-        return item
+        return UpdateResult(matched_count=0, modified_count=0, upserted_id=None)
+
+    def update_many(
+        self, filter: Dict[str, Any], update: Dict[str, Any]
+    ) -> UpdateResult:
+        docs = list(self.find(filter))
+        modified_count = 0
+        for doc in docs:
+            self._internal_update(doc["_id"], update, doc)
+            modified_count += 1
+        return UpdateResult(
+            matched_count=len(docs),
+            modified_count=modified_count,
+            upserted_id=None,
+        )
+
+    def replace_one(
+        self,
+        filter: Dict[str, Any],
+        replacement: Dict[str, Any],
+        upsert: bool = False,
+    ) -> UpdateResult:
+        doc = self.find_one(filter)
+        if doc:
+            self._internal_replace(doc["_id"], replacement)
+            return UpdateResult(
+                matched_count=1, modified_count=1, upserted_id=None
+            )
+
+        if upsert:
+            inserted_id = self.insert_one(replacement).inserted_id
+            return UpdateResult(
+                matched_count=0, modified_count=0, upserted_id=inserted_id
+            )
+
+        return UpdateResult(matched_count=0, modified_count=0, upserted_id=None)
+
+    def delete_one(self, filter: Dict[str, Any]) -> DeleteResult:
+        doc = self.find_one(filter)
+        if doc:
+            self.db.execute(
+                f"DELETE FROM {self.name} WHERE id = ?", (doc["_id"],)
+            )
+            return DeleteResult(deleted_count=1)
+        return DeleteResult(deleted_count=0)
+
+    def delete_many(self, filter: Dict[str, Any]) -> DeleteResult:
+        docs = list(self.find(filter))
+        if not docs:
+            return DeleteResult(deleted_count=0)
+
+        ids = tuple(d["_id"] for d in docs)
+        placeholders = ",".join("?" for _ in ids)
+        self.db.execute(
+            f"DELETE FROM {self.name} WHERE id IN ({placeholders})", ids
+        )
+        return DeleteResult(deleted_count=len(docs))
 
     def find(
         self,
-        query: Optional[Dict[str, Any]] = None,
-        skip: Optional[int] = None,
-        limit: Optional[int] = None,
-        hint: Optional[str] = None,
-        sort: Optional[Dict[str, bool]] = None,
-    ) -> List[Dict[str, Any]]:
-        """
-        Returns a list of documents in this collection that match a given query
-        """
-        results = []
-        query = query or {}
-        if skip is None:
-            skip = 0
+        filter: Dict[str, Any] | None = None,
+        hint: str | None = None,
+    ) -> Cursor:
+        return Cursor(self, filter, hint)
 
-        index_name = ""
-        where = ""
-        if hint:
-            keys = self.__table_name_as_keys(hint)
-            index_name = hint
-        else:
-            keys = [
-                key.replace(".", "_")
-                for key in query
-                if not key.startswith("$")
-            ]
-            if keys:
-                index_name = f'[{self.name}{{{",".join(keys)}}}]'
-        if index_name in self.list_indexes():
-            index_query = " AND ".join(
-                [
-                    f"{key}='{json.dumps(query[key.replace('_', '.')])}'"
-                    for key in keys
-                ]
-            )
-            where = (
-                f"WHERE id IN (SELECT id FROM {index_name} WHERE {index_query})"
-            )
-        cmd = f"SELECT id, data FROM {self.name} {where}"
-        cursor = self.db.execute(cmd)
-        apply = partial(self._apply_query, query)
+    def find_one(
+        self,
+        filter: Dict[str, Any] | None = None,
+        hint: str | None = None,
+    ) -> Dict[str, Any] | None:
+        try:
+            return next(iter(self.find(filter, hint).limit(1)))
+        except StopIteration:
+            return None
 
-        for match in filter(apply, starmap(self._load, cursor.fetchall())):
-            if skip > 0:  # Discard match before skip
-                skip -= 1
-            else:
-                results.append(match)
+    def count_documents(self, filter: Dict[str, Any]) -> int:
+        return len(list(self.find(filter)))
 
-            # Just return if we already reached the limit
-            if limit and len(results) == limit and sort is None:
-                break
+    def find_one_and_delete(
+        self, filter: Dict[str, Any]
+    ) -> Dict[str, Any] | None:
+        doc = self.find_one(filter)
+        if doc:
+            self.delete_one({"_id": doc["_id"]})
+        return doc
 
-        if sort:  # sort={key1:direction1, key2:direction2, ...}
-            sort_keys = list(sort.keys())
-            sort_keys.reverse()  # sort from right to left
-            for key in sort_keys:
-                get_val = partial(self.__get_val, key=key)
-                results = sorted(results, key=get_val, reverse=sort[key])
+    def find_one_and_replace(
+        self, filter: Dict[str, Any], replacement: Dict[str, Any]
+    ) -> Dict[str, Any] | None:
+        doc = self.find_one(filter)
+        if doc:
+            self.replace_one({"_id": doc["_id"]}, replacement)
+        return doc
 
-        return results[:limit] if isinstance(limit, int) else results
+    def find_one_and_update(
+        self, filter: Dict[str, Any], update: Dict[str, Any]
+    ) -> Dict[str, Any] | None:
+        doc = self.find_one(filter)
+        if doc:
+            self.update_one({"_id": doc["_id"]}, update)
+        return doc
 
     def _apply_query(
         self, query: Dict[str, Any], document: Dict[str, Any]
     ) -> bool:
-        """
-        Applies a query to a document. Returns True if the document meets the
-        criteria of the supplied query. The ``query`` argument generally
-        follows mongodb style syntax and consists of the following logical
-        checks and operators.
-
-        Logical: $and, $or, $nor, $not
-        Operators: $eq, $ne, $gt, $gte, $lt, $lte, $mod, $in, $nin, $all
-
-        If no logical operator is supplied, it assumed that all field checks
-        must pass. For example, these are equivalent:
-
-            {'foo': 'bar', 'baz': 'qux'}
-            {'$and': [{'foo': 'bar'}, {'baz': 'qux'}]}
-
-        Both logical and operational queries can be nested in a complex fashion:
-
-            {
-                'bar': 'baz',
-                '$or': [
-                    {
-                        'foo': {
-                            '$gte': 0,
-                            '$lte': 10,
-                            '$mod': [2, 0]
-                        }
-                    },
-                    {
-                        'foo': {
-                            '$gt': 10,
-                            '$mod': [2, 1]
-                        }
-                    },
-                ]
-            }
-
-        In the previous example, this will return any document where the 'bar'
-        key is equal to 'baz' and either the 'foo' key is an even number
-        between 0 and 10 or is an odd number greater than 10.
-        """
         if document is None:
             return False
-        matches = []  # A list of booleans
-        reapply = lambda q: self._apply_query(q, document)
+        matches: List[bool] = []
+
+        def reapply(q: Dict[str, Any]) -> bool:
+            return self._apply_query(q, document)
 
         for field, value in query.items():
-            # A more complex query type $and, $or, etc
             if field == "$and":
                 matches.append(all(map(reapply, value)))
             elif field == "$or":
@@ -377,8 +457,6 @@ class Collection:
                 matches.append(not any(map(reapply, value)))
             elif field == "$not":
                 matches.append(not self._apply_query(value, document))
-
-            # Invoke a query operator
             elif isinstance(value, dict):
                 for operator, arg in value.items():
                     if not self._get_operator_fn(operator)(
@@ -388,8 +466,6 @@ class Collection:
                         break
                 else:
                     matches.append(True)
-
-            # Standard
             else:
                 doc_value = document
                 if field in doc_value:
@@ -401,23 +477,13 @@ class Collection:
                         doc_value = doc_value.get(path, None)
                 if value != doc_value:
                     matches.append(False)
-
         return all(matches)
 
     def _get_operator_fn(self, op: str) -> Any:
-        """
-        Returns the function in this module that corresponds to an operator
-        string. This simply checks if there is a method that handles the
-        operator defined in this module, replacing '$' with '_' (i.e. if this
-        module has a _gt method for $gt) and returns it. If no match is found,
-        or the operator does not start with '$', a MalformedQueryException is
-        raised.
-        """
         if not op.startswith("$"):
             raise MalformedQueryException(
                 f"Operator '{op}' is not a valid query operation"
             )
-
         try:
             return getattr(sys.modules[__name__], op.replace("$", "_"))
         except AttributeError:
@@ -425,73 +491,16 @@ class Collection:
                 f"Operator '{op}' is not currently implemented"
             )
 
-    def find_one(
-        self,
-        query: Optional[Dict[str, Any]] = None,
-        hint: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Equivalent to ``find(query, limit=1)[0]``
-        """
-        try:
-            return self.find(query=query, limit=1, hint=hint)[0]
-        except (sqlite3.OperationalError, IndexError):
-            return None
-
-    def find_and_modify(
-        self,
-        query: Optional[Dict[str, Any]] = None,
-        update: Optional[Dict[str, Any]] = None,
-        hint: Optional[str] = None,
-    ):
-        """
-        Finds documents in this collection that match a given query and updates
-        them
-        """
-        update = update or {}
-
-        for document in self.find(query=query, hint=hint):
-            document.update(update)
-            self.save(document)
-
-    def count(
-        self,
-        query: Optional[Dict[str, Any]] = None,
-        hint: Optional[str] = None,
-    ) -> int:
-        """
-        Equivalent to ``len(find(query))``
-        """
-        return len(self.find(query=query, hint=hint))
-
-    def rename(self, new_name: str):
-        """
-        Rename this collection
-        """
-        new_collection = Collection(self.db, new_name, create=False)
-        assert not new_collection.exists()
-
-        self.db.execute(f"ALTER TABLE {self.name} RENAME TO {new_name}")
-        self.name = new_name
-
     def distinct(self, key: str) -> set:
-        """
-        Get a set of distinct values for the given key excluding an implicit
-        None for documents that do not contain the key
-        """
         return {d[key] for d in self.find() if key in d}
 
     def create_index(
         self,
-        key: Union[str, List[str]],
+        key: str | List[str],
         reindex: bool = True,
         sparse: bool = False,
         unique: bool = False,
     ):
-        """
-        Creates an index if it does not exist then performs a full reindex for
-        this collection
-        """
         if isinstance(key, (list, tuple)):
             index_name = ",".join(key)
             index_columns = ", ".join(f"{f} text" for f in key)
@@ -499,27 +508,20 @@ class Collection:
             index_name = key
             index_columns = f"{key} text"
 
-        # Allow dot notation, but save it as underscore
         index_name = index_name.replace(".", "_")
         index_columns = index_columns.replace(".", "_")
-
         table_name = f"[{self.name}{{{index_name}}}]"
         reindex = reindex or not self._object_exists("table", table_name)
 
-        # Create a table store for the index data
         self.db.execute(
             f"""
             CREATE TABLE IF NOT EXISTS {table_name} (
                 id INTEGER PRIMARY KEY,
                 {index_columns},
                 FOREIGN KEY(id) REFERENCES {self.name}(id)
-                ON DELETE CASCADE
-                ON UPDATE CASCADE
-            )
-            """
+                ON DELETE CASCADE ON UPDATE CASCADE
+            )"""
         )
-
-        # Create the index
         self.db.execute(
             f"""
             CREATE {'UNIQUE ' if unique else ''}INDEX
@@ -527,7 +529,6 @@ class Collection:
             ON {table_name}({index_name})
             """
         )
-
         if reindex:
             try:
                 self.reindex(table_name)
@@ -535,88 +536,97 @@ class Collection:
                 self.drop_index(table_name)
                 raise ie
 
-    def ensure_index(self, key: Union[str, List[str]], sparse: bool = False):
-        """
-        Equivalent to ``create_index(key, reindex=False)``
-        """
-        self.create_index(key, reindex=False, sparse=False)
-
-    def __table_name_as_keys(self, table: str) -> List[str]:
+    def _table_name_as_keys(self, table: str) -> List[str]:
         return re.findall(r"^\[.*\{(.*)\}\]$", table)[0].split(",")
 
     def reindex(
         self,
         table: str,
         sparse: bool = False,
-        documents: Optional[List[Dict[str, Any]]] = None,
+        documents: List[Dict[str, Any]] | None = None,
     ):
-        index = self.__table_name_as_keys(table)
-        update = "UPDATE {table} SET {key} = ? WHERE id = ?"
-        insert = "INSERT INTO {table}({index},id) VALUES({q},{_id})"
-        delete = "DELETE FROM {table} WHERE id = {_id}"
-        count = "SELECT COUNT(1) FROM {table} WHERE id = ?"
-        qs = ("?," * len(index)).rstrip(",")
+        index_keys = self._table_name_as_keys(table)
+        update_sql = "UPDATE {table} SET {key} = ? WHERE id = ?"
+        insert_sql = "INSERT INTO {table}({index},id) VALUES({q},{_id})"
+        delete_sql = "DELETE FROM {table} WHERE id = {_id}"
+        count_sql = "SELECT COUNT(1) FROM {table} WHERE id = ?"
+        qs = ("?," * len(index_keys)).rstrip(",")
 
-        for document in documents or self.find():
+        docs_to_index = documents or self.find()
+
+        for document in docs_to_index:
             _id = document["_id"]
-            # Ensure there's a row before we update
-            row = self.db.execute(count.format(table=table), (_id,)).fetchone()
-            if int(row[0]) == 0:
+            row = self.db.execute(
+                count_sql.format(table=table), (_id,)
+            ).fetchone()
+            if row and int(row[0]) == 0:
                 self.db.execute(
-                    insert.format(
-                        table=table, index=",".join(index), q=qs, _id=_id
+                    insert_sql.format(
+                        table=table, index=",".join(index_keys), q=qs, _id=_id
                     ),
-                    [None for _ in index],
+                    [None for _ in index_keys],
                 )
-            for key in index:
+            for key in index_keys:
                 doc = deepcopy(document)
+                val: Any = doc
                 for k in key.split("_"):
-                    if isinstance(doc, dict):
-                        # Ignore this document if it doesn't have the key
-                        if k not in doc and sparse:
-                            continue
-                        doc = doc.get(k, None)
+                    if isinstance(val, dict):
+                        if k not in val and sparse:
+                            val = None
+                            break
+                        val = val.get(k, None)
+                    else:
+                        val = None
+                        break
                 try:
                     self.db.execute(
-                        update.format(table=table, key=key),
-                        (json.dumps(doc), _id),
+                        update_sql.format(table=table, key=key),
+                        (json.dumps(val), _id),
                     )
                 except sqlite3.IntegrityError as ie:
-                    self.db.execute(delete.format(table=table, _id=_id))
+                    self.db.execute(delete_sql.format(table=table, _id=_id))
                     raise ie
 
-    def list_indexes(self, as_keys: bool = False) -> List[str]:
+    @overload
+    def list_indexes(self, as_keys: Literal[True]) -> List[List[str]]: ...
+    @overload
+    def list_indexes(self, as_keys: Literal[False] = False) -> List[str]: ...
+    def list_indexes(
+        self, as_keys: bool = False
+    ) -> List[str] | List[List[str]]:
         cmd = (
-            "SELECT name FROM sqlite_master "
-            "WHERE type='table' AND name LIKE '{name}{{%}}'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE ?"
         )
+        like_pattern = f"{self.name}{{{'%'}}}"
         if as_keys:
             return [
-                self.__table_name_as_keys("[{index}]".format(index=t[0]))
-                for t in self.db.execute(cmd.format(name=self.name)).fetchall()
+                self._table_name_as_keys(f"[{t[0]}]")
+                for t in self.db.execute(cmd, (like_pattern,)).fetchall()
             ]
         return [
-            "[{index}]".format(index=t[0])
-            for t in self.db.execute(cmd.format(name=self.name)).fetchall()
+            f"[{t[0]}]"
+            for t in self.db.execute(cmd, (like_pattern,)).fetchall()
         ]
 
     def drop_index(self, index: str):
-        cmd = "DROP TABLE {index}"
-        self.db.execute(cmd.format(index=index))
+        self.db.execute(f"DROP TABLE {index}")
 
     def drop_indexes(self):
-        """
-        Drop all indexes for this collection
-        """
-        [self.drop_index(index) for index in self.list_indexes()]
+        indexes = self.list_indexes()
+        for index in indexes:
+            if isinstance(index, str):
+                self.drop_index(index)
+
+    def _object_exists(self, type: str, name: str) -> bool:
+        row = self.db.execute(
+            "SELECT COUNT(1) FROM sqlite_master WHERE type = ? AND name = ?",
+            (type, name.strip("[]")),
+        ).fetchone()
+        return bool(row and int(row[0]) > 0)
 
 
-# BELOW ARE OPERATIONS FOR LOOKUPS
-# TypeErrors are caught specifically for python 3 compatibility
+# Query operators
 def _eq(field: str, value: Any, document: Dict[str, Any]) -> bool:
-    """
-    Returns True if the value of a document field is equal to a given value
-    """
     try:
         return document.get(field, None) == value
     except (TypeError, AttributeError):
@@ -624,9 +634,6 @@ def _eq(field: str, value: Any, document: Dict[str, Any]) -> bool:
 
 
 def _gt(field: str, value: Any, document: Dict[str, Any]) -> bool:
-    """
-    Returns True if the value of a document field is greater than a given value
-    """
     try:
         return document.get(field, None) > value
     except TypeError:
@@ -634,9 +641,6 @@ def _gt(field: str, value: Any, document: Dict[str, Any]) -> bool:
 
 
 def _lt(field: str, value: Any, document: Dict[str, Any]) -> bool:
-    """
-    Returns True if the value of a document field is less than a given value
-    """
     try:
         return document.get(field, None) < value
     except TypeError:
@@ -644,10 +648,6 @@ def _lt(field: str, value: Any, document: Dict[str, Any]) -> bool:
 
 
 def _gte(field: str, value: Any, document: Dict[str, Any]) -> bool:
-    """
-    Returns True if the value of a document field is greater than or equal to
-    a given value
-    """
     try:
         return document.get(field, None) >= value
     except TypeError:
@@ -655,10 +655,6 @@ def _gte(field: str, value: Any, document: Dict[str, Any]) -> bool:
 
 
 def _lte(field: str, value: Any, document: Dict[str, Any]) -> bool:
-    """
-    Returns True if the value of a document field is less than or equal to
-    a given value
-    """
     try:
         return document.get(field, None) <= value
     except TypeError:
@@ -666,77 +662,45 @@ def _lte(field: str, value: Any, document: Dict[str, Any]) -> bool:
 
 
 def _all(field: str, value: List[Any], document: Dict[str, Any]) -> bool:
-    """
-    Returns True if the value of document field contains all the values
-    specified by ``value``. If supplied value is not an iterable, a
-    MalformedQueryException is raised. If the value of the document field
-    is not an iterable, False is returned
-    """
     try:
         a = set(value)
     except TypeError:
         raise MalformedQueryException("'$all' must accept an iterable")
-
     try:
         b = set(document.get(field, []))
     except TypeError:
         return False
     else:
-        return a.intersection(b) == a
+        return a.issubset(b)
 
 
 def _in(field: str, value: List[Any], document: Dict[str, Any]) -> bool:
-    """
-    Returns True if document[field] is in the iterable value. If the
-    supplied value is not an iterable, then a MalformedQueryException is raised
-    """
     try:
         values = iter(value)
     except TypeError:
         raise MalformedQueryException("'$in' must accept an iterable")
-
     return document.get(field, None) in values
 
 
 def _ne(field: str, value: Any, document: Dict[str, Any]) -> bool:
-    """
-    Returns True if the value of document[field] is not equal to a given value
-    """
     return document.get(field, None) != value
 
 
 def _nin(field: str, value: List[Any], document: Dict[str, Any]) -> bool:
-    """
-    Returns True if document[field] is NOT in the iterable value. If the
-    supplied value is not an iterable, then a MalformedQueryException is raised
-    """
     try:
         values = iter(value)
     except TypeError:
         raise MalformedQueryException("'$nin' must accept an iterable")
-
     return document.get(field, None) not in values
 
 
 def _mod(field: str, value: List[int], document: Dict[str, Any]) -> bool:
-    """
-    Performs a mod on a document field. Value must be a list or tuple with
-    two values divisor and remainder (i.e. [2, 0]). This will essentially
-    perform the following:
-
-        document[field] % divisor == remainder
-
-    If the value does not contain integers or is not a two-item list/tuple,
-    a MalformedQueryException will be raised. If the value of document[field]
-    cannot be converted to an integer, this will return False.
-    """
     try:
         divisor, remainder = list(map(int, value))
     except (TypeError, ValueError):
         raise MalformedQueryException(
             "'$mod' must accept an iterable: [divisor, remainder]"
         )
-
     try:
         return int(document.get(field, None)) % divisor == remainder
     except (TypeError, ValueError):
@@ -744,15 +708,9 @@ def _mod(field: str, value: List[int], document: Dict[str, Any]) -> bool:
 
 
 def _exists(field: str, value: bool, document: Dict[str, Any]) -> bool:
-    """
-    Ensures a document has a given field or not. ``value`` must be either True
-    or False, otherwise a MalformedQueryException is raised
-    """
     if value not in (True, False):
         raise MalformedQueryException("'$exists' must be supplied a boolean")
-
     if value:
         return field in document
     else:
         return field not in document
-
