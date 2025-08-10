@@ -112,3 +112,40 @@ def test_find_with_projection(collection):
     assert len(docs) == 2
     for doc in docs:
         assert doc.keys() == {"a"}
+
+
+def test_find_with_in_operator(collection):
+    collection.insert_many([{"a": 1}, {"a": 2}, {"a": 3}])
+    docs = list(collection.find({"a": {"$in": [1, 3]}}))
+    assert len(docs) == 2
+    assert {doc["a"] for doc in docs} == {1, 3}
+
+
+def test_find_with_nin_operator(collection):
+    collection.insert_many([{"a": 1}, {"a": 2}, {"a": 3}])
+    docs = list(collection.find({"a": {"$nin": [1, 3]}}))
+    assert len(docs) == 1
+    assert docs[0]["a"] == 2
+
+
+def test_find_with_comparison_operators(collection):
+    collection.insert_many([{"a": 1}, {"a": 5}, {"a": 10}])
+    docs = list(collection.find({"a": {"$gt": 3}}))
+    assert len(docs) == 2
+    assert {doc["a"] for doc in docs} == {5, 10}
+
+    docs = list(collection.find({"a": {"$gte": 5}}))
+    assert len(docs) == 2
+    assert {doc["a"] for doc in docs} == {5, 10}
+
+    docs = list(collection.find({"a": {"$lt": 7}}))
+    assert len(docs) == 2
+    assert {doc["a"] for doc in docs} == {1, 5}
+
+    docs = list(collection.find({"a": {"$lte": 5}}))
+    assert len(docs) == 2
+    assert {doc["a"] for doc in docs} == {1, 5}
+
+    docs = list(collection.find({"a": {"$ne": 5}}))
+    assert len(docs) == 2
+    assert {doc["a"] for doc in docs} == {1, 10}

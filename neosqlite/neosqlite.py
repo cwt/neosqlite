@@ -677,13 +677,52 @@ class Collection:
         params = []
 
         for field, value in query.items():
-            if isinstance(value, dict) or "." in field:
+            if "." in field:
                 return None  # Fallback for complex queries
+
             if field == "_id":
                 clauses.append("id = ?")
                 params.append(value)
+                continue
+
+            path = f"'$.{field}'"
+            if isinstance(value, dict):
+                for op, op_val in value.items():
+                    match op:
+                        case "$eq":
+                            clauses.append(f"json_extract(data, {path}) = ?")
+                            params.append(op_val)
+                        case "$gt":
+                            clauses.append(f"json_extract(data, {path}) > ?")
+                            params.append(op_val)
+                        case "$lt":
+                            clauses.append(f"json_extract(data, {path}) < ?")
+                            params.append(op_val)
+                        case "$gte":
+                            clauses.append(f"json_extract(data, {path}) >= ?")
+                            params.append(op_val)
+                        case "$lte":
+                            clauses.append(f"json_extract(data, {path}) <= ?")
+                            params.append(op_val)
+                        case "$ne":
+                            clauses.append(f"json_extract(data, {path}) != ?")
+                            params.append(op_val)
+                        case "$in":
+                            placeholders = ", ".join("?" for _ in op_val)
+                            clauses.append(
+                                f"json_extract(data, {path}) IN ({placeholders})"
+                            )
+                            params.extend(op_val)
+                        case "$nin":
+                            placeholders = ", ".join("?" for _ in op_val)
+                            clauses.append(
+                                f"json_extract(data, {path}) NOT IN ({placeholders})"
+                            )
+                            params.extend(op_val)
+                        case _:
+                            return None  # Fallback for unsupported operators
             else:
-                clauses.append(f"json_extract(data, '$.{field}') = ?")
+                clauses.append(f"json_extract(data, {path}) = ?")
                 params.append(value)
 
         if not clauses:
