@@ -66,6 +66,25 @@ def test_update_many(collection):
     assert collection.count_documents({"foo": "baz"}) == 2
 
 
+def test_update_many_fast_path(collection):
+    collection.insert_many(
+        [
+            {"a": 1, "b": 1, "c": 0},
+            {"a": 1, "b": 2, "c": 0},
+            {"a": 2, "b": 1, "c": 0},
+        ]
+    )
+    result = collection.update_many(
+        {"a": 1}, {"$set": {"b": 5}, "$inc": {"c": 1}}
+    )
+    assert result.matched_count == 2
+    assert result.modified_count == 2
+    docs = list(collection.find({"a": 1}))
+    assert len(docs) == 2
+    assert all(doc["b"] == 5 for doc in docs)
+    assert all(doc["c"] == 1 for doc in docs)
+
+
 def test_delete_one(collection):
     collection.insert_one({"foo": "bar"})
     result = collection.delete_one({"foo": "bar"})

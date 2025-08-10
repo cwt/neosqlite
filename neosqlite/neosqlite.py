@@ -416,6 +416,21 @@ class Collection:
     def update_many(
         self, filter: Dict[str, Any], update: Dict[str, Any]
     ) -> UpdateResult:
+        where_result = self._build_simple_where_clause(filter)
+        update_result = self._build_update_clause(update)
+
+        if where_result is not None and update_result is not None:
+            where_clause, where_params = where_result
+            set_clause, set_params = update_result
+            cmd = f"UPDATE {self.name} SET {set_clause} {where_clause}"
+            cursor = self.db.execute(cmd, set_params + where_params)
+            return UpdateResult(
+                matched_count=cursor.rowcount,
+                modified_count=cursor.rowcount,
+                upserted_id=None,
+            )
+
+        # Fallback for complex queries
         docs = list(self.find(filter))
         modified_count = 0
         for doc in docs:
@@ -426,6 +441,31 @@ class Collection:
             modified_count=modified_count,
             upserted_id=None,
         )
+
+    def _build_update_clause(
+        self, update: Dict[str, Any]
+    ) -> tuple[str, List[Any]] | None:
+        set_clauses = []
+        params = []
+
+        for op, value in update.items():
+            if op == "$set":
+                for field, field_val in value.items():
+                    set_clauses.append(f"'$.{field}', ?")
+                    params.append(field_val)
+            elif op == "$inc":
+                for field, field_val in value.items():
+                    path = f"'$.{field}'"
+                    set_clauses.append(
+                        f"{path}, json_extract(data, {path}) + ?"
+                    )
+                    params.append(field_val)
+            else:
+                return None  # Fallback for unsupported operators
+
+        if not set_clauses:
+            return None
+        return f"data = json_set(data, {', '.join(set_clauses)})", params
 
     def replace_one(
         self,
