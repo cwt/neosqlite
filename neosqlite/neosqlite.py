@@ -155,27 +155,28 @@ class Cursor:
             where_clause, params = where_result
             cmd = f"SELECT id, data FROM {self._collection.name} {where_clause}"
             db_cursor = self._collection.db.execute(cmd, params)
-            docs = starmap(self._collection._load, db_cursor.fetchall())
-            filtered_docs = docs
+            docs: Iterable[Dict[str, Any]] = starmap(
+                self._collection._load, db_cursor.fetchall()
+            )
         else:
             # Fallback to old method for complex queries
             cmd = f"SELECT id, data FROM {self._collection.name}"
             db_cursor = self._collection.db.execute(cmd)
             apply = partial(self._collection._apply_query, self._filter)
             all_docs = starmap(self._collection._load, db_cursor.fetchall())
-            filtered_docs = filter(apply, all_docs)
+            docs = filter(apply, all_docs)
 
         if self._sort:
             sort_keys = list(self._sort.keys())
             sort_keys.reverse()
+            sorted_docs = list(docs)
             for key in sort_keys:
                 get_val = partial(self._collection._get_val, key=key)
                 reverse = self._sort[key] == DESCENDING
-                filtered_docs = sorted(
-                    list(filtered_docs), key=get_val, reverse=reverse
-                )
+                sorted_docs.sort(key=get_val, reverse=reverse)
+            docs = sorted_docs
 
-        skipped_docs = list(filtered_docs)[self._skip :]
+        skipped_docs = list(docs)[self._skip :]
 
         project = partial(self._collection._apply_projection, self._projection)
         projected_docs = list(map(project, skipped_docs))
