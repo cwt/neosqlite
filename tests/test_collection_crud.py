@@ -80,6 +80,16 @@ def test_delete_many(collection):
     assert collection.count_documents({}) == 0
 
 
+def test_delete_many_fast_path(collection):
+    collection.insert_many(
+        [{"a": 1, "b": 1}, {"a": 1, "b": 2}, {"a": 2, "b": 1}]
+    )
+    result = collection.delete_many({"a": 1})
+    assert result.deleted_count == 2
+    assert collection.count_documents({}) == 1
+    assert collection.find_one({})["a"] == 2
+
+
 def test_transaction(connection):
     collection = connection["foo"]
     try:

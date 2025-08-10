@@ -492,6 +492,14 @@ class Collection:
         return DeleteResult(deleted_count=0)
 
     def delete_many(self, filter: Dict[str, Any]) -> DeleteResult:
+        where_result = self._build_simple_where_clause(filter)
+        if where_result is not None:
+            where_clause, params = where_result
+            cmd = f"DELETE FROM {self.name} {where_clause}"
+            cursor = self.db.execute(cmd, params)
+            return DeleteResult(deleted_count=cursor.rowcount)
+
+        # Fallback for complex queries
         docs = list(self.find(filter))
         if not docs:
             return DeleteResult(deleted_count=0)
@@ -783,7 +791,17 @@ class Collection:
             )
 
     def distinct(self, key: str) -> set:
-        return {d[key] for d in self.find() if key in d}
+        cmd = f"SELECT DISTINCT json_extract(data, '$.{key}') FROM {self.name}"
+        cursor = self.db.execute(cmd)
+        results = set()
+        for row in cursor.fetchall():
+            if row[0] is None:
+                continue
+            try:
+                results.add(json.loads(row[0]))
+            except (json.JSONDecodeError, TypeError):
+                results.add(row[0])
+        return results
 
     def create_index(
         self,
