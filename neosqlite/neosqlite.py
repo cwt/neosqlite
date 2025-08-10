@@ -523,6 +523,12 @@ class Collection:
             return None
 
     def count_documents(self, filter: Dict[str, Any]) -> int:
+        where_result = self._build_simple_where_clause(filter)
+        if where_result is not None:
+            where_clause, params = where_result
+            cmd = f"SELECT COUNT(id) FROM {self.name} {where_clause}"
+            row = self.db.execute(cmd, params).fetchone()
+            return row[0] if row else 0
         return len(list(self.find(filter)))
 
     def estimated_document_count(self) -> int:
