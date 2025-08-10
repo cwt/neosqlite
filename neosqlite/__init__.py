@@ -1,6 +1,6 @@
 """A wrapper for sqlite3 to have schemaless, document-store features."""
 
-from .nosqlite import (
+from .neosqlite import (
     Connection,
     Collection,
     Cursor,

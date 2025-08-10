@@ -1,15 +1,15 @@
 [tool.poetry]
-name = "pynosqlite"
-version = "0.1.1"
+name = "neosqlite"
+version = "0.1.2"
 description = "A wrapper for sqlite3 to have schemaless, document-store features"
 authors = ["Chaiwat Suttipongsakul <cwt@bashell.com>"]
 license = "MIT"
 readme = "README.md"
-homepage = "https://hg.sr.ht/~cwt/nosqlite"
-repository = "https://hg.sr.ht/~cwt/nosqlite"
-keywords = ["nosql", "sqlite", "nosqlite"]
+homepage = "https://sr.ht/~cwt/neosqlite"
+repository = "https://hg.sr.ht/~cwt/neosqlite"
+keywords = ["nosql", "sqlite", "neosqlite"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",

@@ -1,7 +1,7 @@
 # coding: utf-8
 import sqlite3
 from pytest import raises
-import pynosqlite as nosqlite
+import neosqlite
 
 
 def test_create_index(collection):

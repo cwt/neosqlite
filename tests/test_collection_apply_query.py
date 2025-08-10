@@ -1,7 +1,7 @@
 # coding: utf-8
 import sqlite3
 from pytest import raises
-import pynosqlite as nosqlite
+import neosqlite
 
 
 def test_apply_query_and_type(collection):
@@ -71,7 +71,7 @@ def test_apply_query_in_operator(collection):
 
 def test_apply_query_in_operator_raises(collection):
     query = {"foo": {"$in": 5}}
-    with raises(nosqlite.MalformedQueryException):
+    with raises(neosqlite.MalformedQueryException):
         collection._apply_query(query, {"foo": 1})
 
 
@@ -84,7 +84,7 @@ def test_apply_query_nin_operator(collection):
 
 def test_apply_query_nin_operator_raises(collection):
     query = {"foo": {"$nin": 5}}
-    with raises(nosqlite.MalformedQueryException):
+    with raises(neosqlite.MalformedQueryException):
         collection._apply_query(query, {"foo": 1})
 
 
@@ -104,7 +104,7 @@ def test_apply_query_all_operator(collection):
 
 def test_apply_query_all_operator_raises(collection):
     query = {"foo": {"$all": 3}}
-    with raises(nosqlite.MalformedQueryException):
+    with raises(neosqlite.MalformedQueryException):
         collection._apply_query(query, {"foo": "bar"})
 
 
@@ -117,7 +117,7 @@ def test_apply_query_mod_operator(collection):
 
 def test_apply_query_mod_operator_raises(collection):
     query = {"foo": {"$mod": 2}}
-    with raises(nosqlite.MalformedQueryException):
+    with raises(neosqlite.MalformedQueryException):
         collection._apply_query(query, {"foo": 5})
 
 
@@ -154,7 +154,7 @@ def test_apply_query_exists(collection):
 
 def test_apply_query_exists_raises(collection):
     query = {"foo": {"$exists": "foo"}}
-    with raises(nosqlite.MalformedQueryException):
+    with raises(neosqlite.MalformedQueryException):
         collection._apply_query(query, {"foo": "bar"})
 
 

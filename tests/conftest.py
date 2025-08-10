@@ -1,7 +1,7 @@
 # coding: utf-8
 import pytest
 import sqlite3
-import pynosqlite as nosqlite
+import neosqlite
 
 
 @pytest.fixture
@@ -15,5 +15,5 @@ def db():
 @pytest.fixture
 def collection(db):
     """Fixture to provide a clean collection for each test."""
-    collection = nosqlite.Collection(db, "foo")
+    collection = neosqlite.Collection(db, "foo")
     return collection

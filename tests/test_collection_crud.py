@@ -1,7 +1,7 @@
 # coding: utf-8
 import sqlite3
 from pytest import raises
-import pynosqlite as nosqlite
+import neosqlite
 
 
 def test_create(collection):
@@ -16,7 +16,7 @@ def test_create(collection):
 def test_insert_one(collection):
     doc = {"foo": "bar"}
     result = collection.insert_one(doc)
-    assert isinstance(result, nosqlite.InsertOneResult)
+    assert isinstance(result, neosqlite.InsertOneResult)
     assert result.inserted_id == 1
     assert doc["_id"] == 1
     found = collection.find_one({"_id": 1})
@@ -26,14 +26,14 @@ def test_insert_one(collection):
 def test_insert_many(collection):
     docs = [{"foo": "bar"}, {"foo": "baz"}]
     result = collection.insert_many(docs)
-    assert isinstance(result, nosqlite.InsertManyResult)
+    assert isinstance(result, neosqlite.InsertManyResult)
     assert result.inserted_ids == [1, 2]
     assert collection.count_documents({}) == 2
 
 
 def test_insert_non_dict_raise(collection):
     doc = "{'foo': 'bar'}"
-    with raises(nosqlite.MalformedDocument):
+    with raises(neosqlite.MalformedDocument):
         collection.insert_one(doc)
 
 

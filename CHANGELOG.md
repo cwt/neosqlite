@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## 0.1.1 - 0.1.2
+
+- Rename project to neosqlite (new + nosqlite) for PyPI package.
+
 ## 0.1.0
 
 - Made the API compatible with modern pymongo.

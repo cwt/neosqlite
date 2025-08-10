@@ -1,7 +1,7 @@
 # coding: utf-8
 from pytest import raises
-from pynosqlite.nosqlite import _eq, _gt, _lt, _lte, _in
-import pynosqlite as nosqlite
+from neosqlite.neosqlite import _eq, _gt, _lt, _lte, _in
+import neosqlite
 
 
 def test_eq_type_error():
@@ -30,7 +30,7 @@ def test_lte_type_error():
 
 
 def test_get_operator_fn_improper_op(collection):
-    with raises(nosqlite.MalformedQueryException):
+    with raises(neosqlite.MalformedQueryException):
         collection._get_operator_fn("foo")
 
 
@@ -39,5 +39,5 @@ def test_get_operator_fn_valid_op(collection):
 
 
 def test_get_operator_fn_no_op(collection):
-    with raises(nosqlite.MalformedQueryException):
+    with raises(neosqlite.MalformedQueryException):
         collection._get_operator_fn("$foo")

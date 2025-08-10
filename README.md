@@ -1,6 +1,6 @@
-# pynosqlite
+# neosqlite
 
-`pynosqlite` is a pure Python library that provides a schemaless, `pymongo`-like wrapper for interacting with SQLite databases. The API is designed to be familiar to those who have worked with `pymongo`, providing a simple and intuitive way to work with document-based data in a relational database.
+`neosqlite` (new + nosqlite) is a pure Python library that provides a schemaless, `pymongo`-like wrapper for interacting with SQLite databases. The API is designed to be familiar to those who have worked with `pymongo`, providing a simple and intuitive way to work with document-based data in a relational database.
 
 ## Features
 
@@ -12,10 +12,10 @@
 
 ## Quickstart
 
-Here is a quick example of how to use `pynosqlite`:
+Here is a quick example of how to use `neosqlite`:
 
 ```python
-import nosqlite as pynosqlite
+import neosqlite
 
 # Connect to an in-memory database
 with pynosqlite.Connection(':memory:') as conn:
@@ -76,7 +76,7 @@ You can sort the results of a `find()` query by chaining the `sort()` method.
 
 ```python
 # Sort users by age in descending order
-for user in users.find().sort('age', pynosqlite.DESCENDING):
+for user in users.find().sort('age', neosqlite.DESCENDING):
     print(user)
 ```
 

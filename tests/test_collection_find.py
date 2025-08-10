@@ -1,10 +1,10 @@
 # coding: utf-8
-import pynosqlite as nosqlite
+import neosqlite
 
 
 def test_find_returns_cursor(collection):
     cursor = collection.find()
-    assert isinstance(cursor, nosqlite.Cursor)
+    assert isinstance(cursor, neosqlite.Cursor)
 
 
 def test_find_with_sort(collection):
@@ -18,15 +18,15 @@ def test_find_with_sort(collection):
         ]
     )
 
-    docs = list(collection.find().sort("a", nosqlite.ASCENDING))
+    docs = list(collection.find().sort("a", neosqlite.ASCENDING))
     assert [d["a"] for d in docs] == [1, 1, 3, 4, 5]
 
-    docs = list(collection.find().sort("a", nosqlite.DESCENDING))
+    docs = list(collection.find().sort("a", neosqlite.DESCENDING))
     assert [d["a"] for d in docs] == [5, 4, 3, 1, 1]
 
     docs = list(
         collection.find().sort(
-            [("a", nosqlite.ASCENDING), ("b", nosqlite.DESCENDING)]
+            [("a", neosqlite.ASCENDING), ("b", neosqlite.DESCENDING)]
         )
     )
     a_vals = [d["a"] for d in docs]
@@ -59,10 +59,10 @@ def test_find_with_sort_on_nested_key(collection):
             {"a": {"b": 7}, "c": "C"},
         ]
     )
-    docs = list(collection.find().sort("a.b", nosqlite.ASCENDING))
+    docs = list(collection.find().sort("a.b", neosqlite.ASCENDING))
     assert [d["a"]["b"] for d in docs] == [5, 7, 9]
 
-    docs = list(collection.find().sort("a.b", nosqlite.DESCENDING))
+    docs = list(collection.find().sort("a.b", neosqlite.DESCENDING))
     assert [d["a"]["b"] for d in docs] == [9, 7, 5]
 
 
