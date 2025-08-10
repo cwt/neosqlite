@@ -18,7 +18,7 @@ Here is a quick example of how to use `neosqlite`:
 import neosqlite
 
 # Connect to an in-memory database
-with pynosqlite.Connection(':memory:') as conn:
+with neosqlite.Connection(':memory:') as conn:
     # Get a collection
     users = conn.users
 
@@ -54,14 +54,14 @@ with pynosqlite.Connection(':memory:') as conn:
 
 ## Indexes
 
-Indexes can significantly speed up query performance. `pynosqlite` supports single-key, compound-key, and nested-key indexes.
+Indexes can significantly speed up query performance. `neosqlite` supports single-key, compound-key, and nested-key indexes.
 
 ```python
 # Create a single-key index
 users.create_index('age')
 
 # Create a compound index
-users.create_index([('name', pynosqlite.ASCENDING), ('age', pynosqlite.DESCENDING)])
+users.create_index([('name', neosqlite.ASCENDING), ('age', neosqlite.DESCENDING)])
 
 # Create an index on a nested key
 users.insert_one({'name': 'David', 'profile': {'followers': 100}})
