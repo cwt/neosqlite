@@ -1264,6 +1264,66 @@ class Collection:
 
         return options
 
+    def index_information(self) -> Dict[str, Any]:
+        """
+        Get information on this collection's indexes.
+
+        :return: A dictionary of index information.
+        """
+        info: Dict[str, Any] = {}
+
+        try:
+            # Get all indexes for this collection
+            indexes = self.db.execute(
+                "SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name=?",
+                (self.name,),
+            ).fetchall()
+
+            for idx_name, idx_sql in indexes:
+                # Parse the index information
+                index_info: Dict[str, Any] = {
+                    "v": 2,  # Index version
+                }
+
+                # Check if it's a unique index
+                if idx_sql and "UNIQUE" in idx_sql.upper():
+                    index_info["unique"] = True
+                else:
+                    index_info["unique"] = False
+
+                # Try to extract key information from the SQL
+                if idx_sql:
+                    # Extract key information from json_extract expressions
+                    import re
+
+                    json_extract_matches = re.findall(
+                        r"json_extract\(data, '(\$.+?)'\)", idx_sql
+                    )
+                    if json_extract_matches:
+                        # Convert SQLite JSON paths back to dot notation
+                        keys = []
+                        for path in json_extract_matches:
+                            # Remove $ and leading dot, then convert _ back to .
+                            if path.startswith("$"):
+                                path = path[1:]  # Remove $
+                            if path.startswith("."):
+                                path = path[1:]  # Remove leading dot
+                            path = path.replace("_", ".")
+                            keys.append(path)
+
+                        if len(keys) == 1:
+                            index_info["key"] = {keys[0]: 1}
+                        else:
+                            index_info["key"] = {key: 1 for key in keys}
+
+                info[idx_name] = index_info
+
+        except sqlite3.Error:
+            # If we can't get index information, return empty dict
+            pass
+
+        return info
+
     def _object_exists(self, type: str, name: str) -> bool:
         if type == "table":
             row = self.db.execute(
