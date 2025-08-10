@@ -35,6 +35,11 @@ def test_count_documents(collection):
     assert collection.count_documents({"foo": "bar"}) == 0
 
 
+def test_estimated_document_count(collection):
+    collection.insert_many([{}, {}, {}])
+    assert collection.estimated_document_count() == 3
+
+
 def test_distinct(collection):
     collection.insert_many(
         [{"foo": "bar"}, {"foo": "baz"}, {"foo": 10}, {"bar": "foo"}]

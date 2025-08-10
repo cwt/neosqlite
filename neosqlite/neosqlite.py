@@ -542,6 +542,10 @@ class Collection:
     def count_documents(self, filter: Dict[str, Any]) -> int:
         return len(list(self.find(filter)))
 
+    def estimated_document_count(self) -> int:
+        row = self.db.execute(f"SELECT COUNT(1) FROM {self.name}").fetchone()
+        return row[0] if row else 0
+
     def find_one_and_delete(
         self, filter: Dict[str, Any]
     ) -> Dict[str, Any] | None:
