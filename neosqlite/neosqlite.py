@@ -149,42 +149,72 @@ class Cursor:
         return self
 
     def _execute_query(self) -> Iterator[Dict[str, Any]]:
+        # Get the documents based on filter
+        docs = self._get_filtered_documents()
+
+        # Apply sorting if specified
+        docs = self._apply_sorting(docs)
+
+        # Apply skip and limit
+        docs = self._apply_pagination(docs)
+
+        # Apply projection
+        docs = self._apply_projection(docs)
+
+        # Yield results
+        yield from docs
+
+    def _get_filtered_documents(self) -> Iterable[Dict[str, Any]]:
+        """Get documents based on the filter criteria."""
         where_result = self._collection._build_simple_where_clause(self._filter)
 
         if where_result is not None:
+            # Use SQL-based filtering
             where_clause, params = where_result
             cmd = f"SELECT id, data FROM {self._collection.name} {where_clause}"
             db_cursor = self._collection.db.execute(cmd, params)
-            docs: Iterable[Dict[str, Any]] = starmap(
-                self._collection._load, db_cursor.fetchall()
-            )
+            return starmap(self._collection._load, db_cursor.fetchall())
         else:
-            # Fallback to old method for complex queries
+            # Fallback to Python-based filtering for complex queries
             cmd = f"SELECT id, data FROM {self._collection.name}"
             db_cursor = self._collection.db.execute(cmd)
             apply = partial(self._collection._apply_query, self._filter)
             all_docs = starmap(self._collection._load, db_cursor.fetchall())
-            docs = filter(apply, all_docs)
+            return filter(apply, all_docs)
 
-        if self._sort:
-            sort_keys = list(self._sort.keys())
-            sort_keys.reverse()
-            sorted_docs = list(docs)
-            for key in sort_keys:
-                get_val = partial(self._collection._get_val, key=key)
-                reverse = self._sort[key] == DESCENDING
-                sorted_docs.sort(key=get_val, reverse=reverse)
-            docs = sorted_docs
+    def _apply_sorting(
+        self, docs: Iterable[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Apply sorting to the documents."""
+        if not self._sort:
+            return list(docs)
 
-        skipped_docs = list(docs)[self._skip :]
+        sort_keys = list(self._sort.keys())
+        sort_keys.reverse()
+        sorted_docs = list(docs)
+        for key in sort_keys:
+            get_val = partial(self._collection._get_val, key=key)
+            reverse = self._sort[key] == DESCENDING
+            sorted_docs.sort(key=get_val, reverse=reverse)
+        return sorted_docs
 
-        project = partial(self._collection._apply_projection, self._projection)
-        projected_docs = list(map(project, skipped_docs))
+    def _apply_pagination(
+        self, docs: Iterable[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Apply skip and limit to the documents."""
+        doc_list = list(docs)
+        skipped_docs = doc_list[self._skip :]
 
         if self._limit is not None:
-            yield from projected_docs[: self._limit]
-        else:
-            yield from projected_docs
+            return skipped_docs[: self._limit]
+        return skipped_docs
+
+    def _apply_projection(
+        self, docs: Iterable[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Apply projection to the documents."""
+        project = partial(self._collection._apply_projection, self._projection)
+        return list(map(project, docs))
 
 
 class Connection:
@@ -308,84 +338,127 @@ class Collection:
         original_doc: Dict[str, Any],
     ):
         # Try to use SQL-based updates for simple operations
-        # Check if we can handle all operations with SQL
-        sql_updates = []
-        sql_params = []
+        if self._can_use_sql_updates(update_spec, doc_id):
+            return self._perform_sql_update(doc_id, update_spec)
+        else:
+            # Fall back to Python-based updates for complex operations
+            return self._perform_python_update(
+                doc_id, update_spec, original_doc
+            )
 
+    def _can_use_sql_updates(
+        self, update_spec: Dict[str, Any], doc_id: int
+    ) -> bool:
+        """Check if all operations in the update spec can be handled with SQL."""
         # Only handle operations that can be done purely with SQL
         supported_ops = {"$set", "$unset", "$inc", "$mul", "$min", "$max"}
-        if all(op in supported_ops for op in update_spec.keys()):
-            # Build SQL update clause
-            set_clauses = []
-            params = []
+        # Also check that doc_id is not 0 (which indicates an upsert)
+        return doc_id != 0 and all(
+            op in supported_ops for op in update_spec.keys()
+        )
 
-            for op, value in update_spec.items():
-                if op == "$set":
-                    for field, field_val in value.items():
-                        set_clauses.append(f"'$.{field}', ?")
-                        params.append(field_val)
-                elif op == "$inc":
-                    for field, field_val in value.items():
-                        path = f"'$.{field}'"
-                        set_clauses.append(
-                            f"{path}, json_extract(data, {path}) + ?"
-                        )
-                        params.append(field_val)
-                elif op == "$mul":
-                    for field, field_val in value.items():
-                        path = f"'$.{field}'"
-                        set_clauses.append(
-                            f"{path}, json_extract(data, {path}) * ?"
-                        )
-                        params.append(field_val)
-                elif op == "$min":
-                    for field, field_val in value.items():
-                        path = f"'$.{field}'"
-                        set_clauses.append(
-                            f"{path}, min(json_extract(data, {path}), ?)"
-                        )
-                        params.append(field_val)
-                elif op == "$max":
-                    for field, field_val in value.items():
-                        path = f"'$.{field}'"
-                        set_clauses.append(
-                            f"{path}, max(json_extract(data, {path}), ?)"
-                        )
-                        params.append(field_val)
-                elif op == "$unset":
-                    # For $unset, we use json_remove
-                    for field in value:
-                        path = f"'$.{field}'"
-                        set_clauses.append(path)
-                    # json_remove has a different syntax
-                    if set_clauses:
-                        sql_updates.append(
-                            f"data = json_remove(data, {', '.join(set_clauses)})"
-                        )
-                        sql_params.extend(params)
-                        set_clauses = []
-                        params = []
+    def _perform_sql_update(
+        self, doc_id: int, update_spec: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Perform update operations using SQL JSON functions."""
+        set_clauses = []
+        set_params = []
+        unset_clauses = []
+        unset_params = []
 
-            if set_clauses:
-                sql_updates.append(
-                    f"data = json_set(data, {', '.join(set_clauses)})"
-                )
-                sql_params.extend(params)
+        # Build SQL update clauses for each operation
+        for op, value in update_spec.items():
+            clauses, params = self._build_sql_update_clause(op, value)
+            if clauses:
+                if op == "$unset":
+                    unset_clauses.extend(clauses)
+                    unset_params.extend(params)
+                else:
+                    set_clauses.extend(clauses)
+                    set_params.extend(params)
 
-            if sql_updates:
-                # Execute the SQL update
-                cmd = f"UPDATE {self.name} SET {', '.join(sql_updates)} WHERE id = ?"
-                sql_params.append(doc_id)
-                self.db.execute(cmd, sql_params)
+        # Execute the SQL updates
+        sql_params = []
+        if unset_clauses:
+            # Handle $unset operations with json_remove
+            cmd = f"UPDATE {self.name} SET data = json_remove(data, {', '.join(unset_clauses)}) WHERE id = ?"
+            sql_params = unset_params + [doc_id]
+            self.db.execute(cmd, sql_params)
 
-                # Fetch and return the updated document
-                row = self.db.execute(
-                    f"SELECT data FROM {self.name} WHERE id = ?", (doc_id,)
-                ).fetchone()
-                if row:
-                    return self._load(doc_id, row[0])
+        if set_clauses:
+            # Handle other operations with json_set
+            cmd = f"UPDATE {self.name} SET data = json_set(data, {', '.join(set_clauses)}) WHERE id = ?"
+            sql_params = set_params + [doc_id]
+            cursor = self.db.execute(cmd, sql_params)
 
-        # Fall back to Python-based updates for complex operations
+            # Check if any rows were updated
+            if cursor.rowcount == 0:
+                raise RuntimeError(f"No rows updated for doc_id {doc_id}")
+        elif not unset_clauses:
+            # No operations to perform
+            raise RuntimeError("No valid operations to perform")
+
+        # Fetch and return the updated document
+        row = self.db.execute(
+            f"SELECT data FROM {self.name} WHERE id = ?", (doc_id,)
+        ).fetchone()
+        if row:
+            return self._load(doc_id, row[0])
+
+        # This shouldn't happen, but just in case
+        raise RuntimeError("Failed to fetch updated document")
+
+    def _build_sql_update_clause(
+        self, op: str, value: Any
+    ) -> tuple[List[str], List[Any]]:
+        """Build SQL update clause for a single operation."""
+        clauses = []
+        params = []
+
+        match op:
+            case "$set":
+                for field, field_val in value.items():
+                    clauses.append(f"'$.{field}', ?")
+                    params.append(field_val)
+            case "$inc":
+                for field, field_val in value.items():
+                    path = f"'$.{field}'"
+                    clauses.append(f"{path}, json_extract(data, {path}) + ?")
+                    params.append(field_val)
+            case "$mul":
+                for field, field_val in value.items():
+                    path = f"'$.{field}'"
+                    clauses.append(f"{path}, json_extract(data, {path}) * ?")
+                    params.append(field_val)
+            case "$min":
+                for field, field_val in value.items():
+                    path = f"'$.{field}'"
+                    clauses.append(
+                        f"{path}, min(json_extract(data, {path}), ?)"
+                    )
+                    params.append(field_val)
+            case "$max":
+                for field, field_val in value.items():
+                    path = f"'$.{field}'"
+                    clauses.append(
+                        f"{path}, max(json_extract(data, {path}), ?)"
+                    )
+                    params.append(field_val)
+            case "$unset":
+                # For $unset, we use json_remove
+                for field in value:
+                    path = f"'$.{field}'"
+                    clauses.append(path)
+
+        return clauses, params
+
+    def _perform_python_update(
+        self,
+        doc_id: int,
+        update_spec: Dict[str, Any],
+        original_doc: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Perform update operations using Python-based logic."""
         doc_to_update = deepcopy(original_doc)
 
         for op, value in update_spec.items():
@@ -514,57 +587,58 @@ class Collection:
         params = []
 
         for op, value in update.items():
-            if op == "$set":
-                for field, field_val in value.items():
-                    set_clauses.append(f"'$.{field}', ?")
-                    params.append(field_val)
-            elif op == "$inc":
-                for field, field_val in value.items():
-                    path = f"'$.{field}'"
-                    set_clauses.append(
-                        f"{path}, json_extract(data, {path}) + ?"
-                    )
-                    params.append(field_val)
-            elif op == "$mul":
-                for field, field_val in value.items():
-                    path = f"'$.{field}'"
-                    set_clauses.append(
-                        f"{path}, json_extract(data, {path}) * ?"
-                    )
-                    params.append(field_val)
-            elif op == "$min":
-                for field, field_val in value.items():
-                    path = f"'$.{field}'"
-                    set_clauses.append(
-                        f"{path}, min(json_extract(data, {path}), ?)"
-                    )
-                    params.append(field_val)
-            elif op == "$max":
-                for field, field_val in value.items():
-                    path = f"'$.{field}'"
-                    set_clauses.append(
-                        f"{path}, max(json_extract(data, {path}), ?)"
-                    )
-                    params.append(field_val)
-            elif op == "$unset":
-                # For $unset, we use json_remove
-                for field in value:
-                    path = f"'$.{field}'"
-                    set_clauses.append(path)
-                # json_remove has a different syntax
-                if set_clauses:
-                    return (
-                        f"data = json_remove(data, {', '.join(set_clauses)})",
-                        params,
-                    )
-                else:
-                    # No fields to unset
+            match op:
+                case "$set":
+                    for field, field_val in value.items():
+                        set_clauses.append(f"'$.{field}', ?")
+                        params.append(field_val)
+                case "$inc":
+                    for field, field_val in value.items():
+                        path = f"'$.{field}'"
+                        set_clauses.append(
+                            f"{path}, json_extract(data, {path}) + ?"
+                        )
+                        params.append(field_val)
+                case "$mul":
+                    for field, field_val in value.items():
+                        path = f"'$.{field}'"
+                        set_clauses.append(
+                            f"{path}, json_extract(data, {path}) * ?"
+                        )
+                        params.append(field_val)
+                case "$min":
+                    for field, field_val in value.items():
+                        path = f"'$.{field}'"
+                        set_clauses.append(
+                            f"{path}, min(json_extract(data, {path}), ?)"
+                        )
+                        params.append(field_val)
+                case "$max":
+                    for field, field_val in value.items():
+                        path = f"'$.{field}'"
+                        set_clauses.append(
+                            f"{path}, max(json_extract(data, {path}), ?)"
+                        )
+                        params.append(field_val)
+                case "$unset":
+                    # For $unset, we use json_remove
+                    for field in value:
+                        path = f"'$.{field}'"
+                        set_clauses.append(path)
+                    # json_remove has a different syntax
+                    if set_clauses:
+                        return (
+                            f"data = json_remove(data, {', '.join(set_clauses)})",
+                            params,
+                        )
+                    else:
+                        # No fields to unset
+                        return None
+                case "$rename":
+                    # $rename is complex to do in SQL, so we'll fall back to the Python implementation
                     return None
-            elif op == "$rename":
-                # $rename is complex to do in SQL, so we'll fall back to the Python implementation
-                return None
-            else:
-                return None  # Fallback for unsupported operators
+                case _:
+                    return None  # Fallback for unsupported operators
 
         if not set_clauses:
             return None
@@ -875,61 +949,78 @@ class Collection:
     def _build_simple_where_clause(
         self, query: Dict[str, Any]
     ) -> tuple[str, List[Any]] | None:
+        """Build a SQL WHERE clause for simple queries that can be handled with json_extract."""
         clauses = []
         params = []
 
         for field, value in query.items():
+            # If field contains dots, it's a complex nested query that we can't handle with SQL
             if "." in field:
-                return None  # Fallback for complex queries
+                return None  # Fallback to Python-based filtering
 
+            # Handle _id field specially since it's stored as a column, not in the JSON data
             if field == "_id":
                 clauses.append("id = ?")
                 params.append(value)
                 continue
 
-            path = f"'$.{field}'"
+            # For other fields, use json_extract to get values from the JSON data
+            json_path = f"'$.{field}'"
+
             if isinstance(value, dict):
-                for op, op_val in value.items():
-                    match op:
-                        case "$eq":
-                            clauses.append(f"json_extract(data, {path}) = ?")
-                            params.append(op_val)
-                        case "$gt":
-                            clauses.append(f"json_extract(data, {path}) > ?")
-                            params.append(op_val)
-                        case "$lt":
-                            clauses.append(f"json_extract(data, {path}) < ?")
-                            params.append(op_val)
-                        case "$gte":
-                            clauses.append(f"json_extract(data, {path}) >= ?")
-                            params.append(op_val)
-                        case "$lte":
-                            clauses.append(f"json_extract(data, {path}) <= ?")
-                            params.append(op_val)
-                        case "$ne":
-                            clauses.append(f"json_extract(data, {path}) != ?")
-                            params.append(op_val)
-                        case "$in":
-                            placeholders = ", ".join("?" for _ in op_val)
-                            clauses.append(
-                                f"json_extract(data, {path}) IN ({placeholders})"
-                            )
-                            params.extend(op_val)
-                        case "$nin":
-                            placeholders = ", ".join("?" for _ in op_val)
-                            clauses.append(
-                                f"json_extract(data, {path}) NOT IN ({placeholders})"
-                            )
-                            params.extend(op_val)
-                        case _:
-                            return None  # Fallback for unsupported operators
+                # Handle query operators like $eq, $gt, $lt, etc.
+                clause, clause_params = self._build_operator_clause(
+                    json_path, value
+                )
+                if clause is None:
+                    return None  # Unsupported operator, fallback to Python
+                clauses.append(clause)
+                params.extend(clause_params)
             else:
-                clauses.append(f"json_extract(data, {path}) = ?")
+                # Simple equality check
+                clauses.append(f"json_extract(data, {json_path}) = ?")
                 params.append(value)
 
         if not clauses:
             return "", []
         return "WHERE " + " AND ".join(clauses), params
+
+    def _build_operator_clause(
+        self, json_path: str, operators: Dict[str, Any]
+    ) -> tuple[str | None, List[Any]]:
+        """Build a SQL clause for query operators."""
+        for op, op_val in operators.items():
+            match op:
+                case "$eq":
+                    return f"json_extract(data, {json_path}) = ?", [op_val]
+                case "$gt":
+                    return f"json_extract(data, {json_path}) > ?", [op_val]
+                case "$lt":
+                    return f"json_extract(data, {json_path}) < ?", [op_val]
+                case "$gte":
+                    return f"json_extract(data, {json_path}) >= ?", [op_val]
+                case "$lte":
+                    return f"json_extract(data, {json_path}) <= ?", [op_val]
+                case "$ne":
+                    return f"json_extract(data, {json_path}) != ?", [op_val]
+                case "$in":
+                    placeholders = ", ".join("?" for _ in op_val)
+                    return (
+                        f"json_extract(data, {json_path}) IN ({placeholders})",
+                        op_val,
+                    )
+                case "$nin":
+                    placeholders = ", ".join("?" for _ in op_val)
+                    return (
+                        f"json_extract(data, {json_path}) NOT IN ({placeholders})",
+                        op_val,
+                    )
+                case _:
+                    # Unsupported operator, return None to indicate we should fallback to Python
+                    return None, []
+
+        # This shouldn't happen, but just in case
+        return None, []
 
     def _apply_query(
         self, query: Dict[str, Any], document: Dict[str, Any]
