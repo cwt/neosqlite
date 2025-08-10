@@ -123,3 +123,39 @@ def test_update_with_pop_first(collection):
     collection.update_one({"a": 1}, {"$pop": {"items": -1}})
     doc = collection.find_one({"a": 1})
     assert doc["items"] == ["y", "z"]
+
+
+def test_update_with_rename(collection):
+    collection.insert_one({"a": 1, "foo": "bar"})
+    collection.update_one({"a": 1}, {"$rename": {"foo": "baz"}})
+    doc = collection.find_one({"a": 1})
+    assert "foo" not in doc
+    assert "baz" in doc
+    assert doc["baz"] == "bar"
+
+
+def test_update_with_mul(collection):
+    collection.insert_one({"a": 1, "value": 5})
+    collection.update_one({"a": 1}, {"$mul": {"value": 2}})
+    doc = collection.find_one({"a": 1})
+    assert doc["value"] == 10
+
+
+def test_update_with_min(collection):
+    collection.insert_one({"a": 1, "value": 10})
+    collection.update_one({"a": 1}, {"$min": {"value": 5}})
+    doc = collection.find_one({"a": 1})
+    assert doc["value"] == 5
+    collection.update_one({"a": 1}, {"$min": {"value": 10}})
+    doc = collection.find_one({"a": 1})
+    assert doc["value"] == 5
+
+
+def test_update_with_max(collection):
+    collection.insert_one({"a": 1, "value": 5})
+    collection.update_one({"a": 1}, {"$max": {"value": 10}})
+    doc = collection.find_one({"a": 1})
+    assert doc["value"] == 10
+    collection.update_one({"a": 1}, {"$max": {"value": 5}})
+    doc = collection.find_one({"a": 1})
+    assert doc["value"] == 10

@@ -188,3 +188,11 @@ def test_apply_query_elem_match(collection):
     doc_no_match = {"items": [{"name": "item1", "value": 10}, {"name": "item2", "value": 5}]}
     assert collection._apply_query(query, doc_match)
     assert not collection._apply_query(query, doc_no_match)
+
+
+def test_apply_query_size(collection):
+    query = {"items": {"$size": 2}}
+    doc_match = {"items": ["a", "b"]}
+    doc_no_match = {"items": ["a", "b", "c"]}
+    assert collection._apply_query(query, doc_match)
+    assert not collection._apply_query(query, doc_no_match)

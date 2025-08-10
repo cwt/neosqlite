@@ -341,6 +341,22 @@ class Collection:
                         doc_to_update.get(k, []).pop()
                     elif v == -1:
                         doc_to_update.get(k, []).pop(0)
+            elif op == "$rename":
+                for k, v in value.items():
+                    if k in doc_to_update:
+                        doc_to_update[v] = doc_to_update.pop(k)
+            elif op == "$mul":
+                for k, v in value.items():
+                    if k in doc_to_update:
+                        doc_to_update[k] *= v
+            elif op == "$min":
+                for k, v in value.items():
+                    if k in doc_to_update and doc_to_update[k] > v:
+                        doc_to_update[k] = v
+            elif op == "$max":
+                for k, v in value.items():
+                    if k in doc_to_update and doc_to_update[k] < v:
+                        doc_to_update[k] = v
             else:
                 raise MalformedQueryException(
                     f"Update operator '{op}' not supported"
@@ -863,3 +879,10 @@ def _elemMatch(
         ):
             return True
     return False
+
+
+def _size(field: str, value: int, document: Dict[str, Any]) -> bool:
+    field_val = document.get(field)
+    if not isinstance(field_val, list):
+        return False
+    return len(field_val) == value
