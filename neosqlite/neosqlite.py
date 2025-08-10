@@ -330,49 +330,50 @@ class Collection:
         doc_to_update = deepcopy(original_doc)
 
         for op, value in update_spec.items():
-            if op == "$set":
-                doc_to_update.update(value)
-            elif op == "$unset":
-                for k in value:
-                    doc_to_update.pop(k, None)
-            elif op == "$inc":
-                for k, v in value.items():
-                    doc_to_update[k] = doc_to_update.get(k, 0) + v
-            elif op == "$push":
-                for k, v in value.items():
-                    doc_to_update.setdefault(k, []).append(v)
-            elif op == "$pull":
-                for k, v in value.items():
-                    if k in doc_to_update:
-                        doc_to_update[k] = [
-                            item for item in doc_to_update[k] if item != v
-                        ]
-            elif op == "$pop":
-                for k, v in value.items():
-                    if v == 1:
-                        doc_to_update.get(k, []).pop()
-                    elif v == -1:
-                        doc_to_update.get(k, []).pop(0)
-            elif op == "$rename":
-                for k, v in value.items():
-                    if k in doc_to_update:
-                        doc_to_update[v] = doc_to_update.pop(k)
-            elif op == "$mul":
-                for k, v in value.items():
-                    if k in doc_to_update:
-                        doc_to_update[k] *= v
-            elif op == "$min":
-                for k, v in value.items():
-                    if k in doc_to_update and doc_to_update[k] > v:
-                        doc_to_update[k] = v
-            elif op == "$max":
-                for k, v in value.items():
-                    if k in doc_to_update and doc_to_update[k] < v:
-                        doc_to_update[k] = v
-            else:
-                raise MalformedQueryException(
-                    f"Update operator '{op}' not supported"
-                )
+            match op:
+                case "$set":
+                    doc_to_update.update(value)
+                case "$unset":
+                    for k in value:
+                        doc_to_update.pop(k, None)
+                case "$inc":
+                    for k, v in value.items():
+                        doc_to_update[k] = doc_to_update.get(k, 0) + v
+                case "$push":
+                    for k, v in value.items():
+                        doc_to_update.setdefault(k, []).append(v)
+                case "$pull":
+                    for k, v in value.items():
+                        if k in doc_to_update:
+                            doc_to_update[k] = [
+                                item for item in doc_to_update[k] if item != v
+                            ]
+                case "$pop":
+                    for k, v in value.items():
+                        if v == 1:
+                            doc_to_update.get(k, []).pop()
+                        elif v == -1:
+                            doc_to_update.get(k, []).pop(0)
+                case "$rename":
+                    for k, v in value.items():
+                        if k in doc_to_update:
+                            doc_to_update[v] = doc_to_update.pop(k)
+                case "$mul":
+                    for k, v in value.items():
+                        if k in doc_to_update:
+                            doc_to_update[k] *= v
+                case "$min":
+                    for k, v in value.items():
+                        if k in doc_to_update and doc_to_update[k] > v:
+                            doc_to_update[k] = v
+                case "$max":
+                    for k, v in value.items():
+                        if k in doc_to_update and doc_to_update[k] < v:
+                            doc_to_update[k] = v
+                case _:
+                    raise MalformedQueryException(
+                        f"Update operator '{op}' not supported"
+                    )
 
         self.db.execute(
             f"UPDATE {self.name} SET data = ? WHERE id = ?",
@@ -474,20 +475,19 @@ class Collection:
         self.db.execute("SAVEPOINT bulk_write")
         try:
             for req in requests:
-                if isinstance(req, InsertOne):
-                    self.insert_one(req.document)
-                    inserted_count += 1
-                elif isinstance(req, UpdateOne):
-                    update_res = self.update_one(
-                        req.filter, req.update, req.upsert
-                    )
-                    matched_count += update_res.matched_count
-                    modified_count += update_res.modified_count
-                    if update_res.upserted_id:
-                        upserted_count += 1
-                elif isinstance(req, DeleteOne):
-                    delete_res = self.delete_one(req.filter)
-                    deleted_count += delete_res.deleted_count
+                match req:
+                    case InsertOne(document=doc):
+                        self.insert_one(doc)
+                        inserted_count += 1
+                    case UpdateOne(filter=f, update=u, upsert=up):
+                        update_res = self.update_one(f, u, up)
+                        matched_count += update_res.matched_count
+                        modified_count += update_res.modified_count
+                        if update_res.upserted_id:
+                            upserted_count += 1
+                    case DeleteOne(filter=f):
+                        delete_res = self.delete_one(f)
+                        deleted_count += delete_res.deleted_count
             self.db.execute("RELEASE SAVEPOINT bulk_write")
         except Exception as e:
             self.db.execute("ROLLBACK TO SAVEPOINT bulk_write")
