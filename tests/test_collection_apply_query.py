@@ -184,8 +184,12 @@ def test_apply_query_regex(collection):
 
 def test_apply_query_elem_match(collection):
     query = {"items": {"$elemMatch": {"name": "item1", "value": 5}}}
-    doc_match = {"items": [{"name": "item1", "value": 5}, {"name": "item2", "value": 10}]}
-    doc_no_match = {"items": [{"name": "item1", "value": 10}, {"name": "item2", "value": 5}]}
+    doc_match = {
+        "items": [{"name": "item1", "value": 5}, {"name": "item2", "value": 10}]
+    }
+    doc_no_match = {
+        "items": [{"name": "item1", "value": 10}, {"name": "item2", "value": 5}]
+    }
     assert collection._apply_query(query, doc_match)
     assert not collection._apply_query(query, doc_no_match)
 

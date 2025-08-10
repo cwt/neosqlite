@@ -80,20 +80,21 @@ def test_delete_many(collection):
     assert collection.count_documents({}) == 0
 
 
-def test_transaction(collection):
+def test_transaction(connection):
+    collection = connection["foo"]
     try:
-        collection.db.execute("BEGIN")
+        connection.db.execute("BEGIN")
         collection.insert_one({"a": 1})
         collection.insert_one({"a": 2})
-        collection.db.rollback()
+        connection.db.rollback()
     except sqlite3.OperationalError:
         pass  # Some versions of sqlite might complain
     assert collection.count_documents({}) == 0
 
-    collection.db.execute("BEGIN")
+    connection.db.execute("BEGIN")
     collection.insert_one({"a": 1})
     collection.insert_one({"a": 2})
-    collection.db.commit()
+    connection.db.commit()
     assert collection.count_documents({}) == 2
 
 

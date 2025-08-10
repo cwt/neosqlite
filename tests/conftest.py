@@ -5,15 +5,14 @@ import neosqlite
 
 
 @pytest.fixture
-def db():
-    """Fixture to set up and tear down a database connection."""
-    conn = sqlite3.connect(":memory:")
+def connection():
+    """Fixture to set up and tear down a neosqlite connection."""
+    conn = neosqlite.Connection(":memory:")
     yield conn
     conn.close()
 
 
 @pytest.fixture
-def collection(db):
+def collection(connection):
     """Fixture to provide a clean collection for each test."""
-    collection = neosqlite.Collection(db, "foo")
-    return collection
+    return connection["foo"]

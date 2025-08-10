@@ -3,6 +3,7 @@ from functools import partial
 from itertools import starmap
 from typing import Any, Dict, List, Iterator, Iterable, overload
 from typing_extensions import Literal
+from contextlib import contextmanager
 import json
 import re
 import sqlite3
@@ -107,8 +108,6 @@ class UpdateOne:
 class DeleteOne:
     def __init__(self, filter: Dict[str, Any]):
         self.filter = filter
-
-
 
 
 class Cursor:
@@ -243,6 +242,17 @@ class Connection:
     def drop_collection(self, name: str):
         self.db.execute(f"DROP TABLE IF EXISTS {name}")
 
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """A context manager for database transactions."""
+        try:
+            self.db.execute("BEGIN")
+            yield
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+
 
 class Collection:
     def __init__(self, db: sqlite3.Connection, name: str, create: bool = True):
@@ -268,6 +278,8 @@ class Collection:
         return document
 
     def _get_val(self, item: Dict[str, Any], key: str) -> Any:
+        if key.startswith("$"):
+            key = key[1:]
         val: Any = item
         for k in key.split("."):
             if val is None:
@@ -466,14 +478,16 @@ class Collection:
                     self.insert_one(req.document)
                     inserted_count += 1
                 elif isinstance(req, UpdateOne):
-                    res = self.update_one(req.filter, req.update, req.upsert)
-                    matched_count += res.matched_count
-                    modified_count += res.modified_count
-                    if res.upserted_id:
+                    update_res = self.update_one(
+                        req.filter, req.update, req.upsert
+                    )
+                    matched_count += update_res.matched_count
+                    modified_count += update_res.modified_count
+                    if update_res.upserted_id:
                         upserted_count += 1
                 elif isinstance(req, DeleteOne):
-                    res = self.delete_one(req.filter)
-                    deleted_count += res.deleted_count
+                    delete_res = self.delete_one(req.filter)
+                    deleted_count += delete_res.deleted_count
             self.db.execute("RELEASE SAVEPOINT bulk_write")
         except Exception as e:
             self.db.execute("ROLLBACK TO SAVEPOINT bulk_write")
@@ -551,6 +565,58 @@ class Collection:
         if doc:
             self.update_one({"_id": doc["_id"]}, update)
         return doc
+
+    def aggregate(self, pipeline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        docs: List[Dict[str, Any]] = list(self.find())
+        for stage in pipeline:
+            match stage:
+                case {"$match": query}:
+                    docs = [
+                        doc for doc in docs if self._apply_query(query, doc)
+                    ]
+                case {"$sort": sort_spec}:
+                    for key, direction in reversed(list(sort_spec.items())):
+                        docs.sort(
+                            key=lambda doc: self._get_val(doc, key),
+                            reverse=direction == DESCENDING,
+                        )
+                case {"$skip": count}:
+                    docs = docs[count:]
+                case {"$limit": count}:
+                    docs = docs[:count]
+                case {"$project": projection}:
+                    docs = [
+                        self._apply_projection(projection, doc) for doc in docs
+                    ]
+                case {"$group": group_spec}:
+                    docs = self._process_group_stage(group_spec, docs)
+                case _:
+                    stage_name = next(iter(stage.keys()))
+                    raise MalformedQueryException(
+                        f"Aggregation stage '{stage_name}' not supported"
+                    )
+        return docs
+
+    def _process_group_stage(
+        self, group_query: Dict[str, Any], docs: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        grouped_docs: Dict[Any, Dict[str, Any]] = {}
+        group_id_key = group_query.pop("_id")
+
+        for doc in docs:
+            group_id = self._get_val(doc, group_id_key)
+            group = grouped_docs.setdefault(group_id, {"_id": group_id})
+
+            for field, accumulator in group_query.items():
+                op, key = next(iter(accumulator.items()))
+                value = self._get_val(doc, key)
+
+                if op == "$sum":
+                    current_sum = group.get(field, 0) or 0
+                    value_to_add = value or 0
+                    group[field] = current_sum + value_to_add
+
+        return list(grouped_docs.values())
 
     def _apply_projection(
         self, projection: Dict[str, Any], document: Dict[str, Any]
