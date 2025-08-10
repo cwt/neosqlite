@@ -95,3 +95,31 @@ def test_transaction(collection):
     collection.insert_one({"a": 2})
     collection.db.commit()
     assert collection.count_documents({}) == 2
+
+
+def test_update_with_push(collection):
+    collection.insert_one({"a": 1, "items": ["x"]})
+    collection.update_one({"a": 1}, {"$push": {"items": "y"}})
+    doc = collection.find_one({"a": 1})
+    assert doc["items"] == ["x", "y"]
+
+
+def test_update_with_pull(collection):
+    collection.insert_one({"a": 1, "items": ["x", "y", "z", "y"]})
+    collection.update_one({"a": 1}, {"$pull": {"items": "y"}})
+    doc = collection.find_one({"a": 1})
+    assert doc["items"] == ["x", "z"]
+
+
+def test_update_with_pop_last(collection):
+    collection.insert_one({"a": 1, "items": ["x", "y", "z"]})
+    collection.update_one({"a": 1}, {"$pop": {"items": 1}})
+    doc = collection.find_one({"a": 1})
+    assert doc["items"] == ["x", "y"]
+
+
+def test_update_with_pop_first(collection):
+    collection.insert_one({"a": 1, "items": ["x", "y", "z"]})
+    collection.update_one({"a": 1}, {"$pop": {"items": -1}})
+    doc = collection.find_one({"a": 1})
+    assert doc["items"] == ["y", "z"]

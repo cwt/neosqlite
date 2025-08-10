@@ -71,15 +71,57 @@ class DeleteResult:
         return self._deleted_count
 
 
+class BulkWriteResult:
+    def __init__(
+        self,
+        inserted_count: int,
+        matched_count: int,
+        modified_count: int,
+        deleted_count: int,
+        upserted_count: int,
+    ):
+        self.inserted_count = inserted_count
+        self.matched_count = matched_count
+        self.modified_count = modified_count
+        self.deleted_count = deleted_count
+        self.upserted_count = upserted_count
+
+
+class InsertOne:
+    def __init__(self, document: Dict[str, Any]):
+        self.document = document
+
+
+class UpdateOne:
+    def __init__(
+        self,
+        filter: Dict[str, Any],
+        update: Dict[str, Any],
+        upsert: bool = False,
+    ):
+        self.filter = filter
+        self.update = update
+        self.upsert = upsert
+
+
+class DeleteOne:
+    def __init__(self, filter: Dict[str, Any]):
+        self.filter = filter
+
+
+
+
 class Cursor:
     def __init__(
         self,
         collection: "Collection",
         filter: Dict[str, Any] | None = None,
+        projection: Dict[str, Any] | None = None,
         hint: str | None = None,
     ):
         self._collection = collection
         self._filter = filter or {}
+        self._projection = projection or {}
         self._hint = hint
         self._skip = 0
         self._limit: int | None = None
@@ -154,10 +196,13 @@ class Cursor:
 
         skipped_docs = list(filtered_docs)[self._skip :]
 
+        project = partial(self._collection._apply_projection, self._projection)
+        projected_docs = list(map(project, skipped_docs))
+
         if self._limit is not None:
-            yield from skipped_docs[: self._limit]
+            yield from projected_docs[: self._limit]
         else:
-            yield from skipped_docs
+            yield from projected_docs
 
 
 class Connection:
@@ -281,6 +326,21 @@ class Collection:
             elif op == "$inc":
                 for k, v in value.items():
                     doc_to_update[k] = doc_to_update.get(k, 0) + v
+            elif op == "$push":
+                for k, v in value.items():
+                    doc_to_update.setdefault(k, []).append(v)
+            elif op == "$pull":
+                for k, v in value.items():
+                    if k in doc_to_update:
+                        doc_to_update[k] = [
+                            item for item in doc_to_update[k] if item != v
+                        ]
+            elif op == "$pop":
+                for k, v in value.items():
+                    if v == 1:
+                        doc_to_update.get(k, []).pop()
+                    elif v == -1:
+                        doc_to_update.get(k, []).pop(0)
             else:
                 raise MalformedQueryException(
                     f"Update operator '{op}' not supported"
@@ -314,6 +374,9 @@ class Collection:
                 self.reindex(table=index, documents=[replacement])
         except sqlite3.IntegrityError as ie:
             raise ie
+
+    def _internal_delete(self, doc_id: int):
+        self.db.execute(f"DELETE FROM {self.name} WHERE id = ?", (doc_id,))
 
     def update_one(
         self,
@@ -373,12 +436,45 @@ class Collection:
 
         return UpdateResult(matched_count=0, modified_count=0, upserted_id=None)
 
+    def bulk_write(self, requests: List[Any]) -> BulkWriteResult:
+        inserted_count = 0
+        matched_count = 0
+        modified_count = 0
+        deleted_count = 0
+        upserted_count = 0
+
+        self.db.execute("SAVEPOINT bulk_write")
+        try:
+            for req in requests:
+                if isinstance(req, InsertOne):
+                    self.insert_one(req.document)
+                    inserted_count += 1
+                elif isinstance(req, UpdateOne):
+                    res = self.update_one(req.filter, req.update, req.upsert)
+                    matched_count += res.matched_count
+                    modified_count += res.modified_count
+                    if res.upserted_id:
+                        upserted_count += 1
+                elif isinstance(req, DeleteOne):
+                    res = self.delete_one(req.filter)
+                    deleted_count += res.deleted_count
+            self.db.execute("RELEASE SAVEPOINT bulk_write")
+        except Exception as e:
+            self.db.execute("ROLLBACK TO SAVEPOINT bulk_write")
+            raise e
+
+        return BulkWriteResult(
+            inserted_count=inserted_count,
+            matched_count=matched_count,
+            modified_count=modified_count,
+            deleted_count=deleted_count,
+            upserted_count=upserted_count,
+        )
+
     def delete_one(self, filter: Dict[str, Any]) -> DeleteResult:
         doc = self.find_one(filter)
         if doc:
-            self.db.execute(
-                f"DELETE FROM {self.name} WHERE id = ?", (doc["_id"],)
-            )
+            self._internal_delete(doc["_id"])
             return DeleteResult(deleted_count=1)
         return DeleteResult(deleted_count=0)
 
@@ -397,17 +493,19 @@ class Collection:
     def find(
         self,
         filter: Dict[str, Any] | None = None,
+        projection: Dict[str, Any] | None = None,
         hint: str | None = None,
     ) -> Cursor:
-        return Cursor(self, filter, hint)
+        return Cursor(self, filter, projection, hint)
 
     def find_one(
         self,
         filter: Dict[str, Any] | None = None,
+        projection: Dict[str, Any] | None = None,
         hint: str | None = None,
     ) -> Dict[str, Any] | None:
         try:
-            return next(iter(self.find(filter, hint).limit(1)))
+            return next(iter(self.find(filter, projection, hint).limit(1)))
         except StopIteration:
             return None
 
@@ -436,6 +534,33 @@ class Collection:
         doc = self.find_one(filter)
         if doc:
             self.update_one({"_id": doc["_id"]}, update)
+        return doc
+
+    def _apply_projection(
+        self, projection: Dict[str, Any], document: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        if not projection:
+            return document
+
+        doc = deepcopy(document)
+        projected_doc: Dict[str, Any] = {}
+        include_id = projection.get("_id", 1) == 1
+
+        # Inclusion mode
+        if any(v == 1 for v in projection.values()):
+            for key, value in projection.items():
+                if value == 1 and key in doc:
+                    projected_doc[key] = doc[key]
+            if include_id and "_id" in doc:
+                projected_doc["_id"] = doc["_id"]
+            return projected_doc
+
+        # Exclusion mode
+        for key, value in projection.items():
+            if value == 0 and key in doc:
+                doc.pop(key, None)
+        if not include_id and "_id" in doc:
+            doc.pop("_id", None)
         return doc
 
     def _apply_query(
@@ -717,3 +842,24 @@ def _exists(field: str, value: bool, document: Dict[str, Any]) -> bool:
         return field in document
     else:
         return field not in document
+
+
+def _regex(field: str, value: str, document: Dict[str, Any]) -> bool:
+    try:
+        return re.search(value, document.get(field, "")) is not None
+    except (TypeError, re.error):
+        return False
+
+
+def _elemMatch(
+    field: str, value: Dict[str, Any], document: Dict[str, Any]
+) -> bool:
+    field_val = document.get(field)
+    if not isinstance(field_val, list):
+        return False
+    for elem in field_val:
+        if isinstance(elem, dict) and all(
+            _eq(k, v, elem) for k, v in value.items()
+        ):
+            return True
+    return False

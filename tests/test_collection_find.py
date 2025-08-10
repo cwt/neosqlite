@@ -72,3 +72,43 @@ def test_find_one(collection):
     assert doc is not None
     assert doc["foo"] == "bar"
     assert collection.find_one({"foo": "baz"}) is None
+
+
+def test_find_one_with_projection_inclusion(collection):
+    collection.insert_one({"foo": "bar", "baz": 42, "qux": [1, 2]})
+    doc = collection.find_one({"foo": "bar"}, {"foo": 1, "baz": 1})
+    assert doc is not None
+    assert "foo" in doc
+    assert "baz" in doc
+    assert "qux" not in doc
+    assert "_id" in doc
+
+
+def test_find_one_with_projection_exclusion(collection):
+    collection.insert_one({"foo": "bar", "baz": 42, "qux": [1, 2]})
+    doc = collection.find_one({"foo": "bar"}, {"qux": 0, "_id": 0})
+    assert doc is not None
+    assert "foo" in doc
+    assert "baz" in doc
+    assert "qux" not in doc
+    assert "_id" not in doc
+
+
+def test_find_one_with_projection_id_only(collection):
+    collection.insert_one({"foo": "bar", "baz": 42})
+    doc = collection.find_one({"foo": "bar"}, {"_id": 1})
+    assert doc is not None
+    assert doc.keys() == {"_id"}
+
+
+def test_find_with_projection(collection):
+    collection.insert_many(
+        [
+            {"a": 1, "b": "c", "d": True},
+            {"a": 1, "b": "a", "d": False},
+        ]
+    )
+    docs = list(collection.find(projection={"a": 1, "_id": 0}))
+    assert len(docs) == 2
+    for doc in docs:
+        assert doc.keys() == {"a"}
