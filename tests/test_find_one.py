@@ -1,5 +1,5 @@
 # coding: utf-8
-import nosqlite
+import pynosqlite as nosqlite
 
 
 def test_returns_None_if_collection_is_empty(collection: nosqlite.Collection):

@@ -1,7 +1,7 @@
 # coding: utf-8
 import pytest
 import sqlite3
-import nosqlite
+import pynosqlite as nosqlite
 
 
 @pytest.fixture

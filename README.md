@@ -1,6 +1,6 @@
-# nosqlite
+# pynosqlite
 
-`nosqlite` is a pure Python library that provides a schemaless, `pymongo`-like wrapper for interacting with SQLite databases. The API is designed to be familiar to those who have worked with `pymongo`, providing a simple and intuitive way to work with document-based data in a relational database.
+`pynosqlite` is a pure Python library that provides a schemaless, `pymongo`-like wrapper for interacting with SQLite databases. The API is designed to be familiar to those who have worked with `pymongo`, providing a simple and intuitive way to work with document-based data in a relational database.
 
 ## Features
 
@@ -12,13 +12,13 @@
 
 ## Quickstart
 
-Here is a quick example of how to use `nosqlite`:
+Here is a quick example of how to use `pynosqlite`:
 
 ```python
-import nosqlite
+import nosqlite as pynosqlite
 
 # Connect to an in-memory database
-with nosqlite.Connection(':memory:') as conn:
+with pynosqlite.Connection(':memory:') as conn:
     # Get a collection
     users = conn.users
 
@@ -54,14 +54,14 @@ with nosqlite.Connection(':memory:') as conn:
 
 ## Indexes
 
-Indexes can significantly speed up query performance. `nosqlite` supports single-key, compound-key, and nested-key indexes.
+Indexes can significantly speed up query performance. `pynosqlite` supports single-key, compound-key, and nested-key indexes.
 
 ```python
 # Create a single-key index
 users.create_index('age')
 
 # Create a compound index
-users.create_index([('name', nosqlite.ASCENDING), ('age', nosqlite.DESCENDING)])
+users.create_index([('name', pynosqlite.ASCENDING), ('age', pynosqlite.DESCENDING)])
 
 # Create an index on a nested key
 users.insert_one({'name': 'David', 'profile': {'followers': 100}})
@@ -76,7 +76,7 @@ You can sort the results of a `find()` query by chaining the `sort()` method.
 
 ```python
 # Sort users by age in descending order
-for user in users.find().sort('age', nosqlite.DESCENDING):
+for user in users.find().sort('age', pynosqlite.DESCENDING):
     print(user)
 ```
 

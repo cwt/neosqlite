@@ -1,5 +1,5 @@
 # coding: utf-8
-import nosqlite
+import pynosqlite as nosqlite
 
 
 def test_find_one_and_update(collection):

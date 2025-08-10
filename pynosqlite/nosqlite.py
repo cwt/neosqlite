@@ -467,12 +467,12 @@ class Collection:
                 else:
                     matches.append(True)
             else:
-                doc_value = document
-                if field in doc_value:
+                doc_value: Dict[str, Any] | None = document
+                if doc_value and field in doc_value:
                     doc_value = doc_value.get(field, None)
                 else:
                     for path in field.split("."):
-                        if doc_value is None:
+                        if not isinstance(doc_value, dict):
                             break
                         doc_value = doc_value.get(path, None)
                 if value != doc_value:
@@ -702,7 +702,10 @@ def _mod(field: str, value: List[int], document: Dict[str, Any]) -> bool:
             "'$mod' must accept an iterable: [divisor, remainder]"
         )
     try:
-        return int(document.get(field, None)) % divisor == remainder
+        val = document.get(field, None)
+        if val is None:
+            return False
+        return int(val) % divisor == remainder
     except (TypeError, ValueError):
         return False
 

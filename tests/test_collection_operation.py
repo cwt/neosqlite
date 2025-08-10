@@ -1,31 +1,32 @@
 # coding: utf-8
 from pytest import raises
-import nosqlite
+from pynosqlite.nosqlite import _eq, _gt, _lt, _lte, _in
+import pynosqlite as nosqlite
 
 
 def test_eq_type_error():
     document = {"foo": 5}
-    assert not nosqlite._eq("foo", "bar", document)
+    assert not _eq("foo", "bar", document)
 
 
 def test_eq_attribute_error():
     document = None
-    assert not nosqlite._eq("foo", "bar", document)
+    assert not _eq("foo", "bar", document)
 
 
 def test_gt_type_error():
     document = {"foo": "bar"}
-    assert not nosqlite._gt("foo", 5, document)
+    assert not _gt("foo", 5, document)
 
 
 def test_lt_type_error():
     document = {"foo": "bar"}
-    assert not nosqlite._lt("foo", 5, document)
+    assert not _lt("foo", 5, document)
 
 
 def test_lte_type_error():
     document = {"foo": "bar"}
-    assert not nosqlite._lte("foo", 5, document)
+    assert not _lte("foo", 5, document)
 
 
 def test_get_operator_fn_improper_op(collection):
@@ -34,7 +35,7 @@ def test_get_operator_fn_improper_op(collection):
 
 
 def test_get_operator_fn_valid_op(collection):
-    assert collection._get_operator_fn("$in") == nosqlite._in
+    assert collection._get_operator_fn("$in") == _in
 
 
 def test_get_operator_fn_no_op(collection):
