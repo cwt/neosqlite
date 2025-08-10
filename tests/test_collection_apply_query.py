@@ -169,3 +169,8 @@ class TestCollection:
         document = {"bar": "baz"}
         assert not self.collection._apply_query(query, document)
 
+    def test_apply_query_with_dot_in_key(self):
+        query = {"a.b": "some_value"}
+        document = {"a.b": "some_value"}
+        assert self.collection._apply_query(query, document)
+

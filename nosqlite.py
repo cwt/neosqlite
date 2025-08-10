@@ -362,6 +362,8 @@ class Collection:
         key is equal to 'baz' and either the 'foo' key is an even number
         between 0 and 10 or is an odd number greater than 10.
         """
+        if document is None:
+            return False
         matches = []  # A list of booleans
         reapply = lambda q: self._apply_query(q, document)
 
@@ -390,10 +392,13 @@ class Collection:
             # Standard
             else:
                 doc_value = document
-                for path in field.split("."):
-                    if doc_value is None:
-                        break
-                    doc_value = doc_value.get(path, None)
+                if field in doc_value:
+                    doc_value = doc_value.get(field, None)
+                else:
+                    for path in field.split("."):
+                        if doc_value is None:
+                            break
+                        doc_value = doc_value.get(path, None)
                 if value != doc_value:
                     matches.append(False)
 
