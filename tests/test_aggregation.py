@@ -91,3 +91,12 @@ def test_aggregate_group_accumulators(collection):
         "max_price": 20,
         "prices": [20, 10],
     }
+
+
+def test_aggregate_unwind(collection):
+    collection.insert_one({"_id": 1, "item": "A", "sizes": ["S", "M", "L"]})
+    pipeline = [{"$unwind": "$sizes"}]
+    result = collection.aggregate(pipeline)
+    assert len(result) == 3
+    assert {doc["sizes"] for doc in result} == {"S", "M", "L"}
+    assert all(doc["item"] == "A" for doc in result)

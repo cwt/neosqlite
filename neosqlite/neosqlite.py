@@ -594,6 +594,19 @@ class Collection:
                     ]
                 case {"$group": group_spec}:
                     docs = self._process_group_stage(group_spec, docs)
+                case {"$unwind": field}:
+                    unwound_docs = []
+                    field_name = field.lstrip("$")
+                    for doc in docs:
+                        array_to_unwind = self._get_val(doc, field_name)
+                        if isinstance(array_to_unwind, list):
+                            for item in array_to_unwind:
+                                new_doc = doc.copy()
+                                new_doc[field_name] = item
+                                unwound_docs.append(new_doc)
+                        else:
+                            unwound_docs.append(doc)
+                    docs = unwound_docs
                 case _:
                     stage_name = next(iter(stage.keys()))
                     raise MalformedQueryException(
