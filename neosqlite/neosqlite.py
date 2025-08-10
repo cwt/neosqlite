@@ -616,9 +616,28 @@ class Collection:
                 value = self._get_val(doc, key)
 
                 if op == "$sum":
-                    current_sum = group.get(field, 0) or 0
-                    value_to_add = value or 0
-                    group[field] = current_sum + value_to_add
+                    group[field] = (group.get(field, 0) or 0) + (value or 0)
+                elif op == "$avg":
+                    avg_info = group.get(field, {"sum": 0, "count": 0})
+                    avg_info["sum"] += value or 0
+                    avg_info["count"] += 1
+                    group[field] = avg_info
+                elif op == "$min":
+                    group[field] = min(group.get(field, value), value)
+                elif op == "$max":
+                    group[field] = max(group.get(field, value), value)
+                elif op == "$push":
+                    group.setdefault(field, []).append(value)
+
+        # Finalize results (e.g., calculate average)
+        for group in grouped_docs.values():
+            for field, value in group.items():
+                if (
+                    isinstance(value, dict)
+                    and "sum" in value
+                    and "count" in value
+                ):
+                    group[field] = value["sum"] / value["count"]
 
         return list(grouped_docs.values())
 

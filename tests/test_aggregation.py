@@ -49,3 +49,45 @@ def test_aggregate_group(collection):
     assert len(result) == 2
     assert result[0] == {"_id": "A", "total": 40}
     assert result[1] == {"_id": "B", "total": 20}
+
+
+def test_aggregate_group_accumulators(collection):
+    collection.insert_many(
+        [
+            {"item": "A", "price": 10, "quantity": 2},
+            {"item": "B", "price": 20, "quantity": 1},
+            {"item": "A", "price": 30, "quantity": 5},
+            {"item": "B", "price": 10, "quantity": 2},
+        ]
+    )
+    pipeline = [
+        {
+            "$group": {
+                "_id": "$item",
+                "total_quantity": {"$sum": "$quantity"},
+                "avg_price": {"$avg": "$price"},
+                "min_price": {"$min": "$price"},
+                "max_price": {"$max": "$price"},
+                "prices": {"$push": "$price"},
+            }
+        },
+        {"$sort": {"_id": 1}},
+    ]
+    result = collection.aggregate(pipeline)
+    assert len(result) == 2
+    assert result[0] == {
+        "_id": "A",
+        "total_quantity": 7,
+        "avg_price": 20.0,
+        "min_price": 10,
+        "max_price": 30,
+        "prices": [10, 30],
+    }
+    assert result[1] == {
+        "_id": "B",
+        "total_quantity": 3,
+        "avg_price": 15.0,
+        "min_price": 10,
+        "max_price": 20,
+        "prices": [20, 10],
+    }
