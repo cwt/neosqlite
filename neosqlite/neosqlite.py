@@ -307,6 +307,85 @@ class Collection:
         update_spec: Dict[str, Any],
         original_doc: Dict[str, Any],
     ):
+        # Try to use SQL-based updates for simple operations
+        # Check if we can handle all operations with SQL
+        sql_updates = []
+        sql_params = []
+
+        # Only handle operations that can be done purely with SQL
+        supported_ops = {"$set", "$unset", "$inc", "$mul", "$min", "$max"}
+        if all(op in supported_ops for op in update_spec.keys()):
+            # Build SQL update clause
+            set_clauses = []
+            params = []
+
+            for op, value in update_spec.items():
+                if op == "$set":
+                    for field, field_val in value.items():
+                        set_clauses.append(f"'$.{field}', ?")
+                        params.append(field_val)
+                elif op == "$inc":
+                    for field, field_val in value.items():
+                        path = f"'$.{field}'"
+                        set_clauses.append(
+                            f"{path}, json_extract(data, {path}) + ?"
+                        )
+                        params.append(field_val)
+                elif op == "$mul":
+                    for field, field_val in value.items():
+                        path = f"'$.{field}'"
+                        set_clauses.append(
+                            f"{path}, json_extract(data, {path}) * ?"
+                        )
+                        params.append(field_val)
+                elif op == "$min":
+                    for field, field_val in value.items():
+                        path = f"'$.{field}'"
+                        set_clauses.append(
+                            f"{path}, min(json_extract(data, {path}), ?)"
+                        )
+                        params.append(field_val)
+                elif op == "$max":
+                    for field, field_val in value.items():
+                        path = f"'$.{field}'"
+                        set_clauses.append(
+                            f"{path}, max(json_extract(data, {path}), ?)"
+                        )
+                        params.append(field_val)
+                elif op == "$unset":
+                    # For $unset, we use json_remove
+                    for field in value:
+                        path = f"'$.{field}'"
+                        set_clauses.append(path)
+                    # json_remove has a different syntax
+                    if set_clauses:
+                        sql_updates.append(
+                            f"data = json_remove(data, {', '.join(set_clauses)})"
+                        )
+                        sql_params.extend(params)
+                        set_clauses = []
+                        params = []
+
+            if set_clauses:
+                sql_updates.append(
+                    f"data = json_set(data, {', '.join(set_clauses)})"
+                )
+                sql_params.extend(params)
+
+            if sql_updates:
+                # Execute the SQL update
+                cmd = f"UPDATE {self.name} SET {', '.join(sql_updates)} WHERE id = ?"
+                sql_params.append(doc_id)
+                self.db.execute(cmd, sql_params)
+
+                # Fetch and return the updated document
+                row = self.db.execute(
+                    f"SELECT data FROM {self.name} WHERE id = ?", (doc_id,)
+                ).fetchone()
+                if row:
+                    return self._load(doc_id, row[0])
+
+        # Fall back to Python-based updates for complex operations
         doc_to_update = deepcopy(original_doc)
 
         for op, value in update_spec.items():
@@ -715,6 +794,11 @@ class Collection:
                     offset = f"OFFSET {count}"
                 case {"$limit": count}:
                     limit = f"LIMIT {count}"
+                case {"$group": group_spec}:
+                    # Handle $group stage in Python for now
+                    # This is complex to do in SQL and would require significant changes
+                    # to the result processing pipeline
+                    return None
                 case _:
                     return None  # Fallback for unsupported stages
 
