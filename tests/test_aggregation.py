@@ -100,3 +100,23 @@ def test_aggregate_unwind(collection):
     assert len(result) == 3
     assert {doc["sizes"] for doc in result} == {"S", "M", "L"}
     assert all(doc["item"] == "A" for doc in result)
+
+
+def test_aggregate_fast_path(collection):
+    collection.insert_many(
+        [
+            {"a": 1, "b": 10},
+            {"a": 2, "b": 20},
+            {"a": 3, "b": 30},
+            {"a": 4, "b": 40},
+        ]
+    )
+    pipeline = [
+        {"$match": {"a": {"$gt": 1}}},
+        {"$sort": {"b": neosqlite.DESCENDING}},
+        {"$skip": 1},
+        {"$limit": 1},
+    ]
+    result = collection.aggregate(pipeline)
+    assert len(result) == 1
+    assert result[0]["a"] == 3

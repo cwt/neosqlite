@@ -568,6 +568,13 @@ class Collection:
         return doc
 
     def aggregate(self, pipeline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        query_result = self._build_aggregation_query(pipeline)
+        if query_result is not None:
+            cmd, params = query_result
+            db_cursor = self.db.execute(cmd, params)
+            return [self._load(row[0], row[1]) for row in db_cursor.fetchall()]
+
+        # Fallback to old method for complex queries
         docs: List[Dict[str, Any]] = list(self.find())
         for stage in pipeline:
             match stage:
@@ -610,6 +617,39 @@ class Collection:
                         f"Aggregation stage '{stage_name}' not supported"
                     )
         return docs
+
+    def _build_aggregation_query(
+        self, pipeline: List[Dict[str, Any]]
+    ) -> tuple[str, List[Any]] | None:
+        where_clause = ""
+        params: List[Any] = []
+        order_by = ""
+        limit = ""
+        offset = ""
+
+        for stage in pipeline:
+            match stage:
+                case {"$match": query}:
+                    where_result = self._build_simple_where_clause(query)
+                    if where_result is None:
+                        return None  # Fallback for complex queries
+                    where_clause, params = where_result
+                case {"$sort": sort_spec}:
+                    sort_clauses = []
+                    for key, direction in sort_spec.items():
+                        sort_clauses.append(
+                            f"json_extract(data, '$.{key}') {'DESC' if direction == DESCENDING else 'ASC'}"
+                        )
+                    order_by = "ORDER BY " + ", ".join(sort_clauses)
+                case {"$skip": count}:
+                    offset = f"OFFSET {count}"
+                case {"$limit": count}:
+                    limit = f"LIMIT {count}"
+                case _:
+                    return None  # Fallback for unsupported stages
+
+        cmd = f"SELECT id, data FROM {self.name} {where_clause} {order_by} {limit} {offset}"
+        return cmd, params
 
     def _process_group_stage(
         self, group_query: Dict[str, Any], docs: List[Dict[str, Any]]
