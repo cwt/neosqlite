@@ -21,6 +21,7 @@
 
 ### Indexing
 - [x] create_index()
+- [x] create_indexes()
 - [x] list_indexes()
 - [x] drop_index()
 - [x] drop_indexes()
@@ -39,9 +40,6 @@
 - [x] database property
 
 ## Missing High-Priority APIs
-
-### Enhanced Index Operations
-- [ ] create_indexes()
 
 ### Enhanced Bulk Operations
 - [ ] initialize_unordered_bulk_op()
@@ -71,4 +69,4 @@
 2. **Medium Priority** - Important for enhanced capabilities
 3. **Low Priority** - Specialized features that can be added later
 
-This comparison shows that our library has a solid foundation with most core CRUD operations implemented, and we've now added all the high-priority missing APIs: `rename()`, `options()`, `index_information()`, and `database property`. We're making excellent progress toward better PyMongo compatibility.
+This comparison shows that our library has a solid foundation with most core CRUD operations implemented, and we've now added all the high-priority missing APIs: `rename()`, `options()`, `index_information()`, `database property`, and `create_indexes()`. We're making excellent progress toward better PyMongo compatibility.

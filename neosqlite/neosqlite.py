@@ -1149,6 +1149,54 @@ class Collection:
                 """
             )
 
+    def create_indexes(
+        self,
+        indexes: List[Dict[str, Any]],
+        reindex: bool = True,
+    ) -> List[str]:
+        """
+        Create multiple indexes at once.
+
+        Args:
+            indexes: A list of index specifications. Each specification can be:
+                     - A string for a single key index
+                     - A list of strings for a compound index
+                     - A dict with 'key' (string or list) and optional 'unique' (bool)
+            reindex: Whether to reindex (kept for API compatibility)
+
+        Returns:
+            A list of index names that were created
+        """
+        created_indexes = []
+
+        for index_spec in indexes:
+            # Handle different index specification formats
+            if isinstance(index_spec, str):
+                # Simple string key
+                self.create_index(index_spec)
+                index_name = index_spec.replace(".", "_")
+                created_indexes.append(f"idx_{self.name}_{index_name}")
+            elif isinstance(index_spec, list):
+                # List of keys for compound index
+                self.create_index(index_spec)
+                index_name = "_".join(index_spec).replace(".", "_")
+                created_indexes.append(f"idx_{self.name}_{index_name}")
+            elif isinstance(index_spec, dict):
+                # Dictionary with key and options
+                key = index_spec.get("key")
+                unique = index_spec.get("unique", False)
+                sparse = index_spec.get("sparse", False)
+
+                if key is not None:
+                    self.create_index(key, unique=unique, sparse=sparse)
+                    if isinstance(key, str):
+                        index_name = key.replace(".", "_")
+                    else:
+                        index_name = "_".join(key).replace(".", "_")
+                    created_indexes.append(f"idx_{self.name}_{index_name}")
+
+        return created_indexes
+
     def reindex(
         self,
         table: str,

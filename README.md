@@ -96,6 +96,13 @@ users.create_index([('name', neosqlite.ASCENDING), ('age', neosqlite.DESCENDING)
 # Create an index on a nested key
 users.insert_one({'name': 'David', 'profile': {'followers': 100}})
 users.create_index('profile.followers')
+
+# Create multiple indexes at once
+users.create_indexes([
+    'age',
+    [('name', neosqlite.ASCENDING), ('age', neosqlite.DESCENDING)],
+    'profile.followers'
+])
 ```
 
 Indexes are automatically used by `find()` operations where possible. You can also provide a `hint` to force the use of a specific index.
