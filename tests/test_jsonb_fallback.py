@@ -17,7 +17,7 @@ def test_import_with_pysqlite3():
 
     # This test would pass in an environment where pysqlite3 is available
     # which is our current test environment
-    import neosqlite.neosqlite as neosqlite_module
+    import neosqlite.collection as neosqlite_module
 
     # In our current environment, pysqlite3 should be available
     try:

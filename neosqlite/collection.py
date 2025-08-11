@@ -1,16 +1,8 @@
 from copy import deepcopy
-from functools import partial
-from itertools import starmap
-from typing import Any, Dict, List, Iterator, Iterable, overload
-from typing_extensions import Literal
-from contextlib import contextmanager
 import json
-import re
-import sys
-import time
+from typing import Any, Dict, List, overload
+from typing_extensions import Literal
 
-# Try to use pysqlite3 for enhanced SQLite features (including JSONB)
-# Fall back to standard sqlite3 if not available
 try:
     import pysqlite3.dbapi2 as sqlite3
 except ImportError:
@@ -18,263 +10,18 @@ except ImportError:
 
 from .bulk_operations import BulkOperationExecutor
 from .raw_batch_cursor import RawBatchCursor
-
-ASCENDING = 1
-DESCENDING = -1
-
-
-class MalformedQueryException(Exception):
-    pass
-
-
-class MalformedDocument(Exception):
-    pass
-
-
-class InsertOneResult:
-    def __init__(self, inserted_id: int):
-        self._inserted_id = inserted_id
-
-    @property
-    def inserted_id(self) -> int:
-        return self._inserted_id
-
-
-class InsertManyResult:
-    def __init__(self, inserted_ids: List[int]):
-        self._inserted_ids = inserted_ids
-
-    @property
-    def inserted_ids(self) -> List[int]:
-        return self._inserted_ids
-
-
-class UpdateResult:
-    def __init__(
-        self,
-        matched_count: int,
-        modified_count: int,
-        upserted_id: int | None,
-    ):
-        self._matched_count = matched_count
-        self._modified_count = modified_count
-        self._upserted_id = upserted_id
-
-    @property
-    def matched_count(self) -> int:
-        return self._matched_count
-
-    @property
-    def modified_count(self) -> int:
-        return self._modified_count
-
-    @property
-    def upserted_id(self) -> int | None:
-        return self._upserted_id
-
-
-class DeleteResult:
-    def __init__(self, deleted_count: int):
-        self._deleted_count = deleted_count
-
-    @property
-    def deleted_count(self) -> int:
-        return self._deleted_count
-
-
-class BulkWriteResult:
-    def __init__(
-        self,
-        inserted_count: int,
-        matched_count: int,
-        modified_count: int,
-        deleted_count: int,
-        upserted_count: int,
-    ):
-        self.inserted_count = inserted_count
-        self.matched_count = matched_count
-        self.modified_count = modified_count
-        self.deleted_count = deleted_count
-        self.upserted_count = upserted_count
-
-
-class InsertOne:
-    def __init__(self, document: Dict[str, Any]):
-        self.document = document
-
-
-class UpdateOne:
-    def __init__(
-        self,
-        filter: Dict[str, Any],
-        update: Dict[str, Any],
-        upsert: bool = False,
-    ):
-        self.filter = filter
-        self.update = update
-        self.upsert = upsert
-
-
-class DeleteOne:
-    def __init__(self, filter: Dict[str, Any]):
-        self.filter = filter
-
-
-class Cursor:
-    def __init__(
-        self,
-        collection: "Collection",
-        filter: Dict[str, Any] | None = None,
-        projection: Dict[str, Any] | None = None,
-        hint: str | None = None,
-    ):
-        self._collection = collection
-        self._filter = filter or {}
-        self._projection = projection or {}
-        self._hint = hint
-        self._skip = 0
-        self._limit: int | None = None
-        self._sort: Dict[str, int] | None = None
-
-    def __iter__(self) -> Iterator[Dict[str, Any]]:
-        return self._execute_query()
-
-    def limit(self, limit: int) -> "Cursor":
-        self._limit = limit
-        return self
-
-    def skip(self, skip: int) -> "Cursor":
-        self._skip = skip
-        return self
-
-    def sort(
-        self,
-        key_or_list: str | List[tuple],
-        direction: int | None = None,
-    ) -> "Cursor":
-        if isinstance(key_or_list, str):
-            self._sort = {key_or_list: direction or ASCENDING}
-        else:
-            self._sort = dict(key_or_list)
-        return self
-
-    def _execute_query(self) -> Iterator[Dict[str, Any]]:
-        # Get the documents based on filter
-        docs = self._get_filtered_documents()
-
-        # Apply sorting if specified
-        docs = self._apply_sorting(docs)
-
-        # Apply skip and limit
-        docs = self._apply_pagination(docs)
-
-        # Apply projection
-        docs = self._apply_projection(docs)
-
-        # Yield results
-        yield from docs
-
-    def _get_filtered_documents(self) -> Iterable[Dict[str, Any]]:
-        """Get documents based on the filter criteria."""
-        where_result = self._collection._build_simple_where_clause(self._filter)
-
-        if where_result is not None:
-            # Use SQL-based filtering
-            where_clause, params = where_result
-            cmd = f"SELECT id, data FROM {self._collection.name} {where_clause}"
-            db_cursor = self._collection.db.execute(cmd, params)
-            return starmap(self._collection._load, db_cursor.fetchall())
-        else:
-            # Fallback to Python-based filtering for complex queries
-            cmd = f"SELECT id, data FROM {self._collection.name}"
-            db_cursor = self._collection.db.execute(cmd)
-            apply = partial(self._collection._apply_query, self._filter)
-            all_docs = starmap(self._collection._load, db_cursor.fetchall())
-            return filter(apply, all_docs)
-
-    def _apply_sorting(
-        self, docs: Iterable[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """Apply sorting to the documents."""
-        if not self._sort:
-            return list(docs)
-
-        sort_keys = list(self._sort.keys())
-        sort_keys.reverse()
-        sorted_docs = list(docs)
-        for key in sort_keys:
-            get_val = partial(self._collection._get_val, key=key)
-            reverse = self._sort[key] == DESCENDING
-            sorted_docs.sort(key=get_val, reverse=reverse)
-        return sorted_docs
-
-    def _apply_pagination(
-        self, docs: Iterable[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """Apply skip and limit to the documents."""
-        doc_list = list(docs)
-        skipped_docs = doc_list[self._skip :]
-
-        if self._limit is not None:
-            return skipped_docs[: self._limit]
-        return skipped_docs
-
-    def _apply_projection(
-        self, docs: Iterable[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """Apply projection to the documents."""
-        project = partial(self._collection._apply_projection, self._projection)
-        return list(map(project, docs))
-
-
-class Connection:
-    def __init__(self, *args: Any, **kwargs: Any):
-        self._collections: Dict[str, "Collection"] = {}
-        self.connect(*args, **kwargs)
-
-    def connect(self, *args: Any, **kwargs: Any):
-        self.db = sqlite3.connect(*args, **kwargs)
-        self.db.isolation_level = None
-        self.db.execute("PRAGMA journal_mode=WAL")
-
-    def close(self):
-        if self.db is not None:
-            if self.db.in_transaction:
-                self.db.commit()
-            self.db.close()
-
-    def __getitem__(self, name: str) -> "Collection":
-        if name not in self._collections:
-            self._collections[name] = Collection(self.db, name, database=self)
-        return self._collections[name]
-
-    def __getattr__(self, name: str) -> Any:
-        if name in self.__dict__:
-            return self.__dict__[name]
-        return self[name]
-
-    def __enter__(self) -> "Connection":
-        return self
-
-    def __exit__(
-        self, exc_type: Any, exc_val: Any, exc_traceback: Any
-    ) -> Literal[False]:
-        self.close()
-        return False
-
-    def drop_collection(self, name: str):
-        self.db.execute(f"DROP TABLE IF EXISTS {name}")
-
-    @contextmanager
-    def transaction(self) -> Iterator[None]:
-        """A context manager for database transactions."""
-        try:
-            self.db.execute("BEGIN")
-            yield
-            self.db.commit()
-        except Exception:
-            self.db.rollback()
-            raise
+from .results import (
+    InsertOneResult,
+    InsertManyResult,
+    UpdateResult,
+    DeleteResult,
+    BulkWriteResult,
+)
+from .requests import InsertOne, UpdateOne, DeleteOne
+from .exceptions import MalformedQueryException, MalformedDocument
+from .cursor import Cursor, DESCENDING
+from .changestream import ChangeStream
+from . import query_operators
 
 
 class Collection:
@@ -375,7 +122,9 @@ class Collection:
             )
 
     def _can_use_sql_updates(
-        self, update_spec: Dict[str, Any], doc_id: int
+        self,
+        update_spec: Dict[str, Any],
+        doc_id: int,
     ) -> bool:
         """Check if all operations in the update spec can be handled with SQL."""
         # Only handle operations that can be done purely with SQL
@@ -386,7 +135,9 @@ class Collection:
         )
 
     def _perform_sql_update(
-        self, doc_id: int, update_spec: Dict[str, Any]
+        self,
+        doc_id: int,
+        update_spec: Dict[str, Any],
     ) -> Dict[str, Any]:
         """Perform update operations using SQL JSON functions."""
         set_clauses = []
@@ -437,7 +188,9 @@ class Collection:
         raise RuntimeError("Failed to fetch updated document")
 
     def _build_sql_update_clause(
-        self, op: str, value: Any
+        self,
+        op: str,
+        value: Any,
     ) -> tuple[List[str], List[Any]]:
         """Build SQL update clause for a single operation."""
         clauses = []
@@ -585,7 +338,9 @@ class Collection:
         return UpdateResult(matched_count=0, modified_count=0, upserted_id=None)
 
     def update_many(
-        self, filter: Dict[str, Any], update: Dict[str, Any]
+        self,
+        filter: Dict[str, Any],
+        update: Dict[str, Any],
     ) -> UpdateResult:
         where_result = self._build_simple_where_clause(filter)
         update_result = self._build_update_clause(update)
@@ -614,7 +369,8 @@ class Collection:
         )
 
     def _build_update_clause(
-        self, update: Dict[str, Any]
+        self,
+        update: Dict[str, Any],
     ) -> tuple[str, List[Any]] | None:
         set_clauses = []
         params = []
@@ -705,7 +461,9 @@ class Collection:
         return UpdateResult(matched_count=0, modified_count=0, upserted_id=None)
 
     def bulk_write(
-        self, requests: List[Any], ordered: bool = True
+        self,
+        requests: List[Any],
+        ordered: bool = True,
     ) -> BulkWriteResult:
         inserted_count = 0
         matched_count = 0
@@ -853,7 +611,8 @@ class Collection:
         return row[0] if row else 0
 
     def find_one_and_delete(
-        self, filter: Dict[str, Any]
+        self,
+        filter: Dict[str, Any],
     ) -> Dict[str, Any] | None:
         doc = self.find_one(filter)
         if doc:
@@ -861,7 +620,9 @@ class Collection:
         return doc
 
     def find_one_and_replace(
-        self, filter: Dict[str, Any], replacement: Dict[str, Any]
+        self,
+        filter: Dict[str, Any],
+        replacement: Dict[str, Any],
     ) -> Dict[str, Any] | None:
         doc = self.find_one(filter)
         if doc:
@@ -869,7 +630,9 @@ class Collection:
         return doc
 
     def find_one_and_update(
-        self, filter: Dict[str, Any], update: Dict[str, Any]
+        self,
+        filter: Dict[str, Any],
+        update: Dict[str, Any],
     ) -> Dict[str, Any] | None:
         doc = self.find_one(filter)
         if doc:
@@ -928,7 +691,8 @@ class Collection:
         return docs
 
     def _build_aggregation_query(
-        self, pipeline: List[Dict[str, Any]]
+        self,
+        pipeline: List[Dict[str, Any]],
     ) -> tuple[str, List[Any]] | None:
         where_clause = ""
         params: List[Any] = []
@@ -966,7 +730,9 @@ class Collection:
         return cmd, params
 
     def _process_group_stage(
-        self, group_query: Dict[str, Any], docs: List[Dict[str, Any]]
+        self,
+        group_query: Dict[str, Any],
+        docs: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
         grouped_docs: Dict[Any, Dict[str, Any]] = {}
         group_id_key = group_query.pop("_id")
@@ -1006,7 +772,9 @@ class Collection:
         return list(grouped_docs.values())
 
     def _apply_projection(
-        self, projection: Dict[str, Any], document: Dict[str, Any]
+        self,
+        projection: Dict[str, Any],
+        document: Dict[str, Any],
     ) -> Dict[str, Any]:
         if not projection:
             return document
@@ -1033,7 +801,8 @@ class Collection:
         return doc
 
     def _build_simple_where_clause(
-        self, query: Dict[str, Any]
+        self,
+        query: Dict[str, Any],
     ) -> tuple[str, List[Any]] | None:
         """Build a SQL WHERE clause for simple queries that can be handled with json_extract."""
         clauses = []
@@ -1072,7 +841,9 @@ class Collection:
         return "WHERE " + " AND ".join(clauses), params
 
     def _build_operator_clause(
-        self, json_path: str, operators: Dict[str, Any]
+        self,
+        json_path: str,
+        operators: Dict[str, Any],
     ) -> tuple[str | None, List[Any]]:
         """Build a SQL clause for query operators."""
         for op, op_val in operators.items():
@@ -1109,7 +880,9 @@ class Collection:
         return None, []
 
     def _apply_query(
-        self, query: Dict[str, Any], document: Dict[str, Any]
+        self,
+        query: Dict[str, Any],
+        document: Dict[str, Any],
     ) -> bool:
         if document is None:
             return False
@@ -1155,7 +928,7 @@ class Collection:
                 f"Operator '{op}' is not a valid query operation"
             )
         try:
-            return getattr(sys.modules[__name__], op.replace("$", "_"))
+            return getattr(query_operators, op.replace("$", "_"))
         except AttributeError:
             raise MalformedQueryException(
                 f"Operator '{op}' is not currently implemented"
@@ -1331,7 +1104,8 @@ class Collection:
     @overload
     def list_indexes(self, as_keys: Literal[False] = False) -> List[str]: ...
     def list_indexes(
-        self, as_keys: bool = False
+        self,
+        as_keys: bool = False,
     ) -> List[str] | List[List[str]]:
         # Get indexes that match our naming convention
         cmd = (
@@ -1380,7 +1154,7 @@ class Collection:
         Rename this collection.
 
         :param new_name: The new name for this collection.
-        :raises sqlite3.Error: If the rename operation fails.
+        :raises sqlite3.Error: If the rename operation fails
         """
         # If the new name is the same as the current name, do nothing
         if new_name == self.name:
@@ -1488,18 +1262,15 @@ class Collection:
                     import re
 
                     json_extract_matches = re.findall(
-                        r"json_extract\(data, '(\$.+?)'\)", idx_sql
+                        r"json_extract\(data, '(\$..*?)'\)", idx_sql
                     )
                     if json_extract_matches:
                         # Convert SQLite JSON paths back to dot notation
                         keys = []
                         for path in json_extract_matches:
-                            # Remove $ and leading dot, then convert _ back to .
-                            if path.startswith("$"):
-                                path = path[1:]  # Remove $
-                            if path.startswith("."):
-                                path = path[1:]  # Remove leading dot
-                            path = path.replace("_", ".")
+                            # Remove $ and leading dot
+                            if path.startswith("$."):
+                                path = path[2:]
                             keys.append(path)
 
                         if len(keys) == 1:
@@ -1581,329 +1352,3 @@ class Collection:
             session=session,
             start_after=start_after,
         )
-
-
-class ChangeStream:
-    """
-    A change stream that watches for changes on a collection.
-
-    This implementation uses SQLite's built-in features to monitor changes.
-    It provides an iterator interface to receive change events.
-    """
-
-    def __init__(
-        self,
-        collection: "Collection",
-        pipeline: List[Dict[str, Any]] | None = None,
-        full_document: str | None = None,
-        resume_after: Dict[str, Any] | None = None,
-        max_await_time_ms: int | None = None,
-        batch_size: int | None = None,
-        collation: Dict[str, Any] | None = None,
-        start_at_operation_time: Any | None = None,
-        session: Any | None = None,
-        start_after: Dict[str, Any] | None = None,
-    ):
-        self._collection = collection
-        self._pipeline = pipeline or []
-        self._full_document = full_document
-        self._resume_after = resume_after
-        self._max_await_time_ms = max_await_time_ms
-        self._batch_size = batch_size or 1
-        self._collation = collation
-        self._start_at_operation_time = start_at_operation_time
-        self._session = session
-        self._start_after = start_after
-
-        # For SQLite-based implementation, we'll use a simple polling approach
-        # In a more advanced implementation, we could use SQLite's update hooks
-        self._closed = False
-        self._last_id = 0
-
-        # Set up triggers to capture changes
-        self._setup_triggers()
-
-    def _setup_triggers(self):
-        """Set up SQLite triggers to capture changes to the collection."""
-        # Create a table to store change events if it doesn't exist
-        self._collection.db.execute(
-            """
-            CREATE TABLE IF NOT EXISTS _neosqlite_changestream (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                collection_name TEXT NOT NULL,
-                operation TEXT NOT NULL,
-                document_id INTEGER,
-                document_data TEXT,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        """
-        )
-
-        # Create triggers for INSERT, UPDATE, DELETE operations
-        # Insert trigger
-        self._collection.db.execute(
-            f"""
-            CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._collection.name}_insert_trigger
-            AFTER INSERT ON {self._collection.name}
-            BEGIN
-                INSERT INTO _neosqlite_changestream 
-                (collection_name, operation, document_id, document_data)
-                VALUES ('{self._collection.name}', 'insert', NEW.id, NEW.data);
-            END
-        """
-        )
-
-        # Update trigger
-        self._collection.db.execute(
-            f"""
-            CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._collection.name}_update_trigger
-            AFTER UPDATE ON {self._collection.name}
-            BEGIN
-                INSERT INTO _neosqlite_changestream 
-                (collection_name, operation, document_id, document_data)
-                VALUES ('{self._collection.name}', 'update', NEW.id, NEW.data);
-            END
-        """
-        )
-
-        # Delete trigger
-        self._collection.db.execute(
-            f"""
-            CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._collection.name}_delete_trigger
-            AFTER DELETE ON {self._collection.name}
-            BEGIN
-                INSERT INTO _neosqlite_changestream 
-                (collection_name, operation, document_id, document_data)
-                VALUES ('{self._collection.name}', 'delete', OLD.id, OLD.data);
-            END
-        """
-        )
-
-        # Commit the changes
-        self._collection.db.commit()
-
-    def _cleanup_triggers(self):
-        """Clean up the triggers when the change stream is closed."""
-        if self._closed:
-            return
-
-        try:
-            # Drop the triggers
-            self._collection.db.execute(
-                f"DROP TRIGGER IF EXISTS _neosqlite_{self._collection.name}_insert_trigger"
-            )
-            self._collection.db.execute(
-                f"DROP TRIGGER IF EXISTS _neosqlite_{self._collection.name}_update_trigger"
-            )
-            self._collection.db.execute(
-                f"DROP TRIGGER IF EXISTS _neosqlite_{self._collection.name}_delete_trigger"
-            )
-
-            # Note: We don't drop the _neosqlite_changestream table as it might be used by other change streams
-            self._collection.db.commit()
-        except Exception:
-            # Ignore errors during cleanup
-            pass
-
-    def __iter__(self) -> "ChangeStream":
-        return self
-
-    def __next__(self) -> Dict[str, Any]:
-        if self._closed:
-            raise StopIteration("Change stream is closed")
-
-        # Record the start time for timeout checking
-        start_time = time.time()
-        timeout = (
-            self._max_await_time_ms or 10000
-        ) / 1000.0  # Convert to seconds
-
-        # Poll for changes
-        while True:
-            # Check if we've exceeded the timeout
-            if time.time() - start_time > timeout:
-                raise StopIteration("Change stream timeout exceeded")
-
-            # Query for new changes
-            cursor = self._collection.db.execute(
-                """
-                SELECT id, operation, document_id, document_data, timestamp
-                FROM _neosqlite_changestream
-                WHERE collection_name = ? AND id > ?
-                ORDER BY id
-                LIMIT ?
-                """,
-                (self._collection.name, self._last_id, self._batch_size),
-            )
-
-            rows = cursor.fetchall()
-
-            if rows:
-                # Process the first change
-                row = rows[0]
-                change_id, operation, document_id, document_data, timestamp = (
-                    row
-                )
-
-                # Update the last processed ID
-                self._last_id = change_id
-
-                # Create the change document
-                change_doc = {
-                    "_id": {"id": change_id},
-                    "operationType": operation,
-                    "clusterTime": timestamp,
-                    "ns": {
-                        "db": "default",  # Default database name since Connection doesn't have a name property
-                        "coll": self._collection.name,
-                    },
-                    "documentKey": {"_id": document_id},
-                }
-
-                # Add full document if requested
-                if self._full_document == "updateLookup" and document_data:
-                    try:
-                        doc = json.loads(document_data)
-                        doc["_id"] = document_id
-                        change_doc["fullDocument"] = doc
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-
-                return change_doc
-
-            # If no changes, sleep briefly before polling again
-            time.sleep(0.1)
-
-    def close(self) -> None:
-        """Close the change stream and clean up resources."""
-        if not self._closed:
-            self._closed = True
-            self._cleanup_triggers()
-
-    def __enter__(self) -> "ChangeStream":
-        return self
-
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_traceback: Any) -> None:
-        self.close()
-
-
-# Query operators
-def _eq(field: str, value: Any, document: Dict[str, Any]) -> bool:
-    try:
-        return document.get(field, None) == value
-    except (TypeError, AttributeError):
-        return False
-
-
-def _gt(field: str, value: Any, document: Dict[str, Any]) -> bool:
-    try:
-        return document.get(field, None) > value
-    except TypeError:
-        return False
-
-
-def _lt(field: str, value: Any, document: Dict[str, Any]) -> bool:
-    try:
-        return document.get(field, None) < value
-    except TypeError:
-        return False
-
-
-def _gte(field: str, value: Any, document: Dict[str, Any]) -> bool:
-    try:
-        return document.get(field, None) >= value
-    except TypeError:
-        return False
-
-
-def _lte(field: str, value: Any, document: Dict[str, Any]) -> bool:
-    try:
-        return document.get(field, None) <= value
-    except TypeError:
-        return False
-
-
-def _all(field: str, value: List[Any], document: Dict[str, Any]) -> bool:
-    try:
-        a = set(value)
-    except TypeError:
-        raise MalformedQueryException("'$all' must accept an iterable")
-    try:
-        b = set(document.get(field, []))
-    except TypeError:
-        return False
-    else:
-        return a.issubset(b)
-
-
-def _in(field: str, value: List[Any], document: Dict[str, Any]) -> bool:
-    try:
-        values = iter(value)
-    except TypeError:
-        raise MalformedQueryException("'$in' must accept an iterable")
-    return document.get(field, None) in values
-
-
-def _ne(field: str, value: Any, document: Dict[str, Any]) -> bool:
-    return document.get(field, None) != value
-
-
-def _nin(field: str, value: List[Any], document: Dict[str, Any]) -> bool:
-    try:
-        values = iter(value)
-    except TypeError:
-        raise MalformedQueryException("'$nin' must accept an iterable")
-    return document.get(field, None) not in values
-
-
-def _mod(field: str, value: List[int], document: Dict[str, Any]) -> bool:
-    try:
-        divisor, remainder = list(map(int, value))
-    except (TypeError, ValueError):
-        raise MalformedQueryException(
-            "'$mod' must accept an iterable: [divisor, remainder]"
-        )
-    try:
-        val = document.get(field, None)
-        if val is None:
-            return False
-        return int(val) % divisor == remainder
-    except (TypeError, ValueError):
-        return False
-
-
-def _exists(field: str, value: bool, document: Dict[str, Any]) -> bool:
-    if value not in (True, False):
-        raise MalformedQueryException("'$exists' must be supplied a boolean")
-    if value:
-        return field in document
-    else:
-        return field not in document
-
-
-def _regex(field: str, value: str, document: Dict[str, Any]) -> bool:
-    try:
-        return re.search(value, document.get(field, "")) is not None
-    except (TypeError, re.error):
-        return False
-
-
-def _elemMatch(
-    field: str, value: Dict[str, Any], document: Dict[str, Any]
-) -> bool:
-    field_val = document.get(field)
-    if not isinstance(field_val, list):
-        return False
-    for elem in field_val:
-        if isinstance(elem, dict) and all(
-            _eq(k, v, elem) for k, v in value.items()
-        ):
-            return True
-    return False
-
-
-def _size(field: str, value: int, document: Dict[str, Any]) -> bool:
-    field_val = document.get(field)
-    if not isinstance(field_val, list):
-        return False
-    return len(field_val) == value

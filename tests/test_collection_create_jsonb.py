@@ -9,6 +9,11 @@ from unittest.mock import MagicMock, patch
 
 import neosqlite
 
+try:
+    import pysqlite3.dbapi2 as sqlite3
+except ImportError:
+    import sqlite3
+
 
 def test_collection_create_with_jsonb_support():
     """Test that Collection.create() uses JSONB when supported."""
@@ -50,9 +55,7 @@ def test_collection_create_without_jsonb_support():
     def execute_side_effect(query, *args, **kwargs):
         if "jsonb(" in query.lower():
             # Fail - JSONB is not supported
-            raise neosqlite.neosqlite.sqlite3.OperationalError(
-                "JSONB not supported"
-            )
+            raise sqlite3.OperationalError("JSONB not supported")
         elif "CREATE TABLE" in query:
             # Capture the CREATE TABLE query
             mock_db.create_table_query = query

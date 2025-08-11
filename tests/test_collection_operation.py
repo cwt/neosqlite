@@ -1,6 +1,6 @@
 # coding: utf-8
 from pytest import raises
-from neosqlite.neosqlite import _eq, _gt, _lt, _lte, _in
+from neosqlite.query_operators import _eq, _gt, _lt, _lte, _in
 import neosqlite
 
 

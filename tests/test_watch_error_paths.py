@@ -150,7 +150,7 @@ def test_watch_json_type_error_handling(collection):
     change_stream = collection.watch(full_document="updateLookup")
 
     # Mock json.loads to raise TypeError
-    with patch("neosqlite.neosqlite.json.loads") as mock_loads:
+    with patch("neosqlite.changestream.json.loads") as mock_loads:
         mock_loads.side_effect = TypeError("Invalid type")
 
         # Manually insert valid JSON data

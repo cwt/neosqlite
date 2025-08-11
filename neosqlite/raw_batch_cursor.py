@@ -1,8 +1,8 @@
-from typing import Any, Dict, Iterator, List, Optional, Iterable, TYPE_CHECKING
+from typing import Any, Dict, Iterator, Optional, TYPE_CHECKING
 import json
 
 if TYPE_CHECKING:
-    from .neosqlite import Collection
+    from .collection import Collection
 
 
 class RawBatchCursor:

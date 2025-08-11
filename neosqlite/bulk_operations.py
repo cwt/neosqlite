@@ -1,11 +1,12 @@
 # coding: utf-8
-from typing import Dict, Any, List, Optional, TYPE_CHECKING
+from typing import Dict, Any, List, TYPE_CHECKING
 from dataclasses import dataclass
-from abc import ABC, abstractmethod
+from abc import ABC
 
 if TYPE_CHECKING:
     import neosqlite
-    from .neosqlite import BulkWriteResult
+
+from .results import BulkWriteResult
 
 
 @dataclass
@@ -131,20 +132,16 @@ class BulkOperationExecutor:
         """Create a context for find-based operations."""
         return BulkOperationContext(self._operations, filter)
 
-    def execute(self) -> "neosqlite.BulkWriteResult":
+    def execute(self) -> "BulkWriteResult":
         """Execute all bulk operations."""
-        # Import here to avoid circular import
-        import neosqlite
 
         if self._ordered:
             return self._execute_ordered()
         else:
             return self._execute_unordered()
 
-    def _execute_ordered(self) -> "neosqlite.BulkWriteResult":
+    def _execute_ordered(self) -> "BulkWriteResult":
         """Execute operations in order."""
-        # Import here to avoid circular import
-        import neosqlite
 
         inserted_count = 0
         matched_count = 0
@@ -184,7 +181,7 @@ class BulkOperationExecutor:
             self._collection.db.execute("ROLLBACK TO SAVEPOINT bulk_operations")
             raise e
 
-        return neosqlite.BulkWriteResult(
+        return BulkWriteResult(
             inserted_count=inserted_count,
             matched_count=matched_count,
             modified_count=modified_count,
@@ -192,10 +189,8 @@ class BulkOperationExecutor:
             upserted_count=upserted_count,
         )
 
-    def _execute_unordered(self) -> "neosqlite.BulkWriteResult":
+    def _execute_unordered(self) -> "BulkWriteResult":
         """Execute operations in any order (for now, we'll just execute them in order)."""
-        # Import here to avoid circular import
-        import neosqlite
 
         # For simplicity, we'll execute unordered operations the same as ordered
         # In a more advanced implementation, we might group operations by type

@@ -1,41 +1,25 @@
-# coding: utf-8
-"""neosqlite - A wrapper for sqlite3 to have schemaless, document-store features."""
-
-from .neosqlite import (
-    Connection,
-    Collection,
-    Cursor,
-    ChangeStream,
-    MalformedDocument,
-    MalformedQueryException,
+from .connection import Connection
+from .collection import Collection
+from .cursor import Cursor, ASCENDING, DESCENDING
+from .results import (
     InsertOneResult,
     InsertManyResult,
     UpdateResult,
     DeleteResult,
     BulkWriteResult,
-    InsertOne,
-    UpdateOne,
-    DeleteOne,
-    ASCENDING,
-    DESCENDING,
 )
-
-from .bulk_operations import (
-    BulkOperationExecutor,
-)
-
-from .raw_batch_cursor import (
-    RawBatchCursor,
-)
+from .requests import InsertOne, UpdateOne, DeleteOne
+from .exceptions import MalformedQueryException, MalformedDocument
+from .changestream import ChangeStream
+from .raw_batch_cursor import RawBatchCursor
+from .bulk_operations import BulkOperationExecutor
 
 __all__ = [
     "Connection",
     "Collection",
     "Cursor",
-    "ChangeStream",
-    "RawBatchCursor",
-    "MalformedDocument",
-    "MalformedQueryException",
+    "ASCENDING",
+    "DESCENDING",
     "InsertOneResult",
     "InsertManyResult",
     "UpdateResult",
@@ -44,7 +28,9 @@ __all__ = [
     "InsertOne",
     "UpdateOne",
     "DeleteOne",
-    "ASCENDING",
-    "DESCENDING",
+    "MalformedQueryException",
+    "MalformedDocument",
+    "ChangeStream",
+    "RawBatchCursor",
     "BulkOperationExecutor",
 ]
