@@ -1160,15 +1160,29 @@ class Collection:
                 f"Operator '{op}' is not currently implemented"
             )
 
-    def distinct(self, key: str) -> set:
-        cmd = f"SELECT DISTINCT json_extract(data, '$.{key}') FROM {self.name}"
-        cursor = self.db.execute(cmd)
-        results = set()
+    def distinct(self, key: str, filter: Dict[str, Any] | None = None) -> set:
+        params: List[Any] = []
+        where_clause = ""
+
+        if filter:
+            where_result = self._build_simple_where_clause(filter)
+            if where_result:
+                where_clause, params = where_result
+
+        cmd = f"SELECT DISTINCT json_extract(data, '$.{key}') FROM {self.name} {where_clause}"
+        cursor = self.db.execute(cmd, params)
+        results: set[Any] = set()
         for row in cursor.fetchall():
             if row[0] is None:
                 continue
             try:
-                results.add(json.loads(row[0]))
+                val = json.loads(row[0])
+                if isinstance(val, list):
+                    results.add(tuple(val))
+                elif isinstance(val, dict):
+                    results.add(json.dumps(val, sort_keys=True))
+                else:
+                    results.add(val)
             except (json.JSONDecodeError, TypeError):
                 results.add(row[0])
         return results

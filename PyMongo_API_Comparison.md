@@ -53,7 +53,7 @@
 
 ### Aggregation Enhancements
 - [ ] map_reduce()
-- [ ] distinct() with query filter
+- [x] distinct() with query filter
 
 ### Utility Methods
 - [ ] watch() (change streams)
