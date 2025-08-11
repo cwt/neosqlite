@@ -6,8 +6,14 @@ from typing_extensions import Literal
 from contextlib import contextmanager
 import json
 import re
-import sqlite3
 import sys
+
+# Try to use pysqlite3 for enhanced SQLite features (including JSONB)
+# Fall back to standard sqlite3 if not available
+try:
+    import pysqlite3.dbapi2 as sqlite3
+except ImportError:
+    import sqlite3
 
 ASCENDING = 1
 DESCENDING = -1
@@ -282,13 +288,24 @@ class Collection:
             self.create()
 
     def create(self):
-        self.db.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS {self.name} (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                data TEXT NOT NULL
-            )"""
-        )
+        try:
+            self.db.execute("""SELECT jsonb('{"key": "value"}')""")
+        except sqlite3.OperationalError:
+            self.db.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {self.name} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    data TEXT NOT NULL
+                )"""
+            )
+        else:
+            self.db.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {self.name} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    data JSONB NOT NULL
+                )"""
+            )
 
     def _load(self, id: int, data: str | bytes) -> Dict[str, Any]:
         if isinstance(data, bytes):

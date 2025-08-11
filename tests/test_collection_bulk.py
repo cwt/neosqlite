@@ -3,6 +3,18 @@ import sqlite3
 from pytest import raises
 import neosqlite
 from neosqlite import InsertOne, UpdateOne, DeleteOne
+from typing import Tuple, Type
+
+# Handle both standard sqlite3 and pysqlite3 exceptions
+try:
+    import pysqlite3.dbapi2 as sqlite3_with_jsonb  # type: ignore
+
+    IntegrityError: Tuple[Type[Exception], ...] = (
+        sqlite3.IntegrityError,
+        sqlite3_with_jsonb.IntegrityError,
+    )
+except ImportError:
+    IntegrityError = (sqlite3.IntegrityError,)
 
 
 def test_bulk_write(collection):
@@ -38,7 +50,7 @@ def test_bulk_write_rollback(collection):
         InsertOne({"a": 2}),
         InsertOne({"a": 1}),  # This will fail
     ]
-    with raises(sqlite3.IntegrityError):
+    with raises(IntegrityError):
         collection.bulk_write(requests)
     assert collection.count_documents({}) == 1
     assert collection.find_one({"a": 2}) is None

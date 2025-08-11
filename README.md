@@ -9,6 +9,27 @@
 - **Lazy Cursor**: `find()` returns a memory-efficient cursor for iterating over results.
 - **Advanced Indexing**: Supports single-key, compound-key, and nested-key indexes.
 - **Modern API**: Aligned with modern `pymongo` practices (using methods like `insert_one`, `update_one`, `delete_many`, etc.).
+- **Automatic JSON/JSONB Support**: Automatically detects and uses JSONB column type when available for better performance.
+
+## Installation
+
+```bash
+pip install neosqlite
+```
+
+For enhanced JSON/JSONB support on systems where the built-in SQLite doesn't support these features, you can install with the `jsonb` extra:
+
+```bash
+pip install neosqlite[jsonb]
+```
+
+This will install `pysqlite3-binary` which provides a newer version of SQLite with JSON/JSONB support compiled in.
+
+**Note**: `neosqlite` will work with any SQLite installation. The `jsonb` extra is only needed if:
+1. Your system's built-in SQLite doesn't support JSON functions, **and**
+2. You want to take advantage of JSONB column type for better performance with JSON operations
+
+If your system's SQLite already supports JSONB column type, `neosqlite` will automatically use them without needing the extra dependency.
 
 ## Quickstart
 
@@ -51,6 +72,15 @@ with neosqlite.Connection(':memory:') as conn:
     # Count remaining documents
     print(f"There are now {users.count_documents({})} users.")
 ```
+
+## JSON/JSONB Support
+
+`neosqlite` automatically detects JSON support in your SQLite installation:
+
+- **With JSON/JSONB support**: Uses JSONB column type for better performance with JSON operations
+- **Without JSON support**: Falls back to TEXT column type with JSON serialization
+
+The library will work correctly in all environments - the `jsonb` extra is completely optional and only needed for enhanced performance on systems where the built-in SQLite doesn't support JSONB column type.
 
 ## Indexes
 

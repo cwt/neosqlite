@@ -20,8 +20,10 @@ def test_options_empty_collection():
     assert any(
         col["name"] == "id" and col["type"] == "INTEGER" for col in columns
     )
+    # The data column type can be either TEXT (fallback) or JSONB (enhanced)
     assert any(
-        col["name"] == "data" and col["type"] == "TEXT" for col in columns
+        col["name"] == "data" and col["type"] in ("TEXT", "JSONB")
+        for col in columns
     )
 
     # Verify count

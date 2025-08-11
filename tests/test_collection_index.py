@@ -2,6 +2,18 @@
 import sqlite3
 from pytest import raises
 import neosqlite
+from typing import Tuple, Type
+
+# Handle both standard sqlite3 and pysqlite3 exceptions
+try:
+    import pysqlite3.dbapi2 as sqlite3_with_jsonb  # type: ignore
+
+    IntegrityError: Tuple[Type[Exception], ...] = (
+        sqlite3.IntegrityError,
+        sqlite3_with_jsonb.IntegrityError,
+    )
+except ImportError:
+    IntegrityError = (sqlite3.IntegrityError,)
 
 
 def test_create_index(collection):
@@ -44,7 +56,7 @@ def test_create_compound_index(collection):
 def test_create_unique_index_violation(collection):
     collection.create_index("foo", unique=True)
     collection.insert_one({"foo": "bar"})
-    with raises(sqlite3.IntegrityError):
+    with raises(IntegrityError):
         collection.insert_one({"foo": "bar"})
 
 
@@ -53,7 +65,7 @@ def test_update_to_break_uniqueness(collection):
     collection.insert_one({"foo": "bar"})
     res = collection.insert_one({"foo": "baz"})
 
-    with raises(sqlite3.IntegrityError):
+    with raises(IntegrityError):
         collection.update_one(
             {"_id": res.inserted_id}, {"$set": {"foo": "bar"}}
         )

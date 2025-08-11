@@ -18,6 +18,10 @@ classifiers = [
 
 [tool.poetry.dependencies]
 python = "^3.10"
+pysqlite3-binary = { version = "^0.5.4", optional = true }
+
+[tool.poetry.extras]
+jsonb = ["pysqlite3-binary"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.0"

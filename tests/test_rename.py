@@ -2,6 +2,18 @@
 import pytest
 import sqlite3
 import neosqlite
+from typing import Tuple, Type
+
+# Handle both standard sqlite3 and pysqlite3 exceptions
+try:
+    import pysqlite3.dbapi2 as sqlite3_with_jsonb  # type: ignore
+
+    Error: Tuple[Type[Exception], ...] = (
+        sqlite3.Error,
+        sqlite3_with_jsonb.Error,
+    )
+except ImportError:
+    Error = (sqlite3.Error,)
 
 
 def test_rename_collection():
@@ -46,7 +58,7 @@ def test_rename_collection_already_exists():
     collection2 = db["test2"]
 
     # Try to rename collection1 to collection2's name
-    with pytest.raises(sqlite3.Error, match="already exists"):
+    with pytest.raises(Error, match="already exists"):
         collection1.rename("test2")
 
 
