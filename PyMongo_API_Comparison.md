@@ -33,6 +33,7 @@
 - [x] estimated_document_count()
 - [x] distinct()
 - [x] bulk_write()
+- [x] find_raw_batches()
 
 ### Collection Management
 - [x] rename()
@@ -42,11 +43,6 @@
 ### Enhanced Bulk Operations
 - [x] initialize_unordered_bulk_op()
 - [x] initialize_ordered_bulk_op()
-
-## Missing High-Priority APIs
-
-### Additional Query Methods
-- [ ] find_raw_batches()
 
 ## Missing Medium-Priority APIs
 

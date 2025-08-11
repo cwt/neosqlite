@@ -7,6 +7,7 @@
 - **`pymongo`-like API**: A familiar interface for developers experienced with MongoDB.
 - **Schemaless Documents**: Store flexible JSON-like documents.
 - **Lazy Cursor**: `find()` returns a memory-efficient cursor for iterating over results.
+- **Raw Batch Support**: `find_raw_batches()` returns raw JSON data in batches for efficient processing.
 - **Advanced Indexing**: Supports single-key, compound-key, and nested-key indexes.
 - **Modern API**: Aligned with modern `pymongo` practices (using methods like `insert_one`, `update_one`, `delete_many`, etc.).
 - **Automatic JSON/JSONB Support**: Automatically detects and uses JSONB column type when available for better performance.
@@ -71,7 +72,15 @@ with neosqlite.Connection(':memory:') as conn:
 
     # Count remaining documents
     print(f"There are now {users.count_documents({})} users.")
-```
+
+    # Process documents in raw batches for efficient handling of large datasets
+    print("\nProcessing documents in batches:")
+    cursor = users.find_raw_batches(batch_size=2)
+    for i, batch in enumerate(cursor, 1):
+        # Each batch is raw bytes containing JSON documents separated by newlines
+        batch_str = batch.decode('utf-8')
+        doc_strings = [s for s in batch_str.split('\n') if s]
+        print(f"  Batch {i}: {len(doc_strings)} documents")
 
 ## JSON/JSONB Support
 

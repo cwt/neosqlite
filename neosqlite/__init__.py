@@ -23,10 +23,15 @@ from .bulk_operations import (
     BulkOperationExecutor,
 )
 
+from .raw_batch_cursor import (
+    RawBatchCursor,
+)
+
 __all__ = [
     "Connection",
     "Collection",
     "Cursor",
+    "RawBatchCursor",
     "MalformedDocument",
     "MalformedQueryException",
     "InsertOneResult",

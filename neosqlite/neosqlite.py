@@ -16,6 +16,7 @@ except ImportError:
     import sqlite3
 
 from .bulk_operations import BulkOperationExecutor
+from .raw_batch_cursor import RawBatchCursor
 
 ASCENDING = 1
 DESCENDING = -1
@@ -790,6 +791,41 @@ class Collection:
         hint: str | None = None,
     ) -> Cursor:
         return Cursor(self, filter, projection, hint)
+
+    def find_raw_batches(
+        self,
+        filter: Dict[str, Any] | None = None,
+        projection: Dict[str, Any] | None = None,
+        hint: str | None = None,
+        batch_size: int = 100,
+    ) -> RawBatchCursor:
+        """
+        Query the database and retrieve batches of raw JSON.
+        
+        Similar to the :meth:`find` method but returns a
+        :class:`~neosqlite.raw_batch_cursor.RawBatchCursor`.
+        
+        This method returns raw JSON batches which can be more efficient for
+        certain use cases where you want to process data in batches rather than
+        individual documents.
+        
+        Example usage:
+        
+          >>> import json
+          >>> cursor = collection.find_raw_batches()
+          >>> for batch in cursor:
+          ...     # Each batch is raw bytes containing JSON documents
+          ...     # separated by newlines
+          ...     documents = [json.loads(doc) for doc in batch.decode('utf-8').split('\n') if doc]
+          ...     print(documents)
+        
+        :param filter: A dictionary specifying the query criteria.
+        :param projection: A dictionary specifying which fields to return.
+        :param hint: A string specifying the index to use.
+        :param batch_size: The number of documents to include in each batch.
+        :return: A RawBatchCursor instance.
+        """
+        return RawBatchCursor(self, filter, projection, hint, batch_size)
 
     def find_one(
         self,
