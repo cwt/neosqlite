@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "neosqlite"
-version = "0.1.3"
+version = "0.2.0"
 description = "A wrapper for sqlite3 to have schemaless, document-store features"
 authors = ["Chaiwat Suttipongsakul <cwt@bashell.com>"]
 license = "MIT"

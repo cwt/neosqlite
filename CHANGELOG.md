@@ -1,5 +1,23 @@
 # CHANGELOG
 
+## 0.2.0
+
+- Major performance improvements with native SQLite JSON indexing
+- Added `create_indexes()` method for creating multiple indexes at once
+- Added `bulk_write()` method with bulk operations support
+- Added transaction support with context manager
+- Added `rename()`, `options()`, and `index_information()` APIs
+- Added `database` property to collections
+- Added `estimated_document_count()` method
+- Extended update operators: `$push`, `$pull`, `$pop`, `$rename`, `$mul`, `$min`, `$max`
+- Extended query operators: `$regex`, `$elemMatch`, `$size`
+- Added projection support in find operations
+- Added comprehensive aggregation pipeline support
+- Added JSONB column type support when available for better performance
+- Improved PyMongo API compatibility
+- Enhanced error handling and type checking
+- Added extensive test coverage for all new features
+
 ## 0.1.1 - 0.1.2
 
 - Rename project to neosqlite (new + nosqlite) for PyPI package.
