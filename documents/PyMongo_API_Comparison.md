@@ -56,7 +56,7 @@
 - [x] distinct() with query filter
 
 ### Utility Methods
-- [ ] watch() (change streams)
+- [x] watch() (change streams)
 - [ ] parallel_scan()
 
 ## Implementation Priority
