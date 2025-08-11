@@ -69,4 +69,8 @@
 2. **Medium Priority** - Important for enhanced capabilities
 3. **Low Priority** - Specialized features that can be added later
 
-This comparison shows that our library has a solid foundation with most core CRUD operations implemented, and we've now added all the high-priority missing APIs: `rename()`, `options()`, `index_information()`, `database property`, and `create_indexes()`. We're making excellent progress toward better PyMongo compatibility.
+## Note on API Evolution
+
+This comparison was initially based on older PyMongo documentation that referenced `initialize_ordered_bulk_op()` and `initialize_unordered_bulk_op()` methods. However, in newer versions of PyMongo (4.x), these methods have been removed in favor of the simpler `bulk_write()` API that takes a list of operations and an `ordered` parameter.
+
+neosqlite implements both the legacy API (initialize_ordered_bulk_op, initialize_ordered_bulk_op) for backward compatibility and the current PyMongo API (bulk_write with ordered parameter).

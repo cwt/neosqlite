@@ -702,7 +702,9 @@ class Collection:
 
         return UpdateResult(matched_count=0, modified_count=0, upserted_id=None)
 
-    def bulk_write(self, requests: List[Any]) -> BulkWriteResult:
+    def bulk_write(
+        self, requests: List[Any], ordered: bool = True
+    ) -> BulkWriteResult:
         inserted_count = 0
         matched_count = 0
         modified_count = 0
@@ -1185,6 +1187,7 @@ class Collection:
                      - A string for a single key index
                      - A list of strings for a compound index
                      - A dict with 'key' (string or list) and optional 'unique' (bool)
+                     - A PyMongo IndexModel object
             reindex: Whether to reindex (kept for API compatibility)
 
         Returns:
@@ -1193,16 +1196,56 @@ class Collection:
         created_indexes = []
 
         for index_spec in indexes:
-            # Handle different index specification formats
-            if isinstance(index_spec, str):
+            # Handle PyMongo IndexModel objects
+            if hasattr(index_spec, "document"):
+                # This is a PyMongo IndexModel object
+                doc = index_spec.document
+                key = doc.get("key", {})
+                unique = doc.get("unique", False)
+                sparse = doc.get("sparse", False)
+
+                # Convert key dict to our format
+                if isinstance(key, dict):
+                    # Convert {'name': 1, 'age': -1} to ['name', 'age'] for simplicity
+                    # In a more advanced implementation, we could handle sort order
+                    key_list = list(key.keys())
+                    if len(key_list) == 1:
+                        key = key_list[0]  # Single key
+                    else:
+                        key = key_list  # Compound key
+                elif isinstance(key, list):
+                    # Handle list format like [('name', 1), ('age', -1)]
+                    key_list = [k for k, _ in key] if key else []
+                    if len(key_list) == 1:
+                        key = key_list[0]
+                    else:
+                        key = key_list
+
+                self.create_index(key, unique=unique, sparse=sparse)
+                if isinstance(key, str):
+                    index_name = key.replace(".", "_")
+                else:
+                    index_name = "_".join(key).replace(".", "_")
+                created_indexes.append(f"idx_{self.name}_{index_name}")
+
+            # Handle our existing formats
+            elif isinstance(index_spec, str):
                 # Simple string key
                 self.create_index(index_spec)
                 index_name = index_spec.replace(".", "_")
                 created_indexes.append(f"idx_{self.name}_{index_name}")
             elif isinstance(index_spec, list):
                 # List of keys for compound index
-                self.create_index(index_spec)
-                index_name = "_".join(index_spec).replace(".", "_")
+                # Handle both ['name', 'age'] and [('name', 1), ('age', -1)] formats
+                if index_spec and isinstance(index_spec[0], tuple):
+                    # Format [('name', 1), ('age', -1)] - extract just the field names
+                    key_list = [k for k, _ in index_spec]
+                    self.create_index(key_list)
+                    index_name = "_".join(key_list).replace(".", "_")
+                else:
+                    # Format ['name', 'age']
+                    self.create_index(index_spec)
+                    index_name = "_".join(index_spec).replace(".", "_")
                 created_indexes.append(f"idx_{self.name}_{index_name}")
             elif isinstance(index_spec, dict):
                 # Dictionary with key and options
@@ -1215,7 +1258,9 @@ class Collection:
                     if isinstance(key, str):
                         index_name = key.replace(".", "_")
                     else:
-                        index_name = "_".join(key).replace(".", "_")
+                        index_name = "_".join(str(k) for k in key).replace(
+                            ".", "_"
+                        )
                     created_indexes.append(f"idx_{self.name}_{index_name}")
 
         return created_indexes

@@ -54,3 +54,47 @@ def test_bulk_write_rollback(collection):
         collection.bulk_write(requests)
     assert collection.count_documents({}) == 1
     assert collection.find_one({"a": 2}) is None
+
+
+def test_bulk_write_ordered_parameter(collection):
+    """Test bulk_write with ordered parameter"""
+    # Test with ordered=True (default)
+    collection.insert_many([{"a": 1}, {"a": 2}])
+    requests = [
+        InsertOne({"a": 3}),
+        UpdateOne({"a": 1}, {"$set": {"a": 10}}),
+        DeleteOne({"a": 2}),
+    ]
+    result = collection.bulk_write(requests, ordered=True)
+    assert isinstance(result, neosqlite.BulkWriteResult)
+    assert result.inserted_count == 1
+    assert result.matched_count == 1
+    assert result.modified_count == 1
+    assert result.deleted_count == 1
+
+    # Verify the operations were executed
+    assert collection.count_documents({}) == 2
+    assert collection.find_one({"a": 10}) is not None
+    assert collection.find_one({"a": 3}) is not None
+    assert collection.find_one({"a": 2}) is None
+
+    # Test with ordered=False
+    collection.delete_many({})
+    collection.insert_many([{"a": 1}, {"a": 2}])
+    requests = [
+        InsertOne({"a": 4}),
+        UpdateOne({"a": 1}, {"$set": {"a": 10}}),
+        DeleteOne({"a": 2}),
+    ]
+    result = collection.bulk_write(requests, ordered=False)
+    assert isinstance(result, neosqlite.BulkWriteResult)
+    assert result.inserted_count == 1
+    assert result.matched_count == 1
+    assert result.modified_count == 1
+    assert result.deleted_count == 1
+
+    # Verify the operations were executed
+    assert collection.count_documents({}) == 2
+    assert collection.find_one({"a": 10}) is not None
+    assert collection.find_one({"a": 4}) is not None
+    assert collection.find_one({"a": 2}) is None

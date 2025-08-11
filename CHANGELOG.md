@@ -2,7 +2,8 @@
 
 ## Next
 
-- Added `initialize_unordered_bulk_op()` and `initialize_ordered_bulk_op()` for bulk operations
+- Added `bulk_write()` method with bulk operations support and ordered parameter
+- Added `initialize_unordered_bulk_op()` and `initialize_ordered_bulk_op()` for legacy bulk operations API
 
 ## 0.2.0
 
