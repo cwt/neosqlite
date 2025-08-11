@@ -39,11 +39,11 @@
 - [x] options()
 - [x] database property
 
-## Missing High-Priority APIs
-
 ### Enhanced Bulk Operations
-- [ ] initialize_unordered_bulk_op()
-- [ ] initialize_ordered_bulk_op()
+- [x] initialize_unordered_bulk_op()
+- [x] initialize_ordered_bulk_op()
+
+## Missing High-Priority APIs
 
 ### Additional Query Methods
 - [ ] find_raw_batches()

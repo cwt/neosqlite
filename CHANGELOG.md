@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## Next
+
+- Added `initialize_unordered_bulk_op()` and `initialize_ordered_bulk_op()` for bulk operations
+
 ## 0.2.0
 
 - Major performance improvements with native SQLite JSON indexing

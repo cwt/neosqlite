@@ -15,6 +15,8 @@ try:
 except ImportError:
     import sqlite3
 
+from .bulk_operations import BulkOperationExecutor
+
 ASCENDING = 1
 DESCENDING = -1
 
@@ -531,13 +533,15 @@ class Collection:
                         f"Update operator '{op}' not supported"
                     )
 
-        self.db.execute(
-            f"UPDATE {self.name} SET data = ? WHERE id = ?",
-            (json.dumps(doc_to_update), doc_id),
-        )
-
-        # With native JSON indexing, SQLite handles index updates automatically
-        # No need to manually reindex
+        # If this is an upsert (doc_id == 0), we don't update the database
+        # We just return the updated document for insertion by the caller
+        if doc_id != 0:
+            self.db.execute(
+                f"UPDATE {self.name} SET data = ? WHERE id = ?",
+                (json.dumps(doc_to_update), doc_id),
+            )
+            # With native JSON indexing, SQLite handles index updates automatically
+            # No need to manually reindex
 
         return doc_to_update
 
@@ -566,8 +570,11 @@ class Collection:
             )
 
         if upsert:
-            new_doc: Dict[str, Any] = {}
-            self._internal_update(0, update, new_doc)
+            # For upsert, we need to create a document that includes:
+            # 1. The filter fields (as base document)
+            # 2. Apply the update operations to that document
+            new_doc: Dict[str, Any] = dict(filter)  # Start with filter fields
+            new_doc = self._internal_update(0, update, new_doc)  # Apply updates
             inserted_id = self.insert_one(new_doc).inserted_id
             return UpdateResult(
                 matched_count=0, modified_count=0, upserted_id=inserted_id
@@ -730,6 +737,22 @@ class Collection:
             deleted_count=deleted_count,
             upserted_count=upserted_count,
         )
+
+    def initialize_ordered_bulk_op(self) -> BulkOperationExecutor:
+        """Initialize an ordered bulk operation.
+
+        Returns:
+            BulkOperationExecutor: An executor for ordered bulk operations.
+        """
+        return BulkOperationExecutor(self, ordered=True)
+
+    def initialize_unordered_bulk_op(self) -> BulkOperationExecutor:
+        """Initialize an unordered bulk operation.
+
+        Returns:
+            BulkOperationExecutor: An executor for unordered bulk operations.
+        """
+        return BulkOperationExecutor(self, ordered=False)
 
     def delete_one(self, filter: Dict[str, Any]) -> DeleteResult:
         doc = self.find_one(filter)
