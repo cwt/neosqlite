@@ -12,6 +12,36 @@
 - **Modern API**: Aligned with modern `pymongo` practices (using methods like `insert_one`, `update_one`, `delete_many`, etc.).
 - **Automatic JSON/JSONB Support**: Automatically detects and uses JSONB column type when available for better performance.
 
+## Drop-in Replacement for PyMongo
+
+For many common use cases, `neosqlite` can serve as a drop-in replacement for `pymongo`. The API is designed to be compatible, meaning you can switch from MongoDB to a SQLite backend with minimal code changes. The primary difference is in the initial connection setup.
+
+Once you have a `collection` object, the method calls for all implemented APIs are identical.
+
+**PyMongo:**
+```python
+from pymongo import MongoClient
+client = MongoClient('mongodb://localhost:27017/')
+db = client.mydatabase
+collection = db.mycollection
+```
+
+**neosqlite:**
+```python
+import neosqlite
+# The Connection object is analogous to the database
+client = neosqlite.Connection('mydatabase.db')
+collection = client.mycollection
+```
+
+After the setup, your application logic for interacting with the collection remains the same:
+```python
+# This code works for both pymongo and neosqlite
+collection.insert_one({"name": "test_user", "value": 123})
+document = collection.find_one({"name": "test_user"})
+print(document)
+```
+
 ## Installation
 
 ```bash
