@@ -10,12 +10,9 @@ import pytest
 # Try to import pysqlite3 for consistent JSON/JSONB support
 try:
     import pysqlite3.dbapi2 as sqlite3
-
-    PYSQLITE3_AVAILABLE = True
 except ImportError:
     import sqlite3
 
-    PYSQLITE3_AVAILABLE = False
 
 import neosqlite
 
@@ -45,12 +42,11 @@ def test_jsonb_table_creation():
         print(f"Table schema: {table_sql}")
 
         # Check if JSONB is supported in this SQLite installation
-        jsonb_supported = False
         try:
             conn.db.execute('SELECT jsonb(\'{"key": "value"}\')')
             jsonb_supported = True
         except sqlite3.OperationalError:
-            pass
+            jsonb_supported = False
 
         # If JSONB is supported, the column should be JSONB
         # Otherwise, it should be TEXT
@@ -64,10 +60,6 @@ def test_jsonb_table_creation():
 
 def test_jsonb_operations():
     """Test JSONB operations with enhanced SQLite support."""
-    # Skip this test if pysqlite3 is not available
-    if not PYSQLITE3_AVAILABLE:
-        pytest.skip("pysqlite3 not available for JSONB testing")
-
     with neosqlite.Connection(":memory:") as conn:
         collection = conn["jsonb_operations_test"]
 
@@ -112,10 +104,6 @@ def test_jsonb_operations():
 
 def test_jsonb_query_operations():
     """Test querying JSONB data."""
-    # Skip this test if pysqlite3 is not available
-    if not PYSQLITE3_AVAILABLE:
-        pytest.skip("pysqlite3 not available for JSONB testing")
-
     with neosqlite.Connection(":memory:") as conn:
         collection = conn["jsonb_query_test"]
 
@@ -165,10 +153,6 @@ def test_jsonb_query_operations():
 
 def test_jsonb_indexing():
     """Test JSONB indexing capabilities."""
-    # Skip this test if pysqlite3 is not available
-    if not PYSQLITE3_AVAILABLE:
-        pytest.skip("pysqlite3 not available for JSONB testing")
-
     with neosqlite.Connection(":memory:") as conn:
         collection = conn["jsonb_index_test"]
 
