@@ -869,6 +869,39 @@ class Collection:
                         f"json_extract(data, {json_path}) NOT IN ({placeholders})",
                         op_val,
                     )
+                case "$exists":
+                    # Handle boolean value for $exists
+                    if op_val is True:
+                        return (
+                            f"json_extract(data, {json_path}) IS NOT NULL",
+                            [],
+                        )
+                    elif op_val is False:
+                        return f"json_extract(data, {json_path}) IS NULL", []
+                    else:
+                        # Invalid value for $exists, fallback to Python
+                        return None, []
+                case "$mod":
+                    # Handle [divisor, remainder] array
+                    if isinstance(op_val, (list, tuple)) and len(op_val) == 2:
+                        divisor, remainder = op_val
+                        return f"json_extract(data, {json_path}) % ? = ?", [
+                            divisor,
+                            remainder,
+                        ]
+                    else:
+                        # Invalid format for $mod, fallback to Python
+                        return None, []
+                case "$size":
+                    # Handle array size comparison
+                    if isinstance(op_val, int):
+                        return (
+                            f"json_array_length(json_extract(data, {json_path})) = ?",
+                            [op_val],
+                        )
+                    else:
+                        # Invalid value for $size, fallback to Python
+                        return None, []
                 case _:
                     # Unsupported operator, return None to indicate we should fallback to Python
                     return None, []
