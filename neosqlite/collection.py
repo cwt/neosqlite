@@ -809,17 +809,14 @@ class Collection:
         params = []
 
         for field, value in query.items():
-            # If field contains dots, it's a complex nested query that we can't handle with SQL
-            if "." in field:
-                return None  # Fallback to Python-based filtering
-
             # Handle _id field specially since it's stored as a column, not in the JSON data
             if field == "_id":
                 clauses.append("id = ?")
                 params.append(value)
                 continue
 
-            # For other fields, use json_extract to get values from the JSON data
+            # For all fields (including nested ones), use json_extract to get values from the JSON data
+            # Convert dot notation to JSON path notation (e.g., "profile.age" -> "$.profile.age")
             json_path = f"'$.{field}'"
 
             if isinstance(value, dict):
