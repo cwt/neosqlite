@@ -1091,7 +1091,7 @@ class Collection:
             elif isinstance(index_spec, list):
                 # List of keys for compound index
                 # Handle both ['name', 'age'] and [('name', 1), ('age', -1)] formats
-                if index_spec and isinstance(index_spec[0], tuple): # type: ignore
+                if index_spec and isinstance(index_spec[0], tuple):  # type: ignore
                     # Format [('name', 1), ('age', -1)] - extract just the field names
                     key_list = [k for k, _ in index_spec]
                     self.create_index(key_list)
