@@ -1,9 +1,17 @@
 # CHANGELOG
 
-## Next
+## 0.3.0
 
 - Added `bulk_write()` method with bulk operations support and ordered parameter
 - Added `initialize_unordered_bulk_op()` and `initialize_ordered_bulk_op()` for legacy bulk operations API
+- Added `find_raw_batches()` method for efficient batch processing of large datasets
+- Added `distinct()` method with query filter support
+- Added `watch()` method with change stream functionality for monitoring collection changes
+- Enhanced SQL query optimization to leverage SQLite's native JSON capabilities for nested field queries
+- Improved `RawBatchCursor` to use SQLite's native batching instead of Python-based processing
+- Added support for `$exists`, `$mod`, and `$size` query operators using SQL-based implementation
+- Refactored codebase into smaller modules for better maintainability
+- Improved test coverage to 90% across the entire codebase
 
 ## 0.2.0
 
