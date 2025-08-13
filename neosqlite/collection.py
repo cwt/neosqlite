@@ -1193,33 +1193,104 @@ class Collection:
         params = []
 
         for field, value in query.items():
-            # Handle _id field specially since it's stored as a column,
-            # not in the JSON data
-            if field == "_id":
+            # Handle logical operators
+            if field == "$and":
+                # Handle $and by recursively processing each condition
+                if not isinstance(value, list):
+                    return None  # Invalid format, fallback to Python
+
+                and_clauses = []
+                for sub_query in value:
+                    sub_result = self._build_simple_where_clause(sub_query)
+                    if sub_result is None:
+                        return None  # Complex sub-query, fallback to Python
+                    sub_clause, sub_params = sub_result
+                    # Remove "WHERE " prefix if present
+                    if sub_clause.startswith("WHERE "):
+                        sub_clause = sub_clause[6:]
+                    and_clauses.append(f"({sub_clause})")
+                    params.extend(sub_params)
+
+                clauses.append(" AND ".join(and_clauses))
+
+            elif field == "$or":
+                # Handle $or by recursively processing each condition
+                if not isinstance(value, list):
+                    return None  # Invalid format, fallback to Python
+
+                or_clauses = []
+                for sub_query in value:
+                    sub_result = self._build_simple_where_clause(sub_query)
+                    if sub_result is None:
+                        return None  # Complex sub-query, fallback to Python
+                    sub_clause, sub_params = sub_result
+                    # Remove "WHERE " prefix if present
+                    if sub_clause.startswith("WHERE "):
+                        sub_clause = sub_clause[6:]
+                    or_clauses.append(f"({sub_clause})")
+                    params.extend(sub_params)
+
+                clauses.append(" OR ".join(or_clauses))
+
+            elif field == "$nor":
+                # Handle $nor - similar to $or but negated
+                if not isinstance(value, list):
+                    return None  # Invalid format, fallback to Python
+
+                nor_clauses = []
+                for sub_query in value:
+                    sub_result = self._build_simple_where_clause(sub_query)
+                    if sub_result is None:
+                        return None  # Complex sub-query, fallback to Python
+                    sub_clause, sub_params = sub_result
+                    # Remove "WHERE " prefix if present
+                    if sub_clause.startswith("WHERE "):
+                        sub_clause = sub_clause[6:]
+                    nor_clauses.append(f"({sub_clause})")
+                    params.extend(sub_params)
+
+                clauses.append("NOT (" + " OR ".join(nor_clauses) + ")")
+
+            elif field == "$not":
+                # Handle $not by negating the sub-query
+                sub_result = self._build_simple_where_clause(value)
+                if sub_result is None:
+                    return None  # Complex sub-query, fallback to Python
+                sub_clause, sub_params = sub_result
+                # Remove "WHERE " prefix if present
+                if sub_clause.startswith("WHERE "):
+                    sub_clause = sub_clause[6:]
+                clauses.append(f"NOT ({sub_clause})")
+                params.extend(sub_params)
+
+            elif field == "_id":
+                # Handle _id field specially since it's stored as a column,
+                # not in the JSON data
                 clauses.append("id = ?")
                 params.append(value)
                 continue
 
-            # For all fields (including nested ones), use json_extract to get
-            # values from the JSON data.
-
-            # Convert dot notation to JSON path notation.
-            # (e.g., "profile.age" -> "$.profile.age")
-            json_path = f"'$.{field}'"
-
-            if isinstance(value, dict):
-                # Handle query operators like $eq, $gt, $lt, etc.
-                clause, clause_params = self._build_operator_clause(
-                    json_path, value
-                )
-                if clause is None:
-                    return None  # Unsupported operator, fallback to Python
-                clauses.append(clause)
-                params.extend(clause_params)
             else:
-                # Simple equality check
-                clauses.append(f"json_extract(data, {json_path}) = ?")
-                params.append(value)
+                # For all fields (including nested ones), use json_extract to get
+                # values from the JSON data.
+
+                # Convert dot notation to JSON path notation.
+                # (e.g., "profile.age" -> "$.profile.age")
+                json_path = f"'$.{field}'"
+
+                if isinstance(value, dict):
+                    # Handle query operators like $eq, $gt, $lt, etc.
+                    clause, clause_params = self._build_operator_clause(
+                        json_path, value
+                    )
+                    if clause is None:
+                        return None  # Unsupported operator, fallback to Python
+                    clauses.append(clause)
+                    params.extend(clause_params)
+                else:
+                    # Simple equality check
+                    clauses.append(f"json_extract(data, {json_path}) = ?")
+                    params.append(value)
 
         if not clauses:
             return "", []

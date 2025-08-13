@@ -1,8 +1,9 @@
 # CHANGELOG
 
-## 0.3.1
+## 0.3.1 - 0.3.2
 
 - Added support for `$contains` query operator (neosqlite-specific) for case-insensitive substring search
+- Enhanced `$contains` to work with logical operators
 - WIP: Adding more docstring
 
 
