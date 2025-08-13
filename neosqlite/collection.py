@@ -25,6 +25,13 @@ from . import query_operators
 
 
 class Collection:
+    """
+    Provides a class representing a collection in a SQLite database.
+
+    This class encapsulates operations on a collection such as inserting,
+    updating, deleting, and querying documents.
+    """
+
     def __init__(
         self,
         db: sqlite3.Connection,
@@ -32,6 +39,14 @@ class Collection:
         create: bool = True,
         database=None,
     ):
+        """
+        Initialize a new collection object.
+
+        Args:
+            db: Database object to which the collection belongs.
+            name: Name of the collection.
+            **kwargs: Additional arguments for initialization.
+        """
         self.db = db
         self.name = name
         self._database = database
@@ -39,26 +54,42 @@ class Collection:
             self.create()
 
     def create(self):
+        """
+        Initialize the collection table if it does not exist.
+
+        This method creates a table with an 'id' column and a 'data' column for
+        storing JSON data. If the JSONB data type is supported, it will be used,
+        otherwise, TEXT data type will be used.
+        """
         try:
             self.db.execute("""SELECT jsonb('{"key": "value"}')""")
         except sqlite3.OperationalError:
-            self.db.execute(
-                f"""
+            self.db.execute(f"""
                 CREATE TABLE IF NOT EXISTS {self.name} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     data TEXT NOT NULL
-                )"""
-            )
+                )""")
         else:
-            self.db.execute(
-                f"""
+            self.db.execute(f"""
                 CREATE TABLE IF NOT EXISTS {self.name} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     data JSONB NOT NULL
-                )"""
-            )
+                )""")
 
     def _load(self, id: int, data: str | bytes) -> Dict[str, Any]:
+        """
+        Deserialize and load a document from its ID and JSON data.
+
+        Deserialize the JSON string or bytes back into a Python dictionary,
+        add the document ID to it, and return the document.
+
+        Args:
+            id (int): The document ID.
+            data (str | bytes): The JSON string or bytes representing the document.
+
+        Returns:
+            Dict[str, Any]: The deserialized document with the _id field added.
+        """
         if isinstance(data, bytes):
             data = data.decode("utf-8")
         document: Dict[str, Any] = json.loads(data)
@@ -66,6 +97,17 @@ class Collection:
         return document
 
     def _get_val(self, item: Dict[str, Any], key: str) -> Any:
+        """
+        Retrieves a value from a dictionary using a key, handling nested keys and
+        optional prefixes.
+
+        Args:
+            item (Dict[str, Any]): The dictionary to search.
+            key (str): The key to retrieve, may include nested keys separated by dots or may be prefixed with '$'.
+
+        Returns:
+            Any: The value associated with the key, or None if the key is not found.
+        """
         if key.startswith("$"):
             key = key[1:]
         val: Any = item
@@ -76,6 +118,15 @@ class Collection:
         return val
 
     def _internal_insert(self, document: Dict[str, Any]) -> int:
+        """
+        Inserts a document into the collection and returns the inserted document's _id.
+
+        Args:
+            document (dict): The document to insert. Must be a dictionary.
+
+        Returns:
+            int: The _id of the inserted document.
+        """
         if not isinstance(document, dict):
             raise MalformedDocument(
                 f"document must be a dictionary, not a {type(document)}"
@@ -89,20 +140,36 @@ class Collection:
             (json.dumps(doc_to_insert),),
         )
         inserted_id = cursor.lastrowid
+
         if inserted_id is None:
             raise sqlite3.Error("Failed to get last row id.")
+
         document["_id"] = inserted_id
-
-        # With native JSON indexing, SQLite handles index updates automatically
-        # No need to manually reindex
-
         return inserted_id
 
     def insert_one(self, document: Dict[str, Any]) -> InsertOneResult:
+        """
+        Insert a single document into the collection.
+
+        Args:
+            document (Dict[str, Any]): The document to insert.
+
+        Returns:
+            InsertOneResult: The result of the insert operation, containing the inserted document ID.
+        """
         inserted_id = self._internal_insert(document)
         return InsertOneResult(inserted_id)
 
     def insert_many(self, documents: List[Dict[str, Any]]) -> InsertManyResult:
+        """
+        Insert multiple documents into the collection.
+
+        Args:
+            documents (List[Dict[str, Any]]): List of documents to insert.
+
+        Returns:
+            InsertManyResult: Result of the insert operation, containing a list of inserted document IDs.
+        """
         inserted_ids = [self._internal_insert(doc) for doc in documents]
         return InsertManyResult(inserted_ids)
 
@@ -112,6 +179,20 @@ class Collection:
         update_spec: Dict[str, Any],
         original_doc: Dict[str, Any],
     ):
+        """
+        Helper method for updating documents.
+
+        Attempts to use SQL-based updates for simple operations, falling back to
+        Python-based updates for complex operations.
+
+        Args:
+            doc_id (int): The ID of the document to update.
+            update_spec (Dict[str, Any]): The update specification.
+            original_doc (Dict[str, Any]): The original document before the update.
+
+        Returns:
+            Dict[str, Any]: The updated document.
+        """
         # Try to use SQL-based updates for simple operations
         if self._can_use_sql_updates(update_spec, doc_id):
             return self._perform_sql_update(doc_id, update_spec)
@@ -126,7 +207,20 @@ class Collection:
         update_spec: Dict[str, Any],
         doc_id: int,
     ) -> bool:
-        """Check if all operations in the update spec can be handled with SQL."""
+        """
+        Check if all operations in the update spec can be handled with SQL.
+
+        This method determines whether the update operations can be efficiently
+        executed using SQL directly, which allows for better performance compared
+        to iterating over each document and applying updates in Python.
+
+        Args:
+            update_spec (Dict[str, Any]): The update operations to be checked.
+            doc_id (int): The document ID, which is used to determine if the update is an upsert.
+
+        Returns:
+            bool: True if all operations can be handled with SQL, False otherwise.
+        """
         # Only handle operations that can be done purely with SQL
         supported_ops = {"$set", "$unset", "$inc", "$mul", "$min", "$max"}
         # Also check that doc_id is not 0 (which indicates an upsert)
@@ -139,7 +233,25 @@ class Collection:
         doc_id: int,
         update_spec: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Perform update operations using SQL JSON functions."""
+        """
+        Perform update operations using SQL JSON functions.
+
+        This method builds SQL clauses for updating document fields based on the
+        provided update specification. It supports both `$set` and `$unset` operations
+        using SQLite's `json_set` and `json_remove` functions, respectively. The
+        method then executes the SQL commands to apply the updates and fetches
+        the updated document from the database.
+
+        Args:
+            doc_id (int): The ID of the document to be updated.
+            update_spec (Dict[str, Any]): A dictionary specifying the update operations to be performed.
+
+        Returns:
+            Dict[str, Any]: The updated document.
+
+        Raises:
+            RuntimeError: If no rows are updated or if an error occurs during the update process.
+        """
         set_clauses = []
         set_params = []
         unset_clauses = []
@@ -192,7 +304,16 @@ class Collection:
         op: str,
         value: Any,
     ) -> tuple[List[str], List[Any]]:
-        """Build SQL update clause for a single operation."""
+        """
+        Build SQL update clause for a single operation.
+
+        Args:
+            op (str): The update operation, such as "$set", "$inc", "$mul", etc.
+            value (Any): The value associated with the update operation.
+
+        Returns:
+            tuple[List[str], List[Any]]: A tuple containing the SQL update clauses and parameters.
+        """
         clauses = []
         params = []
 
@@ -239,7 +360,17 @@ class Collection:
         update_spec: Dict[str, Any],
         original_doc: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Perform update operations using Python-based logic."""
+        """
+        Perform update operations using Python-based logic.
+
+        Args:
+            doc_id (int): The document ID of the document to update.
+            update_spec (Dict[str, Any]): A dictionary specifying the update operations to perform.
+            original_doc (Dict[str, Any]): The original document before applying the updates.
+
+        Returns:
+            Dict[str, Any]: The updated document.
+        """
         doc_to_update = deepcopy(original_doc)
 
         for op, value in update_spec.items():
@@ -295,20 +426,29 @@ class Collection:
                 f"UPDATE {self.name} SET data = ? WHERE id = ?",
                 (json.dumps(doc_to_update), doc_id),
             )
-            # With native JSON indexing, SQLite handles index updates automatically
-            # No need to manually reindex
 
         return doc_to_update
 
     def _internal_replace(self, doc_id: int, replacement: Dict[str, Any]):
+        """
+        Replace the document with the specified ID with a new document.
+
+        Args:
+            doc_id (int): The ID of the document to replace.
+            replacement (Dict[str, Any]): The new document to replace the existing one.
+        """
         self.db.execute(
             f"UPDATE {self.name} SET data = ? WHERE id = ?",
             (json.dumps(replacement), doc_id),
         )
-        # With native JSON indexing, SQLite handles index updates automatically
-        # No need to manually reindex
 
     def _internal_delete(self, doc_id: int):
+        """
+        Deletes a document from the collection based on the document ID.
+
+        Args:
+            doc_id (int): The ID of the document to delete.
+        """
         self.db.execute(f"DELETE FROM {self.name} WHERE id = ?", (doc_id,))
 
     def update_one(
@@ -317,6 +457,18 @@ class Collection:
         update: Dict[str, Any],
         upsert: bool = False,
     ) -> UpdateResult:
+        """
+        Updates a single document in the collection based on the provided filter
+        and update operations.
+
+        Args:
+            filter (Dict[str, Any]): A dictionary specifying the query criteria for finding the document to update.
+            update (Dict[str, Any]): A dictionary specifying the update operations to apply to the document.
+            upsert (bool, optional): If True, inserts a new document if no document matches the filter. Defaults to False.
+
+        Returns:
+            UpdateResult: An object containing information about the update operation, including the count of matched and modified documents, and the upserted ID if applicable.
+        """
         doc = self.find_one(filter)
         if doc:
             self._internal_update(doc["_id"], update, doc)
@@ -342,6 +494,19 @@ class Collection:
         filter: Dict[str, Any],
         update: Dict[str, Any],
     ) -> UpdateResult:
+        """
+        Update multiple documents based on a filter.
+
+        This method updates documents in the collection that match the given filter
+        using the specified update.
+
+        Args:
+            filter (Dict[str, Any]): A dictionary representing the filter to select documents to update.
+            update (Dict[str, Any]): A dictionary representing the updates to apply.
+
+        Returns:
+            UpdateResult: A result object containing information about the update operation.
+        """
         where_result = self._build_simple_where_clause(filter)
         update_result = self._build_update_clause(update)
 
@@ -372,6 +537,16 @@ class Collection:
         self,
         update: Dict[str, Any],
     ) -> tuple[str, List[Any]] | None:
+        """
+        Build the SQL update clause based on the provided update operations.
+
+        Args:
+            update (Dict[str, Any]): A dictionary containing update operations.
+
+        Returns:
+            tuple[str, List[Any]] | None: A tuple containing the SQL update clause and parameters,
+                                          or None if no update clauses are generated.
+        """
         set_clauses = []
         params = []
 
@@ -445,6 +620,18 @@ class Collection:
         replacement: Dict[str, Any],
         upsert: bool = False,
     ) -> UpdateResult:
+        """
+        Replace one document in the collection that matches the filter with the
+        replacement document.
+
+        Args:
+            filter (Dict[str, Any]): A query that matches the document to replace.
+            replacement (Dict[str, Any]): The new document that replaces the matched document.
+            upsert (bool, optional): If true, inserts the replacement document if no document matches the filter. Default is False.
+
+        Returns:
+            UpdateResult: A result object containing the number of matched and modified documents and the upserted ID.
+        """
         doc = self.find_one(filter)
         if doc:
             self._internal_replace(doc["_id"], replacement)
@@ -465,6 +652,16 @@ class Collection:
         requests: List[Any],
         ordered: bool = True,
     ) -> BulkWriteResult:
+        """
+        Execute bulk write operations on the collection.
+
+        Args:
+            requests: List of write operations to execute.
+            ordered: If true, operations will be performed in order and will raise an exception if a single operation fails.
+
+        Returns:
+            BulkWriteResult: A result object containing the number of matched, modified, and inserted documents.
+        """
         inserted_count = 0
         matched_count = 0
         modified_count = 0
@@ -517,6 +714,15 @@ class Collection:
         return BulkOperationExecutor(self, ordered=False)
 
     def delete_one(self, filter: Dict[str, Any]) -> DeleteResult:
+        """
+        Delete a single document matching the filter.
+
+        Args:
+            filter (Dict[str, Any]): A dictionary specifying the filter conditions for the document to delete.
+
+        Returns:
+            DeleteResult: A result object indicating whether the deletion was successful or not.
+        """
         doc = self.find_one(filter)
         if doc:
             self._internal_delete(doc["_id"])
@@ -524,6 +730,15 @@ class Collection:
         return DeleteResult(deleted_count=0)
 
     def delete_many(self, filter: Dict[str, Any]) -> DeleteResult:
+        """
+        Deletes multiple documents in the collection that match the provided filter.
+
+        Args:
+            filter (Dict[str, Any]): A dictionary specifying the query criteria for finding the documents to delete.
+
+        Returns:
+            DeleteResult: A result object indicating whether the deletion was successful or not.
+        """
         where_result = self._build_simple_where_clause(filter)
         if where_result is not None:
             where_clause, params = where_result
@@ -549,6 +764,17 @@ class Collection:
         projection: Dict[str, Any] | None = None,
         hint: str | None = None,
     ) -> Cursor:
+        """
+        Query the database and retrieve documents matching the provided filter.
+
+        Args:
+            filter (Dict[str, Any] | None): A dictionary specifying the query criteria.
+            projection (Dict[str, Any] | None): A dictionary specifying which fields to return.
+            hint (str | None): A string specifying the index to use.
+
+        Returns:
+            Cursor: A cursor object to iterate over the results.
+        """
         return Cursor(self, filter, projection, hint)
 
     def find_raw_batches(
@@ -562,27 +788,29 @@ class Collection:
         Query the database and retrieve batches of raw JSON.
 
         Similar to the :meth:`find` method but returns a
-        :class:`~neosqlite.raw_batch_cursor.RawBatchCursor`.
+         :class:`~neosqlite.raw_batch_cursor.RawBatchCursor`.
 
         This method returns raw JSON batches which can be more efficient for
         certain use cases where you want to process data in batches rather than
         individual documents.
+
+        Args:
+            filter (Dict[str, Any] | None): A dictionary specifying the query criteria.
+            projection (Dict[str, Any] | None): A dictionary specifying which fields to return.
+            hint (str | None): A string specifying the index to use.
+            batch_size (int): The number of documents to include in each batch.
+
+        Returns:
+            RawBatchCursor instance.
 
         Example usage:
 
           >>> import json
           >>> cursor = collection.find_raw_batches()
           >>> for batch in cursor:
-          ...     # Each batch is raw bytes containing JSON documents
-          ...     # separated by newlines
-          ...     documents = [json.loads(doc) for doc in batch.decode('utf-8').split('\n') if doc]
-          ...     print(documents)
-
-        :param filter: A dictionary specifying the query criteria.
-        :param projection: A dictionary specifying which fields to return.
-        :param hint: A string specifying the index to use.
-        :param batch_size: The number of documents to include in each batch.
-        :return: A RawBatchCursor instance.
+              # Each batch is raw bytes containing JSON documents separated by newlines.
+              documents = [json.loads(doc) for doc in batch.decode('utf-8').split('\n') if doc]
+              print(documents)
         """
         return RawBatchCursor(self, filter, projection, hint, batch_size)
 
@@ -592,12 +820,33 @@ class Collection:
         projection: Dict[str, Any] | None = None,
         hint: str | None = None,
     ) -> Dict[str, Any] | None:
+        """
+        Find a single document matching the filter.
+
+        Args:
+            filter (Dict[str, Any]): A dictionary specifying the filter conditions.
+            projection (Dict[str, Any]): A dictionary specifying which fields to return.
+            hint (str): A string specifying the index to use (not used in SQLite).
+
+        Returns:
+            Dict[str, Any]: A dictionary representing the found document,
+                            or None if no document matches.
+        """
         try:
             return next(iter(self.find(filter, projection, hint).limit(1)))
         except StopIteration:
             return None
 
     def count_documents(self, filter: Dict[str, Any]) -> int:
+        """
+        Return the count of documents that match the given filter.
+
+        Args:
+            filter (Dict[str, Any]): A dictionary specifying the query filter.
+
+        Returns:
+            int: The number of documents matching the filter.
+        """
         where_result = self._build_simple_where_clause(filter)
         if where_result is not None:
             where_clause, params = where_result
@@ -607,6 +856,12 @@ class Collection:
         return len(list(self.find(filter)))
 
     def estimated_document_count(self) -> int:
+        """
+        Return the estimated number of documents in the collection.
+
+        Returns:
+            int: The estimated number of documents.
+        """
         row = self.db.execute(f"SELECT COUNT(1) FROM {self.name}").fetchone()
         return row[0] if row else 0
 
@@ -614,6 +869,16 @@ class Collection:
         self,
         filter: Dict[str, Any],
     ) -> Dict[str, Any] | None:
+        """
+        Deletes a document that matches the filter and returns it.
+
+        Args:
+            filter (Dict[str, Any]): A dictionary specifying the filter criteria.
+
+        Returns:
+            Dict[str, Any] | None: The document that was deleted,
+                                   or None if no document matches.
+        """
         doc = self.find_one(filter)
         if doc:
             self.delete_one({"_id": doc["_id"]})
@@ -624,6 +889,21 @@ class Collection:
         filter: Dict[str, Any],
         replacement: Dict[str, Any],
     ) -> Dict[str, Any] | None:
+        """
+        Replaces a single document in the collection based on a filter with a new document.
+
+        This method first finds a document matching the filter, then replaces it
+        with the new document. If the document is found and replaced, the original
+        document is returned; otherwise, None is returned.
+
+        Args:
+            filter (Dict[str, Any]): A dictionary representing the filter to search for the document to replace.
+            replacement (Dict[str, Any]): A dictionary representing the new document to replace the existing one.
+
+        Returns:
+            Dict[str, Any] | None: The original document that was replaced,
+                                   or None if no document was found and replaced.
+        """
         doc = self.find_one(filter)
         if doc:
             self.replace_one({"_id": doc["_id"]}, replacement)
@@ -634,12 +914,40 @@ class Collection:
         filter: Dict[str, Any],
         update: Dict[str, Any],
     ) -> Dict[str, Any] | None:
+        """
+        Find and update a single document.
+
+        Finds a document matching the given filter, updates it using the specified
+        update expression, and returns the updated document.
+
+        Args:
+            filter (Dict[str, Any]): A dictionary specifying the filter criteria for the document to find.
+            update (Dict[str, Any]): A dictionary specifying the update operations to perform on the document.
+
+        Returns:
+            Dict[str, Any] | None: The document that was updated,
+                                   or None if no document was found and updated.
+        """
         doc = self.find_one(filter)
         if doc:
             self.update_one({"_id": doc["_id"]}, update)
         return doc
 
     def aggregate(self, pipeline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Applies a list of aggregation pipeline stages to the collection.
+
+        This method handles both simple and complex queries. For simpler queries,
+        it leverages the database's native indexing capabilities to optimize
+        performance. For more complex queries, it falls back to a Python-based
+        processing mechanism.
+
+        Args:
+            pipeline (List[Dict[str, Any]]): A list of aggregation pipeline stages to apply.
+
+        Returns:
+            List[Dict[str, Any]]: The list of documents after applying the aggregation pipeline.
+        """
         query_result = self._build_aggregation_query(pipeline)
         if query_result is not None:
             cmd, params = query_result
@@ -694,6 +1002,21 @@ class Collection:
         self,
         pipeline: List[Dict[str, Any]],
     ) -> tuple[str, List[Any]] | None:
+        """
+        Builds a SQL query for the given MongoDB-like aggregation pipeline.
+
+        This method constructs a SQL query based on the stages provided in the
+        aggregation pipeline. It currently handles $match, $sort, $skip,
+        and $limit stages, while $group stages are handled in Python. The method
+        returns a tuple containing the SQL command and a list of parameters.
+
+        Args:
+            pipeline (List[Dict[str, Any]]): A list of aggregation pipeline stages.
+
+        Returns:
+            tuple[str, List[Any]] | None: A tuple containing the SQL command and a list of parameters,
+                                          or None if the pipeline contains unsupported stages or complex queries.
+        """
         where_clause = ""
         params: List[Any] = []
         order_by = ""
@@ -734,6 +1057,19 @@ class Collection:
         group_query: Dict[str, Any],
         docs: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
+        """
+        Process the $group stage of an aggregation pipeline.
+
+        This method groups documents by a specified field and performs specified
+        accumulator operations on other fields.
+
+        Args:
+            group_query (Dict[str, Any]): A dictionary representing the $group stage of the aggregation pipeline.
+            docs (List[Dict[str, Any]]): A list of documents to be grouped.
+
+        Returns:
+            List[Dict[str, Any]]: A list of grouped documents with applied accumulator operations.
+        """
         grouped_docs: Dict[Any, Dict[str, Any]] = {}
         group_id_key = group_query.pop("_id")
 
@@ -776,6 +1112,17 @@ class Collection:
         projection: Dict[str, Any],
         document: Dict[str, Any],
     ) -> Dict[str, Any]:
+        """
+        Applies the projection to the document, selecting or excluding fields
+        based on the projection criteria.
+
+        Args:
+            projection (Dict[str, Any]): A dictionary specifying which fields to include or exclude.
+            document (Dict[str, Any]): The document to apply the projection to.
+
+        Returns:
+            Dict[str, Any]: The document with fields applied based on the projection.
+        """
         if not projection:
             return document
 
@@ -804,7 +1151,21 @@ class Collection:
         self,
         query: Dict[str, Any],
     ) -> tuple[str, List[Any]] | None:
-        """Build a SQL WHERE clause for simple queries that can be handled with json_extract."""
+        """
+        Builds a SQL WHERE clause for simple queries that can be handled with json_extract.
+
+        This method constructs a SQL WHERE clause based on the query provided.
+        It handles simple equality checks and query operators like $eq, $gt, $lt,
+        etc. for fields stored in JSON data. For more complex queries, it returns
+        None, indicating that a Python-based method should be used instead.
+
+        Args:
+            query (Dict[str, Any]): A dictionary representing the query criteria.
+
+        Returns:
+            tuple[str, List[Any]] | None: A tuple containing the SQL WHERE clause and a list of parameters,
+                                          or None if the query contains unsupported operators.
+        """
         clauses = []
         params = []
 
@@ -842,7 +1203,23 @@ class Collection:
         json_path: str,
         operators: Dict[str, Any],
     ) -> tuple[str | None, List[Any]]:
-        """Build a SQL clause for query operators."""
+        """
+        Builds a SQL clause for query operators.
+
+        This method constructs a SQL clause based on the provided operators for
+        a specific JSON path. It handles various operators like $eq, $gt, $lt, etc.,
+        and returns a tuple containing the SQL clause and a list of parameters.
+        If an unsupported operator is encountered, it returns None, indicating
+        that a fallback to Python processing is needed.
+
+        Args:
+            json_path (str): The JSON path to extract the value from.
+            operators (Dict[str, Any]): A dictionary of operators and their values.
+
+        Returns:
+            tuple[str | None, List[Any]]: A tuple containing the SQL clause and parameters.
+                                          If the operator is unsupported, returns (None, []).
+        """
         for op, op_val in operators.items():
             match op:
                 case "$eq":
@@ -914,11 +1291,35 @@ class Collection:
         query: Dict[str, Any],
         document: Dict[str, Any],
     ) -> bool:
+        """
+        Applies a query to a document to determine if it matches the query criteria.
+
+        Handles logical operators ($and, $or, $nor, $not) and nested field paths.
+        Processes both simple equality checks and complex query operators.
+
+        Args:
+            query (Dict[str, Any]): A dictionary representing the query criteria.
+            document (Dict[str, Any]): The document to apply the query to.
+
+        Returns:
+            bool: True if the document matches the query, False otherwise.
+        """
         if document is None:
             return False
         matches: List[bool] = []
 
         def reapply(q: Dict[str, Any]) -> bool:
+            """
+            Recursively apply the query to the document to determine if it matches
+            the query criteria.
+
+            Args:
+                q (Dict[str, Any]): The query to apply.
+                document (Dict[str, Any]): The document to apply the query to.
+
+            Returns:
+                bool: True if the document matches the query, False otherwise.
+            """
             return self._apply_query(q, document)
 
         for field, value in query.items():
@@ -953,6 +1354,20 @@ class Collection:
         return all(matches)
 
     def _get_operator_fn(self, op: str) -> Any:
+        """
+        Retrieve the function associated with the given operator from the
+        query_operators module.
+
+        Args:
+            op (str): The operator string, which should start with a '$' prefix.
+
+        Returns:
+            Any: The function corresponding to the operator.
+
+        Raises:
+            MalformedQueryException: If the operator does not start with '$'.
+            MalformedQueryException: If the operator is not currently implemented.
+        """
         if not op.startswith("$"):
             raise MalformedQueryException(
                 f"Operator '{op}' is not a valid query operation"
@@ -965,6 +1380,17 @@ class Collection:
             )
 
     def distinct(self, key: str, filter: Dict[str, Any] | None = None) -> set:
+        """
+        Return a set of distinct values from the specified key in the documents
+        of this collection, optionally filtered by a query.
+
+        Args:
+            key (str): The field name to extract distinct values from.
+            filter (Optional[Dict[str, Any]]): An optional query filter to apply to the documents.
+
+        Returns:
+            Set[Any]: A set containing the distinct values from the specified key.
+        """
         params: List[Any] = []
         where_clause = ""
 
@@ -998,19 +1424,30 @@ class Collection:
         sparse: bool = False,
         unique: bool = False,
     ):
+        """
+        Create an index on the specified key(s) for this collection.
+
+        Handles both single-key and compound indexes by using SQLite's json_extract
+        function to create indexes on the JSON-stored data. For compound indexes,
+        multiple json_extract calls are used for each key in the list.
+
+        Args:
+            key: A string or list of strings representing the field(s) to index.
+            reindex: Boolean indicating whether to reindex (not used in this implementation).
+            sparse: Boolean indicating whether the index should be sparse (only include documents with the field).
+            unique: Boolean indicating whether the index should be unique.
+        """
         # For single key indexes, we can use SQLite's native JSON indexing
         if isinstance(key, str):
             # Create index name (replace dots with underscores for valid identifiers)
             index_name = key.replace(".", "_")
 
             # Create the index using json_extract
-            self.db.execute(
-                f"""
+            self.db.execute(f"""
                 CREATE {'UNIQUE ' if unique else ''}INDEX
                 IF NOT EXISTS [idx_{self.name}_{index_name}]
                 ON {self.name}(json_extract(data, '$.{key}'))
-                """
-            )
+                """)
         else:
             # For compound indexes, we still need to handle them differently
             # This is a simplified implementation - we could expand on this later
@@ -1020,13 +1457,11 @@ class Collection:
             index_columns = ", ".join(
                 f"json_extract(data, '$.{k}')" for k in key
             )
-            self.db.execute(
-                f"""
+            self.db.execute(f"""
                 CREATE {'UNIQUE ' if unique else ''}INDEX
                 IF NOT EXISTS [idx_{self.name}_{index_name}]
                 ON {self.name}({index_columns})
-                """
-            )
+                """)
 
     def create_indexes(
         self,
@@ -1036,16 +1471,25 @@ class Collection:
         """
         Create multiple indexes at once.
 
+        This method processes a list of index specifications and creates corresponding
+        indexes in the database. It supports various formats for index specifications,
+        including PyMongo IndexModel objects, strings, lists, and dictionaries.
+
         Args:
-            indexes: A list of index specifications. Each specification can be:
-                     - A string for a single key index
-                     - A list of strings for a compound index
-                     - A dict with 'key' (string or list) and optional 'unique' (bool)
-                     - A PyMongo IndexModel object
-            reindex: Whether to reindex (kept for API compatibility)
+            indexes (List[Dict[str, Any]]): A list of index specifications. Each
+                specification can be a PyMongo-like IndexModel object, a dictionary
+                with 'key' and optional 'unique' and 'sparse' parameters, a string
+                key, or a list of keys for compound indexes.
+            reindex (bool, optional): Whether to reindex. Not used in this implementation.
 
         Returns:
-            A list of index names that were created
+            List[str]: A list of index names that were created.
+
+        Notes:
+            - Index names are generated based on the key, using underscores to
+              separate nested keys.
+            - The method handles both single-key and compound indexes.
+            - The 'reindex' parameter is not used in this implementation.
         """
         created_indexes = []
 
@@ -1125,6 +1569,17 @@ class Collection:
         sparse: bool = False,
         documents: List[Dict[str, Any]] | None = None,
     ):
+        """
+        Reindex the collection.
+
+        With native JSON indexing, reindexing is handled automatically by SQLite.
+        This method is kept for API compatibility but does nothing.
+
+        Args:
+            table (str): The table name (not used in this implementation).
+            sparse (bool): Whether the index should be sparse (not used in this implementation).
+            documents (List[Dict[str, Any]]): List of documents to reindex (not used in this implementation).
+        """
         # With native JSON indexing, reindexing is handled automatically by SQLite
         # This method is kept for API compatibility but does nothing
         pass
@@ -1137,6 +1592,16 @@ class Collection:
         self,
         as_keys: bool = False,
     ) -> List[str] | List[List[str]]:
+        """
+        Retrieve indexes for the collection. Indexes are identified by names following a specific pattern.
+
+        Args:
+            as_keys (bool): If True, return the key names (converted from underscores to dots) instead of the full index names.
+
+        Returns:
+            List[str] or List[List[str]]: List of index names or keys, depending on the as_keys parameter.
+                If as_keys is True, each entry is a list containing a single string (the key name).
+        """
         # Get indexes that match our naming convention
         cmd = (
             "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE ?"
@@ -1159,6 +1624,17 @@ class Collection:
         ]
 
     def drop_index(self, index: str):
+        """
+        Drop an index from the collection.
+
+        Handles both single-key and compound indexes. For compound indexes, the
+        input should be a list of field names. The index name is generated by
+        joining the field names with underscores and replacing dots with underscores.
+
+        Args:
+            index (str or list): The name of the index to drop. If a list is provided,
+                                 it represents a compound index.
+        """
         # With native JSON indexing, we just need to drop the index
         if isinstance(index, str):
             # For single indexes
@@ -1174,6 +1650,12 @@ class Collection:
             )
 
     def drop_indexes(self):
+        """
+        Drop all indexes associated with this collection.
+
+        This method retrieves the list of indexes using the list_indexes method
+        and drops each one.
+        """
         indexes = self.list_indexes()
         for index in indexes:
             # Extract the actual index name from the full name
@@ -1181,10 +1663,17 @@ class Collection:
 
     def rename(self, new_name: str) -> None:
         """
-        Rename this collection.
+        Renames the collection to the specified new name.
+        If the new name is the same as the current name, does nothing.
 
-        :param new_name: The new name for this collection.
-        :raises sqlite3.Error: If the rename operation fails
+        Checks if a table with the new name exists and raises an error if it does.
+        Renames the underlying table and updates the collection's name.
+
+        Args:
+            new_name (str): The new name for the collection.
+
+        Raises:
+            sqlite3.Error: If a collection with the new name already exists.
         """
         # If the new name is the same as the current name, do nothing
         if new_name == self.name:
@@ -1202,9 +1691,11 @@ class Collection:
 
     def options(self) -> Dict[str, Any]:
         """
-        Get the options set on this collection.
+        Retrieves options set on this collection.
 
-        :return: A dictionary of collection options.
+        Returns:
+            dict: A dictionary containing various options for the collection,
+                including the table's name, columns, indexes, and count of documents.
         """
         # For SQLite, we can provide information about the table structure
         options: Dict[str, Any] = {
@@ -1261,9 +1752,15 @@ class Collection:
 
     def index_information(self) -> Dict[str, Any]:
         """
-        Get information on this collection's indexes.
+        Retrieves information on this collection's indexes.
 
-        :return: A dictionary of index information.
+        The function fetches all indexes associated with the collection and extracts
+        relevant details such as whether the index is unique and the keys used in
+        the index. It constructs a dictionary where the keys are the index names
+        and the values are dictionaries containing the index information.
+
+        Returns:
+            dict: A dictionary containing index information.
         """
         info: Dict[str, Any] = {}
 
@@ -1321,11 +1818,22 @@ class Collection:
         """
         Get the database that this collection is a part of.
 
-        :return: The database object.
+        Returns:
+            Database: The database this collection is associated with.
         """
         return self._database
 
     def _object_exists(self, type: str, name: str) -> bool:
+        """
+        Check if an object (table or index) of a specific type and name exists within the database.
+
+        Args:
+            type (str): The type of object to check, either "table" or "index".
+            name (str): The name of the object to check.
+
+        Returns:
+            bool: True if the object exists, False otherwise.
+        """
         if type == "table":
             row = self.db.execute(
                 "SELECT COUNT(1) FROM sqlite_master WHERE type = ? AND name = ?",
@@ -1354,21 +1862,26 @@ class Collection:
         start_after: Dict[str, Any] | None = None,
     ) -> "ChangeStream":
         """
-        Watch changes on this collection.
+        Monitor changes on this collection using SQLite's change tracking features.
 
-        This implementation uses SQLite's built-in features to monitor changes.
-        It creates a change stream that can be iterated over to receive change events.
+        This method creates a change stream that allows iterating over change events
+        generated by modifications to the collection. While SQLite doesn't natively
+        support change streams like MongoDB, this implementation uses triggers and
+        SQLite's built-in change tracking mechanisms to provide similar functionality.
 
-        :param pipeline: A list of aggregation pipeline stages to apply to the change events.
-        :param full_document: Determines how the 'fullDocument' response field is populated.
-        :param resume_after: Specifies the logical starting point for the new change stream.
-        :param max_await_time_ms: The maximum amount of time for the server to wait on new documents.
-        :param batch_size: The number of documents to return per batch.
-        :param collation: Specifies the collation to use for the operation.
-        :param start_at_operation_time: The operation time to use as the starting point.
-        :param session: The client session to use.
-        :param start_after: Specifies the logical starting point for the new change stream.
-        :return: A ChangeStream object that can be iterated over.
+        Args:
+            pipeline (List[Dict[str, Any]]): Aggregation pipeline stages to apply to change events.
+            full_document (str): Determines how the 'fullDocument' field is populated in change events.
+            resume_after (Dict[str, Any]): Logical starting point for the change stream.
+            max_await_time_ms (int): Maximum time to wait for new documents in milliseconds.
+            batch_size (int): Number of documents to return per batch.
+            collation (Dict[str, Any]): Collation settings for the operation.
+            start_at_operation_time (Any): Operation time to start monitoring from.
+            session (Any): Client session for the operation.
+            start_after (Dict[str, Any]): Logical starting point for the change stream.
+
+        Returns:
+            ChangeStream: A change stream object that can be iterated over to receive change events.
         """
         return ChangeStream(
             collection=self,
