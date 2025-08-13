@@ -85,7 +85,7 @@ class ChangeStream:
                 document_data TEXT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )
-        """
+            """
         )
 
         # Create triggers for INSERT, UPDATE, DELETE operations
@@ -99,7 +99,7 @@ class ChangeStream:
                 (collection_name, operation, document_id, document_data)
                 VALUES ('{self._collection.name}', 'insert', NEW.id, NEW.data);
             END
-        """
+            """
         )
 
         # Update trigger
@@ -112,7 +112,7 @@ class ChangeStream:
                 (collection_name, operation, document_id, document_data)
                 VALUES ('{self._collection.name}', 'update', NEW.id, NEW.data);
             END
-        """
+            """
         )
 
         # Delete trigger
@@ -125,7 +125,7 @@ class ChangeStream:
                 (collection_name, operation, document_id, document_data)
                 VALUES ('{self._collection.name}', 'delete', OLD.id, OLD.data);
             END
-        """
+            """
         )
 
         # Commit the changes

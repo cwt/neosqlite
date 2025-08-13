@@ -69,7 +69,8 @@ class Collection:
                 CREATE TABLE IF NOT EXISTS {self.name} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     data TEXT NOT NULL
-                )"""
+                )
+                """
             )
         else:
             self.db.execute(
@@ -107,7 +108,8 @@ class Collection:
 
         Args:
             item (Dict[str, Any]): The dictionary to search.
-            key (str): The key to retrieve, may include nested keys separated by dots or may be prefixed with '$'.
+            key (str): The key to retrieve, may include nested keys separated by
+                       dots or may be prefixed with '$'.
 
         Returns:
             Any: The value associated with the key, or None if the key is not found.
@@ -276,13 +278,21 @@ class Collection:
         sql_params = []
         if unset_clauses:
             # Handle $unset operations with json_remove
-            cmd = f"UPDATE {self.name} SET data = json_remove(data, {', '.join(unset_clauses)}) WHERE id = ?"
+            cmd = (
+                f"UPDATE {self.name} "
+                f"SET data = json_remove(data, {', '.join(unset_clauses)}) "
+                "WHERE id = ?"
+            )
             sql_params = unset_params + [doc_id]
             self.db.execute(cmd, sql_params)
 
         if set_clauses:
             # Handle other operations with json_set
-            cmd = f"UPDATE {self.name} SET data = json_set(data, {', '.join(set_clauses)}) WHERE id = ?"
+            cmd = (
+                f"UPDATE {self.name} "
+                f"SET data = json_set(data, {', '.join(set_clauses)}) "
+                "WHERE id = ?"
+            )
             sql_params = set_params + [doc_id]
             cursor = self.db.execute(cmd, sql_params)
 
@@ -471,7 +481,9 @@ class Collection:
             upsert (bool, optional): If True, inserts a new document if no document matches the filter. Defaults to False.
 
         Returns:
-            UpdateResult: An object containing information about the update operation, including the count of matched and modified documents, and the upserted ID if applicable.
+            UpdateResult: An object containing information about the update operation,
+                          including the count of matched and modified documents,
+                          and the upserted ID if applicable.
         """
         doc = self.find_one(filter)
         if doc:
@@ -631,10 +643,12 @@ class Collection:
         Args:
             filter (Dict[str, Any]): A query that matches the document to replace.
             replacement (Dict[str, Any]): The new document that replaces the matched document.
-            upsert (bool, optional): If true, inserts the replacement document if no document matches the filter. Default is False.
+            upsert (bool, optional): If true, inserts the replacement document if no document matches the filter.
+                                     Default is False.
 
         Returns:
-            UpdateResult: A result object containing the number of matched and modified documents and the upserted ID.
+            UpdateResult: A result object containing the number of matched and
+                          modified documents and the upserted ID.
         """
         doc = self.find_one(filter)
         if doc:
@@ -661,10 +675,12 @@ class Collection:
 
         Args:
             requests: List of write operations to execute.
-            ordered: If true, operations will be performed in order and will raise an exception if a single operation fails.
+            ordered: If true, operations will be performed in order and will
+                     raise an exception if a single operation fails.
 
         Returns:
-            BulkWriteResult: A result object containing the number of matched, modified, and inserted documents.
+            BulkWriteResult: A result object containing the number of matched,
+                             modified, and inserted documents.
         """
         inserted_count = 0
         matched_count = 0
@@ -722,10 +738,12 @@ class Collection:
         Delete a single document matching the filter.
 
         Args:
-            filter (Dict[str, Any]): A dictionary specifying the filter conditions for the document to delete.
+            filter (Dict[str, Any]): A dictionary specifying the filter conditions
+                                     for the document to delete.
 
         Returns:
-            DeleteResult: A result object indicating whether the deletion was successful or not.
+            DeleteResult: A result object indicating whether the deletion was
+                          successful or not.
         """
         doc = self.find_one(filter)
         if doc:
@@ -738,7 +756,8 @@ class Collection:
         Deletes multiple documents in the collection that match the provided filter.
 
         Args:
-            filter (Dict[str, Any]): A dictionary specifying the query criteria for finding the documents to delete.
+            filter (Dict[str, Any]): A dictionary specifying the query criteria
+                                     for finding the documents to delete.
 
         Returns:
             DeleteResult: A result object indicating whether the deletion was successful or not.
@@ -1174,14 +1193,18 @@ class Collection:
         params = []
 
         for field, value in query.items():
-            # Handle _id field specially since it's stored as a column, not in the JSON data
+            # Handle _id field specially since it's stored as a column,
+            # not in the JSON data
             if field == "_id":
                 clauses.append("id = ?")
                 params.append(value)
                 continue
 
-            # For all fields (including nested ones), use json_extract to get values from the JSON data
-            # Convert dot notation to JSON path notation (e.g., "profile.age" -> "$.profile.age")
+            # For all fields (including nested ones), use json_extract to get
+            # values from the JSON data.
+
+            # Convert dot notation to JSON path notation.
+            # (e.g., "profile.age" -> "$.profile.age")
             json_path = f"'$.{field}'"
 
             if isinstance(value, dict):
@@ -1403,7 +1426,10 @@ class Collection:
             if where_result:
                 where_clause, params = where_result
 
-        cmd = f"SELECT DISTINCT json_extract(data, '$.{key}') FROM {self.name} {where_clause}"
+        cmd = (
+            f"SELECT DISTINCT json_extract(data, '$.{key}') "
+            f"FROM {self.name} {where_clause}"
+        )
         cursor = self.db.execute(cmd, params)
         results: set[Any] = set()
         for row in cursor.fetchall():
@@ -1448,11 +1474,11 @@ class Collection:
 
             # Create the index using json_extract
             self.db.execute(
-                f"""
-                CREATE {'UNIQUE ' if unique else ''}INDEX
-                IF NOT EXISTS [idx_{self.name}_{index_name}]
-                ON {self.name}(json_extract(data, '$.{key}'))
-                """
+                (
+                    f"CREATE {'UNIQUE ' if unique else ''}INDEX "
+                    f"IF NOT EXISTS [idx_{self.name}_{index_name}] "
+                    f"ON {self.name}(json_extract(data, '$.{key}'))"
+                )
             )
         else:
             # For compound indexes, we still need to handle them differently
@@ -1464,11 +1490,11 @@ class Collection:
                 f"json_extract(data, '$.{k}')" for k in key
             )
             self.db.execute(
-                f"""
-                CREATE {'UNIQUE ' if unique else ''}INDEX
-                IF NOT EXISTS [idx_{self.name}_{index_name}]
-                ON {self.name}({index_columns})
-                """
+                (
+                    f"CREATE {'UNIQUE ' if unique else ''}INDEX "
+                    f"IF NOT EXISTS [idx_{self.name}_{index_name}] "
+                    f"ON {self.name}({index_columns})"
+                )
             )
 
     def create_indexes(
@@ -1604,7 +1630,8 @@ class Collection:
         Retrieve indexes for the collection. Indexes are identified by names following a specific pattern.
 
         Args:
-            as_keys (bool): If True, return the key names (converted from underscores to dots) instead of the full index names.
+            as_keys (bool): If True, return the key names (converted from
+                            underscores to dots) instead of the full index names.
 
         Returns:
             List[str] or List[List[str]]: List of index names or keys, depending on the as_keys parameter.
