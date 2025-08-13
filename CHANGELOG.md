@@ -1,5 +1,11 @@
 # CHANGELOG
 
+## 0.3.1
+
+- Added support for `$contains` query operator (neosqlite-specific) for case-insensitive substring search
+- WIP: Adding more docstring
+
+
 ## 0.3.0
 
 - Added `bulk_write()` method with bulk operations support and ordered parameter

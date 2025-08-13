@@ -146,6 +146,42 @@ users.create_indexes([
 
 Indexes are automatically used by `find()` operations where possible. You can also provide a `hint` to force the use of a specific index.
 
+## Query Operators
+
+`neosqlite` supports various query operators for filtering documents:
+
+- `$eq` - Matches values that are equal to a specified value
+- `$gt` - Matches values that are greater than a specified value
+- `$gte` - Matches values that are greater than or equal to a specified value
+- `$lt` - Matches values that are less than a specified value
+- `$lte` - Matches values that are less than or equal to a specified value
+- `$ne` - Matches all values that are not equal to a specified value
+- `$in` - Matches any of the values specified in an array
+- `$nin` - Matches none of the values specified in an array
+- `$exists` - Matches documents that have the specified field
+- `$mod` - Performs a modulo operation on the value of a field and selects documents with a specified result
+- `$size` - Matches the number of elements in an array
+- `$regex` - Selects documents where values match a specified regular expression
+- `$elemMatch` - Selects documents if element in the array field matches all the specified conditions
+- `$contains` - **(neosqlite-specific)** Performs a case-insensitive substring search on string values
+
+Example usage of the `$contains` operator:
+```python
+# Find users whose name contains "ali" (case-insensitive)
+users.find({"name": {"$contains": "ali"}})
+
+# Find users whose bio contains "python" (case-insensitive)
+users.find({"bio": {"$contains": "python"}})
+```
+
+**Performance Notes:**
+- The `$contains` operator performs substring searches using SQL `LIKE` with wildcards (`%value%`) at the database level
+- This type of search does not efficiently use standard B-tree indexes and may result in full table scans
+- However, for simple substring matching, `$contains` is faster than `$regex` at the Python level because it uses optimized string operations instead of regular expression compilation and execution
+- The operator is intended as a lightweight convenience feature for basic substring matching, not as a replacement for proper full-text search solutions
+- For high-performance text search requirements, consider using SQLite's FTS (Full-Text Search) extensions or other specialized search solutions
+- The `$contains` operator is a neosqlite-specific extension that is not part of the standard MongoDB query operators
+
 ## Sorting
 
 You can sort the results of a `find()` query by chaining the `sort()` method.

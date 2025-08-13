@@ -10,9 +10,9 @@ from unittest.mock import MagicMock, patch
 import neosqlite
 
 try:
-    import pysqlite3.dbapi2 as sqlite3
+    from pysqlite3 import dbapi2 as sqlite3
 except ImportError:
-    import sqlite3
+    import sqlite3  # type: ignore
 
 
 def test_collection_create_with_jsonb_support():

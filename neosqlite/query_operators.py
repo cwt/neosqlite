@@ -124,3 +124,14 @@ def _size(field: str, value: int, document: Dict[str, Any]) -> bool:
     if not isinstance(field_val, list):
         return False
     return len(field_val) == value
+
+
+def _contains(field: str, value: str, document: Dict[str, Any]) -> bool:
+    try:
+        field_val = document.get(field)
+        if field_val is None:
+            return False
+        # Convert both values to strings and do a case-insensitive comparison
+        return str(value).lower() in str(field_val).lower()
+    except (TypeError, AttributeError):
+        return False

@@ -9,9 +9,9 @@ import pytest
 
 # Try to import pysqlite3 for consistent JSON/JSONB support
 try:
-    import pysqlite3.dbapi2 as sqlite3
+    from pysqlite3 import dbapi2 as sqlite3
 except ImportError:
-    import sqlite3
+    import sqlite3  # type: ignore
 
 
 import neosqlite

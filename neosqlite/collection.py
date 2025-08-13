@@ -4,9 +4,9 @@ from typing import Any, Dict, List, overload
 from typing_extensions import Literal
 
 try:
-    import pysqlite3.dbapi2 as sqlite3
+    from pysqlite3 import dbapi2 as sqlite3
 except ImportError:
-    import sqlite3
+    import sqlite3  # type: ignore
 
 from .bulk_operations import BulkOperationExecutor
 from .raw_batch_cursor import RawBatchCursor
@@ -1305,6 +1305,16 @@ class Collection:
                         )
                     else:
                         # Invalid value for $size, fallback to Python
+                        return None, []
+                case "$contains":
+                    # Handle case-insensitive substring search
+                    if isinstance(op_val, str):
+                        return (
+                            f"lower(json_extract(data, {json_path})) LIKE ?",
+                            [f"%{op_val.lower()}%"],
+                        )
+                    else:
+                        # Invalid value for $contains, fallback to Python
                         return None, []
                 case _:
                     # Unsupported operator, return None to indicate we should fallback to Python
