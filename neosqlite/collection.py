@@ -64,17 +64,21 @@ class Collection:
         try:
             self.db.execute("""SELECT jsonb('{"key": "value"}')""")
         except sqlite3.OperationalError:
-            self.db.execute(f"""
+            self.db.execute(
+                f"""
                 CREATE TABLE IF NOT EXISTS {self.name} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     data TEXT NOT NULL
-                )""")
+                )"""
+            )
         else:
-            self.db.execute(f"""
+            self.db.execute(
+                f"""
                 CREATE TABLE IF NOT EXISTS {self.name} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     data JSONB NOT NULL
-                )""")
+                )"""
+            )
 
     def _load(self, id: int, data: str | bytes) -> Dict[str, Any]:
         """
@@ -1443,11 +1447,13 @@ class Collection:
             index_name = key.replace(".", "_")
 
             # Create the index using json_extract
-            self.db.execute(f"""
+            self.db.execute(
+                f"""
                 CREATE {'UNIQUE ' if unique else ''}INDEX
                 IF NOT EXISTS [idx_{self.name}_{index_name}]
                 ON {self.name}(json_extract(data, '$.{key}'))
-                """)
+                """
+            )
         else:
             # For compound indexes, we still need to handle them differently
             # This is a simplified implementation - we could expand on this later
@@ -1457,11 +1463,13 @@ class Collection:
             index_columns = ", ".join(
                 f"json_extract(data, '$.{k}')" for k in key
             )
-            self.db.execute(f"""
+            self.db.execute(
+                f"""
                 CREATE {'UNIQUE ' if unique else ''}INDEX
                 IF NOT EXISTS [idx_{self.name}_{index_name}]
                 ON {self.name}({index_columns})
-                """)
+                """
+            )
 
     def create_indexes(
         self,

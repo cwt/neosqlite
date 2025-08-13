@@ -75,7 +75,8 @@ class ChangeStream:
         operation type, document ID, and data.
         """
         # Create a table to store change events if it doesn't exist
-        self._collection.db.execute("""
+        self._collection.db.execute(
+            """
             CREATE TABLE IF NOT EXISTS _neosqlite_changestream (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 collection_name TEXT NOT NULL,
@@ -84,11 +85,13 @@ class ChangeStream:
                 document_data TEXT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """
+        )
 
         # Create triggers for INSERT, UPDATE, DELETE operations
         # Insert trigger
-        self._collection.db.execute(f"""
+        self._collection.db.execute(
+            f"""
             CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._collection.name}_insert_trigger
             AFTER INSERT ON {self._collection.name}
             BEGIN
@@ -96,10 +99,12 @@ class ChangeStream:
                 (collection_name, operation, document_id, document_data)
                 VALUES ('{self._collection.name}', 'insert', NEW.id, NEW.data);
             END
-        """)
+        """
+        )
 
         # Update trigger
-        self._collection.db.execute(f"""
+        self._collection.db.execute(
+            f"""
             CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._collection.name}_update_trigger
             AFTER UPDATE ON {self._collection.name}
             BEGIN
@@ -107,10 +112,12 @@ class ChangeStream:
                 (collection_name, operation, document_id, document_data)
                 VALUES ('{self._collection.name}', 'update', NEW.id, NEW.data);
             END
-        """)
+        """
+        )
 
         # Delete trigger
-        self._collection.db.execute(f"""
+        self._collection.db.execute(
+            f"""
             CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._collection.name}_delete_trigger
             AFTER DELETE ON {self._collection.name}
             BEGIN
@@ -118,7 +125,8 @@ class ChangeStream:
                 (collection_name, operation, document_id, document_data)
                 VALUES ('{self._collection.name}', 'delete', OLD.id, OLD.data);
             END
-        """)
+        """
+        )
 
         # Commit the changes
         self._collection.db.commit()
