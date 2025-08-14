@@ -41,6 +41,28 @@ results = list(collection.find({"$text": {"$search": "python programming"}}))
 results = list(collection.find({"$text": {"$search": "PYTHON"}}))
 ```
 
+## Using $text with Logical Operators
+
+The `$text` operator can be combined with logical operators (`$and`, `$or`, `$not`, `$nor`) for complex queries. See [Text Search with Logical Operators](text_search_logical_operators.md) for detailed information.
+
+```python
+# $text with $and
+results = list(collection.find({
+    "$and": [
+        {"$text": {"$search": "python"}},
+        {"category": "programming"}
+    ]
+}))
+
+# $text with $or
+results = list(collection.find({
+    "$or": [
+        {"$text": {"$search": "python"}},
+        {"$text": {"$search": "javascript"}}
+    ]
+}))
+```
+
 ## How It Works
 
 1. **FTS Index Creation**: When you create an FTS index, NeoSQLite:

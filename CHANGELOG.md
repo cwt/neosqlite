@@ -8,6 +8,8 @@
 - Improved query processing to leverage FTS5 for text search when available
 - Added Python-based fallback for text search when FTS indexes are not available
 - Added comprehensive test coverage for text search functionality
+- Added support for combining `$text` operator with logical operators (`$and`, `$or`, `$not`, `$nor`)
+- Added documentation and examples for text search with logical operators
 
 ## 0.3.1 - 0.3.2
 
