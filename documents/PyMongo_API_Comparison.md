@@ -44,6 +44,9 @@
 - [x] initialize_unordered_bulk_op()
 - [x] initialize_ordered_bulk_op()
 
+### Text Search
+- [x] $text operator with FTS5 integration (see [text search documentation](text_search.md) for details)
+
 ## Missing Medium-Priority APIs
 
 ### Data Type Support
@@ -58,6 +61,11 @@
 ### Utility Methods
 - [x] watch() (change streams)
 - [ ] parallel_scan()
+
+### Text Search Enhancements
+- [ ] Text scoring with $meta
+- [ ] Advanced $text parameters ($language, $caseSensitive, $diacriticSensitive)
+- [ ] Phrase search and term exclusion syntax
 
 ## Implementation Priority
 

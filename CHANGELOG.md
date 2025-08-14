@@ -10,6 +10,7 @@
 - Added comprehensive test coverage for text search functionality
 - Added support for combining `$text` operator with logical operators (`$and`, `$or`, `$not`, `$nor`)
 - Added documentation and examples for text search with logical operators
+- Added documentation for PyMongo `$text` operator compatibility and differences
 
 ## 0.3.1 - 0.3.2
 

@@ -63,6 +63,10 @@ results = list(collection.find({
 }))
 ```
 
+## PyMongo Compatibility
+
+For information about compatibility with PyMongo's `$text` operator and differences in supported features, see [PyMongo $text Operator Compatibility](text_search_pymongo_compatibility.md).
+
 ## How It Works
 
 1. **FTS Index Creation**: When you create an FTS index, NeoSQLite:
@@ -85,6 +89,7 @@ results = list(collection.find({
 1. **Single Field Search**: Currently, the implementation searches only the first FTS-indexed field it finds
 2. **No Advanced FTS5 Features**: Advanced FTS5 features like ranking and snippets are not yet exposed
 3. **FTS5 Availability**: Requires SQLite with FTS5 support (available in SQLite 3.9.0 and later)
+4. **Limited $text Parameters**: Does not support PyMongo's advanced `$text` parameters like `$language`, `$caseSensitive`, etc.
 
 ## Python Fallback
 

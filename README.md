@@ -187,7 +187,7 @@ articles.create_index("content", fts=True)
 results = articles.find({"$text": {"$search": "python programming"}})
 ```
 
-For more details on text search capabilities, see the [Text Search Documentation](documents/text_search.md) and [Text Search with Logical Operators](documents/text_search_logical_operators.md).
+For more details on text search capabilities, see the [Text Search Documentation](documents/text_search.md), [Text Search with Logical Operators](documents/text_search_logical_operators.md), and [PyMongo Compatibility Information](documents/text_search_pymongo_compatibility.md).
 
 **Performance Notes:**
 - The `$contains` operator performs substring searches using SQL `LIKE` with wildcards (`%value%`) at the database level
