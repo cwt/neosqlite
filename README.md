@@ -187,6 +187,26 @@ articles.create_index("content", fts=True)
 results = articles.find({"$text": {"$search": "python programming"}})
 ```
 
+### Custom FTS5 Tokenizers
+
+NeoSQLite supports custom FTS5 tokenizers for improved language-specific text processing:
+
+```python
+# Load custom tokenizer when creating connection
+conn = neosqlite.Connection(":memory:", tokenizers=[("icu", "/path/to/libfts5_icu.so")])
+
+# Create FTS index with custom tokenizer
+articles.create_index("content", fts=True, tokenizer="icu")
+
+# For language-specific tokenizers like Thai
+conn = neosqlite.Connection(":memory:", tokenizers=[("icu_th", "/path/to/libfts5_icu_th.so")])
+articles.create_index("content", fts=True, tokenizer="icu_th")
+```
+
+Custom tokenizers can significantly improve text search quality for languages that don't use spaces between words (like Chinese, Japanese, Thai) or have complex tokenization rules.
+
+For more information about building and using custom FTS5 tokenizers, see the [FTS5 ICU Tokenizer project](https://sr.ht/~cwt/fts5-icu-tokenizer/) ([GitHub mirror](https://github.com/cwt/fts5-icu-tokenizer)).
+
 For more details on text search capabilities, see the [Text Search Documentation](documents/text_search.md), [Text Search with Logical Operators](documents/text_search_logical_operators.md), and [PyMongo Compatibility Information](documents/text_search_pymongo_compatibility.md).
 
 **Performance Notes:**

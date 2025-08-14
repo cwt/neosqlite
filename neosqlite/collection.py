@@ -1,6 +1,6 @@
 from copy import deepcopy
 import json
-from typing import Any, Dict, List, overload
+from typing import Any, Dict, List, Tuple, overload
 from typing_extensions import Literal
 
 try:
@@ -1597,6 +1597,7 @@ class Collection:
         sparse: bool = False,
         unique: bool = False,
         fts: bool = False,
+        tokenizer: str | None = None,
     ):
         """
         Create an index on the specified key(s) for this collection.
@@ -1611,12 +1612,13 @@ class Collection:
             sparse: Boolean indicating whether the index should be sparse (only include documents with the field).
             unique: Boolean indicating whether the index should be unique.
             fts: Boolean indicating whether to create an FTS index for text search.
+            tokenizer: Optional tokenizer to use for FTS index (e.g., 'icu', 'icu_th').
         """
         # For single key indexes, we can use SQLite's native JSON indexing
         if isinstance(key, str):
             if fts:
-                # Create FTS index
-                self._create_fts_index(key)
+                # Create FTS index with optional tokenizer
+                self._create_fts_index(key, tokenizer)
             else:
                 # Create index name (replace dots with underscores for valid identifiers)
                 index_name = key.replace(".", "_")
@@ -1646,12 +1648,13 @@ class Collection:
                 )
             )
 
-    def _create_fts_index(self, field: str):
+    def _create_fts_index(self, field: str, tokenizer: str | None = None):
         """
         Create an FTS5 index on the specified field for text search.
 
         Args:
             field: The field to create the FTS index on.
+            tokenizer: Optional tokenizer to use for the FTS index.
         """
         from .exceptions import MalformedQueryException
 
@@ -1671,13 +1674,21 @@ class Collection:
                 "FTS5 is not available in this SQLite installation"
             )
 
-        # Create the FTS table
-        self.db.execute(
-            f"""
-            CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name} 
-            USING fts5(content='{self.name}', content_rowid='id', {index_name})
-            """
-        )
+        # Create the FTS table with optional tokenizer
+        if tokenizer:
+            self.db.execute(
+                f"""
+                CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name} 
+                USING fts5(content='{self.name}', content_rowid='id', {index_name}, tokenize='{tokenizer}')
+                """
+            )
+        else:
+            self.db.execute(
+                f"""
+                CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name} 
+                USING fts5(content='{self.name}', content_rowid='id', {index_name})
+                """
+            )
 
         # Create triggers to keep the FTS index in sync with the main table
         # Delete existing triggers if they exist
@@ -1741,69 +1752,53 @@ class Collection:
 
     def create_indexes(
         self,
-        indexes: List[Dict[str, Any]],
-        reindex: bool = True,
+        indexes: List[str | List[str] | List[Tuple[str, int]] | Dict[str, Any]],
     ) -> List[str]:
         """
         Create multiple indexes at once.
 
-        This method processes a list of index specifications and creates corresponding
-        indexes in the database. It supports various formats for index specifications,
-        including PyMongo IndexModel objects, strings, lists, and dictionaries.
+        This method provides a convenient way to create several indexes in a single call.
+        It supports various formats for specifying indexes, including simple strings for
+        single-field indexes, lists for compound indexes, and dictionaries for indexes
+        with additional options.
 
         Args:
-            indexes (List[Dict[str, Any]]): A list of index specifications. Each
-                specification can be a PyMongo-like IndexModel object, a dictionary
-                with 'key' and optional 'unique' and 'sparse' parameters, a string
-                key, or a list of keys for compound indexes.
-            reindex (bool, optional): Whether to reindex. Not used in this implementation.
+            indexes: A list of index specifications in various formats:
+                    - str: Simple single-field index
+                    - List[str]: Compound index with multiple fields
+                    - List[Tuple[str, int]]: Compound index with field names and sort directions
+                    - Dict: Index with additional options like unique, sparse, fts
 
         Returns:
-            List[str]: A list of index names that were created.
-
-        Notes:
-            - Index names are generated based on the key, using underscores to
-              separate nested keys.
-            - The method handles both single-key and compound indexes.
-            - The 'reindex' parameter is not used in this implementation.
+            List[str]: A list of the names of the indexes that were created.
         """
         created_indexes = []
-
         for index_spec in indexes:
-            # Handle PyMongo IndexModel objects
-            if hasattr(index_spec, "document"):
-                # This is a PyMongo IndexModel object
-                doc = index_spec.get("document", {})
-                key = doc.get("key", {})
-                unique = doc.get("unique", False)
-                sparse = doc.get("sparse", False)
-                fts = doc.get("fts", False)
+            # Handle dict format with options
+            if isinstance(index_spec, dict):
+                key: str | List[str] | None = index_spec.get("key")
+                unique: bool = bool(index_spec.get("unique", False))
+                sparse: bool = bool(index_spec.get("sparse", False))
+                fts: bool = bool(index_spec.get("fts", False))
+                tokenizer: str | None = index_spec.get("tokenizer")
 
-                # Convert key dict to our format
-                if isinstance(key, dict):
-                    # Convert {'name': 1, 'age': -1} to ['name', 'age'] for simplicity
-                    # In a more advanced implementation, we could handle sort order
-                    key_list = list(key.keys())
-                    if len(key_list) == 1:
-                        key = key_list[0]  # Single key
+                if key is not None:
+                    self.create_index(
+                        key,
+                        unique=unique,
+                        sparse=sparse,
+                        fts=fts,
+                        tokenizer=tokenizer,
+                    )
+                    if isinstance(key, str):
+                        index_name = key.replace(".", "_")
                     else:
-                        key = key_list  # Compound key
-                elif isinstance(key, list):
-                    # Handle list format like [('name', 1), ('age', -1)]
-                    key_list = [k for k, _ in key] if key else []
-                    if len(key_list) == 1:
-                        key = key_list[0]
-                    else:
-                        key = key_list
+                        index_name = "_".join(str(k) for k in key).replace(
+                            ".", "_"
+                        )
+                    created_indexes.append(f"idx_{self.name}_{index_name}")
 
-                self.create_index(key, unique=unique, sparse=sparse, fts=fts)
-                if isinstance(key, str):
-                    index_name = key.replace(".", "_")
-                else:
-                    index_name = "_".join(key).replace(".", "_")
-                created_indexes.append(f"idx_{self.name}_{index_name}")
-
-            # Handle our existing formats
+            # Handle string format
             elif isinstance(index_spec, str):
                 # Simple string key
                 self.create_index(index_spec)
@@ -1814,32 +1809,28 @@ class Collection:
                 # Handle both ['name', 'age'] and [('name', 1), ('age', -1)] formats
                 if index_spec and isinstance(index_spec[0], tuple):  # type: ignore
                     # Format [('name', 1), ('age', -1)] - extract just the field names
-                    key_list = [k for k, _ in index_spec]
+                    key_list: List[str] = []
+                    # Type assertion: we know this is List[Tuple[str, int]] at this point
+                    tuple_list: List[Tuple[str, int]] = index_spec  # type: ignore
+                    for k, _ in tuple_list:
+                        key_list.append(k)
                     self.create_index(key_list)
-                    index_name = "_".join(key_list).replace(".", "_")
+                    # Join the key list with underscores
+                    str_keys: List[str] = []
+                    for k in key_list:
+                        str_keys.append(str(k))
+                    index_name = "_".join(str_keys).replace(".", "_")
                 else:
                     # Format ['name', 'age']
-                    self.create_index(index_spec)
-                    index_name = "_".join(index_spec).replace(".", "_")
+                    # Type check: we know this is List[str] at this point
+                    str_list: List[str] = index_spec  # type: ignore
+                    self.create_index(str_list)
+                    # Join the string list with underscores
+                    str_keys2: List[str] = []
+                    for k in str_list:
+                        str_keys2.append(str(k))
+                    index_name = "_".join(str_keys2).replace(".", "_")
                 created_indexes.append(f"idx_{self.name}_{index_name}")
-            elif isinstance(index_spec, dict):
-                # Dictionary with key and options
-                key = index_spec.get("key")
-                unique = index_spec.get("unique", False)
-                sparse = index_spec.get("sparse", False)
-                fts = index_spec.get("fts", False)
-
-                if key is not None:
-                    self.create_index(
-                        key, unique=unique, sparse=sparse, fts=fts
-                    )
-                    if isinstance(key, str):
-                        index_name = key.replace(".", "_")
-                    else:
-                        index_name = "_".join(str(k) for k in key).replace(
-                            ".", "_"
-                        )
-                    created_indexes.append(f"idx_{self.name}_{index_name}")
 
         return created_indexes
 

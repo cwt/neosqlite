@@ -1,5 +1,5 @@
 from contextlib import contextmanager
-from typing import Any, Dict, Iterator
+from typing import Any, Dict, Iterator, List, Tuple
 from typing_extensions import Literal
 
 try:
@@ -22,8 +22,11 @@ class Connection:
         Args:
             *args: Positional arguments passed to sqlite3.connect().
             **kwargs: Keyword arguments passed to sqlite3.connect().
+                     Special kwargs:
+                     - tokenizers: List of tuples (name, path) for FTS5 tokenizers to load
         """
         self._collections: Dict[str, "Collection"] = {}
+        self._tokenizers: List[Tuple[str, str]] = kwargs.pop("tokenizers", [])
         self.connect(*args, **kwargs)
 
     def connect(self, *args: Any, **kwargs: Any):
@@ -41,6 +44,12 @@ class Connection:
         self.db = sqlite3.connect(*args, **kwargs)
         self.db.isolation_level = None
         self.db.execute("PRAGMA journal_mode=WAL")
+
+        # Enable extension loading and load custom FTS5 tokenizers if provided
+        if self._tokenizers:
+            self.db.enable_load_extension(True)
+            for name, path in self._tokenizers:
+                self.db.execute(f"SELECT load_extension('{path}')")
 
     def close(self):
         """

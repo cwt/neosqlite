@@ -31,6 +31,33 @@ collection.create_index("title", fts=True)
 collection.create_index("content", fts=True)
 ```
 
+### Custom FTS5 Tokenizers
+
+NeoSQLite supports custom FTS5 tokenizers for improved language-specific text processing. To use a custom tokenizer:
+
+1. Load the tokenizer library when creating the connection
+2. Specify the tokenizer when creating the FTS index
+
+```python
+# Load custom tokenizer when creating connection
+conn = neosqlite.Connection(
+    ":memory:",
+    tokenizers=[("icu", "/path/to/libfts5_icu.so")]
+)
+
+# Create FTS index with custom tokenizer
+collection.create_index("content", fts=True, tokenizer="icu")
+
+# For language-specific tokenizers like Thai
+conn = neosqlite.Connection(
+    ":memory:",
+    tokenizers=[("icu_th", "/path/to/libfts5_icu_th.so")]
+)
+collection.create_index("content", fts=True, tokenizer="icu_th")
+```
+
+Custom tokenizers can significantly improve text search quality for languages that don't use spaces between words (like Chinese, Japanese, Thai) or have complex tokenization rules. For more information about building and using custom FTS5 tokenizers, see the [FTS5 ICU Tokenizer project](https://sr.ht/~cwt/fts5-icu-tokenizer/) ([GitHub mirror](https://github.com/cwt/fts5-icu-tokenizer)).
+
 **Note on PyMongo Compatibility**: Unlike PyMongo which supports compound text indexes that index multiple fields together, NeoSQLite creates separate FTS tables for each field. When searching across multiple FTS-indexed fields, NeoSQLite automatically searches all relevant FTS tables and combines the results.
 
 ## Using the $text Operator

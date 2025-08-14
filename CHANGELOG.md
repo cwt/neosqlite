@@ -1,5 +1,12 @@
 # CHANGELOG
 
+## 0.3.5
+
+- Added support for custom FTS5 tokenizers with Connection.tokenizers parameter
+- Enhanced `create_index()` method with `tokenizer` parameter for FTS indexes
+- Enhanced `create_indexes()` method to support tokenizer parameter in index specifications
+- Added documentation and examples for using custom FTS5 tokenizers
+
 ## 0.3.4
 
 - Fixed Text Search with Multiple FTS Indexes
