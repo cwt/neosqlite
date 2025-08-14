@@ -112,6 +112,7 @@ with neosqlite.Connection(':memory:') as conn:
         batch_str = batch.decode('utf-8')
         doc_strings = [s for s in batch_str.split('\n') if s]
         print(f"  Batch {i}: {len(doc_strings)} documents")
+```
 
 ## JSON/JSONB Support
 
