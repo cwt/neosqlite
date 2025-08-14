@@ -77,7 +77,7 @@ results = list(collection.find({"$text": {"$search": "PYTHON"}}))
 
 ## Using $text with Logical Operators
 
-The `$text` operator can be combined with logical operators (`$and`, `$or`, `$not`, `$nor`) for complex queries. See [Text Search with Logical Operators](text_search_logical_operators.md) for detailed information.
+The `$text` operator can be combined with logical operators (`$and`, `$or`, `$not`, `$nor`) for complex queries. See [Text Search with Logical Operators](TEXT_SEARCH_Logical_Operators.md) for detailed information.
 
 ```python
 # $text with $and
@@ -99,7 +99,7 @@ results = list(collection.find({
 
 ## PyMongo Compatibility
 
-For information about compatibility with PyMongo's `$text` operator and differences in supported features, see [PyMongo $text Operator Compatibility](text_search_pymongo_compatibility.md).
+For information about compatibility with PyMongo's `$text` operator and differences in supported features, see [PyMongo $text Operator Compatibility](TEXT_SEARCH_PyMongo_Compatibility.md).
 
 ## How It Works
 
