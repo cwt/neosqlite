@@ -208,7 +208,7 @@ Custom tokenizers can significantly improve text search quality for languages th
 
 For more information about building and using custom FTS5 tokenizers, see the [FTS5 ICU Tokenizer project](https://sr.ht/~cwt/fts5-icu-tokenizer/) ([GitHub mirror](https://github.com/cwt/fts5-icu-tokenizer)).
 
-For more details on text search capabilities, see the [Text Search Documentation](documents/text_search.md), [Text Search with Logical Operators](documents/text_search_logical_operators.md), and [PyMongo Compatibility Information](documents/text_search_pymongo_compatibility.md).
+For more details on text search capabilities, see the [Text Search Documentation](documents/TEXT_SEARCH.md), [Text Search with Logical Operators](documents/TEXT_SEARCH_Logical_Operators.md), and [PyMongo Compatibility Information](documents/TEXT_SEARCH_PyMongo_Compatibility.md).
 
 **Performance Notes:**
 - The `$contains` operator performs substring searches using SQL `LIKE` with wildcards (`%value%`) at the database level
