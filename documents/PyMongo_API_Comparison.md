@@ -45,7 +45,7 @@
 - [x] initialize_ordered_bulk_op()
 
 ### Text Search
-- [x] $text operator with FTS5 integration (see [text search documentation](text_search.md) for details)
+- [x] $text operator with FTS5 integration (see [text search documentation](TEXT_SEARCH.md) for details)
 
 ## Missing Medium-Priority APIs
 
