@@ -9,6 +9,7 @@
 - **Lazy Cursor**: `find()` returns a memory-efficient cursor for iterating over results.
 - **Raw Batch Support**: `find_raw_batches()` returns raw JSON data in batches for efficient processing.
 - **Advanced Indexing**: Supports single-key, compound-key, and nested-key indexes.
+- **Text Search**: Full-text search capabilities using SQLite's FTS5 extension with the `$text` operator.
 - **Modern API**: Aligned with modern `pymongo` practices (using methods like `insert_one`, `update_one`, `delete_many`, etc.).
 - **Automatic JSON/JSONB Support**: Automatically detects and uses JSONB column type when available for better performance.
 
@@ -174,9 +175,24 @@ users.find({"name": {"$contains": "ali"}})
 users.find({"bio": {"$contains": "python"}})
 ```
 
+## Text Search with $text Operator
+
+NeoSQLite supports efficient full-text search using the `$text` operator, which leverages SQLite's FTS5 extension:
+
+```python
+# Create FTS index on content field
+articles.create_index("content", fts=True)
+
+# Perform text search
+results = articles.find({"$text": {"$search": "python programming"}})
+```
+
+For more details on text search capabilities, see the [Text Search Documentation](documents/text_search.md).
+
 **Performance Notes:**
 - The `$contains` operator performs substring searches using SQL `LIKE` with wildcards (`%value%`) at the database level
 - This type of search does not efficiently use standard B-tree indexes and may result in full table scans
+- The `$text` operator with FTS indexes provides much better performance for text search operations
 - However, for simple substring matching, `$contains` is faster than `$regex` at the Python level because it uses optimized string operations instead of regular expression compilation and execution
 - The operator is intended as a lightweight convenience feature for basic substring matching, not as a replacement for proper full-text search solutions
 - For high-performance text search requirements, consider using SQLite's FTS (Full-Text Search) extensions or other specialized search solutions

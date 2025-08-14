@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## 0.3.3
+
+- Added support for `$text` query operator with FTS5 integration for efficient text search
+- Enhanced `create_index()` method with `fts=True` parameter to create FTS indexes
+- Added automatic trigger-based synchronization for FTS indexes on insert/update/delete operations
+- Improved query processing to leverage FTS5 for text search when available
+- Added Python-based fallback for text search when FTS indexes are not available
+- Added comprehensive test coverage for text search functionality
+
 ## 0.3.1 - 0.3.2
 
 - Added support for `$contains` query operator (neosqlite-specific) for case-insensitive substring search

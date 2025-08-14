@@ -1170,6 +1170,67 @@ class Collection:
             doc.pop("_id", None)
         return doc
 
+    def _is_text_search_query(self, query: Dict[str, Any]) -> bool:
+        """
+        Check if the query is a text search query (contains $text operator).
+
+        Args:
+            query: The query to check.
+
+        Returns:
+            True if the query is a text search query, False otherwise.
+        """
+        return "$text" in query
+
+    def _build_text_search_query(
+        self, query: Dict[str, Any]
+    ) -> tuple[str, List[Any]] | None:
+        """
+        Builds a SQL query for text search using FTS5.
+
+        Args:
+            query: A dictionary representing the text search query with $text operator.
+
+        Returns:
+            tuple[str, List[Any]] | None: A tuple containing the SQL WHERE clause and a list of parameters,
+                                          or None if the query is invalid or FTS index doesn't exist.
+        """
+        if "$text" not in query:
+            return None
+
+        text_query = query["$text"]
+        if not isinstance(text_query, dict) or "$search" not in text_query:
+            return None
+
+        search_term = text_query["$search"]
+        if not isinstance(search_term, str):
+            return None
+
+        # Find FTS tables for this collection
+        cursor = self.db.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE ?",
+            (f"{self.name}_%_fts",),
+        )
+        fts_tables = cursor.fetchall()
+
+        if not fts_tables:
+            return None
+
+        # For simplicity, we'll use the first FTS table found
+        fts_table_name = fts_tables[0][0]
+        # Extract field name from FTS table name (collection_field_fts -> field)
+        index_name = fts_table_name[
+            len(f"{self.name}_") : -4
+        ]  # Remove collection_ prefix and _fts suffix
+
+        # Build the FTS query
+        where_clause = f"""
+        WHERE id IN (
+            SELECT rowid FROM {fts_table_name} WHERE {index_name} MATCH ?
+        )
+        """
+        return where_clause, [search_term]
+
     def _build_simple_where_clause(
         self,
         query: Dict[str, Any],
@@ -1189,6 +1250,10 @@ class Collection:
             tuple[str, List[Any]] | None: A tuple containing the SQL WHERE clause and a list of parameters,
                                           or None if the query contains unsupported operators.
         """
+        # Handle text search queries separately
+        if self._is_text_search_query(query):
+            return self._build_text_search_query(query)
+
         clauses = []
         params = []
 
@@ -1431,7 +1496,57 @@ class Collection:
             return self._apply_query(q, document)
 
         for field, value in query.items():
-            if field == "$and":
+            if field == "$text":
+                # Handle $text operator in Python fallback
+                # This is a simplified implementation that just does basic string matching
+                if isinstance(value, dict) and "$search" in value:
+                    search_term = value["$search"]
+                    if isinstance(search_term, str):
+                        # Find FTS tables for this collection to determine which fields are indexed
+                        cursor = self.db.execute(
+                            "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE ?",
+                            (f"{self.name}_%_fts",),
+                        )
+                        fts_tables = cursor.fetchall()
+
+                        # Check each FTS-indexed field for matches
+                        for fts_table in fts_tables:
+                            fts_table_name = fts_table[0]
+                            # Extract field name from FTS table name (collection_field_fts -> field)
+                            index_name = fts_table_name[
+                                len(f"{self.name}_") : -4
+                            ]  # Remove collection_ prefix and _fts suffix
+                            # Convert underscores back to dots for nested keys
+                            field_name = index_name.replace("_", ".")
+                            # Check if this field has content that matches the search term
+                            field_value = self._get_val(document, field_name)
+                            if field_value and isinstance(field_value, str):
+                                # Simple case-insensitive substring search
+                                if search_term.lower() in field_value.lower():
+                                    matches.append(True)
+                                    break
+                        else:
+                            # If no FTS indexes exist, check all string fields
+                            def check_all_fields(doc, search_term):
+                                """Recursively check all fields in the document for the search term"""
+                                for key, val in doc.items():
+                                    if isinstance(val, str):
+                                        if search_term.lower() in val.lower():
+                                            return True
+                                    elif isinstance(val, dict):
+                                        if check_all_fields(val, search_term):
+                                            return True
+                                return False
+
+                            if check_all_fields(document, search_term):
+                                matches.append(True)
+                            else:
+                                matches.append(False)
+                    else:
+                        matches.append(False)
+                else:
+                    matches.append(False)
+            elif field == "$and":
                 matches.append(all(map(reapply, value)))
             elif field == "$or":
                 matches.append(any(map(reapply, value)))
@@ -1534,6 +1649,7 @@ class Collection:
         reindex: bool = True,
         sparse: bool = False,
         unique: bool = False,
+        fts: bool = False,
     ):
         """
         Create an index on the specified key(s) for this collection.
@@ -1547,20 +1663,25 @@ class Collection:
             reindex: Boolean indicating whether to reindex (not used in this implementation).
             sparse: Boolean indicating whether the index should be sparse (only include documents with the field).
             unique: Boolean indicating whether the index should be unique.
+            fts: Boolean indicating whether to create an FTS index for text search.
         """
         # For single key indexes, we can use SQLite's native JSON indexing
         if isinstance(key, str):
-            # Create index name (replace dots with underscores for valid identifiers)
-            index_name = key.replace(".", "_")
+            if fts:
+                # Create FTS index
+                self._create_fts_index(key)
+            else:
+                # Create index name (replace dots with underscores for valid identifiers)
+                index_name = key.replace(".", "_")
 
-            # Create the index using json_extract
-            self.db.execute(
-                (
-                    f"CREATE {'UNIQUE ' if unique else ''}INDEX "
-                    f"IF NOT EXISTS [idx_{self.name}_{index_name}] "
-                    f"ON {self.name}(json_extract(data, '$.{key}'))"
+                # Create the index using json_extract
+                self.db.execute(
+                    (
+                        f"CREATE {'UNIQUE ' if unique else ''}INDEX "
+                        f"IF NOT EXISTS [idx_{self.name}_{index_name}] "
+                        f"ON {self.name}(json_extract(data, '$.{key}'))"
+                    )
                 )
-            )
         else:
             # For compound indexes, we still need to handle them differently
             # This is a simplified implementation - we could expand on this later
@@ -1577,6 +1698,99 @@ class Collection:
                     f"ON {self.name}({index_columns})"
                 )
             )
+
+    def _create_fts_index(self, field: str):
+        """
+        Create an FTS5 index on the specified field for text search.
+
+        Args:
+            field: The field to create the FTS index on.
+        """
+        from .exceptions import MalformedQueryException
+
+        # Create FTS5 virtual table
+        index_name = field.replace(".", "_")
+        fts_table_name = f"{self.name}_{index_name}_fts"
+
+        # Check if FTS5 is available by trying to create a simple FTS table
+        try:
+            # Try to create a temporary FTS table to check if FTS5 is available
+            self.db.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS temp.fts_test USING fts5(test)"
+            )
+            self.db.execute("DROP TABLE IF EXISTS temp.fts_test")
+        except sqlite3.OperationalError:
+            raise MalformedQueryException(
+                "FTS5 is not available in this SQLite installation"
+            )
+
+        # Create the FTS table
+        self.db.execute(
+            f"""
+            CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name} 
+            USING fts5(content='{self.name}', content_rowid='id', {index_name})
+            """
+        )
+
+        # Create triggers to keep the FTS index in sync with the main table
+        # Delete existing triggers if they exist
+        self.db.execute(
+            f"DROP TRIGGER IF EXISTS {self.name}_{index_name}_fts_insert"
+        )
+        self.db.execute(
+            f"DROP TRIGGER IF EXISTS {self.name}_{index_name}_fts_update"
+        )
+        self.db.execute(
+            f"DROP TRIGGER IF EXISTS {self.name}_{index_name}_fts_delete"
+        )
+
+        # Insert trigger
+        self.db.execute(
+            f"""
+            CREATE TRIGGER IF NOT EXISTS {self.name}_{index_name}_fts_insert
+            AFTER INSERT ON {self.name}
+            BEGIN
+                INSERT INTO {fts_table_name}(rowid, {index_name}) 
+                VALUES (new.id, json_extract(new.data, '$.{field}'));
+            END
+            """
+        )
+
+        # Update trigger
+        self.db.execute(
+            f"""
+            CREATE TRIGGER IF NOT EXISTS {self.name}_{index_name}_fts_update
+            AFTER UPDATE ON {self.name}
+            BEGIN
+                INSERT INTO {fts_table_name}({fts_table_name}, rowid, {index_name}) 
+                VALUES ('delete', old.id, json_extract(old.data, '$.{field}'));
+                INSERT INTO {fts_table_name}(rowid, {index_name}) 
+                VALUES (new.id, json_extract(new.data, '$.{field}'));
+            END
+            """
+        )
+
+        # Delete trigger
+        self.db.execute(
+            f"""
+            CREATE TRIGGER IF NOT EXISTS {self.name}_{index_name}_fts_delete
+            AFTER DELETE ON {self.name}
+            BEGIN
+                INSERT INTO {fts_table_name}({fts_table_name}, rowid, {index_name}) 
+                VALUES ('delete', old.id, json_extract(old.data, '$.{field}'));
+            END
+            """
+        )
+
+        # Populate the FTS index with existing data
+        self.db.execute(
+            f"""
+            INSERT INTO {fts_table_name}(rowid, {index_name})
+            SELECT id, json_extract(data, '$.{field}') 
+            FROM {self.name} 
+            WHERE json_extract(data, '$.{field}') IS NOT NULL
+            """
+        )
 
     def create_indexes(
         self,
@@ -1616,6 +1830,7 @@ class Collection:
                 key = doc.get("key", {})
                 unique = doc.get("unique", False)
                 sparse = doc.get("sparse", False)
+                fts = doc.get("fts", False)
 
                 # Convert key dict to our format
                 if isinstance(key, dict):
@@ -1634,7 +1849,7 @@ class Collection:
                     else:
                         key = key_list
 
-                self.create_index(key, unique=unique, sparse=sparse)
+                self.create_index(key, unique=unique, sparse=sparse, fts=fts)
                 if isinstance(key, str):
                     index_name = key.replace(".", "_")
                 else:
@@ -1665,9 +1880,12 @@ class Collection:
                 key = index_spec.get("key")
                 unique = index_spec.get("unique", False)
                 sparse = index_spec.get("sparse", False)
+                fts = index_spec.get("fts", False)
 
                 if key is not None:
-                    self.create_index(key, unique=unique, sparse=sparse)
+                    self.create_index(
+                        key, unique=unique, sparse=sparse, fts=fts
+                    )
                     if isinstance(key, str):
                         index_name = key.replace(".", "_")
                     else:
