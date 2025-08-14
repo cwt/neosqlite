@@ -137,3 +137,23 @@ def test_update_many_combined():
     assert alice["score"] == 85  # max(80, 85)
     assert result.matched_count == 1
     assert result.modified_count == 1
+
+
+def test_upsert_min_max_non_existent_field():
+    """Test $min and $max operators on non-existent fields during an upsert."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test"]
+
+    # Upsert with $min on a non-existent document
+    collection.update_one({"name": "Frank"}, {"$min": {"score": 50}}, upsert=True)
+    frank = collection.find_one({"name": "Frank"})
+    assert frank is not None
+    assert "score" in frank
+    assert frank["score"] == 50
+
+    # Upsert with $max on a non-existent document
+    collection.update_one({"name": "Grace"}, {"$max": {"score": 60}}, upsert=True)
+    grace = collection.find_one({"name": "Grace"})
+    assert grace is not None
+    assert "score" in grace
+    assert grace["score"] == 60

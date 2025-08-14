@@ -422,11 +422,11 @@ class Collection:
                             doc_to_update[k] *= v
                 case "$min":
                     for k, v in value.items():
-                        if k in doc_to_update and doc_to_update[k] > v:
+                        if k not in doc_to_update or doc_to_update[k] > v:
                             doc_to_update[k] = v
                 case "$max":
                     for k, v in value.items():
-                        if k in doc_to_update and doc_to_update[k] < v:
+                        if k not in doc_to_update or doc_to_update[k] < v:
                             doc_to_update[k] = v
                 case _:
                     raise MalformedQueryException(
