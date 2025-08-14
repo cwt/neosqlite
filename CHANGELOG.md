@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## 0.3.4
+
+- Fixed Text Search with Multiple FTS Indexes
+
 ## 0.3.3
 
 - Added support for `$text` query operator with FTS5 integration for efficient text search

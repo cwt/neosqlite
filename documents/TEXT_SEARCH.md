@@ -24,7 +24,14 @@ collection.create_index("content", fts=True)
 
 # Create FTS index on nested fields
 collection.create_index("metadata.description", fts=True)
+
+# For searching across multiple fields, create separate FTS indexes on each field
+# (Unlike PyMongo's compound text indexes, NeoSQLite uses separate FTS tables)
+collection.create_index("title", fts=True)
+collection.create_index("content", fts=True)
 ```
+
+**Note on PyMongo Compatibility**: Unlike PyMongo which supports compound text indexes that index multiple fields together, NeoSQLite creates separate FTS tables for each field. When searching across multiple FTS-indexed fields, NeoSQLite automatically searches all relevant FTS tables and combines the results.
 
 ## Using the $text Operator
 
@@ -86,10 +93,9 @@ For information about compatibility with PyMongo's `$text` operator and differen
 
 ## Limitations
 
-1. **Single Field Search**: Currently, the implementation searches only the first FTS-indexed field it finds
-2. **No Advanced FTS5 Features**: Advanced FTS5 features like ranking and snippets are not yet exposed
-3. **FTS5 Availability**: Requires SQLite with FTS5 support (available in SQLite 3.9.0 and later)
-4. **Limited $text Parameters**: Does not support PyMongo's advanced `$text` parameters like `$language`, `$caseSensitive`, etc.
+1. **No Advanced FTS5 Features**: Advanced FTS5 features like ranking and snippets are not yet exposed
+2. **FTS5 Availability**: Requires SQLite with FTS5 support (available in SQLite 3.9.0 and later)
+3. **Limited $text Parameters**: Does not support PyMongo's advanced `$text` parameters like `$language`, `$caseSensitive`, etc.
 
 ## Python Fallback
 

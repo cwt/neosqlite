@@ -11,6 +11,7 @@ The following PyMongo `$text` features are supported in NeoSQLite:
 - Multiple word search
 - Combining with logical operators (`$and`, `$or`, `$not`, `$nor`)
 - Nested field support
+- **Multiple Index Search**: Searches across all FTS-indexed fields in a collection, matching MongoDB's behavior
 
 ## Incompatible or Missing Features
 
@@ -54,15 +55,28 @@ PyMongo supports advanced search syntax that is not implemented:
 
 ### 4. Index Creation Differences
 
-The index creation syntax differs between PyMongo and NeoSQLite:
+The index creation approach differs between PyMongo and NeoSQLite:
 
 ```javascript
-// PyMongo:
-db.collection.createIndex({"content": "text"})
+// PyMongo - Compound text index on multiple fields:
+db.collection.createIndex(
+    {
+        "title": "text",
+        "subtitle": "text"
+    },
+    name="title_subtitle_text_index"
+)
 
-// NeoSQLite:
-collection.create_index("content", fts=True)
+// NeoSQLite - Separate FTS indexes on each field:
+collection.create_index("title", fts=True)
+collection.create_index("subtitle", fts=True)
 ```
+
+**Key Difference**: 
+- **PyMongo/MongoDB** creates a single compound text index that indexes multiple fields together
+- **NeoSQLite** creates separate FTS tables for each field, which are then searched collectively using UNION queries (thanks to our recent fix)
+
+Both approaches achieve the same end result - being able to search across multiple fields - but with different underlying implementations. The NeoSQLite approach offers more flexibility as you can selectively index specific fields while the PyMongo approach requires committing to a specific set of fields in the compound index.
 
 ## Implementation Differences
 

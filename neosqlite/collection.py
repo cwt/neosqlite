@@ -1216,20 +1216,30 @@ class Collection:
         if not fts_tables:
             return None
 
-        # For simplicity, we'll use the first FTS table found
-        fts_table_name = fts_tables[0][0]
-        # Extract field name from FTS table name (collection_field_fts -> field)
-        index_name = fts_table_name[
-            len(f"{self.name}_") : -4
-        ]  # Remove collection_ prefix and _fts suffix
+        # Build UNION query to search across ALL FTS tables
+        subqueries = []
+        params = []
+
+        for (fts_table_name,) in fts_tables:
+            # Extract field name from FTS table name (collection_field_fts -> field)
+            index_name = fts_table_name[
+                len(f"{self.name}_") : -4
+            ]  # Remove collection_ prefix and _fts suffix
+
+            # Add subquery for this FTS table
+            subqueries.append(
+                f"SELECT rowid FROM {fts_table_name} WHERE {index_name} MATCH ?"
+            )
+            params.append(search_term)
+
+        # Combine all subqueries with UNION to get documents matching in ANY FTS index
+        union_query = " UNION ".join(subqueries)
 
         # Build the FTS query
         where_clause = f"""
-        WHERE id IN (
-            SELECT rowid FROM {fts_table_name} WHERE {index_name} MATCH ?
-        )
+        WHERE id IN ({union_query})
         """
-        return where_clause, [search_term]
+        return where_clause, params
 
     def _build_simple_where_clause(
         self,
