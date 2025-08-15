@@ -1230,7 +1230,7 @@ class Collection:
             subqueries.append(
                 f"SELECT rowid FROM {fts_table_name} WHERE {index_name} MATCH ?"
             )
-            params.append(search_term)
+            params.append(search_term.lower())
 
         # Combine all subqueries with UNION to get documents matching in ANY FTS index
         union_query = " UNION ".join(subqueries)
@@ -1709,7 +1709,7 @@ class Collection:
             AFTER INSERT ON {self.name}
             BEGIN
                 INSERT INTO {fts_table_name}(rowid, {index_name}) 
-                VALUES (new.id, json_extract(new.data, '$.{field}'));
+                VALUES (new.id, lower(json_extract(new.data, '$.{field}')));
             END
             """
         )
@@ -1721,9 +1721,9 @@ class Collection:
             AFTER UPDATE ON {self.name}
             BEGIN
                 INSERT INTO {fts_table_name}({fts_table_name}, rowid, {index_name}) 
-                VALUES ('delete', old.id, json_extract(old.data, '$.{field}'));
+                VALUES ('delete', old.id, lower(json_extract(old.data, '$.{field}')));
                 INSERT INTO {fts_table_name}(rowid, {index_name}) 
-                VALUES (new.id, json_extract(new.data, '$.{field}'));
+                VALUES (new.id, lower(json_extract(new.data, '$.{field}')));
             END
             """
         )
@@ -1735,7 +1735,7 @@ class Collection:
             AFTER DELETE ON {self.name}
             BEGIN
                 INSERT INTO {fts_table_name}({fts_table_name}, rowid, {index_name}) 
-                VALUES ('delete', old.id, json_extract(old.data, '$.{field}'));
+                VALUES ('delete', old.id, lower(json_extract(old.data, '$.{field}')));
             END
             """
         )
@@ -1744,7 +1744,7 @@ class Collection:
         self.db.execute(
             f"""
             INSERT INTO {fts_table_name}(rowid, {index_name})
-            SELECT id, json_extract(data, '$.{field}') 
+            SELECT id, lower(json_extract(data, '$.{field}'))
             FROM {self.name} 
             WHERE json_extract(data, '$.{field}') IS NOT NULL
             """
