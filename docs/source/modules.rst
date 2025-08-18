@@ -4,7 +4,6 @@ API Reference
 .. toctree::
    :maxdepth: 4
 
-   neosqlite
    neosqlite.bulk_operations
    neosqlite.changestream
    neosqlite.collection
