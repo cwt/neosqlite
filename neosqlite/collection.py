@@ -811,7 +811,7 @@ class Collection:
         Query the database and retrieve batches of raw JSON.
 
         Similar to the :meth:`find` method but returns a
-         :class:`~neosqlite.raw_batch_cursor.RawBatchCursor`.
+        :class:`~neosqlite.raw_batch_cursor.RawBatchCursor`.
 
         This method returns raw JSON batches which can be more efficient for
         certain use cases where you want to process data in batches rather than
@@ -828,12 +828,12 @@ class Collection:
 
         Example usage:
 
-          >>> import json
-          >>> cursor = collection.find_raw_batches()
-          >>> for batch in cursor:
-              # Each batch is raw bytes containing JSON documents separated by newlines.
-              documents = [json.loads(doc) for doc in batch.decode('utf-8').split('\n') if doc]
-              print(documents)
+        >>> import json
+        >>> cursor = collection.find_raw_batches()
+        >>> for batch in cursor:
+        ...     # Each batch is raw bytes containing JSON documents separated by newlines.
+        ...     documents = [json.loads(doc) for doc in batch.decode('utf-8').split('\\n') if doc]
+        ...     print(documents)
         """
         return RawBatchCursor(self, filter, projection, hint, batch_size)
 
