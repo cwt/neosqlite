@@ -5,10 +5,9 @@ build:
   tools:
     python: "3.10"
 
-sphinx:
-  configuration: docs/source/conf.py
-
 python:
   install:
-    - method: poetry
-      path: .
+    - path: .
+      method: pip
+      extra_requirements:
+        - dev
