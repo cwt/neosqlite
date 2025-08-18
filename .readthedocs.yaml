@@ -13,4 +13,4 @@ python:
     - path: .
       method: pip
       extra_requirements:
-        - dev
+        - docs
