@@ -26,7 +26,27 @@ extensions = [
 templates_path = ['_templates']
 exclude_patterns = []
 
+# Configure autodoc to reduce cross-reference warnings
+autodoc_default_options = {
+    'members': True,
+    'member-order': 'bysource',
+    'special-members': '__init__',
+    'undoc-members': True,
+    'private-members': True,
+    'exclude-members': '__weakref__'
+}
 
+# Tell Sphinx to prefer the explicit locations over the re-exports
+autodoc_typehints_description_target = 'documented'
+
+# Suppress Python cross-reference warnings
+# These warnings occur because the main package re-exports classes from their defining modules,
+# creating ambiguous references. For example, Collection exists in both neosqlite.collection
+# (its defining module) and neosqlite (as a re-export). Since the documentation is working
+# correctly despite these warnings, we suppress them to reduce noise.
+suppress_warnings = [
+    'ref.python'
+]
 
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output

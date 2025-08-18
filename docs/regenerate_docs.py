@@ -13,6 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+
 def run_command(command, cwd=None, description=""):
     """Run a shell command and handle errors."""
     print(f"Running: {description or command}")
@@ -24,7 +25,7 @@ def run_command(command, cwd=None, description=""):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            shell=True  # Use shell to handle complex commands
+            shell=True,  # Use shell to handle complex commands
         )
         if result.stdout:
             print(result.stdout)
@@ -35,6 +36,7 @@ def run_command(command, cwd=None, description=""):
         print(f"Stderr:\n{e.stderr}")
         return False
 
+
 def find_orphaned_rst_files(source_dir: Path, package_dir: Path):
     """
     Find .rst files that might correspond to modules no longer in the package.
@@ -43,7 +45,7 @@ def find_orphaned_rst_files(source_dir: Path, package_dir: Path):
     tries to match them to a corresponding .py file in the package.
     """
     orphaned = []
-    
+
     # Get all .py files in the package (relative paths)
     py_files = set()
     package_name = package_dir.name  # e.g., "neosqlite"
@@ -59,24 +61,91 @@ def find_orphaned_rst_files(source_dir: Path, package_dir: Path):
                 module_name = f"{package_name}.{module_name}"
         else:
             module_path = str(rel_path.with_suffix(""))
-            module_name = f"{package_name}.{module_path}" if module_path != "__init__" else package_name
-            
+            module_name = (
+                f"{package_name}.{module_path}"
+                if module_path != "__init__"
+                else package_name
+            )
+
         py_files.add(module_name)
-            
+
     # Check .rst files in source_dir
     for rst_file in source_dir.glob("*.rst"):
         if rst_file.name in ["index.rst", "modules.rst"]:
             continue
-            
+
         # Derive potential module name from rst file name
         # e.g., neosqlite.subpkg.module.rst -> neosqlite.subpkg.module
         potential_module_name = rst_file.stem
-        
+
         # Check if this .rst file corresponds to a module that no longer exists
         if potential_module_name not in py_files:
             orphaned.append(rst_file)
-            
+
     return orphaned
+
+
+def add_private_members_to_rst_files(source_dir: Path):
+    """
+    Add :private-members: directive to all neosqlite RST files.
+
+    This ensures that private methods (those starting with underscore) are
+    included in the documentation for all modules.
+    """
+    import re
+
+    for rst_file in source_dir.glob("neosqlite*.rst"):
+        if rst_file.name in ["index.rst", "modules.rst"]:
+            continue
+
+        content = rst_file.read_text()
+        # Replace the automodule directive to include private-members
+        # We insert :private-members: before :show-inheritance:
+        patterns = [
+            # Pattern for modules with :undoc-members:
+            (
+                r"(.. automodule:: neosqlite\.[^\n]+?\n   :members:\n   :undoc-members:\n)(   :show-inheritance:)",
+                r"\1   :private-members:\n\2",
+            ),
+            # Pattern for modules with :undoc-members: on separate lines
+            (
+                r"(.. automodule:: neosqlite\.[^\n]+?\n   :members:\n   :undoc-members:)(\n   :show-inheritance:)",
+                r"\1\n   :private-members:\2",
+            ),
+            # Pattern for main package file with :undoc-members:
+            (
+                r"(.. automodule:: neosqlite\n   :members:\n   :undoc-members:\n)(   :show-inheritance:)",
+                r"\1   :private-members:\n\2",
+            ),
+            # Pattern for modules without :undoc-members:
+            (
+                r"(.. automodule:: neosqlite\.\S+?\n   :members:\n)(   :show-inheritance:)",
+                r"\1   :private-members:\n\2",
+            ),
+            # Pattern for main package without :undoc-members:
+            (
+                r"(.. automodule:: neosqlite\n   :members:\n)(   :show-inheritance:)",
+                r"\1   :private-members:\n\2",
+            ),
+        ]
+
+        for pattern, replacement in patterns:
+            content = re.sub(pattern, replacement, content, flags=re.MULTILINE)
+
+        rst_file.write_text(content)
+
+
+def ensure_static_dir_exists(source_dir: Path):
+    """
+    Ensure the _static directory exists.
+
+    Sphinx requires this directory to exist even if it's empty.
+    """
+    static_dir = source_dir / "_static"
+    if not static_dir.exists():
+        static_dir.mkdir(parents=True)
+        print(f"Created _static directory: {static_dir}")
+
 
 def main():
     """Main function to orchestrate documentation regeneration."""
@@ -84,7 +153,7 @@ def main():
     project_root = Path(__file__).parent.parent  # /home/cwt/Projects/neosqlite
     docs_dir = project_root / "docs"
     source_dir = docs_dir / "source"
-    package_dir = project_root / "neosqlite" # The package to document
+    package_dir = project_root / "neosqlite"  # The package to document
 
     if not docs_dir.exists():
         print(f"Error: Docs directory not found at {docs_dir}")
@@ -94,14 +163,21 @@ def main():
         sys.exit(1)
 
     original_cwd = os.getcwd()
-    os.chdir(docs_dir) # Change to docs directory for relative path resolution in sphinx-apidoc
+    os.chdir(
+        docs_dir
+    )  # Change to docs directory for relative path resolution in sphinx-apidoc
 
     try:
+        # --- Step 0: Ensure _static directory exists ---
+        ensure_static_dir_exists(source_dir)
+
         # --- Step 1: Find Orphaned .rst Files (Before regeneration) ---
         print("Checking for orphaned .rst files...")
         orphaned_rst_files = find_orphaned_rst_files(source_dir, package_dir)
         if orphaned_rst_files:
-            print("\nWarning: Found .rst files that may correspond to modules no longer present:")
+            print(
+                "\nWarning: Found .rst files that may correspond to modules no longer present:"
+            )
             for f in orphaned_rst_files:
                 print(f"  - {f.relative_to(docs_dir)}")
             print("Please review and consider removing them manually.\n")
@@ -115,36 +191,38 @@ def main():
         # ../neosqlite : Path to the package (relative to docs_dir)
         # --implicit-namespaces : If using PEP 420 implicit namespaces
         apidoc_cmd = f"sphinx-apidoc -f -e -o {source_dir.relative_to(docs_dir)} {package_dir}"
-        if not run_command(apidoc_cmd, cwd=docs_dir, description="Generating .rst files with sphinx-apidoc"):
+        if not run_command(
+            apidoc_cmd,
+            cwd=docs_dir,
+            description="Generating .rst files with sphinx-apidoc",
+        ):
             print("Failed to generate .rst files.")
             sys.exit(1)
 
-        # --- Step 2.5: Fix query_operators.rst to include private members ---
-        # The query_operators module has functions that start with underscore, 
-        # so we need to add :private-members: to its RST file
-        query_operators_rst = source_dir / "neosqlite.query_operators.rst"
-        if query_operators_rst.exists():
-            content = query_operators_rst.read_text()
-            # Replace the automodule directive to include private-members
-            content = content.replace(
-                ".. automodule:: neosqlite.query_operators\n   :members:\n   :undoc-members:\n   :show-inheritance:",
-                ".. automodule:: neosqlite.query_operators\n   :members:\n   :undoc-members:\n   :private-members:\n   :show-inheritance:"
-            )
-            query_operators_rst.write_text(content)
+        # --- Step 2.5: Fix all .rst files to include private members ---
+        # Many modules have functions that start with underscore,
+        # so we need to add :private-members: to all RST files
+        print("Adding :private-members: directive to all RST files...")
+        add_private_members_to_rst_files(source_dir)
 
         print("\n.srst files generated/updated successfully.\n")
 
         # --- Step 3: Build HTML Documentation ---
         build_cmd = "make html"
-        if not run_command(build_cmd, cwd=docs_dir, description="Building HTML documentation"):
+        if not run_command(
+            build_cmd, cwd=docs_dir, description="Building HTML documentation"
+        ):
             print("Failed to build HTML documentation.")
             sys.exit(1)
 
         print("\nHTML documentation built successfully.")
-        print(f"Output is located at: {docs_dir / 'build' / 'html' / 'index.html'}")
+        print(
+            f"Output is located at: {docs_dir / 'build' / 'html' / 'index.html'}"
+        )
 
     finally:
-        os.chdir(original_cwd) # Restore original working directory
+        os.chdir(original_cwd)  # Restore original working directory
+
 
 if __name__ == "__main__":
     main()
