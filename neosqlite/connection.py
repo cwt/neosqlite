@@ -33,9 +33,9 @@ class Connection:
         """
         Establish a connection to the SQLite database.
 
-        Configures the database connection with the provided arguments and sets up
-        SQLite-specific settings like isolation level and journal mode. This method
-        does not return a value.
+        Configures the database connection with the provided arguments, sets up
+        SQLite-specific settings like isolation level and journal mode, and loads
+        custom FTS5 tokenizers if specified. This method does not return a value.
 
         Args:
             *args: Positional arguments passed to sqlite3.connect().

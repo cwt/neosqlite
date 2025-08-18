@@ -1057,7 +1057,8 @@ class Collection:
                     sort_clauses = []
                     for key, direction in sort_spec.items():
                         sort_clauses.append(
-                            f"json_extract(data, '$.{key}') {'DESC' if direction == DESCENDING else 'ASC'}"
+                            f"json_extract(data, '$.{key}') "
+                            f"{'DESC' if direction == DESCENDING else 'ASC'}"
                         )
                     order_by = "ORDER BY " + ", ".join(sort_clauses)
                 case {"$skip": count}:
@@ -1650,14 +1651,15 @@ class Collection:
 
     def _create_fts_index(self, field: str, tokenizer: str | None = None):
         """
-        Create an FTS5 index on the specified field for text search.
+        Creates an FTS5 index on the specified field for text search.
 
         Args:
-            field: The field to create the FTS index on.
-            tokenizer: Optional tokenizer to use for the FTS index.
-        """
-        from .exceptions import MalformedQueryException
+            field (str): The field to create the FTS index on.
+            tokenizer (str, optional): Optional tokenizer to use for the FTS index.
 
+        Raises:
+            MalformedQueryException: If FTS5 is not available in the SQLite installation.
+        """
         # Create FTS5 virtual table
         index_name = field.replace(".", "_")
         fts_table_name = f"{self.name}_{index_name}_fts"
@@ -1679,14 +1681,23 @@ class Collection:
             self.db.execute(
                 f"""
                 CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name} 
-                USING fts5(content='{self.name}', content_rowid='id', {index_name}, tokenize='{tokenizer}')
+                USING fts5(
+                    content='{self.name}',
+                    content_rowid='id',
+                    {index_name},
+                    tokenize='{tokenizer}'
+                )
                 """
             )
         else:
             self.db.execute(
                 f"""
                 CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name} 
-                USING fts5(content='{self.name}', content_rowid='id', {index_name})
+                USING fts5(
+                    content='{self.name}',
+                    content_rowid='id',
+                    {index_name}
+                )
                 """
             )
 

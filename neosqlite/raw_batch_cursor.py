@@ -16,6 +16,16 @@ class RawBatchCursor:
         hint: Optional[str] = None,
         batch_size: int = 100,
     ):
+        """
+        Initialize a RawBatchCursor object.
+
+        Args:
+            collection (Collection): The collection associated with this cursor.
+            filter (Dict[str, Any]): A dictionary representing the filter criteria for the documents.
+            projection (Dict[str, Any]): A dictionary representing the projection criteria for the documents.
+            hint (str): A string hinting at the index to use for the query.
+            batch_size (int): The number of documents to return in each batch.
+        """
         self._collection = collection
         self._filter = filter or {}
         self._projection = projection or {}
@@ -26,12 +36,25 @@ class RawBatchCursor:
         self._sort: Optional[Dict[str, int]] = None
 
     def batch_size(self, batch_size: int) -> "RawBatchCursor":
-        """Set the batch size for this cursor."""
+        """
+        Set the batch size for this cursor.
+
+        Args:
+            batch_size (int): The number of documents to return in each batch.
+
+        Returns:
+            RawBatchCursor: This cursor object, for method chaining.
+        """
         self._batch_size = batch_size
         return self
 
     def __iter__(self) -> Iterator[bytes]:
-        """Return an iterator over raw batches of JSON data."""
+        """
+        Return an iterator over raw batches of JSON data.
+
+        Returns:
+            Iterator[bytes]: An iterator that yields raw batches of JSON data.
+        """
         # Build the query using the collection's SQL-building methods
         where_result = self._collection._build_simple_where_clause(self._filter)
 

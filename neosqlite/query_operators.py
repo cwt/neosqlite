@@ -6,6 +6,17 @@ from .exceptions import MalformedQueryException
 
 # Query operators
 def _eq(field: str, value: Any, document: Dict[str, Any]) -> bool:
+    """
+    Compare a field value with a given value using the equals operator.
+
+    Args:
+        field (str): The document field to compare.
+        value (Any): The value to compare against.
+        document (Dict[str, Any]): The document to compare the field value from.
+
+    Returns:
+        bool: True if the field value equals the given value, False otherwise.
+    """
     try:
         return document.get(field, None) == value
     except (TypeError, AttributeError):
@@ -13,6 +24,17 @@ def _eq(field: str, value: Any, document: Dict[str, Any]) -> bool:
 
 
 def _gt(field: str, value: Any, document: Dict[str, Any]) -> bool:
+    """
+    Compare a field value with a given value using the greater than operator.
+
+    Args:
+        field (str): The document field to compare.
+        value (Any): The value to compare against.
+        document (Dict[str, Any]): The document to compare the field value from.
+
+    Returns:
+        bool: True if the field value is greater than the given value, False otherwise.
+    """
     try:
         return document.get(field, None) > value
     except TypeError:
@@ -20,6 +42,17 @@ def _gt(field: str, value: Any, document: Dict[str, Any]) -> bool:
 
 
 def _lt(field: str, value: Any, document: Dict[str, Any]) -> bool:
+    """
+    Compare a field value with a given value using the less than operator.
+
+    Args:
+        field (str): The document field to compare.
+        value (Any): The value to compare against.
+        document (Dict[str, Any]): The document to compare the field value from.
+
+    Returns:
+        bool: True if the field value is less than the given value, False otherwise.
+    """
     try:
         return document.get(field, None) < value
     except TypeError:
@@ -27,6 +60,17 @@ def _lt(field: str, value: Any, document: Dict[str, Any]) -> bool:
 
 
 def _gte(field: str, value: Any, document: Dict[str, Any]) -> bool:
+    """
+    Compare a field value with a given value using the greater than or equal to operator.
+
+    Args:
+        field (str): The document field to compare.
+        value (Any): The value to compare against.
+        document (Dict[str, Any]): The document to compare the field value from.
+
+    Returns:
+        bool: True if the field value is greater than or equal to the given value, False otherwise.
+    """
     try:
         return document.get(field, None) >= value
     except TypeError:
@@ -34,6 +78,17 @@ def _gte(field: str, value: Any, document: Dict[str, Any]) -> bool:
 
 
 def _lte(field: str, value: Any, document: Dict[str, Any]) -> bool:
+    """
+    Compare a field value with a given value using the less than or equal to operator.
+
+    Args:
+        field (str): The document field to compare.
+        value (Any): The value to compare against.
+        document (Dict[str, Any]): The document to compare the field value from.
+
+    Returns:
+        bool: True if the field value is less than or equal to the given value, False otherwise.
+    """
     try:
         return document.get(field, None) <= value
     except TypeError:
@@ -41,6 +96,17 @@ def _lte(field: str, value: Any, document: Dict[str, Any]) -> bool:
 
 
 def _all(field: str, value: List[Any], document: Dict[str, Any]) -> bool:
+    """
+    Check if all elements in an array field match the provided value.
+
+    Args:
+        field (str): The document field to compare.
+        value (List[Any]): The value to compare against.
+        document (Dict[str, Any]): The document to compare the field value from.
+
+    Returns:
+        bool: True if all elements in the array field match the given value, False otherwise.
+    """
     try:
         a = set(value)
     except TypeError:
@@ -54,6 +120,17 @@ def _all(field: str, value: List[Any], document: Dict[str, Any]) -> bool:
 
 
 def _in(field: str, value: List[Any], document: Dict[str, Any]) -> bool:
+    """
+    Check if a field value is present in the provided list.
+
+    Args:
+        field (str): The document field to compare.
+        value (List[Any]): The list to check against.
+        document (Dict[str, Any]): The document to compare the field value from.
+
+    Returns:
+        bool: True if the field value is present in the list, False otherwise.
+    """
     try:
         values = iter(value)
     except TypeError:
@@ -62,10 +139,32 @@ def _in(field: str, value: List[Any], document: Dict[str, Any]) -> bool:
 
 
 def _ne(field: str, value: Any, document: Dict[str, Any]) -> bool:
+    """
+    Compare a field value with a given value using the not equal operator.
+
+    Args:
+        field (str): The document field to compare.
+        value (Any): The value to compare against.
+        document (Dict[str, Any]): The document to compare the field value from.
+
+    Returns:
+        bool: True if the field value is not equal to the given value, False otherwise.
+    """
     return document.get(field, None) != value
 
 
 def _nin(field: str, value: List[Any], document: Dict[str, Any]) -> bool:
+    """
+    Check if a field value is not present in the provided list.
+
+    Args:
+        field (str): The document field to compare.
+        value (List[Any]): The list to check against.
+        document (Dict[str, Any]): The document to compare the field value from.
+
+    Returns:
+        bool: True if the field value is not present in the list, False otherwise.
+    """
     try:
         values = iter(value)
     except TypeError:
@@ -74,6 +173,17 @@ def _nin(field: str, value: List[Any], document: Dict[str, Any]) -> bool:
 
 
 def _mod(field: str, value: List[int], document: Dict[str, Any]) -> bool:
+    """
+    Compare a field value with a given value using the modulo operator.
+
+    Args:
+        field (str): The document field to compare.
+        value (List[int]): The divisor and remainder to compare against.
+        document (Dict[str, Any]): The document to compare the field value from.
+
+    Returns:
+        bool: True if the field value modulo the divisor equals the remainder, False otherwise.
+    """
     try:
         divisor, remainder = list(map(int, value))
     except (TypeError, ValueError):
@@ -90,6 +200,17 @@ def _mod(field: str, value: List[int], document: Dict[str, Any]) -> bool:
 
 
 def _exists(field: str, value: bool, document: Dict[str, Any]) -> bool:
+    """
+    Check if a field exists in the document.
+
+    Args:
+        field (str): The document field to check.
+        value (bool): True if the field must exist, False if it must not exist.
+        document (Dict[str, Any]): The document to check the field in.
+
+    Returns:
+        bool: True if the field exists (if value is True), or does not exist (if value is False), False otherwise.
+    """
     if value not in (True, False):
         raise MalformedQueryException("'$exists' must be supplied a boolean")
     if value:
@@ -99,6 +220,17 @@ def _exists(field: str, value: bool, document: Dict[str, Any]) -> bool:
 
 
 def _regex(field: str, value: str, document: Dict[str, Any]) -> bool:
+    """
+    Match a field value against a regular expression.
+
+    Args:
+        field (str): The document field to compare.
+        value (str): The regular expression to compare against.
+        document (Dict[str, Any]): The document to compare the field value from.
+
+    Returns:
+        bool: True if the field value matches the regular expression, False otherwise.
+    """
     try:
         return re.search(value, document.get(field, "")) is not None
     except (TypeError, re.error):
@@ -108,6 +240,17 @@ def _regex(field: str, value: str, document: Dict[str, Any]) -> bool:
 def _elemMatch(
     field: str, value: Dict[str, Any], document: Dict[str, Any]
 ) -> bool:
+    """
+    Check if a field value matches all criteria in a provided dictionary.
+
+    Args:
+        field (str): The document field to compare.
+        value (Dict[str, Any]): A dictionary of field-value pairs to compare against.
+        document (Dict[str, Any]): The document to compare the field value from.
+
+    Returns:
+        bool: True if the field value matches all criteria in the provided dictionary, False otherwise.
+    """
     field_val = document.get(field)
     if not isinstance(field_val, list):
         return False
@@ -120,6 +263,17 @@ def _elemMatch(
 
 
 def _size(field: str, value: int, document: Dict[str, Any]) -> bool:
+    """
+    Check if the size of an array field matches a specified value.
+
+    Args:
+        field (str): The document field to compare.
+        value (int): The size to compare against.
+        document (Dict[str, Any]): The document to compare the field value from.
+
+    Returns:
+        bool: True if the size of the array field matches the specified value, False otherwise.
+    """
     field_val = document.get(field)
     if not isinstance(field_val, list):
         return False
@@ -127,6 +281,17 @@ def _size(field: str, value: int, document: Dict[str, Any]) -> bool:
 
 
 def _contains(field: str, value: str, document: Dict[str, Any]) -> bool:
+    """
+    Check if a field value contains a specified substring.
+
+    Args:
+        field (str): The document field to compare.
+        value (str): The substring to compare against.
+        document (Dict[str, Any]): The document to compare the field value from.
+
+    Returns:
+        bool: True if the field value contains the specified substring, False otherwise.
+    """
     try:
         field_val = document.get(field)
         if field_val is None:

@@ -145,14 +145,18 @@ def test_upsert_min_max_non_existent_field():
     collection = db["test"]
 
     # Upsert with $min on a non-existent document
-    collection.update_one({"name": "Frank"}, {"$min": {"score": 50}}, upsert=True)
+    collection.update_one(
+        {"name": "Frank"}, {"$min": {"score": 50}}, upsert=True
+    )
     frank = collection.find_one({"name": "Frank"})
     assert frank is not None
     assert "score" in frank
     assert frank["score"] == 50
 
     # Upsert with $max on a non-existent document
-    collection.update_one({"name": "Grace"}, {"$max": {"score": 60}}, upsert=True)
+    collection.update_one(
+        {"name": "Grace"}, {"$max": {"score": 60}}, upsert=True
+    )
     grace = collection.find_one({"name": "Grace"})
     assert grace is not None
     assert "score" in grace

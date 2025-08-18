@@ -4,7 +4,7 @@ import sys
 import os
 
 # Example usage with the actual tokenizer
-example_code = '''
+example_code = """
 import neosqlite
 
 # Load custom tokenizer when creating connection
@@ -35,7 +35,7 @@ try:
     
 except Exception as e:
     print(f"Example usage (this is expected to fail if tokenizer is not available): {e}")
-'''
+"""
 
 print("Example usage of custom FTS5 tokenizer with neosqlite:")
 print(example_code)
