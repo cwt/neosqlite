@@ -119,6 +119,19 @@ def main():
             print("Failed to generate .rst files.")
             sys.exit(1)
 
+        # --- Step 2.5: Fix query_operators.rst to include private members ---
+        # The query_operators module has functions that start with underscore, 
+        # so we need to add :private-members: to its RST file
+        query_operators_rst = source_dir / "neosqlite.query_operators.rst"
+        if query_operators_rst.exists():
+            content = query_operators_rst.read_text()
+            # Replace the automodule directive to include private-members
+            content = content.replace(
+                ".. automodule:: neosqlite.query_operators\n   :members:\n   :undoc-members:\n   :show-inheritance:",
+                ".. automodule:: neosqlite.query_operators\n   :members:\n   :undoc-members:\n   :private-members:\n   :show-inheritance:"
+            )
+            query_operators_rst.write_text(content)
+
         print("\n.srst files generated/updated successfully.\n")
 
         # --- Step 3: Build HTML Documentation ---
