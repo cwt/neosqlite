@@ -22,6 +22,11 @@ from .exceptions import MalformedQueryException, MalformedDocument
 from .cursor import Cursor, DESCENDING
 from .changestream import ChangeStream
 from . import query_operators
+from .json_utils import (
+    neosqlite_json_dumps,
+    neosqlite_json_loads,
+    neosqlite_json_dumps_for_sql,
+)
 
 
 class Collection:
@@ -97,7 +102,7 @@ class Collection:
         """
         if isinstance(data, bytes):
             data = data.decode("utf-8")
-        document: Dict[str, Any] = json.loads(data)
+        document: Dict[str, Any] = neosqlite_json_loads(data)
         document["_id"] = id
         return document
 
@@ -143,7 +148,7 @@ class Collection:
 
         cursor = self.db.execute(
             f"INSERT INTO {self.name}(data) VALUES (?)",
-            (json.dumps(doc_to_insert),),
+            (neosqlite_json_dumps(doc_to_insert),),
         )
         inserted_id = cursor.lastrowid
 
@@ -230,8 +235,18 @@ class Collection:
         # Only handle operations that can be done purely with SQL
         supported_ops = {"$set", "$unset", "$inc", "$mul", "$min", "$max"}
         # Also check that doc_id is not 0 (which indicates an upsert)
-        return doc_id != 0 and all(
-            op in supported_ops for op in update_spec.keys()
+        # Disable SQL updates for documents containing Binary objects
+        has_binary_values = any(
+            isinstance(val, bytes) and hasattr(val, "encode_for_storage")
+            for op in update_spec.values()
+            if isinstance(op, dict)
+            for val in op.values()
+        )
+
+        return (
+            doc_id != 0
+            and not has_binary_values
+            and all(op in supported_ops for op in update_spec.keys())
         )
 
     def _perform_sql_update(
@@ -438,7 +453,7 @@ class Collection:
         if doc_id != 0:
             self.db.execute(
                 f"UPDATE {self.name} SET data = ? WHERE id = ?",
-                (json.dumps(doc_to_update), doc_id),
+                (neosqlite_json_dumps(doc_to_update), doc_id),
             )
 
         return doc_to_update
@@ -453,7 +468,7 @@ class Collection:
         """
         self.db.execute(
             f"UPDATE {self.name} SET data = ? WHERE id = ?",
-            (json.dumps(replacement), doc_id),
+            (neosqlite_json_dumps(replacement), doc_id),
         )
 
     def _internal_delete(self, doc_id: int):
@@ -1303,7 +1318,13 @@ class Collection:
                 else:
                     # Simple equality check
                     clauses.append(f"json_extract(data, {json_path}) = ?")
-                    params.append(value)
+                    # Serialize Binary objects for SQL comparisons using compact format
+                    if isinstance(value, bytes) and hasattr(
+                        value, "encode_for_storage"
+                    ):
+                        params.append(neosqlite_json_dumps_for_sql(value))
+                    else:
+                        params.append(value)
 
         if not clauses:
             return "", []
@@ -1332,6 +1353,12 @@ class Collection:
                                           If the operator is unsupported, returns (None, []).
         """
         for op, op_val in operators.items():
+            # Serialize Binary objects for SQL comparisons using compact format
+            if isinstance(op_val, bytes) and hasattr(
+                op_val, "encode_for_storage"
+            ):
+                op_val = neosqlite_json_dumps_for_sql(op_val)
+
             match op:
                 case "$eq":
                     return f"json_extract(data, {json_path}) = ?", [op_val]
@@ -1580,11 +1607,11 @@ class Collection:
             if row[0] is None:
                 continue
             try:
-                val = json.loads(row[0])
+                val = neosqlite_json_loads(row[0])
                 if isinstance(val, list):
                     results.add(tuple(val))
                 elif isinstance(val, dict):
-                    results.add(json.dumps(val, sort_keys=True))
+                    results.add(neosqlite_json_dumps(val, sort_keys=True))
                 else:
                     results.add(val)
             except (json.JSONDecodeError, TypeError):

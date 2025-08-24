@@ -124,9 +124,45 @@ with neosqlite.Connection(':memory:') as conn:
 
 The library will work correctly in all environments - the `jsonb` extra is completely optional and only needed for enhanced performance on systems where the built-in SQLite doesn't support JSONB column type.
 
-## GridFS Support
+## Binary Data Support
 
-`neosqlite` now includes GridFS support for storing and retrieving large files. The implementation provides a PyMongo-compatible GridFSBucket interface:
+`neosqlite` now includes full support for binary data outside of GridFS through the `Binary` class, which provides a PyMongo-compatible interface for storing and retrieving binary data directly in documents:
+
+```python
+from neosqlite import Connection, Binary
+
+# Create connection
+with Connection(":memory:") as conn:
+    collection = conn.my_collection
+
+    # Store binary data in a document
+    binary_data = Binary(b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09")
+    collection.insert_one({
+        "name": "binary_example",
+        "data": binary_data,
+        "metadata": {"description": "Binary data example"}
+    })
+
+    # Retrieve and use the binary data
+    doc = collection.find_one({"name": "binary_example"})
+    retrieved_data = doc["data"]  # Returns Binary instance
+    raw_bytes = bytes(retrieved_data)  # Convert to bytes if needed
+
+    # Query with binary data
+    docs = list(collection.find({"data": binary_data}))
+```
+
+The `Binary` class supports different subtypes for specialized binary data:
+- `Binary.BINARY_SUBTYPE` (0) - Default for general binary data
+- `Binary.UUID_SUBTYPE` (4) - For UUID data with `Binary.from_uuid()` and `as_uuid()` methods
+- `Binary.FUNCTION_SUBTYPE` (1) - For function data
+- And other standard BSON binary subtypes
+
+For large file storage, continue to use the GridFS support which is optimized for that use case.
+
+### Modern GridFSBucket API
+
+The implementation provides a PyMongo-compatible GridFSBucket interface:
 
 ```python
 import io
@@ -145,6 +181,28 @@ with Connection(":memory:") as conn:
     output = io.BytesIO()
     bucket.download_to_stream(file_id, output)
     print(output.getvalue().decode('utf-8'))
+```
+
+### Legacy GridFS API
+
+For users familiar with the legacy PyMongo GridFS API, `neosqlite` also provides the simpler `GridFS` class:
+
+```python
+import io
+from neosqlite import Connection
+from neosqlite.gridfs import GridFS
+
+# Create connection and legacy GridFS instance
+with Connection(":memory:") as conn:
+    fs = GridFS(conn.db)
+
+    # Put a file
+    file_data = b"Hello, legacy GridFS!"
+    file_id = fs.put(file_data, filename="example.txt")
+
+    # Get the file
+    grid_out = fs.get(file_id)
+    print(grid_out.read().decode('utf-8'))
 ```
 
 For more comprehensive examples, see the examples directory.

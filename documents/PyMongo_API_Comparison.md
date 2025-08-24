@@ -47,12 +47,39 @@
 ### Text Search
 - [x] $text operator with FTS5 integration (see [text search documentation](TEXT_SEARCH.md) for details)
 
+### GridFS Support
+- [x] GridFSBucket API (modern PyMongo API)
+  - [x] upload_from_stream()
+  - [x] upload_from_stream_with_id()
+  - [x] download_to_stream()
+  - [x] download_to_stream_by_name()
+  - [x] open_upload_stream()
+  - [x] open_upload_stream_with_id()
+  - [x] open_download_stream()
+  - [x] open_download_stream_by_name()
+  - [x] delete()
+  - [x] delete_by_name()
+  - [x] rename()
+  - [x] rename_by_name()
+  - [x] find()
+- [x] Legacy GridFS API
+  - [x] put()
+  - [x] get()
+  - [x] get_version()
+  - [x] get_last_version()
+  - [x] delete()
+  - [x] list()
+  - [x] find()
+  - [x] find_one()
+  - [x] exists()
+  - [x] new_file()
+
 ## Missing Medium-Priority APIs
 
 ### Data Type Support
 - [ ] Better ObjectId support
 - [ ] Improved datetime handling
-- [x] Binary data support (GridFS) - Partially implemented (GridFSBucket)
+- [x] Binary data support (outside of GridFS)
 
 ### Aggregation Enhancements
 - [ ] map_reduce()
@@ -78,3 +105,24 @@
 This comparison was initially based on older PyMongo documentation that referenced `initialize_ordered_bulk_op()` and `initialize_unordered_bulk_op()` methods. However, in newer versions of PyMongo (4.x), these methods have been removed in favor of the simpler `bulk_write()` API that takes a list of operations and an `ordered` parameter.
 
 neosqlite implements both the legacy API (initialize_ordered_bulk_op, initialize_ordered_bulk_op) for backward compatibility and the current PyMongo API (bulk_write with ordered parameter).
+
+## GridFS API Details
+
+### GridFSBucket (Modern API)
+The GridFSBucket implementation provides a complete PyMongo-compatible interface for storing and retrieving large files:
+
+- **File Operations**: Direct upload/download methods with full control over the process
+- **Stream Operations**: Open streams for reading/writing with fine-grained control
+- **Management Operations**: Delete, rename, and find files with various criteria
+- **Metadata Support**: Full support for file metadata in all operations
+- **Error Handling**: Proper exception handling with PyMongo-compatible error types
+
+### Legacy GridFS API
+The legacy GridFS API provides a simpler interface that's familiar to users of older PyMongo versions:
+
+- **Simple Operations**: put/get methods for straightforward file storage and retrieval
+- **Version Management**: Automatic handling of file versions with the same name
+- **Query Operations**: Find and filter files using familiar PyMongo patterns
+- **Utility Methods**: List files, check existence, and manage file lifecycle
+
+Both APIs work with the same underlying SQLite storage and are fully interoperable.

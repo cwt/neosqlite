@@ -15,7 +15,7 @@ from .errors import NoFile, FileExists
 class GridFSBucket:
     """
     A GridFSBucket-like class for storing large files in SQLite.
-    
+
     This implementation provides a PyMongo-compatible interface for GridFS
     functionality using SQLite as the backend storage.
     """
@@ -30,7 +30,7 @@ class GridFSBucket:
     ):
         """
         Initialize a new GridFSBucket instance.
-        
+
         Args:
             db: SQLite database connection
             bucket_name: The bucket name for the GridFS files (default: "fs")
@@ -43,14 +43,15 @@ class GridFSBucket:
         self._chunk_size_bytes = chunk_size_bytes
         self._files_collection = f"{bucket_name}.files"
         self._chunks_collection = f"{bucket_name}.chunks"
-        
+
         # Create the necessary tables if they don't exist
         self._create_collections()
 
     def _create_collections(self):
         """Create the files and chunks collections (tables) if they don't exist."""
         # Create files collection (table)
-        self._db.execute(f"""
+        self._db.execute(
+            f"""
             CREATE TABLE IF NOT EXISTS `{self._files_collection}` (
                 _id INTEGER PRIMARY KEY AUTOINCREMENT,
                 filename TEXT,
@@ -60,10 +61,12 @@ class GridFSBucket:
                 md5 TEXT,
                 metadata TEXT
             )
-        """)
-        
+        """
+        )
+
         # Create chunks collection (table)
-        self._db.execute(f"""
+        self._db.execute(
+            f"""
             CREATE TABLE IF NOT EXISTS `{self._chunks_collection}` (
                 _id INTEGER PRIMARY KEY AUTOINCREMENT,
                 files_id INTEGER,
@@ -71,18 +74,23 @@ class GridFSBucket:
                 data BLOB,
                 FOREIGN KEY (files_id) REFERENCES `{self._files_collection}` (_id)
             )
-        """)
-        
+        """
+        )
+
         # Create indexes for better performance
-        self._db.execute(f"""
+        self._db.execute(
+            f"""
             CREATE INDEX IF NOT EXISTS `idx_{self._files_collection}_filename` 
             ON `{self._files_collection}` (filename)
-        """)
-        
-        self._db.execute(f"""
+        """
+        )
+
+        self._db.execute(
+            f"""
             CREATE INDEX IF NOT EXISTS `idx_{self._chunks_collection}_files_id` 
             ON `{self._chunks_collection}` (files_id)
-        """)
+        """
+        )
 
     def upload_from_stream(
         self,
@@ -92,16 +100,16 @@ class GridFSBucket:
     ) -> int:
         """
         Uploads a user file to a GridFS bucket.
-        
-        Reads the contents of the user file from source and uploads it 
-        as chunks in the chunks collection. After all the chunks have 
+
+        Reads the contents of the user file from source and uploads it
+        as chunks in the chunks collection. After all the chunks have
         been uploaded, it creates a file document in the files collection.
-        
+
         Args:
             filename: The name of the file to upload
             source: The source data (bytes or file-like object)
             metadata: Optional metadata for the file
-            
+
         Returns:
             The _id of the uploaded file document
         """
@@ -112,94 +120,103 @@ class GridFSBucket:
             data = source.read()
         else:
             raise TypeError("source must be bytes or a file-like object")
-            
+
         # Calculate MD5 hash of the data
         md5_hash = hashlib.md5(data).hexdigest()
-        
+
         # Insert file metadata first
         upload_date = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        
-        cursor = self._db.execute(f"""
+
+        cursor = self._db.execute(
+            f"""
             INSERT INTO `{self._files_collection}` 
             (filename, length, chunkSize, uploadDate, md5, metadata)
             VALUES (?, ?, ?, ?, ?, ?)
-        """, (
-            filename,
-            len(data),
-            self._chunk_size_bytes,
-            upload_date,
-            md5_hash,
-            None if metadata is None else str(metadata)
-        ))
-        
+        """,
+            (
+                filename,
+                len(data),
+                self._chunk_size_bytes,
+                upload_date,
+                md5_hash,
+                None if metadata is None else str(metadata),
+            ),
+        )
+
         file_id = cursor.lastrowid
         if file_id is None:
             raise RuntimeError("Failed to get file ID")
-            
+
         # Split data into chunks and insert them
         self._insert_chunks(file_id, data)
-        
+
         return file_id
 
     def _insert_chunks(self, file_id: int, data: bytes):
         """
         Split data into chunks and insert them into the chunks collection.
-        
+
         Args:
             file_id: The ID of the file document
             data: The data to be chunked
         """
         # Split data into chunks
         for i in range(0, len(data), self._chunk_size_bytes):
-            chunk_data = data[i:i + self._chunk_size_bytes]
-            
-            self._db.execute(f"""
+            chunk_data = data[i : i + self._chunk_size_bytes]
+
+            self._db.execute(
+                f"""
                 INSERT INTO `{self._chunks_collection}` 
                 (files_id, n, data)
                 VALUES (?, ?, ?)
-            """, (file_id, i // self._chunk_size_bytes, chunk_data))
+            """,
+                (file_id, i // self._chunk_size_bytes, chunk_data),
+            )
 
     def download_to_stream(self, file_id: int, destination: io.IOBase) -> None:
         """
-        Downloads the contents of the stored file specified by file_id 
+        Downloads the contents of the stored file specified by file_id
         and writes the contents to destination.
-        
+
         Args:
             file_id: The _id of the file document
             destination: A file-like object to which the file contents will be written
         """
         # Get file metadata
-        row = self._db.execute(f"""
+        row = self._db.execute(
+            f"""
             SELECT length, chunkSize FROM `{self._files_collection}` 
             WHERE _id = ?
-        """, (file_id,)).fetchone()
-        
+        """,
+            (file_id,),
+        ).fetchone()
+
         if row is None:
             raise NoFile(f"File with id {file_id} not found")
-            
+
         length, chunk_size = row
-        
+
         # Get all chunks in order
-        cursor = self._db.execute(f"""
+        cursor = self._db.execute(
+            f"""
             SELECT data FROM `{self._chunks_collection}` 
             WHERE files_id = ? 
             ORDER BY n ASC
-        """, (file_id,))
-        
+        """,
+            (file_id,),
+        )
+
         # Write chunks to destination
         for chunk_row in cursor:
             destination.write(chunk_row[0])
 
     def download_to_stream_by_name(
-        self, 
-        filename: str, 
-        destination: io.IOBase, 
-        revision: int = -1
+        self, filename: str, destination: io.IOBase, revision: int = -1
     ) -> None:
         """
-        Downloads the contents of the stored file specified by filename 
+        Downloads the contents of the stored file specified by filename
         and writes the contents to destination.
-        
+
         Args:
             filename: The name of the file to download
             destination: A file-like object to which the file contents will be written
@@ -211,60 +228,64 @@ class GridFSBucket:
     def _get_file_id_by_name(self, filename: str, revision: int = -1) -> int:
         """
         Get the file ID for a given filename and revision.
-        
+
         Args:
             filename: The name of the file
             revision: The revision number (-1 for latest, 0 for first, etc.)
-            
+
         Returns:
             The _id of the file document
         """
         if revision == -1:
             # Get the latest revision
-            row = self._db.execute(f"""
+            row = self._db.execute(
+                f"""
                 SELECT _id FROM `{self._files_collection}` 
                 WHERE filename = ? 
                 ORDER BY uploadDate DESC 
                 LIMIT 1
-            """, (filename,)).fetchone()
+            """,
+                (filename,),
+            ).fetchone()
         else:
             # Get specific revision (0-indexed)
-            row = self._db.execute(f"""
+            row = self._db.execute(
+                f"""
                 SELECT _id FROM `{self._files_collection}` 
                 WHERE filename = ? 
                 ORDER BY uploadDate ASC 
                 LIMIT 1 OFFSET ?
-            """, (filename, revision)).fetchone()
-            
+            """,
+                (filename, revision),
+            ).fetchone()
+
         if row is None:
             raise NoFile(f"File with name {filename} not found")
-            
+
         return row[0]
 
     def open_download_stream(self, file_id: int) -> "GridOut":
         """
         Opens a stream to read the contents of the stored file specified by file_id.
-        
+
         Args:
             file_id: The _id of the file document
-            
+
         Returns:
             A GridOut instance to read the file contents
         """
         return GridOut(self._db, self._bucket_name, file_id)
 
     def open_download_stream_by_name(
-        self, 
-        filename: str, 
-        revision: int = -1
+        self, filename: str, revision: int = -1
     ) -> "GridOut":
         """
         Opens a stream to read the contents of the stored file specified by filename.
-        
+
         Args:
             filename: The name of the file to read
             revision: The revision of the file to read (default: -1 for latest)
-            
+
         Returns:
             A GridOut instance to read the file contents
         """
@@ -273,34 +294,40 @@ class GridFSBucket:
 
     def delete(self, file_id: int) -> None:
         """
-        Given a file_id, delete the stored file's files collection document 
+        Given a file_id, delete the stored file's files collection document
         and associated chunks from a GridFS bucket.
-        
+
         Args:
             file_id: The _id of the file document
         """
         # Delete chunks first
-        self._db.execute(f"""
+        self._db.execute(
+            f"""
             DELETE FROM `{self._chunks_collection}` 
             WHERE files_id = ?
-        """, (file_id,))
-        
+        """,
+            (file_id,),
+        )
+
         # Delete file document
-        cursor = self._db.execute(f"""
+        cursor = self._db.execute(
+            f"""
             DELETE FROM `{self._files_collection}` 
             WHERE _id = ?
-        """, (file_id,))
-        
+        """,
+            (file_id,),
+        )
+
         if cursor.rowcount == 0:
             raise NoFile(f"File with id {file_id} not found")
 
     def find(self, filter: Optional[Dict[str, Any]] = None) -> "GridOutCursor":
         """
         Find and return the files collection documents that match filter.
-        
+
         Args:
             filter: The filter to apply when searching for files
-            
+
         Returns:
             A GridOutCursor instance
         """
@@ -313,15 +340,21 @@ class GridFSBucket:
     ) -> "GridIn":
         """
         Opens a stream for writing a file to a GridFS bucket.
-        
+
         Args:
             filename: The name of the file to upload
             metadata: Optional metadata for the file
-            
+
         Returns:
             A GridIn instance to write the file contents
         """
-        return GridIn(self._db, self._bucket_name, self._chunk_size_bytes, filename, metadata)
+        return GridIn(
+            self._db,
+            self._bucket_name,
+            self._chunk_size_bytes,
+            filename,
+            metadata,
+        )
 
     def upload_from_stream_with_id(
         self,
@@ -332,7 +365,7 @@ class GridFSBucket:
     ) -> None:
         """
         Uploads a user file to a GridFS bucket with a custom file id.
-        
+
         Args:
             file_id: The custom _id for the file document
             filename: The name of the file to upload
@@ -340,14 +373,17 @@ class GridFSBucket:
             metadata: Optional metadata for the file
         """
         # Check if file with this ID already exists
-        row = self._db.execute(f"""
+        row = self._db.execute(
+            f"""
             SELECT _id FROM `{self._files_collection}` 
             WHERE _id = ?
-        """, (file_id,)).fetchone()
-        
+        """,
+            (file_id,),
+        ).fetchone()
+
         if row is not None:
             raise FileExists(f"File with id {file_id} already exists")
-            
+
         # Get the data from the source
         if isinstance(source, bytes):
             data = source
@@ -355,27 +391,30 @@ class GridFSBucket:
             data = source.read()
         else:
             raise TypeError("source must be bytes or a file-like object")
-            
+
         # Calculate MD5 hash of the data
         md5_hash = hashlib.md5(data).hexdigest()
-        
+
         # Insert file metadata
         upload_date = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        
-        self._db.execute(f"""
+
+        self._db.execute(
+            f"""
             INSERT INTO `{self._files_collection}` 
             (_id, filename, length, chunkSize, uploadDate, md5, metadata)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-            file_id,
-            filename,
-            len(data),
-            self._chunk_size_bytes,
-            upload_date,
-            md5_hash,
-            None if metadata is None else str(metadata)
-        ))
-        
+        """,
+            (
+                file_id,
+                filename,
+                len(data),
+                self._chunk_size_bytes,
+                upload_date,
+                md5_hash,
+                None if metadata is None else str(metadata),
+            ),
+        )
+
         # Split data into chunks and insert them
         self._insert_chunks(file_id, data)
 
@@ -387,25 +426,115 @@ class GridFSBucket:
     ) -> "GridIn":
         """
         Opens a stream for writing a file to a GridFS bucket with a custom file id.
-        
+
         Args:
             file_id: The custom _id for the file document
             filename: The name of the file to upload
             metadata: Optional metadata for the file
-            
+
         Returns:
             A GridIn instance to write the file contents
         """
         # Check if file with this ID already exists
-        row = self._db.execute(f"""
+        row = self._db.execute(
+            f"""
             SELECT _id FROM `{self._files_collection}` 
             WHERE _id = ?
-        """, (file_id,)).fetchone()
-        
+        """,
+            (file_id,),
+        ).fetchone()
+
         if row is not None:
             raise FileExists(f"File with id {file_id} already exists")
-            
-        return GridIn(self._db, self._bucket_name, self._chunk_size_bytes, filename, metadata, file_id)
+
+        return GridIn(
+            self._db,
+            self._bucket_name,
+            self._chunk_size_bytes,
+            filename,
+            metadata,
+            file_id,
+        )
+
+    def delete_by_name(self, filename: str) -> None:
+        """
+        Delete all stored file documents and associated chunks with the given filename.
+
+        Args:
+            filename: The name of the file to delete
+        """
+        # Get all file IDs with this filename
+        cursor = self._db.execute(
+            f"""
+            SELECT _id FROM `{self._files_collection}` 
+            WHERE filename = ?
+        """,
+            (filename,),
+        )
+
+        file_ids = [row[0] for row in cursor.fetchall()]
+
+        if not file_ids:
+            raise NoFile(f"File with name {filename} not found")
+
+        # Delete all chunks for these files
+        placeholders = ",".join("?" * len(file_ids))
+        self._db.execute(
+            f"""
+            DELETE FROM `{self._chunks_collection}` 
+            WHERE files_id IN ({placeholders})
+        """,
+            file_ids,
+        )
+
+        # Delete all file documents
+        self._db.execute(
+            f"""
+            DELETE FROM `{self._files_collection}` 
+            WHERE filename = ?
+        """,
+            (filename,),
+        )
+
+    def rename(self, file_id: int, new_filename: str) -> None:
+        """
+        Rename a stored file with the specified file_id to a new filename.
+
+        Args:
+            file_id: The _id of the file to rename
+            new_filename: The new name for the file
+        """
+        cursor = self._db.execute(
+            f"""
+            UPDATE `{self._files_collection}` 
+            SET filename = ? 
+            WHERE _id = ?
+        """,
+            (new_filename, file_id),
+        )
+
+        if cursor.rowcount == 0:
+            raise NoFile(f"File with id {file_id} not found")
+
+    def rename_by_name(self, filename: str, new_filename: str) -> None:
+        """
+        Rename all stored files with the specified filename to a new filename.
+
+        Args:
+            filename: The current name of the files to rename
+            new_filename: The new name for the files
+        """
+        cursor = self._db.execute(
+            f"""
+            UPDATE `{self._files_collection}` 
+            SET filename = ? 
+            WHERE filename = ?
+        """,
+            (new_filename, filename),
+        )
+
+        if cursor.rowcount == 0:
+            raise NoFile(f"File with name {filename} not found")
 
 
 # Import these at the end to avoid circular imports
