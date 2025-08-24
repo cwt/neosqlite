@@ -52,7 +52,7 @@
 ### Data Type Support
 - [ ] Better ObjectId support
 - [ ] Improved datetime handling
-- [ ] Binary data support (GridFS)
+- [x] Binary data support (GridFS) - Partially implemented (GridFSBucket)
 
 ### Aggregation Enhancements
 - [ ] map_reduce()

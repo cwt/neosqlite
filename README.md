@@ -12,6 +12,7 @@
 - **Text Search**: Full-text search capabilities using SQLite's FTS5 extension with the `$text` operator.
 - **Modern API**: Aligned with modern `pymongo` practices (using methods like `insert_one`, `update_one`, `delete_many`, etc.).
 - **Automatic JSON/JSONB Support**: Automatically detects and uses JSONB column type when available for better performance.
+- **GridFS Support**: Store and retrieve large files with a PyMongo-compatible GridFS implementation.
 
 ## Drop-in Replacement for PyMongo
 
@@ -122,6 +123,31 @@ with neosqlite.Connection(':memory:') as conn:
 - **Without JSON support**: Falls back to TEXT column type with JSON serialization
 
 The library will work correctly in all environments - the `jsonb` extra is completely optional and only needed for enhanced performance on systems where the built-in SQLite doesn't support JSONB column type.
+
+## GridFS Support
+
+`neosqlite` now includes GridFS support for storing and retrieving large files. The implementation provides a PyMongo-compatible GridFSBucket interface:
+
+```python
+import io
+from neosqlite import Connection
+from neosqlite.gridfs import GridFSBucket
+
+# Create connection and GridFS bucket
+with Connection(":memory:") as conn:
+    bucket = GridFSBucket(conn.db)
+
+    # Upload a file
+    file_data = b"Hello, GridFS!"
+    file_id = bucket.upload_from_stream("example.txt", file_data)
+
+    # Download the file
+    output = io.BytesIO()
+    bucket.download_to_stream(file_id, output)
+    print(output.getvalue().decode('utf-8'))
+```
+
+For more comprehensive examples, see the examples directory.
 
 ## Indexes
 

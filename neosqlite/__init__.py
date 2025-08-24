@@ -14,6 +14,14 @@ from .changestream import ChangeStream
 from .raw_batch_cursor import RawBatchCursor
 from .bulk_operations import BulkOperationExecutor
 
+# GridFS support
+try:
+    from .gridfs import GridFSBucket
+
+    _HAS_GRIDFS = True
+except ImportError:
+    _HAS_GRIDFS = False
+
 __all__ = [
     "Connection",
     "Collection",
@@ -34,3 +42,7 @@ __all__ = [
     "RawBatchCursor",
     "BulkOperationExecutor",
 ]
+
+# Add GridFS to __all__ if available
+if _HAS_GRIDFS:
+    __all__.extend(["GridFSBucket"])
