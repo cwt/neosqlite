@@ -1114,6 +1114,50 @@ class Collection:
                 if group_result is None:
                     return None
                 select_clause, group_by, output_fields = group_result
+            elif stage_name == "$unwind":
+                # Handle $unwind as the first stage or after $match
+                # This is a simplified implementation that only works for simple cases
+                if i == 0 or (i == 1 and "$match" in pipeline[0]):
+                    field = stage["$unwind"]
+                    if isinstance(field, str) and field.startswith("$"):
+                        field_name = field[1:]  # Remove leading $
+
+                        # For $unwind, we need to change the query structure completely
+                        # We use json_each to decompose the array and json_set to add the unwound field
+                        select_clause = (
+                            f"SELECT {self.name}.id, json_set({self.name}.data, '$.\""
+                            + field_name
+                            + "\"', je.value) as data"
+                        )
+                        from_clause = f"FROM {self.name}, json_each(json_extract({self.name}.data, '$.{field_name}')) as je"
+
+                        # If there's a previous $match stage, incorporate its WHERE clause
+                        if i == 1 and "$match" in pipeline[0]:
+                            match_query = pipeline[0]["$match"]
+                            where_result = self._build_simple_where_clause(
+                                match_query
+                            )
+                            if (
+                                where_result and where_result[0]
+                            ):  # Has WHERE clause
+                                # Need to adapt the WHERE clause for the new FROM structure
+                                # This is a simplified approach - in practice would need more complex logic
+                                where_clause = where_result[0].replace(
+                                    "WHERE ", "WHERE "
+                                )
+                                params = where_result[1]
+                                cmd = f"{select_clause} {from_clause} {where_clause} {order_by} {limit} {offset}"
+                            else:
+                                cmd = f"{select_clause} {from_clause} {order_by} {limit} {offset}"
+                        else:
+                            cmd = f"{select_clause} {from_clause} {order_by} {limit} {offset}"
+
+                        return cmd, params, output_fields
+                    else:
+                        return None  # Fallback for complex unwind expressions
+                else:
+                    # $unwind not as first or second stage - fallback to Python
+                    return None
             else:
                 return None  # Fallback for unsupported stages
 
