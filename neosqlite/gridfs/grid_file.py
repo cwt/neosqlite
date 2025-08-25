@@ -1,5 +1,6 @@
 import hashlib
 import io
+import json
 from typing import Any, Dict, Optional, Union
 import datetime
 
@@ -59,6 +60,51 @@ class GridIn:
         self._position = 0
         self._closed = False
         self._md5_hasher = None if disable_md5 else hashlib.md5()
+
+    def _serialize_metadata(self, metadata: Optional[Dict[str, Any]]) -> Optional[str]:
+        """
+        Serialize metadata to JSON string.
+
+        Args:
+            metadata: Metadata dictionary to serialize
+
+        Returns:
+            JSON string representation or None
+        """
+        if metadata is None:
+            return None
+        try:
+            return json.dumps(metadata)
+        except (TypeError, ValueError):
+            # Fallback to string representation if JSON serialization fails
+            return str(metadata)
+
+    def _deserialize_metadata(self, metadata_str: Optional[str]) -> Optional[Dict[str, Any]]:
+        """
+        Deserialize metadata from JSON string.
+
+        Args:
+            metadata_str: JSON string representation of metadata
+
+        Returns:
+            Metadata dictionary or None
+        """
+        if metadata_str is None:
+            return None
+        try:
+            return json.loads(metadata_str)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            # Fallback to parsing as Python literal (for backward compatibility)
+            try:
+                # Try to evaluate as Python literal (for backward compatibility)
+                import ast
+                result = ast.literal_eval(metadata_str)
+                if isinstance(result, dict):
+                    return result
+            except (ValueError, SyntaxError):
+                pass
+            # Return as simple string in a dict for backward compatibility
+            return {"_metadata": metadata_str}
 
     def _force_sync_if_needed(self):
         """Force database synchronization if write concern requires it."""
@@ -127,7 +173,7 @@ class GridIn:
                 self._filename,
                 self._chunk_size_bytes,
                 upload_date,
-                None if self._metadata is None else str(self._metadata)
+                self._serialize_metadata(self._metadata),
             ))
             self._file_id = cursor.lastrowid
         else:
@@ -140,7 +186,7 @@ class GridIn:
                 self._filename,
                 self._chunk_size_bytes,
                 upload_date,
-                None if self._metadata is None else str(self._metadata)
+                self._serialize_metadata(self._metadata),
             ))
 
     def _get_file_id(self) -> int:
@@ -230,11 +276,39 @@ class GridOut:
         if row is None:
             raise NoFile(f"File with id {file_id} not found")
 
-        self._filename, self._length, self._chunk_size, self._upload_date, self._md5, self._metadata = row
+        self._filename, self._length, self._chunk_size, self._upload_date, self._md5, metadata_str = row
+        self._metadata = self._deserialize_metadata(metadata_str)
         self._position = 0
         self._current_chunk_data = b""
         self._current_chunk_index = -1
         self._closed = False
+
+    def _deserialize_metadata(self, metadata_str: Optional[str]) -> Optional[Dict[str, Any]]:
+        """
+        Deserialize metadata from JSON string.
+
+        Args:
+            metadata_str: JSON string representation of metadata
+
+        Returns:
+            Metadata dictionary or None
+        """
+        if metadata_str is None:
+            return None
+        try:
+            return json.loads(metadata_str)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            # Fallback to parsing as Python literal (for backward compatibility)
+            try:
+                # Try to evaluate as Python literal (for backward compatibility)
+                import ast
+                result = ast.literal_eval(metadata_str)
+                if isinstance(result, dict):
+                    return result
+            except (ValueError, SyntaxError):
+                pass
+            # Return as simple string in a dict for backward compatibility
+            return {"_metadata": metadata_str}
 
     def read(self, size: int = -1) -> bytes:
         """
@@ -329,7 +403,7 @@ class GridOut:
         return self._md5
 
     @property
-    def metadata(self) -> Optional[str]:
+    def metadata(self) -> Optional[Dict[str, Any]]:
         """Get the metadata of the file."""
         return self._metadata
 

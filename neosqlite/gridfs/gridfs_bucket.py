@@ -1,5 +1,6 @@
 import hashlib
 import io
+import json
 from typing import Any, Dict, Optional, Union
 from typing_extensions import Literal
 import datetime
@@ -132,6 +133,51 @@ class GridFSBucket:
         """
         )
 
+    def _serialize_metadata(self, metadata: Optional[Dict[str, Any]]) -> Optional[str]:
+        """
+        Serialize metadata to JSON string.
+
+        Args:
+            metadata: Metadata dictionary to serialize
+
+        Returns:
+            JSON string representation or None
+        """
+        if metadata is None:
+            return None
+        try:
+            return json.dumps(metadata)
+        except (TypeError, ValueError):
+            # Fallback to string representation if JSON serialization fails
+            return str(metadata)
+
+    def _deserialize_metadata(self, metadata_str: Optional[str]) -> Optional[Dict[str, Any]]:
+        """
+        Deserialize metadata from JSON string.
+
+        Args:
+            metadata_str: JSON string representation of metadata
+
+        Returns:
+            Metadata dictionary or None
+        """
+        if metadata_str is None:
+            return None
+        try:
+            return json.loads(metadata_str)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            # Fallback to parsing as dictionary if possible, otherwise return as-is
+            try:
+                # Try to evaluate as Python literal (for backward compatibility)
+                import ast
+                result = ast.literal_eval(metadata_str)
+                if isinstance(result, dict):
+                    return result
+            except (ValueError, SyntaxError):
+                pass
+            # Return as simple string in a dict for backward compatibility
+            return {"_metadata": metadata_str}
+
     def _force_sync_if_needed(self):
         """Force database synchronization if write concern requires it."""
         if self._write_concern.get("j") is True or self._write_concern.get("w") == "majority":
@@ -189,7 +235,7 @@ class GridFSBucket:
                 self._chunk_size_bytes,
                 upload_date,
                 md5_hash,
-                None if metadata is None else str(metadata),
+                self._serialize_metadata(metadata),
             ),
         )
 
@@ -468,7 +514,7 @@ class GridFSBucket:
                 self._chunk_size_bytes,
                 upload_date,
                 md5_hash,
-                None if metadata is None else str(metadata),
+                self._serialize_metadata(metadata),
             ),
         )
 
@@ -597,6 +643,19 @@ class GridFSBucket:
 
         if cursor.rowcount == 0:
             raise NoFile(f"File with name {filename} not found")
+
+    def drop(self) -> None:
+        """
+        Remove all files and chunks from the bucket.
+
+        This method deletes all data in the GridFS bucket, including
+        all files and their associated chunks.
+        """
+        # Delete all chunks first (foreign key constraint)
+        self._db.execute(f"DELETE FROM `{self._chunks_collection}`")
+
+        # Delete all files
+        self._db.execute(f"DELETE FROM `{self._files_collection}`")
 
 
 # Import these at the end to avoid circular imports

@@ -109,13 +109,13 @@ class TestGridFSFiltering:
         self.fs.put(b"data3", filename="file3.txt", author="alice", version=1)
 
         # Find files by author (basic substring matching)
-        # Metadata is stored as a string representation of the dict
-        cursor = self.fs.find({"metadata": "'author': 'alice'"})
+        # Metadata is now stored as JSON, so we look for the JSON representation
+        cursor = self.fs.find({"metadata": '"author": "alice"'})
         files = list(cursor)
         assert len(files) == 2  # file1 and file3
 
         # Find files by version
-        cursor = self.fs.find({"metadata": "'version': 1"})
+        cursor = self.fs.find({"metadata": '"version": 1'})
         files = list(cursor)
         assert len(files) == 2  # file1 and file3
 
