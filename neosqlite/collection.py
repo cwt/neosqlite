@@ -1115,48 +1115,125 @@ class Collection:
                     return None
                 select_clause, group_by, output_fields = group_result
             elif stage_name == "$unwind":
-                # Handle $unwind as the first stage or after $match
-                # This is a simplified implementation that only works for simple cases
-                if i == 0 or (i == 1 and "$match" in pipeline[0]):
-                    field = stage["$unwind"]
-                    if isinstance(field, str) and field.startswith("$"):
-                        field_name = field[1:]  # Remove leading $
+                # Handle $unwind stages
+                # Check if this is the first stage or follows a $match stage
+                valid_position = (i == 0) or (
+                    i == 1 and "$match" in pipeline[0]
+                )
 
-                        # For $unwind, we need to change the query structure completely
-                        # We use json_each to decompose the array and json_set to add the unwound field
-                        select_clause = (
-                            f"SELECT {self.name}.id, json_set({self.name}.data, '$.\""
-                            + field_name
-                            + "\"', je.value) as data"
-                        )
-                        from_clause = f"FROM {self.name}, json_each(json_extract({self.name}.data, '$.{field_name}')) as je"
+                # Check if there are multiple consecutive $unwind stages
+                unwind_stages = []
+                j = i
+                while j < len(pipeline) and "$unwind" in pipeline[j]:
+                    unwind_stages.append(pipeline[j]["$unwind"])
+                    j += 1
 
-                        # If there's a previous $match stage, incorporate its WHERE clause
-                        if i == 1 and "$match" in pipeline[0]:
-                            match_query = pipeline[0]["$match"]
-                            where_result = self._build_simple_where_clause(
-                                match_query
+                # If we have valid positioning and at least one $unwind stage
+                if valid_position and len(unwind_stages) > 0:
+                    # Handle single $unwind with our existing logic
+                    if len(unwind_stages) == 1:
+                        field = unwind_stages[0]
+                        if isinstance(field, str) and field.startswith("$"):
+                            field_name = field[1:]  # Remove leading $
+
+                            # For $unwind, we need to change the query structure completely
+                            # We use json_each to decompose the array and json_set to add the unwound field
+                            select_clause = (
+                                f"SELECT {self.name}.id, json_set({self.name}.data, '$.\""
+                                + field_name
+                                + "\"', je.value) as data"
                             )
-                            if (
-                                where_result and where_result[0]
-                            ):  # Has WHERE clause
-                                # Need to adapt the WHERE clause for the new FROM structure
-                                # This is a simplified approach - in practice would need more complex logic
-                                where_clause = where_result[0].replace(
-                                    "WHERE ", "WHERE "
+                            from_clause = f"FROM {self.name}, json_each(json_extract({self.name}.data, '$.{field_name}')) as je"
+
+                            # If there's a previous $match stage, incorporate its WHERE clause
+                            if i == 1 and "$match" in pipeline[0]:
+                                match_query = pipeline[0]["$match"]
+                                where_result = self._build_simple_where_clause(
+                                    match_query
                                 )
-                                params = where_result[1]
-                                cmd = f"{select_clause} {from_clause} {where_clause} {order_by} {limit} {offset}"
+                                if (
+                                    where_result and where_result[0]
+                                ):  # Has WHERE clause
+                                    where_clause = where_result[0]
+                                    params = where_result[1]
+                                    cmd = f"{select_clause} {from_clause} {where_clause} {order_by} {limit} {offset}"
+                                else:
+                                    cmd = f"{select_clause} {from_clause} {order_by} {limit} {offset}"
                             else:
                                 cmd = f"{select_clause} {from_clause} {order_by} {limit} {offset}"
-                        else:
-                            cmd = f"{select_clause} {from_clause} {order_by} {limit} {offset}"
 
-                        return cmd, params, output_fields
-                    else:
-                        return None  # Fallback for complex unwind expressions
+                            # Skip the processed unwind stage
+                            i = j - 1
+                            return cmd, params, output_fields
+                        else:
+                            return (
+                                None  # Fallback for complex unwind expressions
+                            )
+                    # Handle multiple consecutive $unwind stages
+                    elif len(unwind_stages) > 1:
+                        # Build chained json_each() query for multiple unwinds
+                        field_names = []
+                        valid_fields = True
+
+                        for field in unwind_stages:
+                            if isinstance(field, str) and field.startswith("$"):
+                                field_names.append(
+                                    field[1:]
+                                )  # Remove leading $
+                            else:
+                                valid_fields = False
+                                break
+
+                        if valid_fields and len(field_names) > 0:
+                            # Build SELECT clause with nested json_set calls
+                            select_parts = [f"{self.name}.data"]
+                            for k, field_name in enumerate(field_names):
+                                select_parts.insert(0, f"json_set(")
+                                select_parts.append(
+                                    f", '$.\"{field_name}\"', je{k+1}.value)"
+                                )
+
+                            # Join all parts except the last closing parenthesis
+                            select_expr = (
+                                "".join(select_parts[:-1]) + select_parts[-1]
+                            )
+                            select_clause = (
+                                f"SELECT {self.name}.id, {select_expr} as data"
+                            )
+
+                            # Build FROM clause with multiple json_each calls
+                            from_parts = [f"FROM {self.name}"]
+                            for k, field_name in enumerate(field_names):
+                                from_parts.append(
+                                    f", json_each(json_extract({self.name}.data, '$.{field_name}')) as je{k+1}"
+                                )
+
+                            from_clause = " ".join(from_parts)
+
+                            # If there's a previous $match stage, incorporate its WHERE clause
+                            where_clause = ""
+                            if i == 1 and "$match" in pipeline[0]:
+                                match_query = pipeline[0]["$match"]
+                                where_result = self._build_simple_where_clause(
+                                    match_query
+                                )
+                                if (
+                                    where_result and where_result[0]
+                                ):  # Has WHERE clause
+                                    where_clause = where_result[0]
+                                    params = where_result[1]
+
+                            cmd = f"{select_clause} {from_clause} {where_clause} {order_by} {limit} {offset}"
+
+                            # Skip all processed unwind stages
+                            i = j - 1
+                            return cmd, params, output_fields
+                        else:
+                            return (
+                                None  # Fallback for complex unwind expressions
+                            )
                 else:
-                    # $unwind not as first or second stage - fallback to Python
+                    # $unwind not in valid position or complex case - fallback to Python
                     return None
             else:
                 return None  # Fallback for unsupported stages
