@@ -27,6 +27,7 @@ class GridFSBucket:
         chunk_size_bytes: int = 255 * 1024,  # 255KB default chunk size
         write_concern: Optional[Dict[str, Any]] = None,
         read_preference: Optional[Any] = None,
+        disable_md5: bool = False,
     ):
         """
         Initialize a new GridFSBucket instance.
@@ -35,8 +36,9 @@ class GridFSBucket:
             db: SQLite database connection
             bucket_name: The bucket name for the GridFS files (default: "fs")
             chunk_size_bytes: The chunk size in bytes (default: 255KB)
-            write_concern: Write concern settings (not used in SQLite)
-            read_preference: Read preference settings (not used in SQLite)
+            write_concern: Write concern settings (simulated for compatibility)
+            read_preference: Read preference settings (not applicable to SQLite)
+            disable_md5: Disable MD5 checksum calculation for performance
         """
         self._db = db
         self._bucket_name = bucket_name
@@ -44,8 +46,46 @@ class GridFSBucket:
         self._files_collection = f"{bucket_name}.files"
         self._chunks_collection = f"{bucket_name}.chunks"
 
+        # Process write concern settings
+        self._write_concern = write_concern or {}
+        self._read_preference = read_preference
+        self._disable_md5 = disable_md5
+
+        # Apply write concern settings to SQLite
+        self._apply_write_concern()
+
+        # Validate chunk size
+        if chunk_size_bytes <= 0:
+            raise ValueError("chunk_size_bytes must be a positive integer")
+
+        # Validate write concern settings (basic validation for compatibility)
+        if write_concern:
+            # Basic validation - in a real implementation, you might want to do more
+            if "w" in write_concern and not isinstance(write_concern["w"], (int, str)):
+                raise ValueError("write_concern 'w' must be an integer or string")
+            if "wtimeout" in write_concern and not isinstance(write_concern["wtimeout"], int):
+                raise ValueError("write_concern 'wtimeout' must be an integer")
+            if "j" in write_concern and not isinstance(write_concern["j"], bool):
+                raise ValueError("write_concern 'j' must be a boolean")
+
         # Create the necessary tables if they don't exist
         self._create_collections()
+
+    def _apply_write_concern(self):
+        """Apply write concern settings to SQLite connection."""
+        # Handle journal concern (j=True)
+        if self._write_concern.get("j") is True:
+            # Set synchronous to FULL for maximum durability
+            self._db.execute("PRAGMA synchronous = FULL")
+        else:
+            # Default behavior (NORMAL is a good balance)
+            self._db.execute("PRAGMA synchronous = NORMAL")
+
+        # Handle write acknowledgment level
+        w_level = self._write_concern.get("w", 1)
+        if w_level == 0:
+            # No acknowledgment - set to OFF for maximum performance
+            self._db.execute("PRAGMA synchronous = OFF")
 
     def _create_collections(self):
         """Create the files and chunks collections (tables) if they don't exist."""
@@ -80,17 +120,25 @@ class GridFSBucket:
         # Create indexes for better performance
         self._db.execute(
             f"""
-            CREATE INDEX IF NOT EXISTS `idx_{self._files_collection}_filename` 
+            CREATE INDEX IF NOT EXISTS `idx_{self._files_collection}_filename`
             ON `{self._files_collection}` (filename)
         """
         )
 
         self._db.execute(
             f"""
-            CREATE INDEX IF NOT EXISTS `idx_{self._chunks_collection}_files_id` 
+            CREATE INDEX IF NOT EXISTS `idx_{self._chunks_collection}_files_id`
             ON `{self._chunks_collection}` (files_id)
         """
         )
+
+    def _force_sync_if_needed(self):
+        """Force database synchronization if write concern requires it."""
+        if self._write_concern.get("j") is True or self._write_concern.get("w") == "majority":
+            # Force sync to disk for maximum durability
+            self._db.execute("PRAGMA wal_checkpoint(PASSIVE)")
+            # Note: In pysqlite, we can't directly call fsync on the file,
+            # but we can force SQLite to flush its buffers
 
     def upload_from_stream(
         self,
@@ -121,15 +169,17 @@ class GridFSBucket:
         else:
             raise TypeError("source must be bytes or a file-like object")
 
-        # Calculate MD5 hash of the data
-        md5_hash = hashlib.md5(data).hexdigest()
+        # Calculate MD5 hash of the data (unless disabled)
+        md5_hash = None
+        if not self._disable_md5:
+            md5_hash = hashlib.md5(data).hexdigest()
 
         # Insert file metadata first
         upload_date = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
         cursor = self._db.execute(
             f"""
-            INSERT INTO `{self._files_collection}` 
+            INSERT INTO `{self._files_collection}`
             (filename, length, chunkSize, uploadDate, md5, metadata)
             VALUES (?, ?, ?, ?, ?, ?)
         """,
@@ -150,6 +200,9 @@ class GridFSBucket:
         # Split data into chunks and insert them
         self._insert_chunks(file_id, data)
 
+        # Force sync if write concern requires it
+        self._force_sync_if_needed()
+
         return file_id
 
     def _insert_chunks(self, file_id: int, data: bytes):
@@ -166,7 +219,7 @@ class GridFSBucket:
 
             self._db.execute(
                 f"""
-                INSERT INTO `{self._chunks_collection}` 
+                INSERT INTO `{self._chunks_collection}`
                 (files_id, n, data)
                 VALUES (?, ?, ?)
             """,
@@ -185,7 +238,7 @@ class GridFSBucket:
         # Get file metadata
         row = self._db.execute(
             f"""
-            SELECT length, chunkSize FROM `{self._files_collection}` 
+            SELECT length, chunkSize FROM `{self._files_collection}`
             WHERE _id = ?
         """,
             (file_id,),
@@ -199,8 +252,8 @@ class GridFSBucket:
         # Get all chunks in order
         cursor = self._db.execute(
             f"""
-            SELECT data FROM `{self._chunks_collection}` 
-            WHERE files_id = ? 
+            SELECT data FROM `{self._chunks_collection}`
+            WHERE files_id = ?
             ORDER BY n ASC
         """,
             (file_id,),
@@ -240,9 +293,9 @@ class GridFSBucket:
             # Get the latest revision
             row = self._db.execute(
                 f"""
-                SELECT _id FROM `{self._files_collection}` 
-                WHERE filename = ? 
-                ORDER BY uploadDate DESC 
+                SELECT _id FROM `{self._files_collection}`
+                WHERE filename = ?
+                ORDER BY uploadDate DESC
                 LIMIT 1
             """,
                 (filename,),
@@ -251,9 +304,9 @@ class GridFSBucket:
             # Get specific revision (0-indexed)
             row = self._db.execute(
                 f"""
-                SELECT _id FROM `{self._files_collection}` 
-                WHERE filename = ? 
-                ORDER BY uploadDate ASC 
+                SELECT _id FROM `{self._files_collection}`
+                WHERE filename = ?
+                ORDER BY uploadDate ASC
                 LIMIT 1 OFFSET ?
             """,
                 (filename, revision),
@@ -303,7 +356,7 @@ class GridFSBucket:
         # Delete chunks first
         self._db.execute(
             f"""
-            DELETE FROM `{self._chunks_collection}` 
+            DELETE FROM `{self._chunks_collection}`
             WHERE files_id = ?
         """,
             (file_id,),
@@ -312,7 +365,7 @@ class GridFSBucket:
         # Delete file document
         cursor = self._db.execute(
             f"""
-            DELETE FROM `{self._files_collection}` 
+            DELETE FROM `{self._files_collection}`
             WHERE _id = ?
         """,
             (file_id,),
@@ -354,6 +407,8 @@ class GridFSBucket:
             self._chunk_size_bytes,
             filename,
             metadata,
+            disable_md5=self._disable_md5,
+            write_concern=self._write_concern,
         )
 
     def upload_from_stream_with_id(
@@ -375,7 +430,7 @@ class GridFSBucket:
         # Check if file with this ID already exists
         row = self._db.execute(
             f"""
-            SELECT _id FROM `{self._files_collection}` 
+            SELECT _id FROM `{self._files_collection}`
             WHERE _id = ?
         """,
             (file_id,),
@@ -392,15 +447,17 @@ class GridFSBucket:
         else:
             raise TypeError("source must be bytes or a file-like object")
 
-        # Calculate MD5 hash of the data
-        md5_hash = hashlib.md5(data).hexdigest()
+        # Calculate MD5 hash of the data (unless disabled)
+        md5_hash = None
+        if not self._disable_md5:
+            md5_hash = hashlib.md5(data).hexdigest()
 
         # Insert file metadata
         upload_date = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
         self._db.execute(
             f"""
-            INSERT INTO `{self._files_collection}` 
+            INSERT INTO `{self._files_collection}`
             (_id, filename, length, chunkSize, uploadDate, md5, metadata)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
@@ -417,6 +474,9 @@ class GridFSBucket:
 
         # Split data into chunks and insert them
         self._insert_chunks(file_id, data)
+
+        # Force sync if write concern requires it
+        self._force_sync_if_needed()
 
     def open_upload_stream_with_id(
         self,
@@ -438,7 +498,7 @@ class GridFSBucket:
         # Check if file with this ID already exists
         row = self._db.execute(
             f"""
-            SELECT _id FROM `{self._files_collection}` 
+            SELECT _id FROM `{self._files_collection}`
             WHERE _id = ?
         """,
             (file_id,),
@@ -454,6 +514,8 @@ class GridFSBucket:
             filename,
             metadata,
             file_id,
+            disable_md5=self._disable_md5,
+            write_concern=self._write_concern,
         )
 
     def delete_by_name(self, filename: str) -> None:
@@ -466,7 +528,7 @@ class GridFSBucket:
         # Get all file IDs with this filename
         cursor = self._db.execute(
             f"""
-            SELECT _id FROM `{self._files_collection}` 
+            SELECT _id FROM `{self._files_collection}`
             WHERE filename = ?
         """,
             (filename,),
@@ -481,7 +543,7 @@ class GridFSBucket:
         placeholders = ",".join("?" * len(file_ids))
         self._db.execute(
             f"""
-            DELETE FROM `{self._chunks_collection}` 
+            DELETE FROM `{self._chunks_collection}`
             WHERE files_id IN ({placeholders})
         """,
             file_ids,
@@ -490,7 +552,7 @@ class GridFSBucket:
         # Delete all file documents
         self._db.execute(
             f"""
-            DELETE FROM `{self._files_collection}` 
+            DELETE FROM `{self._files_collection}`
             WHERE filename = ?
         """,
             (filename,),
@@ -506,8 +568,8 @@ class GridFSBucket:
         """
         cursor = self._db.execute(
             f"""
-            UPDATE `{self._files_collection}` 
-            SET filename = ? 
+            UPDATE `{self._files_collection}`
+            SET filename = ?
             WHERE _id = ?
         """,
             (new_filename, file_id),
@@ -526,8 +588,8 @@ class GridFSBucket:
         """
         cursor = self._db.execute(
             f"""
-            UPDATE `{self._files_collection}` 
-            SET filename = ? 
+            UPDATE `{self._files_collection}`
+            SET filename = ?
             WHERE filename = ?
         """,
             (new_filename, filename),
