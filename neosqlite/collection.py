@@ -988,58 +988,70 @@ class Collection:
         """
         query_result = self._build_aggregation_query(pipeline)
         if query_result is not None:
-            cmd, params = query_result
+            cmd, params, output_fields = query_result
             db_cursor = self.db.execute(cmd, params)
-            return [self._load(row[0], row[1]) for row in db_cursor.fetchall()]
+            if output_fields:
+                # Handle results from a GROUP BY query
+                return [
+                    dict(zip(output_fields, row))
+                    for row in db_cursor.fetchall()
+                ]
+            else:
+                # Handle results from a regular find query
+                return [
+                    self._load(row[0], row[1]) for row in db_cursor.fetchall()
+                ]
 
         # Fallback to old method for complex queries
         docs: List[Dict[str, Any]] = list(self.find())
         for stage in pipeline:
-            match stage:
-                case {"$match": query}:
-                    docs = [
-                        doc for doc in docs if self._apply_query(query, doc)
-                    ]
-                case {"$sort": sort_spec}:
-                    for key, direction in reversed(list(sort_spec.items())):
-                        docs.sort(
-                            key=lambda doc: self._get_val(doc, key),
-                            reverse=direction == DESCENDING,
-                        )
-                case {"$skip": count}:
-                    docs = docs[count:]
-                case {"$limit": count}:
-                    docs = docs[:count]
-                case {"$project": projection}:
-                    docs = [
-                        self._apply_projection(projection, doc) for doc in docs
-                    ]
-                case {"$group": group_spec}:
-                    docs = self._process_group_stage(group_spec, docs)
-                case {"$unwind": field}:
-                    unwound_docs = []
-                    field_name = field.lstrip("$")
-                    for doc in docs:
-                        array_to_unwind = self._get_val(doc, field_name)
-                        if isinstance(array_to_unwind, list):
-                            for item in array_to_unwind:
-                                new_doc = doc.copy()
-                                new_doc[field_name] = item
-                                unwound_docs.append(new_doc)
-                        else:
-                            unwound_docs.append(doc)
-                    docs = unwound_docs
-                case _:
-                    stage_name = next(iter(stage.keys()))
-                    raise MalformedQueryException(
-                        f"Aggregation stage '{stage_name}' not supported"
+            stage_name = next(iter(stage.keys()))
+            if stage_name == "$match":
+                query = stage["$match"]
+                docs = [doc for doc in docs if self._apply_query(query, doc)]
+            elif stage_name == "$sort":
+                sort_spec = stage["$sort"]
+                for key, direction in reversed(list(sort_spec.items())):
+                    docs.sort(
+                        key=lambda doc: self._get_val(doc, key),
+                        reverse=direction == DESCENDING,
                     )
+            elif stage_name == "$skip":
+                count = stage["$skip"]
+                docs = docs[count:]
+            elif stage_name == "$limit":
+                count = stage["$limit"]
+                docs = docs[:count]
+            elif stage_name == "$project":
+                projection = stage["$project"]
+                docs = [self._apply_projection(projection, doc) for doc in docs]
+            elif stage_name == "$group":
+                group_spec = stage["$group"]
+                docs = self._process_group_stage(group_spec, docs)
+            elif stage_name == "$unwind":
+                field = stage["$unwind"]
+                unwound_docs = []
+                field_name = field.lstrip("$")
+                for doc in docs:
+                    array_to_unwind = self._get_val(doc, field_name)
+                    if isinstance(array_to_unwind, list):
+                        for item in array_to_unwind:
+                            new_doc = doc.copy()
+                            new_doc[field_name] = item
+                            unwound_docs.append(new_doc)
+                    else:
+                        unwound_docs.append(doc)
+                docs = unwound_docs
+            else:
+                raise MalformedQueryException(
+                    f"Aggregation stage '{stage_name}' not supported"
+                )
         return docs
 
     def _build_aggregation_query(
         self,
         pipeline: List[Dict[str, Any]],
-    ) -> tuple[str, List[Any]] | None:
+    ) -> tuple[str, List[Any], List[str] | None] | None:
         """
         Builds a SQL query for the given MongoDB-like aggregation pipeline.
 
@@ -1060,36 +1072,112 @@ class Collection:
         order_by = ""
         limit = ""
         offset = ""
+        group_by = ""
+        select_clause = "SELECT id, data"
+        output_fields: List[str] | None = None
 
-        for stage in pipeline:
-            match stage:
-                case {"$match": query}:
-                    where_result = self._build_simple_where_clause(query)
-                    if where_result is None:
-                        return None  # Fallback for complex queries
-                    where_clause, params = where_result
-                case {"$sort": sort_spec}:
-                    sort_clauses = []
-                    for key, direction in sort_spec.items():
+        for i, stage in enumerate(pipeline):
+            stage_name = next(iter(stage.keys()))
+            if stage_name == "$match":
+                query = stage["$match"]
+                where_result = self._build_simple_where_clause(query)
+                if where_result is None:
+                    return None  # Fallback for complex queries
+                where_clause, params = where_result
+            elif stage_name == "$sort":
+                sort_spec = stage["$sort"]
+                sort_clauses = []
+                for key, direction in sort_spec.items():
+                    # When sorting after a group stage, we sort by the output field name
+                    if group_by:
+                        sort_clauses.append(
+                            f"{key} {'DESC' if direction == DESCENDING else 'ASC'}"
+                        )
+                    else:
                         sort_clauses.append(
                             f"json_extract(data, '$.{key}') "
                             f"{'DESC' if direction == DESCENDING else 'ASC'}"
                         )
-                    order_by = "ORDER BY " + ", ".join(sort_clauses)
-                case {"$skip": count}:
-                    offset = f"OFFSET {count}"
-                case {"$limit": count}:
-                    limit = f"LIMIT {count}"
-                case {"$group": group_spec}:
-                    # Handle $group stage in Python for now
-                    # This is complex to do in SQL and would require significant changes
-                    # to the result processing pipeline
+                order_by = "ORDER BY " + ", ".join(sort_clauses)
+            elif stage_name == "$skip":
+                count = stage["$skip"]
+                offset = f"OFFSET {count}"
+            elif stage_name == "$limit":
+                count = stage["$limit"]
+                limit = f"LIMIT {count}"
+            elif stage_name == "$group":
+                # A group stage must be the first stage or after a match stage
+                if i > 1 or (i == 1 and "$match" not in pipeline[0]):
                     return None
-                case _:
-                    return None  # Fallback for unsupported stages
+                group_spec = stage["$group"]
+                group_result = self._build_group_query(group_spec)
+                if group_result is None:
+                    return None
+                select_clause, group_by, output_fields = group_result
+            else:
+                return None  # Fallback for unsupported stages
 
-        cmd = f"SELECT id, data FROM {self.name} {where_clause} {order_by} {limit} {offset}"
-        return cmd, params
+        cmd = f"{select_clause} FROM {self.name} {where_clause} {group_by} {order_by} {limit} {offset}"
+        return cmd, params, output_fields
+
+    def _build_group_query(
+        self, group_spec: Dict[str, Any]
+    ) -> tuple[str, str, List[str]] | None:
+        """
+        Builds the SELECT and GROUP BY clauses for a $group stage.
+        """
+        group_id_expr = group_spec.get("_id")
+        if group_id_expr is None:
+            group_by_clause = ""
+            select_expressions = ["NULL AS _id"]
+            output_fields = ["_id"]
+        elif isinstance(group_id_expr, str) and group_id_expr.startswith("$"):
+            group_by_field = group_id_expr[1:]
+            group_by_clause = (
+                f"GROUP BY json_extract(data, '$.{group_by_field}')"
+            )
+            select_expressions = [
+                f"json_extract(data, '$.{group_by_field}') AS _id"
+            ]
+            output_fields = ["_id"]
+        else:
+            return None  # Fallback for complex _id expressions
+
+        for field, accumulator in group_spec.items():
+            if field == "_id":
+                continue
+
+            if not isinstance(accumulator, dict) or len(accumulator) != 1:
+                return None
+
+            op, expr = next(iter(accumulator.items()))
+
+            if op == "$count":
+                select_expressions.append(f"COUNT(*) AS {field}")
+                output_fields.append(field)
+                continue
+
+            if not isinstance(expr, str) or not expr.startswith("$"):
+                return None  # Fallback for complex accumulator expressions
+
+            field_name = expr[1:]
+            sql_func = {
+                "$sum": "SUM",
+                "$avg": "AVG",
+                "$min": "MIN",
+                "$max": "MAX",
+            }.get(op)
+
+            if not sql_func:
+                return None  # Unsupported accumulator
+
+            select_expressions.append(
+                f"{sql_func}(json_extract(data, '$.{field_name}')) AS {field}"
+            )
+            output_fields.append(field)
+
+        select_clause = "SELECT " + ", ".join(select_expressions)
+        return select_clause, group_by_clause, output_fields
 
     def _process_group_stage(
         self,
@@ -1113,11 +1201,19 @@ class Collection:
         group_id_key = group_query.pop("_id")
 
         for doc in docs:
-            group_id = self._get_val(doc, group_id_key)
+            if group_id_key is None:
+                group_id = None
+            else:
+                group_id = self._get_val(doc, group_id_key)
             group = grouped_docs.setdefault(group_id, {"_id": group_id})
 
             for field, accumulator in group_query.items():
                 op, key = next(iter(accumulator.items()))
+
+                if op == "$count":
+                    group[field] = group.get(field, 0) + 1
+                    continue
+
                 value = self._get_val(doc, key)
 
                 if op == "$sum":
