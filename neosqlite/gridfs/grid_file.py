@@ -365,9 +365,132 @@ class GridOutCursor:
                     where_conditions.append("_id = ?")
                     params.append(value)
                 elif key == "filename":
-                    where_conditions.append("filename = ?")
-                    params.append(value)
-                # Add more filter conditions as needed
+                    if isinstance(value, dict):
+                        # Handle operators like {"$regex": "pattern"}, {"$ne": "name"}, etc.
+                        for op, val in value.items():
+                            if op == "$regex":
+                                where_conditions.append("filename LIKE ?")
+                                params.append(f"%{val}%")
+                            elif op == "$ne":
+                                where_conditions.append("filename != ?")
+                                params.append(val)
+                            elif op == "$eq":
+                                where_conditions.append("filename = ?")
+                                params.append(val)
+                            else:
+                                # For unsupported operators, fall back to exact match
+                                where_conditions.append("filename = ?")
+                                params.append(str(value))
+                    else:
+                        # Direct value comparison
+                        where_conditions.append("filename = ?")
+                        params.append(value)
+                elif key == "length":
+                    if isinstance(value, dict):
+                        # Handle operators like {"$gt": 1000}, {"$lt": 5000}, etc.
+                        for op, val in value.items():
+                            if op == "$gt":
+                                where_conditions.append("length > ?")
+                                params.append(val)
+                            elif op == "$gte":
+                                where_conditions.append("length >= ?")
+                                params.append(val)
+                            elif op == "$lt":
+                                where_conditions.append("length < ?")
+                                params.append(val)
+                            elif op == "$lte":
+                                where_conditions.append("length <= ?")
+                                params.append(val)
+                            elif op == "$eq":
+                                where_conditions.append("length = ?")
+                                params.append(val)
+                            elif op == "$ne":
+                                where_conditions.append("length != ?")
+                                params.append(val)
+                    else:
+                        # Direct value comparison
+                        where_conditions.append("length = ?")
+                        params.append(value)
+                elif key == "chunkSize":
+                    if isinstance(value, dict):
+                        # Handle operators like {"$gt": 1000}, {"$lt": 5000}, etc.
+                        for op, val in value.items():
+                            if op == "$gt":
+                                where_conditions.append("chunkSize > ?")
+                                params.append(val)
+                            elif op == "$gte":
+                                where_conditions.append("chunkSize >= ?")
+                                params.append(val)
+                            elif op == "$lt":
+                                where_conditions.append("chunkSize < ?")
+                                params.append(val)
+                            elif op == "$lte":
+                                where_conditions.append("chunkSize <= ?")
+                                params.append(val)
+                            elif op == "$eq":
+                                where_conditions.append("chunkSize = ?")
+                                params.append(val)
+                            elif op == "$ne":
+                                where_conditions.append("chunkSize != ?")
+                                params.append(val)
+                    else:
+                        # Direct value comparison
+                        where_conditions.append("chunkSize = ?")
+                        params.append(value)
+                elif key == "uploadDate":
+                    if isinstance(value, dict):
+                        # Handle operators like {"$gt": date}, {"$lt": date}, etc.
+                        for op, val in value.items():
+                            if op == "$gt":
+                                where_conditions.append("uploadDate > ?")
+                                params.append(val)
+                            elif op == "$gte":
+                                where_conditions.append("uploadDate >= ?")
+                                params.append(val)
+                            elif op == "$lt":
+                                where_conditions.append("uploadDate < ?")
+                                params.append(val)
+                            elif op == "$lte":
+                                where_conditions.append("uploadDate <= ?")
+                                params.append(val)
+                            elif op == "$eq":
+                                where_conditions.append("uploadDate = ?")
+                                params.append(val)
+                            elif op == "$ne":
+                                where_conditions.append("uploadDate != ?")
+                                params.append(val)
+                    else:
+                        # Direct value comparison
+                        where_conditions.append("uploadDate = ?")
+                        params.append(value)
+                elif key == "md5":
+                    if isinstance(value, dict) and "$ne" in value:
+                        where_conditions.append("md5 != ?")
+                        params.append(value["$ne"])
+                    else:
+                        # Direct value comparison
+                        where_conditions.append("md5 = ?")
+                        params.append(value)
+                # For metadata, we do a simple string match (basic implementation)
+                # In a full implementation, we'd parse the JSON, but for now we'll do substring matching
+                elif key == "metadata":
+                    if isinstance(value, dict):
+                        # Handle metadata queries with operators
+                        for op, val in value.items():
+                            if op == "$regex":
+                                where_conditions.append("metadata LIKE ?")
+                                params.append(f"%{val}%")
+                            elif op == "$ne":
+                                where_conditions.append("metadata != ?")
+                                params.append(str(val) if not isinstance(val, str) else val)
+                            else:
+                                # For other operators, convert to string and match
+                                where_conditions.append("metadata LIKE ?")
+                                params.append(f"%{op}%{val}%")
+                    else:
+                        # Direct metadata string matching
+                        where_conditions.append("metadata LIKE ?")
+                        params.append(f"%{value}%")
                 
             if where_conditions:
                 where_clause = "WHERE " + " AND ".join(where_conditions)
