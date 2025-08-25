@@ -1106,6 +1106,89 @@ class Collection:
                 count = stage["$limit"]
                 limit = f"LIMIT {count}"
             elif stage_name == "$group":
+                # Check if this is a $unwind + $group pattern we can optimize
+                if i == 1 and "$unwind" in pipeline[0]:
+                    # $unwind followed by $group - try to optimize with SQL
+                    unwind_stage = pipeline[0]["$unwind"]
+                    group_spec = stage["$group"]
+
+                    if (
+                        isinstance(unwind_stage, str)
+                        and unwind_stage.startswith("$")
+                        and isinstance(group_spec.get("_id"), str)
+                        and group_spec.get("_id").startswith("$")
+                    ):
+
+                        unwind_field = unwind_stage[1:]  # Remove leading $
+                        group_id_field = group_spec["_id"][
+                            1:
+                        ]  # Remove leading $
+
+                        # Check if we can handle this specific group operation
+                        can_optimize = True
+                        select_expressions = []
+                        output_fields = ["_id"]
+
+                        # Handle _id field
+                        if group_id_field == unwind_field:
+                            # Grouping by the unwound field
+                            select_expressions.append(f"je.value AS _id")
+                            group_by_clause = "GROUP BY je.value"
+                        else:
+                            # Grouping by another field
+                            select_expressions.append(
+                                f"json_extract({self.name}.data, '$.{group_id_field}') AS _id"
+                            )
+                            group_by_clause = f"GROUP BY json_extract({self.name}.data, '$.{group_id_field}')"
+
+                        # Handle accumulator operations
+                        for field, accumulator in group_spec.items():
+                            if field == "_id":
+                                continue
+
+                            if (
+                                not isinstance(accumulator, dict)
+                                or len(accumulator) != 1
+                            ):
+                                can_optimize = False
+                                break
+
+                            op, expr = next(iter(accumulator.items()))
+
+                            if (
+                                op == "$sum"
+                                and isinstance(expr, int)
+                                and expr == 1
+                            ):
+                                # Count operation
+                                select_expressions.append(
+                                    f"COUNT(*) AS {field}"
+                                )
+                                output_fields.append(field)
+                            elif op == "$count":
+                                # Count operation
+                                select_expressions.append(
+                                    f"COUNT(*) AS {field}"
+                                )
+                                output_fields.append(field)
+                            else:
+                                # Unsupported operation, fallback to Python
+                                can_optimize = False
+                                break
+
+                        if can_optimize:
+                            # Build the optimized SQL query
+                            select_clause = "SELECT " + ", ".join(
+                                select_expressions
+                            )
+                            from_clause = f"FROM {self.name}, json_each(json_extract({self.name}.data, '$.{unwind_field}')) as je"
+
+                            # Add ordering by _id for consistent results
+                            order_by_clause = "ORDER BY _id"
+
+                            cmd = f"{select_clause} {from_clause} {group_by_clause} {order_by_clause}"
+                            return cmd, [], output_fields
+
                 # A group stage must be the first stage or after a match stage
                 if i > 1 or (i == 1 and "$match" not in pipeline[0]):
                     return None
@@ -1115,7 +1198,197 @@ class Collection:
                     return None
                 select_clause, group_by, output_fields = group_result
             elif stage_name == "$unwind":
-                # Handle $unwind stages
+                # Check if this is part of an $unwind + $group pattern we can optimize
+                # Case 1: $unwind is first stage followed by $group
+                if i == 0 and len(pipeline) > 1 and "$group" in pipeline[1]:
+                    # $unwind followed by $group - try to optimize with SQL
+                    group_stage = pipeline[1]["$group"]
+                    unwind_field = stage["$unwind"]
+
+                    if (
+                        isinstance(unwind_field, str)
+                        and unwind_field.startswith("$")
+                        and isinstance(group_stage.get("_id"), str)
+                        and group_stage.get("_id").startswith("$")
+                    ):
+
+                        unwind_field_name = unwind_field[1:]  # Remove leading $
+                        group_id_field = group_stage["_id"][
+                            1:
+                        ]  # Remove leading $
+
+                        # Check if we can handle this specific group operation
+                        can_optimize = True
+                        select_expressions = []
+                        output_fields = ["_id"]
+
+                        # Handle _id field
+                        if group_id_field == unwind_field_name:
+                            # Grouping by the unwound field
+                            select_expressions.append(f"je.value AS _id")
+                            group_by_clause = "GROUP BY je.value"
+                        else:
+                            # Grouping by another field
+                            select_expressions.append(
+                                f"json_extract({self.name}.data, '$.{group_id_field}') AS _id"
+                            )
+                            group_by_clause = f"GROUP BY json_extract({self.name}.data, '$.{group_id_field}')"
+
+                        # Handle accumulator operations
+                        for field, accumulator in group_stage.items():
+                            if field == "_id":
+                                continue
+
+                            if (
+                                not isinstance(accumulator, dict)
+                                or len(accumulator) != 1
+                            ):
+                                can_optimize = False
+                                break
+
+                            op, expr = next(iter(accumulator.items()))
+
+                            if (
+                                op == "$sum"
+                                and isinstance(expr, int)
+                                and expr == 1
+                            ):
+                                # Count operation
+                                select_expressions.append(
+                                    f"COUNT(*) AS {field}"
+                                )
+                                output_fields.append(field)
+                            elif op == "$count":
+                                # Count operation
+                                select_expressions.append(
+                                    f"COUNT(*) AS {field}"
+                                )
+                                output_fields.append(field)
+                            else:
+                                # Unsupported operation, fallback to Python
+                                can_optimize = False
+                                break
+
+                        if can_optimize:
+                            # Build the optimized SQL query
+                            select_clause = "SELECT " + ", ".join(
+                                select_expressions
+                            )
+                            from_clause = f"FROM {self.name}, json_each(json_extract({self.name}.data, '$.{unwind_field_name}')) as je"
+
+                            # Add ordering by _id for consistent results
+                            order_by_clause = "ORDER BY _id"
+
+                            cmd = f"{select_clause} {from_clause} {group_by_clause} {order_by_clause}"
+                            # Skip both the $unwind and $group stages
+                            i = 1  # Will be incremented to 2 by the loop
+                            return cmd, [], output_fields
+
+                # Case 2: $match followed by $unwind + $group
+                elif (
+                    i == 1
+                    and len(pipeline) > 2
+                    and "$match" in pipeline[0]
+                    and "$group" in pipeline[2]
+                ):
+                    # $match followed by $unwind followed by $group - try to optimize with SQL
+                    match_stage = pipeline[0]["$match"]
+                    group_stage = pipeline[2]["$group"]
+                    unwind_field = stage["$unwind"]
+
+                    if (
+                        isinstance(unwind_field, str)
+                        and unwind_field.startswith("$")
+                        and isinstance(group_stage.get("_id"), str)
+                        and group_stage.get("_id").startswith("$")
+                    ):
+
+                        unwind_field_name = unwind_field[1:]  # Remove leading $
+                        group_id_field = group_stage["_id"][
+                            1:
+                        ]  # Remove leading $
+
+                        # Check if we can handle this specific group operation
+                        can_optimize = True
+                        select_expressions = []
+                        output_fields = ["_id"]
+
+                        # Handle _id field
+                        if group_id_field == unwind_field_name:
+                            # Grouping by the unwound field
+                            select_expressions.append(f"je.value AS _id")
+                            group_by_clause = "GROUP BY je.value"
+                        else:
+                            # Grouping by another field
+                            select_expressions.append(
+                                f"json_extract({self.name}.data, '$.{group_id_field}') AS _id"
+                            )
+                            group_by_clause = f"GROUP BY json_extract({self.name}.data, '$.{group_id_field}')"
+
+                        # Handle accumulator operations
+                        for field, accumulator in group_stage.items():
+                            if field == "_id":
+                                continue
+
+                            if (
+                                not isinstance(accumulator, dict)
+                                or len(accumulator) != 1
+                            ):
+                                can_optimize = False
+                                break
+
+                            op, expr = next(iter(accumulator.items()))
+
+                            if (
+                                op == "$sum"
+                                and isinstance(expr, int)
+                                and expr == 1
+                            ):
+                                # Count operation
+                                select_expressions.append(
+                                    f"COUNT(*) AS {field}"
+                                )
+                                output_fields.append(field)
+                            elif op == "$count":
+                                # Count operation
+                                select_expressions.append(
+                                    f"COUNT(*) AS {field}"
+                                )
+                                output_fields.append(field)
+                            else:
+                                # Unsupported operation, fallback to Python
+                                can_optimize = False
+                                break
+
+                        if can_optimize:
+                            # Build the optimized SQL query with WHERE clause from $match
+                            select_clause = "SELECT " + ", ".join(
+                                select_expressions
+                            )
+                            from_clause = f"FROM {self.name}, json_each(json_extract({self.name}.data, '$.{unwind_field_name}')) as je"
+
+                            # Add WHERE clause from $match
+                            where_result = self._build_simple_where_clause(
+                                match_stage
+                            )
+                            if (
+                                where_result and where_result[0]
+                            ):  # Has WHERE clause
+                                where_clause = where_result[0]
+                                params = where_result[1]
+                            else:
+                                where_clause = ""
+                                params = []
+
+                            # Add ordering by _id for consistent results
+                            order_by_clause = "ORDER BY _id"
+
+                            cmd = f"{select_clause} {from_clause} {where_clause} {group_by_clause} {order_by_clause}"
+                            # Skip the $match, $unwind, and $group stages
+                            i = 2  # Will be incremented to 3 by the loop
+                            return cmd, params, output_fields
+
+                # Handle $unwind stages (original logic)
                 # Check if this is the first stage or follows a $match stage
                 valid_position = (i == 0) or (
                     i == 1 and "$match" in pipeline[0]
