@@ -1707,7 +1707,7 @@ class Collection:
         if tokenizer:
             self.db.execute(
                 f"""
-                CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name} 
+                CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name}
                 USING fts5(
                     content='{self.name}',
                     content_rowid='id',
@@ -1719,7 +1719,7 @@ class Collection:
         else:
             self.db.execute(
                 f"""
-                CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name} 
+                CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name}
                 USING fts5(
                     content='{self.name}',
                     content_rowid='id',
@@ -1746,7 +1746,7 @@ class Collection:
             CREATE TRIGGER IF NOT EXISTS {self.name}_{index_name}_fts_insert
             AFTER INSERT ON {self.name}
             BEGIN
-                INSERT INTO {fts_table_name}(rowid, {index_name}) 
+                INSERT INTO {fts_table_name}(rowid, {index_name})
                 VALUES (new.id, lower(json_extract(new.data, '$.{field}')));
             END
             """
@@ -1758,9 +1758,9 @@ class Collection:
             CREATE TRIGGER IF NOT EXISTS {self.name}_{index_name}_fts_update
             AFTER UPDATE ON {self.name}
             BEGIN
-                INSERT INTO {fts_table_name}({fts_table_name}, rowid, {index_name}) 
+                INSERT INTO {fts_table_name}({fts_table_name}, rowid, {index_name})
                 VALUES ('delete', old.id, lower(json_extract(old.data, '$.{field}')));
-                INSERT INTO {fts_table_name}(rowid, {index_name}) 
+                INSERT INTO {fts_table_name}(rowid, {index_name})
                 VALUES (new.id, lower(json_extract(new.data, '$.{field}')));
             END
             """
@@ -1772,7 +1772,7 @@ class Collection:
             CREATE TRIGGER IF NOT EXISTS {self.name}_{index_name}_fts_delete
             AFTER DELETE ON {self.name}
             BEGIN
-                INSERT INTO {fts_table_name}({fts_table_name}, rowid, {index_name}) 
+                INSERT INTO {fts_table_name}({fts_table_name}, rowid, {index_name})
                 VALUES ('delete', old.id, lower(json_extract(old.data, '$.{field}')));
             END
             """
@@ -1783,7 +1783,7 @@ class Collection:
             f"""
             INSERT INTO {fts_table_name}(rowid, {index_name})
             SELECT id, lower(json_extract(data, '$.{field}'))
-            FROM {self.name} 
+            FROM {self.name}
             WHERE json_extract(data, '$.{field}') IS NOT NULL
             """
         )

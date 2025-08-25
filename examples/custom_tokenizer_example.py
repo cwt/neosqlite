@@ -41,7 +41,7 @@ import neosqlite
 
 # Load custom tokenizer when creating connection
 conn = neosqlite.Connection(
-    ":memory:", 
+    ":memory:",
     tokenizers=[("icu", "{tokenizer_path}")]
 )
 

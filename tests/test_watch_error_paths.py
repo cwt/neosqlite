@@ -128,7 +128,7 @@ def test_watch_full_document_with_none_data(collection):
     # Manually insert a record with None document_data
     collection.db.execute(
         """
-        INSERT INTO _neosqlite_changestream 
+        INSERT INTO _neosqlite_changestream
         (collection_name, operation, document_id, document_data)
         VALUES (?, 'custom', 888, NULL)
         """,
@@ -156,7 +156,7 @@ def test_watch_json_type_error_handling(collection):
         # Manually insert valid JSON data
         collection.db.execute(
             """
-            INSERT INTO _neosqlite_changestream 
+            INSERT INTO _neosqlite_changestream
             (collection_name, operation, document_id, document_data)
             VALUES (?, 'insert', 777, ?)
             """,

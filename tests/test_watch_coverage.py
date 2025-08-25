@@ -84,7 +84,7 @@ def test_watch_json_decode_error_handling(collection):
     # Manually insert invalid JSON data into the change stream table
     collection.db.execute(
         """
-        INSERT INTO _neosqlite_changestream 
+        INSERT INTO _neosqlite_changestream
         (collection_name, operation, document_id, document_data)
         VALUES (?, 'insert', 999, ?)
         """,

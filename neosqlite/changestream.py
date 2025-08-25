@@ -95,7 +95,7 @@ class ChangeStream:
             CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._collection.name}_insert_trigger
             AFTER INSERT ON {self._collection.name}
             BEGIN
-                INSERT INTO _neosqlite_changestream 
+                INSERT INTO _neosqlite_changestream
                 (collection_name, operation, document_id, document_data)
                 VALUES ('{self._collection.name}', 'insert', NEW.id, NEW.data);
             END
@@ -108,7 +108,7 @@ class ChangeStream:
             CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._collection.name}_update_trigger
             AFTER UPDATE ON {self._collection.name}
             BEGIN
-                INSERT INTO _neosqlite_changestream 
+                INSERT INTO _neosqlite_changestream
                 (collection_name, operation, document_id, document_data)
                 VALUES ('{self._collection.name}', 'update', NEW.id, NEW.data);
             END
@@ -121,7 +121,7 @@ class ChangeStream:
             CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._collection.name}_delete_trigger
             AFTER DELETE ON {self._collection.name}
             BEGIN
-                INSERT INTO _neosqlite_changestream 
+                INSERT INTO _neosqlite_changestream
                 (collection_name, operation, document_id, document_data)
                 VALUES ('{self._collection.name}', 'delete', OLD.id, OLD.data);
             END
