@@ -212,9 +212,17 @@ class Collection:
 
     # --- Querying methods delegated to QueryEngine ---
     def insert_one(self, document: Dict[str, Any]) -> InsertOneResult:
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.insert_one`.
+        """
         return self.query_engine.insert_one(document)
 
     def insert_many(self, documents: List[Dict[str, Any]]) -> InsertManyResult:
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.insert_many`.
+        """
         return self.query_engine.insert_many(documents)
 
     def update_one(
@@ -223,6 +231,10 @@ class Collection:
         update: Dict[str, Any],
         upsert: bool = False,
     ) -> UpdateResult:
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.update_one`.
+        """
         return self.query_engine.update_one(filter, update, upsert)
 
     def update_many(
@@ -230,6 +242,10 @@ class Collection:
         filter: Dict[str, Any],
         update: Dict[str, Any],
     ) -> UpdateResult:
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.update_many`.
+        """
         return self.query_engine.update_many(filter, update)
 
     def replace_one(
@@ -238,12 +254,24 @@ class Collection:
         replacement: Dict[str, Any],
         upsert: bool = False,
     ) -> UpdateResult:
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.replace_one`.
+        """
         return self.query_engine.replace_one(filter, replacement, upsert)
 
     def delete_one(self, filter: Dict[str, Any]) -> DeleteResult:
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.delete_one`.
+        """
         return self.query_engine.delete_one(filter)
 
     def delete_many(self, filter: Dict[str, Any]) -> DeleteResult:
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.delete_many`.
+        """
         return self.query_engine.delete_many(filter)
 
     def find(
@@ -252,6 +280,10 @@ class Collection:
         projection: Dict[str, Any] | None = None,
         hint: str | None = None,
     ) -> Cursor:
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.find`.
+        """
         return self.query_engine.find(filter, projection, hint)
 
     def find_raw_batches(
@@ -261,6 +293,10 @@ class Collection:
         hint: str | None = None,
         batch_size: int = 100,
     ) -> RawBatchCursor:
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.find_raw_batches`.
+        """
         return self.query_engine.find_raw_batches(
             filter, projection, hint, batch_size
         )
@@ -271,18 +307,34 @@ class Collection:
         projection: Dict[str, Any] | None = None,
         hint: str | None = None,
     ) -> Dict[str, Any] | None:
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.find_one`.
+        """
         return self.query_engine.find_one(filter, projection, hint)
 
     def count_documents(self, filter: Dict[str, Any]) -> int:
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.count_documents`.
+        """
         return self.query_engine.count_documents(filter)
 
     def estimated_document_count(self) -> int:
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.estimated_document_count`.
+        """
         return self.query_engine.estimated_document_count()
 
     def find_one_and_delete(
         self,
         filter: Dict[str, Any],
     ) -> Dict[str, Any] | None:
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.find_one_and_delete`.
+        """
         return self.query_engine.find_one_and_delete(filter)
 
     def find_one_and_replace(
@@ -290,6 +342,10 @@ class Collection:
         filter: Dict[str, Any],
         replacement: Dict[str, Any],
     ) -> Dict[str, Any] | None:
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.find_one_and_replace`.
+        """
         return self.query_engine.find_one_and_replace(filter, replacement)
 
     def find_one_and_update(
@@ -297,12 +353,24 @@ class Collection:
         filter: Dict[str, Any],
         update: Dict[str, Any],
     ) -> Dict[str, Any] | None:
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.find_one_and_update`.
+        """
         return self.query_engine.find_one_and_update(filter, update)
 
     def aggregate(self, pipeline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.aggregate`.
+        """
         return self.query_engine.aggregate(pipeline)
 
     def distinct(self, key: str, filter: Dict[str, Any] | None = None) -> set:
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.distinct`.
+        """
         return self.query_engine.distinct(key, filter)
 
     # --- Bulk Write methods delegated to QueryEngine ---
@@ -311,12 +379,24 @@ class Collection:
         requests: List[Any],
         ordered: bool = True,
     ) -> BulkWriteResult:
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.bulk_write`.
+        """
         return self.query_engine.bulk_write(requests, ordered)
 
     def initialize_ordered_bulk_op(self) -> BulkOperationExecutor:
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.initialize_ordered_bulk_op`.
+        """
         return self.query_engine.initialize_ordered_bulk_op()
 
     def initialize_unordered_bulk_op(self) -> BulkOperationExecutor:
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.initialize_unordered_bulk_op`.
+        """
         return self.query_engine.initialize_unordered_bulk_op()
 
     # --- Indexing methods delegated to IndexManager ---
@@ -329,12 +409,20 @@ class Collection:
         fts: bool = False,
         tokenizer: str | None = None,
     ):
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.create_index`.
+        """
         self.indexes.create_index(key, reindex, sparse, unique, fts, tokenizer)
 
     def create_indexes(
         self,
         indexes: List[str | List[str] | List[Tuple[str, int]] | Dict[str, Any]],
     ) -> List[str]:
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.create_indexes`.
+        """
         return self.indexes.create_indexes(indexes)
 
     def reindex(
@@ -343,6 +431,10 @@ class Collection:
         sparse: bool = False,
         documents: List[Dict[str, Any]] | None = None,
     ):
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.reindex`.
+        """
         self.indexes.reindex(table, sparse, documents)
 
     @overload
@@ -353,6 +445,10 @@ class Collection:
         self,
         as_keys: bool = False,
     ) -> List[str] | List[List[str]]:
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.list_indexes`.
+        """
         # This explicit check is the key to solving the Mypy error on overloading.
         if as_keys:
             # Inside this block, Mypy knows 'as_keys' is Literal[True].
@@ -362,12 +458,24 @@ class Collection:
             return self.indexes.list_indexes(as_keys)
 
     def drop_index(self, index: str):
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.drop_index`.
+        """
         self.indexes.drop_index(index)
 
     def drop_indexes(self):
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.drop_indexes`.
+        """
         self.indexes.drop_indexes()
 
     def index_information(self) -> Dict[str, Any]:
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.index_information`.
+        """
         return self.indexes.index_information()
 
     # --- Other methods ---
