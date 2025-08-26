@@ -32,8 +32,10 @@ def test_performance_improvement():
         print(f"Returned {len(results)} documents")
 
         # Check that we're now using SQL by examining the generated clause
-        where_result = collection._build_simple_where_clause(
-            {"profile.age": 25}
+        where_result = (
+            collection.query_engine.helpers._build_simple_where_clause(
+                {"profile.age": 25}
+            )
         )
         assert where_result is not None
         where_clause, params = where_result

@@ -31,13 +31,13 @@ def test_lte_type_error():
 
 def test_get_operator_fn_improper_op(collection):
     with raises(neosqlite.MalformedQueryException):
-        collection._get_operator_fn("foo")
+        collection.query_engine.helpers._get_operator_fn("foo")
 
 
 def test_get_operator_fn_valid_op(collection):
-    assert collection._get_operator_fn("$in") == _in
+    assert collection.query_engine.helpers._get_operator_fn("$in") == _in
 
 
 def test_get_operator_fn_no_op(collection):
     with raises(neosqlite.MalformedQueryException):
-        collection._get_operator_fn("$foo")
+        collection.query_engine.helpers._get_operator_fn("$foo")

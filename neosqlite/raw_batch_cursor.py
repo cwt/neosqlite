@@ -27,6 +27,7 @@ class RawBatchCursor:
             batch_size (int): The number of documents to return in each batch.
         """
         self._collection = collection
+        self._query_helpers = collection.query_engine.helpers
         self._filter = filter or {}
         self._projection = projection or {}
         self._hint = hint
@@ -56,7 +57,9 @@ class RawBatchCursor:
             Iterator[bytes]: An iterator that yields raw batches of JSON data.
         """
         # Build the query using the collection's SQL-building methods
-        where_result = self._collection._build_simple_where_clause(self._filter)
+        where_result = self._query_helpers._build_simple_where_clause(
+            self._filter
+        )
 
         if where_result is not None:
             # Use SQL-based filtering

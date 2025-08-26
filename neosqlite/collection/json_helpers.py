@@ -1,6 +1,6 @@
-import json
+from neosqlite.binary import Binary
 from typing import Any, Dict
-from .binary import Binary
+import json
 
 
 class NeoSQLiteJSONEncoder(json.JSONEncoder):

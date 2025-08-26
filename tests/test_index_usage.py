@@ -22,7 +22,9 @@ def test_index_usage_with_explain(collection):
 
     # Build a query using the Collection's own query building mechanism
     query_filter = {"age": 25}
-    where_result = collection._build_simple_where_clause(query_filter)
+    where_result = collection.query_engine.helpers._build_simple_where_clause(
+        query_filter
+    )
 
     # Verify that we can build a SQL query for this filter
     assert where_result is not None

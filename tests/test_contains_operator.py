@@ -9,7 +9,7 @@ def test_contains_operator_sql_generation():
         collection = conn["test"]
 
         # Test $contains with string
-        result = collection._build_simple_where_clause(
+        result = collection.query_engine.helpers._build_simple_where_clause(
             {"name": {"$contains": "alice"}}
         )
         assert result is not None

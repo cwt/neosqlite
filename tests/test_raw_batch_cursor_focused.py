@@ -23,7 +23,11 @@ def test_raw_batch_cursor_fallback_path():
         complex_filter = {"nonexistent": {"$elemMatch": {"$eq": "value"}}}
 
         # Verify that this filter causes _build_simple_where_clause to return None
-        where_result = collection._build_simple_where_clause(complex_filter)
+        where_result = (
+            collection.query_engine.helpers._build_simple_where_clause(
+                complex_filter
+            )
+        )
         assert where_result is None  # Should cause fallback to Python
 
         # This should work and use the fallback path without error

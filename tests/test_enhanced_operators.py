@@ -8,7 +8,7 @@ def test_exists_operator_sql_generation():
         collection = conn["test"]
 
         # Test $exists: True
-        result = collection._build_simple_where_clause(
+        result = collection.query_engine.helpers._build_simple_where_clause(
             {"tags": {"$exists": True}}
         )
         assert result is not None
@@ -17,7 +17,7 @@ def test_exists_operator_sql_generation():
         assert params == []
 
         # Test $exists: False
-        result = collection._build_simple_where_clause(
+        result = collection.query_engine.helpers._build_simple_where_clause(
             {"tags": {"$exists": False}}
         )
         assert result is not None
@@ -32,7 +32,7 @@ def test_mod_operator_sql_generation():
         collection = conn["test"]
 
         # Test $mod with [divisor, remainder]
-        result = collection._build_simple_where_clause(
+        result = collection.query_engine.helpers._build_simple_where_clause(
             {"age": {"$mod": [2, 1]}}
         )
         assert result is not None
@@ -47,7 +47,9 @@ def test_size_operator_sql_generation():
         collection = conn["test"]
 
         # Test $size with integer
-        result = collection._build_simple_where_clause({"tags": {"$size": 2}})
+        result = collection.query_engine.helpers._build_simple_where_clause(
+            {"tags": {"$size": 2}}
+        )
         assert result is not None
         sql, params = result
         assert "json_array_length(json_extract(data, '$.tags')) = ?" in sql

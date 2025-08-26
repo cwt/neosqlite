@@ -23,8 +23,10 @@ def test_nested_field_queries_now_use_sql():
         assert names == {"Alice", "Charlie"}
 
         # Test that _build_simple_where_clause now handles nested fields
-        where_result = collection._build_simple_where_clause(
-            {"profile.age": 25}
+        where_result = (
+            collection.query_engine.helpers._build_simple_where_clause(
+                {"profile.age": 25}
+            )
         )
         assert where_result is not None  # Now handled by SQL
         where_clause, params = where_result
@@ -53,8 +55,10 @@ def test_nested_field_with_operators_now_use_sql():
         assert names == {"Bob", "Charlie"}
 
         # Test that _build_simple_where_clause now handles nested fields with operators
-        where_result = collection._build_simple_where_clause(
-            {"profile.age": {"$gt": 25}}
+        where_result = (
+            collection.query_engine.helpers._build_simple_where_clause(
+                {"profile.age": {"$gt": 25}}
+            )
         )
         assert where_result is not None  # Now handled by SQL
         where_clause, params = where_result
@@ -92,8 +96,10 @@ def test_multiple_nested_fields():
         assert names == {"Alice", "Charlie"}
 
         # Test _build_simple_where_clause with deeply nested fields
-        where_result = collection._build_simple_where_clause(
-            {"profile.address.city": "New York"}
+        where_result = (
+            collection.query_engine.helpers._build_simple_where_clause(
+                {"profile.address.city": "New York"}
+            )
         )
         assert where_result is not None  # Now handled by SQL
         where_clause, params = where_result

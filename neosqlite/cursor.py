@@ -32,6 +32,7 @@ class Cursor:
             hint (str, optional): Hint for the database to improve query performance.
         """
         self._collection = collection
+        self._query_helpers = collection.query_engine.helpers
         self._filter = filter or {}
         self._projection = projection or {}
         self._hint = hint
@@ -129,7 +130,9 @@ class Cursor:
             Iterable[Dict[str, Any]]: An iterable of dictionaries representing
                                       the documents that match the filter criteria.
         """
-        where_result = self._collection._build_simple_where_clause(self._filter)
+        where_result = self._query_helpers._build_simple_where_clause(
+            self._filter
+        )
 
         if where_result is not None:
             # Use SQL-based filtering
@@ -141,7 +144,7 @@ class Cursor:
             # Fallback to Python-based filtering for complex queries
             cmd = f"SELECT id, data FROM {self._collection.name}"
             db_cursor = self._collection.db.execute(cmd)
-            apply = partial(self._collection._apply_query, self._filter)
+            apply = partial(self._query_helpers._apply_query, self._filter)
             all_docs = starmap(self._collection._load, db_cursor.fetchall())
             return filter(apply, all_docs)
 
@@ -203,5 +206,7 @@ class Cursor:
             List[Dict[str, Any]]: A list of dictionaries representing the documents
                                   after applying the projection.
         """
-        project = partial(self._collection._apply_projection, self._projection)
+        project = partial(
+            self._query_helpers._apply_projection, self._projection
+        )
         return list(map(project, docs))

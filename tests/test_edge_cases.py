@@ -11,11 +11,7 @@ def test_malformed_document_error():
 
     # Test with a non-dict document
     with pytest.raises(MalformedDocument):
-        collection._internal_insert("not a dict")
-
-
-# We can't easily test the lastrowid error case without more complex mocking
-# Let's remove this test for now
+        collection.query_engine.helpers._internal_insert("not a dict")
 
 
 def test_update_many_fallback():
@@ -69,7 +65,7 @@ def test_build_update_clause_unsupported_operator():
     collection = db["test"]
 
     # Test with an unsupported operator
-    result = collection._build_update_clause(
+    result = collection.query_engine.helpers._build_update_clause(
         {"$unsupported": {"field": "value"}}
     )
     # Should fall back to None
@@ -101,7 +97,7 @@ def test_load_bytes_data():
     db = neosqlite.Connection(":memory:")
     collection = db["test"]
 
-    # Test with bytes data
+    # Test with bytes datquery_engine.helpers.a
     result = collection._load(1, b'{"test": "value"}')
     assert result == {"_id": 1, "test": "value"}
 
@@ -116,6 +112,6 @@ def test_unsupported_update_operator():
         MalformedQueryException,
         match="Update operator '\\$unsupported' not supported",
     ):
-        collection._internal_update(
+        collection.query_engine.helpers._internal_update(
             1, {"$unsupported": {"field": "value"}}, {"_id": 1}
         )

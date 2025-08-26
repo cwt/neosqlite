@@ -14,7 +14,7 @@ def test_internal_update_sql_path():
 
     # Update using SQL-based path (simple operations)
     original_doc = collection.find_one({"_id": doc_id})
-    result = collection._internal_update(
+    result = collection.query_engine.helpers._internal_update(
         doc_id,
         {"$set": {"name": "Bob"}, "$inc": {"age": 5}, "$mul": {"score": 1.1}},
         original_doc,
@@ -38,7 +38,7 @@ def test_internal_update_python_path():
 
     # Update using Python-based path (complex operations)
     original_doc = collection.find_one({"_id": doc_id})
-    result = collection._internal_update(
+    result = collection.query_engine.helpers._internal_update(
         doc_id, {"$push": {"items": 4}, "$set": {"name": "Bob"}}, original_doc
     )
 
@@ -59,7 +59,7 @@ def test_internal_update_mixed_operations():
 
     # Update with mixed operations (should fall back to Python)
     original_doc = collection.find_one({"_id": doc_id})
-    result = collection._internal_update(
+    result = collection.query_engine.helpers._internal_update(
         doc_id,
         {
             "$set": {"name": "Bob"},

@@ -1,15 +1,24 @@
 neosqlite package
 =================
 
+Subpackages
+-----------
+
+.. toctree::
+   :maxdepth: 4
+
+   neosqlite.collection
+   neosqlite.gridfs
+
 Submodules
 ----------
 
 .. toctree::
    :maxdepth: 4
 
+   neosqlite.binary
    neosqlite.bulk_operations
    neosqlite.changestream
-   neosqlite.collection
    neosqlite.connection
    neosqlite.cursor
    neosqlite.exceptions
