@@ -1,5 +1,38 @@
 # CHANGELOG
 
+## 0.5.0
+
+- Major performance improvements with SQL-based $unwind optimization using json_each()
+- Extended $unwind optimization to support multiple consecutive $unwind stages
+- Extended json_each() optimization to support $unwind + $group combinations in aggregation pipelines
+- Extended json_each() optimization to support $unwind + $sort + $limit combinations in aggregation pipelines
+- Extended json_each() optimization to support nested $unwind operations
+- Refactored `neosqlite/collection.py` into smaller modules for better maintainability
+- Added comprehensive test coverage for all new json_each() optimizations
+- Updated documentation to reflect new capabilities
+
+## 0.4.0
+
+- Complete GridFS implementation with GridFSBucket API
+- Added Binary data support with PyMongo-compatible Binary class
+- Implemented legacy GridFS API for backward compatibility
+- Added PyMongo-compatible write concern simulation
+- Added MD5 disable option for GridFS
+- Implemented PyMongo-compatible JSON metadata handling
+- Added bucket drop method
+- Added NeoSQLiteError exception that's compatible with PyMongoError
+- Added alias for PyMongoError for compatibility
+
+## 0.3.7
+
+- Added extensive docstrings across the library
+- Improved code documentation coverage
+
+## 0.3.6
+
+- Made FTS case-insensitive
+- Fixed $min and $max operators to correctly handle non-existent fields
+
 ## 0.3.5
 
 - Added support for custom FTS5 tokenizers with Connection.tokenizers parameter
