@@ -1,7 +1,5 @@
-import io
-import pytest
 from neosqlite import Connection
-from neosqlite.gridfs import GridFS, GridFSBucket, NoFile
+from neosqlite.gridfs import GridFS, GridFSBucket
 
 
 class TestGridFSFiltering:

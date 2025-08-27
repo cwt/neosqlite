@@ -2,7 +2,6 @@
 """
 Tests for text search with multiple FTS indexes
 """
-import pytest
 import neosqlite
 
 

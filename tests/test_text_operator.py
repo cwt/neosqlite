@@ -2,9 +2,7 @@
 """
 Tests for the $text operator and FTS functionality
 """
-import pytest
 import warnings
-import neosqlite
 
 
 def test_create_fts_index_and_text_search(collection):

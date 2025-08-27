@@ -1,8 +1,7 @@
-import io
-import hashlib
-import pytest
 from neosqlite import Connection
 from neosqlite.gridfs import GridFSBucket, GridFS
+import hashlib
+import pytest
 
 
 class TestGridFSOptions:

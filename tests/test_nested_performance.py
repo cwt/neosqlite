@@ -1,6 +1,6 @@
 # coding: utf-8
-import time
 import neosqlite
+import time
 
 
 def test_performance_improvement():

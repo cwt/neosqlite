@@ -9,6 +9,15 @@ class NeoSQLiteJSONEncoder(json.JSONEncoder):
     """
 
     def default(self, obj):
+        """
+        Encodes Binary objects for JSON serialization.
+
+        Args:
+            obj: The object to encode.
+
+        Returns:
+            The encoded object suitable for JSON serialization.
+        """
         if isinstance(obj, Binary):
             return obj.encode_for_storage()
         return super().default(obj)
@@ -58,6 +67,15 @@ def neosqlite_json_loads(s: str, **kwargs) -> Any:
     """
 
     def object_hook(dct: Dict[str, Any]) -> Any:
+        """
+        Decodes Binary objects from JSON deserialization.
+
+        Args:
+            dct: The dictionary to decode.
+
+        Returns:
+            The decoded object or the original dictionary if no Binary object is found.
+        """
         if isinstance(dct, dict) and "__neosqlite_binary__" in dct:
             return Binary.decode_from_storage(dct)
         return dct

@@ -1,6 +1,6 @@
+from typing import Any, Dict, List, TYPE_CHECKING
 import json
 import time
-from typing import Any, Dict, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .collection import Collection

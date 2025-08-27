@@ -20,7 +20,21 @@ import json
 
 
 class QueryEngine:
+    """
+    A class that provides methods for querying and manipulating documents in a collection.
+
+    The QueryEngine handles all database operations including inserting, updating, deleting,
+    and finding documents. It also supports aggregation pipelines, bulk operations, and
+    various utility methods for counting and retrieving distinct values.
+    """
+
     def __init__(self, collection):
+        """
+        Initialize the QueryEngine with a collection.
+
+        Args:
+            collection: The collection instance this QueryEngine will operate on.
+        """
         self.collection = collection
         self.helpers = QueryHelper(collection)
 

@@ -2,12 +2,11 @@
 """
 Tests for the legacy GridFS implementation in neosqlite.
 """
-import io
-import pytest
-import uuid
 from neosqlite import Connection
 from neosqlite.gridfs import GridFS, NoFile
-from neosqlite.gridfs.grid_file import GridIn, GridOut
+from neosqlite.gridfs.grid_file import GridOut
+import io
+import pytest
 
 
 class TestLegacyGridFS:

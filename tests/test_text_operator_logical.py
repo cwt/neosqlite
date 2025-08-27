@@ -2,8 +2,6 @@
 """
 Tests for the $text operator with logical operators ($and, $or, $not, $nor)
 """
-import pytest
-import neosqlite
 
 
 def test_text_with_and_operator(collection):

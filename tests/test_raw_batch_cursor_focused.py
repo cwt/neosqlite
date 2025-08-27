@@ -1,7 +1,6 @@
 # coding: utf-8
 """Focused tests for RawBatchCursor edge cases and fallback path."""
 
-import json
 import neosqlite
 
 

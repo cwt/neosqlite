@@ -1,5 +1,8 @@
 from neosqlite.binary import Binary
-from neosqlite.json_utils import neosqlite_json_dumps, neosqlite_json_loads
+from neosqlite.collection.json_helpers import (
+    neosqlite_json_dumps,
+    neosqlite_json_loads,
+)
 
 
 def test_json_utils():

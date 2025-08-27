@@ -5,8 +5,7 @@ Direct tests for Collection.create() method JSONB detection logic.
 These tests verify that the Collection.create() method correctly detects
 JSONB support and creates tables with the appropriate column type.
 """
-from unittest.mock import MagicMock, patch
-
+from unittest.mock import MagicMock
 import neosqlite
 
 try:

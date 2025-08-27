@@ -5,6 +5,7 @@ Tests for JSONB features in neosqlite.
 These tests verify that the JSONB functionality works correctly
 when pysqlite3-binary is available.
 """
+import neosqlite
 import pytest
 
 # Try to import pysqlite3 for consistent JSON/JSONB support
@@ -12,9 +13,6 @@ try:
     from pysqlite3 import dbapi2 as sqlite3
 except ImportError:
     import sqlite3  # type: ignore
-
-
-import neosqlite
 
 
 @pytest.fixture

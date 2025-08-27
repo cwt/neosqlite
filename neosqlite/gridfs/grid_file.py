@@ -1,15 +1,13 @@
-import hashlib
-import io
-import json
+from .errors import NoFile
 from typing import Any, Dict, Optional, Union
 import datetime
+import hashlib
+import json
 
 try:
     from pysqlite3 import dbapi2 as sqlite3
 except ImportError:
     import sqlite3  # type: ignore
-
-from .errors import NoFile
 
 
 class GridIn:
@@ -61,7 +59,9 @@ class GridIn:
         self._closed = False
         self._md5_hasher = None if disable_md5 else hashlib.md5()
 
-    def _serialize_metadata(self, metadata: Optional[Dict[str, Any]]) -> Optional[str]:
+    def _serialize_metadata(
+        self, metadata: Optional[Dict[str, Any]]
+    ) -> Optional[str]:
         """
         Serialize metadata to JSON string.
 
@@ -79,7 +79,9 @@ class GridIn:
             # Fallback to string representation if JSON serialization fails
             return str(metadata)
 
-    def _deserialize_metadata(self, metadata_str: Optional[str]) -> Optional[Dict[str, Any]]:
+    def _deserialize_metadata(
+        self, metadata_str: Optional[str]
+    ) -> Optional[Dict[str, Any]]:
         """
         Deserialize metadata from JSON string.
 
@@ -98,6 +100,7 @@ class GridIn:
             try:
                 # Try to evaluate as Python literal (for backward compatibility)
                 import ast
+
                 result = ast.literal_eval(metadata_str)
                 if isinstance(result, dict):
                     return result
@@ -108,7 +111,10 @@ class GridIn:
 
     def _force_sync_if_needed(self):
         """Force database synchronization if write concern requires it."""
-        if self._write_concern.get("j") is True or self._write_concern.get("w") == "majority":
+        if (
+            self._write_concern.get("j") is True
+            or self._write_concern.get("w") == "majority"
+        ):
             # Force sync to disk for maximum durability
             self._db.execute("PRAGMA wal_checkpoint(PASSIVE)")
 
@@ -144,19 +150,22 @@ class GridIn:
         """Flush a chunk from the buffer to the database."""
         if len(self._buffer) >= self._chunk_size_bytes:
             # Extract a chunk from the buffer
-            chunk_data = bytes(self._buffer[:self._chunk_size_bytes])
-            del self._buffer[:self._chunk_size_bytes]
+            chunk_data = bytes(self._buffer[: self._chunk_size_bytes])
+            del self._buffer[: self._chunk_size_bytes]
 
             # If this is the first chunk, create the file document
             if self._chunk_number == 0 and self._file_id is None:
                 self._create_file_document()
 
             # Insert the chunk
-            self._db.execute(f"""
+            self._db.execute(
+                f"""
                 INSERT INTO `{self._chunks_collection}`
                 (files_id, n, data)
                 VALUES (?, ?, ?)
-            """, (self._get_file_id(), self._chunk_number, chunk_data))
+            """,
+                (self._get_file_id(), self._chunk_number, chunk_data),
+            )
 
             self._chunk_number += 1
 
@@ -165,29 +174,35 @@ class GridIn:
         upload_date = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
         if self._file_id is None:
-            cursor = self._db.execute(f"""
+            cursor = self._db.execute(
+                f"""
                 INSERT INTO `{self._files_collection}`
                 (filename, chunkSize, uploadDate, metadata)
                 VALUES (?, ?, ?, ?)
-            """, (
-                self._filename,
-                self._chunk_size_bytes,
-                upload_date,
-                self._serialize_metadata(self._metadata),
-            ))
+            """,
+                (
+                    self._filename,
+                    self._chunk_size_bytes,
+                    upload_date,
+                    self._serialize_metadata(self._metadata),
+                ),
+            )
             self._file_id = cursor.lastrowid
         else:
-            self._db.execute(f"""
+            self._db.execute(
+                f"""
                 INSERT INTO `{self._files_collection}`
                 (_id, filename, chunkSize, uploadDate, metadata)
                 VALUES (?, ?, ?, ?, ?)
-            """, (
-                self._file_id,
-                self._filename,
-                self._chunk_size_bytes,
-                upload_date,
-                self._serialize_metadata(self._metadata),
-            ))
+            """,
+                (
+                    self._file_id,
+                    self._filename,
+                    self._chunk_size_bytes,
+                    upload_date,
+                    self._serialize_metadata(self._metadata),
+                ),
+            )
 
     def _get_file_id(self) -> int:
         """Get the file ID, creating the file document if necessary."""
@@ -208,22 +223,32 @@ class GridIn:
 
             # Write the final chunk (which may be smaller than chunk_size_bytes)
             if self._buffer:
-                self._db.execute(f"""
+                self._db.execute(
+                    f"""
                     INSERT INTO `{self._chunks_collection}`
                     (files_id, n, data)
                     VALUES (?, ?, ?)
-                """, (self._get_file_id(), self._chunk_number, bytes(self._buffer)))
+                """,
+                    (
+                        self._get_file_id(),
+                        self._chunk_number,
+                        bytes(self._buffer),
+                    ),
+                )
                 self._chunk_number += 1
 
             # Update the file document with final metadata
             md5_hash = None
             if self._md5_hasher:
                 md5_hash = self._md5_hasher.hexdigest()
-            self._db.execute(f"""
+            self._db.execute(
+                f"""
                 UPDATE `{self._files_collection}`
                 SET length = ?, md5 = ?
                 WHERE _id = ?
-            """, (self._position, md5_hash, self._get_file_id()))
+            """,
+                (self._position, md5_hash, self._get_file_id()),
+            )
 
         # Force sync if write concern requires it
         self._force_sync_if_needed()
@@ -267,23 +292,35 @@ class GridOut:
         self._chunks_collection = f"{bucket_name}.chunks"
 
         # Get file metadata
-        row = self._db.execute(f"""
+        row = self._db.execute(
+            f"""
             SELECT filename, length, chunkSize, uploadDate, md5, metadata
             FROM `{self._files_collection}`
             WHERE _id = ?
-        """, (file_id,)).fetchone()
+        """,
+            (file_id,),
+        ).fetchone()
 
         if row is None:
             raise NoFile(f"File with id {file_id} not found")
 
-        self._filename, self._length, self._chunk_size, self._upload_date, self._md5, metadata_str = row
+        (
+            self._filename,
+            self._length,
+            self._chunk_size,
+            self._upload_date,
+            self._md5,
+            metadata_str,
+        ) = row
         self._metadata = self._deserialize_metadata(metadata_str)
         self._position = 0
         self._current_chunk_data = b""
         self._current_chunk_index = -1
         self._closed = False
 
-    def _deserialize_metadata(self, metadata_str: Optional[str]) -> Optional[Dict[str, Any]]:
+    def _deserialize_metadata(
+        self, metadata_str: Optional[str]
+    ) -> Optional[Dict[str, Any]]:
         """
         Deserialize metadata from JSON string.
 
@@ -302,6 +339,7 @@ class GridOut:
             try:
                 # Try to evaluate as Python literal (for backward compatibility)
                 import ast
+
                 result = ast.literal_eval(metadata_str)
                 if isinstance(result, dict):
                     return result
@@ -340,11 +378,17 @@ class GridOut:
 
             # Calculate how much we can read from the current chunk
             chunk_offset = self._position % self._chunk_size
-            bytes_available_in_chunk = len(self._current_chunk_data) - chunk_offset
+            bytes_available_in_chunk = (
+                len(self._current_chunk_data) - chunk_offset
+            )
             bytes_to_read = min(size - bytes_read, bytes_available_in_chunk)
 
             # Read from the current chunk
-            result.extend(self._current_chunk_data[chunk_offset:chunk_offset + bytes_to_read])
+            result.extend(
+                self._current_chunk_data[
+                    chunk_offset : chunk_offset + bytes_to_read
+                ]
+            )
 
             # Update position
             self._position += bytes_to_read
@@ -366,13 +410,18 @@ class GridOut:
             return
 
         # Load the required chunk
-        row = self._db.execute(f"""
+        row = self._db.execute(
+            f"""
             SELECT data FROM `{self._chunks_collection}`
             WHERE files_id = ? AND n = ?
-        """, (self._file_id, chunk_index)).fetchone()
+        """,
+            (self._file_id, chunk_index),
+        ).fetchone()
 
         if row is None:
-            raise NoFile(f"Chunk {chunk_index} for file id {self._file_id} not found")
+            raise NoFile(
+                f"Chunk {chunk_index} for file id {self._file_id} not found"
+            )
 
         self._current_chunk_data = row[0]
         self._current_chunk_index = chunk_index
@@ -574,7 +623,11 @@ class GridOutCursor:
                                 params.append(f"%{val}%")
                             elif op == "$ne":
                                 where_conditions.append("metadata != ?")
-                                params.append(str(val) if not isinstance(val, str) else val)
+                                params.append(
+                                    str(val)
+                                    if not isinstance(val, str)
+                                    else val
+                                )
                             else:
                                 # For other operators, convert to string and match
                                 where_conditions.append("metadata LIKE ?")

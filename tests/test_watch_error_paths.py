@@ -2,10 +2,10 @@
 """
 Additional tests specifically for ChangeStream error paths to improve coverage
 """
-import time
-import pytest
-import neosqlite
 from unittest.mock import patch
+import neosqlite
+import pytest
+import time
 
 
 def test_watch_cleanup_with_closed_stream(collection):

@@ -1,7 +1,7 @@
 # coding: utf-8
-import pytest
-import neosqlite
 from neosqlite import MalformedDocument, MalformedQueryException
+import neosqlite
+import pytest
 
 
 def test_malformed_document_error():

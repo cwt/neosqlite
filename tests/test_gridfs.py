@@ -1,8 +1,7 @@
-import io
-import sqlite3
-import unittest
 from neosqlite import Connection
 from neosqlite.gridfs import GridFSBucket, NoFile
+import io
+import unittest
 
 
 class TestGridFSBucket(unittest.TestCase):

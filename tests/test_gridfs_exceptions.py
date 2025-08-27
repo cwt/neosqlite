@@ -1,12 +1,12 @@
-import pytest
 from neosqlite.gridfs.errors import (
-    NeoSQLiteError,
-    GridFSError,
-    NoFile,
-    FileExists,
     CorruptGridFile,
+    FileExists,
+    GridFSError,
+    NeoSQLiteError,
+    NoFile,
     PyMongoError,
 )
+import pytest
 
 
 class TestGridFSExceptions:

@@ -1,5 +1,4 @@
 import neosqlite
-import pytest
 
 
 def test_or_with_contains_operator():

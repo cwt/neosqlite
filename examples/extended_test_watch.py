@@ -2,7 +2,6 @@
 """
 Test script for the watch() implementation in neosqlite with fullDocument support
 """
-import time
 from neosqlite import Connection
 
 
@@ -26,7 +25,6 @@ def test_watch_with_full_document():
 
         # Watch for changes (with a timeout)
         print("Watching for changes...")
-        start_time = time.time()
         try:
             change = next(change_stream)
             print(f"Received change: {change}")

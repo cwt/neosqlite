@@ -1,8 +1,8 @@
 # coding: utf-8
+from typing import Tuple, Type
+import neosqlite
 import pytest
 import sqlite3
-import neosqlite
-from typing import Tuple, Type
 
 # Handle both standard sqlite3 and pysqlite3 exceptions
 try:

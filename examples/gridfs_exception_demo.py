@@ -8,10 +8,10 @@ the same way as PyMongo GridFS exceptions.
 from neosqlite import Connection
 from neosqlite.gridfs import GridFS, GridFSBucket
 from neosqlite.gridfs.errors import (
-    GridFSError,
-    NoFile,
     FileExists,
+    GridFSError,
     NeoSQLiteError,
+    NoFile,
 )
 
 

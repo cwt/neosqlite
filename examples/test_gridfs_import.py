@@ -1,4 +1,3 @@
-import io
 from neosqlite import Connection
 
 # Test that we can import GridFS directly from neosqlite

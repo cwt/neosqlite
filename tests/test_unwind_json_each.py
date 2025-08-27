@@ -2,7 +2,6 @@
 """
 Tests for using json_each() with $unwind operations
 """
-import neosqlite
 import pytest
 
 

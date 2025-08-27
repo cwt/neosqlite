@@ -3,7 +3,6 @@
 Tests for SQL-based $group stage optimization in aggregation pipeline.
 """
 import neosqlite
-import pytest
 
 
 def test_group_stage_sql_optimization():

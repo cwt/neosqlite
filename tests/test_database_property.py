@@ -1,7 +1,6 @@
-import pytest
-import tempfile
-import os
 from neosqlite import Connection
+import os
+import tempfile
 
 
 def test_database_property():

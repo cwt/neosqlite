@@ -3,10 +3,9 @@
 Additional tests for the watch() method and ChangeStream functionality
 to improve code coverage
 """
-import time
-import json
-import pytest
 import neosqlite
+import pytest
+import time
 
 
 def test_watch_error_handling(collection):

@@ -6,10 +6,6 @@ These tests verify that the library correctly handles the import fallback
 from pysqlite3 to standard sqlite3, and that the Collection.create() method
 correctly detects JSONB support.
 """
-import sys
-from unittest.mock import patch
-
-import neosqlite
 
 
 def test_import_with_pysqlite3():

@@ -1,5 +1,4 @@
 from neosqlite import Connection
-import io
 
 
 def test_binary_data_support():

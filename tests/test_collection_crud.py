@@ -1,7 +1,7 @@
 # coding: utf-8
-import sqlite3
 from pytest import raises
 import neosqlite
+import sqlite3
 
 
 def test_create(collection):

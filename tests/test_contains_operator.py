@@ -1,6 +1,6 @@
 # coding: utf-8
-import neosqlite
 from neosqlite.query_operators import _contains
+import neosqlite
 
 
 def test_contains_operator_sql_generation():

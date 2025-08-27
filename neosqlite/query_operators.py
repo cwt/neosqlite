@@ -1,7 +1,6 @@
-import re
-from typing import Any, Dict, List
-
 from .exceptions import MalformedQueryException
+from typing import Any, Dict, List
+import re
 
 
 # Query operators

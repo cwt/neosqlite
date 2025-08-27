@@ -1,7 +1,5 @@
 # coding: utf-8
-import sqlite3
 from pytest import raises
-import neosqlite
 
 
 def test_transaction_commit(connection):

@@ -1,6 +1,5 @@
-import pytest
-import neosqlite
 from unittest.mock import patch, MagicMock
+import neosqlite
 
 
 def test_custom_tokenizer_parameter():

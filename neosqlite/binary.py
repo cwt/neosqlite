@@ -1,5 +1,5 @@
+from typing import Union
 import base64
-from typing import Union, Optional
 
 
 class Binary(bytes):

@@ -1,11 +1,8 @@
-import io
-import json
-import sqlite3
-import unittest
 from neosqlite import Connection
 from neosqlite.gridfs import GridFSBucket, NoFile, FileExists
-from neosqlite.gridfs.grid_file import GridIn, GridOut
-import datetime
+import io
+import json
+import unittest
 
 
 class TestGridFSComprehensive(unittest.TestCase):

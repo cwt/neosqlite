@@ -5,7 +5,6 @@ API Comparison Script between NeoSQLite and PyMongo
 import neosqlite
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
-import sys
 
 
 def test_pymongo_connection():

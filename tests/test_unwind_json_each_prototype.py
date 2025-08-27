@@ -2,7 +2,6 @@
 """
 Prototype for integrating json_each() with $unwind operations in NeoSQLite
 """
-import neosqlite
 import pytest
 
 

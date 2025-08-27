@@ -2,9 +2,9 @@
 """
 Additional tests to improve ChangeStream code coverage
 """
-import time
-import pytest
 import neosqlite
+import pytest
+import time
 
 
 def test_watch_cleanup_exception_coverage():

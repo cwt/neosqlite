@@ -1,4 +1,3 @@
-import io
 from neosqlite import Connection
 from neosqlite.gridfs import GridFS, NoFile
 

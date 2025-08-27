@@ -1,7 +1,7 @@
 # coding: utf-8
-from typing import Dict, Any, List, TYPE_CHECKING
-from dataclasses import dataclass
 from abc import ABC
+from dataclasses import dataclass
+from typing import Dict, Any, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
     import neosqlite

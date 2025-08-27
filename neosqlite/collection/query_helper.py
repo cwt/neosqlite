@@ -15,7 +15,23 @@ except ImportError:
 
 
 class QueryHelper:
+    """
+    A helper class for the QueryEngine that provides methods for building queries,
+    performing updates, and processing aggregation pipelines.
+
+    This class contains the core logic for translating MongoDB-like queries and
+    operations into SQL statements that can be executed against the SQLite database.
+    It handles both simple operations that can be done directly with SQL JSON
+    functions and complex operations that require Python-based processing.
+    """
+
     def __init__(self, collection):
+        """
+        Initialize the QueryHelper with a collection.
+
+        Args:
+            collection: The collection instance this QueryHelper will operate on.
+        """
         self.collection = collection
 
     def _internal_insert(self, document: Dict[str, Any]) -> int:
@@ -92,7 +108,8 @@ class QueryHelper:
 
         Args:
             update_spec (Dict[str, Any]): The update operations to be checked.
-            doc_id (int): The document ID, which is used to determine if the update is an upsert.
+            doc_id (int): The document ID, which is used to determine if the update
+                          is an upsert.
 
         Returns:
             bool: True if all operations can be handled with SQL, False otherwise.
@@ -130,13 +147,15 @@ class QueryHelper:
 
         Args:
             doc_id (int): The ID of the document to be updated.
-            update_spec (Dict[str, Any]): A dictionary specifying the update operations to be performed.
+            update_spec (Dict[str, Any]): A dictionary specifying the update
+                                          operations to be performed.
 
         Returns:
             Dict[str, Any]: The updated document.
 
         Raises:
-            RuntimeError: If no rows are updated or if an error occurs during the update process.
+            RuntimeError: If no rows are updated or if an error occurs during the
+                          update process.
         """
         set_clauses = []
         set_params = []
@@ -204,8 +223,9 @@ class QueryHelper:
             update (Dict[str, Any]): A dictionary containing update operations.
 
         Returns:
-            tuple[str, List[Any]] | None: A tuple containing the SQL update clause and parameters,
-                                          or None if no update clauses are generated.
+            tuple[str, List[Any]] | None: A tuple containing the SQL update clause
+                                          and parameters, or None if no update
+                                          clauses are generated.
         """
         set_clauses = []
         params = []
@@ -259,7 +279,8 @@ class QueryHelper:
                         # No fields to unset
                         return None
                 case "$rename":
-                    # $rename is complex to do in SQL, so we'll fall back to the Python implementation
+                    # $rename is complex to do in SQL,
+                    # so we'll fall back to the Python implementation
                     return None
                 case _:
                     return None  # Fallback for unsupported operators
@@ -287,7 +308,8 @@ class QueryHelper:
             value (Any): The value associated with the update operation.
 
         Returns:
-            tuple[List[str], List[Any]]: A tuple containing the SQL update clauses and parameters.
+            tuple[List[str], List[Any]]: A tuple containing the SQL update clauses
+                                         and parameters.
         """
         clauses = []
         params = []
@@ -340,8 +362,10 @@ class QueryHelper:
 
         Args:
             doc_id (int): The document ID of the document to update.
-            update_spec (Dict[str, Any]): A dictionary specifying the update operations to perform.
-            original_doc (Dict[str, Any]): The original document before applying the updates.
+            update_spec (Dict[str, Any]): A dictionary specifying the update
+                                          operations to perform.
+            original_doc (Dict[str, Any]): The original document before applying
+                                           the updates.
 
         Returns:
             Dict[str, Any]: The updated document.
@@ -450,8 +474,9 @@ class QueryHelper:
             query: A dictionary representing the text search query with $text operator.
 
         Returns:
-            tuple[str, List[Any]] | None: A tuple containing the SQL WHERE clause and a list of parameters,
-                                          or None if the query is invalid or FTS index doesn't exist.
+            tuple[str, List[Any]] | None: A tuple containing the SQL WHERE clause
+                                          and a list of parameters, or None if the
+                                          query is invalid or FTS index doesn't exist.
         """
         if "$text" not in query:
             return None
@@ -515,8 +540,9 @@ class QueryHelper:
             query (Dict[str, Any]): A dictionary representing the query criteria.
 
         Returns:
-            tuple[str, List[Any]] | None: A tuple containing the SQL WHERE clause and a list of parameters,
-                                          or None if the query contains unsupported operators.
+            tuple[str, List[Any]] | None: A tuple containing the SQL WHERE clause
+                                          and a list of parameters, or None if the
+                                          query contains unsupported operators.
         """
         # Handle text search queries separately
         if self._is_text_search_query(query):
@@ -591,8 +617,9 @@ class QueryHelper:
             operators (Dict[str, Any]): A dictionary of operators and their values.
 
         Returns:
-            tuple[str | None, List[Any]]: A tuple containing the SQL clause and parameters.
-                                          If the operator is unsupported, returns (None, []).
+            tuple[str | None, List[Any]]: A tuple containing the SQL clause and
+                                          parameters. If the operator is unsupported,
+                                          returns (None, []).
         """
         for op, op_val in operators.items():
             # Serialize Binary objects for SQL comparisons using compact format
@@ -670,7 +697,7 @@ class QueryHelper:
                         # Invalid value for $contains, fallback to Python
                         return None, []
                 case _:
-                    # Unsupported operator, return None to indicate we should fallback to Python
+                    # Unsupported operator, fallback to Python
                     return None, []
 
         # This shouldn't happen, but just in case
@@ -729,7 +756,8 @@ class QueryHelper:
                         # Check each FTS-indexed field for matches
                         for fts_table in fts_tables:
                             fts_table_name = fts_table[0]
-                            # Extract field name from FTS table name (collection_field_fts -> field)
+                            # Extract field name from FTS table name
+                            # (collection_field_fts -> field)
                             index_name = fts_table_name[
                                 len(f"{self.collection.name}_") : -4
                             ]  # Remove collection_ prefix and _fts suffix
@@ -746,8 +774,24 @@ class QueryHelper:
                                     break
                         else:
                             # If no FTS indexes exist, check all string fields
-                            def check_all_fields(doc, search_term):
-                                """Recursively check all fields in the document for the search term"""
+                            def check_all_fields(doc, search_term) -> bool:
+                                """
+                                Recursively check all fields in the document for
+                                the search term.
+
+                                This helper function traverses through all fields
+                                of a document (including nested dictionaries) to
+                                find if any string field contains the specified
+                                search term (case-insensitive).
+
+                                Args:
+                                    doc (Dict[str, Any]): The document to search through.
+                                    search_term (str): The term to search for.
+
+                                Returns:
+                                    bool: True if the search term is found in any
+                                          string field, False otherwise.
+                                """
                                 for key, val in doc.items():
                                     if isinstance(val, str):
                                         if search_term.lower() in val.lower():
@@ -837,8 +881,10 @@ class QueryHelper:
             pipeline (List[Dict[str, Any]]): A list of aggregation pipeline stages.
 
         Returns:
-            tuple[str, List[Any]] | None: A tuple containing the SQL command and a list of parameters,
-                                          or None if the pipeline contains unsupported stages or complex queries.
+            tuple[str, List[Any]] | None: A tuple containing the SQL command and
+                                          a list of parameters, or None if the
+                                          pipeline contains unsupported stages
+                                          or complex queries.
         """
         where_clause = ""
         params: List[Any] = []
@@ -1174,23 +1220,11 @@ class QueryHelper:
                     unwind_stages.append(pipeline[j]["$unwind"])
                     j += 1
 
-                # Check if this unwind is followed by sort and/or limit operations
-                has_sort_or_limit = False
-                k = j
-                while k < len(pipeline):
-                    if (
-                        "$sort" in pipeline[k]
-                        or "$limit" in pipeline[k]
-                        or "$skip" in pipeline[k]
-                    ):
-                        has_sort_or_limit = True
-                        k += 1
-                    else:
-                        break
-
                 # If we have valid positioning and at least one $unwind stage
                 if valid_position and unwind_stages:
-                    result = self._build_unwind_query(i, pipeline, unwind_stages)
+                    result = self._build_unwind_query(
+                        i, pipeline, unwind_stages
+                    )
                     if result:
                         cmd, params, output_fields = result
                         # Skip all processed stages
@@ -1215,10 +1249,34 @@ class QueryHelper:
     ) -> tuple[str, List[Any], List[str] | None] | None:
         """
         Builds a SQL query for a sequence of $unwind stages.
+
+        This method constructs a SQL query to handle one or more consecutive $unwind
+        stages in an aggregation pipeline. It processes array fields by joining
+        with SQLite's `json_each` function to "unwind" the arrays into separate rows.
+        The method also handles necessary array type checks and integrates with
+        other pipeline stages like $match, $sort, $skip, and $limit.
+
+        Args:
+            pipeline_index (int): The index of the first $unwind stage in the pipeline.
+            pipeline (List[Dict[str, Any]]): The full aggregation pipeline.
+            unwind_stages (List[str]): A list of field paths to unwind,
+                                       each prefixed with '$'.
+
+        Returns:
+            tuple[str, List[Any], List[str] | None] | None: A tuple containing:
+                - The constructed SQL command string.
+                - A list of parameters for the SQL query.
+                - A list of output field names (None if not applicable).
+            Returns None if the unwind stages cannot be processed with SQL and a
+            fallback to Python is required.
         """
         field_names = []
         for field in unwind_stages:
-            if not isinstance(field, str) or not field.startswith("$") or len(field) == 1:
+            if (
+                not isinstance(field, str)
+                or not field.startswith("$")
+                or len(field) == 1
+            ):
                 return None  # Fallback to Python implementation
             field_names.append(field[1:])
 
@@ -1228,10 +1286,14 @@ class QueryHelper:
             select_parts.insert(0, "json_set(")
             select_parts.append(f", '$.\"{field_name}\"', je{i + 1}.value)")
         select_expr = "".join(select_parts)
-        select_clause = f"SELECT {self.collection.name}.id, {select_expr} as data"
+        select_clause = (
+            f"SELECT {self.collection.name}.id, {select_expr} as data"
+        )
 
         # Build FROM clause with multiple json_each calls
-        from_clause, unwound_fields = self._build_unwind_from_clause(field_names)
+        from_clause, unwound_fields = self._build_unwind_from_clause(
+            field_names
+        )
 
         # Handle $match stage and array type checks
         all_where_clauses = []
@@ -1240,7 +1302,9 @@ class QueryHelper:
             match_query = pipeline[0]["$match"]
             where_result = self._build_simple_where_clause(match_query)
             if where_result and where_result[0]:
-                all_where_clauses.append(where_result[0].replace("WHERE ", "", 1))
+                all_where_clauses.append(
+                    where_result[0].replace("WHERE ", "", 1)
+                )
                 params.extend(where_result[1])
 
         for field_name in field_names:
@@ -1272,11 +1336,26 @@ class QueryHelper:
         return cmd, params, None
 
     def _build_unwind_from_clause(
-        self,
-        field_names: List[str]
+        self, field_names: List[str]
     ) -> tuple[str, Dict[str, str]]:
         """
         Builds the FROM clause for a SQL query with one or more $unwind stages.
+
+        This method constructs the FROM clause needed to handle multiple $unwind
+        operations in an aggregation pipeline. It creates joins with SQLite's
+        `json_each` function for each field to be unwound, allowing array elements
+        to be processed as separate rows. It also manages nested unwinds by
+        identifying parent-child relationships between fields.
+
+        Args:
+            field_names (List[str]): A list of field paths to unwind. Each path
+                                     should be a string without the leading '$'.
+
+        Returns:
+            tuple[str, Dict[str, str]]: A tuple containing:
+                - The constructed FROM clause as a string.
+                - A dictionary mapping each unwound field path to its corresponding
+                  alias (e.g., 'je1', 'je2').
         """
         from_parts = [f"FROM {self.collection.name}"]
         unwound_fields: Dict[str, str] = {}
@@ -1300,9 +1379,25 @@ class QueryHelper:
 
         return " ".join(from_parts), unwound_fields
 
-    def _find_parent_unwind(self, field_name: str, unwound_fields: Dict[str, str]) -> tuple[str | None, str | None]:
+    def _find_parent_unwind(
+        self, field_name: str, unwound_fields: Dict[str, str]
+    ) -> tuple[str | None, str | None]:
         """
         Find the parent unwind field for a nested unwind.
+
+        This method searches through already processed unwind fields to find a
+        parent field that the current field is nested within. This is used to
+        properly construct SQL joins for nested array unwinding operations.
+
+        Args:
+            field_name (str): The field name to find the parent for.
+            unwound_fields (Dict[str, str]): A dictionary mapping field paths to
+                                             their aliases.
+
+        Returns:
+            tuple[str | None, str | None]: A tuple containing the parent field
+                                           name and its alias, or (None, None)
+                                           if no parent is found.
         """
         parent_field = None
         parent_alias = None
@@ -1326,6 +1421,24 @@ class QueryHelper:
     ) -> tuple[str, str, str]:
         """
         Build ORDER BY, LIMIT, and OFFSET clauses for aggregation queries.
+
+        This method constructs the SQL clauses for sorting, skipping, and limiting
+        results in an aggregation pipeline. It handles both regular fields and
+        fields that have been unwound from arrays, ensuring proper SQL generation
+        for nested array elements.
+
+        Args:
+            pipeline (List[Dict[str, Any]]): The aggregation pipeline stages.
+            start_index (int): The starting index in the pipeline to process stages from.
+            end_index (int): The ending index in the pipeline to process stages to.
+            unwound_fields (Dict[str, str]): A mapping of field names to their aliases
+                                             for unwound fields.
+
+        Returns:
+            tuple[str, str, str]: A tuple containing:
+                - The ORDER BY clause (empty string if no sorting)
+                - The LIMIT clause (empty string if no limit)
+                - The OFFSET clause (empty string if no offset)
         """
         local_order_by = ""
         local_limit = ""
@@ -1386,6 +1499,25 @@ class QueryHelper:
     ) -> tuple[str, str, List[str]] | None:
         """
         Builds the SELECT and GROUP BY clauses for a $group stage.
+
+        This method constructs SQL SELECT and GROUP BY clauses for MongoDB-like
+        $group aggregation stages that can be handled directly with SQL. It supports
+        grouping by a single field and various accumulator operations like $sum,
+        $avg, $min, $max, and $count.
+
+        Args:
+            group_spec (Dict[str, Any]): A dictionary representing the $group stage
+                                         specification. It should contain an "_id"
+                                         field for grouping and accumulator operations
+                                         for other fields.
+
+        Returns:
+            tuple[str, str, List[str]] | None: A tuple containing:
+                - The SELECT clause string with all required expressions
+                - The GROUP BY clause string
+                - A list of output field names
+            Returns None if the group specification contains unsupported operations
+            that require Python-based processing.
         """
         group_id_expr = group_spec.get("_id")
         if group_id_expr is None:
@@ -1452,11 +1584,13 @@ class QueryHelper:
         accumulator operations on other fields.
 
         Args:
-            group_query (Dict[str, Any]): A dictionary representing the $group stage of the aggregation pipeline.
+            group_query (Dict[str, Any]): A dictionary representing the $group
+                                          stage of the aggregation pipeline.
             docs (List[Dict[str, Any]]): A list of documents to be grouped.
 
         Returns:
-            List[Dict[str, Any]]: A list of grouped documents with applied accumulator operations.
+            List[Dict[str, Any]]: A list of grouped documents with applied
+                                  accumulator operations.
         """
         grouped_docs: Dict[Any, Dict[str, Any]] = {}
         group_id_key = group_query.pop("_id")
@@ -1513,7 +1647,8 @@ class QueryHelper:
         based on the projection criteria.
 
         Args:
-            projection (Dict[str, Any]): A dictionary specifying which fields to include or exclude.
+            projection (Dict[str, Any]): A dictionary specifying which fields to
+                                         include or exclude.
             document (Dict[str, Any]): The document to apply the projection to.
 
         Returns:

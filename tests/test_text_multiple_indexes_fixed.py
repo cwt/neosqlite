@@ -3,7 +3,6 @@
 Tests for text search with multiple FTS indexes - verifying the fix
 """
 import pytest
-import neosqlite
 
 
 def test_text_search_multiple_indexes_fixed_behavior(collection):

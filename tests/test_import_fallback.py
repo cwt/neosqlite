@@ -5,8 +5,6 @@ Tests for JSONB import fallback behavior in neosqlite.
 These tests verify that the library correctly handles the import fallback
 from pysqlite3 to standard sqlite3.
 """
-import sys
-from unittest.mock import patch
 
 
 def test_import_with_pysqlite3():

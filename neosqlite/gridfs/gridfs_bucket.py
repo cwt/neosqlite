@@ -1,16 +1,17 @@
+from .errors import NoFile, FileExists
+from typing import Any, Dict, Optional, Union, TYPE_CHECKING
+import datetime
 import hashlib
 import io
 import json
-from typing import Any, Dict, Optional, Union
-from typing_extensions import Literal
-import datetime
 
 try:
     from pysqlite3 import dbapi2 as sqlite3
 except ImportError:
     import sqlite3  # type: ignore
 
-from .errors import NoFile, FileExists
+if TYPE_CHECKING:
+    from .grid_file import GridIn, GridOut, GridOutCursor
 
 
 class GridFSBucket:
@@ -62,11 +63,19 @@ class GridFSBucket:
         # Validate write concern settings (basic validation for compatibility)
         if write_concern:
             # Basic validation - in a real implementation, you might want to do more
-            if "w" in write_concern and not isinstance(write_concern["w"], (int, str)):
-                raise ValueError("write_concern 'w' must be an integer or string")
-            if "wtimeout" in write_concern and not isinstance(write_concern["wtimeout"], int):
+            if "w" in write_concern and not isinstance(
+                write_concern["w"], (int, str)
+            ):
+                raise ValueError(
+                    "write_concern 'w' must be an integer or string"
+                )
+            if "wtimeout" in write_concern and not isinstance(
+                write_concern["wtimeout"], int
+            ):
                 raise ValueError("write_concern 'wtimeout' must be an integer")
-            if "j" in write_concern and not isinstance(write_concern["j"], bool):
+            if "j" in write_concern and not isinstance(
+                write_concern["j"], bool
+            ):
                 raise ValueError("write_concern 'j' must be a boolean")
 
         # Create the necessary tables if they don't exist
@@ -91,8 +100,7 @@ class GridFSBucket:
     def _create_collections(self):
         """Create the files and chunks collections (tables) if they don't exist."""
         # Create files collection (table)
-        self._db.execute(
-            f"""
+        self._db.execute(f"""
             CREATE TABLE IF NOT EXISTS `{self._files_collection}` (
                 _id INTEGER PRIMARY KEY AUTOINCREMENT,
                 filename TEXT,
@@ -102,12 +110,10 @@ class GridFSBucket:
                 md5 TEXT,
                 metadata TEXT
             )
-        """
-        )
+        """)
 
         # Create chunks collection (table)
-        self._db.execute(
-            f"""
+        self._db.execute(f"""
             CREATE TABLE IF NOT EXISTS `{self._chunks_collection}` (
                 _id INTEGER PRIMARY KEY AUTOINCREMENT,
                 files_id INTEGER,
@@ -115,25 +121,22 @@ class GridFSBucket:
                 data BLOB,
                 FOREIGN KEY (files_id) REFERENCES `{self._files_collection}` (_id)
             )
-        """
-        )
+        """)
 
         # Create indexes for better performance
-        self._db.execute(
-            f"""
+        self._db.execute(f"""
             CREATE INDEX IF NOT EXISTS `idx_{self._files_collection}_filename`
             ON `{self._files_collection}` (filename)
-        """
-        )
+        """)
 
-        self._db.execute(
-            f"""
+        self._db.execute(f"""
             CREATE INDEX IF NOT EXISTS `idx_{self._chunks_collection}_files_id`
             ON `{self._chunks_collection}` (files_id)
-        """
-        )
+        """)
 
-    def _serialize_metadata(self, metadata: Optional[Dict[str, Any]]) -> Optional[str]:
+    def _serialize_metadata(
+        self, metadata: Optional[Dict[str, Any]]
+    ) -> Optional[str]:
         """
         Serialize metadata to JSON string.
 
@@ -151,7 +154,9 @@ class GridFSBucket:
             # Fallback to string representation if JSON serialization fails
             return str(metadata)
 
-    def _deserialize_metadata(self, metadata_str: Optional[str]) -> Optional[Dict[str, Any]]:
+    def _deserialize_metadata(
+        self, metadata_str: Optional[str]
+    ) -> Optional[Dict[str, Any]]:
         """
         Deserialize metadata from JSON string.
 
@@ -170,6 +175,7 @@ class GridFSBucket:
             try:
                 # Try to evaluate as Python literal (for backward compatibility)
                 import ast
+
                 result = ast.literal_eval(metadata_str)
                 if isinstance(result, dict):
                     return result
@@ -180,7 +186,10 @@ class GridFSBucket:
 
     def _force_sync_if_needed(self):
         """Force database synchronization if write concern requires it."""
-        if self._write_concern.get("j") is True or self._write_concern.get("w") == "majority":
+        if (
+            self._write_concern.get("j") is True
+            or self._write_concern.get("w") == "majority"
+        ):
             # Force sync to disk for maximum durability
             self._db.execute("PRAGMA wal_checkpoint(PASSIVE)")
             # Note: In pysqlite, we can't directly call fsync on the file,
@@ -292,8 +301,6 @@ class GridFSBucket:
 
         if row is None:
             raise NoFile(f"File with id {file_id} not found")
-
-        length, chunk_size = row
 
         # Get all chunks in order
         cursor = self._db.execute(

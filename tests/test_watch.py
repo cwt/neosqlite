@@ -2,9 +2,8 @@
 """
 Tests for the watch() method and ChangeStream functionality
 """
-import time
 import pytest
-import neosqlite
+import time
 
 
 def test_watch_basic_functionality(collection):

@@ -1,6 +1,5 @@
 # coding: utf-8
 import pytest
-import sqlite3
 import neosqlite
 
 

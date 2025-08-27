@@ -5,7 +5,6 @@ Performance comparison between $contains and $regex operators.
 
 import neosqlite
 import time
-import re
 
 
 def main():
@@ -21,7 +20,9 @@ def main():
                 {
                     "name": f"User {i}",
                     "email": f"user{i}@example.com",
-                    "bio": f"This is user {i} who loves Python and SQL. User {i} has been using Python for years.",
+                    "bio": (
+                        f"This is user {i} who loves Python and SQL. User {i} has been using Python for years."
+                    ),
                 }
             )
 

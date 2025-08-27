@@ -1,5 +1,4 @@
 # coding: utf-8
-import neosqlite
 
 
 def test_index_usage_with_explain(collection):

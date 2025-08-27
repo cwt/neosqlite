@@ -1,7 +1,5 @@
 # coding: utf-8
-import pytest
 import neosqlite
-from neosqlite import InsertOne, UpdateOne, DeleteOne
 
 
 def test_initialize_ordered_bulk_op(collection):

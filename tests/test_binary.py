@@ -2,10 +2,10 @@
 """
 Tests for the Binary class in neosqlite.
 """
-import base64
-import uuid
-import pytest
 from neosqlite.binary import Binary
+import base64
+import pytest
+import uuid
 
 
 def test_binary_creation():

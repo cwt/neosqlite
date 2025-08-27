@@ -3,8 +3,8 @@
 Performance test for the new $unwind implementation with json_each()
 """
 import neosqlite
-import time
 import pytest
+import time
 
 
 def test_unwind_performance_improvement():
