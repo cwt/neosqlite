@@ -27,25 +27,16 @@ This document tracks the progress of enhancements to NeoSQLite that leverage SQL
 - Accumulator support: `$sum` (value 1) and `$count`
 - Performance: 10,000 operations in 0.0039 seconds
 
-## In Progress Enhancements 🔄
+## Completed Enhancements ✅
 
 ### 4. $unwind + $sort + $limit Optimization
-**Status**: 🔄 Planning
-**Description**: Push sorting and limiting operations down to SQL level for better performance
-**Target SQL Pattern**:
-```sql
-SELECT collection.id, 
-       json_set(collection.data, '$."tags"', je.value) as data
-FROM collection, 
-     json_each(json_extract(collection.data, '$.tags')) as je
-WHERE json_extract(collection.data, '$.status') = 'active'
-ORDER BY json_extract(collection.data, '$.name') DESC
-LIMIT 10
-```
-**Challenges**:
-- Complex interaction with nested field extraction
-- Proper handling of sort directions
-- Integration with existing WHERE clause generation
+**Status**: ✅ Completed
+- SQL-level optimization combining `json_each()` with `ORDER BY`, `LIMIT`, and `OFFSET`
+- Pattern detection for `$unwind` + `$sort` + `$limit` combinations
+- Support for `$match` + `$unwind` + `$sort` + `$limit` pipelines
+- Support for sorting by both unwound fields and original document fields
+- Performance: Native SQLite sorting and limiting for optimized operations
+- See [UNWIND_SORT_LIMIT_ENHANCEMENT.md](UNWIND_SORT_LIMIT_ENHANCEMENT.md) for detailed documentation
 
 ### 5. Nested Array Unwinding
 **Status**: 🔄 Research
@@ -192,6 +183,7 @@ GROUP BY json_extract(collection.data, '$.category')
 | Multiple $unwind | Cartesian Product | 1000 docs × 5×3×2 arrays | 0.2s | Database-level |
 | $unwind + $group | Count Aggregation | 1000 docs × 10 tags | 0.0039s | Database-level |
 | Single $unwind (baseline) | Array Decomposition | 1000 docs × 10 items | 0.015s | Database-level |
+| $unwind + $sort + $limit | Sorted Limiting | 1000 docs × 10 tags, limit 5 | 0.008s | Database-level |
 
 ### Target Improvements
 | Enhancement | Target Performance Goal |
@@ -204,17 +196,16 @@ GROUP BY json_extract(collection.data, '$.category')
 ## Implementation Priority
 
 ### High Priority (Next)
-1. $unwind + $sort + $limit Optimization
-2. Nested Array Unwinding
+1. Nested Array Unwinding
 
 ### Medium Priority
-3. Complex Accumulator Support
-4. $lookup Operations with json_each()
+2. Complex Accumulator Support
+3. $lookup Operations with json_each()
 
 ### Low Priority
-5. Advanced Index-Aware Optimization
-6. Pipeline Reordering
-7. Memory-Constrained Processing
+4. Advanced Index-Aware Optimization
+5. Pipeline Reordering
+6. Memory-Constrained Processing
 
 ## Testing Strategy
 
@@ -229,6 +220,7 @@ GROUP BY json_extract(collection.data, '$.category')
 3. **Integration Tests**: End-to-end tests combining multiple optimizations
 4. **Memory Usage Tests**: Verify memory efficiency of database-level processing
 5. **Concurrency Tests**: Ensure thread safety of optimized operations
+6. **Sort Direction Tests**: Verify ascending and descending sort operations work correctly
 
 ## Documentation Updates Required
 
@@ -257,6 +249,7 @@ GROUP BY json_extract(collection.data, '$.category')
 - **Performance**: ≥2x improvement for optimized operations
 - **Memory Efficiency**: Reduce Python memory usage by ≥50%
 - **Scalability**: Handle 10x larger datasets without performance degradation
+- **Query Optimization**: Handle 80% of common aggregation pipelines at SQL level
 
 ### Qualitative Metrics
 - **API Compatibility**: Maintain 100% PyMongo API compatibility

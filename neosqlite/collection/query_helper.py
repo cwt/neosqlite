@@ -1174,6 +1174,16 @@ class QueryHelper:
                     unwind_stages.append(pipeline[j]["$unwind"])
                     j += 1
 
+                # Check if this unwind is followed by sort and/or limit operations
+                has_sort_or_limit = False
+                k = j
+                while k < len(pipeline):
+                    if "$sort" in pipeline[k] or "$limit" in pipeline[k] or "$skip" in pipeline[k]:
+                        has_sort_or_limit = True
+                        k += 1
+                    else:
+                        break
+
                 # If we have valid positioning and at least one $unwind stage
                 if valid_position and len(unwind_stages) > 0:
                     # Handle single $unwind with our existing logic
@@ -1192,6 +1202,8 @@ class QueryHelper:
                             from_clause = f"FROM {self.collection.name}, json_each(json_extract({self.collection.name}.data, '$.{field_name}')) as je"
 
                             # If there's a previous $match stage, incorporate its WHERE clause
+                            where_clause = ""
+                            params = []
                             if i == 1 and "$match" in pipeline[0]:
                                 match_query = pipeline[0]["$match"]
                                 where_result = self._build_simple_where_clause(
@@ -1202,14 +1214,55 @@ class QueryHelper:
                                 ):  # Has WHERE clause
                                     where_clause = where_result[0]
                                     params = where_result[1]
-                                    cmd = f"{select_clause} {from_clause} {where_clause} {order_by} {limit} {offset}"
-                                else:
-                                    cmd = f"{select_clause} {from_clause} {order_by} {limit} {offset}"
-                            else:
-                                cmd = f"{select_clause} {from_clause} {order_by} {limit} {offset}"
 
-                            # Skip the processed unwind stage
-                            i = j - 1
+                            # Handle sort, skip, and limit operations that follow
+                            local_order_by = ""
+                            local_limit = ""
+                            local_offset = ""
+
+                            # Process subsequent sort, skip, and limit stages
+                            sort_stages = []
+                            skip_value = 0
+                            limit_value = None
+
+                            for stage_idx in range(j, k):
+                                stage = pipeline[stage_idx]
+                                if "$sort" in stage:
+                                    sort_stages.append(stage["$sort"])
+                                elif "$skip" in stage:
+                                    skip_value = stage["$skip"]
+                                elif "$limit" in stage:
+                                    limit_value = stage["$limit"]
+
+                            # Build ORDER BY clause
+                            if sort_stages:
+                                sort_clauses = []
+                                for sort_spec in sort_stages:
+                                    for key, direction in sort_spec.items():
+                                        # When sorting after unwind, we may need to sort by the unwound field
+                                        # or by fields in the original document
+                                        if key == field_name:  # Sorting by the unwound field
+                                            sort_clauses.append(
+                                                f"je.value {'DESC' if direction == DESCENDING else 'ASC'}"
+                                            )
+                                        else:  # Sorting by original document fields
+                                            sort_clauses.append(
+                                                f"json_extract({self.collection.name}.data, '$.{key}') "
+                                                f"{'DESC' if direction == DESCENDING else 'ASC'}"
+                                            )
+                                if sort_clauses:
+                                    local_order_by = "ORDER BY " + ", ".join(sort_clauses)
+
+                            # Build LIMIT and OFFSET clauses
+                            if limit_value is not None:
+                                local_limit = f"LIMIT {limit_value}"
+                            if skip_value > 0:
+                                local_offset = f"OFFSET {skip_value}"
+
+                            cmd = f"{select_clause} {from_clause} {where_clause} {local_order_by} {local_limit} {local_offset}"
+
+                            # Skip all processed stages (unwind + sort/skip/limit)
+                            i = k - 1
                             return cmd, params, output_fields
                         else:
                             return (
@@ -1256,6 +1309,7 @@ class QueryHelper:
 
                             # If there's a previous $match stage, incorporate its WHERE clause
                             where_clause = ""
+                            params = []
                             if i == 1 and "$match" in pipeline[0]:
                                 match_query = pipeline[0]["$match"]
                                 where_result = self._build_simple_where_clause(
@@ -1267,10 +1321,57 @@ class QueryHelper:
                                     where_clause = where_result[0]
                                     params = where_result[1]
 
-                            cmd = f"{select_clause} {from_clause} {where_clause} {order_by} {limit} {offset}"
+                            # Handle sort, skip, and limit operations that follow
+                            local_order_by = ""
+                            local_limit = ""
+                            local_offset = ""
 
-                            # Skip all processed unwind stages
-                            i = j - 1
+                            # Process subsequent sort, skip, and limit stages
+                            sort_stages = []
+                            skip_value = 0
+                            limit_value = None
+
+                            for stage_idx in range(j, k):
+                                stage = pipeline[stage_idx]
+                                if "$sort" in stage:
+                                    sort_stages.append(stage["$sort"])
+                                elif "$skip" in stage:
+                                    skip_value = stage["$skip"]
+                                elif "$limit" in stage:
+                                    limit_value = stage["$limit"]
+
+                            # Build ORDER BY clause
+                            if sort_stages:
+                                sort_clauses = []
+                                for sort_spec in sort_stages:
+                                    for key, direction in sort_spec.items():
+                                        # When sorting after multiple unwinds, we need to determine
+                                        # if we're sorting by one of the unwound fields or original fields
+                                        is_unwound_field = key in field_names
+                                        if is_unwound_field:
+                                            # Find which je variable corresponds to this field
+                                            field_index = field_names.index(key) + 1
+                                            sort_clauses.append(
+                                                f"je{field_index}.value {'DESC' if direction == DESCENDING else 'ASC'}"
+                                            )
+                                        else:  # Sorting by original document fields
+                                            sort_clauses.append(
+                                                f"json_extract({self.collection.name}.data, '$.{key}') "
+                                                f"{'DESC' if direction == DESCENDING else 'ASC'}"
+                                            )
+                                if sort_clauses:
+                                    local_order_by = "ORDER BY " + ", ".join(sort_clauses)
+
+                            # Build LIMIT and OFFSET clauses
+                            if limit_value is not None:
+                                local_limit = f"LIMIT {limit_value}"
+                            if skip_value > 0:
+                                local_offset = f"OFFSET {skip_value}"
+
+                            cmd = f"{select_clause} {from_clause} {where_clause} {local_order_by} {local_limit} {local_offset}"
+
+                            # Skip all processed stages (unwind + sort/skip/limit)
+                            i = k - 1
                             return cmd, params, output_fields
                         else:
                             return (
