@@ -24,10 +24,8 @@ This document tracks the progress of enhancements to NeoSQLite that leverage SQL
 - SQL-level optimization combining `json_each()` with `GROUP BY`
 - Pattern detection for `$unwind` + `$group` combinations
 - Support for `$match` + `$unwind` + `$group` pipelines
-- Accumulator support: `$sum` (value 1) and `$count`
+- Accumulator support: `$sum` (value 1), `$count`, `$avg`, `$min`, `$max`
 - Performance: 10,000 operations in 0.0039 seconds
-
-## Completed Enhancements ✅
 
 ### 4. $unwind + $sort + $limit Optimization
 **Status**: ✅ Completed
@@ -36,7 +34,7 @@ This document tracks the progress of enhancements to NeoSQLite that leverage SQL
 - Support for `$match` + `$unwind` + `$sort` + `$limit` pipelines
 - Support for sorting by both unwound fields and original document fields
 - Performance: Native SQLite sorting and limiting for optimized operations
-- See [UNWIND_SORT_LIMIT_ENHANCEMENT.md](UNWIND_SORT_LIMIT_ENHANCEMENT.md) for detailed documentation
+- See [NESTED_ARRAY_UNWIND.md](NESTED_ARRAY_UNWIND.md) for detailed documentation
 
 ### 5. Nested Array Unwinding
 **Status**: ✅ Completed
@@ -75,28 +73,29 @@ FROM collection,
 ```
 - See [NESTED_ARRAY_UNWIND.md](NESTED_ARRAY_UNWIND.md) for a detailed explanation.
 
-## Planned Enhancements 📋
-
 ### 6. Complex Accumulator Support
-**Status**: 📋 Backlog
+**Status**: ✅ Completed
 **Description**: Extend `$unwind` + `$group` optimization to support more accumulator operations
-**Target Accumulators**:
+**Implemented Accumulators**:
 - `$avg`: Average calculation at SQL level
 - `$min`/`$max`: Min/Max operations using SQL functions
-- `$push`: Array building at SQL level (using `group_concat` or similar)
-- `$addToSet`: Unique value collection
+- `$sum`: Sum operations using SQL functions
+- `$count`: Count operations using SQL functions
 
-**Target SQL Pattern**:
+**Example SQL Pattern**:
 ```sql
 SELECT 
   json_extract(collection.data, '$.category') as _id,
   AVG(json_extract(collection.data, '$.price')) as avg_price,
   MIN(json_extract(collection.data, '$.price')) as min_price,
-  MAX(json_extract(collection.data, '$.price')) as max_price
+  MAX(json_extract(collection.data, '$.price')) as max_price,
+  COUNT(*) as count
 FROM collection, 
      json_each(json_extract(collection.data, '$.items')) as je
 GROUP BY json_extract(collection.data, '$.category')
 ```
+
+## Planned Enhancements 📋
 
 ### 7. $lookup Operations with json_each()
 **Status**: 📋 Backlog
@@ -113,7 +112,14 @@ GROUP BY json_extract(collection.data, '$.category')
 ]
 ```
 
-### 8. Advanced Index-Aware Optimization
+### 8. Advanced $unwind Options
+**Status**: 📋 Backlog
+**Description**: Support for additional $unwind options
+**Features**:
+- `includeArrayIndex`: Include the array index in the unwound documents
+- `preserveNullAndEmptyArrays`: Preserve null and empty arrays in the output
+
+### 9. Advanced Index-Aware Optimization
 **Status**: 📋 Backlog
 **Description**: Leverage existing indexes in query planning for complex operations
 **Features**:
@@ -121,7 +127,7 @@ GROUP BY json_extract(collection.data, '$.category')
 - Automatic selection of optimal execution paths
 - Integration with existing index information system
 
-### 9. Pipeline Reordering Optimization
+### 10. Pipeline Reordering Optimization
 **Status**: 📋 Backlog
 **Description**: Rearrange pipeline stages for better performance when possible
 **Example**:
@@ -141,9 +147,16 @@ GROUP BY json_extract(collection.data, '$.category')
 ]
 ```
 
+### 11. Additional Group Operations
+**Status**: 📋 Backlog
+**Description**: Support for more MongoDB-style group accumulators in SQL
+**Target Accumulators**:
+- `$push`: Array building at SQL level
+- `$addToSet`: Unique value collection
+
 ## Future Research Opportunities 🔍
 
-### 10. Memory-Constrained Processing
+### 12. Memory-Constrained Processing
 **Status**: 🔍 Research
 **Description**: Handle very large datasets with memory-constrained environments
 **Approach**:
@@ -151,7 +164,7 @@ GROUP BY json_extract(collection.data, '$.category')
 - Streaming results instead of loading all into memory
 - Batch processing with configurable batch sizes
 
-### 11. Text Search Integration with json_each()
+### 13. Text Search Integration with json_each()
 **Status**: 🔍 Research
 **Description**: Combine full-text search with array operations
 **Use Case**:
@@ -163,12 +176,12 @@ GROUP BY json_extract(collection.data, '$.category')
 ]
 ```
 
-### 12. Recursive json_each() for Deep Nesting
+### 14. Recursive json_each() for Deep Nesting
 **Status**: 🔍 Research
 **Description**: Handle arbitrarily deep nested structures with recursive SQL
 **Challenge**: SQLite's limited support for recursive CTEs with JSON
 
-### 13. Window Function Integration
+### 15. Window Function Integration
 **Status**: 🔍 Research
 **Description**: Leverage SQLite window functions with `json_each()` for advanced analytics
 **Target Operations**:
@@ -197,11 +210,11 @@ GROUP BY json_extract(collection.data, '$.category')
 ## Implementation Priority
 
 ### High Priority (Next)
-1. Nested Array Unwinding
+1. $lookup Operations with json_each()
 
 ### Medium Priority
-2. Complex Accumulator Support
-3. $lookup Operations with json_each()
+2. Advanced $unwind Options
+3. Additional Group Operations
 
 ### Low Priority
 4. Advanced Index-Aware Optimization
@@ -211,9 +224,9 @@ GROUP BY json_extract(collection.data, '$.category')
 ## Testing Strategy
 
 ### Current Coverage
-- **Total Tests**: 430 tests passing
-- **Code Coverage**: 85.32%
-- **Edge Cases**: Comprehensive testing of error conditions
+- **Comprehensive Tests**: Extensive test coverage for all implemented features
+- **Code Coverage**: Maintains ≥85% code coverage
+- **Edge Cases**: Comprehensive testing of error conditions and fallbacks
 
 ### Additional Testing Needed
 1. **Performance Regression Tests**: Ensure new optimizations don't slow down existing operations
@@ -250,7 +263,7 @@ GROUP BY json_extract(collection.data, '$.category')
 - **Performance**: ≥2x improvement for optimized operations
 - **Memory Efficiency**: Reduce Python memory usage by ≥50%
 - **Scalability**: Handle 10x larger datasets without performance degradation
-- **Query Optimization**: Handle 80% of common aggregation pipelines at SQL level
+- **Query Optimization**: Handle 90% of common aggregation pipelines at SQL level
 
 ### Qualitative Metrics
 - **API Compatibility**: Maintain 100% PyMongo API compatibility
@@ -260,17 +273,10 @@ GROUP BY json_extract(collection.data, '$.category')
 
 ## Next Steps
 
-### Immediate Actions (Tomorrow)
-1. Implement `$unwind` + `$sort` + `$limit` optimization
-2. Create test cases for the new optimization
-3. Benchmark performance improvements
-4. Update documentation with examples
-
-### Short-term Goals (Next Week)
-1. Complete nested array unwinding implementation
-2. Add complex accumulator support
-3. Implement comprehensive performance testing
-4. Create migration guide for users
+### Short-term Goals
+1. Implement $lookup operations with json_each()
+2. Add support for advanced $unwind options
+3. Implement additional group operations ($push, $addToSet)
 
 ### Long-term Vision
 1. Achieve ≥90% code coverage

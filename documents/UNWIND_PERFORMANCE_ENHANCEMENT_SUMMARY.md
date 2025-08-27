@@ -65,10 +65,18 @@ Comprehensive tests were created to verify:
 
 All existing tests continue to pass, ensuring backward compatibility.
 
+## Current Capabilities
+
+1. **Multiple Consecutive $unwind Stages**: Support for 2, 3, or more consecutive `$unwind` stages
+2. **Nested Array Unwinding**: Support for arrays of objects and deeply nested unwinding operations
+3. **$unwind + $group Optimization**: SQL-level optimization combining `json_each()` with `GROUP BY`
+4. **$unwind + $sort + $limit Optimization**: SQL-level optimization combining `json_each()` with `ORDER BY`, `LIMIT`, and `OFFSET`
+5. **Enhanced Error Handling**: Proper handling of malformed JSON, non-array fields, and edge cases
+6. **Array Type Checking**: Ensures `json_each()` is only applied to actual arrays
+
 ## Future Improvements
 
-1. **More Complex Pipeline Support**: Extend support for `$unwind` in more positions in the pipeline
-2. **Enhanced Error Handling**: Better handling of malformed JSON or non-array fields
-3. **Nested Field Optimization**: Further optimization for deeply nested field paths
-4. **Nested Array Unwinding**: See [NESTED_ARRAY_UNWIND.md](NESTED_ARRAY_UNWIND.md) for details.
-5. **Include Optimization**: Integration with other SQL-based optimizations
+1. **Advanced $unwind Options**: Support for `includeArrayIndex` and `preserveNullAndEmptyArrays` options
+2. **$lookup Operations**: Integration with joins for related data operations
+3. **Index-Aware Optimization**: Leverage existing indexes in queries for even better performance
+4. **Pipeline Reordering**: Intelligent rearrangement of pipeline stages for optimal performance

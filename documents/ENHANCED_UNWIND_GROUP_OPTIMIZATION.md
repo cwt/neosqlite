@@ -39,7 +39,7 @@ The enhanced implementation:
 2. **`$match` + `$unwind` + `$group`** (newly enhanced)
 3. **Grouping by unwound field** (e.g., `{"_id": "$tags"}`)
 4. **Grouping by other fields** (e.g., `{"_id": "$category"}`)
-5. **`$sum` and `$count` accumulators**
+5. **Multiple accumulator functions**: `$sum` (with value 1), `$count`, `$avg`, `$min`, and `$max`
 
 ### Performance Benefits
 
