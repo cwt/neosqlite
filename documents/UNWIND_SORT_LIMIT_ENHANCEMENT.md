@@ -131,7 +131,7 @@ LIMIT 5
 - Sorting by original document fields (e.g., other fields in the document)
 - Integration with existing `$match` optimizations
 - Support for `$skip` operations
-- Works with multiple consecutive `$unwind` stages
+- Works with multiple consecutive `$unwind` stages, including nested unwinds. See [NESTED_ARRAY_UNWIND.md](NESTED_ARRAY_UNWIND.md) for details.
 
 ## Performance Benefits
 - Operations are performed at the database level, reducing data transfer to Python

@@ -70,4 +70,5 @@ All existing tests continue to pass, ensuring backward compatibility.
 1. **More Complex Pipeline Support**: Extend support for `$unwind` in more positions in the pipeline
 2. **Enhanced Error Handling**: Better handling of malformed JSON or non-array fields
 3. **Nested Field Optimization**: Further optimization for deeply nested field paths
-4. **Include Optimization**: Integration with other SQL-based optimizations
+4. **Nested Array Unwinding**: See [NESTED_ARRAY_UNWIND.md](NESTED_ARRAY_UNWIND.md) for details.
+5. **Include Optimization**: Integration with other SQL-based optimizations

@@ -18,6 +18,13 @@
 
 ### Aggregation
 - [x] aggregate()
+  - Supports major pipeline stages:
+    - `$match`
+    - `$sort`
+    - `$skip`
+    - `$limit`
+    - `$group`
+    - `$unwind` (including multiple, consecutive, and nested unwinds, see [NESTED_ARRAY_UNWIND.md](NESTED_ARRAY_UNWIND.md) for details)
 
 ### Indexing
 - [x] create_index()

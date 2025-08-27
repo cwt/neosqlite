@@ -536,7 +536,7 @@ class QueryHelper:
             elif field == "_id":
                 # Handle _id field specially since it's stored as a column,
                 # not in the JSON data
-                clauses.append("id = ?")
+                clauses.append(f"{self.collection.name}.id = ?")
                 params.append(value)
                 continue
 
@@ -1178,206 +1178,27 @@ class QueryHelper:
                 has_sort_or_limit = False
                 k = j
                 while k < len(pipeline):
-                    if "$sort" in pipeline[k] or "$limit" in pipeline[k] or "$skip" in pipeline[k]:
+                    if (
+                        "$sort" in pipeline[k]
+                        or "$limit" in pipeline[k]
+                        or "$skip" in pipeline[k]
+                    ):
                         has_sort_or_limit = True
                         k += 1
                     else:
                         break
 
                 # If we have valid positioning and at least one $unwind stage
-                if valid_position and len(unwind_stages) > 0:
-                    # Handle single $unwind with our existing logic
-                    if len(unwind_stages) == 1:
-                        field = unwind_stages[0]
-                        if isinstance(field, str) and field.startswith("$"):
-                            field_name = field[1:]  # Remove leading $
-
-                            # For $unwind, we need to change the query structure completely
-                            # We use json_each to decompose the array and json_set to add the unwound field
-                            select_clause = (
-                                f"SELECT {self.collection.name}.id, json_set({self.collection.name}.data, '$.\""
-                                + field_name
-                                + "\"', je.value) as data"
-                            )
-                            from_clause = f"FROM {self.collection.name}, json_each(json_extract({self.collection.name}.data, '$.{field_name}')) as je"
-
-                            # If there's a previous $match stage, incorporate its WHERE clause
-                            where_clause = ""
-                            params = []
-                            if i == 1 and "$match" in pipeline[0]:
-                                match_query = pipeline[0]["$match"]
-                                where_result = self._build_simple_where_clause(
-                                    match_query
-                                )
-                                if (
-                                    where_result and where_result[0]
-                                ):  # Has WHERE clause
-                                    where_clause = where_result[0]
-                                    params = where_result[1]
-
-                            # Handle sort, skip, and limit operations that follow
-                            local_order_by = ""
-                            local_limit = ""
-                            local_offset = ""
-
-                            # Process subsequent sort, skip, and limit stages
-                            sort_stages = []
-                            skip_value = 0
-                            limit_value = None
-
-                            for stage_idx in range(j, k):
-                                stage = pipeline[stage_idx]
-                                if "$sort" in stage:
-                                    sort_stages.append(stage["$sort"])
-                                elif "$skip" in stage:
-                                    skip_value = stage["$skip"]
-                                elif "$limit" in stage:
-                                    limit_value = stage["$limit"]
-
-                            # Build ORDER BY clause
-                            if sort_stages:
-                                sort_clauses = []
-                                for sort_spec in sort_stages:
-                                    for key, direction in sort_spec.items():
-                                        # When sorting after unwind, we may need to sort by the unwound field
-                                        # or by fields in the original document
-                                        if key == field_name:  # Sorting by the unwound field
-                                            sort_clauses.append(
-                                                f"je.value {'DESC' if direction == DESCENDING else 'ASC'}"
-                                            )
-                                        else:  # Sorting by original document fields
-                                            sort_clauses.append(
-                                                f"json_extract({self.collection.name}.data, '$.{key}') "
-                                                f"{'DESC' if direction == DESCENDING else 'ASC'}"
-                                            )
-                                if sort_clauses:
-                                    local_order_by = "ORDER BY " + ", ".join(sort_clauses)
-
-                            # Build LIMIT and OFFSET clauses
-                            if limit_value is not None:
-                                local_limit = f"LIMIT {limit_value}"
-                            if skip_value > 0:
-                                local_offset = f"OFFSET {skip_value}"
-
-                            cmd = f"{select_clause} {from_clause} {where_clause} {local_order_by} {local_limit} {local_offset}"
-
-                            # Skip all processed stages (unwind + sort/skip/limit)
-                            i = k - 1
-                            return cmd, params, output_fields
-                        else:
-                            return (
-                                None  # Fallback for complex unwind expressions
-                            )
-                    # Handle multiple consecutive $unwind stages
-                    elif len(unwind_stages) > 1:
-                        # Build chained json_each() query for multiple unwinds
-                        field_names = []
-                        valid_fields = True
-
-                        for field in unwind_stages:
-                            if isinstance(field, str) and field.startswith("$"):
-                                field_names.append(
-                                    field[1:]
-                                )  # Remove leading $
-                            else:
-                                valid_fields = False
-                                break
-
-                        if valid_fields and len(field_names) > 0:
-                            # Build SELECT clause with nested json_set calls
-                            select_parts = [f"{self.collection.name}.data"]
-                            for k, field_name in enumerate(field_names):
-                                select_parts.insert(0, f"json_set(")
-                                select_parts.append(
-                                    f", '$.\"{field_name}\"', je{k+1}.value)"
-                                )
-
-                            # Join all parts except the last closing parenthesis
-                            select_expr = (
-                                "".join(select_parts[:-1]) + select_parts[-1]
-                            )
-                            select_clause = f"SELECT {self.collection.name}.id, {select_expr} as data"
-
-                            # Build FROM clause with multiple json_each calls
-                            from_parts = [f"FROM {self.collection.name}"]
-                            for k, field_name in enumerate(field_names):
-                                from_parts.append(
-                                    f", json_each(json_extract({self.collection.name}.data, '$.{field_name}')) as je{k+1}"
-                                )
-
-                            from_clause = " ".join(from_parts)
-
-                            # If there's a previous $match stage, incorporate its WHERE clause
-                            where_clause = ""
-                            params = []
-                            if i == 1 and "$match" in pipeline[0]:
-                                match_query = pipeline[0]["$match"]
-                                where_result = self._build_simple_where_clause(
-                                    match_query
-                                )
-                                if (
-                                    where_result and where_result[0]
-                                ):  # Has WHERE clause
-                                    where_clause = where_result[0]
-                                    params = where_result[1]
-
-                            # Handle sort, skip, and limit operations that follow
-                            local_order_by = ""
-                            local_limit = ""
-                            local_offset = ""
-
-                            # Process subsequent sort, skip, and limit stages
-                            sort_stages = []
-                            skip_value = 0
-                            limit_value = None
-
-                            for stage_idx in range(j, k):
-                                stage = pipeline[stage_idx]
-                                if "$sort" in stage:
-                                    sort_stages.append(stage["$sort"])
-                                elif "$skip" in stage:
-                                    skip_value = stage["$skip"]
-                                elif "$limit" in stage:
-                                    limit_value = stage["$limit"]
-
-                            # Build ORDER BY clause
-                            if sort_stages:
-                                sort_clauses = []
-                                for sort_spec in sort_stages:
-                                    for key, direction in sort_spec.items():
-                                        # When sorting after multiple unwinds, we need to determine
-                                        # if we're sorting by one of the unwound fields or original fields
-                                        is_unwound_field = key in field_names
-                                        if is_unwound_field:
-                                            # Find which je variable corresponds to this field
-                                            field_index = field_names.index(key) + 1
-                                            sort_clauses.append(
-                                                f"je{field_index}.value {'DESC' if direction == DESCENDING else 'ASC'}"
-                                            )
-                                        else:  # Sorting by original document fields
-                                            sort_clauses.append(
-                                                f"json_extract({self.collection.name}.data, '$.{key}') "
-                                                f"{'DESC' if direction == DESCENDING else 'ASC'}"
-                                            )
-                                if sort_clauses:
-                                    local_order_by = "ORDER BY " + ", ".join(sort_clauses)
-
-                            # Build LIMIT and OFFSET clauses
-                            if limit_value is not None:
-                                local_limit = f"LIMIT {limit_value}"
-                            if skip_value > 0:
-                                local_offset = f"OFFSET {skip_value}"
-
-                            cmd = f"{select_clause} {from_clause} {where_clause} {local_order_by} {local_limit} {local_offset}"
-
-                            # Skip all processed stages (unwind + sort/skip/limit)
-                            i = k - 1
-                            return cmd, params, output_fields
-                        else:
-                            return (
-                                None  # Fallback for complex unwind expressions
-                            )
-                else:
+                if valid_position and unwind_stages:
+                    result = self._build_unwind_query(i, pipeline, unwind_stages)
+                    if result:
+                        cmd, params, output_fields = result
+                        # Skip all processed stages
+                        i = len(pipeline)
+                        return cmd, params, output_fields
+                    else:
+                        return None
+                elif unwind_stages:
                     # $unwind not in valid position or complex case - fallback to Python
                     return None
             else:
@@ -1385,6 +1206,180 @@ class QueryHelper:
 
         cmd = f"{select_clause} FROM {self.collection.name} {where_clause} {group_by} {order_by} {limit} {offset}"
         return cmd, params, output_fields
+
+    def _build_unwind_query(
+        self,
+        pipeline_index: int,
+        pipeline: List[Dict[str, Any]],
+        unwind_stages: List[str],
+    ) -> tuple[str, List[Any], List[str] | None] | None:
+        """
+        Builds a SQL query for a sequence of $unwind stages.
+        """
+        field_names = []
+        for field in unwind_stages:
+            if not isinstance(field, str) or not field.startswith("$") or len(field) == 1:
+                return None  # Fallback to Python implementation
+            field_names.append(field[1:])
+
+        # Build SELECT clause with nested json_set calls
+        select_parts = [f"{self.collection.name}.data"]
+        for i, field_name in enumerate(field_names):
+            select_parts.insert(0, "json_set(")
+            select_parts.append(f", '$.\"{field_name}\"', je{i + 1}.value)")
+        select_expr = "".join(select_parts)
+        select_clause = f"SELECT {self.collection.name}.id, {select_expr} as data"
+
+        # Build FROM clause with multiple json_each calls
+        from_clause, unwound_fields = self._build_unwind_from_clause(field_names)
+
+        # Handle $match stage and array type checks
+        all_where_clauses = []
+        params: List[Any] = []
+        if pipeline_index == 1 and "$match" in pipeline[0]:
+            match_query = pipeline[0]["$match"]
+            where_result = self._build_simple_where_clause(match_query)
+            if where_result and where_result[0]:
+                all_where_clauses.append(where_result[0].replace("WHERE ", "", 1))
+                params.extend(where_result[1])
+
+        for field_name in field_names:
+            parent_field, parent_alias = self._find_parent_unwind(
+                field_name, unwound_fields
+            )
+            if parent_field and parent_alias:
+                nested_path = field_name[len(parent_field) + 1 :]
+                all_where_clauses.append(
+                    f"json_type(json_extract({parent_alias}.value, '$.{nested_path}')) = 'array'"
+                )
+            else:
+                all_where_clauses.append(
+                    f"json_type(json_extract({self.collection.name}.data, '$.{field_name}')) = 'array'"
+                )
+
+        where_clause = ""
+        if all_where_clauses:
+            where_clause = "WHERE " + " AND ".join(all_where_clauses)
+
+        # Handle sort, skip, and limit operations
+        start_index = pipeline_index + len(unwind_stages)
+        end_index = len(pipeline)
+        order_by, limit, offset = self._build_sort_skip_limit_clauses(
+            pipeline, start_index, end_index, unwound_fields
+        )
+
+        cmd = f"{select_clause} {from_clause} {where_clause} {order_by} {limit} {offset}"
+        return cmd, params, None
+
+    def _build_unwind_from_clause(
+        self,
+        field_names: List[str]
+    ) -> tuple[str, Dict[str, str]]:
+        """
+        Builds the FROM clause for a SQL query with one or more $unwind stages.
+        """
+        from_parts = [f"FROM {self.collection.name}"]
+        unwound_fields: Dict[str, str] = {}
+
+        for i, field_name in enumerate(field_names):
+            je_alias = f"je{i + 1}"
+            parent_field, parent_alias = self._find_parent_unwind(
+                field_name, unwound_fields
+            )
+
+            if parent_field and parent_alias:
+                nested_path = field_name[len(parent_field) + 1 :]
+                from_parts.append(
+                    f", json_each(json_extract({parent_alias}.value, '$.{nested_path}')) as {je_alias}"
+                )
+            else:
+                from_parts.append(
+                    f", json_each(json_extract({self.collection.name}.data, '$.{field_name}')) as {je_alias}"
+                )
+            unwound_fields[field_name] = je_alias
+
+        return " ".join(from_parts), unwound_fields
+
+    def _find_parent_unwind(self, field_name: str, unwound_fields: Dict[str, str]) -> tuple[str | None, str | None]:
+        """
+        Find the parent unwind field for a nested unwind.
+        """
+        parent_field = None
+        parent_alias = None
+        longest_match_len = -1
+
+        for p_field, p_alias in unwound_fields.items():
+            prefix = p_field + "."
+            if field_name.startswith(prefix):
+                if len(p_field) > longest_match_len:
+                    longest_match_len = len(p_field)
+                    parent_field = p_field
+                    parent_alias = p_alias
+        return parent_field, parent_alias
+
+    def _build_sort_skip_limit_clauses(
+        self,
+        pipeline: List[Dict[str, Any]],
+        start_index: int,
+        end_index: int,
+        unwound_fields: Dict[str, str],
+    ) -> tuple[str, str, str]:
+        """
+        Build ORDER BY, LIMIT, and OFFSET clauses for aggregation queries.
+        """
+        local_order_by = ""
+        local_limit = ""
+        local_offset = ""
+
+        sort_stages = []
+        skip_value = 0
+        limit_value = None
+
+        for stage_idx in range(start_index, end_index):
+            stage = pipeline[stage_idx]
+            if "$sort" in stage:
+                sort_stages.append(stage["$sort"])
+            elif "$skip" in stage:
+                skip_value = stage["$skip"]
+            elif "$limit" in stage:
+                limit_value = stage["$limit"]
+
+        if sort_stages:
+            sort_clauses = []
+            for sort_spec in sort_stages:
+                for key, direction in sort_spec.items():
+                    parent_field, parent_alias = self._find_parent_unwind(
+                        key, unwound_fields
+                    )
+                    if parent_field and parent_alias:
+                        nested_path = key[len(parent_field) + 1 :]
+                        sort_clauses.append(
+                            f"json_extract({parent_alias}.value, '$.{nested_path}') "
+                            f"{'DESC' if direction == DESCENDING else 'ASC'}"
+                        )
+                    elif key in unwound_fields:
+                        unwound_alias = unwound_fields[key]
+                        sort_clauses.append(
+                            f"{unwound_alias}.value {'DESC' if direction == DESCENDING else 'ASC'}"
+                        )
+                    else:
+                        sort_clauses.append(
+                            f"json_extract({self.collection.name}.data, '$.{key}') "
+                            f"{'DESC' if direction == DESCENDING else 'ASC'}"
+                        )
+            if sort_clauses:
+                local_order_by = "ORDER BY " + ", ".join(sort_clauses)
+
+        if limit_value is not None:
+            local_limit = f"LIMIT {limit_value}"
+            if skip_value > 0:
+                local_offset = f"OFFSET {skip_value}"
+        elif skip_value > 0:
+            # SQLite requires LIMIT when using OFFSET
+            local_limit = "LIMIT -1"
+            local_offset = f"OFFSET {skip_value}"
+
+        return local_order_by, local_limit, local_offset
 
     def _build_group_query(
         self, group_spec: Dict[str, Any]

@@ -1,3 +1,5 @@
+> **Note:** This document describes the initial integration of `json_each()` with `$unwind`. The implementation has since been enhanced to support multiple consecutive `$unwind` stages and nested array unwinding. For more details, see [ENHANCED_MULTIPLE_UNWIND_STAGES.md](ENHANCED_MULTIPLE_UNWIND_STAGES.md) and [NESTED_ARRAY_UNWIND.md](NESTED_ARRAY_UNWIND.md).
+
 # Integrating json_each() with $unwind in NeoSQLite
 
 ## Overview
@@ -119,8 +121,8 @@ After implementation, the following aggregation pipeline:
 
 ```python
 pipeline = [
-    {"$match": {"status": "active"}},
-    {"$unwind": "$tags"}
+    {"status": "active"},
+    {"unwind": "$tags"}
 ]
 result = collection.aggregate(pipeline)
 ```
@@ -133,4 +135,3 @@ Would be processed using a single SQL query instead of Python iteration, resulti
 2. **Error Handling**: Proper handling of malformed JSON or non-array fields
 3. **Nested Field Preservation**: Ensuring original nested structures are maintained
 4. **Integration with Other Stages**: How `$unwind` interacts with `$match`, `$sort`, etc.
-```

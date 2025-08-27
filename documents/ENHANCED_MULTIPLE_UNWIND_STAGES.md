@@ -40,6 +40,7 @@ The enhanced implementation:
 2. **Multiple Consecutive $unwind Stages** (newly enhanced)
 3. **$match followed by Multiple $unwind Stages**
 4. **Two, Three, or More Consecutive $unwind Stages**
+5. **Nested Array Unwinding** (see [NESTED_ARRAY_UNWIND.md](NESTED_ARRAY_UNWIND.md) for details)
 
 ### Performance Benefits
 

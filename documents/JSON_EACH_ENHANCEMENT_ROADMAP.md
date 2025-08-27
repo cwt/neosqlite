@@ -39,7 +39,7 @@ This document tracks the progress of enhancements to NeoSQLite that leverage SQL
 - See [UNWIND_SORT_LIMIT_ENHANCEMENT.md](UNWIND_SORT_LIMIT_ENHANCEMENT.md) for detailed documentation
 
 ### 5. Nested Array Unwinding
-**Status**: 🔄 Research
+**Status**: ✅ Completed
 **Description**: Handle arrays of objects and deeply nested unwinding operations
 **Target Use Case**:
 ```python
@@ -73,6 +73,7 @@ FROM collection,
      json_each(json_extract(collection.data, '$.orders')) as je1,
      json_each(json_extract(je1.value, '$.items')) as je2
 ```
+- See [NESTED_ARRAY_UNWIND.md](NESTED_ARRAY_UNWIND.md) for a detailed explanation.
 
 ## Planned Enhancements 📋
 

@@ -82,6 +82,16 @@ ORDER BY _id
 - `$unwind` + `$group` combinations
 - `$match` + `$unwind` + `$group` combinations
 
+### 4. Nested Array Unwinding
+
+**Feature**: Support for nested array unwinding.
+
+**Implementation**:
+- Detects nested `$unwind` operations
+- Generates chained SQL queries with multiple `json_each()` calls, where subsequent `json_each` calls operate on the results of the previous ones.
+- See [NESTED_ARRAY_UNWIND.md](NESTED_ARRAY_UNWIND.md) for a detailed explanation.
+
+
 ## Testing
 
 ### Test Coverage
