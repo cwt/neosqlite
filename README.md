@@ -1,10 +1,12 @@
-# neosqlite
+# NeoSQLite
 
-`neosqlite` (new + nosqlite) is a pure Python library that provides a schemaless, `pymongo`-like wrapper for interacting with SQLite databases. The API is designed to be familiar to those who have worked with `pymongo`, providing a simple and intuitive way to work with document-based data in a relational database.
+`NeoSQLite` (new + nosqlite) is a pure Python library that provides a schemaless, `PyMongo`-like wrapper for interacting with SQLite databases. The API is designed to be familiar to those who have worked with `PyMongo`, providing a simple and intuitive way to work with document-based data in a relational database.
+
+[![NeoSQLite: SQLite with a MongoDB Disguise](https://img.youtube.com/vi/iZXoEjBaFdU/0.jpg)](https://www.youtube.com/watch?v=iZXoEjBaFdU)
 
 ## Features
 
-- **`pymongo`-like API**: A familiar interface for developers experienced with MongoDB.
+- **`PyMongo`-like API**: A familiar interface for developers experienced with MongoDB.
 - **Schemaless Documents**: Store flexible JSON-like documents.
 - **Lazy Cursor**: `find()` returns a memory-efficient cursor for iterating over results.
 - **Raw Batch Support**: `find_raw_batches()` returns raw JSON data in batches for efficient processing.
@@ -16,7 +18,7 @@
 
 ## Drop-in Replacement for PyMongo
 
-For many common use cases, `neosqlite` can serve as a drop-in replacement for `pymongo`. The API is designed to be compatible, meaning you can switch from MongoDB to a SQLite backend with minimal code changes. The primary difference is in the initial connection setup.
+For many common use cases, `NeoSQLite` can serve as a drop-in replacement for `PyMongo`. The API is designed to be compatible, meaning you can switch from MongoDB to a SQLite backend with minimal code changes. The primary difference is in the initial connection setup.
 
 Once you have a `collection` object, the method calls for all implemented APIs are identical.
 
@@ -28,7 +30,7 @@ db = client.mydatabase
 collection = db.mycollection
 ```
 
-**neosqlite:**
+**NeoSQLite:**
 ```python
 import neosqlite
 # The Connection object is analogous to the database
