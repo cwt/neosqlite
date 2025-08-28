@@ -194,69 +194,70 @@ class IndexManager:
         """
         created_indexes = []
         for index_spec in indexes:
-            # Handle dict format with options
-            if isinstance(index_spec, dict):
-                key: str | List[str] | None = index_spec.get("key")
-                unique: bool = bool(index_spec.get("unique", False))
-                sparse: bool = bool(index_spec.get("sparse", False))
-                fts: bool = bool(index_spec.get("fts", False))
-                tokenizer: str | None = index_spec.get("tokenizer")
+            match index_spec:
+                # Handle dict format with options
+                case dict():
+                    key: str | List[str] | None = index_spec.get("key")
+                    unique: bool = bool(index_spec.get("unique", False))
+                    sparse: bool = bool(index_spec.get("sparse", False))
+                    fts: bool = bool(index_spec.get("fts", False))
+                    tokenizer: str | None = index_spec.get("tokenizer")
 
-                if key is not None:
-                    self.create_index(
-                        key,
-                        unique=unique,
-                        sparse=sparse,
-                        fts=fts,
-                        tokenizer=tokenizer,
-                    )
-                    if isinstance(key, str):
-                        index_name = key.replace(".", "_")
-                    else:
-                        index_name = "_".join(str(k) for k in key).replace(
-                            ".", "_"
+                    if key is not None:
+                        self.create_index(
+                            key,
+                            unique=unique,
+                            sparse=sparse,
+                            fts=fts,
+                            tokenizer=tokenizer,
                         )
+                        if isinstance(key, str):
+                            index_name = key.replace(".", "_")
+                        else:
+                            index_name = "_".join(str(k) for k in key).replace(
+                                ".", "_"
+                            )
+                        created_indexes.append(
+                            f"idx_{self.collection.name}_{index_name}"
+                        )
+
+                # Handle string format
+                case str():
+                    # Simple string key
+                    self.create_index(index_spec)
+                    index_name = index_spec.replace(".", "_")
                     created_indexes.append(
                         f"idx_{self.collection.name}_{index_name}"
                     )
-
-            # Handle string format
-            elif isinstance(index_spec, str):
-                # Simple string key
-                self.create_index(index_spec)
-                index_name = index_spec.replace(".", "_")
-                created_indexes.append(
-                    f"idx_{self.collection.name}_{index_name}"
-                )
-            elif isinstance(index_spec, list):
-                # List of keys for compound index
-                # Handle both ['name', 'age'] and [('name', 1), ('age', -1)] formats
-                if index_spec and isinstance(index_spec[0], tuple):  # type: ignore
-                    # Format [('name', 1), ('age', -1)] - extract just the field names
-                    key_list: List[str] = []
-                    # Type assertion: we know this is List[Tuple[str, int]] at this point
-                    tuple_list: List[Tuple[str, int]] = index_spec  # type: ignore
-                    for k, _ in tuple_list:
-                        key_list.append(k)
-                    self.create_index(key_list)
-                    # Join the key list with underscores
-                    str_keys: List[str] = []
-                    for k in key_list:
-                        str_keys.append(str(k))
-                    index_name = "_".join(str_keys).replace(".", "_")
-                else:
-                    # Format ['name', 'age']
-                    # Type check: we know this is List[str] at this point
-                    str_list: List[str] = index_spec  # type: ignore
-                    self.create_index(str_list)
-                    # Join the string list with underscores
-                    str_keys2: List[str] = []
-                    for k in str_list:
-                        str_keys2.append(str(k))
-                    index_name = "_".join(str_keys2).replace(".", "_")
-                created_indexes.append(
-                    f"idx_{self.collection.name}_{index_name}"
-                )
+                case list():
+                    # List of keys for compound index
+                    # Handle both ['name', 'age'] and [('name', 1), ('age', -1)] formats
+                    if index_spec and isinstance(index_spec[0], tuple):  # type: ignore
+                        # Format [('name', 1), ('age', -1)] - extract just the field names
+                        key_list: List[str] = []
+                        # Type assertion: we know this is List[Tuple[str, int]] at this point
+                        tuple_list: List[Tuple[str, int]] = index_spec  # type: ignore
+                        for k, _ in tuple_list:
+                            key_list.append(k)
+                        self.create_index(key_list)
+                        # Join the key list with underscores
+                        str_keys: List[str] = []
+                        for k in key_list:
+                            str_keys.append(str(k))
+                        index_name = "_".join(str_keys).replace(".", "_")
+                    else:
+                        # Format ['name', 'age']
+                        # Type check: we know this is List[str] at this point
+                        str_list: List[str] = index_spec  # type: ignore
+                        self.create_index(str_list)
+                        # Join the string list with underscores
+                        str_keys2: List[str] = []
+                        for k in str_list:
+                            str_keys2.append(str(k))
+                        index_name = "_".join(str_keys2).replace(".", "_")
+                    created_indexes.append(
+                        f"idx_{self.collection.name}_{index_name}"
+                    )
 
         return created_indexes
 

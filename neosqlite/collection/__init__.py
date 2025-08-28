@@ -500,20 +500,22 @@ class Collection:
         Returns:
             bool: True if the object exists, False otherwise.
         """
-        if type == "table":
-            row = self.db.execute(
-                "SELECT COUNT(1) FROM sqlite_master WHERE type = ? AND name = ?",
-                (type, name.strip("[]")),
-            ).fetchone()
-            return bool(row and int(row[0]) > 0)
-        elif type == "index":
-            # For indexes, check if it exists with our naming convention
-            row = self.db.execute(
-                "SELECT COUNT(1) FROM sqlite_master WHERE type = ? AND name = ?",
-                (type, name),
-            ).fetchone()
-            return bool(row and int(row[0]) > 0)
-        return False
+        match type:
+            case "table":
+                row = self.db.execute(
+                    "SELECT COUNT(1) FROM sqlite_master WHERE type = ? AND name = ?",
+                    (type, name.strip("[]")),
+                ).fetchone()
+                return bool(row and int(row[0]) > 0)
+            case "index":
+                # For indexes, check if it exists with our naming convention
+                row = self.db.execute(
+                    "SELECT COUNT(1) FROM sqlite_master WHERE type = ? AND name = ?",
+                    (type, name),
+                ).fetchone()
+                return bool(row and int(row[0]) > 0)
+            case _:
+                return False
 
     def watch(
         self,

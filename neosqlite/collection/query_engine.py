@@ -446,12 +446,13 @@ class QueryEngine:
                 continue
             try:
                 val = neosqlite_json_loads(row[0])
-                if isinstance(val, list):
-                    results.add(tuple(val))
-                elif isinstance(val, dict):
-                    results.add(neosqlite_json_dumps(val, sort_keys=True))
-                else:
-                    results.add(val)
+                match val:
+                    case list():
+                        results.add(tuple(val))
+                    case dict():
+                        results.add(neosqlite_json_dumps(val, sort_keys=True))
+                    case _:
+                        results.add(val)
             except (json.JSONDecodeError, TypeError):
                 results.add(row[0])
         return results
@@ -492,51 +493,52 @@ class QueryEngine:
         docs: List[Dict[str, Any]] = list(self.find())
         for stage in pipeline:
             stage_name = next(iter(stage.keys()))
-            if stage_name == "$match":
-                query = stage["$match"]
-                docs = [
-                    doc for doc in docs if self.helpers._apply_query(query, doc)
-                ]
-            elif stage_name == "$sort":
-                sort_spec = stage["$sort"]
-                for key, direction in reversed(list(sort_spec.items())):
-                    docs.sort(
-                        key=lambda doc: self.collection._get_val(doc, key),
-                        reverse=direction == DESCENDING,
+            match stage_name:
+                case "$match":
+                    query = stage["$match"]
+                    docs = [
+                        doc for doc in docs if self.helpers._apply_query(query, doc)
+                    ]
+                case "$sort":
+                    sort_spec = stage["$sort"]
+                    for key, direction in reversed(list(sort_spec.items())):
+                        docs.sort(
+                            key=lambda doc: self.collection._get_val(doc, key),
+                            reverse=direction == DESCENDING,
+                        )
+                case "$skip":
+                    count = stage["$skip"]
+                    docs = docs[count:]
+                case "$limit":
+                    count = stage["$limit"]
+                    docs = docs[:count]
+                case "$project":
+                    projection = stage["$project"]
+                    docs = [
+                        self.helpers._apply_projection(projection, doc)
+                        for doc in docs
+                    ]
+                case "$group":
+                    group_spec = stage["$group"]
+                    docs = self.helpers._process_group_stage(group_spec, docs)
+                case "$unwind":
+                    field = stage["$unwind"]
+                    unwound_docs = []
+                    field_name = field.lstrip("$")
+                    for doc in docs:
+                        array_to_unwind = self.collection._get_val(doc, field_name)
+                        if isinstance(array_to_unwind, list):
+                            for item in array_to_unwind:
+                                new_doc = doc.copy()
+                                new_doc[field_name] = item
+                                unwound_docs.append(new_doc)
+                        else:
+                            unwound_docs.append(doc)
+                    docs = unwound_docs
+                case _:
+                    raise MalformedQueryException(
+                        f"Aggregation stage '{stage_name}' not supported"
                     )
-            elif stage_name == "$skip":
-                count = stage["$skip"]
-                docs = docs[count:]
-            elif stage_name == "$limit":
-                count = stage["$limit"]
-                docs = docs[:count]
-            elif stage_name == "$project":
-                projection = stage["$project"]
-                docs = [
-                    self.helpers._apply_projection(projection, doc)
-                    for doc in docs
-                ]
-            elif stage_name == "$group":
-                group_spec = stage["$group"]
-                docs = self.helpers._process_group_stage(group_spec, docs)
-            elif stage_name == "$unwind":
-                field = stage["$unwind"]
-                unwound_docs = []
-                field_name = field.lstrip("$")
-                for doc in docs:
-                    array_to_unwind = self.collection._get_val(doc, field_name)
-                    if isinstance(array_to_unwind, list):
-                        for item in array_to_unwind:
-                            new_doc = doc.copy()
-                            new_doc[field_name] = item
-                            unwound_docs.append(new_doc)
-                    else:
-                        unwound_docs.append(doc)
-                docs = unwound_docs
-            else:
-                raise MalformedQueryException(
-                    f"Aggregation stage '{stage_name}' not supported"
-                )
         return docs
 
     # --- Bulk Write methods ---
