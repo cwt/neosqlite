@@ -150,3 +150,14 @@ class Connection:
         except Exception:
             self.db.rollback()
             raise
+
+    def __del__(self):
+        """Ensure the database connection is closed when the object is garbage collected."""
+        try:
+            if hasattr(self, "db") and self.db is not None:
+                # Only close if it's not already closed
+                if not getattr(self.db, "closed", False):
+                    self.db.close()
+        except Exception:
+            # Ignore exceptions in __del__ to avoid crashes during garbage collection
+            pass

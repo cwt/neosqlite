@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "neosqlite"
-version = "0.5.1"
+version = "0.5.2"
 description = "NoSQL for SQLite with PyMongo-like API"
 authors = ["Chaiwat Suttipongsakul <cwt@bashell.com>"]
 license = "MIT"
@@ -31,9 +31,9 @@ jsonb = ["pysqlite3-binary"]
 docs = ["sphinx", "furo"]
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^7.0"
-pytest-cov = "^5.0"
-mypy = "^1.5"
+pytest = "^8.4"
+pytest-cov = "^6.2"
+mypy = "^1.17"
 
 [tool.pyright]
 stubPath = "typings"
