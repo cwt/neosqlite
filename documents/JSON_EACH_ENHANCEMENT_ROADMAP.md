@@ -95,12 +95,17 @@ FROM collection,
 GROUP BY json_extract(collection.data, '$.category')
 ```
 
-## Planned Enhancements 📋
+### 7. $lookup Operations
+**Status**: ✅ Completed
+**Description**: Implement join-like operations for related data across collections
+**Implemented Features**:
+- Basic $lookup operations between collections
+- Support for $lookup followed by $unwind operations
+- Integration with existing pipeline stages ($match, etc.)
+- Python fallback implementation for complex cases
+- SQL optimization for simple $lookup-only pipelines
 
-### 7. $lookup Operations with json_each()
-**Status**: 📋 Backlog
-**Description**: Optimize join-like operations using `json_each()` for array field matching
-**Target Use Case**:
+**Example Usage**:
 ```python
 [
   {"$lookup": {
@@ -111,6 +116,8 @@ GROUP BY json_extract(collection.data, '$.category')
   }}
 ]
 ```
+
+## Planned Enhancements 📋
 
 ### 8. Advanced $unwind Options
 **Status**: 📋 Backlog
@@ -210,16 +217,15 @@ GROUP BY json_extract(collection.data, '$.category')
 ## Implementation Priority
 
 ### High Priority (Next)
-1. $lookup Operations with json_each()
+1. Advanced $unwind Options
+2. Additional Group Operations
 
 ### Medium Priority
-2. Advanced $unwind Options
-3. Additional Group Operations
+3. Advanced Index-Aware Optimization
+4. Pipeline Reordering
 
 ### Low Priority
-4. Advanced Index-Aware Optimization
-5. Pipeline Reordering
-6. Memory-Constrained Processing
+5. Memory-Constrained Processing
 
 ## Testing Strategy
 
@@ -274,9 +280,8 @@ GROUP BY json_extract(collection.data, '$.category')
 ## Next Steps
 
 ### Short-term Goals
-1. Implement $lookup operations with json_each()
-2. Add support for advanced $unwind options
-3. Implement additional group operations ($push, $addToSet)
+1. Add support for advanced $unwind options
+2. Implement additional group operations ($push, $addToSet)
 
 ### Long-term Vision
 1. Achieve ≥90% code coverage

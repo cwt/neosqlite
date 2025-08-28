@@ -160,10 +160,9 @@ All enhancements maintain full backward compatibility:
 ## Future Enhancement Opportunities
 
 ### Additional Optimizations
-1. **$lookup Operations**: Integration with joins for related data operations across collections
-2. **Additional Group Operations**: Support for more MongoDB-style group accumulators in SQL (e.g., `$push`, `$addToSet`)
-3. **Advanced $unwind Options**: Support for `includeArrayIndex` and `preserveNullAndEmptyArrays` options
-4. **Complex Expression Support**: Handle more complex expressions in group operations and projections
+1. **Additional Group Operations**: Support for more MongoDB-style group accumulators in SQL (e.g., `$push`, `$addToSet`)
+2. **Advanced $unwind Options**: Support for `includeArrayIndex` and `preserveNullAndEmptyArrays` options
+3. **Complex Expression Support**: Handle more complex expressions in group operations and projections
 
 ### Advanced Features
 1. **Index-Aware Optimization**: Leverage existing indexes in queries for even better performance

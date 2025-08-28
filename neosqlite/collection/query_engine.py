@@ -529,6 +529,34 @@ class QueryEngine:
                         else:
                             unwound_docs.append(doc)
                     docs = unwound_docs
+                case "$lookup":
+                    # Python fallback implementation for $lookup
+                    lookup_spec = stage["$lookup"]
+                    from_collection_name = lookup_spec["from"]
+                    local_field = lookup_spec["localField"]
+                    foreign_field = lookup_spec["foreignField"]
+                    as_field = lookup_spec["as"]
+
+                    # Get the from collection from the database
+                    from_collection = self.collection._database[from_collection_name]
+
+                    # Process each document
+                    for doc in docs:
+                        # Get the local field value
+                        local_value = self.collection._get_val(doc, local_field)
+
+                        # Find matching documents in the from collection
+                        matching_docs = []
+                        for match_doc in from_collection.find():
+                            foreign_value = from_collection._get_val(match_doc, foreign_field)
+                            if local_value == foreign_value:
+                                # Add the matching document (without _id)
+                                match_doc_copy = match_doc.copy()
+                                match_doc_copy.pop("_id", None)
+                                matching_docs.append(match_doc_copy)
+
+                        # Add the matching documents as an array field
+                        doc[as_field] = matching_docs
                 case _:
                     raise MalformedQueryException(
                         f"Aggregation stage '{stage_name}' not supported"

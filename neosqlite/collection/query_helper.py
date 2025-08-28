@@ -1237,6 +1237,66 @@ class QueryHelper:
                     elif unwind_stages:
                         # $unwind not in valid position or complex case - fallback to Python
                         return None
+                case "$lookup":
+                    # Check if this is the last stage in the pipeline
+                    # If not, we can't optimize with SQL because we need to handle subsequent stages
+                    if i < len(pipeline) - 1:
+                        return None  # Fallback to Python to handle subsequent stages
+
+                    # Check if this is a valid position for $lookup (first stage or after $match)
+                    if i > 1 or (i == 1 and "$match" not in pipeline[0]):
+                        return None  # Fallback for complex positions
+
+                    lookup_spec = stage["$lookup"]
+                    from_collection = lookup_spec["from"]
+                    local_field = lookup_spec["localField"]
+                    foreign_field = lookup_spec["foreignField"]
+                    as_field = lookup_spec["as"]
+
+                    # Check if we can handle this lookup operation
+                    if not isinstance(from_collection, str) or not isinstance(local_field, str) or \
+                       not isinstance(foreign_field, str) or not isinstance(as_field, str):
+                        return None  # Fallback for complex specifications
+
+                    # Build the optimized SQL query for $lookup
+                    # Handle special case for _id field (stored as column, not in JSON)
+                    if foreign_field == "_id":
+                        foreign_extract = "related.id"
+                    else:
+                        foreign_extract = f"json_extract(related.data, '$.{foreign_field}')"
+
+                    if local_field == "_id":
+                        local_extract = f"{self.collection.name}.id"
+                    else:
+                        local_extract = f"json_extract({self.collection.name}.data, '$.{local_field}')"
+
+                    select_clause = f"SELECT {self.collection.name}.id, " \
+                                   f"json_set({self.collection.name}.data, '$.\"{as_field}\"', " \
+                                   f"coalesce((" \
+                                   f"  SELECT json_group_array(json(related.data)) " \
+                                   f"  FROM {from_collection} as related " \
+                                   f"  WHERE {foreign_extract} = " \
+                                   f"        {local_extract} " \
+                                   f"), '[]')) as data"
+
+                    from_clause = f"FROM {self.collection.name}"
+
+                    # If there's a $match stage before this, incorporate its WHERE clause
+                    if i == 1 and "$match" in pipeline[0]:
+                        match_query = pipeline[0]["$match"]
+                        where_result = self._build_simple_where_clause(match_query)
+                        if where_result and where_result[0]:  # Has WHERE clause
+                            where_clause = where_result[0]
+                            params = where_result[1]
+                        else:
+                            where_clause = ""
+                            params = []
+                    else:
+                        where_clause = ""
+                        params = []
+
+                    cmd = f"{select_clause} {from_clause} {where_clause}"
+                    return cmd, params, None
                 case _:
                     return None  # Fallback for unsupported stages
 
