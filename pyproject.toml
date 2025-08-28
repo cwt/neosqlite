@@ -1,13 +1,14 @@
 [tool.poetry]
 name = "neosqlite"
-version = "0.5.0"
-description = "A wrapper for sqlite3 to have schemaless, document-store features"
+version = "0.5.1"
+description = "NoSQL for SQLite with PyMongo-like API"
 authors = ["Chaiwat Suttipongsakul <cwt@bashell.com>"]
 license = "MIT"
 readme = "README.md"
-homepage = "https://sr.ht/~cwt/neosqlite"
-repository = "https://hg.sr.ht/~cwt/neosqlite"
-keywords = ["nosql", "sqlite", "neosqlite"]
+homepage = "https://github.com/cwt/neosqlite"
+documentation = "https://neosqlite.readthedocs.io/en/latest/"
+repository = "https://github.com/cwt/neosqlite"
+keywords = ["nosql", "sqlite", "pymongo"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "License :: OSI Approved :: MIT License",
@@ -15,6 +16,9 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
+
+[tool.poetry.urls]
+"SourceHut Mirror" = "https://sr.ht/~cwt/neosqlite"
 
 [tool.poetry.dependencies]
 python = "^3.10"

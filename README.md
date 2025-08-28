@@ -1,6 +1,12 @@
-# NeoSQLite
+# NeoSQLite - NoSQL for SQLite with PyMongo-like API
+
+[![PyPI Version](https://img.shields.io/pypi/v/neosqlite.svg)](https://pypi.org/project/neosqlite/)
 
 `NeoSQLite` (new + nosqlite) is a pure Python library that provides a schemaless, `PyMongo`-like wrapper for interacting with SQLite databases. The API is designed to be familiar to those who have worked with `PyMongo`, providing a simple and intuitive way to work with document-based data in a relational database.
+
+NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for developers who want the flexibility of NoSQL with the reliability of SQLite. This library serves as a bridge between NoSQL databases and SQLite, providing PyMongo compatibility for Python developers.
+
+**Keywords**: NoSQL, NoSQLite, SQLite NoSQL, PyMongo alternative, SQLite document database, Python NoSQL, schemaless SQLite, MongoDB-like SQLite
 
 [![NeoSQLite: SQLite with a MongoDB Disguise](https://img.youtube.com/vi/iZXoEjBaFdU/0.jpg)](https://www.youtube.com/watch?v=iZXoEjBaFdU)
 
@@ -16,7 +22,7 @@
 - **Automatic JSON/JSONB Support**: Automatically detects and uses JSONB column type when available for better performance.
 - **GridFS Support**: Store and retrieve large files with a PyMongo-compatible GridFS implementation.
 
-## Drop-in Replacement for PyMongo
+## Drop-in Replacement for PyMongo and NoSQL Solutions
 
 For many common use cases, `NeoSQLite` can serve as a drop-in replacement for `PyMongo`. The API is designed to be compatible, meaning you can switch from MongoDB to a SQLite backend with minimal code changes. The primary difference is in the initial connection setup.
 
@@ -30,7 +36,7 @@ db = client.mydatabase
 collection = db.mycollection
 ```
 
-**NeoSQLite:**
+**NeoSQLite (NoSQLite solution):**
 ```python
 import neosqlite
 # The Connection object is analogous to the database
@@ -60,15 +66,15 @@ pip install neosqlite[jsonb]
 
 This will install `pysqlite3-binary` which provides a newer version of SQLite with JSON/JSONB support compiled in.
 
-**Note**: `neosqlite` will work with any SQLite installation. The `jsonb` extra is only needed if:
+**Note**: `NeoSQLite` will work with any SQLite installation. The `jsonb` extra is only needed if:
 1. Your system's built-in SQLite doesn't support JSON functions, **and**
 2. You want to take advantage of JSONB column type for better performance with JSON operations
 
-If your system's SQLite already supports JSONB column type, `neosqlite` will automatically use them without needing the extra dependency.
+If your system's SQLite already supports JSONB column type, `NeoSQLite` will automatically use them without needing the extra dependency.
 
 ## Quickstart
 
-Here is a quick example of how to use `neosqlite`:
+Here is a quick example of how to use `NeoSQLite`:
 
 ```python
 import neosqlite
@@ -119,7 +125,7 @@ with neosqlite.Connection(':memory:') as conn:
 
 ## JSON/JSONB Support
 
-`neosqlite` automatically detects JSON support in your SQLite installation:
+`NeoSQLite` automatically detects JSON support in your SQLite installation:
 
 - **With JSON/JSONB support**: Uses JSONB column type for better performance with JSON operations
 - **Without JSON support**: Falls back to TEXT column type with JSON serialization
@@ -128,7 +134,7 @@ The library will work correctly in all environments - the `jsonb` extra is compl
 
 ## Binary Data Support
 
-`neosqlite` now includes full support for binary data outside of GridFS through the `Binary` class, which provides a PyMongo-compatible interface for storing and retrieving binary data directly in documents:
+`NeoSQLite` now includes full support for binary data outside of GridFS through the `Binary` class, which provides a PyMongo-compatible interface for storing and retrieving binary data directly in documents:
 
 ```python
 from neosqlite import Connection, Binary
@@ -187,7 +193,7 @@ with Connection(":memory:") as conn:
 
 ### Legacy GridFS API
 
-For users familiar with the legacy PyMongo GridFS API, `neosqlite` also provides the simpler `GridFS` class:
+For users familiar with the legacy PyMongo GridFS API, `NeoSQLite` also provides the simpler `GridFS` class:
 
 ```python
 import io
@@ -211,7 +217,7 @@ For more comprehensive examples, see the examples directory.
 
 ## Indexes
 
-Indexes can significantly speed up query performance. `neosqlite` supports single-key, compound-key, and nested-key indexes.
+Indexes can significantly speed up query performance. `NeoSQLite` supports single-key, compound-key, and nested-key indexes.
 
 ```python
 # Create a single-key index
@@ -236,7 +242,7 @@ Indexes are automatically used by `find()` operations where possible. You can al
 
 ## Query Operators
 
-`neosqlite` supports various query operators for filtering documents:
+`NeoSQLite` supports various query operators for filtering documents:
 
 - `$eq` - Matches values that are equal to a specified value
 - `$gt` - Matches values that are greater than a specified value
@@ -251,9 +257,11 @@ Indexes are automatically used by `find()` operations where possible. You can al
 - `$size` - Matches the number of elements in an array
 - `$regex` - Selects documents where values match a specified regular expression
 - `$elemMatch` - Selects documents if element in the array field matches all the specified conditions
-- `$contains` - **(neosqlite-specific)** Performs a case-insensitive substring search on string values
+- `$contains` - **(NeoSQLite-specific and deprecated)** Performs a case-insensitive substring search on string values
 
 Example usage of the `$contains` operator:
+> **DEPRECATED**: The `$contains` operator is deprecated and will be removed in a future version. Please use the `$text` operator with FTS5 indexing for better performance.
+
 ```python
 # Find users whose name contains "ali" (case-insensitive)
 users.find({"name": {"$contains": "ali"}})
@@ -292,7 +300,7 @@ articles.create_index("content", fts=True, tokenizer="icu_th")
 
 Custom tokenizers can significantly improve text search quality for languages that don't use spaces between words (like Chinese, Japanese, Thai) or have complex tokenization rules.
 
-For more information about building and using custom FTS5 tokenizers, see the [FTS5 ICU Tokenizer project](https://sr.ht/~cwt/fts5-icu-tokenizer/) ([GitHub mirror](https://github.com/cwt/fts5-icu-tokenizer)).
+For more information about building and using custom FTS5 tokenizers, see the [FTS5 ICU Tokenizer project](https://github.com/cwt/fts5-icu-tokenizer) ([SourceHut mirror](https://sr.ht/~cwt/fts5-icu-tokenizer/)).
 
 For more details on text search capabilities, see the [Text Search Documentation](documents/TEXT_SEARCH.md), [Text Search with Logical Operators](documents/TEXT_SEARCH_Logical_Operators.md), and [PyMongo Compatibility Information](documents/TEXT_SEARCH_PyMongo_Compatibility.md).
 
@@ -303,7 +311,8 @@ For more details on text search capabilities, see the [Text Search Documentation
 - However, for simple substring matching, `$contains` is faster than `$regex` at the Python level because it uses optimized string operations instead of regular expression compilation and execution
 - The operator is intended as a lightweight convenience feature for basic substring matching, not as a replacement for proper full-text search solutions
 - For high-performance text search requirements, consider using SQLite's FTS (Full-Text Search) extensions or other specialized search solutions
-- The `$contains` operator is a neosqlite-specific extension that is not part of the standard MongoDB query operators
+- The `$contains` operator is a NeoSQLite-specific extension that is not part of the standard MongoDB query operators
+- **Deprecation Notice**: The `$contains` operator is deprecated and will be removed in a future version. Please use the `$text` operator with FTS5 indexing for better performance.
 
 ## Sorting
 
@@ -317,6 +326,6 @@ for user in users.find().sort('age', neosqlite.DESCENDING):
 
 ## Contribution and License
 
-This project was originally developed by Shaun Duncan and is now maintained by Chaiwat Suttipongsakul. It is licensed under the MIT license.
+This project was originally developed as [shaunduncan/nosqlite](https://github.com/shaunduncan/nosqlite) and was later forked as [plutec/nosqlite](https://github.com/plutec/nosqlite) before becoming NeoSQLite. It is now maintained by Chaiwat Suttipongsakul and is licensed under the MIT license.
 
 Contributions are highly encouraged. If you find a bug, have an enhancement in mind, or want to suggest a new feature, please feel free to open an issue or submit a pull request.
