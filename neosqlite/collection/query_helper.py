@@ -740,103 +740,105 @@ class QueryHelper:
             return self._apply_query(q, document)
 
         for field, value in query.items():
-            if field == "$text":
-                # Handle $text operator in Python fallback
-                # This is a simplified implementation that just does basic string matching
-                if isinstance(value, dict) and "$search" in value:
-                    search_term = value["$search"]
-                    if isinstance(search_term, str):
-                        # Find FTS tables for this collection to determine which fields are indexed
-                        cursor = self.collection.db.execute(
-                            "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE ?",
-                            (f"{self.collection.name}_%_fts",),
-                        )
-                        fts_tables = cursor.fetchall()
-
-                        # Check each FTS-indexed field for matches
-                        for fts_table in fts_tables:
-                            fts_table_name = fts_table[0]
-                            # Extract field name from FTS table name
-                            # (collection_field_fts -> field)
-                            index_name = fts_table_name[
-                                len(f"{self.collection.name}_") : -4
-                            ]  # Remove collection_ prefix and _fts suffix
-                            # Convert underscores back to dots for nested keys
-                            field_name = index_name.replace("_", ".")
-                            # Check if this field has content that matches the search term
-                            field_value = self.collection._get_val(
-                                document, field_name
+            match field:
+                case "$text":
+                    # Handle $text operator in Python fallback
+                    # This is a simplified implementation that just does basic string matching
+                    if isinstance(value, dict) and "$search" in value:
+                        search_term = value["$search"]
+                        if isinstance(search_term, str):
+                            # Find FTS tables for this collection to determine which fields are indexed
+                            cursor = self.collection.db.execute(
+                                "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE ?",
+                                (f"{self.collection.name}_%_fts",),
                             )
-                            if field_value and isinstance(field_value, str):
-                                # Simple case-insensitive substring search
-                                if search_term.lower() in field_value.lower():
-                                    matches.append(True)
-                                    break
-                        else:
-                            # If no FTS indexes exist, check all string fields
-                            def check_all_fields(doc, search_term) -> bool:
-                                """
-                                Recursively check all fields in the document for
-                                the search term.
+                            fts_tables = cursor.fetchall()
 
-                                This helper function traverses through all fields
-                                of a document (including nested dictionaries) to
-                                find if any string field contains the specified
-                                search term (case-insensitive).
-
-                                Args:
-                                    doc (Dict[str, Any]): The document to search through.
-                                    search_term (str): The term to search for.
-
-                                Returns:
-                                    bool: True if the search term is found in any
-                                          string field, False otherwise.
-                                """
-                                for key, val in doc.items():
-                                    if isinstance(val, str):
-                                        if search_term.lower() in val.lower():
-                                            return True
-                                    elif isinstance(val, dict):
-                                        if check_all_fields(val, search_term):
-                                            return True
-                                return False
-
-                            if check_all_fields(document, search_term):
-                                matches.append(True)
+                            # Check each FTS-indexed field for matches
+                            for fts_table in fts_tables:
+                                fts_table_name = fts_table[0]
+                                # Extract field name from FTS table name
+                                # (collection_field_fts -> field)
+                                index_name = fts_table_name[
+                                    len(f"{self.collection.name}_") : -4
+                                ]  # Remove collection_ prefix and _fts suffix
+                                # Convert underscores back to dots for nested keys
+                                field_name = index_name.replace("_", ".")
+                                # Check if this field has content that matches the search term
+                                field_value = self.collection._get_val(
+                                    document, field_name
+                                )
+                                if field_value and isinstance(field_value, str):
+                                    # Simple case-insensitive substring search
+                                    if search_term.lower() in field_value.lower():
+                                        matches.append(True)
+                                        break
                             else:
-                                matches.append(False)
+                                # If no FTS indexes exist, check all string fields
+                                def check_all_fields(doc, search_term) -> bool:
+                                    """
+                                    Recursively check all fields in the document for
+                                    the search term.
+
+                                    This helper function traverses through all fields
+                                    of a document (including nested dictionaries) to
+                                    find if any string field contains the specified
+                                    search term (case-insensitive).
+
+                                    Args:
+                                        doc (Dict[str, Any]): The document to search through.
+                                        search_term (str): The term to search for.
+
+                                    Returns:
+                                        bool: True if the search term is found in any
+                                              string field, False otherwise.
+                                    """
+                                    for key, val in doc.items():
+                                        if isinstance(val, str):
+                                            if search_term.lower() in val.lower():
+                                                return True
+                                        elif isinstance(val, dict):
+                                            if check_all_fields(val, search_term):
+                                                return True
+                                    return False
+
+                                if check_all_fields(document, search_term):
+                                    matches.append(True)
+                                else:
+                                    matches.append(False)
+                        else:
+                            matches.append(False)
                     else:
                         matches.append(False)
-                else:
-                    matches.append(False)
-            elif field == "$and":
-                matches.append(all(map(reapply, value)))
-            elif field == "$or":
-                matches.append(any(map(reapply, value)))
-            elif field == "$nor":
-                matches.append(not any(map(reapply, value)))
-            elif field == "$not":
-                matches.append(not self._apply_query(value, document))
-            elif isinstance(value, dict):
-                for operator, arg in value.items():
-                    if not self._get_operator_fn(operator)(
-                        field, arg, document
-                    ):
-                        matches.append(False)
-                        break
-                else:
-                    matches.append(True)
-            else:
-                doc_value: Dict[str, Any] | None = document
-                if doc_value and field in doc_value:
-                    doc_value = doc_value.get(field, None)
-                else:
-                    for path in field.split("."):
-                        if not isinstance(doc_value, dict):
-                            break
-                        doc_value = doc_value.get(path, None)
-                if value != doc_value:
-                    matches.append(False)
+                case "$and":
+                    matches.append(all(map(reapply, value)))
+                case "$or":
+                    matches.append(any(map(reapply, value)))
+                case "$nor":
+                    matches.append(not any(map(reapply, value)))
+                case "$not":
+                    matches.append(not self._apply_query(value, document))
+                case _:
+                    if isinstance(value, dict):
+                        for operator, arg in value.items():
+                            if not self._get_operator_fn(operator)(
+                                field, arg, document
+                            ):
+                                matches.append(False)
+                                break
+                        else:
+                            matches.append(True)
+                    else:
+                        doc_value: Dict[str, Any] | None = document
+                        if doc_value and field in doc_value:
+                            doc_value = doc_value.get(field, None)
+                        else:
+                            for path in field.split("."):
+                                if not isinstance(doc_value, dict):
+                                    break
+                                doc_value = doc_value.get(path, None)
+                        if value != doc_value:
+                            matches.append(False)
         return all(matches)
 
     def _get_operator_fn(self, op: str) -> Any:
@@ -897,346 +899,347 @@ class QueryHelper:
 
         for i, stage in enumerate(pipeline):
             stage_name = next(iter(stage.keys()))
-            if stage_name == "$match":
-                query = stage["$match"]
-                where_result = self._build_simple_where_clause(query)
-                if where_result is None:
-                    return None  # Fallback for complex queries
-                where_clause, params = where_result
-            elif stage_name == "$sort":
-                sort_spec = stage["$sort"]
-                sort_clauses = []
-                for key, direction in sort_spec.items():
-                    # When sorting after a group stage, we sort by the output field name
-                    if group_by:
-                        sort_clauses.append(
-                            f"{key} {'DESC' if direction == DESCENDING else 'ASC'}"
-                        )
-                    else:
-                        sort_clauses.append(
-                            f"json_extract(data, '$.{key}') "
-                            f"{'DESC' if direction == DESCENDING else 'ASC'}"
-                        )
-                order_by = "ORDER BY " + ", ".join(sort_clauses)
-            elif stage_name == "$skip":
-                count = stage["$skip"]
-                offset = f"OFFSET {count}"
-            elif stage_name == "$limit":
-                count = stage["$limit"]
-                limit = f"LIMIT {count}"
-            elif stage_name == "$group":
-                # Check if this is a $unwind + $group pattern we can optimize
-                if i == 1 and "$unwind" in pipeline[0]:
-                    # $unwind followed by $group - try to optimize with SQL
-                    unwind_stage = pipeline[0]["$unwind"]
-                    group_spec = stage["$group"]
-
-                    if (
-                        isinstance(unwind_stage, str)
-                        and unwind_stage.startswith("$")
-                        and isinstance(group_spec.get("_id"), str)
-                        and group_spec.get("_id").startswith("$")
-                    ):
-
-                        unwind_field = unwind_stage[1:]  # Remove leading $
-                        group_id_field = group_spec["_id"][
-                            1:
-                        ]  # Remove leading $
-
-                        # Check if we can handle this specific group operation
-                        can_optimize = True
-                        select_expressions = []
-                        output_fields = ["_id"]
-
-                        # Handle _id field
-                        if group_id_field == unwind_field:
-                            # Grouping by the unwound field
-                            select_expressions.append(f"je.value AS _id")
-                            group_by_clause = "GROUP BY je.value"
+            match stage_name:
+                case "$match":
+                    query = stage["$match"]
+                    where_result = self._build_simple_where_clause(query)
+                    if where_result is None:
+                        return None  # Fallback for complex queries
+                    where_clause, params = where_result
+                case "$sort":
+                    sort_spec = stage["$sort"]
+                    sort_clauses = []
+                    for key, direction in sort_spec.items():
+                        # When sorting after a group stage, we sort by the output field name
+                        if group_by:
+                            sort_clauses.append(
+                                f"{key} {'DESC' if direction == DESCENDING else 'ASC'}"
+                            )
                         else:
-                            # Grouping by another field
-                            select_expressions.append(
-                                f"json_extract({self.collection.name}.data, '$.{group_id_field}') AS _id"
+                            sort_clauses.append(
+                                f"json_extract(data, '$.{key}') "
+                                f"{'DESC' if direction == DESCENDING else 'ASC'}"
                             )
-                            group_by_clause = f"GROUP BY json_extract({self.collection.name}.data, '$.{group_id_field}')"
+                    order_by = "ORDER BY " + ", ".join(sort_clauses)
+                case "$skip":
+                    count = stage["$skip"]
+                    offset = f"OFFSET {count}"
+                case "$limit":
+                    count = stage["$limit"]
+                    limit = f"LIMIT {count}"
+                case "$group":
+                    # Check if this is a $unwind + $group pattern we can optimize
+                    if i == 1 and "$unwind" in pipeline[0]:
+                        # $unwind followed by $group - try to optimize with SQL
+                        unwind_stage = pipeline[0]["$unwind"]
+                        group_spec = stage["$group"]
 
-                        # Handle accumulator operations
-                        for field, accumulator in group_spec.items():
-                            if field == "_id":
-                                continue
+                        if (
+                            isinstance(unwind_stage, str)
+                            and unwind_stage.startswith("$")
+                            and isinstance(group_spec.get("_id"), str)
+                            and group_spec.get("_id").startswith("$")
+                        ):
 
-                            if (
-                                not isinstance(accumulator, dict)
-                                or len(accumulator) != 1
-                            ):
-                                can_optimize = False
-                                break
+                            unwind_field = unwind_stage[1:]  # Remove leading $
+                            group_id_field = group_spec["_id"][
+                                1:
+                            ]  # Remove leading $
 
-                            op, expr = next(iter(accumulator.items()))
+                            # Check if we can handle this specific group operation
+                            can_optimize = True
+                            select_expressions = []
+                            output_fields = ["_id"]
 
-                            if (
-                                op == "$sum"
-                                and isinstance(expr, int)
-                                and expr == 1
-                            ):
-                                # Count operation
-                                select_expressions.append(
-                                    f"COUNT(*) AS {field}"
-                                )
-                                output_fields.append(field)
-                            elif op == "$count":
-                                # Count operation
-                                select_expressions.append(
-                                    f"COUNT(*) AS {field}"
-                                )
-                                output_fields.append(field)
+                            # Handle _id field
+                            if group_id_field == unwind_field:
+                                # Grouping by the unwound field
+                                select_expressions.append(f"je.value AS _id")
+                                group_by_clause = "GROUP BY je.value"
                             else:
-                                # Unsupported operation, fallback to Python
-                                can_optimize = False
-                                break
-
-                        if can_optimize:
-                            # Build the optimized SQL query
-                            select_clause = "SELECT " + ", ".join(
-                                select_expressions
-                            )
-                            from_clause = f"FROM {self.collection.name}, json_each(json_extract({self.collection.name}.data, '$.{unwind_field}')) as je"
-
-                            # Add ordering by _id for consistent results
-                            order_by_clause = "ORDER BY _id"
-
-                            cmd = f"{select_clause} {from_clause} {group_by_clause} {order_by_clause}"
-                            return cmd, [], output_fields
-
-                # A group stage must be the first stage or after a match stage
-                if i > 1 or (i == 1 and "$match" not in pipeline[0]):
-                    return None
-                group_spec = stage["$group"]
-                group_result = self._build_group_query(group_spec)
-                if group_result is None:
-                    return None
-                select_clause, group_by, output_fields = group_result
-            elif stage_name == "$unwind":
-                # Check if this is part of an $unwind + $group pattern we can optimize
-                # Case 1: $unwind is first stage followed by $group
-                if i == 0 and len(pipeline) > 1 and "$group" in pipeline[1]:
-                    # $unwind followed by $group - try to optimize with SQL
-                    group_stage = pipeline[1]["$group"]
-                    unwind_field = stage["$unwind"]
-
-                    if (
-                        isinstance(unwind_field, str)
-                        and unwind_field.startswith("$")
-                        and isinstance(group_stage.get("_id"), str)
-                        and group_stage.get("_id").startswith("$")
-                    ):
-
-                        unwind_field_name = unwind_field[1:]  # Remove leading $
-                        group_id_field = group_stage["_id"][
-                            1:
-                        ]  # Remove leading $
-
-                        # Check if we can handle this specific group operation
-                        can_optimize = True
-                        select_expressions = []
-                        output_fields = ["_id"]
-
-                        # Handle _id field
-                        if group_id_field == unwind_field_name:
-                            # Grouping by the unwound field
-                            select_expressions.append(f"je.value AS _id")
-                            group_by_clause = "GROUP BY je.value"
-                        else:
-                            # Grouping by another field
-                            select_expressions.append(
-                                f"json_extract({self.collection.name}.data, '$.{group_id_field}') AS _id"
-                            )
-                            group_by_clause = f"GROUP BY json_extract({self.collection.name}.data, '$.{group_id_field}')"
-
-                        # Handle accumulator operations
-                        for field, accumulator in group_stage.items():
-                            if field == "_id":
-                                continue
-
-                            if (
-                                not isinstance(accumulator, dict)
-                                or len(accumulator) != 1
-                            ):
-                                can_optimize = False
-                                break
-
-                            op, expr = next(iter(accumulator.items()))
-
-                            if (
-                                op == "$sum"
-                                and isinstance(expr, int)
-                                and expr == 1
-                            ):
-                                # Count operation
+                                # Grouping by another field
                                 select_expressions.append(
-                                    f"COUNT(*) AS {field}"
+                                    f"json_extract({self.collection.name}.data, '$.{group_id_field}') AS _id"
                                 )
-                                output_fields.append(field)
-                            elif op == "$count":
-                                # Count operation
-                                select_expressions.append(
-                                    f"COUNT(*) AS {field}"
+                                group_by_clause = f"GROUP BY json_extract({self.collection.name}.data, '$.{group_id_field}')"
+
+                            # Handle accumulator operations
+                            for field, accumulator in group_spec.items():
+                                if field == "_id":
+                                    continue
+
+                                if (
+                                    not isinstance(accumulator, dict)
+                                    or len(accumulator) != 1
+                                ):
+                                    can_optimize = False
+                                    break
+
+                                op, expr = next(iter(accumulator.items()))
+
+                                if (
+                                    op == "$sum"
+                                    and isinstance(expr, int)
+                                    and expr == 1
+                                ):
+                                    # Count operation
+                                    select_expressions.append(
+                                        f"COUNT(*) AS {field}"
+                                    )
+                                    output_fields.append(field)
+                                elif op == "$count":
+                                    # Count operation
+                                    select_expressions.append(
+                                        f"COUNT(*) AS {field}"
+                                    )
+                                    output_fields.append(field)
+                                else:
+                                    # Unsupported operation, fallback to Python
+                                    can_optimize = False
+                                    break
+
+                            if can_optimize:
+                                # Build the optimized SQL query
+                                select_clause = "SELECT " + ", ".join(
+                                    select_expressions
                                 )
-                                output_fields.append(field)
-                            else:
-                                # Unsupported operation, fallback to Python
-                                can_optimize = False
-                                break
+                                from_clause = f"FROM {self.collection.name}, json_each(json_extract({self.collection.name}.data, '$.{unwind_field}')) as je"
 
-                        if can_optimize:
-                            # Build the optimized SQL query
-                            select_clause = "SELECT " + ", ".join(
-                                select_expressions
-                            )
-                            from_clause = f"FROM {self.collection.name}, json_each(json_extract({self.collection.name}.data, '$.{unwind_field_name}')) as je"
+                                # Add ordering by _id for consistent results
+                                order_by_clause = "ORDER BY _id"
 
-                            # Add ordering by _id for consistent results
-                            order_by_clause = "ORDER BY _id"
+                                cmd = f"{select_clause} {from_clause} {group_by_clause} {order_by_clause}"
+                                return cmd, [], output_fields
 
-                            cmd = f"{select_clause} {from_clause} {group_by_clause} {order_by_clause}"
-                            # Skip both the $unwind and $group stages
-                            i = 1  # Will be incremented to 2 by the loop
-                            return cmd, [], output_fields
-
-                # Case 2: $match followed by $unwind + $group
-                elif (
-                    i == 1
-                    and len(pipeline) > 2
-                    and "$match" in pipeline[0]
-                    and "$group" in pipeline[2]
-                ):
-                    # $match followed by $unwind followed by $group - try to optimize with SQL
-                    match_stage = pipeline[0]["$match"]
-                    group_stage = pipeline[2]["$group"]
-                    unwind_field = stage["$unwind"]
-
-                    if (
-                        isinstance(unwind_field, str)
-                        and unwind_field.startswith("$")
-                        and isinstance(group_stage.get("_id"), str)
-                        and group_stage.get("_id").startswith("$")
-                    ):
-
-                        unwind_field_name = unwind_field[1:]  # Remove leading $
-                        group_id_field = group_stage["_id"][
-                            1:
-                        ]  # Remove leading $
-
-                        # Check if we can handle this specific group operation
-                        can_optimize = True
-                        select_expressions = []
-                        output_fields = ["_id"]
-
-                        # Handle _id field
-                        if group_id_field == unwind_field_name:
-                            # Grouping by the unwound field
-                            select_expressions.append(f"je.value AS _id")
-                            group_by_clause = "GROUP BY je.value"
-                        else:
-                            # Grouping by another field
-                            select_expressions.append(
-                                f"json_extract({self.collection.name}.data, '$.{group_id_field}') AS _id"
-                            )
-                            group_by_clause = f"GROUP BY json_extract({self.collection.name}.data, '$.{group_id_field}')"
-
-                        # Handle accumulator operations
-                        for field, accumulator in group_stage.items():
-                            if field == "_id":
-                                continue
-
-                            if (
-                                not isinstance(accumulator, dict)
-                                or len(accumulator) != 1
-                            ):
-                                can_optimize = False
-                                break
-
-                            op, expr = next(iter(accumulator.items()))
-
-                            if (
-                                op == "$sum"
-                                and isinstance(expr, int)
-                                and expr == 1
-                            ):
-                                # Count operation
-                                select_expressions.append(
-                                    f"COUNT(*) AS {field}"
-                                )
-                                output_fields.append(field)
-                            elif op == "$count":
-                                # Count operation
-                                select_expressions.append(
-                                    f"COUNT(*) AS {field}"
-                                )
-                                output_fields.append(field)
-                            else:
-                                # Unsupported operation, fallback to Python
-                                can_optimize = False
-                                break
-
-                        if can_optimize:
-                            # Build the optimized SQL query with WHERE clause from $match
-                            select_clause = "SELECT " + ", ".join(
-                                select_expressions
-                            )
-                            from_clause = f"FROM {self.collection.name}, json_each(json_extract({self.collection.name}.data, '$.{unwind_field_name}')) as je"
-
-                            # Add WHERE clause from $match
-                            where_result = self._build_simple_where_clause(
-                                match_stage
-                            )
-                            if (
-                                where_result and where_result[0]
-                            ):  # Has WHERE clause
-                                where_clause = where_result[0]
-                                params = where_result[1]
-                            else:
-                                where_clause = ""
-                                params = []
-
-                            # Add ordering by _id for consistent results
-                            order_by_clause = "ORDER BY _id"
-
-                            cmd = f"{select_clause} {from_clause} {where_clause} {group_by_clause} {order_by_clause}"
-                            # Skip the $match, $unwind, and $group stages
-                            i = 2  # Will be incremented to 3 by the loop
-                            return cmd, params, output_fields
-
-                # Handle $unwind stages (original logic)
-                # Check if this is the first stage or follows a $match stage
-                valid_position = (i == 0) or (
-                    i == 1 and "$match" in pipeline[0]
-                )
-
-                # Check if there are multiple consecutive $unwind stages
-                unwind_stages = []
-                j = i
-                while j < len(pipeline) and "$unwind" in pipeline[j]:
-                    unwind_stages.append(pipeline[j]["$unwind"])
-                    j += 1
-
-                # If we have valid positioning and at least one $unwind stage
-                if valid_position and unwind_stages:
-                    result = self._build_unwind_query(
-                        i, pipeline, unwind_stages
-                    )
-                    if result:
-                        cmd, params, output_fields = result
-                        # Skip all processed stages
-                        i = len(pipeline)
-                        return cmd, params, output_fields
-                    else:
+                    # A group stage must be the first stage or after a match stage
+                    if i > 1 or (i == 1 and "$match" not in pipeline[0]):
                         return None
-                elif unwind_stages:
-                    # $unwind not in valid position or complex case - fallback to Python
-                    return None
-            else:
-                return None  # Fallback for unsupported stages
+                    group_spec = stage["$group"]
+                    group_result = self._build_group_query(group_spec)
+                    if group_result is None:
+                        return None
+                    select_clause, group_by, output_fields = group_result
+                case "$unwind":
+                    # Check if this is part of an $unwind + $group pattern we can optimize
+                    # Case 1: $unwind is first stage followed by $group
+                    if i == 0 and len(pipeline) > 1 and "$group" in pipeline[1]:
+                        # $unwind followed by $group - try to optimize with SQL
+                        group_stage = pipeline[1]["$group"]
+                        unwind_field = stage["$unwind"]
+
+                        if (
+                            isinstance(unwind_field, str)
+                            and unwind_field.startswith("$")
+                            and isinstance(group_stage.get("_id"), str)
+                            and group_stage.get("_id").startswith("$")
+                        ):
+
+                            unwind_field_name = unwind_field[1:]  # Remove leading $
+                            group_id_field = group_stage["_id"][
+                                1:
+                            ]  # Remove leading $
+
+                            # Check if we can handle this specific group operation
+                            can_optimize = True
+                            select_expressions = []
+                            output_fields = ["_id"]
+
+                            # Handle _id field
+                            if group_id_field == unwind_field_name:
+                                # Grouping by the unwound field
+                                select_expressions.append(f"je.value AS _id")
+                                group_by_clause = "GROUP BY je.value"
+                            else:
+                                # Grouping by another field
+                                select_expressions.append(
+                                    f"json_extract({self.collection.name}.data, '$.{group_id_field}') AS _id"
+                                )
+                                group_by_clause = f"GROUP BY json_extract({self.collection.name}.data, '$.{group_id_field}')"
+
+                            # Handle accumulator operations
+                            for field, accumulator in group_stage.items():
+                                if field == "_id":
+                                    continue
+
+                                if (
+                                    not isinstance(accumulator, dict)
+                                    or len(accumulator) != 1
+                                ):
+                                    can_optimize = False
+                                    break
+
+                                op, expr = next(iter(accumulator.items()))
+
+                                if (
+                                    op == "$sum"
+                                    and isinstance(expr, int)
+                                    and expr == 1
+                                ):
+                                    # Count operation
+                                    select_expressions.append(
+                                        f"COUNT(*) AS {field}"
+                                    )
+                                    output_fields.append(field)
+                                elif op == "$count":
+                                    # Count operation
+                                    select_expressions.append(
+                                        f"COUNT(*) AS {field}"
+                                    )
+                                    output_fields.append(field)
+                                else:
+                                    # Unsupported operation, fallback to Python
+                                    can_optimize = False
+                                    break
+
+                            if can_optimize:
+                                # Build the optimized SQL query
+                                select_clause = "SELECT " + ", ".join(
+                                    select_expressions
+                                )
+                                from_clause = f"FROM {self.collection.name}, json_each(json_extract({self.collection.name}.data, '$.{unwind_field_name}')) as je"
+
+                                # Add ordering by _id for consistent results
+                                order_by_clause = "ORDER BY _id"
+
+                                cmd = f"{select_clause} {from_clause} {group_by_clause} {order_by_clause}"
+                                # Skip both the $unwind and $group stages
+                                i = 1  # Will be incremented to 2 by the loop
+                                return cmd, [], output_fields
+
+                    # Case 2: $match followed by $unwind + $group
+                    elif (
+                        i == 1
+                        and len(pipeline) > 2
+                        and "$match" in pipeline[0]
+                        and "$group" in pipeline[2]
+                    ):
+                        # $match followed by $unwind followed by $group - try to optimize with SQL
+                        match_stage = pipeline[0]["$match"]
+                        group_stage = pipeline[2]["$group"]
+                        unwind_field = stage["$unwind"]
+
+                        if (
+                            isinstance(unwind_field, str)
+                            and unwind_field.startswith("$")
+                            and isinstance(group_stage.get("_id"), str)
+                            and group_stage.get("_id").startswith("$")
+                        ):
+
+                            unwind_field_name = unwind_field[1:]  # Remove leading $
+                            group_id_field = group_stage["_id"][
+                                1:
+                            ]  # Remove leading $
+
+                            # Check if we can handle this specific group operation
+                            can_optimize = True
+                            select_expressions = []
+                            output_fields = ["_id"]
+
+                            # Handle _id field
+                            if group_id_field == unwind_field_name:
+                                # Grouping by the unwound field
+                                select_expressions.append(f"je.value AS _id")
+                                group_by_clause = "GROUP BY je.value"
+                            else:
+                                # Grouping by another field
+                                select_expressions.append(
+                                    f"json_extract({self.collection.name}.data, '$.{group_id_field}') AS _id"
+                                )
+                                group_by_clause = f"GROUP BY json_extract({self.collection.name}.data, '$.{group_id_field}')"
+
+                            # Handle accumulator operations
+                            for field, accumulator in group_stage.items():
+                                if field == "_id":
+                                    continue
+
+                                if (
+                                    not isinstance(accumulator, dict)
+                                    or len(accumulator) != 1
+                                ):
+                                    can_optimize = False
+                                    break
+
+                                op, expr = next(iter(accumulator.items()))
+
+                                if (
+                                    op == "$sum"
+                                    and isinstance(expr, int)
+                                    and expr == 1
+                                ):
+                                    # Count operation
+                                    select_expressions.append(
+                                        f"COUNT(*) AS {field}"
+                                    )
+                                    output_fields.append(field)
+                                elif op == "$count":
+                                    # Count operation
+                                    select_expressions.append(
+                                        f"COUNT(*) AS {field}"
+                                    )
+                                    output_fields.append(field)
+                                else:
+                                    # Unsupported operation, fallback to Python
+                                    can_optimize = False
+                                    break
+
+                            if can_optimize:
+                                # Build the optimized SQL query with WHERE clause from $match
+                                select_clause = "SELECT " + ", ".join(
+                                    select_expressions
+                                )
+                                from_clause = f"FROM {self.collection.name}, json_each(json_extract({self.collection.name}.data, '$.{unwind_field_name}')) as je"
+
+                                # Add WHERE clause from $match
+                                where_result = self._build_simple_where_clause(
+                                    match_stage
+                                )
+                                if (
+                                    where_result and where_result[0]
+                                ):  # Has WHERE clause
+                                    where_clause = where_result[0]
+                                    params = where_result[1]
+                                else:
+                                    where_clause = ""
+                                    params = []
+
+                                # Add ordering by _id for consistent results
+                                order_by_clause = "ORDER BY _id"
+
+                                cmd = f"{select_clause} {from_clause} {where_clause} {group_by_clause} {order_by_clause}"
+                                # Skip the $match, $unwind, and $group stages
+                                i = 2  # Will be incremented to 3 by the loop
+                                return cmd, params, output_fields
+
+                    # Handle $unwind stages (original logic)
+                    # Check if this is the first stage or follows a $match stage
+                    valid_position = (i == 0) or (
+                        i == 1 and "$match" in pipeline[0]
+                    )
+
+                    # Check if there are multiple consecutive $unwind stages
+                    unwind_stages = []
+                    j = i
+                    while j < len(pipeline) and "$unwind" in pipeline[j]:
+                        unwind_stages.append(pipeline[j]["$unwind"])
+                        j += 1
+
+                    # If we have valid positioning and at least one $unwind stage
+                    if valid_position and unwind_stages:
+                        result = self._build_unwind_query(
+                            i, pipeline, unwind_stages
+                        )
+                        if result:
+                            cmd, params, output_fields = result
+                            # Skip all processed stages
+                            i = len(pipeline)
+                            return cmd, params, output_fields
+                        else:
+                            return None
+                    elif unwind_stages:
+                        # $unwind not in valid position or complex case - fallback to Python
+                        return None
+                case _:
+                    return None  # Fallback for unsupported stages
 
         cmd = f"{select_clause} FROM {self.collection.name} {where_clause} {group_by} {order_by} {limit} {offset}"
         return cmd, params, output_fields
@@ -1611,19 +1614,20 @@ class QueryHelper:
 
                 value = self.collection._get_val(doc, key)
 
-                if op == "$sum":
-                    group[field] = (group.get(field, 0) or 0) + (value or 0)
-                elif op == "$avg":
-                    avg_info = group.get(field, {"sum": 0, "count": 0})
-                    avg_info["sum"] += value or 0
-                    avg_info["count"] += 1
-                    group[field] = avg_info
-                elif op == "$min":
-                    group[field] = min(group.get(field, value), value)
-                elif op == "$max":
-                    group[field] = max(group.get(field, value), value)
-                elif op == "$push":
-                    group.setdefault(field, []).append(value)
+                match op:
+                    case "$sum":
+                        group[field] = (group.get(field, 0) or 0) + (value or 0)
+                    case "$avg":
+                        avg_info = group.get(field, {"sum": 0, "count": 0})
+                        avg_info["sum"] += value or 0
+                        avg_info["count"] += 1
+                        group[field] = avg_info
+                    case "$min":
+                        group[field] = min(group.get(field, value), value)
+                    case "$max":
+                        group[field] = max(group.get(field, value), value)
+                    case "$push":
+                        group.setdefault(field, []).append(value)
 
         # Finalize results (e.g., calculate average)
         for group in grouped_docs.values():
