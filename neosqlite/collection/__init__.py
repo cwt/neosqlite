@@ -193,14 +193,12 @@ class Collection:
             ]
 
             # Get row count
-            count_row = self.db.execute(
+            if count_row := self.db.execute(
                 f"SELECT COUNT(*) FROM {self.name}"
-            ).fetchone()
-            options["count"] = (
-                int(count_row[0])
-                if count_row and count_row[0] is not None
-                else 0
-            )
+            ).fetchone():
+                options["count"] = int(count_row[0]) if count_row[0] is not None else 0
+            else:
+                options["count"] = 0
 
         except sqlite3.Error:
             # If we can't get detailed information, return basic info
@@ -502,18 +500,20 @@ class Collection:
         """
         match type:
             case "table":
-                row = self.db.execute(
+                if row := self.db.execute(
                     "SELECT COUNT(1) FROM sqlite_master WHERE type = ? AND name = ?",
                     (type, name.strip("[]")),
-                ).fetchone()
-                return bool(row and int(row[0]) > 0)
+                ).fetchone():
+                    return int(row[0]) > 0
+                return False
             case "index":
                 # For indexes, check if it exists with our naming convention
-                row = self.db.execute(
+                if row := self.db.execute(
                     "SELECT COUNT(1) FROM sqlite_master WHERE type = ? AND name = ?",
                     (type, name),
-                ).fetchone()
-                return bool(row and int(row[0]) > 0)
+                ).fetchone():
+                    return int(row[0]) > 0
+                return False
             case _:
                 return False
 

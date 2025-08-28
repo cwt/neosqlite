@@ -190,7 +190,7 @@ def _mod(field: str, value: List[int], document: Dict[str, Any]) -> bool:
             "'$mod' must accept an iterable: [divisor, remainder]"
         )
     try:
-        val = document.get(field, None)
+        val = document.get(field)
         if val is None:
             return False
         return int(val) % divisor == remainder
@@ -210,12 +210,9 @@ def _exists(field: str, value: bool, document: Dict[str, Any]) -> bool:
     Returns:
         bool: True if the field exists (if value is True), or does not exist (if value is False), False otherwise.
     """
-    if value not in (True, False):
+    if not isinstance(value, bool):
         raise MalformedQueryException("'$exists' must be supplied a boolean")
-    if value:
-        return field in document
-    else:
-        return field not in document
+    return (field in document) if value else (field not in document)
 
 
 def _regex(field: str, value: str, document: Dict[str, Any]) -> bool:

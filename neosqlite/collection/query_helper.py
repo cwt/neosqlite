@@ -203,10 +203,9 @@ class QueryHelper:
             raise RuntimeError("No valid operations to perform")
 
         # Fetch and return the updated document
-        row = self.collection.db.execute(
+        if row := self.collection.db.execute(
             f"SELECT data FROM {self.collection.name} WHERE id = ?", (doc_id,)
-        ).fetchone()
-        if row:
+        ).fetchone():
             return self.collection._load(doc_id, row[0])
 
         # This shouldn't happen, but just in case

@@ -84,8 +84,7 @@ class QueryEngine:
                           including the count of matched and modified documents,
                           and the upserted ID if applicable.
         """
-        doc = self.find_one(filter)
-        if doc:
+        if doc := self.find_one(filter):
             self.helpers._internal_update(doc["_id"], update, doc)
             return UpdateResult(
                 matched_count=1, modified_count=1, upserted_id=None
@@ -164,8 +163,7 @@ class QueryEngine:
             DeleteResult: A result object indicating whether the deletion was
                           successful or not.
         """
-        doc = self.find_one(filter)
-        if doc:
+        if doc := self.find_one(filter):
             self.helpers._internal_delete(doc["_id"])
             return DeleteResult(deleted_count=1)
         return DeleteResult(deleted_count=0)
@@ -221,8 +219,7 @@ class QueryEngine:
             UpdateResult: A result object containing the number of matched and
                           modified documents and the upserted ID.
         """
-        doc = self.find_one(filter)
-        if doc:
+        if doc := self.find_one(filter):
             self.helpers._internal_replace(doc["_id"], replacement)
             return UpdateResult(
                 matched_count=1, modified_count=1, upserted_id=None
@@ -331,8 +328,7 @@ class QueryEngine:
             Dict[str, Any] | None: The document that was deleted,
                                    or None if no document matches.
         """
-        doc = self.find_one(filter)
-        if doc:
+        if doc := self.find_one(filter):
             self.delete_one({"_id": doc["_id"]})
         return doc
 
@@ -356,8 +352,7 @@ class QueryEngine:
             Dict[str, Any] | None: The original document that was replaced,
                                    or None if no document was found and replaced.
         """
-        doc = self.find_one(filter)
-        if doc:
+        if doc := self.find_one(filter):
             self.replace_one({"_id": doc["_id"]}, replacement)
         return doc
 
@@ -380,8 +375,7 @@ class QueryEngine:
             Dict[str, Any] | None: The document that was updated,
                                    or None if no document was found and updated.
         """
-        doc = self.find_one(filter)
-        if doc:
+        if doc := self.find_one(filter):
             self.update_one({"_id": doc["_id"]}, update)
         return doc
 
