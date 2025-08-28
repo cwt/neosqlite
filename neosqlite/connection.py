@@ -152,7 +152,15 @@ class Connection:
             raise
 
     def __del__(self):
-        """Ensure the database connection is closed when the object is garbage collected."""
+        """
+        Ensure the database connection is closed when the object is garbage collected.
+
+        This method attempts to close the database connection when the Connection
+        object is being garbage collected. It checks if the connection exists and
+        is not already closed before attempting to close it. Any exceptions during
+        this process are caught and ignored to prevent crashes during garbage
+        collection.
+        """
         try:
             if hasattr(self, "db") and self.db is not None:
                 # Only close if it's not already closed
