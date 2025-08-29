@@ -1217,25 +1217,42 @@ class QueryHelper:
 
                     # Check if there are multiple consecutive $unwind stages
                     unwind_stages = []
+                    unwind_specs = []
                     j = i
+                    has_advanced_options = False
                     while j < len(pipeline) and "$unwind" in pipeline[j]:
-                        unwind_stages.append(pipeline[j]["$unwind"])
+                        unwind_spec = pipeline[j]["$unwind"]
+                        unwind_specs.append(unwind_spec)
+                        # Check if this unwind stage has advanced options
+                        if isinstance(unwind_spec, dict) and (
+                            "includeArrayIndex" in unwind_spec or
+                            "preserveNullAndEmptyArrays" in unwind_spec
+                        ):
+                            has_advanced_options = True
+                        # Extract the path for backward compatibility
+                        if isinstance(unwind_spec, str):
+                            unwind_stages.append(unwind_spec)
+                        elif isinstance(unwind_spec, dict):
+                            unwind_stages.append(unwind_spec["path"])
+                        else:
+                            return None  # Invalid unwind specification
                         j += 1
 
                     # If we have valid positioning and at least one $unwind stage
-                    if valid_position and unwind_stages:
+                    # Note: Advanced options require fallback to Python implementation for now
+                    if valid_position and unwind_stages and not has_advanced_options:
                         result = self._build_unwind_query(
                             i, pipeline, unwind_stages
                         )
                         if result:
                             cmd, params, output_fields = result
                             # Skip all processed stages
-                            i = len(pipeline)
+                            i = j - 1  # Set to the last processed stage index
                             return cmd, params, output_fields
                         else:
                             return None
                     elif unwind_stages:
-                        # $unwind not in valid position or complex case - fallback to Python
+                        # $unwind not in valid position, has advanced options, or complex case - fallback to Python
                         return None
                 case "$lookup":
                     # Check if this is the last stage in the pipeline

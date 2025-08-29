@@ -92,6 +92,28 @@ ORDER BY _id
 - Implements parent-child relationship detection to properly construct SQL joins
 - See [NESTED_ARRAY_UNWIND.md](NESTED_ARRAY_UNWIND.md) for a detailed explanation.
 
+### 5. Advanced $unwind Options
+
+**Feature**: Support for `includeArrayIndex` and `preserveNullAndEmptyArrays` options in `$unwind` operations.
+
+**Implementation**:
+- `includeArrayIndex`: Adds the array index as a field in the unwound documents
+- `preserveNullAndEmptyArrays`: Preserves documents with null values and empty arrays when set to `True`
+- Works with both simple and nested array unwinding
+- Combines seamlessly with existing SQL-optimized `$unwind` operations
+- See [ADVANCED_UNWIND_OPTIONS.md](ADVANCED_UNWIND_OPTIONS.md) for detailed documentation.
+
+**Example**:
+```python
+pipeline = [
+    {"$unwind": {
+        "path": "$orders.items",
+        "includeArrayIndex": "itemIndex",
+        "preserveNullAndEmptyArrays": True
+    }}
+]
+```
+
 **Example**:
 ```python
 pipeline = [

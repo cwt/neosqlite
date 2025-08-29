@@ -96,6 +96,32 @@ class Collection:
             val = val.get(k)
         return val
 
+    def _set_val(self, item: Dict[str, Any], key: str, value: Any) -> None:
+        """
+        Sets a value in a dictionary using a key, handling nested keys and
+        optional prefixes.
+
+        Args:
+            item (Dict[str, Any]): The dictionary to modify.
+            key (str): The key to set, may include nested keys separated by dots
+                       or may be prefixed with \'$.
+            value (Any): The value to set.
+        """
+        if key.startswith("$"):
+            key = key[1:]
+
+        keys = key.split(".")
+        current = item
+
+        # Navigate to the parent of the target key
+        for k in keys[:-1]:
+            if k not in current or not isinstance(current[k], dict):
+                current[k] = {}
+            current = current[k]
+
+        # Set the value at the target key
+        current[keys[-1]] = value
+
     # --- Collection methods ---
     def create(self):
         """

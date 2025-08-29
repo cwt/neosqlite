@@ -16,6 +16,7 @@ from neosqlite.collection.json_helpers import (
     neosqlite_json_loads,
 )
 from typing import Any, Dict, List
+from copy import deepcopy
 import json
 
 
@@ -516,18 +517,71 @@ class QueryEngine:
                     group_spec = stage["$group"]
                     docs = self.helpers._process_group_stage(group_spec, docs)
                 case "$unwind":
-                    field = stage["$unwind"]
+                    # Handle both string and object forms of $unwind
+                    unwind_spec = stage["$unwind"]
+                    if isinstance(unwind_spec, str):
+                        # Legacy string form
+                        field_path = unwind_spec.lstrip("$")
+                        include_array_index = None
+                        preserve_null_and_empty = False
+                    elif isinstance(unwind_spec, dict):
+                        # New object form with advanced options
+                        field_path = unwind_spec["path"].lstrip("$")
+                        include_array_index = unwind_spec.get("includeArrayIndex")
+                        preserve_null_and_empty = unwind_spec.get("preserveNullAndEmptyArrays", False)
+                    else:
+                        raise MalformedQueryException(f"Invalid $unwind specification: {unwind_spec}")
+
                     unwound_docs = []
-                    field_name = field.lstrip("$")
                     for doc in docs:
-                        array_to_unwind = self.collection._get_val(doc, field_name)
+                        array_to_unwind = self.collection._get_val(doc, field_path)
+
+                        # For nested fields, check if parent exists
+                        # If parent is None or missing and we're trying to unwind a nested field,
+                        # don't process this document
+                        field_parts = field_path.split(".")
+                        process_document = True
+                        if len(field_parts) > 1:
+                            # This is a nested field
+                            parent_path = ".".join(field_parts[:-1])
+                            parent_value = self.collection._get_val(doc, parent_path)
+                            if parent_value is None:
+                                # Parent is None or missing, don't process this document
+                                process_document = False
+
+                        if not process_document:
+                            continue
+
                         if isinstance(array_to_unwind, list):
-                            for item in array_to_unwind:
-                                new_doc = doc.copy()
-                                new_doc[field_name] = item
+                            # Handle array values
+                            if array_to_unwind:
+                                # Non-empty array - unwind normally
+                                for idx, item in enumerate(array_to_unwind):
+                                    new_doc = deepcopy(doc)
+                                    self.collection._set_val(new_doc, field_path, item)
+                                    # Add array index if requested
+                                    if include_array_index:
+                                        new_doc[include_array_index] = idx
+                                    unwound_docs.append(new_doc)
+                            elif preserve_null_and_empty:
+                                # Empty array but preserve is requested
+                                new_doc = deepcopy(doc)
+                                self.collection._set_val(new_doc, field_path, None)
+                                # Add array index if requested
+                                if include_array_index:
+                                    new_doc[include_array_index] = None
                                 unwound_docs.append(new_doc)
-                        else:
-                            unwound_docs.append(doc)
+                            # If empty array and preserve is False, don't add any documents
+                        elif not isinstance(array_to_unwind, list) and field_path in doc and preserve_null_and_empty:
+                            # Non-array value (None, string, number, etc.) that exists in the document and preserve is requested
+                            new_doc = deepcopy(doc)
+                            # Keep the value as-is
+                            # Add array index if requested
+                            if include_array_index:
+                                new_doc[include_array_index] = None
+                            unwound_docs.append(new_doc)
+                        # Missing fields (field_path not in doc) are never preserved
+                        # Default case: non-array values are ignored unless they exist and preserveNullAndEmptyArrays is True
                     docs = unwound_docs
                 case "$lookup":
                     # Python fallback implementation for $lookup

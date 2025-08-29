@@ -117,14 +117,36 @@ GROUP BY json_extract(collection.data, '$.category')
 ]
 ```
 
-## Planned Enhancements 📋
+## Completed Enhancements ✅
 
 ### 8. Advanced $unwind Options
-**Status**: 📋 Backlog
+**Status**: ✅ Completed
 **Description**: Support for additional $unwind options
 **Features**:
 - `includeArrayIndex`: Include the array index in the unwound documents
 - `preserveNullAndEmptyArrays`: Preserve null and empty arrays in the output
+
+**Implementation Details**:
+- Supports both options individually and in combination
+- Works with nested array unwinding
+- Maintains backward compatibility with traditional string-based $unwind syntax
+- Properly handles edge cases like null values, empty arrays, and missing fields
+- See [ADVANCED_UNWIND_OPTIONS.md](ADVANCED_UNWIND_OPTIONS.md) for detailed documentation
+
+**Example Usage**:
+```python
+[
+  {"$unwind": {
+    "path": "$scores",
+    "includeArrayIndex": "scoreIndex",
+    "preserveNullAndEmptyArrays": True
+  }}
+]
+```
+
+**Performance Notes**:
+- Advanced options are implemented in Python rather than SQL for flexibility
+- For large datasets, consider if advanced options are necessary or if default behavior suffices
 
 ### 9. Advanced Index-Aware Optimization
 **Status**: 📋 Backlog
@@ -216,7 +238,7 @@ GROUP BY json_extract(collection.data, '$.category')
 
 ## Implementation Priority
 
-### High Priority (Next)
+### Completed
 1. Advanced $unwind Options
 2. Additional Group Operations
 
