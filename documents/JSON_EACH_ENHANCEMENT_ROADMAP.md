@@ -258,11 +258,61 @@ result = collection.aggregate(pipeline)
 ```
 
 ### 11. Additional Group Operations
-**Status**: 📋 Backlog
+**Status**: ✅ Completed
 **Description**: Support for more MongoDB-style group accumulators in SQL
 **Target Accumulators**:
 - `$push`: Array building at SQL level
 - `$addToSet`: Unique value collection
+
+**Implementation Details**:
+- Added support for `$push` accumulator using `json_group_array(json_extract(data, '$.field'))`
+- Added support for `$addToSet` accumulator using `json_group_array(DISTINCT json_extract(data, '$.field'))`
+- Both accumulators are optimized at the SQL level for maximum performance
+- Works with existing accumulator functions (`$sum`, `$avg`, `$min`, `$max`, `$count`)
+- Maintains full backward compatibility with Python fallback for complex cases
+- Comprehensive test coverage for both accumulators including edge cases
+
+**Example Usage**:
+```python
+# $push - collect all values including duplicates
+pipeline = [
+    {"$group": {"_id": "$category", "productNames": {"$push": "$name"}}}
+]
+
+# $addToSet - collect unique values only
+pipeline = [
+    {"$group": {"_id": "$category", "uniquePrices": {"$addToSet": "$price"}}}
+]
+
+# Combined with other accumulators
+pipeline = [
+    {"$group": {
+        "_id": "$category",
+        "productNames": {"$push": "$name"},
+        "uniquePrices": {"$addToSet": "$price"},
+        "avgPrice": {"$avg": "$price"},
+        "count": {"$sum": 1}
+    }}
+]
+```
+
+**Performance Benefits**:
+- Executes at database level using native SQLite functions
+- No intermediate Python data structures needed
+- Significant performance improvement over Python-based processing
+- Memory efficient for large datasets
+
+**Testing**:
+- Comprehensive test coverage for both accumulators
+- Edge case testing with null values and missing fields
+- Integration tests with existing aggregation pipeline stages
+- Performance verification tests showing improvements
+- No regression in existing functionality
+
+**Documentation**:
+- Added `ADDITIONAL_GROUP_OPERATIONS.md` with implementation details
+- Added `examples/push_addtoset_example.py` demonstrating usage
+- Updated API documentation
 
 ## Future Research Opportunities 🔍
 

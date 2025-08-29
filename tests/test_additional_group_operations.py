@@ -53,7 +53,7 @@ def test_group_stage_with_add_to_set_accumulator():
             {"category": "A", "tag": "javascript"},
             {"category": "B", "tag": "python"},
             {"category": "A", "tag": "python"},  # Duplicate
-            {"category": "B", "tag": "java"},    # Duplicate
+            {"category": "B", "tag": "java"},  # Duplicate
             {"category": "A", "tag": "go"},
         ]
         collection.insert_many(docs)
@@ -115,9 +115,19 @@ def test_group_stage_with_push_and_other_accumulators():
 
         assert len(result) == 2
         # Category A should have names ["first", "third"], total 40, count 2
-        assert {"_id": "A", "names": ["first", "third"], "total": 40, "count": 2} in result
+        assert {
+            "_id": "A",
+            "names": ["first", "third"],
+            "total": 40,
+            "count": 2,
+        } in result
         # Category B should have names ["second", "fourth"], total 60, count 2
-        assert {"_id": "B", "names": ["second", "fourth"], "total": 60, "count": 2} in result
+        assert {
+            "_id": "B",
+            "names": ["second", "fourth"],
+            "total": 60,
+            "count": 2,
+        } in result
 
         # Sort by category for consistent ordering
         result.sort(key=lambda x: x["_id"])

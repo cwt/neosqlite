@@ -29,7 +29,7 @@ The enhanced implementation:
 
 1. **Pattern Detection**: Scans the pipeline to identify `$unwind` + `$group` patterns
 2. **SQL Generation**: Creates optimized SQL that combines `json_each()` with `GROUP BY`
-3. **Accumulator Support**: Supports `$sum` (with value 1) and `$count` accumulators
+3. **Accumulator Support**: Supports `$sum` (with value 1), `$count`, `$avg`, `$min`, `$max`, `$push`, and `$addToSet` accumulators
 4. **Field Grouping**: Supports grouping by the unwound field or other document fields
 5. **WHERE Clause Integration**: Incorporates `$match` filters when present
 
@@ -39,7 +39,7 @@ The enhanced implementation:
 2. **`$match` + `$unwind` + `$group`** (newly enhanced)
 3. **Grouping by unwound field** (e.g., `{"_id": "$tags"}`)
 4. **Grouping by other fields** (e.g., `{"_id": "$category"}`)
-5. **Multiple accumulator functions**: `$sum` (with value 1), `$count`, `$avg`, `$min`, and `$max`
+5. **Multiple accumulator functions**: `$sum` (with value 1), `$count`, `$avg`, `$min`, `$max`, `$push`, and `$addToSet`
 
 ### Performance Benefits
 

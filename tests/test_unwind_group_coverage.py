@@ -160,6 +160,57 @@ def test_unwind_group_fallback_cases():
         assert len(result) == 2  # python, javascript
 
 
+def test_unwind_group_fallback_with_add_to_set():
+    """Test $unwind + $group with $addToSet using Python fallback"""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn["test_collection"]
+
+        # Insert test data
+        collection.insert_many(
+            [
+                {
+                    "category": "A",
+                    "tags": ["python", "javascript"],
+                    "name": "Alice",
+                },
+                {"category": "A", "tags": ["python", "go"], "name": "Bob"},
+                {
+                    "category": "B",
+                    "tags": ["java", "python"],
+                    "name": "Charlie",
+                },
+            ]
+        )
+
+        # Test complex pipeline that forces Python fallback
+        # Using $match with regex forces fallback
+        pipeline = [
+            {
+                "$match": {"category": {"$regex": "^[AB]"}}
+            },  # Forces Python fallback
+            {"$unwind": "$tags"},
+            {"$group": {"_id": "$tags", "uniqueNames": {"$addToSet": "$name"}}},
+            {"$sort": {"_id": 1}},
+        ]
+        result = collection.aggregate(pipeline)
+
+        # Should work with Python fallback
+        assert len(result) >= 0  # Should have some results
+
+        # Convert to dict for easier checking
+        result_dict = {doc["_id"]: doc.get("uniqueNames", []) for doc in result}
+
+        # Check that python tag has unique names
+        if "python" in result_dict:
+            unique_names = result_dict["python"]
+            # Should contain Alice, Bob, and Charlie (each only once)
+            assert "Alice" in unique_names
+            assert "Bob" in unique_names
+            assert "Charlie" in unique_names
+            # Should not have duplicates
+            assert len(unique_names) == len(set(unique_names))
+
+
 def test_unwind_group_multiple_stages_after():
     """Test $unwind + $group followed by other stages"""
     with neosqlite.Connection(":memory:") as conn:

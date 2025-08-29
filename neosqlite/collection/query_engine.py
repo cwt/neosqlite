@@ -480,9 +480,9 @@ class QueryEngine:
                     for i, value in enumerate(row):
                         # If this field contains a JSON array string, parse it
                         # This handles $push and $addToSet results
-                        if (output_fields[i] != "_id" and 
-                            isinstance(value, str) and 
-                            value.startswith('[') and 
+                        if (output_fields[i] != "_id" and
+                            isinstance(value, str) and
+                            value.startswith('[') and
                             value.endswith(']')):
                             try:
                                 processed_row.append(neosqlite_json_loads(value))
