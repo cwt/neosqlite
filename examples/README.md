@@ -21,3 +21,8 @@ This example shows how to:
 Additional examples can be found in the root directory:
 - `api_comparison.py` - Compares neosqlite API with PyMongo
 - Various test scripts in the `tests/` directory
+
+## Index-Aware Optimization Examples
+
+- `advanced_index_aware_optimization.py` - Comprehensive example showing performance benefits
+- `simple_index_aware_optimization.py` - Basic example demonstrating automatic index usage

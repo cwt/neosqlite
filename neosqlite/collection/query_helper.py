@@ -6,7 +6,7 @@ from neosqlite.collection.json_helpers import (
     neosqlite_json_dumps,
     neosqlite_json_dumps_for_sql,
 )
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     from pysqlite3 import dbapi2 as sqlite3
@@ -523,6 +523,72 @@ class QueryHelper:
         """
         return where_clause, params
 
+    def _get_indexed_fields(self) -> List[str]:
+        """
+        Get a list of indexed fields for this collection.
+
+        Returns:
+            List[str]: A list of field names that have indexes.
+        """
+        # Get indexes that match our naming convention
+        cmd = (
+            "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE ?"
+        )
+        like_pattern = f"idx_{self.collection.name}_%"
+        indexes = self.collection.db.execute(
+            cmd, (like_pattern,)
+        ).fetchall()
+
+        indexed_fields = []
+        for idx in indexes:
+            # Extract key name from index name (idx_collection_key -> key)
+            key_name = idx[0][len(f"idx_{self.collection.name}_") :]
+            # Convert underscores back to dots for nested keys
+            key_name = key_name.replace("_", ".")
+            indexed_fields.append(key_name)
+
+        return indexed_fields
+
+    def _estimate_query_cost(self, query: Dict[str, Any]) -> float:
+        """
+        Estimate the cost of executing a query based on index availability.
+
+        Lower cost values indicate more efficient queries.
+
+        Args:
+            query (Dict[str, Any]): A dictionary representing the query criteria.
+
+        Returns:
+            float: Estimated cost of the query (lower is better).
+        """
+        # Get indexed fields
+        indexed_fields = self._get_indexed_fields()
+
+        # Base cost
+        cost = 1.0
+
+        # Check if we can use indexes for any fields in the query
+        for field, value in query.items():
+            if field in ("$and", "$or", "$nor", "$not"):
+                # Handle logical operators recursively
+                if isinstance(value, list):
+                    for subquery in value:
+                        if isinstance(subquery, dict):
+                            cost *= self._estimate_query_cost(subquery)
+                elif isinstance(value, dict):
+                    cost *= self._estimate_query_cost(value)
+            elif field == "_id":
+                # _id field is always indexed (it's a column)
+                cost *= 0.1  # Very low cost for _id queries
+            elif field in indexed_fields:
+                # Field is indexed, reduce cost
+                cost *= 0.3  # Lower cost when using an index
+            else:
+                # Field is not indexed, increase cost
+                cost *= 1.0  # No change for non-indexed fields
+
+        return cost
+
     def _build_simple_where_clause(
         self,
         query: Dict[str, Any],
@@ -895,6 +961,10 @@ class QueryHelper:
         group_by = ""
         select_clause = "SELECT id, data"
         output_fields: List[str] | None = None
+
+        # Check if we have any indexed fields that could be used for optimization
+        indexed_fields = self._get_indexed_fields()
+        has_indexes = len(indexed_fields) > 0
 
         for i, stage in enumerate(pipeline):
             stage_name = next(iter(stage.keys()))
@@ -1289,7 +1359,7 @@ class QueryHelper:
 
                     select_clause = f"SELECT {self.collection.name}.id, " \
                                    f"json_set({self.collection.name}.data, '$.\"{as_field}\"', " \
-                                   f"coalesce((" \
+                                   f"coalesce(( " \
                                    f"  SELECT json_group_array(json(related.data)) " \
                                    f"  FROM {from_collection} as related " \
                                    f"  WHERE {foreign_extract} = " \

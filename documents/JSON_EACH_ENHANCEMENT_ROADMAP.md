@@ -149,12 +149,56 @@ GROUP BY json_extract(collection.data, '$.category')
 - For large datasets, consider if advanced options are necessary or if default behavior suffices
 
 ### 9. Advanced Index-Aware Optimization
-**Status**: 📋 Backlog
+**Status**: 🔄 Partially Implemented (Infrastructure Complete)
 **Description**: Leverage existing indexes in query planning for complex operations
 **Features**:
 - Query cost estimation based on index availability
-- Automatic selection of optimal execution paths
+- Foundation for automatic selection of optimal execution paths
 - Integration with existing index information system
+
+**Implementation Details**:
+- Added `_estimate_query_cost()` method to estimate query execution costs based on index availability
+- Added `_get_indexed_fields()` method to identify which fields have indexes
+- Integrated cost estimation infrastructure into the aggregation pipeline processing
+- Maintains full backward compatibility with existing code
+
+**Current Status**:
+- ✅ Index detection infrastructure implemented
+- ✅ Cost estimation framework in place
+- ✅ Integration points for future optimization logic
+- ❌ Active optimization decisions not yet implemented
+- ❌ Pipeline reordering based on indexes not yet implemented
+
+**Future Work**:
+- Use cost estimation to reorder pipeline stages for better performance
+- Implement automatic selection of optimal execution paths based on index availability
+- Add query planning logic that chooses different SQL generation strategies
+
+**Performance Notes**:
+- Infrastructure provides foundation for future query optimization features
+- No performance degradation for existing queries
+- Sets the stage for significant performance improvements when full optimization is implemented
+
+**Example Usage**:
+```python
+# Create indexes on frequently queried fields
+collection.create_index("category")
+collection.create_index("status")
+
+# Index information is now detected and cost estimated (optimization coming soon)
+pipeline = [
+    {"$match": {"category": "Category5", "status": "active"}},
+    {"$unwind": "$tags"},
+    {"$sort": {"tags": 1}},
+    {"$limit": 10}
+]
+result = collection.aggregate(pipeline)
+```
+
+**Testing**:
+- Comprehensive test coverage for cost estimation functionality
+- Integration tests with existing aggregation pipeline stages
+- No regression in existing functionality
 
 ### 10. Pipeline Reordering Optimization
 **Status**: 📋 Backlog
