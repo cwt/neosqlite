@@ -13,6 +13,31 @@ try:
 except ImportError:
     import sqlite3  # type: ignore
 
+# Global flag to force fallback - for benchmarking and debugging
+_FORCE_FALLBACK = False
+
+def set_force_fallback(force=True):
+    """Set global flag to force all aggregation queries to use Python fallback.
+
+    This function is useful for benchmarking and debugging to compare performance
+    between the optimized SQL path and the Python fallback path.
+
+    Args:
+        force (bool): If True, forces all aggregation queries to use Python fallback.
+                     If False, allows normal optimization behavior.
+    """
+    global _FORCE_FALLBACK
+    _FORCE_FALLBACK = force
+
+def get_force_fallback():
+    """Get the current state of the force fallback flag.
+
+    Returns:
+        bool: True if fallback is forced, False otherwise.
+    """
+    global _FORCE_FALLBACK
+    return _FORCE_FALLBACK
+
 
 class QueryHelper:
     """
@@ -1140,6 +1165,11 @@ class QueryHelper:
                                           pipeline contains unsupported stages
                                           or complex queries.
         """
+        # Check if we should force fallback for benchmarking/debugging
+        global _FORCE_FALLBACK
+        if _FORCE_FALLBACK:
+            return None  # Force fallback to Python implementation
+
         # Try to optimize the pipeline by reordering for better index usage
         optimized_pipeline = self._reorder_pipeline_for_indexes(pipeline)
 
@@ -1318,6 +1348,10 @@ class QueryHelper:
 
                                 cmd = f"{select_clause} {from_clause} {group_by_clause} {order_by_clause}"
                                 return cmd, [], output_fields
+                            else:
+                                # If we can't optimize the $unwind + $group combination,
+                                # fall back to Python processing for the entire pipeline
+                                return None
 
                     # A group stage must be the first stage or after a match stage
                     if i > 1 or (i == 1 and "$match" not in pipeline[0]):
@@ -1451,6 +1485,10 @@ class QueryHelper:
                                 # Skip both the $unwind and $group stages
                                 i = 1  # Will be incremented to 2 by the loop
                                 return cmd, [], output_fields
+                            else:
+                                # If we can't optimize the $unwind + $group combination,
+                                # fall back to Python processing for the entire pipeline
+                                return None
 
                     # Case 2: $match followed by $unwind + $group
                     elif (
@@ -1593,6 +1631,10 @@ class QueryHelper:
                                 # Skip the $match, $unwind, and $group stages
                                 i = 2  # Will be incremented to 3 by the loop
                                 return cmd, params, output_fields
+                            else:
+                                # If we can't optimize the $unwind + $group combination,
+                                # fall back to Python processing for the entire pipeline
+                                return None
 
                     # Handle $unwind stages (original logic)
                     # Check if this is the first stage or follows a $match stage
@@ -2079,7 +2121,10 @@ class QueryHelper:
                                   accumulator operations.
         """
         grouped_docs: Dict[Any, Dict[str, Any]] = {}
-        group_id_key = group_query.pop("_id")
+        group_id_key = group_query.get("_id")
+
+        # Create a copy of group_query without _id for processing accumulator operations
+        accumulators = {k: v for k, v in group_query.items() if k != "_id"}
 
         for doc in docs:
             if group_id_key is None:
@@ -2088,14 +2133,27 @@ class QueryHelper:
                 group_id = self.collection._get_val(doc, group_id_key)
             group = grouped_docs.setdefault(group_id, {"_id": group_id})
 
-            for field, accumulator in group_query.items():
+            for field, accumulator in accumulators.items():
+                # Check if accumulator is a valid dictionary format
+                if not isinstance(accumulator, dict) or len(accumulator) != 1:
+                    # Invalid accumulator format, skip this field
+                    continue
+
                 op, key = next(iter(accumulator.items()))
 
                 if op == "$count":
                     group[field] = group.get(field, 0) + 1
                     continue
 
-                value = self.collection._get_val(doc, key)
+                # Handle literal values (e.g., $sum: 1 for counting)
+                if isinstance(key, (int, float)):
+                    value = key
+                elif isinstance(key, dict):
+                    # Complex expression like {"$multiply": [...]}, not supported in Python fallback
+                    # Skip this field
+                    continue
+                else:
+                    value = self.collection._get_val(doc, key)
 
                 match op:
                     case "$sum":
