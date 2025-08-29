@@ -26,3 +26,4 @@ Additional examples can be found in the root directory:
 
 - `advanced_index_aware_optimization.py` - Comprehensive example showing performance benefits
 - `simple_index_aware_optimization.py` - Basic example demonstrating automatic index usage
+- `pipeline_reordering_optimization.py` - Detailed example showing pipeline reordering optimization

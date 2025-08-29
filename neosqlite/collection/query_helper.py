@@ -589,6 +589,130 @@ class QueryHelper:
 
         return cost
 
+    def _estimate_pipeline_cost(self, pipeline: List[Dict[str, Any]]) -> float:
+        """
+        Estimate the total cost of executing an aggregation pipeline.
+
+        Lower cost values indicate more efficient pipelines.
+        This method considers data flow - earlier stages affect more documents.
+
+        Args:
+            pipeline (List[Dict[str, Any]]): A list of aggregation pipeline stages.
+
+        Returns:
+            float: Estimated cost of the pipeline (lower is better).
+        """
+        total_cost = 0.0
+        cumulative_multiplier = 1.0  # Represents how much data flows through each stage
+
+        for i, stage in enumerate(pipeline):
+            stage_name = next(iter(stage.keys()))
+            stage_cost = 0.0
+
+            match stage_name:
+                case "$match":
+                    # Estimate cost of match stage
+                    query = stage["$match"]
+                    stage_cost = self._estimate_query_cost(query)
+
+                    # Matches early in the pipeline are more beneficial because they reduce
+                    # the amount of data flowing to later stages
+                    stage_cost *= cumulative_multiplier
+
+                    # Update data flow multiplier based on selectivity
+                    # Assume matches reduce data by 50% on average
+                    cumulative_multiplier *= 0.5
+
+                case "$sort":
+                    # Sort operations have moderate cost, weighted by data volume
+                    stage_cost = 1.0 * cumulative_multiplier
+                case "$skip":
+                    # Skip operations have low cost
+                    stage_cost = 0.1 * cumulative_multiplier
+                case "$limit":
+                    # Limit operations have low cost but dramatically reduce data flow
+                    stage_cost = 0.1 * cumulative_multiplier
+
+                    # Limits significantly reduce data flow to subsequent stages
+                    cumulative_multiplier *= 0.1  # Assume limits reduce data by 90%
+
+                case "$group":
+                    # Group operations have high cost (require processing all data)
+                    stage_cost = 5.0 * cumulative_multiplier
+
+                    # Groups typically reduce data significantly
+                    cumulative_multiplier *= 0.2  # Assume groups reduce data by 80%
+
+                case "$unwind":
+                    # Unwind operations multiply the data size, increasing cost and data flow
+                    stage_cost = 2.0 * cumulative_multiplier
+
+                    # Unwinds increase data volume (assume 5x increase on average)
+                    cumulative_multiplier *= 5.0
+
+                case "$lookup":
+                    # Lookup operations have high cost (joins)
+                    stage_cost = 3.0 * cumulative_multiplier
+
+                    # Lookups may increase data slightly
+                    cumulative_multiplier *= 1.2
+
+                case _:
+                    # Unknown operations have moderate cost
+                    stage_cost = 1.5 * cumulative_multiplier
+
+                    # Assume unknown operations don't significantly change data volume
+                    # cumulative_multiplier stays the same
+
+            total_cost += stage_cost
+
+        return total_cost
+
+    def _optimize_match_pushdown(self, pipeline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Optimize pipeline by pushing $match stages down to earlier positions when beneficial.
+
+        This optimization moves $match stages earlier in the pipeline when they can
+        filter data before expensive operations like $unwind or $group.
+
+        Args:
+            pipeline (List[Dict[str, Any]]): The pipeline stages to optimize.
+
+        Returns:
+            List[Dict[str, Any]]: The optimized pipeline.
+        """
+        if len(pipeline) < 2:
+            return pipeline
+
+        # Look for patterns where we can push matches down
+        optimized = pipeline.copy()
+
+        # Find all $match stages
+        match_stages = []
+        other_stages = []
+
+        for i, stage in enumerate(optimized):
+            stage_name = next(iter(stage.keys()))
+            if stage_name == "$match":
+                match_stages.append((i, stage))
+            else:
+                other_stages.append((i, stage))
+
+        # If we have matches and expensive operations, consider reordering
+        expensive_ops = {"$unwind", "$group", "$lookup"}
+        has_expensive_ops = any(
+            next(iter(stage.keys())) in expensive_ops
+            for _, stage in other_stages
+        )
+
+        if match_stages and has_expensive_ops:
+            # Move matches to the front to filter early
+            match_stage_items = [stage for _, stage in match_stages]
+            other_stage_items = [stage for _, stage in other_stages]
+            return match_stage_items + other_stage_items
+
+        return optimized
+
     def _build_simple_where_clause(
         self,
         query: Dict[str, Any],
@@ -932,6 +1056,69 @@ class QueryHelper:
                 f"Operator '{op}' is not currently implemented"
             )
 
+    def _reorder_pipeline_for_indexes(
+        self, pipeline: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Reorder pipeline stages to optimize performance based on index availability.
+
+        Moves $match stages with indexed fields to the beginning of the pipeline
+        to take advantage of index-based filtering.
+
+        Args:
+            pipeline (List[Dict[str, Any]]): The original pipeline stages.
+
+        Returns:
+            List[Dict[str, Any]]: The reordered pipeline stages.
+        """
+        if not pipeline:
+            return pipeline
+
+        # Get indexed fields
+        indexed_fields = set(self._get_indexed_fields())
+
+        # Separate match stages with indexed fields from others
+        indexed_matches = []
+        other_stages = []
+
+        for stage in pipeline:
+            stage_name = next(iter(stage.keys()))
+            if stage_name == "$match":
+                # Check if this match uses indexed fields
+                match_query = stage["$match"]
+                has_indexed_field = False
+
+                # Simple check for direct field references
+                for field in match_query.keys():
+                    if field in indexed_fields or field == "_id":
+                        has_indexed_field = True
+                        break
+
+                # For logical operators, check nested fields
+                if not has_indexed_field:
+                    for field, value in match_query.items():
+                        if field in ("$and", "$or") and isinstance(value, list):
+                            for condition in value:
+                                if isinstance(condition, dict):
+                                    for subfield in condition.keys():
+                                        if subfield in indexed_fields or subfield == "_id":
+                                            has_indexed_field = True
+                                            break
+                                    if has_indexed_field:
+                                        break
+                        elif field == "_id":
+                            has_indexed_field = True
+
+                if has_indexed_field:
+                    indexed_matches.append(stage)
+                else:
+                    other_stages.append(stage)
+            else:
+                other_stages.append(stage)
+
+        # Return reordered pipeline: indexed matches first, then other stages
+        return indexed_matches + other_stages
+
     def _build_aggregation_query(
         self,
         pipeline: List[Dict[str, Any]],
@@ -953,6 +1140,24 @@ class QueryHelper:
                                           pipeline contains unsupported stages
                                           or complex queries.
         """
+        # Try to optimize the pipeline by reordering for better index usage
+        optimized_pipeline = self._reorder_pipeline_for_indexes(pipeline)
+
+        # Estimate costs for both original and optimized pipelines
+        original_cost = self._estimate_pipeline_cost(pipeline)
+        optimized_cost = self._estimate_pipeline_cost(optimized_pipeline)
+
+        # Use the better pipeline based on cost estimation
+        if optimized_cost < original_cost:
+            # Use optimized pipeline
+            effective_pipeline = optimized_pipeline
+        else:
+            # Use original pipeline
+            effective_pipeline = pipeline
+
+        # Additional optimization: Check if we can push match filters down into SQL operations
+        effective_pipeline = self._optimize_match_pushdown(effective_pipeline)
+
         where_clause = ""
         params: List[Any] = []
         order_by = ""
@@ -962,11 +1167,7 @@ class QueryHelper:
         select_clause = "SELECT id, data"
         output_fields: List[str] | None = None
 
-        # Check if we have any indexed fields that could be used for optimization
-        indexed_fields = self._get_indexed_fields()
-        has_indexes = len(indexed_fields) > 0
-
-        for i, stage in enumerate(pipeline):
+        for i, stage in enumerate(effective_pipeline):
             stage_name = next(iter(stage.keys()))
             match stage_name:
                 case "$match":
