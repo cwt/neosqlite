@@ -1853,7 +1853,7 @@ class QueryHelper:
         This method constructs SQL SELECT and GROUP BY clauses for MongoDB-like
         $group aggregation stages that can be handled directly with SQL. It supports
         grouping by a single field and various accumulator operations like $sum,
-        $avg, $min, $max, and $count.
+        $avg, $min, $max, $count, $push, and $addToSet.
 
         Args:
             group_spec (Dict[str, Any]): A dictionary representing the $group stage
@@ -1897,6 +1897,28 @@ class QueryHelper:
 
             if op == "$count":
                 select_expressions.append(f"COUNT(*) AS {field}")
+                output_fields.append(field)
+                continue
+
+            if op == "$push":
+                # Handle $push accumulator
+                if not isinstance(expr, str) or not expr.startswith("$"):
+                    return None  # Fallback for complex accumulator expressions
+                field_name = expr[1:]
+                select_expressions.append(
+                    f"json_group_array(json_extract(data, '$.{field_name}')) AS \"{field}\""
+                )
+                output_fields.append(field)
+                continue
+
+            if op == "$addToSet":
+                # Handle $addToSet accumulator
+                if not isinstance(expr, str) or not expr.startswith("$"):
+                    return None  # Fallback for complex accumulator expressions
+                field_name = expr[1:]
+                select_expressions.append(
+                    f"json_group_array(DISTINCT json_extract(data, '$.{field_name}')) AS \"{field}\""
+                )
                 output_fields.append(field)
                 continue
 

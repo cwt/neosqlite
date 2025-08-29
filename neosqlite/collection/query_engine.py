@@ -473,10 +473,25 @@ class QueryEngine:
             db_cursor = self.collection.db.execute(cmd, params)
             if output_fields:
                 # Handle results from a GROUP BY query
-                return [
-                    dict(zip(output_fields, row))
-                    for row in db_cursor.fetchall()
-                ]
+                from neosqlite.collection.json_helpers import neosqlite_json_loads
+                results = []
+                for row in db_cursor.fetchall():
+                    processed_row = []
+                    for i, value in enumerate(row):
+                        # If this field contains a JSON array string, parse it
+                        # This handles $push and $addToSet results
+                        if (output_fields[i] != "_id" and 
+                            isinstance(value, str) and 
+                            value.startswith('[') and 
+                            value.endswith(']')):
+                            try:
+                                processed_row.append(neosqlite_json_loads(value))
+                            except:
+                                processed_row.append(value)
+                        else:
+                            processed_row.append(value)
+                    results.append(dict(zip(output_fields, processed_row)))
+                return results
             else:
                 # Handle results from a regular find query
                 return [
