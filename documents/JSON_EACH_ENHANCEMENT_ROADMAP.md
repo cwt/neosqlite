@@ -353,6 +353,17 @@ for doc in cursor:
     process_document(doc)
 ```
 
+**Current Limitations**:
+- Threshold control is memory-based, not document count-based
+- Uses default quez compression algorithm (Zlib)
+- No direct API for selecting compression algorithms
+
+**Future Enhancement Opportunities**:
+- Add document count threshold control: `cursor.document_threshold(1000)`
+- Add compression algorithm selection: `cursor.compressor(Bz2Compressor(level=9))`
+- Add more granular memory management controls
+- Expose quez queue statistics during processing
+
 ### 13. Text Search Integration with json_each()
 **Status**: 🔍 Research
 **Description**: Combine full-text search with array operations

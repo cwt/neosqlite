@@ -357,6 +357,17 @@ This approach is particularly beneficial for:
 - Streaming processing of database results
 - Microservices that need to forward results to other services
 
+**Current Limitations**:
+- Threshold control is memory-based, not document count-based
+- Uses default quez compression algorithm (Zlib)
+
+**Future Enhancement Opportunities**:
+- Document count threshold control
+- Compression algorithm selection
+- More granular memory management controls
+- Exposed quez queue statistics during processing
+
+
 ## Sorting
 
 You can sort the results of a `find()` query by chaining the `sort()` method.
