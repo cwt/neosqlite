@@ -16,6 +16,7 @@ except ImportError:
 # Global flag to force fallback - for benchmarking and debugging
 _FORCE_FALLBACK = False
 
+
 def set_force_fallback(force=True):
     """Set global flag to force all aggregation queries to use Python fallback.
 
@@ -28,6 +29,7 @@ def set_force_fallback(force=True):
     """
     global _FORCE_FALLBACK
     _FORCE_FALLBACK = force
+
 
 def get_force_fallback():
     """Get the current state of the force fallback flag.
@@ -560,9 +562,7 @@ class QueryHelper:
             "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE ?"
         )
         like_pattern = f"idx_{self.collection.name}_%"
-        indexes = self.collection.db.execute(
-            cmd, (like_pattern,)
-        ).fetchall()
+        indexes = self.collection.db.execute(cmd, (like_pattern,)).fetchall()
 
         indexed_fields = []
         for idx in indexes:
@@ -609,7 +609,9 @@ class QueryHelper:
                 case "$unwind":
                     # Unwind operations can multiply the result set
                     # This is a very rough estimate
-                    estimated_count = estimated_count * 3  # Assume 3 elements per array on average
+                    estimated_count = (
+                        estimated_count * 3
+                    )  # Assume 3 elements per array on average
                 case "$group":
                     # Group operations typically reduce the result set
                     # This is a very rough estimate
@@ -619,7 +621,9 @@ class QueryHelper:
                     pass
 
         # Apply some limits to prevent extreme estimates
-        estimated_count = min(estimated_count, base_count * 10)  # Cap at 10x the base count
+        estimated_count = min(
+            estimated_count, base_count * 10
+        )  # Cap at 10x the base count
         estimated_count = max(estimated_count, 0)  # Ensure non-negative
 
         return estimated_count * estimated_avg_doc_size
@@ -678,7 +682,9 @@ class QueryHelper:
             float: Estimated cost of the pipeline (lower is better).
         """
         total_cost = 0.0
-        cumulative_multiplier = 1.0  # Represents how much data flows through each stage
+        cumulative_multiplier = (
+            1.0  # Represents how much data flows through each stage
+        )
 
         for i, stage in enumerate(pipeline):
             stage_name = next(iter(stage.keys()))
@@ -709,14 +715,18 @@ class QueryHelper:
                     stage_cost = 0.1 * cumulative_multiplier
 
                     # Limits significantly reduce data flow to subsequent stages
-                    cumulative_multiplier *= 0.1  # Assume limits reduce data by 90%
+                    cumulative_multiplier *= (
+                        0.1  # Assume limits reduce data by 90%
+                    )
 
                 case "$group":
                     # Group operations have high cost (require processing all data)
                     stage_cost = 5.0 * cumulative_multiplier
 
                     # Groups typically reduce data significantly
-                    cumulative_multiplier *= 0.2  # Assume groups reduce data by 80%
+                    cumulative_multiplier *= (
+                        0.2  # Assume groups reduce data by 80%
+                    )
 
                 case "$unwind":
                     # Unwind operations multiply the data size, increasing cost and data flow
@@ -743,7 +753,9 @@ class QueryHelper:
 
         return total_cost
 
-    def _optimize_match_pushdown(self, pipeline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _optimize_match_pushdown(
+        self, pipeline: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         """
         Optimize pipeline by pushing $match stages down to earlier positions when beneficial.
 
@@ -1034,7 +1046,10 @@ class QueryHelper:
                                 )
                                 if field_value and isinstance(field_value, str):
                                     # Simple case-insensitive substring search
-                                    if search_term.lower() in field_value.lower():
+                                    if (
+                                        search_term.lower()
+                                        in field_value.lower()
+                                    ):
                                         matches.append(True)
                                         break
                             else:
@@ -1059,10 +1074,15 @@ class QueryHelper:
                                     """
                                     for key, val in doc.items():
                                         if isinstance(val, str):
-                                            if search_term.lower() in val.lower():
+                                            if (
+                                                search_term.lower()
+                                                in val.lower()
+                                            ):
                                                 return True
                                         elif isinstance(val, dict):
-                                            if check_all_fields(val, search_term):
+                                            if check_all_fields(
+                                                val, search_term
+                                            ):
                                                 return True
                                     return False
 
@@ -1176,7 +1196,10 @@ class QueryHelper:
                             for condition in value:
                                 if isinstance(condition, dict):
                                     for subfield in condition.keys():
-                                        if subfield in indexed_fields or subfield == "_id":
+                                        if (
+                                            subfield in indexed_fields
+                                            or subfield == "_id"
+                                        ):
                                             has_indexed_field = True
                                             break
                                     if has_indexed_field:
@@ -1345,12 +1368,16 @@ class QueryHelper:
                                     output_fields.append(field)
                                 elif op == "$push":
                                     # $push accumulator - collect all values including duplicates
-                                    if isinstance(expr, str) and expr.startswith("$"):
-                                        push_field = expr[1:]  # Remove leading $
+                                    if isinstance(
+                                        expr, str
+                                    ) and expr.startswith("$"):
+                                        push_field = expr[
+                                            1:
+                                        ]  # Remove leading $
                                         if push_field == unwind_field:
                                             # Collect the unwound values
                                             select_expressions.append(
-                                                f"json_group_array(je.value) AS \"{field}\""
+                                                f'json_group_array(je.value) AS "{field}"'
                                             )
                                         else:
                                             # Collect values from another field
@@ -1364,12 +1391,16 @@ class QueryHelper:
                                         break
                                 elif op == "$addToSet":
                                     # $addToSet accumulator - collect unique values only
-                                    if isinstance(expr, str) and expr.startswith("$"):
-                                        add_to_set_field = expr[1:]  # Remove leading $
+                                    if isinstance(
+                                        expr, str
+                                    ) and expr.startswith("$"):
+                                        add_to_set_field = expr[
+                                            1:
+                                        ]  # Remove leading $
                                         if add_to_set_field == unwind_field:
                                             # Collect unique unwound values
                                             select_expressions.append(
-                                                f"json_group_array(DISTINCT je.value) AS \"{field}\""
+                                                f'json_group_array(DISTINCT je.value) AS "{field}"'
                                             )
                                         else:
                                             # Collect unique values from another field
@@ -1426,7 +1457,9 @@ class QueryHelper:
                             and group_stage.get("_id").startswith("$")
                         ):
 
-                            unwind_field_name = unwind_field[1:]  # Remove leading $
+                            unwind_field_name = unwind_field[
+                                1:
+                            ]  # Remove leading $
                             group_id_field = group_stage["_id"][
                                 1:
                             ]  # Remove leading $
@@ -1480,12 +1513,16 @@ class QueryHelper:
                                     output_fields.append(field)
                                 elif op == "$push":
                                     # $push accumulator - collect all values including duplicates
-                                    if isinstance(expr, str) and expr.startswith("$"):
-                                        push_field = expr[1:]  # Remove leading $
+                                    if isinstance(
+                                        expr, str
+                                    ) and expr.startswith("$"):
+                                        push_field = expr[
+                                            1:
+                                        ]  # Remove leading $
                                         if push_field == unwind_field_name:
                                             # Collect the unwound values
                                             select_expressions.append(
-                                                f"json_group_array(je.value) AS \"{field}\""
+                                                f'json_group_array(je.value) AS "{field}"'
                                             )
                                         else:
                                             # Collect values from another field
@@ -1499,12 +1536,19 @@ class QueryHelper:
                                         break
                                 elif op == "$addToSet":
                                     # $addToSet accumulator - collect unique values only
-                                    if isinstance(expr, str) and expr.startswith("$"):
-                                        add_to_set_field = expr[1:]  # Remove leading $
-                                        if add_to_set_field == unwind_field_name:
+                                    if isinstance(
+                                        expr, str
+                                    ) and expr.startswith("$"):
+                                        add_to_set_field = expr[
+                                            1:
+                                        ]  # Remove leading $
+                                        if (
+                                            add_to_set_field
+                                            == unwind_field_name
+                                        ):
                                             # Collect unique unwound values
                                             select_expressions.append(
-                                                f"json_group_array(DISTINCT je.value) AS \"{field}\""
+                                                f'json_group_array(DISTINCT je.value) AS "{field}"'
                                             )
                                         else:
                                             # Collect unique values from another field
@@ -1559,7 +1603,9 @@ class QueryHelper:
                             and group_stage.get("_id").startswith("$")
                         ):
 
-                            unwind_field_name = unwind_field[1:]  # Remove leading $
+                            unwind_field_name = unwind_field[
+                                1:
+                            ]  # Remove leading $
                             group_id_field = group_stage["_id"][
                                 1:
                             ]  # Remove leading $
@@ -1613,12 +1659,16 @@ class QueryHelper:
                                     output_fields.append(field)
                                 elif op == "$push":
                                     # $push accumulator - collect all values including duplicates
-                                    if isinstance(expr, str) and expr.startswith("$"):
-                                        push_field = expr[1:]  # Remove leading $
+                                    if isinstance(
+                                        expr, str
+                                    ) and expr.startswith("$"):
+                                        push_field = expr[
+                                            1:
+                                        ]  # Remove leading $
                                         if push_field == unwind_field_name:
                                             # Collect the unwound values
                                             select_expressions.append(
-                                                f"json_group_array(je.value) AS \"{field}\""
+                                                f'json_group_array(je.value) AS "{field}"'
                                             )
                                         else:
                                             # Collect values from another field
@@ -1632,12 +1682,19 @@ class QueryHelper:
                                         break
                                 elif op == "$addToSet":
                                     # $addToSet accumulator - collect unique values only
-                                    if isinstance(expr, str) and expr.startswith("$"):
-                                        add_to_set_field = expr[1:]  # Remove leading $
-                                        if add_to_set_field == unwind_field_name:
+                                    if isinstance(
+                                        expr, str
+                                    ) and expr.startswith("$"):
+                                        add_to_set_field = expr[
+                                            1:
+                                        ]  # Remove leading $
+                                        if (
+                                            add_to_set_field
+                                            == unwind_field_name
+                                        ):
                                             # Collect unique unwound values
                                             select_expressions.append(
-                                                f"json_group_array(DISTINCT je.value) AS \"{field}\""
+                                                f'json_group_array(DISTINCT je.value) AS "{field}"'
                                             )
                                         else:
                                             # Collect unique values from another field
@@ -1692,6 +1749,63 @@ class QueryHelper:
                         i == 1 and "$match" in pipeline[0]
                     )
 
+                    # Special case: Check for $unwind followed by $match with $text (text search integration enhancement)
+                    if (
+                        i == 0
+                        and len(pipeline) > 1
+                        and "$unwind" in pipeline[i]
+                        and "$match" in pipeline[i + 1]
+                    ):
+                        unwind_spec = pipeline[i]["$unwind"]
+                        match_spec = pipeline[i + 1]["$match"]
+
+                        # Check if this is a simple string unwind with text search
+                        if (
+                            isinstance(unwind_spec, str)
+                            and unwind_spec.startswith("$")
+                            and "$text" in match_spec
+                        ):
+                            text_query = match_spec["$text"]
+                            if (
+                                isinstance(text_query, dict)
+                                and "$search" in text_query
+                                and isinstance(text_query["$search"], str)
+                            ):
+                                # This is the pattern we want to optimize
+                                unwind_field = unwind_spec[
+                                    1:
+                                ]  # Remove leading $
+                                search_term = text_query["$search"]
+
+                                # Check if there are more stages after $match
+                                has_additional_stages = len(pipeline) > 2
+
+                                # Build SQL query for text search on unwound elements
+                                # For object arrays, we need to handle nested field access
+                                if "." in unwind_field:
+                                    # This is a nested field like "posts.content"
+                                    # For now, fall back to Python for complex nested object cases
+                                    # A more advanced implementation would handle this
+                                    pass
+                                else:
+                                    # Simple array of strings or objects
+                                    select_clause = f"SELECT {self.collection.name}.id, je.value as data"
+                                    from_clause = f"FROM {self.collection.name}, json_each(json_extract({self.collection.name}.data, '$.{unwind_field}')) as je"
+                                    where_clause = (
+                                        "WHERE lower(je.value) LIKE ?"
+                                    )
+                                    params = [f"%{search_term.lower()}%"]
+
+                                    if has_additional_stages:
+                                        # For now, fall back to Python for complex pipelines
+                                        # A more advanced implementation could handle additional stages
+                                        pass
+                                    else:
+                                        cmd = f"{select_clause} {from_clause} {where_clause}"
+                                        # Skip both the $unwind and $match stages
+                                        i = 1  # Will be incremented to 2 by the loop
+                                        return cmd, params, None
+
                     # Check if there are multiple consecutive $unwind stages
                     unwind_stages = []
                     unwind_specs = []
@@ -1702,8 +1816,8 @@ class QueryHelper:
                         unwind_specs.append(unwind_spec)
                         # Check if this unwind stage has advanced options
                         if isinstance(unwind_spec, dict) and (
-                            "includeArrayIndex" in unwind_spec or
-                            "preserveNullAndEmptyArrays" in unwind_spec
+                            "includeArrayIndex" in unwind_spec
+                            or "preserveNullAndEmptyArrays" in unwind_spec
                         ):
                             has_advanced_options = True
                         # Extract the path for backward compatibility
@@ -1717,7 +1831,11 @@ class QueryHelper:
 
                     # If we have valid positioning and at least one $unwind stage
                     # Note: Advanced options require fallback to Python implementation for now
-                    if valid_position and unwind_stages and not has_advanced_options:
+                    if (
+                        valid_position
+                        and unwind_stages
+                        and not has_advanced_options
+                    ):
                         result = self._build_unwind_query(
                             i, pipeline, unwind_stages
                         )
@@ -1748,8 +1866,12 @@ class QueryHelper:
                     as_field = lookup_spec["as"]
 
                     # Check if we can handle this lookup operation
-                    if not isinstance(from_collection, str) or not isinstance(local_field, str) or \
-                       not isinstance(foreign_field, str) or not isinstance(as_field, str):
+                    if (
+                        not isinstance(from_collection, str)
+                        or not isinstance(local_field, str)
+                        or not isinstance(foreign_field, str)
+                        or not isinstance(as_field, str)
+                    ):
                         return None  # Fallback for complex specifications
 
                     # Build the optimized SQL query for $lookup
@@ -1757,28 +1879,34 @@ class QueryHelper:
                     if foreign_field == "_id":
                         foreign_extract = "related.id"
                     else:
-                        foreign_extract = f"json_extract(related.data, '$.{foreign_field}')"
+                        foreign_extract = (
+                            f"json_extract(related.data, '$.{foreign_field}')"
+                        )
 
                     if local_field == "_id":
                         local_extract = f"{self.collection.name}.id"
                     else:
                         local_extract = f"json_extract({self.collection.name}.data, '$.{local_field}')"
 
-                    select_clause = f"SELECT {self.collection.name}.id, " \
-                                   f"json_set({self.collection.name}.data, '$.\"{as_field}\"', " \
-                                   f"coalesce(( " \
-                                   f"  SELECT json_group_array(json(related.data)) " \
-                                   f"  FROM {from_collection} as related " \
-                                   f"  WHERE {foreign_extract} = " \
-                                   f"        {local_extract} " \
-                                   f"), '[]')) as data"
+                    select_clause = (
+                        f"SELECT {self.collection.name}.id, "
+                        f"json_set({self.collection.name}.data, '$.\"{as_field}\"', "
+                        f"coalesce(( "
+                        f"  SELECT json_group_array(json(related.data)) "
+                        f"  FROM {from_collection} as related "
+                        f"  WHERE {foreign_extract} = "
+                        f"        {local_extract} "
+                        f"), '[]')) as data"
+                    )
 
                     from_clause = f"FROM {self.collection.name}"
 
                     # If there's a $match stage before this, incorporate its WHERE clause
                     if i == 1 and "$match" in pipeline[0]:
                         match_query = pipeline[0]["$match"]
-                        where_result = self._build_simple_where_clause(match_query)
+                        where_result = self._build_simple_where_clause(
+                            match_query
+                        )
                         if where_result and where_result[0]:  # Has WHERE clause
                             where_clause = where_result[0]
                             params = where_result[1]

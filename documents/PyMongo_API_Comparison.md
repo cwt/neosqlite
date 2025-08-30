@@ -53,6 +53,7 @@
 
 ### Text Search
 - [x] $text operator with FTS5 integration (see [text search documentation](TEXT_SEARCH.md) for details)
+- [x] Text search integration with $unwind operations (see [TEXT_SEARCH_JSON_EACH_INTEGRATION.md](TEXT_SEARCH_JSON_EACH_INTEGRATION.md) for details)
 
 ### GridFS Support
 - [x] GridFSBucket API (modern PyMongo API)
