@@ -100,7 +100,8 @@ class GridFSBucket:
     def _create_collections(self):
         """Create the files and chunks collections (tables) if they don't exist."""
         # Create files collection (table)
-        self._db.execute(f"""
+        self._db.execute(
+            f"""
             CREATE TABLE IF NOT EXISTS `{self._files_collection}` (
                 _id INTEGER PRIMARY KEY AUTOINCREMENT,
                 filename TEXT,
@@ -110,10 +111,12 @@ class GridFSBucket:
                 md5 TEXT,
                 metadata TEXT
             )
-        """)
+        """
+        )
 
         # Create chunks collection (table)
-        self._db.execute(f"""
+        self._db.execute(
+            f"""
             CREATE TABLE IF NOT EXISTS `{self._chunks_collection}` (
                 _id INTEGER PRIMARY KEY AUTOINCREMENT,
                 files_id INTEGER,
@@ -121,18 +124,23 @@ class GridFSBucket:
                 data BLOB,
                 FOREIGN KEY (files_id) REFERENCES `{self._files_collection}` (_id)
             )
-        """)
+        """
+        )
 
         # Create indexes for better performance
-        self._db.execute(f"""
+        self._db.execute(
+            f"""
             CREATE INDEX IF NOT EXISTS `idx_{self._files_collection}_filename`
             ON `{self._files_collection}` (filename)
-        """)
+        """
+        )
 
-        self._db.execute(f"""
+        self._db.execute(
+            f"""
             CREATE INDEX IF NOT EXISTS `idx_{self._chunks_collection}_files_id`
             ON `{self._chunks_collection}` (files_id)
-        """)
+        """
+        )
 
     def _serialize_metadata(
         self, metadata: Optional[Dict[str, Any]]

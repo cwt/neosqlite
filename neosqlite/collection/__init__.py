@@ -135,18 +135,22 @@ class Collection:
         try:
             self.db.execute("""SELECT jsonb('{"key": "value"}')""")
         except sqlite3.OperationalError:
-            self.db.execute(f"""
+            self.db.execute(
+                f"""
                 CREATE TABLE IF NOT EXISTS {self.name} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     data TEXT NOT NULL
                 )
-                """)
+                """
+            )
         else:
-            self.db.execute(f"""
+            self.db.execute(
+                f"""
                 CREATE TABLE IF NOT EXISTS {self.name} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     data JSONB NOT NULL
-                )""")
+                )"""
+            )
 
     def rename(self, new_name: str) -> None:
         """
@@ -223,7 +227,9 @@ class Collection:
             if count_row := self.db.execute(
                 f"SELECT COUNT(*) FROM {self.name}"
             ).fetchone():
-                options["count"] = int(count_row[0]) if count_row[0] is not None else 0
+                options["count"] = (
+                    int(count_row[0]) if count_row[0] is not None else 0
+                )
             else:
                 options["count"] = 0
 

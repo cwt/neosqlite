@@ -99,7 +99,8 @@ class IndexManager:
 
         # Create the FTS table with optional tokenizer
         if tokenizer:
-            self.collection.db.execute(f"""
+            self.collection.db.execute(
+                f"""
                 CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name}
                 USING fts5(
                     content='{self.collection.name}',
@@ -107,16 +108,19 @@ class IndexManager:
                     {index_name},
                     tokenize='{tokenizer}'
                 )
-                """)
+                """
+            )
         else:
-            self.collection.db.execute(f"""
+            self.collection.db.execute(
+                f"""
                 CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name}
                 USING fts5(
                     content='{self.collection.name}',
                     content_rowid='id',
                     {index_name}
                 )
-                """)
+                """
+            )
 
         # Create triggers to keep the FTS index in sync with the main table
         # Delete existing triggers if they exist
@@ -131,17 +135,20 @@ class IndexManager:
         )
 
         # Insert trigger
-        self.collection.db.execute(f"""
+        self.collection.db.execute(
+            f"""
             CREATE TRIGGER IF NOT EXISTS {self.collection.name}_{index_name}_fts_insert
             AFTER INSERT ON {self.collection.name}
             BEGIN
                 INSERT INTO {fts_table_name}(rowid, {index_name})
                 VALUES (new.id, lower(json_extract(new.data, '$.{field}')));
             END
-            """)
+            """
+        )
 
         # Update trigger
-        self.collection.db.execute(f"""
+        self.collection.db.execute(
+            f"""
             CREATE TRIGGER IF NOT EXISTS {self.collection.name}_{index_name}_fts_update
             AFTER UPDATE ON {self.collection.name}
             BEGIN
@@ -150,25 +157,30 @@ class IndexManager:
                 INSERT INTO {fts_table_name}(rowid, {index_name})
                 VALUES (new.id, lower(json_extract(new.data, '$.{field}')));
             END
-            """)
+            """
+        )
 
         # Delete trigger
-        self.collection.db.execute(f"""
+        self.collection.db.execute(
+            f"""
             CREATE TRIGGER IF NOT EXISTS {self.collection.name}_{index_name}_fts_delete
             AFTER DELETE ON {self.collection.name}
             BEGIN
                 INSERT INTO {fts_table_name}({fts_table_name}, rowid, {index_name})
                 VALUES ('delete', old.id, lower(json_extract(old.data, '$.{field}')));
             END
-            """)
+            """
+        )
 
         # Populate the FTS index with existing data
-        self.collection.db.execute(f"""
+        self.collection.db.execute(
+            f"""
             INSERT INTO {fts_table_name}(rowid, {index_name})
             SELECT id, lower(json_extract(data, '$.{field}'))
             FROM {self.collection.name}
             WHERE json_extract(data, '$.{field}') IS NOT NULL
-            """)
+            """
+        )
 
     def create_indexes(
         self,

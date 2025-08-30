@@ -477,7 +477,7 @@ class QueryEngine:
         self,
         pipeline: List[Dict[str, Any]],
         batch_size: int = 1000,
-        memory_constrained: bool = False
+        memory_constrained: bool = False,
     ) -> List[Dict[str, Any]] | "CompressedQueue":
         """
         Applies a list of aggregation pipeline stages with memory constraints.
@@ -494,6 +494,7 @@ class QueryEngine:
         if memory_constrained:
             try:
                 from quez import CompressedQueue
+
                 # Use quez for memory-constrained processing
                 return self._aggregate_with_quez(pipeline, batch_size)
             except ImportError:
@@ -506,19 +507,26 @@ class QueryEngine:
             db_cursor = self.collection.db.execute(cmd, params)
             if output_fields:
                 # Handle results from a GROUP BY query
-                from neosqlite.collection.json_helpers import neosqlite_json_loads
+                from neosqlite.collection.json_helpers import (
+                    neosqlite_json_loads,
+                )
+
                 results = []
                 for row in db_cursor.fetchall():
                     processed_row = []
                     for i, value in enumerate(row):
                         # If this field contains a JSON array string, parse it
                         # This handles $push and $addToSet results
-                        if (output_fields[i] != "_id" and
-                            isinstance(value, str) and
-                            value.startswith('[') and
-                            value.endswith(']')):
+                        if (
+                            output_fields[i] != "_id"
+                            and isinstance(value, str)
+                            and value.startswith("[")
+                            and value.endswith("]")
+                        ):
                             try:
-                                processed_row.append(neosqlite_json_loads(value))
+                                processed_row.append(
+                                    neosqlite_json_loads(value)
+                                )
                             except:
                                 processed_row.append(value)
                         else:
@@ -540,7 +548,9 @@ class QueryEngine:
                 case "$match":
                     query = stage["$match"]
                     docs = [
-                        doc for doc in docs if self.helpers._apply_query(query, doc)
+                        doc
+                        for doc in docs
+                        if self.helpers._apply_query(query, doc)
                     ]
                 case "$sort":
                     sort_spec = stage["$sort"]
@@ -575,14 +585,22 @@ class QueryEngine:
                     elif isinstance(unwind_spec, dict):
                         # New object form with advanced options
                         field_path = unwind_spec["path"].lstrip("$")
-                        include_array_index = unwind_spec.get("includeArrayIndex")
-                        preserve_null_and_empty = unwind_spec.get("preserveNullAndEmptyArrays", False)
+                        include_array_index = unwind_spec.get(
+                            "includeArrayIndex"
+                        )
+                        preserve_null_and_empty = unwind_spec.get(
+                            "preserveNullAndEmptyArrays", False
+                        )
                     else:
-                        raise MalformedQueryException(f"Invalid $unwind specification: {unwind_spec}")
+                        raise MalformedQueryException(
+                            f"Invalid $unwind specification: {unwind_spec}"
+                        )
 
                     unwound_docs = []
                     for doc in docs:
-                        array_to_unwind = self.collection._get_val(doc, field_path)
+                        array_to_unwind = self.collection._get_val(
+                            doc, field_path
+                        )
 
                         # For nested fields, check if parent exists
                         # If parent is None or missing and we're trying to unwind a nested field,
@@ -592,7 +610,9 @@ class QueryEngine:
                         if len(field_parts) > 1:
                             # This is a nested field
                             parent_path = ".".join(field_parts[:-1])
-                            parent_value = self.collection._get_val(doc, parent_path)
+                            parent_value = self.collection._get_val(
+                                doc, parent_path
+                            )
                             if parent_value is None:
                                 # Parent is None or missing, don't process this document
                                 process_document = False
@@ -606,7 +626,9 @@ class QueryEngine:
                                 # Non-empty array - unwind normally
                                 for idx, item in enumerate(array_to_unwind):
                                     new_doc = deepcopy(doc)
-                                    self.collection._set_val(new_doc, field_path, item)
+                                    self.collection._set_val(
+                                        new_doc, field_path, item
+                                    )
                                     # Add array index if requested
                                     if include_array_index:
                                         new_doc[include_array_index] = idx
@@ -614,13 +636,19 @@ class QueryEngine:
                             elif preserve_null_and_empty:
                                 # Empty array but preserve is requested
                                 new_doc = deepcopy(doc)
-                                self.collection._set_val(new_doc, field_path, None)
+                                self.collection._set_val(
+                                    new_doc, field_path, None
+                                )
                                 # Add array index if requested
                                 if include_array_index:
                                     new_doc[include_array_index] = None
                                 unwound_docs.append(new_doc)
                             # If empty array and preserve is False, don't add any documents
-                        elif not isinstance(array_to_unwind, list) and field_path in doc and preserve_null_and_empty:
+                        elif (
+                            not isinstance(array_to_unwind, list)
+                            and field_path in doc
+                            and preserve_null_and_empty
+                        ):
                             # Non-array value (None, string, number, etc.) that exists in the document and preserve is requested
                             new_doc = deepcopy(doc)
                             # Keep the value as-is
@@ -640,7 +668,9 @@ class QueryEngine:
                     as_field = lookup_spec["as"]
 
                     # Get the from collection from the database
-                    from_collection = self.collection._database[from_collection_name]
+                    from_collection = self.collection._database[
+                        from_collection_name
+                    ]
 
                     # Process each document
                     for doc in docs:
@@ -650,7 +680,9 @@ class QueryEngine:
                         # Find matching documents in the from collection
                         matching_docs = []
                         for match_doc in from_collection.find():
-                            foreign_value = from_collection._get_val(match_doc, foreign_field)
+                            foreign_value = from_collection._get_val(
+                                match_doc, foreign_field
+                            )
                             if local_value == foreign_value:
                                 # Add the matching document (without _id)
                                 match_doc_copy = match_doc.copy()
@@ -719,9 +751,7 @@ class QueryEngine:
         )
 
     def _aggregate_with_quez(
-        self,
-        pipeline: List[Dict[str, Any]],
-        batch_size: int = 1000
+        self, pipeline: List[Dict[str, Any]], batch_size: int = 1000
     ) -> "CompressedQueue":
         """
         Process aggregation pipeline with quez compressed queue for memory efficiency.

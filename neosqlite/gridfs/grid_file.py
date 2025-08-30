@@ -512,7 +512,9 @@ class GridOutCursor:
                             for op, val in value.items():
                                 match op:
                                     case "$regex":
-                                        where_conditions.append("filename LIKE ?")
+                                        where_conditions.append(
+                                            "filename LIKE ?"
+                                        )
                                         params.append(f"%{val}%")
                                     case "$ne":
                                         where_conditions.append("filename != ?")
@@ -564,19 +566,25 @@ class GridOutCursor:
                                         where_conditions.append("chunkSize > ?")
                                         params.append(val)
                                     case "$gte":
-                                        where_conditions.append("chunkSize >= ?")
+                                        where_conditions.append(
+                                            "chunkSize >= ?"
+                                        )
                                         params.append(val)
                                     case "$lt":
                                         where_conditions.append("chunkSize < ?")
                                         params.append(val)
                                     case "$lte":
-                                        where_conditions.append("chunkSize <= ?")
+                                        where_conditions.append(
+                                            "chunkSize <= ?"
+                                        )
                                         params.append(val)
                                     case "$eq":
                                         where_conditions.append("chunkSize = ?")
                                         params.append(val)
                                     case "$ne":
-                                        where_conditions.append("chunkSize != ?")
+                                        where_conditions.append(
+                                            "chunkSize != ?"
+                                        )
                                         params.append(val)
                         else:
                             # Direct value comparison
@@ -588,22 +596,34 @@ class GridOutCursor:
                             for op, val in value.items():
                                 match op:
                                     case "$gt":
-                                        where_conditions.append("uploadDate > ?")
+                                        where_conditions.append(
+                                            "uploadDate > ?"
+                                        )
                                         params.append(val)
                                     case "$gte":
-                                        where_conditions.append("uploadDate >= ?")
+                                        where_conditions.append(
+                                            "uploadDate >= ?"
+                                        )
                                         params.append(val)
                                     case "$lt":
-                                        where_conditions.append("uploadDate < ?")
+                                        where_conditions.append(
+                                            "uploadDate < ?"
+                                        )
                                         params.append(val)
                                     case "$lte":
-                                        where_conditions.append("uploadDate <= ?")
+                                        where_conditions.append(
+                                            "uploadDate <= ?"
+                                        )
                                         params.append(val)
                                     case "$eq":
-                                        where_conditions.append("uploadDate = ?")
+                                        where_conditions.append(
+                                            "uploadDate = ?"
+                                        )
                                         params.append(val)
                                     case "$ne":
-                                        where_conditions.append("uploadDate != ?")
+                                        where_conditions.append(
+                                            "uploadDate != ?"
+                                        )
                                         params.append(val)
                         else:
                             # Direct value comparison
@@ -625,7 +645,9 @@ class GridOutCursor:
                             for op, val in value.items():
                                 match op:
                                     case "$regex":
-                                        where_conditions.append("metadata LIKE ?")
+                                        where_conditions.append(
+                                            "metadata LIKE ?"
+                                        )
                                         params.append(f"%{val}%")
                                     case "$ne":
                                         where_conditions.append("metadata != ?")
@@ -636,7 +658,9 @@ class GridOutCursor:
                                         )
                                     case _:
                                         # For other operators, convert to string and match
-                                        where_conditions.append("metadata LIKE ?")
+                                        where_conditions.append(
+                                            "metadata LIKE ?"
+                                        )
                                         params.append(f"%{op}%{val}%")
                         else:
                             # Direct metadata string matching
