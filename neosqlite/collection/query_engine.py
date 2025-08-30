@@ -486,6 +486,16 @@ class QueryEngine:
         Returns:
             List[Dict[str, Any]]: The list of documents after applying the aggregation pipeline.
         """
+        # If memory_constrained is True and quez is available, use quez for processing
+        if memory_constrained:
+            try:
+                from quez import CompressedQueue
+                # Use quez for memory-constrained processing
+                return self._aggregate_with_quez(pipeline, batch_size)
+            except ImportError:
+                # Fall back to normal processing if quez is not available
+                pass
+        
         query_result = self.helpers._build_aggregation_query(pipeline)
         if query_result is not None:
             cmd, params, output_fields = query_result
@@ -703,6 +713,48 @@ class QueryEngine:
             deleted_count=deleted_count,
             upserted_count=upserted_count,
         )
+
+    def _aggregate_with_quez(
+        self,
+        pipeline: List[Dict[str, Any]],
+        batch_size: int = 1000
+    ) -> List[Dict[str, Any]]:
+        """
+        Process aggregation pipeline with quez compressed queue for memory efficiency.
+        
+        Args:
+            pipeline (List[Dict[str, Any]]): A list of aggregation pipeline stages to apply.
+            batch_size (int): The batch size for quez queue processing.
+            
+        Returns:
+            List[Dict[str, Any]]: The list of documents after applying the aggregation pipeline.
+        """
+        try:
+            from quez import CompressedQueue
+            
+            # Create a compressed queue for results
+            result_queue = CompressedQueue(maxsize=batch_size * 2)
+            
+            # Get results from normal aggregation
+            results = self.aggregate(pipeline)
+            
+            # Add all results to the compressed queue
+            for result in results:
+                result_queue.put(result)
+            
+            # Extract all results from the queue (they'll be compressed in memory)
+            extracted_results = []
+            while not result_queue.empty():
+                try:
+                    extracted_results.append(result_queue.get(block=False))
+                except:
+                    break
+                    
+            return extracted_results
+            
+        except ImportError:
+            # If quez is not available, fall back to normal processing
+            return self.aggregate(pipeline)
 
     def initialize_ordered_bulk_op(self) -> BulkOperationExecutor:
         """Initialize an ordered bulk operation.
