@@ -1,3 +1,4 @@
+from ..aggregation_cursor import AggregationCursor
 from ..bulk_operations import BulkOperationExecutor
 from ..changestream import ChangeStream
 from ..cursor import Cursor
@@ -383,12 +384,12 @@ class Collection:
         """
         return self.query_engine.find_one_and_update(filter, update)
 
-    def aggregate(self, pipeline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def aggregate(self, pipeline: List[Dict[str, Any]]) -> AggregationCursor:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.aggregate`.
         """
-        return self.query_engine.aggregate(pipeline)
+        return AggregationCursor(self, pipeline)
 
     def distinct(self, key: str, filter: Dict[str, Any] | None = None) -> set:
         """

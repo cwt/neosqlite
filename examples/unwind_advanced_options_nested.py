@@ -103,9 +103,9 @@ def main():
             },
         ]
 
-        result1 = orders.aggregate(pipeline1)
+        cursor1 = orders.aggregate(pipeline1)
         print("   Results (all levels unwound with indices):")
-        for doc in result1:
+        for doc in cursor1:
             customer = doc["customer"]
             group = doc["orderGroups"]["groupName"]
             shipment = doc["orderGroups"]["shipments"]["shipmentId"]
@@ -143,9 +143,9 @@ def main():
             },
         ]
 
-        result2 = orders.aggregate(pipeline2)
+        cursor2 = orders.aggregate(pipeline2)
         print("   Results (preserving documents with empty arrays):")
-        for doc in result2:
+        for doc in cursor2:
             customer = doc["customer"]
             if "orderGroups" in doc and doc["orderGroups"] is not None:
                 group = doc["orderGroups"]["groupName"]
@@ -203,9 +203,9 @@ def main():
             },
         ]
 
-        result3 = orders.aggregate(pipeline3)
+        cursor3 = orders.aggregate(pipeline3)
         print("   Results (mixed options - indices and preservation):")
-        for doc in result3:
+        for doc in cursor3:
             customer = doc["customer"]
             group = doc["orderGroups"]["groupName"]
             group_idx = doc["groupIndex"]

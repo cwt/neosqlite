@@ -574,6 +574,56 @@ class QueryHelper:
 
         return indexed_fields
 
+    def _estimate_result_size(self, pipeline: List[Dict[str, Any]]) -> int:
+        """
+        Estimate the size of the aggregation result in bytes.
+
+        This method analyzes the pipeline to estimate the size of the result set.
+
+        Args:
+            pipeline: The aggregation pipeline to analyze
+
+        Returns:
+            Estimated size in bytes
+        """
+        # Get the base collection size
+        base_count = self.collection.estimated_document_count()
+
+        # Apply pipeline stages to estimate result size
+        estimated_count = base_count
+        estimated_avg_doc_size = 1024  # Default estimate of 1KB per document
+
+        for stage in pipeline:
+            stage_name = next(iter(stage.keys()))
+            match stage_name:
+                case "$match":
+                    # Matches typically reduce the result set
+                    # For now, we'll use a rough estimate
+                    estimated_count = max(1, int(estimated_count * 0.5))
+                case "$limit":
+                    limit_count = stage["$limit"]
+                    estimated_count = min(estimated_count, limit_count)
+                case "$skip":
+                    skip_count = stage["$skip"]
+                    estimated_count = max(0, estimated_count - skip_count)
+                case "$unwind":
+                    # Unwind operations can multiply the result set
+                    # This is a very rough estimate
+                    estimated_count = estimated_count * 3  # Assume 3 elements per array on average
+                case "$group":
+                    # Group operations typically reduce the result set
+                    # This is a very rough estimate
+                    estimated_count = max(1, int(estimated_count * 0.1))
+                case _:
+                    # For other operations, we'll assume they don't significantly change the size
+                    pass
+
+        # Apply some limits to prevent extreme estimates
+        estimated_count = min(estimated_count, base_count * 10)  # Cap at 10x the base count
+        estimated_count = max(estimated_count, 0)  # Ensure non-negative
+
+        return estimated_count * estimated_avg_doc_size
+
     def _estimate_query_cost(self, query: Dict[str, Any]) -> float:
         """
         Estimate the cost of executing a query based on index availability.

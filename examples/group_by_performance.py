@@ -40,7 +40,9 @@ def run_benchmark():
 
         # 3. Benchmark the optimized path
         start_time_optimized = time.perf_counter()
-        result_optimized = collection.aggregate(pipeline_optimized)
+        cursor_optimized = collection.aggregate(pipeline_optimized)
+        # Force execution by converting to list to get accurate timing
+        result_optimized = list(cursor_optimized)
         end_time_optimized = time.perf_counter()
         duration_optimized = end_time_optimized - start_time_optimized
         print(
@@ -50,7 +52,9 @@ def run_benchmark():
 
         # 4. Benchmark the fallback path
         start_time_fallback = time.perf_counter()
-        result_fallback = collection.aggregate(pipeline_fallback)
+        cursor_fallback = collection.aggregate(pipeline_fallback)
+        # Force execution by converting to list to get accurate timing
+        result_fallback = list(cursor_fallback)
         end_time_fallback = time.perf_counter()
         duration_fallback = end_time_fallback - start_time_fallback
         print(f"Fallback (Python) time:       {duration_fallback:.4f} seconds")

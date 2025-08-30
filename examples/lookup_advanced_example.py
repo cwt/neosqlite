@@ -159,7 +159,7 @@ def main():
             },
         ]
 
-        result1 = posts.aggregate(pipeline1)
+        result1 = list(posts.aggregate(pipeline1))
         print("   Results:")
         for post in result1:
             # Extract author name (author is an array with one element)
@@ -194,7 +194,7 @@ def main():
             {"$sort": {"commentCount": -1}},
         ]
 
-        result2 = posts.aggregate(pipeline2)
+        result2 = list(posts.aggregate(pipeline2))
         print("   Results (sorted by comment count):")
         for post in result2:
             print(f"     '{post['title']}': {post['commentCount']} comments")
@@ -224,7 +224,7 @@ def main():
             {"$sort": {"title": 1}},
         ]
 
-        result3 = posts.aggregate(pipeline3)
+        result3 = list(posts.aggregate(pipeline3))
         print("   Results:")
         for post in result3:
             author_name = (
@@ -286,7 +286,7 @@ def main():
         ]
 
         start_time = time.time()
-        result4 = posts.aggregate(pipeline4)
+        result4 = list(posts.aggregate(pipeline4))
         elapsed_time = time.time() - start_time
 
         print(
@@ -349,7 +349,7 @@ def main():
             }
         ]
 
-        result5 = users.aggregate(pipeline5_simple)
+        result5 = list(users.aggregate(pipeline5_simple))
         print("   Simplified results (users with their posts):")
         for user in result5:
             print(f"     {user['username']}: {len(user['userPosts'])} posts")

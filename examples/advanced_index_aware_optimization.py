@@ -67,7 +67,7 @@ def main():
 
         # Measure performance
         start_time = time.time()
-        result1 = products.aggregate(pipeline1)
+        result1 = list(products.aggregate(pipeline1))
         elapsed_time1 = time.time() - start_time
 
         print(f"   Found {len(result1)} products")
@@ -88,7 +88,7 @@ def main():
 
         # Measure performance
         start_time = time.time()
-        result2 = products.aggregate(pipeline2)
+        result2 = list(products.aggregate(pipeline2))
         elapsed_time2 = time.time() - start_time
 
         print(f"   Found {len(result2)} products/tags combinations")
@@ -110,7 +110,7 @@ def main():
 
         # Measure performance
         start_time = time.time()
-        result3 = products.aggregate(pipeline3)
+        result3 = list(products.aggregate(pipeline3))
         elapsed_time3 = time.time() - start_time
 
         print(f"   Found {len(result3)} unique tags")

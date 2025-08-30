@@ -1,3 +1,4 @@
+from .aggregation_cursor import AggregationCursor
 from .binary import Binary
 from .bulk_operations import BulkOperationExecutor
 from .changestream import ChangeStream
@@ -43,6 +44,7 @@ __all__ = [
     "RawBatchCursor",
     "BulkOperationExecutor",
     "Binary",
+    "AggregationCursor",
 ]
 
 # Add GridFS to __all__ if available

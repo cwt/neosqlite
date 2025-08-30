@@ -33,7 +33,9 @@ def main():
         print("\nTesting SQL-based $unwind implementation...")
         start_time = time.time()
         pipeline = [{"$unwind": "$tags"}]
-        result = collection.aggregate(pipeline)
+        cursor = collection.aggregate(pipeline)
+        # Force execution by converting to list to get accurate timing
+        result = list(cursor)
         sql_time = time.time() - start_time
 
         print(
@@ -47,7 +49,9 @@ def main():
             {"$match": {"id": {"$lt": 2500}}},  # First half of users
             {"$unwind": "$tags"},
         ]
-        result = collection.aggregate(pipeline)
+        cursor = collection.aggregate(pipeline)
+        # Force execution by converting to list to get accurate timing
+        result = list(cursor)
         combined_time = time.time() - start_time
 
         print(

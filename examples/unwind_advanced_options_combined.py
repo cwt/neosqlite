@@ -85,9 +85,9 @@ def main():
             },
         ]
 
-        result1 = employees.aggregate(pipeline1)
+        cursor1 = employees.aggregate(pipeline1)
         print("   Results (projects and tasks with indices):")
-        for doc in result1:
+        for doc in cursor1:
             proj_name = doc["projects"]["name"]
             task_name = doc["projects"]["tasks"]
             proj_idx = doc["projectIndex"]
@@ -115,9 +115,9 @@ def main():
             },
         ]
 
-        result2 = employees.aggregate(pipeline2)
+        cursor2 = employees.aggregate(pipeline2)
         print("   Results (preserving documents with empty arrays):")
-        for doc in result2:
+        for doc in cursor2:
             if "projects" in doc and doc["projects"] is not None:
                 if (
                     "tasks" in doc["projects"]
@@ -159,9 +159,9 @@ def main():
             },
         ]
 
-        result3 = employees.aggregate(pipeline3)
+        cursor3 = employees.aggregate(pipeline3)
         print("   Results (filtered with both options applied):")
-        for doc in result3:
+        for doc in cursor3:
             name = doc["name"]
             proj_name = doc["projects"]["name"]
             proj_idx = doc["projectIndex"]

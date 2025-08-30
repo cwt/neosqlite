@@ -39,13 +39,17 @@ def benchmark_aggregation_performance():
         # Test optimized path
         neosqlite.collection.query_helper.set_force_fallback(False)
         start_time = time.perf_counter()
-        result_optimized = collection.aggregate(pipeline)
+        cursor_optimized = collection.aggregate(pipeline)
+        # Force execution by converting to list to get accurate timing
+        result_optimized = list(cursor_optimized)
         optimized_time = time.perf_counter() - start_time
 
         # Test fallback path
         neosqlite.collection.query_helper.set_force_fallback(True)
         start_time = time.perf_counter()
-        result_fallback = collection.aggregate(pipeline)
+        cursor_fallback = collection.aggregate(pipeline)
+        # Force execution by converting to list to get accurate timing
+        result_fallback = list(cursor_fallback)
         fallback_time = time.perf_counter() - start_time
 
         # Reset to normal operation

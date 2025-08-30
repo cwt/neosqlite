@@ -93,8 +93,8 @@ def main():
         print("   - Processes 5x fewer documents!")
 
         # Run both pipelines to show they produce the same results
-        result1 = products.aggregate(pipeline1)
-        result2 = products.aggregate(pipeline2)
+        result1 = list(products.aggregate(pipeline1))
+        result2 = list(products.aggregate(pipeline2))
 
         print(f"\n   Results comparison:")
         print(f"   Pipeline 1 found: {len(result1)} documents")

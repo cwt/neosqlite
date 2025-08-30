@@ -70,9 +70,9 @@ def main():
             {"$sort": {"_id": 1}},
         ]
 
-        result1 = products.aggregate(pipeline1)
+        result1_cursor = products.aggregate(pipeline1)
         print("   Results:")
-        for doc in result1:
+        for doc in result1_cursor:
             print(f"     {doc['_id']}: {doc.get('productNames', [])}")
         print()
 
@@ -91,9 +91,9 @@ def main():
             {"$sort": {"_id": 1}},
         ]
 
-        result2 = products.aggregate(pipeline2)
+        result2_cursor = products.aggregate(pipeline2)
         print("   Results:")
-        for doc in result2:
+        for doc in result2_cursor:
             # Sort the prices for consistent output
             sorted_prices = sorted(doc.get("uniquePrices", []))
             print(f"     {doc['_id']}: {sorted_prices}")

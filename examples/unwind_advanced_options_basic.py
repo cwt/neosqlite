@@ -39,9 +39,9 @@ def main():
             {"$unwind": {"path": "$scores", "includeArrayIndex": "scoreIndex"}}
         ]
 
-        result1 = students.aggregate(pipeline1)
+        cursor1 = students.aggregate(pipeline1)
         print("   Results (only documents with actual array elements):")
-        for doc in result1:
+        for doc in cursor1:
             print(f"     {doc}")
         print()
 
@@ -52,9 +52,9 @@ def main():
             {"$unwind": {"path": "$scores", "preserveNullAndEmptyArrays": True}}
         ]
 
-        result2 = students.aggregate(pipeline2)
+        cursor2 = students.aggregate(pipeline2)
         print("   Results (documents with null/empty arrays preserved):")
-        for doc in result2:
+        for doc in cursor2:
             print(f"     {doc}")
         print()
 
@@ -73,9 +73,9 @@ def main():
             }
         ]
 
-        result3 = students.aggregate(pipeline3)
+        cursor3 = students.aggregate(pipeline3)
         print("   Results (both options applied):")
-        for doc in result3:
+        for doc in cursor3:
             print(f"     {doc}")
         print()
 
@@ -84,9 +84,9 @@ def main():
         print("   Pipeline: Traditional string-based unwind")
         pipeline4 = [{"$unwind": "$scores"}]
 
-        result4 = students.aggregate(pipeline4)
+        cursor4 = students.aggregate(pipeline4)
         print("   Results (traditional unwind - null/empty omitted):")
-        for doc in result4:
+        for doc in cursor4:
             print(f"     {doc}")
         print()
 

@@ -257,7 +257,7 @@ def compare_aggregation_operations():
             {"$sort": {"age": neosqlite.DESCENDING}},
             {"$limit": 2},
         ]
-        result = neo_collection.aggregate(pipeline)
+        result = list(neo_collection.aggregate(pipeline))
         print(f"aggregate: {len(result)} documents returned")
         for doc in result:
             print(f"  - {doc}")

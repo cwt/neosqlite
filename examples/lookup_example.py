@@ -99,7 +99,7 @@ def main():
             }
         ]
 
-        result1 = customers.aggregate(pipeline1)
+        result1 = list(customers.aggregate(pipeline1))
         print("   Results:")
         for customer in result1:
             print(
@@ -124,7 +124,7 @@ def main():
             },
         ]
 
-        result2 = customers.aggregate(pipeline2)
+        result2 = list(customers.aggregate(pipeline2))
         print("   Results:")
         for customer in result2:
             print(
@@ -147,7 +147,7 @@ def main():
             {"$unwind": "$customerOrders"},
         ]
 
-        result3 = customers.aggregate(pipeline3)
+        result3 = list(customers.aggregate(pipeline3))
         print("   Results (each line is one customer-order combination):")
         for doc in result3:
             print(
@@ -171,7 +171,7 @@ def main():
             {"$match": {"customerOrders.status": "shipped"}},
         ]
 
-        result4 = customers.aggregate(pipeline4)
+        result4 = list(customers.aggregate(pipeline4))
         print("   Results:")
         for doc in result4:
             print(
@@ -204,7 +204,7 @@ def main():
             },
         ]
 
-        result5 = customers.aggregate(pipeline5)
+        result5 = list(customers.aggregate(pipeline5))
         print("   Results:")
         for customer in result5:
             print(

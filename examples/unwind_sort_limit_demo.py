@@ -68,7 +68,7 @@ def demonstrate_unwind_sort_limit():
         ]
 
         start_time = time.time()
-        result1 = users.aggregate(pipeline1)
+        result1 = list(users.aggregate(pipeline1))
         elapsed_time1 = time.time() - start_time
 
         print("   Results:")
@@ -88,7 +88,7 @@ def demonstrate_unwind_sort_limit():
         ]
 
         start_time = time.time()
-        result2 = users.aggregate(pipeline2)
+        result2 = list(users.aggregate(pipeline2))
         elapsed_time2 = time.time() - start_time
 
         print("   Results:")
@@ -109,7 +109,7 @@ def demonstrate_unwind_sort_limit():
         ]
 
         start_time = time.time()
-        result3 = users.aggregate(pipeline3)
+        result3 = list(users.aggregate(pipeline3))
         elapsed_time3 = time.time() - start_time
 
         print("   Results:")
@@ -128,7 +128,7 @@ def demonstrate_unwind_sort_limit():
         ]
 
         start_time = time.time()
-        result4 = users.aggregate(pipeline4)
+        result4 = list(users.aggregate(pipeline4))
         elapsed_time4 = time.time() - start_time
 
         print("   Results:")
@@ -148,7 +148,7 @@ def demonstrate_unwind_sort_limit():
         ]
 
         start_time = time.time()
-        result6 = users.aggregate(pipeline6)
+        result6 = list(users.aggregate(pipeline6))
         elapsed_time6 = time.time() - start_time
 
         print("   Results:")

@@ -23,7 +23,9 @@ def benchmark_feature(
     optimized_times = []
     for _ in range(num_runs):
         start_time = time.perf_counter()
-        result_optimized = collection.aggregate(pipeline)
+        cursor_optimized = collection.aggregate(pipeline)
+        # Force execution by converting to list
+        result_optimized = list(cursor_optimized)
         optimized_times.append(time.perf_counter() - start_time)
 
     avg_optimized = statistics.mean(optimized_times)
@@ -33,7 +35,9 @@ def benchmark_feature(
     fallback_times = []
     for _ in range(num_runs):
         start_time = time.perf_counter()
-        result_fallback = collection.aggregate(pipeline)
+        cursor_fallback = collection.aggregate(pipeline)
+        # Force execution by converting to list
+        result_fallback = list(cursor_fallback)
         fallback_times.append(time.perf_counter() - start_time)
 
     avg_fallback = statistics.mean(fallback_times)
@@ -267,7 +271,7 @@ def main():
         print("\n--- Simple $lookup operation ---")
         neosqlite.collection.query_helper.set_force_fallback(False)
         start_time = time.perf_counter()
-        result_lookup_opt = orders.aggregate(
+        cursor_lookup_opt = orders.aggregate(
             [
                 {
                     "$lookup": {
@@ -279,11 +283,12 @@ def main():
                 }
             ]
         )
+        result_lookup_opt = list(cursor_lookup_opt)
         optimized_time = time.perf_counter() - start_time
 
         neosqlite.collection.query_helper.set_force_fallback(True)
         start_time = time.perf_counter()
-        result_lookup_fallback = orders.aggregate(
+        cursor_lookup_fallback = orders.aggregate(
             [
                 {
                     "$lookup": {
@@ -295,6 +300,7 @@ def main():
                 }
             ]
         )
+        result_lookup_fallback = list(cursor_lookup_fallback)
         fallback_time = time.perf_counter() - start_time
 
         neosqlite.collection.query_helper.set_force_fallback(False)
@@ -320,7 +326,7 @@ def main():
         # 14. Advanced $unwind with includeArrayIndex (fallback only)
         print("\n--- $unwind with includeArrayIndex (Python fallback only) ---")
         start_time = time.perf_counter()
-        result_advanced = users.aggregate(
+        cursor_advanced = users.aggregate(
             [
                 {
                     "$unwind": {
@@ -330,6 +336,7 @@ def main():
                 }
             ]
         )
+        result_advanced = list(cursor_advanced)
         advanced_time = time.perf_counter() - start_time
         print(f"  Advanced $unwind time: {advanced_time:.4f}s")
         print(f"  Result count: {len(result_advanced)} documents")

@@ -317,12 +317,24 @@ pipeline = [
 ## Future Research Opportunities 🔍
 
 ### 12. Memory-Constrained Processing
-**Status**: 🔍 Research
+**Status**: 🔄 Partially Completed
 **Description**: Handle very large datasets with memory-constrained environments
-**Approach**:
-- Cursor-based processing for large result sets
-- Streaming results instead of loading all into memory
-- Batch processing with configurable batch sizes
+**Progress**:
+- Implemented AggregationCursor with lazy evaluation for deferred execution
+- Results are only loaded into memory when actually accessed
+- Users can choose between streaming (incremental processing) or full results
+- Memory usage is constrained by how the cursor is consumed, not by the size of the result set
+
+**Current Limitations**:
+- Query engine still fetches all results into a list before processing
+- No true database-level streaming/pagination implemented yet
+- Large result sets still consume memory in the database layer
+
+**Planned Approach**:
+- Integrate quez library for compressed in-memory buffering
+- Use quez's compressed queues/deques to handle large result sets
+- Implement true streaming from database with bounded memory usage
+- Leverage quez's compression to reduce memory footprint of intermediate results
 
 ### 13. Text Search Integration with json_each()
 **Status**: 🔍 Research

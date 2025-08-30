@@ -50,9 +50,9 @@ def test_unwind_group_with_new_accumulators():
             {"$sort": {"_id": 1}},
         ]
 
-        result1 = users.aggregate(pipeline1)
+        cursor1 = users.aggregate(pipeline1)
         print("   Results:")
-        for doc in result1:
+        for doc in cursor1:
             print(f"     Tag '{doc['_id']}': {doc.get('users', [])}")
         print()
 
@@ -72,9 +72,9 @@ def test_unwind_group_with_new_accumulators():
             {"$sort": {"_id": 1}},
         ]
 
-        result2 = users.aggregate(pipeline2)
+        cursor2 = users.aggregate(pipeline2)
         print("   Results:")
-        for doc in result2:
+        for doc in cursor2:
             # Sort the users for consistent output
             sorted_users = sorted(doc.get("uniqueUsers", []))
             print(f"     Score {doc['_id']}: {sorted_users}")

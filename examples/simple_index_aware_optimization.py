@@ -45,17 +45,17 @@ def main():
 
         # This query will benefit from the category index
         pipeline1 = [{"$match": {"category": "Category 2"}}, {"$limit": 5}]
-        result1 = collection.aggregate(pipeline1)
-        print(f"   Query with category filter: {len(result1)} results")
+        result1_cursor = collection.aggregate(pipeline1)
+        print(f"   Query with category filter: {len(result1_cursor)} results")
 
         # This query will benefit from both category and status indexes
         pipeline2 = [
             {"$match": {"category": "Category 1", "status": "active"}},
             {"$limit": 5},
         ]
-        result2 = collection.aggregate(pipeline2)
+        result2_cursor = collection.aggregate(pipeline2)
         print(
-            f"   Query with category and status filters: {len(result2)} results"
+            f"   Query with category and status filters: {len(result2_cursor)} results"
         )
 
         # This complex pipeline uses multiple optimizations
@@ -65,7 +65,7 @@ def main():
             {"$sort": {"score": -1}},
             {"$limit": 10},
         ]
-        result3 = collection.aggregate(pipeline3)
+        result3 = list(collection.aggregate(pipeline3))
         print(
             f"   Complex pipeline with unwind, sort, and limit: {len(result3)} results"
         )

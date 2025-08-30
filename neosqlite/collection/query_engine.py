@@ -467,6 +467,25 @@ class QueryEngine:
         Returns:
             List[Dict[str, Any]]: The list of documents after applying the aggregation pipeline.
         """
+        return self.aggregate_with_constraints(pipeline)
+
+    def aggregate_with_constraints(
+        self,
+        pipeline: List[Dict[str, Any]],
+        batch_size: int = 1000,
+        memory_constrained: bool = False
+    ) -> List[Dict[str, Any]]:
+        """
+        Applies a list of aggregation pipeline stages with memory constraints.
+
+        Args:
+            pipeline (List[Dict[str, Any]]): A list of aggregation pipeline stages to apply.
+            batch_size (int): The batch size for processing large result sets.
+            memory_constrained (bool): Whether to use memory-constrained processing.
+
+        Returns:
+            List[Dict[str, Any]]: The list of documents after applying the aggregation pipeline.
+        """
         query_result = self.helpers._build_aggregation_query(pipeline)
         if query_result is not None:
             cmd, params, output_fields = query_result

@@ -40,7 +40,7 @@ def main():
             {"$unwind": "$tags"},
             {"$group": {"_id": "$tags", "count": {"$sum": 1}}},
         ]
-        result = collection.aggregate(pipeline)
+        result = list(collection.aggregate(pipeline))
         sql_time = time.time() - start_time
 
         print(
@@ -60,7 +60,7 @@ def main():
             {"$unwind": "$tags"},
             {"$group": {"_id": "$tags", "count": {"$sum": 1}}},
         ]
-        result = collection.aggregate(pipeline)
+        result = list(collection.aggregate(pipeline))
         combined_time = time.time() - start_time
 
         print(
