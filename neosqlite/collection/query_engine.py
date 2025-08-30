@@ -725,30 +725,30 @@ class QueryEngine:
     ) -> "CompressedQueue":
         """
         Process aggregation pipeline with quez compressed queue for memory efficiency.
-        
+
         Args:
             pipeline (List[Dict[str, Any]]): A list of aggregation pipeline stages to apply.
             batch_size (int): The batch size for quez queue processing.
-            
+
         Returns:
             CompressedQueue: A compressed queue containing the results.
         """
         try:
             from quez import CompressedQueue
-            
+
             # Create a compressed queue for results with a reasonable size
             # Use unbounded queue to avoid blocking during population
             result_queue = CompressedQueue()
-            
+
             # Get results from normal aggregation
             results = self.aggregate(pipeline)
-            
+
             # Add all results to the compressed queue
             for result in results:
                 result_queue.put(result)
-            
+
             return result_queue
-            
+
         except ImportError:
             # If quez is not available, fall back to normal processing
             # This should never happen since we check for quez availability before calling this method

@@ -16,6 +16,7 @@ Submodules
 .. toctree::
    :maxdepth: 4
 
+   neosqlite.aggregation_cursor
    neosqlite.binary
    neosqlite.bulk_operations
    neosqlite.changestream
