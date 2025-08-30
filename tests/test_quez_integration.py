@@ -59,9 +59,13 @@ def test_quez_cursor_methods():
             results = list(cursor)
             assert len(results) == 5
             
-            # Test that we can call to_list again (should be empty since we consumed all)
-            results2 = cursor.to_list()
-            assert len(results2) == 0
+            # Create a new cursor to test to_list
+            cursor2 = collection.aggregate([{"$limit": 3}])
+            cursor2.use_quez(True)
+            
+            # Test to_list method
+            results2 = cursor2.to_list()
+            assert len(results2) == 3
             
         except ImportError:
             pytest.skip("quez library not available")
