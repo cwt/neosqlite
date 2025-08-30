@@ -298,3 +298,21 @@ class AggregationCursor:
         """
         self._use_quez = use_quez and QUEZ_AVAILABLE
         return self
+
+    def get_quez_stats(self) -> Optional[Dict[str, Any]]:
+        """
+        Get quez compression statistics if quez is being used.
+
+        Returns:
+            Dict with compression statistics or None if quez is not being used.
+            Statistics include:
+            - 'count': Number of items in the queue
+            - 'raw_size_bytes': Total raw size of items in bytes
+            - 'compressed_size_bytes': Total compressed size of items in bytes
+            - 'compression_ratio_pct': Compression ratio as percentage (None if empty)
+        """
+        if (QUEZ_AVAILABLE and 
+            self._executed and 
+            isinstance(self._results, CompressedQueue)):
+            return self._results.stats
+        return None
