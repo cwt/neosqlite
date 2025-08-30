@@ -36,6 +36,7 @@ memory-constrained = ["quez"]
 pytest = "^8.4"
 pytest-cov = "^6.2"
 mypy = "^1.17"
+pytest-xdist = "^3.8.0"
 
 [tool.pyright]
 stubPath = "typings"
