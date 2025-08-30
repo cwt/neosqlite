@@ -64,7 +64,19 @@ For enhanced JSON/JSONB support on systems where the built-in SQLite doesn't sup
 pip install neosqlite[jsonb]
 ```
 
-This will install `pysqlite3-binary` which provides a newer version of SQLite with JSON/JSONB support compiled in.
+For memory-constrained processing of large result sets, you can install with the `memory-constrained` extra which includes the `quez` library:
+
+```bash
+pip install neosqlite[memory-constrained]
+```
+
+This will install `quez` which provides compressed in-memory queues for handling large aggregation results with reduced memory footprint.
+
+You can also install multiple extras:
+
+```bash
+pip install neosqlite[jsonb,memory-constrained]
+```
 
 **Note**: `NeoSQLite` will work with any SQLite installation. The `jsonb` extra is only needed if:
 1. Your system's built-in SQLite doesn't support JSON functions, **and**
@@ -313,6 +325,37 @@ For more details on text search capabilities, see the [Text Search Documentation
 - For high-performance text search requirements, consider using SQLite's FTS (Full-Text Search) extensions or other specialized search solutions
 - The `$contains` operator is a NeoSQLite-specific extension that is not part of the standard MongoDB query operators
 - **Deprecation Notice**: The `$contains` operator is deprecated and will be removed in a future version. Please use the `$text` operator with FTS5 indexing for better performance.
+
+## Memory-Constrained Processing
+
+For applications that process large aggregation result sets, NeoSQLite provides memory-constrained processing through integration with the `quez` library. This optional feature compresses intermediate results in-memory, significantly reducing memory footprint for large datasets.
+
+To enable memory-constrained processing:
+
+```python
+# Install with memory-constrained extra
+# pip install neosqlite[memory-constrained]
+
+# Enable quez processing on aggregation cursors
+cursor = collection.aggregate(pipeline)
+cursor.use_quez(True)
+
+# Process results incrementally without loading all into memory
+for doc in cursor:
+    process_document(doc)  # Each document is decompressed and returned one at a time
+```
+
+The `quez` library provides:
+- Compressed in-memory buffering using pluggable compression algorithms (zlib, bz2, lzma, zstd, lzo)
+- Thread-safe queue implementations for both synchronous and asynchronous applications
+- Real-time observability with compression ratio statistics
+- Configurable batch sizes for memory management
+
+This approach is particularly beneficial for:
+- Large aggregation pipelines with many results
+- Applications with limited memory resources
+- Streaming processing of database results
+- Microservices that need to forward results to other services
 
 ## Sorting
 
