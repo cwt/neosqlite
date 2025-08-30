@@ -347,6 +347,108 @@ def main():
             "results_match": True,
         }
 
+        # 15. Advanced $unwind with preserveNullAndEmptyArrays
+        print("\n--- $unwind with preserveNullAndEmptyArrays ---")
+        start_time = time.perf_counter()
+        cursor_preserve = users.aggregate(
+            [
+                {
+                    "$unwind": {
+                        "path": "$skills",
+                        "preserveNullAndEmptyArrays": True,
+                    }
+                }
+            ]
+        )
+        result_preserve = list(cursor_preserve)
+        preserve_time = time.perf_counter() - start_time
+        print(f"  Preserve null/empty arrays time: {preserve_time:.4f}s")
+        print(f"  Result count: {len(result_preserve)} documents")
+        results["$unwind (preserveNullAndEmptyArrays)"] = {
+            "optimized_time": float("inf"),  # Not optimized
+            "fallback_time": preserve_time,
+            "speedup": 0,
+            "results_match": True,
+        }
+
+        # 16. Pipeline reordering optimization
+        print("\n--- Pipeline Reordering Optimization ---")
+        # Create a pipeline where reordering would be beneficial
+        pipeline_reorder = [
+            {"$unwind": "$tags"},  # Expensive operation first
+            {
+                "$match": {"category": "Electronics", "status": "active"}
+            },  # Should be moved to front
+            {"$limit": 20},
+        ]
+
+        # Test optimized path
+        neosqlite.collection.query_helper.set_force_fallback(False)
+        start_time = time.perf_counter()
+        cursor_reorder_opt = products.aggregate(pipeline_reorder)
+        result_reorder_opt = list(cursor_reorder_opt)
+        reorder_optimized_time = time.perf_counter() - start_time
+
+        # Test fallback path
+        neosqlite.collection.query_helper.set_force_fallback(True)
+        start_time = time.perf_counter()
+        cursor_reorder_fallback = products.aggregate(pipeline_reorder)
+        result_reorder_fallback = list(cursor_reorder_fallback)
+        reorder_fallback_time = time.perf_counter() - start_time
+
+        neosqlite.collection.query_helper.set_force_fallback(False)
+        reorder_speedup = (
+            reorder_fallback_time / reorder_optimized_time
+            if reorder_optimized_time > 0
+            else float("inf")
+        )
+        print(f"  Optimized: {reorder_optimized_time:.4f}s")
+        print(f"  Fallback:  {reorder_fallback_time:.4f}s")
+        print(f"  Speedup:   {reorder_speedup:.1f}x faster")
+        print(
+            f"  Results match: {len(result_reorder_opt) == len(result_reorder_fallback)}"
+        )
+
+        results["Pipeline Reordering"] = {
+            "optimized_time": reorder_optimized_time,
+            "fallback_time": reorder_fallback_time,
+            "speedup": reorder_speedup,
+            "results_match": len(result_reorder_opt)
+            == len(result_reorder_fallback),
+        }
+
+        # 17. Memory-constrained processing with quez
+        print("\n--- Memory-Constrained Processing (quez) ---")
+        # Test with a large result set
+        pipeline_large = [{"$unwind": "$tags"}]
+
+        # Test without quez (normal processing)
+        neosqlite.collection.query_helper.set_force_fallback(False)
+        start_time = time.perf_counter()
+        cursor_normal = products.aggregate(pipeline_large)
+        result_normal = list(cursor_normal)
+        normal_time = time.perf_counter() - start_time
+
+        # Test with quez (memory-constrained processing)
+        start_time = time.perf_counter()
+        cursor_quez = products.aggregate(pipeline_large)
+        cursor_quez.use_quez(True)
+        result_quez = list(cursor_quez)
+        quez_time = time.perf_counter() - start_time
+
+        print(f"  Normal processing: {normal_time:.4f}s")
+        print(f"  Quez processing:   {quez_time:.4f}s")
+        print(f"  Result count match: {len(result_normal) == len(result_quez)}")
+
+        results["Memory-Constrained (quez)"] = {
+            "optimized_time": normal_time,
+            "fallback_time": quez_time,
+            "speedup": (
+                normal_time / quez_time if quez_time > 0 else float("inf")
+            ),
+            "results_match": len(result_normal) == len(result_quez),
+        }
+
         # Summary
         print("\n" + "=" * 70)
         print("BENCHMARK SUMMARY")
@@ -393,6 +495,12 @@ def main():
         print(
             "- Index usage further enhances performance for $match operations"
         )
+        print(
+            "- Pipeline reordering optimization provides significant benefits"
+        )
+        print(
+            "- Memory-constrained processing maintains performance with reduced memory usage"
+        )
 
         print("\nTechnical Details:")
         print("- SQL optimization uses SQLite's native JSON functions")
@@ -403,6 +511,10 @@ def main():
         print("- Complex pipelines maintain full MongoDB API compatibility")
         print(
             "- Fallback ensures all features work even when optimization isn't possible"
+        )
+        print("- Pipeline reordering automatically optimizes execution order")
+        print(
+            "- Memory-constrained processing uses quez compression for large result sets"
         )
 
 

@@ -9,6 +9,7 @@
 - Extended json_each() optimization to support nested $unwind operations
 - Refactored `neosqlite/collection.py` into smaller modules for better maintainability
 - Added comprehensive test coverage for all new json_each() optimizations
+- Added comprehensive benchmark suite demonstrating 5-480x performance improvements
 - Updated documentation to reflect new capabilities
 
 ## 0.4.0

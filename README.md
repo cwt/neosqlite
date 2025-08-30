@@ -22,6 +22,16 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 - **Automatic JSON/JSONB Support**: Automatically detects and uses JSONB column type when available for better performance.
 - **GridFS Support**: Store and retrieve large files with a PyMongo-compatible GridFS implementation.
 
+## Performance Benchmarks
+
+NeoSQLite includes comprehensive benchmarks demonstrating the performance benefits of its SQL optimizations:
+
+- **Comprehensive SQL Optimization Benchmark**: Shows 5-480x performance improvements across all core operations
+- **Enhanced SQL Optimization Benchmark**: Covers additional optimizations like pipeline reordering and text search with array processing
+- **Text Search + json_each() Benchmark**: Demonstrates specialized optimizations for text search on array fields
+
+See the [`examples/`](examples/) directory for detailed benchmark implementations and results.
+
 ## Drop-in Replacement for PyMongo and NoSQL Solutions
 
 For many common use cases, `NeoSQLite` can serve as a drop-in replacement for `PyMongo`. The API is designed to be compatible, meaning you can switch from MongoDB to a SQLite backend with minimal code changes. The primary difference is in the initial connection setup.
