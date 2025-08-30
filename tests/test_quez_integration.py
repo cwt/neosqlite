@@ -26,7 +26,7 @@ def test_quez_memory_constrained_processing():
         # Test quez-enabled aggregation (if quez is available)
         try:
             from quez import CompressedQueue
-            
+
             cursor2 = collection.aggregate(pipeline)
             cursor2.use_quez(True)  # Enable quez processing
 
@@ -34,10 +34,10 @@ def test_quez_memory_constrained_processing():
             results2 = list(cursor2)
             assert len(results2) == 10
             assert all(doc["age"] >= 25 for doc in results2)
-            
+
             # Results should be the same
             assert results == results2
-            
+
         except ImportError:
             # quez not available, skip test
             pytest.skip("quez library not available")
@@ -51,22 +51,22 @@ def test_quez_cursor_methods():
 
         try:
             from quez import CompressedQueue
-            
+
             cursor = collection.aggregate([{"$limit": 5}])
             cursor.use_quez(True)
-            
+
             # Test that we can iterate
             results = list(cursor)
             assert len(results) == 5
-            
+
             # Create a new cursor to test to_list
             cursor2 = collection.aggregate([{"$limit": 3}])
             cursor2.use_quez(True)
-            
+
             # Test to_list method
             results2 = cursor2.to_list()
             assert len(results2) == 3
-            
+
         except ImportError:
             pytest.skip("quez library not available")
 

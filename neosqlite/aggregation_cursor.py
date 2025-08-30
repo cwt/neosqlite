@@ -1,9 +1,10 @@
-from typing import Any, Dict, List, Iterator, TYPE_CHECKING, Union, Optional
+from typing import Any, Dict, List, Iterator, TYPE_CHECKING
 import threading
 import time
 
 if TYPE_CHECKING:
     from .collection import Collection
+
     try:
         from quez import CompressedQueue
     except ImportError:
@@ -12,6 +13,7 @@ if TYPE_CHECKING:
 # Try to import quez, but make it optional
 try:
     from quez import CompressedQueue
+
     QUEZ_AVAILABLE = True
 except ImportError:
     CompressedQueue = None
@@ -38,7 +40,7 @@ class AggregationCursor:
         """
         self.collection = collection
         self.pipeline = pipeline
-        self._results: Union[List[Dict[str, Any]], "CompressedQueue", None] = None
+        self._results: List[Dict[str, Any]] | "CompressedQueue" | None = None
         self._position = 0
         self._executed = False
         # Memory constraint settings
@@ -96,7 +98,7 @@ class AggregationCursor:
                 return result
             else:
                 raise StopIteration
-        
+
         raise StopIteration
 
     def __len__(self) -> int:
@@ -120,7 +122,7 @@ class AggregationCursor:
         # Handle list results
         if isinstance(self._results, list):
             return len(self._results)
-        
+
         return 0
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
@@ -142,12 +144,14 @@ class AggregationCursor:
 
         # Handle CompressedQueue results
         if QUEZ_AVAILABLE and isinstance(self._results, CompressedQueue):
-            raise NotImplementedError("Indexing not supported with quez memory-constrained processing")
+            raise NotImplementedError(
+                "Indexing not supported with quez memory-constrained processing"
+            )
 
         # Handle list results
         if isinstance(self._results, list):
             return self._results[index]
-        
+
         raise IndexError("Cursor has no results")
 
     def sort(self, key=None, reverse=False):
@@ -167,7 +171,9 @@ class AggregationCursor:
 
         # Sorting is not supported with quez
         if QUEZ_AVAILABLE and isinstance(self._results, CompressedQueue):
-            raise NotImplementedError("Sorting not supported with quez memory-constrained processing")
+            raise NotImplementedError(
+                "Sorting not supported with quez memory-constrained processing"
+            )
 
         # Check if we have results
         if self._results is None:
@@ -178,7 +184,7 @@ class AggregationCursor:
             # Sort the results
             self._results.sort(key=key, reverse=reverse)
             return self
-        
+
         return self
 
     def _execute(self) -> None:
@@ -188,12 +194,18 @@ class AggregationCursor:
         # Estimate the result size to determine if we need memory-constrained processing
         estimated_size = self._estimate_result_size()
 
-        if estimated_size > self._memory_threshold and QUEZ_AVAILABLE and self._use_quez:
+        if (
+            estimated_size > self._memory_threshold
+            and QUEZ_AVAILABLE
+            and self._use_quez
+        ):
             # Use memory-constrained processing with quez
-            self._results = self.collection.query_engine.aggregate_with_constraints(
-                self.pipeline, 
-                batch_size=self._batch_size, 
-                memory_constrained=True
+            self._results = (
+                self.collection.query_engine.aggregate_with_constraints(
+                    self.pipeline,
+                    batch_size=self._batch_size,
+                    memory_constrained=True,
+                )
             )
         else:
             # Use normal processing
@@ -255,7 +267,7 @@ class AggregationCursor:
         # Handle list results
         if isinstance(self._results, list):
             return self._results[:]
-        
+
         return []
 
     def batch_size(self, size: int) -> "AggregationCursor":
@@ -299,7 +311,7 @@ class AggregationCursor:
         self._use_quez = use_quez and QUEZ_AVAILABLE
         return self
 
-    def get_quez_stats(self) -> Optional[Dict[str, Any]]:
+    def get_quez_stats(self) -> Dict[str, Any] | None:
         """
         Get quez compression statistics if quez is being used.
 
@@ -311,8 +323,10 @@ class AggregationCursor:
             - 'compressed_size_bytes': Total compressed size of items in bytes
             - 'compression_ratio_pct': Compression ratio as percentage (None if empty)
         """
-        if (QUEZ_AVAILABLE and 
-            self._executed and 
-            isinstance(self._results, CompressedQueue)):
+        if (
+            QUEZ_AVAILABLE
+            and self._executed
+            and isinstance(self._results, CompressedQueue)
+        ):
             return self._results.stats
         return None

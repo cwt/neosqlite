@@ -671,6 +671,24 @@ pytest = ">=6.2.5"
 testing = ["fields", "hunter", "process-tests", "pytest-xdist", "virtualenv"]
 
 [[package]]
+name = "quez"
+version = "1.1.1"
+description = "Pluggable, compressed in-memory queues for both sync and asyncio applications."
+optional = true
+python-versions = "<4.0,>=3.10"
+groups = ["main"]
+markers = "extra == \"memory-constrained\""
+files = [
+    {file = "quez-1.1.1-py3-none-any.whl", hash = "sha256:cf9b2beb71e40a3042bd2267e03c5cc79ea762ab2f54404f60e34b609e994e6d"},
+    {file = "quez-1.1.1.tar.gz", hash = "sha256:eec6c8fd480a93f2b3af33673c9b1f32d7a84310731bf2ed1ed41de7796db7c4"},
+]
+
+[package.extras]
+all = ["python-lzo", "zstandard"]
+lzo = ["python-lzo"]
+zstd = ["zstandard"]
+
+[[package]]
 name = "requests"
 version = "2.32.5"
 description = "Python HTTP for Humans."
@@ -959,8 +977,9 @@ zstd = ["zstandard (>=0.18.0)"]
 [extras]
 docs = ["furo", "sphinx"]
 jsonb = ["pysqlite3-binary"]
+memory-constrained = ["quez"]
 
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.10"
-content-hash = "7b5309c3b57ac29deb41998a3c8484705ee615ae489c7801e9d1478ec32fd9ed"
+content-hash = "211321f7e17e8641da4a2e04225d1fe65c65a9aefd2c44d0a728f2c0463bdf22"

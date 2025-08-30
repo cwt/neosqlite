@@ -15,7 +15,7 @@ from neosqlite.collection.json_helpers import (
     neosqlite_json_dumps,
     neosqlite_json_loads,
 )
-from typing import Any, Dict, List, Union, TYPE_CHECKING
+from typing import Any, Dict, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from quez import CompressedQueue
@@ -478,7 +478,7 @@ class QueryEngine:
         pipeline: List[Dict[str, Any]],
         batch_size: int = 1000,
         memory_constrained: bool = False
-    ) -> Union[List[Dict[str, Any]], "CompressedQueue"]:
+    ) -> List[Dict[str, Any]] | "CompressedQueue":
         """
         Applies a list of aggregation pipeline stages with memory constraints.
 
@@ -488,7 +488,7 @@ class QueryEngine:
             memory_constrained (bool): Whether to use memory-constrained processing.
 
         Returns:
-            Union[List[Dict[str, Any]], CompressedQueue]: The results as either a list or compressed queue.
+            List[Dict[str, Any]] | CompressedQueue: The results as either a list or compressed queue.
         """
         # If memory_constrained is True and quez is available, use quez for processing
         if memory_constrained:
@@ -499,7 +499,7 @@ class QueryEngine:
             except ImportError:
                 # Fall back to normal processing if quez is not available
                 pass
-        
+
         query_result = self.helpers._build_aggregation_query(pipeline)
         if query_result is not None:
             cmd, params, output_fields = query_result
@@ -736,8 +736,9 @@ class QueryEngine:
         try:
             from quez import CompressedQueue
             
-            # Create a compressed queue for results
-            result_queue = CompressedQueue(maxsize=batch_size * 2)
+            # Create a compressed queue for results with a reasonable size
+            # Use unbounded queue to avoid blocking during population
+            result_queue = CompressedQueue()
             
             # Get results from normal aggregation
             results = self.aggregate(pipeline)

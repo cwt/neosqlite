@@ -69,7 +69,9 @@ def demonstrate_memory_constrained_processing():
                 # In a real application, you might process each document here
                 # For example, send to another service, write to file, etc.
                 if processed_count <= 3:  # Just show first 3 for demo
-                    print(f"   Processed document: {doc['name']} - ${doc['salary']}")
+                    print(
+                        f"   Processed document: {doc['name']} - ${doc['salary']}"
+                    )
 
             quez_time = time.time() - start_time
             print(f"   Processed {processed_count} documents")
@@ -114,7 +116,9 @@ def demonstrate_memory_constrained_processing():
             print(f"   Found {len(group_results)} tag groups")
             print(f"   Processing time: {group_time:.4f} seconds")
             for result in group_results[:3]:  # Show top 3
-                print(f"   Tag '{result['_id']}': {result['count']} occurrences")
+                print(
+                    f"   Tag '{result['_id']}': {result['count']} occurrences"
+                )
 
         except ImportError:
             print("   Quez library not available. Skipping quez example.")
