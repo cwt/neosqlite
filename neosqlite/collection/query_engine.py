@@ -15,7 +15,11 @@ from neosqlite.collection.json_helpers import (
     neosqlite_json_dumps,
     neosqlite_json_loads,
 )
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Union, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from quez import CompressedQueue
+
 from copy import deepcopy
 import json
 
@@ -474,7 +478,7 @@ class QueryEngine:
         pipeline: List[Dict[str, Any]],
         batch_size: int = 1000,
         memory_constrained: bool = False
-    ) -> List[Dict[str, Any]]:
+    ) -> Union[List[Dict[str, Any]], "CompressedQueue"]:
         """
         Applies a list of aggregation pipeline stages with memory constraints.
 
@@ -484,7 +488,7 @@ class QueryEngine:
             memory_constrained (bool): Whether to use memory-constrained processing.
 
         Returns:
-            List[Dict[str, Any]]: The list of documents after applying the aggregation pipeline.
+            Union[List[Dict[str, Any]], CompressedQueue]: The results as either a list or compressed queue.
         """
         # If memory_constrained is True and quez is available, use quez for processing
         if memory_constrained:
@@ -718,7 +722,7 @@ class QueryEngine:
         self,
         pipeline: List[Dict[str, Any]],
         batch_size: int = 1000
-    ) -> List[Dict[str, Any]]:
+    ) -> "CompressedQueue":
         """
         Process aggregation pipeline with quez compressed queue for memory efficiency.
         
@@ -727,7 +731,7 @@ class QueryEngine:
             batch_size (int): The batch size for quez queue processing.
             
         Returns:
-            List[Dict[str, Any]]: The list of documents after applying the aggregation pipeline.
+            CompressedQueue: A compressed queue containing the results.
         """
         try:
             from quez import CompressedQueue
@@ -742,19 +746,12 @@ class QueryEngine:
             for result in results:
                 result_queue.put(result)
             
-            # Extract all results from the queue (they'll be compressed in memory)
-            extracted_results = []
-            while not result_queue.empty():
-                try:
-                    extracted_results.append(result_queue.get(block=False))
-                except:
-                    break
-                    
-            return extracted_results
+            return result_queue
             
         except ImportError:
             # If quez is not available, fall back to normal processing
-            return self.aggregate(pipeline)
+            # This should never happen since we check for quez availability before calling this method
+            raise RuntimeError("Quez is not available but was expected to be")
 
     def initialize_ordered_bulk_op(self) -> BulkOperationExecutor:
         """Initialize an ordered bulk operation.

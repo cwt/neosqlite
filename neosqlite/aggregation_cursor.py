@@ -38,7 +38,7 @@ class AggregationCursor:
         """
         self.collection = collection
         self.pipeline = pipeline
-        self._results: Optional[List[Dict[str, Any]]] = None
+        self._results: Union[List[Dict[str, Any]], "CompressedQueue", None] = None
         self._position = 0
         self._executed = False
         # Memory constraint settings
@@ -80,13 +80,24 @@ class AggregationCursor:
         if self._results is None:
             raise StopIteration
 
-        # Check if we have more results
-        if self._position < len(self._results):
-            result = self._results[self._position]
-            self._position += 1
-            return result
-        else:
-            raise StopIteration
+        # Handle CompressedQueue results
+        if QUEZ_AVAILABLE and isinstance(self._results, CompressedQueue):
+            try:
+                return self._results.get(block=False)
+            except:
+                raise StopIteration
+
+        # Handle list results
+        if isinstance(self._results, list):
+            # Check if we have more results
+            if self._position < len(self._results):
+                result = self._results[self._position]
+                self._position += 1
+                return result
+            else:
+                raise StopIteration
+        
+        raise StopIteration
 
     def __len__(self) -> int:
         """
@@ -102,7 +113,15 @@ class AggregationCursor:
         if self._results is None:
             return 0
 
-        return len(self._results)
+        # Handle CompressedQueue results
+        if QUEZ_AVAILABLE and isinstance(self._results, CompressedQueue):
+            return self._results.qsize()
+
+        # Handle list results
+        if isinstance(self._results, list):
+            return len(self._results)
+        
+        return 0
 
     def __getitem__(self, index: int) -> Dict[str, Any]:
         """
@@ -121,7 +140,15 @@ class AggregationCursor:
         if self._results is None:
             raise IndexError("Cursor has no results")
 
-        return self._results[index]
+        # Handle CompressedQueue results
+        if QUEZ_AVAILABLE and isinstance(self._results, CompressedQueue):
+            raise NotImplementedError("Indexing not supported with quez memory-constrained processing")
+
+        # Handle list results
+        if isinstance(self._results, list):
+            return self._results[index]
+        
+        raise IndexError("Cursor has no results")
 
     def sort(self, key=None, reverse=False):
         """
@@ -138,12 +165,20 @@ class AggregationCursor:
         if not self._executed:
             self._execute()
 
+        # Sorting is not supported with quez
+        if QUEZ_AVAILABLE and isinstance(self._results, CompressedQueue):
+            raise NotImplementedError("Sorting not supported with quez memory-constrained processing")
+
         # Check if we have results
         if self._results is None:
             return self
 
-        # Sort the results
-        self._results.sort(key=key, reverse=reverse)
+        # Handle list results
+        if isinstance(self._results, list):
+            # Sort the results
+            self._results.sort(key=key, reverse=reverse)
+            return self
+        
         return self
 
     def _execute(self) -> None:
@@ -206,7 +241,22 @@ class AggregationCursor:
         if self._results is None:
             return []
 
-        return self._results[:]
+        # Handle CompressedQueue results
+        if QUEZ_AVAILABLE and isinstance(self._results, CompressedQueue):
+            # Extract all items from the queue
+            results = []
+            while not self._results.empty():
+                try:
+                    results.append(self._results.get(block=False))
+                except:
+                    break
+            return results
+
+        # Handle list results
+        if isinstance(self._results, list):
+            return self._results[:]
+        
+        return []
 
     def batch_size(self, size: int) -> "AggregationCursor":
         """
