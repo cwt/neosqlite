@@ -30,21 +30,21 @@ Aggregation Pipeline Processing Flow:
           │
           ▼
 ┌─────────────────────┐  Yes   ┌─────────────────────┐
-│ Can optimize with  │ ──────▶ │  Single SQL Query   │
-│   single query?    │        │   (Fastest)         │
+│ Can optimize with   │ ─────▶ │  Single SQL Query   │
+│   single query?     │        │   (Fastest)         │
 └─────────┬───────────┘        └─────────────────────┘
           │ No
           ▼
 ┌─────────────────────┐  Yes   ┌─────────────────────┐
-│ Can process with    │ ──────▶ │ Temporary Table     │
-│  temporary tables? │        │  Aggregation        │
+│ Can process with    │ ─────▶ │ Temporary Table     │
+│  temporary tables?  │        │  Aggregation        │
 └─────────┬───────────┘        │  (Intermediate)     │
           │ No                 └─────────────────────┘
           ▼
 ┌─────────────────────┐        ┌─────────────────────┐
-│ Python Fallback    │ ──────▶ │  Python Processing  │
-│  (Slowest but      │        │   (Most Flexible)   │
-│   most flexible)   │        └─────────────────────┘
+│ Python Fallback     │ ─────▶ │  Python Processing  │
+│  (Slowest but       │        │   (Most Flexible)   │
+│   most flexible)    │        └─────────────────────┘
 └─────────────────────┘
 ```
 
@@ -232,12 +232,12 @@ Comprehensive test coverage ensures reliability:
 ### 1. Performance Improvements
 Benchmark results demonstrate significant real-world benefits:
 
-| Pipeline Complexity | Performance Improvement |
-|---------------------|-------------------------|
-| Simple pipelines    | 2-5x faster             |
-| Moderate pipelines  | 10-50x faster           |
-| Complex pipelines   | 50-200x faster          |
-| Highly complex pipelines | Up to 450x faster   |
+| Pipeline Complexity      | Performance Improvement |
+|--------------------------|-------------------------|
+| Simple pipelines         | 2-5x faster             |
+| Moderate pipelines       | 10-50x faster           |
+| Complex pipelines        | 50-200x faster          |
+| Highly complex pipelines | Up to 450x faster       |
 
 ### 2. Memory Efficiency
 - 50-90% reduction in Python memory usage for complex pipelines
