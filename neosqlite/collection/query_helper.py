@@ -1383,7 +1383,9 @@ class QueryHelper:
                     limit = f"LIMIT {count}"
                 case "$group":
                     # Check if this is a $unwind + $group pattern we can optimize
-                    optimization_result = self._optimize_unwind_group_pattern(i, pipeline)
+                    optimization_result = self._optimize_unwind_group_pattern(
+                        i, pipeline
+                    )
                     if optimization_result is not None:
                         return optimization_result
 
@@ -1878,21 +1880,19 @@ class QueryHelper:
         return cmd, params, output_fields
 
     def _optimize_unwind_group_pattern(
-        self, 
-        group_stage_index: int, 
-        pipeline: List[Dict[str, Any]]
+        self, group_stage_index: int, pipeline: List[Dict[str, Any]]
     ) -> tuple[str, List[Any], List[str]] | None:
         """
         Optimize $unwind + $group pattern with SQL-based processing.
-        
+
         This method handles the specific optimization pattern where a $unwind stage
         is immediately followed by a $group stage. It can optimize various accumulator
         operations including $sum, $count, $push, and $addToSet.
-        
+
         Args:
             group_stage_index: Index of the $group stage in the pipeline
             pipeline: The complete aggregation pipeline
-            
+
         Returns:
             tuple[str, List[Any], List[str]] | None: SQL command, params, and output fields
             if optimization is possible, None otherwise
@@ -1911,9 +1911,7 @@ class QueryHelper:
             ):
 
                 unwind_field = unwind_stage[1:]  # Remove leading $
-                group_id_field = group_spec["_id"][
-                    1:
-                ]  # Remove leading $
+                group_id_field = group_spec["_id"][1:]  # Remove leading $
 
                 # Check if we can handle this specific group operation
                 can_optimize = True
@@ -1947,28 +1945,18 @@ class QueryHelper:
                     op, expr = next(iter(accumulator.items()))
 
                     match op:
-                        case "$sum" if (
-                            isinstance(expr, int) and expr == 1
-                        ):
+                        case "$sum" if (isinstance(expr, int) and expr == 1):
                             # Count operation
-                            select_expressions.append(
-                                f"COUNT(*) AS {field}"
-                            )
+                            select_expressions.append(f"COUNT(*) AS {field}")
                             output_fields.append(field)
                         case "$count":
                             # Count operation
-                            select_expressions.append(
-                                f"COUNT(*) AS {field}"
-                            )
+                            select_expressions.append(f"COUNT(*) AS {field}")
                             output_fields.append(field)
                         case "$push":
                             # $push accumulator - collect all values including duplicates
-                            if isinstance(
-                                expr, str
-                            ) and expr.startswith("$"):
-                                push_field = expr[
-                                    1:
-                                ]  # Remove leading $
+                            if isinstance(expr, str) and expr.startswith("$"):
+                                push_field = expr[1:]  # Remove leading $
                                 if push_field == unwind_field:
                                     # Collect the unwound values
                                     select_expressions.append(
@@ -1986,12 +1974,8 @@ class QueryHelper:
                                 break
                         case "$addToSet":
                             # $addToSet accumulator - collect unique values only
-                            if isinstance(
-                                expr, str
-                            ) and expr.startswith("$"):
-                                add_to_set_field = expr[
-                                    1:
-                                ]  # Remove leading $
+                            if isinstance(expr, str) and expr.startswith("$"):
+                                add_to_set_field = expr[1:]  # Remove leading $
                                 if add_to_set_field == unwind_field:
                                     # Collect unique unwound values
                                     select_expressions.append(
@@ -2014,9 +1998,7 @@ class QueryHelper:
 
                 if can_optimize:
                     # Build the optimized SQL query
-                    select_clause = "SELECT " + ", ".join(
-                        select_expressions
-                    )
+                    select_clause = "SELECT " + ", ".join(select_expressions)
                     from_clause = f"FROM {self.collection.name}, json_each(json_extract({self.collection.name}.data, '$.{unwind_field}')) as je"
 
                     # Add ordering by _id for consistent results
@@ -2028,7 +2010,7 @@ class QueryHelper:
                     # If we can't optimize the $unwind + $group combination,
                     # fall back to Python processing for the entire pipeline
                     return None
-                    
+
         return None
 
     def _build_unwind_query(
