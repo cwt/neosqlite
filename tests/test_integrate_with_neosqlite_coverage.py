@@ -2,7 +2,6 @@
 Specific tests for integrate_with_neosqlite function to increase code coverage.
 """
 
-import pytest
 import neosqlite
 from neosqlite.temporary_table_aggregation import integrate_with_neosqlite
 

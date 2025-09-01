@@ -1,6 +1,4 @@
 from typing import Any, Dict, List, Iterator, TYPE_CHECKING
-import threading
-import time
 
 if TYPE_CHECKING:
     from .collection import Collection

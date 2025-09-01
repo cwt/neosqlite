@@ -5,10 +5,8 @@ that the current implementation can't optimize with a single SQL query.
 """
 
 import hashlib
-import uuid
 from contextlib import contextmanager
-from typing import Any, Dict, List, Callable, Optional
-import json
+from typing import Any, Dict, List, Callable
 from .cursor import DESCENDING
 
 
@@ -16,7 +14,15 @@ class DeterministicTempTableManager:
     """Manager for deterministic temporary table names."""
 
     def __init__(self, pipeline_id: str):
-        """Initialize with a pipeline ID for uniqueness."""
+        """
+        Initialize the DeterministicTempTableManager with a pipeline ID for generating
+        unique table names.
+
+        Args:
+            pipeline_id (str): A unique identifier for the pipeline, used to ensure
+                               table names are deterministic and unique across
+                               different pipeline executions.
+        """
         self.pipeline_id = pipeline_id
         self.stage_counter = 0
         self.name_counter: Dict[str, int] = (
@@ -26,7 +32,26 @@ class DeterministicTempTableManager:
     def make_temp_table_name(
         self, stage: Dict[str, Any], name_suffix: str = ""
     ) -> str:
-        """Generate a deterministic temp table name based on the stage and pipeline ID."""
+        """
+        Generate a deterministic temporary table name based on the pipeline stage
+        and pipeline ID.
+
+        This method creates a unique but deterministic name for a temporary table by:
+        1. Creating a canonical representation of the stage
+        2. Hashing the stage to create a short, unique suffix
+        3. Combining the pipeline ID, stage type, and hash to form a base name
+        4. Ensuring uniqueness by tracking name usage within the pipeline
+
+        Args:
+            stage (Dict[str, Any]): The pipeline stage dictionary used to generate
+                                    the table name
+            name_suffix (str, optional): An additional suffix to append to the
+                                         table name. Defaults to "".
+
+        Returns:
+            str: A deterministic temporary table name unique to this stage and
+                 pipeline
+        """
         # Create a canonical representation of the stage
         stage_key = str(sorted(stage.items()))
         # Hash the stage to create a short, unique suffix
@@ -51,10 +76,41 @@ class DeterministicTempTableManager:
 
 
 @contextmanager
-def aggregation_pipeline_context(
-    db_connection, pipeline_id: Optional[str] = None
-):
-    """Context manager for temporary aggregation tables with automatic cleanup."""
+def aggregation_pipeline_context(db_connection, pipeline_id: str | None = None):
+    """
+    Context manager for temporary aggregation tables with automatic cleanup.
+
+    This context manager provides a clean and safe way to work with temporary
+    tables during aggregation pipeline processing. It handles:
+
+    1. Creating a savepoint for atomicity of the entire pipeline
+    2. Generating deterministic temporary table names
+    3. Providing a function to create temporary tables with proper naming
+    4. Automatic cleanup of all temporary tables and savepoint on exit
+
+    The context manager supports both new deterministic naming (using stage dictionaries)
+    and backward compatibility (using string suffixes) for temporary tables.
+
+    Args:
+        db_connection: The database connection object
+        pipeline_id (str | None): A unique identifier for the pipeline. If None,
+                                  a default ID is generated for backward compatibility.
+
+    Yields:
+        Callable: A function to create temporary tables with the signature:
+                  create_temp_table(stage_or_suffix, query, params=None, name_suffix="")
+
+                  Where:
+                  - stage_or_suffix: Either a stage dict (new approach) or string
+                                     (backward compatibility)
+                  - query: The SQL query to populate the temporary table
+                  - params: Optional parameters for the SQL query
+                  - name_suffix: Optional suffix for backward compatibility naming
+
+    Raises:
+        Exception: Any exception that occurs during pipeline processing is re-raised
+                   after cleanup operations
+    """
     temp_tables = []
 
     # Generate a default pipeline ID if none provided (for backward compatibility)
@@ -74,13 +130,41 @@ def aggregation_pipeline_context(
     def create_temp_table(
         stage_or_suffix: Any,  # Can be Dict[str, Any] for new usage or str for backward compatibility
         query: str,
-        params: Optional[List[Any]] = None,
+        params: List[Any] | None = None,
         name_suffix: str = "",  # Used only for backward compatibility
     ) -> str:
-        """Create a temporary table for pipeline processing with deterministic naming.
+        """
+        Create a temporary table for pipeline processing with deterministic naming.
 
-        This function supports both the new deterministic naming approach and the old
-        backward-compatible approach for existing tests.
+        This function supports both the new deterministic naming approach (using
+        stage dictionaries) and the old backward-compatible approach (using string
+        suffixes) for temporary table names.
+
+        The function creates a temporary table by executing a CREATE TEMP TABLE
+        AS SELECT statement with the provided query and optional parameters. The
+        table name is generated deterministically based on the pipeline stage or
+        provided suffix, ensuring uniqueness within the pipeline context.
+
+        Args:
+            stage_or_suffix (Any): Either a stage dictionary (new approach) for
+                                   deterministic naming or a string suffix (backward
+                                   compatibility). When using the new approach,
+                                   this should be the pipeline stage dictionary
+                                   that determines the table name. When using the
+                                   old approach, this should be a string suffix
+                                   for the table name.
+            query (str): The SQL query used to populate the temporary table
+            params (List[Any] | None, optional): Parameters for the SQL query.
+                                                 Defaults to None.
+            name_suffix (str, optional): Additional suffix for table name (used
+                                         only in backward compatibility mode).
+                                         Defaults to "".
+
+        Returns:
+            str: The name of the created temporary table
+
+        Raises:
+            Exception: Any database execution errors are propagated to the caller
         """
         # Check if we're using the new approach (stage is a dict) or old approach (stage is a string)
         if isinstance(stage_or_suffix, dict):
@@ -126,6 +210,14 @@ class TemporaryTableAggregationProcessor:
     """Processor for aggregation pipelines using temporary tables."""
 
     def __init__(self, collection):
+        """
+        Initialize the TemporaryTableAggregationProcessor with a collection.
+
+        Args:
+            collection: The NeoSQLite collection to process aggregation pipelines
+                        on. This collection provides the database connection and
+                        document loading functionality needed for pipeline processing.
+        """
         self.collection = collection
         self.db = collection.db
 
@@ -135,18 +227,34 @@ class TemporaryTableAggregationProcessor:
         """
         Process an aggregation pipeline using temporary tables for intermediate results.
 
-        This implementation focuses on processing complex pipelines that the current
-        NeoSQLite implementation can't optimize with a single SQL query.
+        This method implements a temporary table approach for processing complex
+        aggregation pipelines that cannot be optimized into a single SQL query by
+        the current NeoSQLite implementation. It works by:
+
+        1. Generating a deterministic pipeline ID based on the pipeline content
+        2. Using the aggregation_pipeline_context for atomicity and cleanup
+        3. Creating temporary tables for each stage or group of compatible stages
+        4. Processing pipeline stages in an optimized order (grouping compatible stages)
+        5. Returning the final results from the last temporary table
+
+        The method supports these pipeline stages:
+        - $match: For filtering documents
+        - $unwind: For deconstructing array fields
+        - $lookup: For joining documents from different collections
+        - $sort, $skip, $limit: For sorting and pagination
 
         Args:
-            pipeline: List of aggregation pipeline stages
+            pipeline (List[Dict[str, Any]]): A list of aggregation pipeline stages
+                                             to process
 
         Returns:
-            List of result documents
+            List[Dict[str, Any]]: A list of result documents after processing the
+                                  pipeline
+
+        Raises:
+            NotImplementedError: If the pipeline contains unsupported stages
         """
         # Generate a deterministic pipeline ID based on the pipeline content
-        import hashlib
-
         pipeline_key = "".join(str(sorted(stage.items())) for stage in pipeline)
         pipeline_id = hashlib.sha256(pipeline_key.encode()).hexdigest()[:8]
 
@@ -236,7 +344,30 @@ class TemporaryTableAggregationProcessor:
         current_table: str,
         match_spec: Dict[str, Any],
     ) -> str:
-        """Process a $match stage using temporary tables."""
+        """
+        Process a $match stage using temporary tables.
+
+        This method creates a temporary table that contains only documents matching
+        the specified criteria. It translates the MongoDB-style match specification
+        into SQL WHERE conditions using json_extract for field access.
+
+        The method supports these match operators:
+        - $eq, $gt, $lt, $gte, $lte: Comparison operators
+        - $in, $nin: Array membership operators
+        - $ne: Not equal operator
+
+        For the special _id field, it uses the table's id column directly rather
+        than json_extract.
+
+        Args:
+            create_temp (Callable): Function to create temporary tables
+            current_table (str): Name of the current temporary table containing
+                                 input data
+            match_spec (Dict[str, Any]): The $match stage specification
+
+        Returns:
+            str: Name of the newly created temporary table with matched documents
+        """
         # Build WHERE clause
         where_conditions = []
         params = []
@@ -312,7 +443,36 @@ class TemporaryTableAggregationProcessor:
     def _process_unwind_stages(
         self, create_temp: Callable, current_table: str, unwind_specs: List[Any]
     ) -> str:
-        """Process one or more consecutive $unwind stages."""
+        """
+        Process one or more consecutive $unwind stages using temporary tables.
+
+        This method handles the $unwind stage which deconstructs an array field
+        from input documents to output a document for each element. It can process
+        either a single unwind stage or multiple consecutive unwind stages
+        efficiently in one operation.
+
+        For a single unwind, it uses SQLite's json_each function to expand the
+        array into separate rows. For multiple consecutive unwinds, it creates a
+        Cartesian product of all the arrays being unwound, using nested json_each
+        calls.
+
+        The method properly handles array validation, ensuring that only documents
+        with array fields are processed. It also supports the special _id field
+        handling if it were to be unwound (though this would be unusual).
+
+        Args:
+            create_temp (Callable): Function to create temporary tables
+            current_table (str): Name of the current temporary table containing
+                                 input data
+            unwind_specs (List[Any]): List of $unwind stage specifications to
+                                      process consecutively
+
+        Returns:
+            str: Name of the newly created temporary table with unwound documents
+
+        Raises:
+            ValueError: If an invalid unwind specification is encountered
+        """
         if len(unwind_specs) == 1:
             # Simple case - single unwind
             field = unwind_specs[0]
@@ -324,10 +484,13 @@ class TemporaryTableAggregationProcessor:
                     unwind_stage,
                     f"""
                     SELECT {self.collection.name}.id,
-                           json_set({self.collection.name}.data, '$."{field_name}"', je.value) as data
+                           json_set({self.collection.name}.data,
+                                    '$."{field_name}"', je.value) as data
                     FROM {current_table} as {self.collection.name},
-                         json_each(json_extract({self.collection.name}.data, '$.{field_name}')) as je
-                    WHERE json_type(json_extract({self.collection.name}.data, '$.{field_name}')) = 'array'
+                         json_each(json_extract({self.collection.name}.data,
+                                                '$.{field_name}')) as je
+                    WHERE json_type(json_extract({self.collection.name}.data,
+                                                 '$.{field_name}')) = 'array'
                     """,
                 )
                 return new_table
@@ -353,14 +516,16 @@ class TemporaryTableAggregationProcessor:
             from_parts = [f"FROM {current_table} as {self.collection.name}"]
             for i, field_name in enumerate(field_names):
                 from_parts.append(
-                    f", json_each(json_extract({self.collection.name}.data, '$.{field_name}')) as je{i + 1}"
+                    f""", json_each(json_extract({self.collection.name}.data,
+                                                 '$.{field_name}')) as je{i + 1}"""
                 )
 
             # Build WHERE clause to ensure all fields are arrays
             where_conditions = []
             for field_name in field_names:
                 where_conditions.append(
-                    f"json_type(json_extract({self.collection.name}.data, '$.{field_name}')) = 'array'"
+                    f"""json_type(json_extract({self.collection.name}.data,
+                                               '$.{field_name}')) = 'array'"""
                 )
             where_clause = "WHERE " + " AND ".join(where_conditions)
 
@@ -383,7 +548,35 @@ class TemporaryTableAggregationProcessor:
         current_table: str,
         lookup_spec: Dict[str, Any],
     ) -> str:
-        """Process a $lookup stage using temporary tables."""
+        """
+        Process a $lookup stage using temporary tables.
+
+        This method implements the $lookup aggregation stage which performs a left
+        outer join to another collection in the same database. It uses an optimized
+        SQL query with a subquery to efficiently join the collections.
+
+        The method handles both the special _id field and regular fields for both
+        the local and foreign fields. It constructs an SQL query that:
+        1. Selects all fields from the current collection
+        2. Adds a new array field containing the matched documents from the foreign collection
+        3. Uses json_set to add the lookup results to the document data
+        4. Uses a correlated subquery with json_group_array to collect all matching documents
+
+        The lookup results are stored as an array field in the document, with an
+        empty array used when no matches are found.
+
+        Args:
+            create_temp (Callable): Function to create temporary tables
+            current_table (str): Name of the current temporary table containing input data
+            lookup_spec (Dict[str, Any]): The $lookup stage specification containing:
+                - "from": The name of the collection to join with
+                - "localField": The field from the input documents
+                - "foreignField": The field from the documents of the "from" collection
+                - "as": The name of the new array field to add to the matching documents
+
+        Returns:
+            str: Name of the newly created temporary table with lookup results added
+        """
         from_collection = lookup_spec["from"]
         local_field = lookup_spec["localField"]
         foreign_field = lookup_spec["foreignField"]
@@ -424,11 +617,38 @@ class TemporaryTableAggregationProcessor:
         self,
         create_temp: Callable,
         current_table: str,
-        sort_spec: Optional[Dict[str, Any]],
+        sort_spec: Dict[str, Any] | None,
         skip_value: int = 0,
-        limit_value: Optional[int] = None,
+        limit_value: int | None = None,
     ) -> str:
-        """Process sort/skip/limit stages using temporary tables."""
+        """
+        Process sort/skip/limit stages using temporary tables.
+
+        This method handles the $sort, $skip, and $limit aggregation stages, which
+        can be used individually or in combination. It creates a temporary table
+        with the results sorted and/or paginated according to the specifications.
+
+        The method supports sorting on both regular fields (using json_extract)
+        and the special _id field (using the id column directly). It handles
+        ascending and descending sort orders, as well as skip and limit operations
+        with proper OFFSET and LIMIT clauses in the SQL query.
+
+        When multiple sort/skip/limit stages are consecutive in a pipeline, they
+        are processed together in a single operation for efficiency.
+
+        Args:
+            create_temp (Callable): Function to create temporary tables
+            current_table (str): Name of the current temporary table containing input data
+            sort_spec (Dict[str, Any] | None): The $sort stage specification, mapping
+                                              field names to sort directions (1
+                                              for ascending, -1 for descending)
+            skip_value (int): The number of documents to skip (from $skip stage)
+            limit_value (int | None): The maximum number of documents to return
+                                      (from $limit stage)
+
+        Returns:
+            str: Name of the newly created temporary table with sorted/skipped/limited results
+        """
         # Build ORDER BY clause
         order_clause = ""
         if sort_spec:
@@ -474,7 +694,20 @@ class TemporaryTableAggregationProcessor:
         return new_table
 
     def _get_results_from_table(self, table_name: str) -> List[Dict[str, Any]]:
-        """Get results from a temporary table."""
+        """
+        Get results from a temporary table.
+
+        This method retrieves all documents from a temporary table and converts
+        them back into their Python dictionary representation using the collection's
+        document loading mechanism.
+
+        Args:
+            table_name (str): Name of the temporary table to retrieve results from
+
+        Returns:
+            List[Dict[str, Any]]: List of documents retrieved from the temporary table,
+                                  with each document represented as a dictionary
+        """
         cursor = self.db.execute(f"SELECT * FROM {table_name}")
         results = []
         for row in cursor.fetchall():
@@ -487,11 +720,16 @@ def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
     """
     Determine if a pipeline can be processed with temporary tables.
 
+    This function checks if all stages in an aggregation pipeline are supported
+    by the temporary table processing approach. It verifies that each stage in
+    the pipeline is one of the supported stage types.
+
     Args:
-        pipeline: List of aggregation pipeline stages
+        pipeline (List[Dict[str, Any]]): List of aggregation pipeline stages to check
 
     Returns:
-        True if the pipeline can be processed with temporary tables, False otherwise
+        bool: True if all stages in the pipeline are supported and can be processed
+              with temporary tables, False otherwise
     """
     # Check if all stages are supported
     supported_stages = {
@@ -518,14 +756,20 @@ def integrate_with_neosqlite(
     Integration function that tries to use temporary tables for complex pipelines
     that the current NeoSQLite implementation can't optimize.
 
-    This function can be integrated into the QueryEngine.aggregate_with_constraints method.
+    This function provides a multi-tiered approach to processing aggregation pipelines:
+    1. First, it attempts to use the existing SQL optimization approach
+    2. If that fails, it tries the temporary table approach for supported pipelines
+    3. As a final fallback, it uses the existing Python implementation
+
+    The function is designed to be integrated into the QueryEngine.aggregate_with_constraints
+    method to provide enhanced performance for complex aggregation pipelines.
 
     Args:
-        query_engine: The NeoSQLite QueryEngine instance
-        pipeline: List of aggregation pipeline stages
+        query_engine: The NeoSQLite QueryEngine instance to use for processing
+        pipeline (List[Dict[str, Any]]): List of aggregation pipeline stages to process
 
     Returns:
-        List of result documents
+        List[Dict[str, Any]]: List of result documents after processing the pipeline
     """
     # First, try the existing SQL optimization approach
     try:
@@ -681,8 +925,6 @@ def integrate_with_neosqlite(
                                 unwound_docs.append(new_doc)
                         elif preserve_null_and_empty:
                             # Empty array but preserve is requested
-                            from copy import deepcopy
-
                             new_doc = deepcopy(doc)
                             query_engine.collection._set_val(
                                 new_doc, field_path, None
@@ -698,8 +940,6 @@ def integrate_with_neosqlite(
                         and preserve_null_and_empty
                     ):
                         # Non-array value that exists in the document and preserve is requested
-                        from copy import deepcopy
-
                         new_doc = deepcopy(doc)
                         # Keep the value as-is
                         # Add array index if requested
@@ -743,8 +983,6 @@ def integrate_with_neosqlite(
                     # Add the matching documents as an array field
                     doc[as_field] = matching_docs
             case _:
-                from neosqlite.exceptions import MalformedQueryException
-
                 raise MalformedQueryException(
                     f"Aggregation stage '{stage_name}' not supported"
                 )
