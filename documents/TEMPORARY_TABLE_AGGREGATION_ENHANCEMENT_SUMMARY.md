@@ -21,31 +21,14 @@ This approach has several limitations:
 
 The temporary table aggregation enhancement introduces a third processing path that bridges the gap between pure SQL optimization and Python fallback:
 
-```
-Aggregation Pipeline Processing Flow:
-
-┌─────────────────────┐
-│   Input Pipeline    │
-└─────────┬───────────┘
-          │
-          ▼
-┌─────────────────────┐  Yes   ┌─────────────────────┐
-│ Can optimize with   │ ─────▶ │  Single SQL Query   │
-│   single query?     │        │   (Fastest)         │
-└─────────┬───────────┘        └─────────────────────┘
-          │ No
-          ▼
-┌─────────────────────┐  Yes   ┌─────────────────────┐
-│ Can process with    │ ─────▶ │ Temporary Table     │
-│  temporary tables?  │        │  Aggregation        │
-└─────────┬───────────┘        │  (Intermediate)     │
-          │ No                 └─────────────────────┘
-          ▼
-┌─────────────────────┐        ┌─────────────────────┐
-│ Python Fallback     │ ─────▶ │  Python Processing  │
-│  (Slowest but       │        │   (Most Flexible)   │
-│   most flexible)    │        └─────────────────────┘
-└─────────────────────┘
+```mermaid
+graph TD
+    A["Input Pipeline"] --> B{"Can optimize with single query?"};
+    B -- Yes --> C["Single SQL Query (Fastest)"];
+    B -- No --> D{"Can process with temporary tables?"};
+    D -- Yes --> E["Temporary Table Aggregation (Intermediate)"];
+    D -- No --> F["Python Fallback (Slowest but most flexible)"];
+    F --> G["Python Processing (Most Flexible)"];
 ```
 
 ## Key Features
