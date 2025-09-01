@@ -1350,72 +1350,71 @@ class QueryHelper:
 
                                 op, expr = next(iter(accumulator.items()))
 
-                                if (
-                                    op == "$sum"
-                                    and isinstance(expr, int)
-                                    and expr == 1
-                                ):
-                                    # Count operation
-                                    select_expressions.append(
-                                        f"COUNT(*) AS {field}"
-                                    )
-                                    output_fields.append(field)
-                                elif op == "$count":
-                                    # Count operation
-                                    select_expressions.append(
-                                        f"COUNT(*) AS {field}"
-                                    )
-                                    output_fields.append(field)
-                                elif op == "$push":
-                                    # $push accumulator - collect all values including duplicates
-                                    if isinstance(
-                                        expr, str
-                                    ) and expr.startswith("$"):
-                                        push_field = expr[
-                                            1:
-                                        ]  # Remove leading $
-                                        if push_field == unwind_field:
-                                            # Collect the unwound values
-                                            select_expressions.append(
-                                                f'json_group_array(je.value) AS "{field}"'
-                                            )
-                                        else:
-                                            # Collect values from another field
-                                            select_expressions.append(
-                                                f"json_group_array(json_extract({self.collection.name}.data, '$.{push_field}')) AS \"{field}\""
-                                            )
+                                match op:
+                                    case "$sum" if (
+                                        isinstance(expr, int) and expr == 1
+                                    ):
+                                        # Count operation
+                                        select_expressions.append(
+                                            f"COUNT(*) AS {field}"
+                                        )
                                         output_fields.append(field)
-                                    else:
-                                        # Unsupported expression, fallback to Python
+                                    case "$count":
+                                        # Count operation
+                                        select_expressions.append(
+                                            f"COUNT(*) AS {field}"
+                                        )
+                                        output_fields.append(field)
+                                    case "$push":
+                                        # $push accumulator - collect all values including duplicates
+                                        if isinstance(
+                                            expr, str
+                                        ) and expr.startswith("$"):
+                                            push_field = expr[
+                                                1:
+                                            ]  # Remove leading $
+                                            if push_field == unwind_field:
+                                                # Collect the unwound values
+                                                select_expressions.append(
+                                                    f'json_group_array(je.value) AS "{field}"'
+                                                )
+                                            else:
+                                                # Collect values from another field
+                                                select_expressions.append(
+                                                    f"json_group_array(json_extract({self.collection.name}.data, '$.{push_field}')) AS \"{field}\""
+                                                )
+                                            output_fields.append(field)
+                                        else:
+                                            # Unsupported expression, fallback to Python
+                                            can_optimize = False
+                                            break
+                                    case "$addToSet":
+                                        # $addToSet accumulator - collect unique values only
+                                        if isinstance(
+                                            expr, str
+                                        ) and expr.startswith("$"):
+                                            add_to_set_field = expr[
+                                                1:
+                                            ]  # Remove leading $
+                                            if add_to_set_field == unwind_field:
+                                                # Collect unique unwound values
+                                                select_expressions.append(
+                                                    f'json_group_array(DISTINCT je.value) AS "{field}"'
+                                                )
+                                            else:
+                                                # Collect unique values from another field
+                                                select_expressions.append(
+                                                    f"json_group_array(DISTINCT json_extract({self.collection.name}.data, '$.{add_to_set_field}')) AS \"{field}\""
+                                                )
+                                            output_fields.append(field)
+                                        else:
+                                            # Unsupported expression, fallback to Python
+                                            can_optimize = False
+                                            break
+                                    case _:
+                                        # Unsupported operation, fallback to Python
                                         can_optimize = False
                                         break
-                                elif op == "$addToSet":
-                                    # $addToSet accumulator - collect unique values only
-                                    if isinstance(
-                                        expr, str
-                                    ) and expr.startswith("$"):
-                                        add_to_set_field = expr[
-                                            1:
-                                        ]  # Remove leading $
-                                        if add_to_set_field == unwind_field:
-                                            # Collect unique unwound values
-                                            select_expressions.append(
-                                                f'json_group_array(DISTINCT je.value) AS "{field}"'
-                                            )
-                                        else:
-                                            # Collect unique values from another field
-                                            select_expressions.append(
-                                                f"json_group_array(DISTINCT json_extract({self.collection.name}.data, '$.{add_to_set_field}')) AS \"{field}\""
-                                            )
-                                        output_fields.append(field)
-                                    else:
-                                        # Unsupported expression, fallback to Python
-                                        can_optimize = False
-                                        break
-                                else:
-                                    # Unsupported operation, fallback to Python
-                                    can_optimize = False
-                                    break
 
                             if can_optimize:
                                 # Build the optimized SQL query
@@ -1641,75 +1640,74 @@ class QueryHelper:
 
                                 op, expr = next(iter(accumulator.items()))
 
-                                if (
-                                    op == "$sum"
-                                    and isinstance(expr, int)
-                                    and expr == 1
-                                ):
-                                    # Count operation
-                                    select_expressions.append(
-                                        f"COUNT(*) AS {field}"
-                                    )
-                                    output_fields.append(field)
-                                elif op == "$count":
-                                    # Count operation
-                                    select_expressions.append(
-                                        f"COUNT(*) AS {field}"
-                                    )
-                                    output_fields.append(field)
-                                elif op == "$push":
-                                    # $push accumulator - collect all values including duplicates
-                                    if isinstance(
-                                        expr, str
-                                    ) and expr.startswith("$"):
-                                        push_field = expr[
-                                            1:
-                                        ]  # Remove leading $
-                                        if push_field == unwind_field_name:
-                                            # Collect the unwound values
-                                            select_expressions.append(
-                                                f'json_group_array(je.value) AS "{field}"'
-                                            )
-                                        else:
-                                            # Collect values from another field
-                                            select_expressions.append(
-                                                f"json_group_array(json_extract({self.collection.name}.data, '$.{push_field}')) AS \"{field}\""
-                                            )
+                                match op:
+                                    case "$sum" if (
+                                        isinstance(expr, int) and expr == 1
+                                    ):
+                                        # Count operation
+                                        select_expressions.append(
+                                            f"COUNT(*) AS {field}"
+                                        )
                                         output_fields.append(field)
-                                    else:
-                                        # Unsupported expression, fallback to Python
+                                    case "$count":
+                                        # Count operation
+                                        select_expressions.append(
+                                            f"COUNT(*) AS {field}"
+                                        )
+                                        output_fields.append(field)
+                                    case "$push":
+                                        # $push accumulator - collect all values including duplicates
+                                        if isinstance(
+                                            expr, str
+                                        ) and expr.startswith("$"):
+                                            push_field = expr[
+                                                1:
+                                            ]  # Remove leading $
+                                            if push_field == unwind_field_name:
+                                                # Collect the unwound values
+                                                select_expressions.append(
+                                                    f'json_group_array(je.value) AS "{field}"'
+                                                )
+                                            else:
+                                                # Collect values from another field
+                                                select_expressions.append(
+                                                    f"json_group_array(json_extract({self.collection.name}.data, '$.{push_field}')) AS \"{field}\""
+                                                )
+                                            output_fields.append(field)
+                                        else:
+                                            # Unsupported expression, fallback to Python
+                                            can_optimize = False
+                                            break
+                                    case "$addToSet":
+                                        # $addToSet accumulator - collect unique values only
+                                        if isinstance(
+                                            expr, str
+                                        ) and expr.startswith("$"):
+                                            add_to_set_field = expr[
+                                                1:
+                                            ]  # Remove leading $
+                                            if (
+                                                add_to_set_field
+                                                == unwind_field_name
+                                            ):
+                                                # Collect unique unwound values
+                                                select_expressions.append(
+                                                    f'json_group_array(DISTINCT je.value) AS "{field}"'
+                                                )
+                                            else:
+                                                # Collect unique values from another field
+                                                select_expressions.append(
+                                                    f"json_group_array(DISTINCT json_extract({self.collection.name}.data, '$.{add_to_set_field}')) AS \"{field}\""
+                                                )
+                                            output_fields.append(field)
+                                        else:
+                                            # Unsupported expression, fallback to Python
+                                            can_optimize = False
+                                            break
+                                    case _:
+                                        # Unsupported operation, fallback to Python
                                         can_optimize = False
                                         break
-                                elif op == "$addToSet":
-                                    # $addToSet accumulator - collect unique values only
-                                    if isinstance(
-                                        expr, str
-                                    ) and expr.startswith("$"):
-                                        add_to_set_field = expr[
-                                            1:
-                                        ]  # Remove leading $
-                                        if (
-                                            add_to_set_field
-                                            == unwind_field_name
-                                        ):
-                                            # Collect unique unwound values
-                                            select_expressions.append(
-                                                f'json_group_array(DISTINCT je.value) AS "{field}"'
-                                            )
-                                        else:
-                                            # Collect unique values from another field
-                                            select_expressions.append(
-                                                f"json_group_array(DISTINCT json_extract({self.collection.name}.data, '$.{add_to_set_field}')) AS \"{field}\""
-                                            )
-                                        output_fields.append(field)
-                                    else:
-                                        # Unsupported expression, fallback to Python
-                                        can_optimize = False
-                                        break
-                                else:
-                                    # Unsupported operation, fallback to Python
-                                    can_optimize = False
-                                    break
 
                             if can_optimize:
                                 # Build the optimized SQL query with WHERE clause from $match

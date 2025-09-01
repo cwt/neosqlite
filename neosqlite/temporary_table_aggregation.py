@@ -271,69 +271,71 @@ class TemporaryTableAggregationProcessor:
                 stage = pipeline[i]
                 stage_name = next(iter(stage.keys()))
 
-                # Handle groups of compatible stages
-                if stage_name == "$match":
-                    current_table = self._process_match_stage(
-                        create_temp, current_table, stage["$match"]
-                    )
-                    i += 1
+                # Handle groups of compatible stages using match-case for better readability
+                match stage_name:
+                    case "$match":
+                        current_table = self._process_match_stage(
+                            create_temp, current_table, stage["$match"]
+                        )
+                        i += 1
 
-                elif stage_name == "$unwind":
-                    # Process consecutive $unwind stages
-                    unwind_stages = []
-                    j = i
-                    while j < len(pipeline) and "$unwind" in pipeline[j]:
-                        unwind_stages.append(pipeline[j]["$unwind"])
-                        j += 1
+                    case "$unwind":
+                        # Process consecutive $unwind stages
+                        unwind_stages = []
+                        j = i
+                        while j < len(pipeline) and "$unwind" in pipeline[j]:
+                            unwind_stages.append(pipeline[j]["$unwind"])
+                            j += 1
 
-                    current_table = self._process_unwind_stages(
-                        create_temp, current_table, unwind_stages
-                    )
-                    i = j  # Skip processed stages
+                        current_table = self._process_unwind_stages(
+                            create_temp, current_table, unwind_stages
+                        )
+                        i = j  # Skip processed stages
 
-                elif stage_name == "$lookup":
-                    current_table = self._process_lookup_stage(
-                        create_temp, current_table, stage["$lookup"]
-                    )
-                    i += 1
+                    case "$lookup":
+                        current_table = self._process_lookup_stage(
+                            create_temp, current_table, stage["$lookup"]
+                        )
+                        i += 1
 
-                elif stage_name in ["$sort", "$skip", "$limit"]:
-                    # Process consecutive sort/skip/limit stages
-                    sort_spec = None
-                    skip_value = 0
-                    limit_value = None
-                    j = i
+                    case "$sort" | "$skip" | "$limit":
+                        # Process consecutive sort/skip/limit stages
+                        sort_spec = None
+                        skip_value = 0
+                        limit_value = None
+                        j = i
 
-                    # Process consecutive sort/skip/limit stages
-                    while j < len(pipeline):
-                        next_stage = pipeline[j]
-                        next_stage_name = next(iter(next_stage.keys()))
+                        # Process consecutive sort/skip/limit stages
+                        while j < len(pipeline):
+                            next_stage = pipeline[j]
+                            next_stage_name = next(iter(next_stage.keys()))
 
-                        if next_stage_name == "$sort":
-                            sort_spec = next_stage["$sort"]
-                        elif next_stage_name == "$skip":
-                            skip_value = next_stage["$skip"]
-                        elif next_stage_name == "$limit":
-                            limit_value = next_stage["$limit"]
-                        else:
-                            break
-                        j += 1
+                            match next_stage_name:
+                                case "$sort":
+                                    sort_spec = next_stage["$sort"]
+                                case "$skip":
+                                    skip_value = next_stage["$skip"]
+                                case "$limit":
+                                    limit_value = next_stage["$limit"]
+                                case _:
+                                    break
+                            j += 1
 
-                    current_table = self._process_sort_skip_limit_stage(
-                        create_temp,
-                        current_table,
-                        sort_spec,
-                        skip_value,
-                        limit_value,
-                    )
-                    i = j  # Skip processed stages
+                        current_table = self._process_sort_skip_limit_stage(
+                            create_temp,
+                            current_table,
+                            sort_spec,
+                            skip_value,
+                            limit_value,
+                        )
+                        i = j  # Skip processed stages
 
-                else:
-                    # For unsupported stages, we would need to fall back to Python
-                    # But for this demonstration, we'll raise an exception
-                    raise NotImplementedError(
-                        f"Stage '{stage_name}' not yet supported in temporary table approach"
-                    )
+                    case _:
+                        # For unsupported stages, we would need to fall back to Python
+                        # But for this demonstration, we'll raise an exception
+                        raise NotImplementedError(
+                            f"Stage '{stage_name}' not yet supported in temporary table approach"
+                        )
 
             # Return final results
             return self._get_results_from_table(current_table)
@@ -380,48 +382,49 @@ class TemporaryTableAggregationProcessor:
                 if isinstance(value, dict):
                     # Handle operators like $gt, $lt, etc.
                     for op, op_val in value.items():
-                        if op == "$eq":
-                            where_conditions.append(
-                                f"json_extract(data, '$.{field}') = ?"
-                            )
-                            params.append(op_val)
-                        elif op == "$gt":
-                            where_conditions.append(
-                                f"json_extract(data, '$.{field}') > ?"
-                            )
-                            params.append(op_val)
-                        elif op == "$lt":
-                            where_conditions.append(
-                                f"json_extract(data, '$.{field}') < ?"
-                            )
-                            params.append(op_val)
-                        elif op == "$gte":
-                            where_conditions.append(
-                                f"json_extract(data, '$.{field}') >= ?"
-                            )
-                            params.append(op_val)
-                        elif op == "$lte":
-                            where_conditions.append(
-                                f"json_extract(data, '$.{field}') <= ?"
-                            )
-                            params.append(op_val)
-                        elif op == "$in":
-                            placeholders = ", ".join("?" for _ in op_val)
-                            where_conditions.append(
-                                f"json_extract(data, '$.{field}') IN ({placeholders})"
-                            )
-                            params.extend(op_val)
-                        elif op == "$ne":
-                            where_conditions.append(
-                                f"json_extract(data, '$.{field}') != ?"
-                            )
-                            params.append(op_val)
-                        elif op == "$nin":
-                            placeholders = ", ".join("?" for _ in op_val)
-                            where_conditions.append(
-                                f"json_extract(data, '$.{field}') NOT IN ({placeholders})"
-                            )
-                            params.extend(op_val)
+                        match op:
+                            case "$eq":
+                                where_conditions.append(
+                                    f"json_extract(data, '$.{field}') = ?"
+                                )
+                                params.append(op_val)
+                            case "$gt":
+                                where_conditions.append(
+                                    f"json_extract(data, '$.{field}') > ?"
+                                )
+                                params.append(op_val)
+                            case "$lt":
+                                where_conditions.append(
+                                    f"json_extract(data, '$.{field}') < ?"
+                                )
+                                params.append(op_val)
+                            case "$gte":
+                                where_conditions.append(
+                                    f"json_extract(data, '$.{field}') >= ?"
+                                )
+                                params.append(op_val)
+                            case "$lte":
+                                where_conditions.append(
+                                    f"json_extract(data, '$.{field}') <= ?"
+                                )
+                                params.append(op_val)
+                            case "$in":
+                                placeholders = ", ".join("?" for _ in op_val)
+                                where_conditions.append(
+                                    f"json_extract(data, '$.{field}') IN ({placeholders})"
+                                )
+                                params.extend(op_val)
+                            case "$ne":
+                                where_conditions.append(
+                                    f"json_extract(data, '$.{field}') != ?"
+                                )
+                                params.append(op_val)
+                            case "$nin":
+                                placeholders = ", ".join("?" for _ in op_val)
+                                where_conditions.append(
+                                    f"json_extract(data, '$.{field}') NOT IN ({placeholders})"
+                                )
+                                params.extend(op_val)
                 else:
                     # Simple equality
                     where_conditions.append(
