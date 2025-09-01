@@ -729,7 +729,7 @@ class TemporaryTableAggregationProcessor:
         # Build json_set expressions for each field to add
         # We'll construct a nested json_set call for each field
         data_expr = "data"  # Start with the original data
-        params = []
+        params: List[Any] = []
 
         # Process each field to add
         for new_field, source_field in add_fields_spec.items():
