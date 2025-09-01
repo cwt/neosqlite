@@ -1,6 +1,7 @@
 from .. import query_operators
 from ..cursor import DESCENDING
 from ..exceptions import MalformedDocument, MalformedQueryException
+from ..binary import Binary
 from copy import deepcopy
 from neosqlite.collection.json_helpers import (
     neosqlite_json_dumps,
@@ -15,6 +16,36 @@ except ImportError:
 
 # Global flag to force fallback - for benchmarking and debugging
 _FORCE_FALLBACK = False
+
+
+def _convert_bytes_to_binary(obj: Any) -> Any:
+    """
+    Recursively convert bytes objects to Binary objects in a document.
+
+    This function traverses a document structure (dict, list, etc.) and converts
+    any bytes objects to Binary objects, which can be properly serialized to JSON.
+    Existing Binary objects are left unchanged to preserve their subtype information.
+
+    Args:
+        obj: The object to process (can be dict, list, bytes, Binary, or other types)
+
+    Returns:
+        The processed object with bytes converted to Binary objects
+    """
+    # Check for Binary first, since Binary inherits from bytes
+    if isinstance(obj, Binary):
+        # Leave Binary objects unchanged to preserve subtype information
+        return obj
+    elif isinstance(obj, bytes):
+        return Binary(obj)
+    elif isinstance(obj, dict):
+        return {
+            key: _convert_bytes_to_binary(value) for key, value in obj.items()
+        }
+    elif isinstance(obj, list):
+        return [_convert_bytes_to_binary(item) for item in obj]
+    else:
+        return obj
 
 
 def set_force_fallback(force=True):
@@ -78,6 +109,9 @@ class QueryHelper:
 
         doc_to_insert = deepcopy(document)
         doc_to_insert.pop("_id", None)
+
+        # Convert any bytes objects to Binary objects for proper JSON serialization
+        doc_to_insert = _convert_bytes_to_binary(doc_to_insert)
 
         cursor = self.collection.db.execute(
             f"INSERT INTO {self.collection.name}(data) VALUES (?)",
@@ -343,32 +377,79 @@ class QueryHelper:
         match op:
             case "$set":
                 for field, field_val in value.items():
-                    clauses.append(f"'$.{field}', ?")
-                    params.append(field_val)
+                    # Convert bytes to Binary for proper JSON serialization
+                    converted_val = _convert_bytes_to_binary(field_val)
+                    # If it's a Binary object, serialize it to JSON and use json() function
+                    if isinstance(converted_val, Binary):
+                        clauses.append(f"'$.{field}', json(?)")
+                        params.append(neosqlite_json_dumps(converted_val))
+                    else:
+                        clauses.append(f"'$.{field}', ?")
+                        params.append(converted_val)
             case "$inc":
                 for field, field_val in value.items():
                     path = f"'$.{field}'"
-                    clauses.append(f"{path}, json_extract(data, {path}) + ?")
-                    params.append(field_val)
+                    # Convert bytes to Binary for proper JSON serialization
+                    converted_val = _convert_bytes_to_binary(field_val)
+                    # If it's a Binary object, serialize it to JSON and use json() function
+                    if isinstance(converted_val, Binary):
+                        clauses.append(
+                            f"{path}, json_extract(data, {path}) + json(?)"
+                        )
+                        params.append(neosqlite_json_dumps(converted_val))
+                    else:
+                        clauses.append(
+                            f"{path}, json_extract(data, {path}) + ?"
+                        )
+                        params.append(converted_val)
             case "$mul":
                 for field, field_val in value.items():
                     path = f"'$.{field}'"
-                    clauses.append(f"{path}, json_extract(data, {path}) * ?")
-                    params.append(field_val)
+                    # Convert bytes to Binary for proper JSON serialization
+                    converted_val = _convert_bytes_to_binary(field_val)
+                    # If it's a Binary object, serialize it to JSON and use json() function
+                    if isinstance(converted_val, Binary):
+                        clauses.append(
+                            f"{path}, json_extract(data, {path}) * json(?)"
+                        )
+                        params.append(neosqlite_json_dumps(converted_val))
+                    else:
+                        clauses.append(
+                            f"{path}, json_extract(data, {path}) * ?"
+                        )
+                        params.append(converted_val)
             case "$min":
                 for field, field_val in value.items():
                     path = f"'$.{field}'"
                     clauses.append(
                         f"{path}, min(json_extract(data, {path}), ?)"
                     )
-                    params.append(field_val)
+                    # Convert bytes to Binary for proper JSON serialization
+                    converted_val = _convert_bytes_to_binary(field_val)
+                    # If it's a Binary object, serialize it to JSON and use json() function
+                    if isinstance(converted_val, Binary):
+                        clauses[-1] = (
+                            f"{path}, min(json_extract(data, {path}), json(?))"
+                        )
+                        params.append(neosqlite_json_dumps(converted_val))
+                    else:
+                        params.append(converted_val)
             case "$max":
                 for field, field_val in value.items():
                     path = f"'$.{field}'"
                     clauses.append(
                         f"{path}, max(json_extract(data, {path}), ?)"
                     )
-                    params.append(field_val)
+                    # Convert bytes to Binary for proper JSON serialization
+                    converted_val = _convert_bytes_to_binary(field_val)
+                    # If it's a Binary object, serialize it to JSON and use json() function
+                    if isinstance(converted_val, Binary):
+                        clauses[-1] = (
+                            f"{path}, max(json_extract(data, {path}), json(?))"
+                        )
+                        params.append(neosqlite_json_dumps(converted_val))
+                    else:
+                        params.append(converted_val)
             case "$unset":
                 # For $unset, we use json_remove
                 for field in value:
