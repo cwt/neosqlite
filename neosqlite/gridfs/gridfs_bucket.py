@@ -1,5 +1,6 @@
+from __future__ import annotations
 from .errors import NoFile, FileExists
-from typing import Any, Dict, Optional, Union, TYPE_CHECKING
+from typing import Any, Dict, TYPE_CHECKING
 import datetime
 import hashlib
 import io
@@ -27,8 +28,8 @@ class GridFSBucket:
         db: sqlite3.Connection,
         bucket_name: str = "fs",
         chunk_size_bytes: int = 255 * 1024,  # 255KB default chunk size
-        write_concern: Optional[Dict[str, Any]] = None,
-        read_preference: Optional[Any] = None,
+        write_concern: Dict[str, Any] | None = None,
+        read_preference: Any | None = None,
         disable_md5: bool = False,
     ):
         """
@@ -143,8 +144,8 @@ class GridFSBucket:
         )
 
     def _serialize_metadata(
-        self, metadata: Optional[Dict[str, Any]]
-    ) -> Optional[str]:
+        self, metadata: Dict[str, Any] | None
+    ) -> str | None:
         """
         Serialize metadata to JSON string.
 
@@ -163,8 +164,8 @@ class GridFSBucket:
             return str(metadata)
 
     def _deserialize_metadata(
-        self, metadata_str: Optional[str]
-    ) -> Optional[Dict[str, Any]]:
+        self, metadata_str: str | None
+    ) -> Dict[str, Any] | None:
         """
         Deserialize metadata from JSON string.
 
@@ -206,8 +207,8 @@ class GridFSBucket:
     def upload_from_stream(
         self,
         filename: str,
-        source: Union[bytes, io.IOBase],
-        metadata: Optional[Dict[str, Any]] = None,
+        source: bytes | io.IOBase,
+        metadata: Dict[str, Any] | None = None,
     ) -> int:
         """
         Uploads a user file to a GridFS bucket.
@@ -435,7 +436,7 @@ class GridFSBucket:
         if cursor.rowcount == 0:
             raise NoFile(f"File with id {file_id} not found")
 
-    def find(self, filter: Optional[Dict[str, Any]] = None) -> "GridOutCursor":
+    def find(self, filter: Dict[str, Any] | None = None) -> "GridOutCursor":
         """
         Find and return the files collection documents that match filter.
 
@@ -450,8 +451,8 @@ class GridFSBucket:
     def open_upload_stream(
         self,
         filename: str,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> "GridIn":
+        metadata: Dict[str, Any] | None = None,
+    ) -> GridIn:
         """
         Opens a stream for writing a file to a GridFS bucket.
 
@@ -476,9 +477,9 @@ class GridFSBucket:
         self,
         file_id: int,
         filename: str,
-        source: Union[bytes, io.IOBase],
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> None:
+        source: bytes | io.IOBase,
+        metadata: Dict[str, Any] | None = None,
+    ):
         """
         Uploads a user file to a GridFS bucket with a custom file id.
 
@@ -543,7 +544,7 @@ class GridFSBucket:
         self,
         file_id: int,
         filename: str,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: Dict[str, Any] | None = None,
     ) -> "GridIn":
         """
         Opens a stream for writing a file to a GridFS bucket with a custom file id.

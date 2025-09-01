@@ -1,5 +1,6 @@
+from __future__ import annotations
 from .errors import NoFile
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict
 import datetime
 import hashlib
 import json
@@ -23,10 +24,10 @@ class GridIn:
         bucket_name: str,
         chunk_size_bytes: int,
         filename: str,
-        metadata: Optional[Dict[str, Any]] = None,
-        file_id: Optional[int] = None,
+        metadata: Dict[str, Any] | None = None,
+        file_id: int | None = None,
         disable_md5: bool = False,
-        write_concern: Optional[Dict[str, Any]] = None,
+        write_concern: Dict[str, Any] | None = None,
     ):
         """
         Initialize a new GridIn instance.
@@ -60,8 +61,8 @@ class GridIn:
         self._md5_hasher = None if disable_md5 else hashlib.md5()
 
     def _serialize_metadata(
-        self, metadata: Optional[Dict[str, Any]]
-    ) -> Optional[str]:
+        self, metadata: Dict[str, Any] | None
+    ) -> str | None:
         """
         Serialize metadata to JSON string.
 
@@ -80,8 +81,8 @@ class GridIn:
             return str(metadata)
 
     def _deserialize_metadata(
-        self, metadata_str: Optional[str]
-    ) -> Optional[Dict[str, Any]]:
+        self, metadata_str: str | None
+    ) -> Dict[str, Any] | None:
         """
         Deserialize metadata from JSON string.
 
@@ -118,7 +119,7 @@ class GridIn:
             # Force sync to disk for maximum durability
             self._db.execute("PRAGMA wal_checkpoint(PASSIVE)")
 
-    def write(self, data: Union[bytes, bytearray]) -> int:
+    def write(self, data: bytes | bytearray) -> int:
         """
         Write data to the GridIn stream.
 
@@ -319,8 +320,8 @@ class GridOut:
         self._closed = False
 
     def _deserialize_metadata(
-        self, metadata_str: Optional[str]
-    ) -> Optional[Dict[str, Any]]:
+        self, metadata_str: str | None
+    ) -> Dict[str, Any] | None:
         """
         Deserialize metadata from JSON string.
 
@@ -452,7 +453,7 @@ class GridOut:
         return self._md5
 
     @property
-    def metadata(self) -> Optional[Dict[str, Any]]:
+    def metadata(self) -> Dict[str, Any] | None:
         """Get the metadata of the file."""
         return self._metadata
 

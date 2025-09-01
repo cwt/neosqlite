@@ -1,7 +1,8 @@
+from __future__ import annotations
 from .errors import NoFile
 from .grid_file import GridOut, GridOutCursor, GridIn
 from .gridfs_bucket import GridFSBucket
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict
 import io
 
 try:
@@ -35,8 +36,8 @@ class GridFS:
 
     def put(
         self,
-        data: Union[bytes, io.IOBase],
-        filename: Optional[str] = None,
+        data: bytes | io.IOBase,
+        filename: str | None = None,
         **kwargs: Any,
     ) -> int:
         """
@@ -132,7 +133,7 @@ class GridFS:
                 filenames.append(grid_out.filename)
         return filenames
 
-    def find(self, filter: Optional[Dict[str, Any]] = None) -> "GridOutCursor":
+    def find(self, filter: Dict[str, Any] | None = None) -> "GridOutCursor":
         """
         Find files in GridFS that match the filter.
 
@@ -144,9 +145,7 @@ class GridFS:
         """
         return self._bucket.find(filter or {})
 
-    def find_one(
-        self, filter: Optional[Dict[str, Any]] = None
-    ) -> Optional[GridOut]:
+    def find_one(self, filter: Dict[str, Any] | None = None) -> GridOut | None:
         """
         Find a single file in GridFS that matches the filter.
 
@@ -162,7 +161,7 @@ class GridFS:
         except StopIteration:
             return None
 
-    def exists(self, file_id: Optional[int] = None, **kwargs: Any) -> bool:
+    def exists(self, file_id: int | None = None, **kwargs: Any) -> bool:
         """
         Check if a file exists in GridFS.
 

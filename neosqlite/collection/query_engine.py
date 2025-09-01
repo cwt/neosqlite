@@ -1,3 +1,4 @@
+from __future__ import annotations
 from ..bulk_operations import BulkOperationExecutor
 from ..cursor import Cursor, DESCENDING
 from ..exceptions import MalformedQueryException
@@ -421,7 +422,7 @@ class QueryEngine:
 
         Args:
             key (str): The field name to extract distinct values from.
-            filter (Optional[Dict[str, Any]]): An optional query filter to apply to the documents.
+            filter (Dict[str, Any] | None): An optional query filter to apply to the documents.
 
         Returns:
             Set[Any]: A set containing the distinct values from the specified key.

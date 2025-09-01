@@ -1,3 +1,4 @@
+from __future__ import annotations
 from functools import partial
 from itertools import starmap
 from typing import Any, Dict, List, Iterator, Iterable, TYPE_CHECKING

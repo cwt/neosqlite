@@ -1,3 +1,4 @@
+from __future__ import annotations
 from typing import Any, Dict, Iterator, Optional, TYPE_CHECKING
 import json
 

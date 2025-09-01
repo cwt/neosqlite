@@ -1,4 +1,4 @@
-from typing import Union
+from __future__ import annotations
 import base64
 
 
@@ -39,7 +39,7 @@ class Binary(bytes):
 
     def __new__(
         cls,
-        data: Union[bytes, bytearray, memoryview],
+        data: bytes | bytearray | memoryview,
         subtype: int = BINARY_SUBTYPE,
     ):
         """

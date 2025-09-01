@@ -1,3 +1,4 @@
+from __future__ import annotations
 from .. import query_operators
 from ..cursor import DESCENDING
 from ..exceptions import MalformedDocument, MalformedQueryException

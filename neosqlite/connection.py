@@ -1,3 +1,4 @@
+from __future__ import annotations
 from .collection import Collection
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Tuple

@@ -1,3 +1,4 @@
+from __future__ import annotations
 from ..aggregation_cursor import AggregationCursor
 from ..bulk_operations import BulkOperationExecutor
 from ..changestream import ChangeStream
