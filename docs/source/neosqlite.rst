@@ -27,6 +27,7 @@ Submodules
    neosqlite.raw_batch_cursor
    neosqlite.requests
    neosqlite.results
+   neosqlite.temporary_table_aggregation
 
 Module contents
 ---------------
