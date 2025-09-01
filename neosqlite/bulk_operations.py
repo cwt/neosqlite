@@ -183,9 +183,7 @@ class BulkOperationContext:
 class BulkOperationExecutor:
     """Executor for bulk operations."""
 
-    def __init__(
-        self, collection: "neosqlite.Collection", ordered: bool = True
-    ):
+    def __init__(self, collection: neosqlite.Collection, ordered: bool = True):
         """
         Initialize the BulkOperationExecutor.
 
@@ -233,7 +231,7 @@ class BulkOperationExecutor:
         """
         return BulkOperationContext(self._operations, filter)
 
-    def execute(self) -> "BulkWriteResult":
+    def execute(self) -> BulkWriteResult:
         """
         Execute all bulk operations.
 
@@ -249,7 +247,7 @@ class BulkOperationExecutor:
         else:
             return self._execute_unordered()
 
-    def _execute_ordered(self) -> "BulkWriteResult":
+    def _execute_ordered(self) -> BulkWriteResult:
         """
         Execute operations in order.
 
@@ -308,7 +306,7 @@ class BulkOperationExecutor:
             upserted_count=upserted_count,
         )
 
-    def _execute_unordered(self) -> "BulkWriteResult":
+    def _execute_unordered(self) -> BulkWriteResult:
         """
         Execute operations in any order (for now, we'll just execute them in order).
 

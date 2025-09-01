@@ -1,12 +1,8 @@
+from __future__ import annotations
 from typing import Any, Dict, List, Iterator, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .collection import Collection
-
-    try:
-        from quez import CompressedQueue
-    except ImportError:
-        CompressedQueue = Any
 
 # Try to import quez, but make it optional
 try:
@@ -26,9 +22,7 @@ class AggregationCursor:
     allowing iteration over aggregation results.
     """
 
-    def __init__(
-        self, collection: "Collection", pipeline: List[Dict[str, Any]]
-    ):
+    def __init__(self, collection: Collection, pipeline: List[Dict[str, Any]]):
         """
         Initialize the AggregationCursor.
 
@@ -38,7 +32,7 @@ class AggregationCursor:
         """
         self.collection = collection
         self.pipeline = pipeline
-        self._results: List[Dict[str, Any]] | "CompressedQueue" | None = None
+        self._results: List[Dict[str, Any]] | CompressedQueue | None = None
         self._position = 0
         self._executed = False
         # Memory constraint settings
@@ -268,7 +262,7 @@ class AggregationCursor:
 
         return []
 
-    def batch_size(self, size: int) -> "AggregationCursor":
+    def batch_size(self, size: int) -> AggregationCursor:
         """
         Set the batch size for memory-constrained processing.
 
@@ -281,7 +275,7 @@ class AggregationCursor:
         self._batch_size = size
         return self
 
-    def max_await_time_ms(self, time_ms: int) -> "AggregationCursor":
+    def max_await_time_ms(self, time_ms: int) -> AggregationCursor:
         """
         Set the maximum time to wait for new documents.
 
@@ -296,7 +290,7 @@ class AggregationCursor:
         # This is a placeholder for API compatibility
         return self
 
-    def use_quez(self, use_quez: bool = True) -> "AggregationCursor":
+    def use_quez(self, use_quez: bool = True) -> AggregationCursor:
         """
         Enable or disable quez memory-constrained processing.
 

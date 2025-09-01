@@ -1,6 +1,5 @@
-from __future__ import annotations
 from .errors import NoFile
-from .grid_file import GridOut, GridOutCursor, GridIn
+from .grid_file import GridIn, GridOut, GridOutCursor
 from .gridfs_bucket import GridFSBucket
 from typing import Any, Dict
 import io
@@ -133,7 +132,7 @@ class GridFS:
                 filenames.append(grid_out.filename)
         return filenames
 
-    def find(self, filter: Dict[str, Any] | None = None) -> "GridOutCursor":
+    def find(self, filter: Dict[str, Any] | None = None) -> GridOutCursor:
         """
         Find files in GridFS that match the filter.
 

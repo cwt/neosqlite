@@ -86,7 +86,7 @@ class Binary(bytes):
         }
 
     @classmethod
-    def decode_from_storage(cls, encoded_data: dict) -> "Binary":
+    def decode_from_storage(cls, encoded_data: dict) -> Binary:
         """
         Decode binary data from JSON storage.
 

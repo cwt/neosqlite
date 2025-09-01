@@ -17,7 +17,7 @@ class ChangeStream:
 
     def __init__(
         self,
-        collection: "Collection",
+        collection: Collection,
         pipeline: List[Dict[str, Any]] | None = None,
         full_document: str | None = None,
         resume_after: Dict[str, Any] | None = None,
@@ -167,7 +167,7 @@ class ChangeStream:
             # Ignore errors during cleanup
             pass
 
-    def __iter__(self) -> "ChangeStream":
+    def __iter__(self) -> ChangeStream:
         """
         Return the iterator object for the change stream.
 
@@ -266,7 +266,7 @@ class ChangeStream:
             # If no changes, sleep briefly before polling again
             time.sleep(0.1)
 
-    def __enter__(self) -> "ChangeStream":
+    def __enter__(self) -> ChangeStream:
         """
         Return the change stream itself.
 

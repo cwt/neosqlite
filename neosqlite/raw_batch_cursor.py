@@ -11,7 +11,7 @@ class RawBatchCursor:
 
     def __init__(
         self,
-        collection: "Collection",
+        collection: Collection,
         filter: Optional[Dict[str, Any]] = None,
         projection: Optional[Dict[str, Any]] = None,
         hint: Optional[str] = None,
@@ -37,7 +37,7 @@ class RawBatchCursor:
         self._limit: Optional[int] = None
         self._sort: Optional[Dict[str, int]] = None
 
-    def batch_size(self, batch_size: int) -> "RawBatchCursor":
+    def batch_size(self, batch_size: int) -> RawBatchCursor:
         """
         Set the batch size for this cursor.
 

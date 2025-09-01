@@ -256,7 +256,7 @@ class GridIn:
 
         self._closed = True
 
-    def __enter__(self) -> "GridIn":
+    def __enter__(self) -> GridIn:
         """Context manager entry."""
         return self
 
@@ -461,7 +461,7 @@ class GridOut:
         """Close the GridOut stream."""
         self._closed = True
 
-    def __enter__(self) -> "GridOut":
+    def __enter__(self) -> GridOut:
         """Context manager entry."""
         return self
 
@@ -677,7 +677,7 @@ class GridOutCursor:
         self._file_ids = [row[0] for row in cursor.fetchall()]
         self._index = 0
 
-    def __iter__(self) -> "GridOutCursor":
+    def __iter__(self) -> GridOutCursor:
         """Return the iterator object."""
         return self
 

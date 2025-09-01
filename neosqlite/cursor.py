@@ -18,7 +18,7 @@ class Cursor:
 
     def __init__(
         self,
-        collection: "Collection",
+        collection: Collection,
         filter: Dict[str, Any] | None = None,
         projection: Dict[str, Any] | None = None,
         hint: str | None = None,
@@ -51,7 +51,7 @@ class Cursor:
         """
         return self._execute_query()
 
-    def limit(self, limit: int) -> "Cursor":
+    def limit(self, limit: int) -> Cursor:
         """
         Limit the number of documents returned by the cursor.
 
@@ -64,7 +64,7 @@ class Cursor:
         self._limit = limit
         return self
 
-    def skip(self, skip: int) -> "Cursor":
+    def skip(self, skip: int) -> Cursor:
         """
         Skip the specified number of documents when iterating over the cursor.
 
@@ -81,7 +81,7 @@ class Cursor:
         self,
         key_or_list: str | List[tuple],
         direction: int | None = None,
-    ) -> "Cursor":
+    ) -> Cursor:
         """
         Sort the documents returned by the cursor.
 

@@ -1,6 +1,6 @@
-from __future__ import annotations
 from .errors import NoFile, FileExists
-from typing import Any, Dict, TYPE_CHECKING
+from .grid_file import GridIn, GridOut, GridOutCursor
+from typing import Any, Dict
 import datetime
 import hashlib
 import io
@@ -10,9 +10,6 @@ try:
     from pysqlite3 import dbapi2 as sqlite3
 except ImportError:
     import sqlite3  # type: ignore
-
-if TYPE_CHECKING:
-    from .grid_file import GridIn, GridOut, GridOutCursor
 
 
 class GridFSBucket:
@@ -379,7 +376,7 @@ class GridFSBucket:
 
         return row[0]
 
-    def open_download_stream(self, file_id: int) -> "GridOut":
+    def open_download_stream(self, file_id: int) -> GridOut:
         """
         Opens a stream to read the contents of the stored file specified by file_id.
 
@@ -393,7 +390,7 @@ class GridFSBucket:
 
     def open_download_stream_by_name(
         self, filename: str, revision: int = -1
-    ) -> "GridOut":
+    ) -> GridOut:
         """
         Opens a stream to read the contents of the stored file specified by filename.
 
@@ -436,7 +433,7 @@ class GridFSBucket:
         if cursor.rowcount == 0:
             raise NoFile(f"File with id {file_id} not found")
 
-    def find(self, filter: Dict[str, Any] | None = None) -> "GridOutCursor":
+    def find(self, filter: Dict[str, Any] | None = None) -> GridOutCursor:
         """
         Find and return the files collection documents that match filter.
 
@@ -545,7 +542,7 @@ class GridFSBucket:
         file_id: int,
         filename: str,
         metadata: Dict[str, Any] | None = None,
-    ) -> "GridIn":
+    ) -> GridIn:
         """
         Opens a stream for writing a file to a GridFS bucket with a custom file id.
 
@@ -672,7 +669,3 @@ class GridFSBucket:
 
         # Delete all files
         self._db.execute(f"DELETE FROM `{self._files_collection}`")
-
-
-# Import these at the end to avoid circular imports
-from .grid_file import GridIn, GridOut, GridOutCursor

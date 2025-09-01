@@ -562,7 +562,7 @@ class Collection:
         start_at_operation_time: Any | None = None,
         session: Any | None = None,
         start_after: Dict[str, Any] | None = None,
-    ) -> "ChangeStream":
+    ) -> ChangeStream:
         """
         Monitor changes on this collection using SQLite's change tracking features.
 

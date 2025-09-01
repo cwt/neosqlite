@@ -25,7 +25,7 @@ class Connection:
                      Special kwargs:
                      - tokenizers: List of tuples (name, path) for FTS5 tokenizers to load
         """
-        self._collections: Dict[str, "Collection"] = {}
+        self._collections: Dict[str, Collection] = {}
         self._tokenizers: List[Tuple[str, str]] = kwargs.pop("tokenizers", [])
         self.connect(*args, **kwargs)
 
@@ -64,7 +64,7 @@ class Connection:
                 self.db.commit()
             self.db.close()
 
-    def __getitem__(self, name: str) -> "Collection":
+    def __getitem__(self, name: str) -> Collection:
         """
         Access a collection by name.
 
@@ -97,7 +97,7 @@ class Connection:
             return self.__dict__[name]
         return self[name]
 
-    def __enter__(self) -> "Connection":
+    def __enter__(self) -> Connection:
         """
         Allow the connection to be used in a context manager.
 

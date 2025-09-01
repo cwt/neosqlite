@@ -753,7 +753,7 @@ class QueryEngine:
 
     def _aggregate_with_quez(
         self, pipeline: List[Dict[str, Any]], batch_size: int = 1000
-    ) -> "CompressedQueue":
+    ) -> CompressedQueue:
         """
         Process aggregation pipeline with quez compressed queue for memory efficiency.
 
