@@ -330,6 +330,12 @@ class TemporaryTableAggregationProcessor:
                         )
                         i = j  # Skip processed stages
 
+                    case "$addFields":
+                        current_table = self._process_add_fields_stage(
+                            create_temp, current_table, stage["$addFields"]
+                        )
+                        i += 1
+
                     case _:
                         # For unsupported stages, we would need to fall back to Python
                         # But for this demonstration, we'll raise an exception
@@ -696,6 +702,57 @@ class TemporaryTableAggregationProcessor:
         )
         return new_table
 
+    def _process_add_fields_stage(
+        self,
+        create_temp: Callable,
+        current_table: str,
+        add_fields_spec: Dict[str, Any],
+    ) -> str:
+        """
+        Process an $addFields stage using temporary tables.
+
+        This method implements the $addFields aggregation stage which adds new fields
+        to documents. It uses SQLite's json_set function to add fields to the JSON data.
+
+        For this basic implementation, it handles simple field copying using json_extract
+        and json_set. A full implementation would handle computed fields and expressions.
+
+        Args:
+            create_temp (Callable): Function to create temporary tables
+            current_table (str): Name of the current temporary table containing input data
+            add_fields_spec (Dict[str, Any]): The $addFields stage specification mapping
+                                              new field names to source field paths
+
+        Returns:
+            str: Name of the newly created temporary table with added fields
+        """
+        # Build json_set expressions for each field to add
+        # We'll construct a nested json_set call for each field
+        data_expr = "data"  # Start with the original data
+        params = []
+
+        # Process each field to add
+        for new_field, source_field in add_fields_spec.items():
+            # Handle simple field copying (e.g., {"newField": "$existingField"})
+            if isinstance(source_field, str) and source_field.startswith("$"):
+                source_field_name = source_field[1:]  # Remove leading $
+                if source_field_name == "_id":
+                    # Special handling for _id field
+                    data_expr = f"json_set({data_expr}, '$.{new_field}', id)"
+                else:
+                    # Use json_extract to get the source field value
+                    data_expr = f"json_set({data_expr}, '$.{new_field}', json_extract(data, '$.{source_field_name}'))"
+            # For this basic implementation, we won't handle complex expressions
+
+        # Create addFields temporary table
+        add_fields_stage = {"$addFields": add_fields_spec}
+        new_table = create_temp(
+            add_fields_stage,
+            f"SELECT id, {data_expr} as data FROM {current_table}",
+            params if params else None,
+        )
+        return new_table
+
     def _get_results_from_table(self, table_name: str) -> List[Dict[str, Any]]:
         """
         Get results from a temporary table.
@@ -742,6 +799,7 @@ def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
         "$skip",
         "$limit",
         "$lookup",
+        "$addFields",  # Added support for $addFields
     }
 
     for stage in pipeline:
@@ -985,6 +1043,30 @@ def integrate_with_neosqlite(
 
                     # Add the matching documents as an array field
                     doc[as_field] = matching_docs
+
+            case "$addFields":
+                # Python fallback implementation for $addFields
+                add_fields_spec = stage["$addFields"]
+                from copy import deepcopy
+
+                for doc in docs:
+                    # Process each field to add
+                    for new_field, source_field in add_fields_spec.items():
+                        # Handle simple field copying (e.g., {"newField": "$existingField"})
+                        if isinstance(
+                            source_field, str
+                        ) and source_field.startswith("$"):
+                            source_field_name = source_field[
+                                1:
+                            ]  # Remove leading $
+                            # Get the source field value
+                            source_value = query_engine.collection._get_val(
+                                doc, source_field_name
+                            )
+                            # Add the new field with the source value
+                            doc[new_field] = source_value
+                        # For this basic implementation, we won't handle complex expressions
+
             case _:
                 raise MalformedQueryException(
                     f"Aggregation stage '{stage_name}' not supported"
