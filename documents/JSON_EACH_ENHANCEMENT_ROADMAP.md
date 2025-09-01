@@ -203,59 +203,7 @@ result = collection.aggregate(pipeline)
 - Performance verification tests showing significant improvements
 - No regression in existing functionality
 
-### 10. Pipeline Reordering Optimization
-**Status**: ✅ Completed
-**Description**: Rearrange pipeline stages for better performance when possible
-**Features**:
-- Query cost estimation based on pipeline stage ordering
-- Automatic selection of optimal execution paths
-- Integration with existing index information system
-- Pipeline reordering for better performance
-- Match pushdown optimization for early filtering
 
-**Implementation Details**:
-- Added `_reorder_pipeline_for_indexes()` method to reorder pipeline stages for better index usage
-- Enhanced `_estimate_pipeline_cost()` method to estimate total pipeline costs with data flow awareness
-- Added `_optimize_match_pushdown()` method to push match filters down for early filtering
-- Integrated cost estimation and optimization into the aggregation pipeline processing
-- Maintains full backward compatibility with existing code
-
-**Optimization Techniques**:
-- **Pipeline Reordering**: Automatically reorders pipeline stages to put indexed `$match` operations first
-- **Cost-Based Selection**: Chooses between original and reordered pipelines based on cost estimation
-- **Match Pushdown**: Pushes `$match` stages earlier in the pipeline to filter data before expensive operations
-- **Index-Aware Planning**: Uses index information to make better query execution decisions
-
-**Performance Benefits**:
-- Queries using indexed fields execute significantly faster due to early filtering
-- Pipeline reordering reduces the amount of data processed by expensive operations
-- Match pushdown optimization filters data before `$unwind`, `$group`, and `$lookup` operations
-- Cost-based optimization ensures the most efficient execution path is chosen
-
-**Example Usage**:
-```python
-# Create indexes on frequently queried fields
-collection.create_index("category")
-collection.create_index("status")
-
-# These queries will automatically benefit from pipeline optimization
-pipeline = [
-    {"$unwind": "$tags"},  // Expensive operation
-    {"$match": {"category": "Category5", "status": "active"}},  // Will be moved to the front
-    {"$sort": {"tags": 1}},
-    {"$limit": 10}
-]
-result = collection.aggregate(pipeline)
-// The pipeline is automatically reordered to:
-// [{"$match": {...}}, {"$unwind": "$tags"}, {"$sort": {...}}, {"$limit": 10}]
-```
-
-**Testing**:
-- Comprehensive test coverage for cost estimation and optimization functionality
-- Integration tests with existing aggregation pipeline stages
-- Performance verification tests showing significant improvements
-- No regression in existing functionality
-```
 
 ### 11. Additional Group Operations
 **Status**: ✅ Completed

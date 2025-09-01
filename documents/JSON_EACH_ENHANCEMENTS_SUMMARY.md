@@ -126,43 +126,7 @@ pipeline = [
 - Supports case-insensitive search with `lower()` function
 - See [TEXT_SEARCH_JSON_EACH_INTEGRATION.md](TEXT_SEARCH_JSON_EACH_INTEGRATION.md) for detailed documentation.
 
-**Example**:
-```python
-pipeline = [
-    {"$unwind": "$comments"},
-    {"$match": {"$text": {"$search": "performance"}}}
-]
-```
 
-**SQL Generated**:
-```sql
-SELECT collection.id, je.value as data
-FROM collection, 
-     json_each(json_extract(collection.data, '$.comments')) as je
-WHERE lower(je.value) LIKE '%performance%'
-```
-
-**Example**:
-```python
-pipeline = [
-    {"$unwind": "$orders"},
-    {"$unwind": "$orders.items"}
-]
-```
-
-**SQL Generated**:
-```sql
-SELECT collection.id,
-       json_set(
-           json_set(collection.data, '$."orders"', je1.value),
-           '$."orders.items"', je2.value
-       ) AS data
-FROM collection,
-     json_each(json_extract(collection.data, '$.orders')) AS je1,
-     json_each(json_extract(je1.value, '$.items')) AS je2
-WHERE json_type(json_extract(collection.data, '$.orders')) = 'array'
-  AND json_type(json_extract(je1.value, '$.items')) = 'array'
-```
 
 ## Testing
 

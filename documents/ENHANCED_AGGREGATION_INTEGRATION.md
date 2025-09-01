@@ -1,12 +1,11 @@
-"""
-Integration proposal for temporary table aggregation in NeoSQLite.
-This file shows how the temporary table approach could be integrated
-into the existing QueryEngine to handle complex pipelines.
-"""
+# Integration Proposal for Temporary Table Aggregation in NeoSQLite
 
+This file shows how the temporary table approach could be integrated into the existing `QueryEngine` to handle complex pipelines.
+
+```python
 from typing import Any, Dict, List
 from .temporary_table_aggregation import (
-    TemporaryTableAggregationProcessor, 
+    TemporaryTableAggregationProcessor,
     can_process_with_temporary_tables
 )
 
@@ -14,19 +13,19 @@ from .temporary_table_aggregation import (
 class EnhancedQueryEngine:
     """
     Enhanced QueryEngine that uses temporary tables for complex pipelines.
-    
+
     This is a conceptual integration showing how temporary table aggregation
     could be incorporated into the existing NeoSQLite codebase.
     """
-    
+
     def __init__(self, collection):
         self.collection = collection
         self.helpers = collection.query_helper  # Existing helper methods
-        
+
     def aggregate(self, pipeline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Enhanced aggregate method that tries multiple approaches:
-        
+
         1. First, try the existing SQL optimization approach
         2. If that fails, try the temporary table approach for supported pipelines
         3. Finally, fall back to the Python implementation for unsupported cases
@@ -41,7 +40,7 @@ class EnhancedQueryEngine:
                 if output_fields:
                     # Handle results from a GROUP BY query
                     from neosqlite.collection.json_helpers import neosqlite_json_loads
-                    
+
                     results = []
                     for row in db_cursor.fetchall():
                         processed_row = []
@@ -71,7 +70,7 @@ class EnhancedQueryEngine:
         except Exception:
             # If SQL optimization fails, continue to next approach
             pass
-        
+
         # Try the temporary table approach for supported pipelines
         if can_process_with_temporary_tables(pipeline):
             try:
@@ -80,7 +79,7 @@ class EnhancedQueryEngine:
             except Exception:
                 # If temporary table approach fails, continue to fallback
                 pass
-        
+
         # Fall back to the existing Python implementation
         # This is the existing code from the aggregate_with_constraints method
         docs: List[Dict[str, Any]] = list(self.collection.find())
@@ -89,46 +88,40 @@ class EnhancedQueryEngine:
             # ... (existing Python processing logic)
             # For brevity, we're not including the full implementation here
             # but in a real implementation, this would be the complete fallback logic
-            
+
         return docs
+```
 
+## Example Usage in the Collection Class
 
-# Example usage in the Collection class:
-"""
+```python
 class Collection:
     # ... existing code ...
-    
+
     def aggregate(self, pipeline):
         '''
         Process an aggregation pipeline.
-        
+
         This method now uses a hybrid approach:
         1. Try SQL optimization
         2. Try temporary table processing
         3. Fall back to Python processing
         '''
         return self.query_engine.aggregate(pipeline)
-"""
+```
 
-# Benefits of this approach:
-"""
-1. **Backward Compatibility**: Existing code continues to work without changes
-2. **Performance Improvement**: More pipelines can be processed with SQL optimization
-3. **Resource Management**: Temporary tables provide better resource management
-4. **Gradual Enhancement**: Can be implemented incrementally without breaking changes
-5. **Flexible Fallback**: Multiple fallback options ensure robustness
-"""
+## Benefits of this approach
 
-# Implementation considerations:
-"""
-1. **Performance Testing**: Need to benchmark to ensure temporary table approach 
-   is actually faster than Python fallback for the pipelines it handles
-   
-2. **Error Handling**: Robust error handling to ensure smooth fallback between approaches
-   
-3. **Resource Management**: Ensure temporary tables are always cleaned up properly
-   
-4. **Testing**: Comprehensive testing to ensure all approaches produce identical results
-   
-5. **Documentation**: Clear documentation of when each approach is used
-"""
+1.  **Backward Compatibility**: Existing code continues to work without changes
+2.  **Performance Improvement**: More pipelines can be processed with SQL optimization
+3.  **Resource Management**: Temporary tables provide better resource management
+4.  **Gradual Enhancement**: Can be implemented incrementally without breaking changes
+5.  **Flexible Fallback**: Multiple fallback options ensure robustness
+
+## Implementation considerations
+
+1.  **Performance Testing**: Need to benchmark to ensure temporary table approach is actually faster than Python fallback for the pipelines it handles
+2.  **Error Handling**: Robust error handling to ensure smooth fallback between approaches
+3.  **Resource Management**: Ensure temporary tables are always cleaned up properly
+4.  **Testing**: Comprehensive testing to ensure all approaches produce identical results
+5.  **Documentation**: Clear documentation of when each approach is used
