@@ -4,6 +4,7 @@ This focuses on the core concept: using temporary tables to process complex pipe
 that the current implementation can't optimize with a single SQL query.
 """
 
+import hashlib
 import uuid
 from contextlib import contextmanager
 from typing import Any, Dict, List, Callable, Optional
@@ -11,20 +12,90 @@ import json
 from .cursor import DESCENDING
 
 
+class DeterministicTempTableManager:
+    """Manager for deterministic temporary table names."""
+
+    def __init__(self, pipeline_id: str):
+        """Initialize with a pipeline ID for uniqueness."""
+        self.pipeline_id = pipeline_id
+        self.stage_counter = 0
+        self.name_counter: Dict[str, int] = (
+            {}
+        )  # Track how many times each name has been used
+
+    def make_temp_table_name(
+        self, stage: Dict[str, Any], name_suffix: str = ""
+    ) -> str:
+        """Generate a deterministic temp table name based on the stage and pipeline ID."""
+        # Create a canonical representation of the stage
+        stage_key = str(sorted(stage.items()))
+        # Hash the stage to create a short, unique suffix
+        hash_suffix = hashlib.sha256(stage_key.encode()).hexdigest()[:6]
+        # Get the stage type (e.g., "match", "unwind")
+        stage_type = next(iter(stage.keys())).lstrip("$")
+
+        # Create a base name
+        base_name = (
+            f"temp_{self.pipeline_id}_{stage_type}_{hash_suffix}{name_suffix}"
+        )
+
+        # Ensure uniqueness by tracking usage
+        if base_name in self.name_counter:
+            self.name_counter[base_name] += 1
+            unique_name = f"{base_name}_{self.name_counter[base_name]}"
+        else:
+            self.name_counter[base_name] = 0
+            unique_name = base_name
+
+        return unique_name
+
+
 @contextmanager
-def aggregation_pipeline_context(db_connection):
+def aggregation_pipeline_context(
+    db_connection, pipeline_id: Optional[str] = None
+):
     """Context manager for temporary aggregation tables with automatic cleanup."""
     temp_tables = []
-    savepoint_name = f"agg_pipeline_{uuid.uuid4().hex}"
+
+    # Generate a default pipeline ID if none provided (for backward compatibility)
+    if pipeline_id is None:
+        import uuid
+
+        pipeline_id = f"default_{uuid.uuid4().hex[:8]}"
+
+    savepoint_name = f"agg_pipeline_{pipeline_id}"
 
     # Create savepoint for atomicity
     db_connection.execute(f"SAVEPOINT {savepoint_name}")
 
+    # Create a deterministic temp table manager
+    temp_manager = DeterministicTempTableManager(pipeline_id)
+
     def create_temp_table(
-        name_suffix: str, query: str, params: Optional[List[Any]] = None
+        stage_or_suffix: Any,  # Can be Dict[str, Any] for new usage or str for backward compatibility
+        query: str,
+        params: Optional[List[Any]] = None,
+        name_suffix: str = "",  # Used only for backward compatibility
     ) -> str:
-        """Create a temporary table for pipeline processing."""
-        table_name = f"temp_{name_suffix}_{uuid.uuid4().hex}"
+        """Create a temporary table for pipeline processing with deterministic naming.
+
+        This function supports both the new deterministic naming approach and the old
+        backward-compatible approach for existing tests.
+        """
+        # Check if we're using the new approach (stage is a dict) or old approach (stage is a string)
+        if isinstance(stage_or_suffix, dict):
+            # New approach - deterministic naming
+            table_name = temp_manager.make_temp_table_name(
+                stage_or_suffix, name_suffix
+            )
+        else:
+            # Old approach - backward compatibility
+            if isinstance(stage_or_suffix, str):
+                suffix = stage_or_suffix
+            else:
+                suffix = "unknown"
+            table_name = f"temp_{suffix}_{uuid.uuid4().hex}"
+
         if params is not None:
             db_connection.execute(
                 f"CREATE TEMP TABLE {table_name} AS {query}", params
@@ -73,10 +144,17 @@ class TemporaryTableAggregationProcessor:
         Returns:
             List of result documents
         """
-        with aggregation_pipeline_context(self.db) as create_temp:
+        # Generate a deterministic pipeline ID based on the pipeline content
+        import hashlib
+
+        pipeline_key = "".join(str(sorted(stage.items())) for stage in pipeline)
+        pipeline_id = hashlib.sha256(pipeline_key.encode()).hexdigest()[:8]
+
+        with aggregation_pipeline_context(self.db, pipeline_id) as create_temp:
             # Start with base data
+            base_stage = {"_base": True}
             current_table = create_temp(
-                "base", f"SELECT id, data FROM {self.collection.name}"
+                base_stage, f"SELECT id, data FROM {self.collection.name}"
             )
 
             # Process pipeline stages in groups that can be handled together
@@ -225,8 +303,9 @@ class TemporaryTableAggregationProcessor:
             where_clause = "WHERE " + " AND ".join(where_conditions)
 
         # Create filtered temporary table
+        match_stage = {"$match": match_spec}
         new_table = create_temp(
-            "matched", f"SELECT * FROM {current_table} {where_clause}", params
+            match_stage, f"SELECT * FROM {current_table} {where_clause}", params
         )
         return new_table
 
@@ -240,8 +319,9 @@ class TemporaryTableAggregationProcessor:
             if isinstance(field, str) and field.startswith("$"):
                 field_name = field[1:]  # Remove leading $
 
+                unwind_stage = {"$unwind": field}
                 new_table = create_temp(
-                    "unwound",
+                    unwind_stage,
                     f"""
                     SELECT {self.collection.name}.id,
                            json_set({self.collection.name}.data, '$."{field_name}"', je.value) as data
@@ -284,8 +364,13 @@ class TemporaryTableAggregationProcessor:
                 )
             where_clause = "WHERE " + " AND ".join(where_conditions)
 
+            # Create a representative stage spec for naming
+            # Use the first unwind spec for naming purposes
+            naming_stage: Dict[str, Any] = {
+                "$unwind": unwind_specs[0] if unwind_specs else {}
+            }
             new_table = create_temp(
-                "multi_unwound",
+                naming_stage,
                 f"SELECT {self.collection.name}.id, {select_expr} as data "
                 + " ".join(from_parts)
                 + f" {where_clause}",
@@ -330,8 +415,9 @@ class TemporaryTableAggregationProcessor:
 
         from_clause = f"FROM {current_table} as {self.collection.name}"
 
+        lookup_stage = {"$lookup": lookup_spec}
         # Create lookup temporary table
-        new_table = create_temp("lookup", f"{select_clause} {from_clause}")
+        new_table = create_temp(lookup_stage, f"{select_clause} {from_clause}")
         return new_table
 
     def _process_sort_skip_limit_stage(
@@ -368,9 +454,21 @@ class TemporaryTableAggregationProcessor:
         elif skip_value > 0:
             limit_clause = f"LIMIT -1 OFFSET {skip_value}"  # SQLite requires LIMIT with OFFSET
 
+        # Create a stage spec for naming (use the first non-null stage type)
+        stage_spec: Dict[str, Any] = {}
+        if sort_spec:
+            stage_spec["$sort"] = sort_spec
+        elif skip_value > 0:
+            stage_spec["$skip"] = skip_value
+        elif limit_value is not None:
+            stage_spec["$limit"] = limit_value
+        else:
+            # Default case if all are None/default values
+            stage_spec["$sort"] = {}
+
         # Create sorted/skipped/limited temporary table
         new_table = create_temp(
-            "sorted",
+            stage_spec,
             f"SELECT * FROM {current_table} {order_clause} {limit_clause}",
         )
         return new_table
