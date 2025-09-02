@@ -30,10 +30,10 @@ We've implemented a temporary table approach that:
 ### 1. Context Manager
 - Automatic resource management with guaranteed cleanup
 - Transaction-based atomicity using SQLite SAVEPOINTs
-- Dynamic temporary table creation with unique names
+- Deterministic temporary table creation with unique names based on pipeline structure
 
 ### 2. Pipeline Processor
-- Support for `$match`, `$unwind`, `$sort`, `$skip`, `$limit`, and `$lookup` stages
+- Support for `$match`, `$unwind`, `$sort`, `$skip`, `$limit`, `$lookup`, and `$addFields` stages
 - Handling of consecutive `$unwind` stages
 - Proper parameter handling and SQL injection prevention
 
@@ -52,6 +52,9 @@ The current implementation supports:
 - ✅ `$skip` - Skipping documents
 - ✅ `$limit` - Limiting results
 - ✅ `$lookup` - Joining collections (in any position)
+- ✅ `$addFields` - Adding new fields to documents
+
+The `$group` stage is not supported by the temporary table implementation but is handled by the Python fallback.
 
 ## Benefits Achieved
 
@@ -72,35 +75,38 @@ The current implementation supports:
 
 ## Integration Strategy
 
-The enhancement can be integrated into NeoSQLite by modifying the `QueryEngine.aggregate_with_constraints` method:
+The enhancement is integrated into NeoSQLite's `QueryEngine.aggregate_with_constraints` method via the `integrate_with_neosqlite` function:
 
 ```python
-def aggregate_with_constraints(self, pipeline, ...):
-    # Try existing SQL optimization first
-    if query_result := self.helpers._build_aggregation_query(pipeline):
-        # Process with existing optimization
-        return process_sql_results(query_result)
-    
-    # Try temporary table approach for supported pipelines
-    elif can_process_with_temporary_tables(pipeline):
-        processor = TemporaryTableAggregationProcessor(self.collection)
-        return processor.process_pipeline(pipeline)
-    
-    # Fall back to Python processing
+def integrate_with_neosqlite(
+    query_engine, pipeline: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    # First, try the existing SQL optimization approach
+    try:
+        query_result = query_engine.helpers._build_aggregation_query(pipeline)
+        if query_result is not None:
+            # Process with existing optimization
+            return process_sql_results(query_result)
+    except Exception:
+        pass
+
+    # Try the temporary table approach for supported pipelines
+    if can_process_with_temporary_tables(pipeline):
+        try:
+            processor = TemporaryTableAggregationProcessor(
+                query_engine.collection
+            )
+            return processor.process_pipeline(pipeline)
+        except Exception:
+            pass
+
+    # Fall back to the existing Python implementation
     return process_with_python(pipeline)
 ```
 
-## Test Results
-
-Testing shows the approach works well for:
-- Simple pipelines (equivalent performance to existing optimization)
-- Complex pipelines with multiple `$unwind` stages
-- Pipelines with `$lookup` operations in any position
-- Pipelines that current implementation cannot optimize
-
 ## Future Enhancements
 
-1. **Additional Stage Support**: Extend to support `$project`, `$group`, and other stages
+1. **Additional Stage Support**: Extend to support `$project` and other stages.
 2. **Query Planning**: Intelligently decide which approach to use based on pipeline complexity
 3. **Streaming Results**: Stream results from temporary tables to reduce memory usage
 4. **Parallel Processing**: Process independent pipeline branches in parallel

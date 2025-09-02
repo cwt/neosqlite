@@ -1,134 +1,84 @@
-# Text Search with $text Operator
+# Text Search in NeoSQLite
 
-NeoSQLite now supports text search using the `$text` operator, which leverages SQLite's FTS5 (Full-Text Search) extension for efficient text searching.
+NeoSQLite supports efficient text search using the `$text` operator, which leverages SQLite's FTS5 (Full-Text Search) extension.
 
 ## Creating FTS Indexes
 
-To enable text search functionality, you need to create FTS indexes on the fields you want to search. This is done by passing `fts=True` to the `create_index()` method:
+To enable text search, you must first create an FTS index on the desired fields using `fts=True`.
 
 ```python
-import neosqlite
-
-# Create a connection and collection
-conn = neosqlite.Connection(":memory:")
-collection = conn["articles"]
-
-# Insert sample documents
-collection.insert_many([
-    {"title": "Python Programming Basics", "content": "Python is a high-level programming language..."},
-    {"title": "JavaScript Fundamentals", "content": "JavaScript is a versatile programming language..."}
-])
-
-# Create FTS index on content field
 collection.create_index("content", fts=True)
-
-# Create FTS index on nested fields
 collection.create_index("metadata.description", fts=True)
-
-# For searching across multiple fields, create separate FTS indexes on each field
-# (Unlike PyMongo's compound text indexes, NeoSQLite uses separate FTS tables)
-collection.create_index("title", fts=True)
-collection.create_index("content", fts=True)
 ```
+
+Unlike MongoDB, NeoSQLite creates separate FTS tables for each field. When searching, it automatically queries all relevant FTS tables and combines the results.
 
 ### Custom FTS5 Tokenizers
 
-NeoSQLite supports custom FTS5 tokenizers for improved language-specific text processing. To use a custom tokenizer:
-
-1. Load the tokenizer library when creating the connection
-2. Specify the tokenizer when creating the FTS index
+You can use custom FTS5 tokenizers for language-specific text processing.
 
 ```python
-# Load custom tokenizer when creating connection
 conn = neosqlite.Connection(
     ":memory:",
     tokenizers=[("icu", "/path/to/libfts5_icu.so")]
 )
-
-# Create FTS index with custom tokenizer
 collection.create_index("content", fts=True, tokenizer="icu")
-
-# For language-specific tokenizers like Thai
-conn = neosqlite.Connection(
-    ":memory:",
-    tokenizers=[("icu_th", "/path/to/libfts5_icu_th.so")]
-)
-collection.create_index("content", fts=True, tokenizer="icu_th")
 ```
-
-Custom tokenizers can significantly improve text search quality for languages that don't use spaces between words (like Chinese, Japanese, Thai) or have complex tokenization rules. For more information about building and using custom FTS5 tokenizers, see the [FTS5 ICU Tokenizer project](https://sr.ht/~cwt/fts5-icu-tokenizer/) ([GitHub mirror](https://github.com/cwt/fts5-icu-tokenizer)).
-
-**Note on PyMongo Compatibility**: Unlike PyMongo which supports compound text indexes that index multiple fields together, NeoSQLite creates separate FTS tables for each field. When searching across multiple FTS-indexed fields, NeoSQLite automatically searches all relevant FTS tables and combines the results.
 
 ## Using the $text Operator
 
-Once you have created FTS indexes, you can use the `$text` operator to perform text searches:
+Once indexes are created, you can use the `$text` operator for searching.
 
 ```python
-# Search for documents containing the word "programming"
+# Search for a single word
 results = list(collection.find({"$text": {"$search": "programming"}}))
-
-# Search for documents containing multiple words
-results = list(collection.find({"$text": {"$search": "python programming"}}))
 
 # Search is case-insensitive
 results = list(collection.find({"$text": {"$search": "PYTHON"}}))
 ```
 
-## Using $text with Logical Operators
+If no FTS indexes exist, the search will fall back to a less efficient, case-insensitive substring search across all string fields in the documents.
 
-The `$text` operator can be combined with logical operators (`$and`, `$or`, `$not`, `$nor`) for complex queries. See [Text Search with Logical Operators](TEXT_SEARCH_Logical_Operators.md) for detailed information.
+## Integration with Logical Operators
+
+The `$text` operator can be combined with logical operators like `$and`, `$or`, and `$not` for more complex queries. These queries are processed using a hybrid approach: `$text` conditions leverage FTS5, and the results are combined in Python using set operations.
 
 ```python
-# $text with $and
 results = list(collection.find({
     "$and": [
         {"$text": {"$search": "python"}},
         {"category": "programming"}
     ]
 }))
-
-# $text with $or
-results = list(collection.find({
-    "$or": [
-        {"$text": {"$search": "python"}},
-        {"$text": {"$search": "javascript"}}
-    ]
-}))
 ```
+
+## Integration with $unwind (json_each)
+
+For text searching within arrays, NeoSQLite provides a powerful optimization that combines `$unwind` and `$text` search at the SQL level.
+
+```python
+pipeline = [
+  {"$unwind": "$comments"},
+  {"$match": {"$text": {"$search": "performance"}}}
+]
+```
+
+This pipeline is converted into a single, efficient SQL query using `json_each()`, which can be 10-100x faster than processing in Python.
 
 ## PyMongo Compatibility
 
-For information about compatibility with PyMongo's `$text` operator and differences in supported features, see [PyMongo $text Operator Compatibility](TEXT_SEARCH_PyMongo_Compatibility.md).
+NeoSQLite's `$text` operator is designed for compatibility with PyMongo, but there are some differences:
 
-## How It Works
+### Supported Features
+- Basic syntax: `{"$text": {"$search": "..."}}`
+- Case-insensitive search
+- Searching across multiple indexed fields
 
-1. **FTS Index Creation**: When you create an FTS index, NeoSQLite:
-   - Creates an FTS5 virtual table to store the indexed text
-   - Sets up triggers to keep the FTS index synchronized with the main table
-   - Populates the FTS index with existing data
-
-2. **Query Processing**: When you use the `$text` operator:
-   - NeoSQLite first checks if FTS indexes exist for the collection
-   - If FTS indexes exist, it uses FTS5's efficient MATCH query
-   - If no FTS indexes exist, it falls back to a Python-based substring search
-
-3. **Automatic Synchronization**: FTS indexes are automatically kept in sync with the main table through triggers:
-   - INSERT operations add new text to the FTS index
-   - UPDATE operations update the text in the FTS index
-   - DELETE operations remove text from the FTS index
+### Incompatible or Missing Features
+- **Advanced Parameters**: `$language`, `$caseSensitive`, `$diacriticSensitive` are not supported.
+- **Text Scoring**: The `$meta: "textScore"` feature is not available.
+- **Advanced Search Syntax**: Phrase searches (`"exact phrase"`) and term exclusion (`-term`) are not supported.
 
 ## Limitations
-
-1. **No Advanced FTS5 Features**: Advanced FTS5 features like ranking and snippets are not yet exposed
-2. **FTS5 Availability**: Requires SQLite with FTS5 support (available in SQLite 3.9.0 and later)
-3. **Limited $text Parameters**: Does not support PyMongo's advanced `$text` parameters like `$language`, `$caseSensitive`, etc.
-
-## Python Fallback
-
-If no FTS indexes exist for a collection, the `$text` operator will fall back to a Python-based substring search that:
-- Searches all string fields in documents
-- Performs case-insensitive matching
-- Supports multiple word searches (all words must be present)
-
-This ensures that text search functionality is always available, even without FTS indexes, though it will be less efficient for large collections.
+- Advanced FTS5 features like ranking and snippets are not exposed.
+- Requires SQLite 3.9.0 or later for FTS5 support.
