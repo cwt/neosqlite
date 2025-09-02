@@ -10,7 +10,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import neosqlite
-from neosqlite.temporary_table_aggregation import integrate_with_neosqlite
+from neosqlite.temporary_table_aggregation import execute_three_tier_aggregation
 
 
 def demonstrate_integration():
@@ -81,7 +81,7 @@ def demonstrate_integration():
 
         # Use the integrated approach
         try:
-            results = integrate_with_neosqlite(
+            results = execute_three_tier_aggregation(
                 products.query_engine, simple_pipeline
             )
             print(f"   Integrated approach results count: {len(results)}")
@@ -114,7 +114,7 @@ def demonstrate_integration():
 
         # Use the integrated approach
         try:
-            results = integrate_with_neosqlite(
+            results = execute_three_tier_aggregation(
                 products.query_engine, complex_pipeline
             )
             print(f"   Integrated approach results count: {len(results)}")
@@ -139,11 +139,10 @@ def demonstrate_integration():
         )
         unsupported_pipeline = [{"$project": {"name": 1, "price": 1, "_id": 0}}]
 
-        # Use the integrated approach
+        # Use the integrated approach (through QueryEngine which handles all tiers)
         try:
-            results = integrate_with_neosqlite(
-                products.query_engine, unsupported_pipeline
-            )
+            # This will go through all three tiers: SQL optimization -> Temp tables -> Python fallback
+            results = list(products.aggregate(unsupported_pipeline))
             print(f"   Integrated approach results count: {len(results)}")
             for doc in results[:3]:  # Show first 3 results
                 print(f"     {doc}")

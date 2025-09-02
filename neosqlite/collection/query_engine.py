@@ -502,46 +502,70 @@ class QueryEngine:
                 # Fall back to normal processing if quez is not available
                 pass
 
-        query_result = self.helpers._build_aggregation_query(pipeline)
-        if query_result is not None:
-            cmd, params, output_fields = query_result
-            db_cursor = self.collection.db.execute(cmd, params)
-            if output_fields:
-                # Handle results from a GROUP BY query
-                from neosqlite.collection.json_helpers import (
-                    neosqlite_json_loads,
-                )
+        # Try existing SQL optimization first (this was previously missing)
+        try:
+            query_result = self.helpers._build_aggregation_query(pipeline)
+            if query_result is not None:
+                cmd, params, output_fields = query_result
+                db_cursor = self.collection.db.execute(cmd, params)
+                if output_fields:
+                    # Handle results from a GROUP BY query
+                    from neosqlite.collection.json_helpers import (
+                        neosqlite_json_loads,
+                    )
 
-                results = []
-                for row in db_cursor.fetchall():
-                    processed_row = []
-                    for i, value in enumerate(row):
-                        # If this field contains a JSON array string, parse it
-                        # This handles $push and $addToSet results
-                        if (
-                            output_fields[i] != "_id"
-                            and isinstance(value, str)
-                            and value.startswith("[")
-                            and value.endswith("]")
-                        ):
-                            try:
-                                processed_row.append(
-                                    neosqlite_json_loads(value)
-                                )
-                            except:
+                    results = []
+                    for row in db_cursor.fetchall():
+                        processed_row = []
+                        for i, value in enumerate(row):
+                            # If this field contains a JSON array string, parse it
+                            # This handles $push and $addToSet results
+                            if (
+                                output_fields[i] != "_id"
+                                and isinstance(value, str)
+                                and value.startswith("[")
+                                and value.endswith("]")
+                            ):
+                                try:
+                                    processed_row.append(
+                                        neosqlite_json_loads(value)
+                                    )
+                                except:
+                                    processed_row.append(value)
+                            else:
                                 processed_row.append(value)
-                        else:
-                            processed_row.append(value)
-                    results.append(dict(zip(output_fields, processed_row)))
-                return results
-            else:
-                # Handle results from a regular find query
-                return [
-                    self.collection._load(row[0], row[1])
-                    for row in db_cursor.fetchall()
-                ]
+                        results.append(dict(zip(output_fields, processed_row)))
+                    return results
+                else:
+                    # Handle results from a regular find query
+                    return [
+                        self.collection._load(row[0], row[1])
+                        for row in db_cursor.fetchall()
+                    ]
+        except Exception:
+            # If SQL optimization fails, continue to next approach
+            pass
 
-        # Fallback to old method for complex queries
+        # Try the temporary table approach for complex pipelines that the
+        # current SQL optimization can't handle efficiently
+        try:
+            from neosqlite.temporary_table_aggregation import (
+                execute_three_tier_aggregation,
+            )
+
+            # Use the temporary table aggregation which provides enhanced
+            # SQL processing for complex pipelines
+            return execute_three_tier_aggregation(self, pipeline)
+        except NotImplementedError:
+            # If temporary table approach indicates it needs Python fallback,
+            # continue to fallback below
+            pass
+        except Exception:
+            # If temporary table approach fails for other reasons,
+            # continue to fallback below
+            pass
+
+        # Fallback to old method for complex queries (Python implementation)
         docs: List[Dict[str, Any]] = list(self.find())
         for stage in pipeline:
             stage_name = next(iter(stage.keys()))

@@ -810,20 +810,19 @@ def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
     return True
 
 
-def integrate_with_neosqlite(
+def execute_three_tier_aggregation(
     query_engine, pipeline: List[Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
     """
-    Integration function that tries to use temporary tables for complex pipelines
-    that the current NeoSQLite implementation can't optimize.
+    Execute aggregation pipeline using temporary table approach for complex pipelines.
 
-    This function provides a multi-tiered approach to processing aggregation pipelines:
-    1. First, it attempts to use the existing SQL optimization approach
-    2. If that fails, it tries the temporary table approach for supported pipelines
-    3. As a final fallback, it uses the existing Python implementation
+    This function is designed to be called as the second tier in a three-tier processing system:
+    1. First tier (QueryEngine): Try existing SQL optimization for simple pipelines
+    2. Second tier (this function): Try temporary table approach for complex pipelines
+    3. Third tier (QueryEngine): Fall back to Python implementation for unsupported operations
 
-    The function is designed to be integrated into the QueryEngine.aggregate_with_constraints
-    method to provide enhanced performance for complex aggregation pipelines.
+    This function focuses specifically on processing complex pipelines that the current
+    NeoSQLite SQL optimization cannot handle efficiently, using temporary tables for better performance.
 
     Args:
         query_engine: The NeoSQLite QueryEngine instance to use for processing
@@ -832,50 +831,7 @@ def integrate_with_neosqlite(
     Returns:
         List[Dict[str, Any]]: List of result documents after processing the pipeline
     """
-    # First, try the existing SQL optimization approach
-    try:
-        query_result = query_engine.helpers._build_aggregation_query(pipeline)
-        if query_result is not None:
-            cmd, params, output_fields = query_result
-            db_cursor = query_engine.collection.db.execute(cmd, params)
-            if output_fields:
-                # Handle results from a GROUP BY query
-                from neosqlite.collection.json_helpers import (
-                    neosqlite_json_loads,
-                )
-
-                results = []
-                for row in db_cursor.fetchall():
-                    processed_row = []
-                    for i, value in enumerate(row):
-                        # If this field contains a JSON array string, parse it
-                        if (
-                            output_fields[i] != "_id"
-                            and isinstance(value, str)
-                            and value.startswith("[")
-                            and value.endswith("]")
-                        ):
-                            try:
-                                processed_row.append(
-                                    neosqlite_json_loads(value)
-                                )
-                            except:
-                                processed_row.append(value)
-                        else:
-                            processed_row.append(value)
-                    results.append(dict(zip(output_fields, processed_row)))
-                return results
-            else:
-                # Handle results from a regular find query
-                return [
-                    query_engine.collection._load(row[0], row[1])
-                    for row in db_cursor.fetchall()
-                ]
-    except Exception:
-        # If SQL optimization fails, continue to next approach
-        pass
-
-    # Try the temporary table approach for supported pipelines
+    # Process the pipeline with temporary tables if possible
     if can_process_with_temporary_tables(pipeline):
         try:
             processor = TemporaryTableAggregationProcessor(
@@ -883,192 +839,10 @@ def integrate_with_neosqlite(
             )
             return processor.process_pipeline(pipeline)
         except Exception:
-            # If temporary table approach fails, continue to fallback
+            # If temporary table approach fails, let the caller handle fallback
             pass
 
-    # Fall back to the existing Python implementation
-    # This is the existing code from the aggregate_with_constraints method
-    docs: List[Dict[str, Any]] = list(query_engine.collection.find())
-    for stage in pipeline:
-        stage_name = next(iter(stage.keys()))
-        match stage_name:
-            case "$match":
-                query = stage["$match"]
-                docs = [
-                    doc
-                    for doc in docs
-                    if query_engine.helpers._apply_query(query, doc)
-                ]
-            case "$sort":
-                sort_spec = stage["$sort"]
-                for key, direction in reversed(list(sort_spec.items())):
-                    docs.sort(
-                        key=lambda doc: query_engine.collection._get_val(
-                            doc, key
-                        ),
-                        reverse=direction == DESCENDING,
-                    )
-            case "$skip":
-                count = stage["$skip"]
-                docs = docs[count:]
-            case "$limit":
-                count = stage["$limit"]
-                docs = docs[:count]
-            case "$project":
-                projection = stage["$project"]
-                docs = [
-                    query_engine.helpers._apply_projection(projection, doc)
-                    for doc in docs
-                ]
-            case "$group":
-                group_spec = stage["$group"]
-                docs = query_engine.helpers._process_group_stage(
-                    group_spec, docs
-                )
-            case "$unwind":
-                # Handle both string and object forms of $unwind
-                unwind_spec = stage["$unwind"]
-                if isinstance(unwind_spec, str):
-                    # Legacy string form
-                    field_path = unwind_spec.lstrip("$")
-                    include_array_index = None
-                    preserve_null_and_empty = False
-                elif isinstance(unwind_spec, dict):
-                    # New object form with advanced options
-                    field_path = unwind_spec["path"].lstrip("$")
-                    include_array_index = unwind_spec.get("includeArrayIndex")
-                    preserve_null_and_empty = unwind_spec.get(
-                        "preserveNullAndEmptyArrays", False
-                    )
-                else:
-                    from neosqlite.exceptions import MalformedQueryException
-
-                    raise MalformedQueryException(
-                        f"Invalid $unwind specification: {unwind_spec}"
-                    )
-
-                unwound_docs = []
-                for doc in docs:
-                    array_to_unwind = query_engine.collection._get_val(
-                        doc, field_path
-                    )
-
-                    # For nested fields, check if parent exists
-                    field_parts = field_path.split(".")
-                    process_document = True
-                    if len(field_parts) > 1:
-                        # This is a nested field
-                        parent_path = ".".join(field_parts[:-1])
-                        parent_value = query_engine.collection._get_val(
-                            doc, parent_path
-                        )
-                        if parent_value is None:
-                            # Parent is None or missing, don't process this document
-                            process_document = False
-
-                    if not process_document:
-                        continue
-
-                    if isinstance(array_to_unwind, list):
-                        # Handle array values
-                        if array_to_unwind:
-                            # Non-empty array - unwind normally
-                            for idx, item in enumerate(array_to_unwind):
-                                from copy import deepcopy
-
-                                new_doc = deepcopy(doc)
-                                query_engine.collection._set_val(
-                                    new_doc, field_path, item
-                                )
-                                # Add array index if requested
-                                if include_array_index:
-                                    new_doc[include_array_index] = idx
-                                unwound_docs.append(new_doc)
-                        elif preserve_null_and_empty:
-                            # Empty array but preserve is requested
-                            new_doc = deepcopy(doc)
-                            query_engine.collection._set_val(
-                                new_doc, field_path, None
-                            )
-                            # Add array index if requested
-                            if include_array_index:
-                                new_doc[include_array_index] = None
-                            unwound_docs.append(new_doc)
-                        # If empty array and preserve is False, don't add any documents
-                    elif (
-                        not isinstance(array_to_unwind, list)
-                        and field_path in doc
-                        and preserve_null_and_empty
-                    ):
-                        # Non-array value that exists in the document and preserve is requested
-                        new_doc = deepcopy(doc)
-                        # Keep the value as-is
-                        # Add array index if requested
-                        if include_array_index:
-                            new_doc[include_array_index] = None
-                        unwound_docs.append(new_doc)
-                    # Missing fields are never preserved
-                docs = unwound_docs
-            case "$lookup":
-                # Python fallback implementation for $lookup
-                lookup_spec = stage["$lookup"]
-                from_collection_name = lookup_spec["from"]
-                local_field = lookup_spec["localField"]
-                foreign_field = lookup_spec["foreignField"]
-                as_field = lookup_spec["as"]
-
-                # Get the from collection from the database
-                from_collection = query_engine.collection._database[
-                    from_collection_name
-                ]
-
-                # Process each document
-                for doc in docs:
-                    # Get the local field value
-                    local_value = query_engine.collection._get_val(
-                        doc, local_field
-                    )
-
-                    # Find matching documents in the from collection
-                    matching_docs = []
-                    for match_doc in from_collection.find():
-                        foreign_value = from_collection._get_val(
-                            match_doc, foreign_field
-                        )
-                        if local_value == foreign_value:
-                            # Add the matching document (without _id)
-                            match_doc_copy = match_doc.copy()
-                            match_doc_copy.pop("_id", None)
-                            matching_docs.append(match_doc_copy)
-
-                    # Add the matching documents as an array field
-                    doc[as_field] = matching_docs
-
-            case "$addFields":
-                # Python fallback implementation for $addFields
-                add_fields_spec = stage["$addFields"]
-                from copy import deepcopy
-
-                for doc in docs:
-                    # Process each field to add
-                    for new_field, source_field in add_fields_spec.items():
-                        # Handle simple field copying (e.g., {"newField": "$existingField"})
-                        if isinstance(
-                            source_field, str
-                        ) and source_field.startswith("$"):
-                            source_field_name = source_field[
-                                1:
-                            ]  # Remove leading $
-                            # Get the source field value
-                            source_value = query_engine.collection._get_val(
-                                doc, source_field_name
-                            )
-                            # Add the new field with the source value
-                            doc[new_field] = source_value
-                        # For this basic implementation, we won't handle complex expressions
-
-            case _:
-                raise MalformedQueryException(
-                    f"Aggregation stage '{stage_name}' not supported"
-                )
-    return docs
+    # If we can't process with temporary tables, or if processing fails,
+    # let the QueryEngine handle the fallback to Python implementation
+    # We raise a special exception that the QueryEngine can catch
+    raise NotImplementedError("Pipeline requires Python fallback processing")

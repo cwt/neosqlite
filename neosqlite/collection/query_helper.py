@@ -1945,7 +1945,7 @@ class QueryHelper:
                     op, expr = next(iter(accumulator.items()))
 
                     match op:
-                        case "$sum" if (isinstance(expr, int) and expr == 1):
+                        case "$sum" if isinstance(expr, int) and expr == 1:
                             # Count operation
                             select_expressions.append(f"COUNT(*) AS {field}")
                             output_fields.append(field)

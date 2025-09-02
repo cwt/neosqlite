@@ -141,7 +141,7 @@ def benchmark_complex_pipeline_with_temporary_tables(
     from neosqlite.temporary_table_aggregation import (
         TemporaryTableAggregationProcessor,
         can_process_with_temporary_tables,
-        integrate_with_neosqlite,
+        execute_three_tier_aggregation,
     )
 
     # Test with temporary table integration approach
@@ -149,7 +149,7 @@ def benchmark_complex_pipeline_with_temporary_tables(
         temp_table_times = []
         for _ in range(num_runs):
             start_time = time.perf_counter()
-            result_temp_table = integrate_with_neosqlite(
+            result_temp_table = execute_three_tier_aggregation(
                 collection1.query_engine, pipeline
             )
             temp_table_times.append(time.perf_counter() - start_time)

@@ -7,7 +7,7 @@ import neosqlite
 from neosqlite.temporary_table_aggregation import (
     TemporaryTableAggregationProcessor,
     can_process_with_temporary_tables,
-    integrate_with_neosqlite,
+    execute_three_tier_aggregation,
 )
 
 
@@ -251,8 +251,8 @@ class TestTemporaryTableAggregation:
             processor.process_pipeline(pipeline)
 
 
-def test_integrate_with_neosqlite():
-    """Test the integrate_with_neosqlite function."""
+def test_execute_three_tier_aggregation():
+    """Test the execute_three_tier_aggregation function."""
     with neosqlite.Connection(":memory:") as conn:
         collection = conn.test_collection
 
@@ -267,7 +267,7 @@ def test_integrate_with_neosqlite():
 
         # Test a simple pipeline that should use existing optimization
         simple_pipeline = [{"$match": {"status": "active"}}]
-        results = integrate_with_neosqlite(
+        results = execute_three_tier_aggregation(
             collection.query_engine, simple_pipeline
         )
         assert len(results) == 2
@@ -275,7 +275,7 @@ def test_integrate_with_neosqlite():
 
         # Test a pipeline that would fall back to Python
         unsupported_pipeline = [{"$project": {"name": 1}}]
-        results = integrate_with_neosqlite(
+        results = execute_three_tier_aggregation(
             collection.query_engine, unsupported_pipeline
         )
         assert len(results) == 3

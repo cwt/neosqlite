@@ -279,7 +279,7 @@ def test_import_and_module_structure():
         aggregation_pipeline_context,
         TemporaryTableAggregationProcessor,
         can_process_with_temporary_tables,
-        integrate_with_neosqlite,
+        execute_three_tier_aggregation,
     )
 
     # All imports should work without errors

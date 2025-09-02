@@ -1,13 +1,13 @@
 """
-Specific tests for integrate_with_neosqlite function to increase code coverage.
+Specific tests for execute_three_tier_aggregation function to increase code coverage.
 """
 
 import neosqlite
-from neosqlite.temporary_table_aggregation import integrate_with_neosqlite
+from neosqlite.temporary_table_aggregation import execute_three_tier_aggregation
 
 
-class TestIntegrateWithNeosqliteCoverage:
-    """Tests specifically designed to increase coverage of integrate_with_neosqlite function."""
+class TestExecuteThreeTierAggregationCoverage:
+    """Tests specifically designed to increase coverage of execute_three_tier_aggregation function."""
 
     def test_sql_optimization_with_output_fields(self):
         """Test SQL optimization path that returns output_fields."""
@@ -24,7 +24,7 @@ class TestIntegrateWithNeosqliteCoverage:
             )
 
             # Create a pipeline that can be optimized with GROUP BY
-            # This should trigger the output_fields path in integrate_with_neosqlite
+            # This should trigger the output_fields path in execute_three_tier_aggregation
             pipeline = [
                 {"$unwind": "$tags"},  # This should fail SQL optimization
                 {"$group": {"_id": "$category", "total": {"$sum": "$price"}}},
@@ -38,7 +38,7 @@ class TestIntegrateWithNeosqliteCoverage:
 
             # This might not work as expected, so let's just test that it doesn't crash
             try:
-                results = integrate_with_neosqlite(
+                results = execute_three_tier_aggregation(
                     collection.query_engine, simple_group_pipeline
                 )
                 # Should return results without crashing
@@ -65,7 +65,7 @@ class TestIntegrateWithNeosqliteCoverage:
             # Simple pipeline that should use existing optimization
             pipeline = [{"$match": {"name": "Alice"}}]
 
-            results = integrate_with_neosqlite(
+            results = execute_three_tier_aggregation(
                 collection.query_engine, pipeline
             )
             assert isinstance(results, list)
@@ -90,7 +90,7 @@ class TestIntegrateWithNeosqliteCoverage:
             ]
 
             # This should fall back to Python processing
-            results = integrate_with_neosqlite(
+            results = execute_three_tier_aggregation(
                 collection.query_engine, pipeline
             )
             # Should return results (empty list since tags field doesn't exist)
@@ -109,20 +109,18 @@ class TestIntegrateWithNeosqliteCoverage:
                 ]
             )
 
-            # Test $project stage (falls back to Python)
+            # Test $project stage (falls back to Python through QueryEngine)
             project_pipeline = [{"$project": {"name": 1, "_id": 0}}]
-            results = integrate_with_neosqlite(
-                collection.query_engine, project_pipeline
-            )
+            # This should go through all tiers and end up using Python fallback
+            results = list(collection.aggregate(project_pipeline))
             assert isinstance(results, list)
 
             # Test $group stage (falls back to Python for complex operations)
             group_pipeline = [
                 {"$group": {"_id": "$name", "avgAge": {"$avg": "$age"}}}
             ]
-            results = integrate_with_neosqlite(
-                collection.query_engine, group_pipeline
-            )
+            # This should go through all tiers and end up using Python fallback
+            results = list(collection.aggregate(group_pipeline))
             assert isinstance(results, list)
 
             # Test $unwind with object form
@@ -134,9 +132,8 @@ class TestIntegrateWithNeosqliteCoverage:
                     }
                 }
             ]
-            results = integrate_with_neosqlite(
-                collection.query_engine, unwind_pipeline
-            )
+            # This should go through all tiers and end up using Python fallback
+            results = list(collection.aggregate(unwind_pipeline))
             assert isinstance(results, list)
 
             # Test $unwind with invalid specification (should raise MalformedQueryException)
@@ -168,9 +165,8 @@ class TestIntegrateWithNeosqliteCoverage:
                 }
             ]
 
-            results = integrate_with_neosqlite(
-                collection.query_engine, unwind_pipeline
-            )
+            # This should go through all tiers and end up using Python fallback
+            results = list(collection.aggregate(unwind_pipeline))
             assert isinstance(results, list)
 
             # Test $unwind with includeArrayIndex
@@ -178,9 +174,8 @@ class TestIntegrateWithNeosqliteCoverage:
                 {"$unwind": {"path": "$tags", "includeArrayIndex": "tagIndex"}}
             ]
 
-            results = integrate_with_neosqlite(
-                collection.query_engine, unwind_with_index_pipeline
-            )
+            # This should go through all tiers and end up using Python fallback
+            results = list(collection.aggregate(unwind_with_index_pipeline))
             assert isinstance(results, list)
 
     def test_lookup_in_python_fallback(self):
@@ -214,7 +209,7 @@ class TestIntegrateWithNeosqliteCoverage:
                 }
             ]
 
-            results = integrate_with_neosqlite(
+            results = execute_three_tier_aggregation(
                 users.query_engine, lookup_pipeline
             )
             assert isinstance(results, list)
