@@ -24,7 +24,7 @@
     - `$skip`
     - `$limit`
     - `$group`
-    - `$unwind` (including multiple, consecutive, and nested unwinds, see [NESTED_ARRAY_UNWIND.md](NESTED_ARRAY_UNWIND.md) for details)
+    - `$unwind` (including multiple, consecutive, and nested unwinds, see [JSON_EACH_ENHANCEMENTS.md](JSON_EACH_ENHANCEMENTS.md) for details)
 
 ### Indexing
 - [x] create_index()
@@ -53,7 +53,7 @@
 
 ### Text Search
 - [x] $text operator with FTS5 integration (see [text search documentation](TEXT_SEARCH.md) for details)
-- [x] Text search integration with $unwind operations (see [TEXT_SEARCH_JSON_EACH_INTEGRATION.md](TEXT_SEARCH_JSON_EACH_INTEGRATION.md) for details)
+- [x] Text search integration with $unwind operations (see [JSON_EACH_ENHANCEMENTS.md](JSON_EACH_ENHANCEMENTS.md) for details)
 
 ### GridFS Support
 - [x] GridFSBucket API (modern PyMongo API)
