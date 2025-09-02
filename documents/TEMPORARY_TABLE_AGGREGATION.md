@@ -6,15 +6,30 @@ This document summarizes the implementation of a temporary table aggregation pip
 
 ## Current Limitations
 
-NeoSQLite currently uses a binary approach for aggregation pipeline processing:
+NeoSQLite currently employs a binary approach to aggregation pipeline optimization:
 
-1. **SQL Optimization**: Try to process the entire pipeline with a single SQL query
-2. **Python Fallback**: If SQL optimization fails, fall back to Python processing for the entire pipeline
+1. **SQL Optimization Path**: Attempt to process the entire pipeline with a single optimized SQL query
+2. **Python Fallback Path**: If SQL optimization is not possible, fall back to Python-based processing for the entire pipeline
 
-This creates limitations:
+This approach has several limitations:
 - Complex pipeline combinations cannot be expressed in a single SQL query
 - Position constraints for optimized stages (e.g., `$lookup` must be last)
 - Intermediate results consume Python memory instead of database storage
+- Limited optimization opportunities for multi-stage pipelines
+
+## Enhancement Approach
+
+The temporary table aggregation enhancement introduces a third processing path that bridges the gap between pure SQL optimization and Python fallback:
+
+```mermaid
+graph TD
+    A["Input Pipeline"] --> B{"Can optimize with single query?"};
+    B -- Yes --> C["Single SQL Query (Fastest)"];
+    B -- No --> D{"Can process with temporary tables?"};
+    D -- Yes --> E["Temporary Table Aggregation (Intermediate)"];
+    D -- No --> F["Python Fallback (Slowest but most flexible)"];
+    F --> G["Python Processing (Most Flexible)"];
+```
 
 ## Enhancement Implementation
 
