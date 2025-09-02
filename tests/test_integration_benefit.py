@@ -3,7 +3,9 @@ Test to demonstrate the integration of temporary table aggregation with existing
 """
 
 import neosqlite
-from neosqlite.temporary_table_aggregation import execute_three_tier_aggregation
+from neosqlite.collection.temporary_table_aggregation import (
+    execute_2nd_tier_aggregation,
+)
 
 
 def test_integration_benefit():
@@ -50,7 +52,7 @@ def test_integration_benefit():
         ]
 
         # Test with the integrated approach
-        results = execute_three_tier_aggregation(
+        results = execute_2nd_tier_aggregation(
             users.query_engine, complex_pipeline
         )
 
@@ -102,7 +104,7 @@ def test_comparison_with_standard_approach():
         ]
 
         # Test with integrated approach
-        integrated_results = execute_three_tier_aggregation(
+        integrated_results = execute_2nd_tier_aggregation(
             products.query_engine, simple_pipeline
         )
 

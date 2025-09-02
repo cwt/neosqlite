@@ -4,7 +4,9 @@ Test for $addFields support in Python fallback implementation.
 
 import pytest
 from neosqlite import Connection
-from neosqlite.temporary_table_aggregation import execute_three_tier_aggregation
+from neosqlite.collection.temporary_table_aggregation import (
+    execute_2nd_tier_aggregation,
+)
 
 
 def test_add_fields_python_fallback():
@@ -41,7 +43,7 @@ def test_add_fields_python_fallback():
 
         # Use the integration function which will try temp tables first
         try:
-            results = execute_three_tier_aggregation(
+            results = execute_2nd_tier_aggregation(
                 query_engine, simple_pipeline
             )
             # Verify results
@@ -70,12 +72,12 @@ def test_add_fields_with_unsupported_stage_fallback():
             ]
         )
 
-        # Test $addFields in Python fallback by using execute_three_tier_aggregation directly
+        # Test $addFields in Python fallback by using execute_2nd_tier_aggregation directly
         # First verify that a simple $addFields works (should use temp tables)
         pipeline = [{"$addFields": {"userName": "$name"}}]
 
         # This should work with temp tables
-        results = execute_three_tier_aggregation(query_engine, pipeline)
+        results = execute_2nd_tier_aggregation(query_engine, pipeline)
         assert len(results) == 3
         for doc in results:
             assert "userName" in doc

@@ -11,7 +11,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import neosqlite
-from neosqlite.temporary_table_aggregation import (
+from neosqlite.collection.temporary_table_aggregation import (
     TemporaryTableAggregationProcessor,
     can_process_with_temporary_tables,
 )

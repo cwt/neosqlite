@@ -4,7 +4,9 @@ Tests for error handling paths in aggregation_pipeline_context.
 
 import pytest
 import neosqlite
-from neosqlite.temporary_table_aggregation import aggregation_pipeline_context
+from neosqlite.collection.temporary_table_aggregation import (
+    aggregation_pipeline_context,
+)
 
 
 class TestAggregationPipelineContextErrors:

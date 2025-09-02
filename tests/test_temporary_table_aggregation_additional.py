@@ -5,11 +5,11 @@ Additional comprehensive tests for temporary_table_aggregation.py to increase co
 import pytest
 import uuid
 import neosqlite
-from neosqlite.temporary_table_aggregation import (
+from neosqlite.collection.temporary_table_aggregation import (
     aggregation_pipeline_context,
     TemporaryTableAggregationProcessor,
     can_process_with_temporary_tables,
-    execute_three_tier_aggregation,
+    execute_2nd_tier_aggregation,
 )
 
 
@@ -359,7 +359,7 @@ class TestIntegrateWithNeosqlite:
         )
 
         simple_pipeline = [{"$match": {"status": "active"}}]
-        results = execute_three_tier_aggregation(
+        results = execute_2nd_tier_aggregation(
             collection.query_engine, simple_pipeline
         )
 
@@ -377,7 +377,7 @@ class TestIntegrateWithNeosqlite:
 
         # Pipeline with $project (unsupported by temporary tables)
         unsupported_pipeline = [{"$project": {"name": 1}}]
-        results = execute_three_tier_aggregation(
+        results = execute_2nd_tier_aggregation(
             collection.query_engine, unsupported_pipeline
         )
 
@@ -405,7 +405,7 @@ class TestIntegrateWithNeosqlite:
             {"$sort": {"tags": 1}},
         ]
 
-        results = execute_three_tier_aggregation(
+        results = execute_2nd_tier_aggregation(
             collection.query_engine, complex_pipeline
         )
 

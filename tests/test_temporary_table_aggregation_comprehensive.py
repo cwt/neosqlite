@@ -4,10 +4,10 @@ Tests for the temporary table aggregation functionality.
 
 import pytest
 import neosqlite
-from neosqlite.temporary_table_aggregation import (
+from neosqlite.collection.temporary_table_aggregation import (
     TemporaryTableAggregationProcessor,
     can_process_with_temporary_tables,
-    execute_three_tier_aggregation,
+    execute_2nd_tier_aggregation,
 )
 
 
@@ -251,8 +251,8 @@ class TestTemporaryTableAggregation:
             processor.process_pipeline(pipeline)
 
 
-def test_execute_three_tier_aggregation():
-    """Test the execute_three_tier_aggregation function."""
+def test_execute_2nd_tier_aggregation():
+    """Test the execute_2nd_tier_aggregation function."""
     with neosqlite.Connection(":memory:") as conn:
         collection = conn.test_collection
 
@@ -267,7 +267,7 @@ def test_execute_three_tier_aggregation():
 
         # Test a simple pipeline that should use existing optimization
         simple_pipeline = [{"$match": {"status": "active"}}]
-        results = execute_three_tier_aggregation(
+        results = execute_2nd_tier_aggregation(
             collection.query_engine, simple_pipeline
         )
         assert len(results) == 2
@@ -275,7 +275,7 @@ def test_execute_three_tier_aggregation():
 
         # Test a pipeline that would fall back to Python
         unsupported_pipeline = [{"$project": {"name": 1}}]
-        results = execute_three_tier_aggregation(
+        results = execute_2nd_tier_aggregation(
             collection.query_engine, unsupported_pipeline
         )
         assert len(results) == 3

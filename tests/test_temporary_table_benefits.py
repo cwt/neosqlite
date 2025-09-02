@@ -4,7 +4,7 @@ that the existing NeoSQLite implementation cannot optimize.
 """
 
 import neosqlite
-from neosqlite.temporary_table_aggregation import (
+from neosqlite.collection.temporary_table_aggregation import (
     TemporaryTableAggregationProcessor,
     can_process_with_temporary_tables,
 )

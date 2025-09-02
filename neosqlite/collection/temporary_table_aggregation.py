@@ -7,8 +7,8 @@ that the current implementation can't optimize with a single SQL query.
 import hashlib
 from contextlib import contextmanager
 from typing import Any, Dict, List, Callable
-from .cursor import DESCENDING
-from .collection.json_helpers import neosqlite_json_dumps
+from ..cursor import DESCENDING
+from .json_helpers import neosqlite_json_dumps
 
 
 class DeterministicTempTableManager:
@@ -842,7 +842,7 @@ def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
     return True
 
 
-def execute_three_tier_aggregation(
+def execute_2nd_tier_aggregation(
     query_engine, pipeline: List[Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
     """

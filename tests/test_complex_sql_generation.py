@@ -4,7 +4,7 @@ Tests for complex SQL generation and error handling in temporary table aggregati
 
 import pytest
 import neosqlite
-from neosqlite.temporary_table_aggregation import (
+from neosqlite.collection.temporary_table_aggregation import (
     TemporaryTableAggregationProcessor,
     aggregation_pipeline_context,
     can_process_with_temporary_tables,
@@ -275,11 +275,11 @@ def test_import_and_module_structure():
     import json
 
     # Make sure our module can be imported without issues
-    from neosqlite.temporary_table_aggregation import (
+    from neosqlite.collection.temporary_table_aggregation import (
         aggregation_pipeline_context,
         TemporaryTableAggregationProcessor,
         can_process_with_temporary_tables,
-        execute_three_tier_aggregation,
+        execute_2nd_tier_aggregation,
     )
 
     # All imports should work without errors

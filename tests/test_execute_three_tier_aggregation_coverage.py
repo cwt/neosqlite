@@ -1,13 +1,15 @@
 """
-Specific tests for execute_three_tier_aggregation function to increase code coverage.
+Specific tests for execute_2nd_tier_aggregation function to increase code coverage.
 """
 
 import neosqlite
-from neosqlite.temporary_table_aggregation import execute_three_tier_aggregation
+from neosqlite.collection.temporary_table_aggregation import (
+    execute_2nd_tier_aggregation,
+)
 
 
 class TestExecuteThreeTierAggregationCoverage:
-    """Tests specifically designed to increase coverage of execute_three_tier_aggregation function."""
+    """Tests specifically designed to increase coverage of execute_2nd_tier_aggregation function."""
 
     def test_sql_optimization_with_output_fields(self):
         """Test SQL optimization path that returns output_fields."""
@@ -24,7 +26,7 @@ class TestExecuteThreeTierAggregationCoverage:
             )
 
             # Create a pipeline that can be optimized with GROUP BY
-            # This should trigger the output_fields path in execute_three_tier_aggregation
+            # This should trigger the output_fields path in execute_2nd_tier_aggregation
             pipeline = [
                 {"$unwind": "$tags"},  # This should fail SQL optimization
                 {"$group": {"_id": "$category", "total": {"$sum": "$price"}}},
@@ -38,7 +40,7 @@ class TestExecuteThreeTierAggregationCoverage:
 
             # This might not work as expected, so let's just test that it doesn't crash
             try:
-                results = execute_three_tier_aggregation(
+                results = execute_2nd_tier_aggregation(
                     collection.query_engine, simple_group_pipeline
                 )
                 # Should return results without crashing
@@ -65,7 +67,7 @@ class TestExecuteThreeTierAggregationCoverage:
             # Simple pipeline that should use existing optimization
             pipeline = [{"$match": {"name": "Alice"}}]
 
-            results = execute_three_tier_aggregation(
+            results = execute_2nd_tier_aggregation(
                 collection.query_engine, pipeline
             )
             assert isinstance(results, list)
@@ -90,7 +92,7 @@ class TestExecuteThreeTierAggregationCoverage:
             ]
 
             # This should fall back to Python processing
-            results = execute_three_tier_aggregation(
+            results = execute_2nd_tier_aggregation(
                 collection.query_engine, pipeline
             )
             # Should return results (empty list since tags field doesn't exist)
@@ -209,7 +211,7 @@ class TestExecuteThreeTierAggregationCoverage:
                 }
             ]
 
-            results = execute_three_tier_aggregation(
+            results = execute_2nd_tier_aggregation(
                 users.query_engine, lookup_pipeline
             )
             assert isinstance(results, list)
@@ -245,7 +247,7 @@ def test_edge_cases_in_helper_functions():
     """Test edge cases in helper functions."""
 
     # Test can_process_with_temporary_tables with various edge cases
-    from neosqlite.temporary_table_aggregation import (
+    from neosqlite.collection.temporary_table_aggregation import (
         can_process_with_temporary_tables,
     )
 

@@ -549,13 +549,13 @@ class QueryEngine:
         # Try the temporary table approach for complex pipelines that the
         # current SQL optimization can't handle efficiently
         try:
-            from neosqlite.temporary_table_aggregation import (
-                execute_three_tier_aggregation,
+            from .temporary_table_aggregation import (
+                execute_2nd_tier_aggregation,
             )
 
             # Use the temporary table aggregation which provides enhanced
             # SQL processing for complex pipelines
-            return execute_three_tier_aggregation(self, pipeline)
+            return execute_2nd_tier_aggregation(self, pipeline)
         except NotImplementedError:
             # If temporary table approach indicates it needs Python fallback,
             # continue to fallback below

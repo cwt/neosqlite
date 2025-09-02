@@ -24,14 +24,14 @@ def test_add_fields_basic():
         pipeline = [{"$addFields": {"userName": "$name", "userAge": "$age"}}]
 
         # Check if pipeline can be processed with temporary tables
-        from neosqlite.temporary_table_aggregation import (
+        from neosqlite.collection.temporary_table_aggregation import (
             can_process_with_temporary_tables,
         )
 
         assert can_process_with_temporary_tables(pipeline)
 
         # Process the pipeline
-        from neosqlite.temporary_table_aggregation import (
+        from neosqlite.collection.temporary_table_aggregation import (
             TemporaryTableAggregationProcessor,
         )
 
@@ -68,14 +68,14 @@ def test_add_fields_with_match():
         ]
 
         # Check if pipeline can be processed with temporary tables
-        from neosqlite.temporary_table_aggregation import (
+        from neosqlite.collection.temporary_table_aggregation import (
             can_process_with_temporary_tables,
         )
 
         assert can_process_with_temporary_tables(pipeline)
 
         # Process the pipeline
-        from neosqlite.temporary_table_aggregation import (
+        from neosqlite.collection.temporary_table_aggregation import (
             TemporaryTableAggregationProcessor,
         )
 

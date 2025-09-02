@@ -10,7 +10,9 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import neosqlite
-from neosqlite.temporary_table_aggregation import execute_three_tier_aggregation
+from neosqlite.collection.temporary_table_aggregation import (
+    execute_2nd_tier_aggregation,
+)
 
 
 def demonstrate_integration():
@@ -81,7 +83,7 @@ def demonstrate_integration():
 
         # Use the integrated approach
         try:
-            results = execute_three_tier_aggregation(
+            results = execute_2nd_tier_aggregation(
                 products.query_engine, simple_pipeline
             )
             print(f"   Integrated approach results count: {len(results)}")
@@ -114,7 +116,7 @@ def demonstrate_integration():
 
         # Use the integrated approach
         try:
-            results = execute_three_tier_aggregation(
+            results = execute_2nd_tier_aggregation(
                 products.query_engine, complex_pipeline
             )
             print(f"   Integrated approach results count: {len(results)}")

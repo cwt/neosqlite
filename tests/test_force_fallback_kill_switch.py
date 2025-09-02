@@ -8,7 +8,9 @@ from neosqlite.collection.query_helper import (
     set_force_fallback,
     get_force_fallback,
 )
-from neosqlite.temporary_table_aggregation import execute_three_tier_aggregation
+from neosqlite.collection.temporary_table_aggregation import (
+    execute_2nd_tier_aggregation,
+)
 
 
 def test_force_fallback_kill_switch():
@@ -36,7 +38,7 @@ def test_force_fallback_kill_switch():
         ]
 
         # With kill switch off, should use temp tables
-        results = execute_three_tier_aggregation(query_engine, pipeline)
+        results = execute_2nd_tier_aggregation(query_engine, pipeline)
         assert len(results) == 2
         for doc in results:
             assert "userName" in doc
@@ -47,7 +49,7 @@ def test_force_fallback_kill_switch():
         assert get_force_fallback() == True
 
         # With kill switch on, should fall back to Python even for supported pipelines
-        results = execute_three_tier_aggregation(query_engine, pipeline)
+        results = execute_2nd_tier_aggregation(query_engine, pipeline)
         assert len(results) == 2
         for doc in results:
             assert "userName" in doc
@@ -58,7 +60,7 @@ def test_force_fallback_kill_switch():
         assert get_force_fallback() == False
 
         # Should work normally again
-        results = execute_three_tier_aggregation(query_engine, pipeline)
+        results = execute_2nd_tier_aggregation(query_engine, pipeline)
         assert len(results) == 2
         for doc in results:
             assert "userName" in doc

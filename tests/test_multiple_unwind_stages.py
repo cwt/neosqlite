@@ -4,7 +4,7 @@ Tests for multiple consecutive unwind stages processing.
 
 import pytest
 import neosqlite
-from neosqlite.temporary_table_aggregation import (
+from neosqlite.collection.temporary_table_aggregation import (
     TemporaryTableAggregationProcessor,
     aggregation_pipeline_context,
 )
