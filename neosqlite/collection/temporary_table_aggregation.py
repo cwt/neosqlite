@@ -480,13 +480,13 @@ class TemporaryTableAggregationProcessor:
 
         This method handles the $unwind stage which deconstructs an array field
         from input documents to output a document for each element. It can process
-        either a single unwind stage or multiple consecutive unwind stages
-        efficiently in one operation.
+        either a single unwind stage or multiple consecutive unwind stages.
 
         For a single unwind, it uses SQLite's json_each function to expand the
-        array into separate rows. For multiple consecutive unwinds, it creates a
-        Cartesian product of all the arrays being unwound, using nested json_each
-        calls.
+        array into separate rows. For multiple consecutive unwinds, it processes
+        them sequentially (one at a time) rather than trying to process them all
+        together, which doesn't work for nested arrays that depend on previous
+        unwind operations.
 
         The method properly handles array validation, ensuring that only documents
         with array fields are processed. It also supports the special _id field
@@ -505,74 +505,32 @@ class TemporaryTableAggregationProcessor:
         Raises:
             ValueError: If an invalid unwind specification is encountered
         """
-        if len(unwind_specs) == 1:
-            # Simple case - single unwind
-            field = unwind_specs[0]
+        # Process unwind stages one at a time to handle nested dependencies correctly
+        current_temp_table = current_table
+
+        for unwind_spec in unwind_specs:
+            field = unwind_spec
             if isinstance(field, str) and field.startswith("$"):
                 field_name = field[1:]  # Remove leading $
 
                 unwind_stage = {"$unwind": field}
-                new_table = create_temp(
+                current_temp_table = create_temp(
                     unwind_stage,
                     f"""
                     SELECT {self.collection.name}.id,
                            json_set({self.collection.name}.data,
                                     '$."{field_name}"', je.value) as data
-                    FROM {current_table} as {self.collection.name},
+                    FROM {current_temp_table} as {self.collection.name},
                          json_each(json_extract({self.collection.name}.data,
                                                 '$.{field_name}')) as je
                     WHERE json_type(json_extract({self.collection.name}.data,
                                                  '$.{field_name}')) = 'array'
                     """,
                 )
-                return new_table
             else:
                 raise ValueError(f"Invalid unwind specification: {field}")
-        else:
-            # Multiple consecutive unwind stages
-            field_names = []
-            for field in unwind_specs:
-                if isinstance(field, str) and field.startswith("$"):
-                    field_names.append(field[1:])
-                else:
-                    raise ValueError(f"Invalid unwind specification: {field}")
 
-            # Build SELECT clause with nested json_set calls
-            select_parts = [f"{self.collection.name}.data"]
-            for i, field_name in enumerate(field_names):
-                select_parts.insert(0, "json_set(")
-                select_parts.append(f", '$.\"{field_name}\"', je{i + 1}.value)")
-            select_expr = "".join(select_parts)
-
-            # Build FROM clause with multiple json_each calls
-            from_parts = [f"FROM {current_table} as {self.collection.name}"]
-            for i, field_name in enumerate(field_names):
-                from_parts.append(
-                    f""", json_each(json_extract({self.collection.name}.data,
-                                                 '$.{field_name}')) as je{i + 1}"""
-                )
-
-            # Build WHERE clause to ensure all fields are arrays
-            where_conditions = []
-            for field_name in field_names:
-                where_conditions.append(
-                    f"""json_type(json_extract({self.collection.name}.data,
-                                               '$.{field_name}')) = 'array'"""
-                )
-            where_clause = "WHERE " + " AND ".join(where_conditions)
-
-            # Create a representative stage spec for naming
-            # Use the first unwind spec for naming purposes
-            naming_stage: Dict[str, Any] = {
-                "$unwind": unwind_specs[0] if unwind_specs else {}
-            }
-            new_table = create_temp(
-                naming_stage,
-                f"SELECT {self.collection.name}.id, {select_expr} as data "
-                + " ".join(from_parts)
-                + f" {where_clause}",
-            )
-            return new_table
+        return current_temp_table
 
     def _process_lookup_stage(
         self,
