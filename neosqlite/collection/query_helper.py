@@ -1436,89 +1436,62 @@ class QueryHelper:
                                 )
                                 group_by_clause = f"GROUP BY json_extract({self.collection.name}.data, '$.{group_id_field}')"
 
-                            # Handle accumulator operations
-                            for field, accumulator in group_stage.items():
-                                if field == "_id":
-                                    continue
+                            # Try to build the group query using the general method
+                            # This supports all accumulator operations including $avg, $min, $max
+                            group_result = self._build_group_query(group_stage)
+                            if group_result is not None:
+                                (
+                                    select_clause,
+                                    group_by_clause,
+                                    group_output_fields,
+                                ) = group_result
 
-                                if (
-                                    not isinstance(accumulator, dict)
-                                    or len(accumulator) != 1
-                                ):
-                                    can_optimize = False
-                                    break
+                                # Modify the SELECT clause to work with the unwound data
+                                # Replace json_extract(data, '$.field') with appropriate expressions
 
-                                op, expr = next(iter(accumulator.items()))
-
-                                if (
-                                    op == "$sum"
-                                    and isinstance(expr, int)
-                                    and expr == 1
-                                ):
-                                    # Count operation
-                                    select_expressions.append(
-                                        f"COUNT(*) AS {field}"
+                                # For the _id field, if it matches the unwind field, use je.value
+                                group_id_field = group_stage["_id"][
+                                    1:
+                                ]  # Remove leading $
+                                if group_id_field == unwind_field_name:
+                                    # Replace the _id extraction with je.value
+                                    modified_select = select_clause.replace(
+                                        f"json_extract(data, '$.{unwind_field_name}') AS _id",
+                                        "je.value AS _id",
                                     )
-                                    output_fields.append(field)
-                                elif op == "$count":
-                                    # Count operation
-                                    select_expressions.append(
-                                        f"COUNT(*) AS {field}"
-                                    )
-                                    output_fields.append(field)
-                                elif op == "$push":
-                                    # $push accumulator - collect all values including duplicates
-                                    if isinstance(
-                                        expr, str
-                                    ) and expr.startswith("$"):
-                                        push_field = expr[
-                                            1:
-                                        ]  # Remove leading $
-                                        if push_field == unwind_field_name:
-                                            # Collect the unwound values
-                                            select_expressions.append(
-                                                f'json_group_array(je.value) AS "{field}"'
-                                            )
-                                        else:
-                                            # Collect values from another field
-                                            select_expressions.append(
-                                                f"json_group_array(json_extract({self.collection.name}.data, '$.{push_field}')) AS \"{field}\""
-                                            )
-                                        output_fields.append(field)
-                                    else:
-                                        # Unsupported expression, fallback to Python
-                                        can_optimize = False
-                                        break
-                                elif op == "$addToSet":
-                                    # $addToSet accumulator - collect unique values only
-                                    if isinstance(
-                                        expr, str
-                                    ) and expr.startswith("$"):
-                                        add_to_set_field = expr[
-                                            1:
-                                        ]  # Remove leading $
-                                        if (
-                                            add_to_set_field
-                                            == unwind_field_name
-                                        ):
-                                            # Collect unique unwound values
-                                            select_expressions.append(
-                                                f'json_group_array(DISTINCT je.value) AS "{field}"'
-                                            )
-                                        else:
-                                            # Collect unique values from another field
-                                            select_expressions.append(
-                                                f"json_group_array(DISTINCT json_extract({self.collection.name}.data, '$.{add_to_set_field}')) AS \"{field}\""
-                                            )
-                                        output_fields.append(field)
-                                    else:
-                                        # Unsupported expression, fallback to Python
-                                        can_optimize = False
-                                        break
                                 else:
-                                    # Unsupported operation, fallback to Python
-                                    can_optimize = False
-                                    break
+                                    modified_select = select_clause
+
+                                # For accumulator expressions that reference the unwound field,
+                                # replace json_extract(data, '$.unwind_field_name') with je.value
+                                # This handles cases like $push: "$tags" or $addToSet: "$tags" where tags is the unwound field
+                                modified_select = modified_select.replace(
+                                    f"json_extract(data, '$.{unwind_field_name}')",
+                                    "je.value",
+                                )
+
+                                # For GROUP BY clause, if grouping by the unwind field, use je.value
+                                if group_id_field == unwind_field_name:
+                                    modified_group_by = "GROUP BY je.value"
+                                else:
+                                    # Keep the original GROUP BY but ensure it references the correct table
+                                    modified_group_by = group_by_clause.replace(
+                                        "json_extract(data,",
+                                        f"json_extract({self.collection.name}.data,",
+                                    )
+
+                                # Build the FROM clause with json_each for unwinding
+                                from_clause = f"FROM {self.collection.name}, json_each(json_extract({self.collection.name}.data, '$.{unwind_field_name}')) as je"
+
+                                # Add ordering by _id for consistent results
+                                order_by_clause = "ORDER BY _id"
+
+                                # Construct the full SQL command
+                                cmd = f"{modified_select} {from_clause} {modified_group_by} {order_by_clause}"
+                                return cmd, [], group_output_fields
+                            else:
+                                # If we can't build the group query, fall back to Python
+                                return None
 
                             if can_optimize:
                                 # Build the optimized SQL query
@@ -1886,8 +1859,9 @@ class QueryHelper:
         Optimize $unwind + $group pattern with SQL-based processing.
 
         This method handles the specific optimization pattern where a $unwind stage
-        is immediately followed by a $group stage. It can optimize various accumulator
-        operations including $sum, $count, $push, and $addToSet.
+        is immediately followed by a $group stage. It supports all accumulator
+        operations by leveraging the general _build_group_query method while
+        handling the $unwind optimization.
 
         Args:
             group_stage_index: Index of the $group stage in the pipeline
@@ -1911,104 +1885,47 @@ class QueryHelper:
             ):
 
                 unwind_field = unwind_stage[1:]  # Remove leading $
-                group_id_field = group_spec["_id"][1:]  # Remove leading $
 
-                # Check if we can handle this specific group operation
-                can_optimize = True
-                select_expressions = []
-                output_fields = ["_id"]
+                # Try to build the group query using the general method
+                group_result = self._build_group_query(group_spec)
+                if group_result is not None:
+                    select_clause, group_by_clause, output_fields = group_result
 
-                # Handle _id field
-                if group_id_field == unwind_field:
-                    # Grouping by the unwound field
-                    select_expressions.append(f"je.value AS _id")
-                    group_by_clause = "GROUP BY je.value"
-                else:
-                    # Grouping by another field
-                    select_expressions.append(
-                        f"json_extract({self.collection.name}.data, '$.{group_id_field}') AS _id"
-                    )
-                    group_by_clause = f"GROUP BY json_extract({self.collection.name}.data, '$.{group_id_field}')"
+                    # Modify the SELECT clause to work with the unwound data
+                    # Replace json_extract(data, '$.field') with appropriate expressions
 
-                # Handle accumulator operations
-                for field, accumulator in group_spec.items():
-                    if field == "_id":
-                        continue
+                    # For the _id field, if it matches the unwind field, use je.value
+                    group_id_field = group_spec["_id"][1:]  # Remove leading $
+                    if group_id_field == unwind_field:
+                        # Replace the _id extraction with je.value
+                        modified_select = select_clause.replace(
+                            f"json_extract(data, '$.{unwind_field}') AS _id",
+                            "je.value AS _id",
+                        )
+                    else:
+                        modified_select = select_clause
 
-                    if (
-                        not isinstance(accumulator, dict)
-                        or len(accumulator) != 1
-                    ):
-                        can_optimize = False
-                        break
+                    # For GROUP BY clause, if grouping by the unwind field, use je.value
+                    if group_id_field == unwind_field:
+                        modified_group_by = "GROUP BY je.value"
+                    else:
+                        # Keep the original GROUP BY but ensure it references the correct table
+                        modified_group_by = group_by_clause.replace(
+                            "json_extract(data,",
+                            f"json_extract({self.collection.name}.data,",
+                        )
 
-                    op, expr = next(iter(accumulator.items()))
-
-                    match op:
-                        case "$sum" if isinstance(expr, int) and expr == 1:
-                            # Count operation
-                            select_expressions.append(f"COUNT(*) AS {field}")
-                            output_fields.append(field)
-                        case "$count":
-                            # Count operation
-                            select_expressions.append(f"COUNT(*) AS {field}")
-                            output_fields.append(field)
-                        case "$push":
-                            # $push accumulator - collect all values including duplicates
-                            if isinstance(expr, str) and expr.startswith("$"):
-                                push_field = expr[1:]  # Remove leading $
-                                if push_field == unwind_field:
-                                    # Collect the unwound values
-                                    select_expressions.append(
-                                        f'json_group_array(je.value) AS "{field}"'
-                                    )
-                                else:
-                                    # Collect values from another field
-                                    select_expressions.append(
-                                        f"json_group_array(json_extract({self.collection.name}.data, '$.{push_field}')) AS \"{field}\""
-                                    )
-                                output_fields.append(field)
-                            else:
-                                # Unsupported expression, fallback to Python
-                                can_optimize = False
-                                break
-                        case "$addToSet":
-                            # $addToSet accumulator - collect unique values only
-                            if isinstance(expr, str) and expr.startswith("$"):
-                                add_to_set_field = expr[1:]  # Remove leading $
-                                if add_to_set_field == unwind_field:
-                                    # Collect unique unwound values
-                                    select_expressions.append(
-                                        f'json_group_array(DISTINCT je.value) AS "{field}"'
-                                    )
-                                else:
-                                    # Collect unique values from another field
-                                    select_expressions.append(
-                                        f"json_group_array(DISTINCT json_extract({self.collection.name}.data, '$.{add_to_set_field}')) AS \"{field}\""
-                                    )
-                                output_fields.append(field)
-                            else:
-                                # Unsupported expression, fallback to Python
-                                can_optimize = False
-                                break
-                        case _:
-                            # Unsupported operation, fallback to Python
-                            can_optimize = False
-                            break
-
-                if can_optimize:
-                    # Build the optimized SQL query
-                    select_clause = "SELECT " + ", ".join(select_expressions)
+                    # Build the FROM clause with json_each for unwinding
                     from_clause = f"FROM {self.collection.name}, json_each(json_extract({self.collection.name}.data, '$.{unwind_field}')) as je"
 
                     # Add ordering by _id for consistent results
                     order_by_clause = "ORDER BY _id"
 
-                    cmd = f"{select_clause} {from_clause} {group_by_clause} {order_by_clause}"
+                    # Construct the full SQL command
+                    cmd = f"{modified_select} {from_clause} {modified_group_by} {order_by_clause}"
                     return cmd, [], output_fields
                 else:
-                    # If we can't optimize the $unwind + $group combination,
-                    # fall back to Python processing for the entire pipeline
+                    # If we can't build the group query, fall back to Python
                     return None
 
         return None
@@ -2344,6 +2261,13 @@ class QueryHelper:
                 output_fields.append(field)
                 continue
 
+            # Handle special case for $sum with integer literal 1 (count operation)
+            if op == "$sum" and isinstance(expr, int) and expr == 1:
+                select_expressions.append(f"COUNT(*) AS {field}")
+                output_fields.append(field)
+                continue
+
+            # Handle field-based operations
             if not isinstance(expr, str) or not expr.startswith("$"):
                 return None  # Fallback for complex accumulator expressions
 
