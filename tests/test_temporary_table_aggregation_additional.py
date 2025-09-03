@@ -377,9 +377,7 @@ class TestIntegrateWithNeosqlite:
 
         # Pipeline with $project (unsupported by temporary tables)
         unsupported_pipeline = [{"$project": {"name": 1}}]
-        results = execute_2nd_tier_aggregation(
-            collection.query_engine, unsupported_pipeline
-        )
+        results = list(collection.aggregate(unsupported_pipeline))
 
         # Should still return results (using Python fallback)
         assert isinstance(results, list)

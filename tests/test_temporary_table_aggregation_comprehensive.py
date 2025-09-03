@@ -267,17 +267,13 @@ def test_execute_2nd_tier_aggregation():
 
         # Test a simple pipeline that should use existing optimization
         simple_pipeline = [{"$match": {"status": "active"}}]
-        results = execute_2nd_tier_aggregation(
-            collection.query_engine, simple_pipeline
-        )
+        results = collection.aggregate(simple_pipeline)
         assert len(results) == 2
         assert all(doc["status"] == "active" for doc in results)
 
         # Test a pipeline that would fall back to Python
         unsupported_pipeline = [{"$project": {"name": 1}}]
-        results = execute_2nd_tier_aggregation(
-            collection.query_engine, unsupported_pipeline
-        )
+        results = collection.aggregate(unsupported_pipeline)
         assert len(results) == 3
         # Note: The actual projection might not work in our simple test,
         # but the function should not crash

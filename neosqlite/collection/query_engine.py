@@ -719,6 +719,23 @@ class QueryEngine:
 
                         # Add the matching documents as an array field
                         doc[as_field] = matching_docs
+                case "$addFields":
+                    add_fields_spec = stage["$addFields"]
+                    for doc in docs:
+                        for (
+                            new_field,
+                            source_field,
+                        ) in add_fields_spec.items():
+                            if isinstance(
+                                source_field, str
+                            ) and source_field.startswith("$"):
+                                source_field_name = source_field[1:]
+                                source_value = self.collection._get_val(
+                                    doc, source_field_name
+                                )
+                                self.collection._set_val(
+                                    doc, new_field, source_value
+                                )
                 case _:
                     raise MalformedQueryException(
                         f"Aggregation stage '{stage_name}' not supported"
