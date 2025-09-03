@@ -384,6 +384,12 @@ class TemporaryTableAggregationProcessor:
         Returns:
             str: Name of the newly created temporary table with matched documents
         """
+        # Check if text search is involved
+        if _contains_text_search(match_spec):
+            return self._process_text_search_stage(
+                create_temp, current_table, match_spec
+            )
+
         # Try to use SQLTranslator to build WHERE clause
         # If it returns (None, []), it means text search is involved and we should fall back
         where_clause, params = self.sql_translator.translate_match(match_spec)
@@ -677,6 +683,97 @@ class TemporaryTableAggregationProcessor:
             results.append(doc)
         return results
 
+    def _matches_text_search(
+        self, document: Dict[str, Any], search_term: str
+    ) -> bool:
+        """
+        Apply Python-based text search to a document.
+
+        Args:
+            document (Dict[str, Any]): The document to search in
+            search_term (str): The term to search for
+
+        Returns:
+            bool: True if the document matches the text search, False otherwise
+        """
+        from neosqlite.collection.text_search import unified_text_search
+
+        return unified_text_search(document, search_term)
+
+    def _batch_insert_documents(
+        self, table_name: str, documents: List[tuple]
+    ) -> None:
+        """
+        Insert multiple documents into a temporary table efficiently.
+
+        Args:
+            table_name (str): The name of the table to insert into
+            documents (List[tuple]): List of (id, data) tuples to insert
+        """
+        if not documents:
+            return
+
+        placeholders = ",".join(["(?,?)"] * len(documents))
+        query = f"INSERT INTO {table_name} (id, data) VALUES {placeholders}"
+        flat_params = [item for doc_tuple in documents for item in doc_tuple]
+        self.db.execute(query, flat_params)
+
+    def _process_text_search_stage(
+        self,
+        create_temp: Callable,
+        current_table: str,
+        match_spec: Dict[str, Any],
+    ) -> str:
+        """
+        Process a $text search stage using Python-based filtering.
+        """
+        # Extract and validate search term
+        if "$text" not in match_spec or "$search" not in match_spec["$text"]:
+            raise ValueError("Invalid $text operator specification")
+
+        search_term = match_spec["$text"]["$search"]
+        if not isinstance(search_term, str):
+            raise ValueError("$text search term must be a string")
+
+        # Generate deterministic table name
+        import hashlib
+
+        text_stage = {"$text": {"$search": search_term}}
+        result_table_name = f"temp_text_filtered_{hashlib.sha256(str(match_spec).encode()).hexdigest()[:8]}"
+
+        # Create result temporary table
+        self.db.execute(
+            f"CREATE TEMP TABLE {result_table_name} (id INTEGER, data TEXT)"
+        )
+
+        # Process documents with cursor
+        cursor = self.db.execute(f"SELECT id, data FROM {current_table}")
+
+        # Batch insert for better performance
+        batch_inserts = []
+        batch_size = 1000
+
+        for row_id, row_data in cursor:
+            # Load document
+            doc = self.collection._load(row_id, row_data)
+
+            # Apply text search
+            if self._matches_text_search(doc, search_term):
+                batch_inserts.append((row_id, row_data))
+
+                # Process batch inserts
+                if len(batch_inserts) >= batch_size:
+                    self._batch_insert_documents(
+                        result_table_name, batch_inserts
+                    )
+                    batch_inserts = []
+
+        # Process remaining inserts
+        if batch_inserts:
+            self._batch_insert_documents(result_table_name, batch_inserts)
+
+        return result_table_name
+
 
 def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
     """
@@ -704,19 +801,33 @@ def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
         "$addFields",  # Added support for $addFields
     }
 
+    # Check if pipeline has text search operations
+    has_text_search = any(
+        stage_name == "$match" and _contains_text_search(stage["$match"])
+        for stage in pipeline
+        if (stage_name := next(iter(stage.keys()))) == "$match"
+    )
+
+    # If pipeline has text search, we need to be more careful about which ones we can handle
+    if has_text_search:
+        # Check if pipeline has unwind operations
+        has_unwind = any(
+            next(iter(stage.keys())) == "$unwind" for stage in pipeline
+        )
+
+        # If pipeline has unwind operations, we can't handle it with temporary tables
+        # because our implementation doesn't properly support unwind operations
+        if has_unwind:
+            return False
+
     for stage in pipeline:
         stage_name = next(iter(stage.keys()))
         if stage_name not in supported_stages:
             return False
 
         # Additionally, check if $match stages contain unsupported operations
-        if stage_name == "$match":
-            match_spec = stage["$match"]
-            # Reject pipelines with $text search operations
-            # as temporary table implementation doesn't properly handle text search
-            # on intermediate (unwound) results
-            if _contains_text_search(match_spec):
-                return False
+        # Note: $text search operations are now supported with hybrid processing
+        # so we don't reject pipelines with $text operators anymore
 
     return True
 

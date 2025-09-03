@@ -7,6 +7,7 @@ from neosqlite.collection.json_helpers import (
     neosqlite_json_dumps,
     neosqlite_json_dumps_for_sql,
 )
+from neosqlite.collection.text_search import unified_text_search
 from typing import Any, Dict, List
 
 try:
@@ -1134,40 +1135,9 @@ class QueryHelper:
                                         matches.append(True)
                                         break
                             else:
-                                # If no FTS indexes exist, check all string fields
-                                def check_all_fields(doc, search_term) -> bool:
-                                    """
-                                    Recursively check all fields in the document for
-                                    the search term.
-
-                                    This helper function traverses through all fields
-                                    of a document (including nested dictionaries) to
-                                    find if any string field contains the specified
-                                    search term (case-insensitive).
-
-                                    Args:
-                                        doc (Dict[str, Any]): The document to search through.
-                                        search_term (str): The term to search for.
-
-                                    Returns:
-                                        bool: True if the search term is found in any
-                                              string field, False otherwise.
-                                    """
-                                    for key, val in doc.items():
-                                        if isinstance(val, str):
-                                            if (
-                                                search_term.lower()
-                                                in val.lower()
-                                            ):
-                                                return True
-                                        elif isinstance(val, dict):
-                                            if check_all_fields(
-                                                val, search_term
-                                            ):
-                                                return True
-                                    return False
-
-                                if check_all_fields(document, search_term):
+                                # If no FTS indexes exist, use enhanced text search on all fields
+                                # This provides better international character support and diacritic-insensitive matching
+                                if unified_text_search(document, search_term):
                                     matches.append(True)
                                 else:
                                     matches.append(False)
