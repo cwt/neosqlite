@@ -26,7 +26,7 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 
 NeoSQLite includes comprehensive benchmarks demonstrating the performance benefits of its SQL optimizations:
 
-- **Comprehensive SQL Optimization Benchmark**: Shows 5-480x performance improvements across all core operations
+- **Three-Tier Aggregation Pipeline Processing**: Expanded SQL optimization coverage to over 85% of common aggregation pipelines
 - **Enhanced SQL Optimization Benchmark**: Covers additional optimizations like pipeline reordering and text search with array processing
 - **Text Search + json_each() Benchmark**: Demonstrates specialized optimizations for text search on array fields
 

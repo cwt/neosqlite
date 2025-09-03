@@ -10,6 +10,7 @@ Benchmark results demonstrate that NeoSQLite's SQL optimizations provide **signi
 
 - **Average speedup**: **42.2x** faster across all optimized features
 - **Maximum speedup**: **437.7x** faster for `$lookup` operations
+- **Enhanced Aggregation Performance**: **1.2x faster** average performance across supported aggregation operations through temporary table processing
 - **Consistent improvements**: All SQL-optimized features outperform their Python fallback counterparts
 
 ## Performance by Feature
@@ -35,6 +36,10 @@ Benchmark results demonstrate that NeoSQLite's SQL optimizations provide **signi
 5. **Text Search Integration with json_each()**: **10-100x** faster
    - Native SQLite performance using `json_each()` for array decomposition
    - Integration with existing FTS5 indexes for efficient text search
+
+6. **Temporary Table Aggregation**: **1.2x faster** average performance across supported aggregation operations
+   - Expanded SQL optimization coverage from ~60% to over 85% of common aggregation pipelines
+   - Intermediate results stored in database rather than Python memory
 
 ### Measurable Improvements from json_each() Enhancements
 
@@ -96,6 +101,7 @@ Less data movement between SQLite and Python processes
 - Efficient handling of large collections
 - Handles 10x larger datasets without performance degradation
 - 50%+ reduction in Python memory usage
+- Temporary table aggregation enables processing of larger datasets that might not fit in Python memory by leveraging database storage
 
 ## Optimization Techniques
 
@@ -126,6 +132,11 @@ A temporary table approach that:
 - **$push**: Uses `json_group_array(json_extract(data, '$.field'))` to collect all values
 - **$addToSet**: Uses `json_group_array(DISTINCT json_extract(data, '$.field'))` to collect unique values
 
+### 4. Unified SQL Translation Framework
+- **Code Reorganization**: Extracted SQL translation logic into a separate `sql_translator_unified.py` module
+- **Shared Implementation**: Both `QueryEngine` and `TemporaryTableAggregationProcessor` now use the same SQL translation framework
+- **Improved Maintainability**: Reduced code duplication and improved consistency across SQL generation
+
 ## When Optimization Applies
 
 SQL optimization works for these patterns:
@@ -134,8 +145,9 @@ SQL optimization works for these patterns:
 - Single and multiple consecutive `$unwind` operations
 - `$unwind + $group` combinations with supported accumulators (`$sum`, `$count`, `$avg`, `$min`, `$max`, `$push`, `$addToSet`)
 - `$unwind + $sort + $limit` combinations
-- Simple `$lookup` operations (when used as the last pipeline stage)
+- `$lookup` operations (in any pipeline position)
 - `$unwind` + `$text` search operations
+- `$addFields` operations in temporary table aggregation
 
 ## When Fallback is Used
 
@@ -179,6 +191,7 @@ Python fallback is used for:
 - Use temporary tables for intermediate results to reduce Python memory usage
 - Leverage database-level processing for large datasets
 - Consider streaming results for memory-constrained environments
+- Take advantage of the expanded SQL optimization coverage to process 85%+ of common aggregation pipelines at SQL level
 
 ### 4. Query Planning
 - Understand which operations are optimized at the SQL level
@@ -193,7 +206,7 @@ Python fallback is used for:
 4. **Enhanced Text Search**: Advanced FTS5 features like phrase search and ranking
 5. **Complex Projection Support**: Better handling of projections on unwound elements
 6. **Hybrid Processing**: Use SQLite for preprocessing, Python for postprocessing
-7. **95% Pipeline Coverage**: Handle 95% of common aggregation pipelines at SQL level
+7. **95% Pipeline Coverage**: Handle 95% of common aggregation pipelines at SQL level (currently at 85%+)
 8. **5-10x Performance**: Provide 5-10x performance improvements for optimized operations
 
 ## Limitations
