@@ -10,6 +10,16 @@ from typing import Any, Dict, List, Tuple, Optional, Union
 from ..cursor import DESCENDING
 
 
+def _empty_result() -> Tuple[str, List[Any]]:
+    """Return an empty result tuple for fallback cases."""
+    return "", []
+
+
+def _text_search_result() -> Tuple[None, List[Any]]:
+    """Return a text search result tuple for fallback cases."""
+    return None, []
+
+
 class SQLFieldAccessor:
     """Handles field access patterns for different contexts."""
 
@@ -173,8 +183,8 @@ class SQLClauseBuilder:
         if not isinstance(conditions, list):
             return None, []
 
-        clauses = []
-        params = []
+        clauses: List[str] = []
+        params: List[Any] = []
 
         for condition in conditions:
             if isinstance(condition, dict):
@@ -198,7 +208,7 @@ class SQLClauseBuilder:
                 return None, []
 
         if not clauses:
-            return "", []
+            return _empty_result()
 
         match operator:
             case "$and":
@@ -230,37 +240,19 @@ class SQLClauseBuilder:
         Returns:
             Tuple of (WHERE clause, parameters) or (None, []) if unsupported
         """
-        clauses = []
-        params = []
+        clauses: List[str] = []
+        params: List[Any] = []
 
         for field, value in query.items():
-            if field == "$and":
-                # Handle $and logical operator
+            if field in ("$and", "$or", "$nor"):
+                # Handle logical operators directly
                 sql, clause_params = self._build_logical_condition(
-                    "$and", value, context
+                    field, value, context
                 )
                 if sql is None:
-                    return "", []  # Unsupported condition, fallback to Python
-                if sql:  # Only add if not empty
-                    clauses.append(sql)
-                    params.extend(clause_params)
-            elif field == "$or":
-                # Handle $or logical operator
-                sql, clause_params = self._build_logical_condition(
-                    "$or", value, context
-                )
-                if sql is None:
-                    return "", []  # Unsupported condition, fallback to Python
-                if sql:  # Only add if not empty
-                    clauses.append(sql)
-                    params.extend(clause_params)
-            elif field == "$nor":
-                # Handle $nor logical operator
-                sql, clause_params = self._build_logical_condition(
-                    "$nor", value, context
-                )
-                if sql is None:
-                    return "", []  # Unsupported condition, fallback to Python
+                    return (
+                        _empty_result()
+                    )  # Unsupported condition, fallback to Python
                 if sql:  # Only add if not empty
                     clauses.append(sql)
                     params.extend(clause_params)
@@ -272,8 +264,7 @@ class SQLClauseBuilder:
                     )
                     if not_clause is None:
                         return (
-                            "",
-                            [],
+                            _empty_result()
                         )  # Unsupported condition, fallback to Python
                     if not_clause:
                         # Remove "WHERE " prefix if present
@@ -282,9 +273,9 @@ class SQLClauseBuilder:
                         clauses.append(f"NOT ({not_clause})")
                         params.extend(not_params)
                     else:
-                        return "", []  # Empty condition
+                        return _empty_result()  # Empty condition
                 else:
-                    return "", []  # Invalid format for $not
+                    return _empty_result()  # Invalid format for $not
             else:
                 # Regular field condition
                 # Get field access expression
@@ -313,7 +304,7 @@ class SQLClauseBuilder:
                     params.append(value)
 
         if not clauses:
-            return "", []
+            return _empty_result()
 
         where_clause = " AND ".join(clauses)
         # Only add "WHERE" prefix if this is not a nested condition
@@ -412,15 +403,13 @@ class SQLTranslator:
         # Handle text search queries separately
         if "$text" in match_spec:
             return (
-                None,
-                [],
+                _text_search_result()
             )  # Special handling required, return None to fallback
 
         # Check for nested $text operators in logical operators
         if self._contains_text_operator(match_spec):
             return (
-                None,
-                [],
+                _text_search_result()
             )  # Special handling required, return None to fallback
 
         return self.clause_builder.build_where_clause(match_spec, context)
