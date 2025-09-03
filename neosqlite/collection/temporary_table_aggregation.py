@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from typing import Any, Dict, List, Callable
 from ..cursor import DESCENDING
 from .json_helpers import neosqlite_json_dumps
+from .sql_translator_unified import SQLTranslator
 
 
 class DeterministicTempTableManager:
@@ -225,6 +226,7 @@ class TemporaryTableAggregationProcessor:
         self.collection = collection
         self.db = collection.db
         self.query_engine = query_engine
+        self.sql_translator = SQLTranslator(collection.name, "data", "id")
 
     def process_pipeline(
         self, pipeline: List[Dict[str, Any]]
@@ -382,8 +384,12 @@ class TemporaryTableAggregationProcessor:
         Returns:
             str: Name of the newly created temporary table with matched documents
         """
-        # Check if this is a text search query
-        if "$text" in match_spec:
+        # Try to use SQLTranslator to build WHERE clause
+        # If it returns (None, []), it means text search is involved and we should fall back
+        where_clause, params = self.sql_translator.translate_match(match_spec)
+
+        # Check if text search is involved (SQLTranslator returns None for text search)
+        if where_clause is None:
             # For text search on unwound elements, we currently fall back to
             # returning all documents from the temporary table.
             # This preserves the behavior where text search falls back to Python
@@ -395,77 +401,7 @@ class TemporaryTableAggregationProcessor:
             )
             return new_table
 
-        # Build WHERE clause for regular match operations
-        where_conditions = []
-        params = []
-
-        for field, value in match_spec.items():
-            # Skip $text operator as it's handled separately
-            if field == "$text":
-                continue
-
-            if field == "_id":
-                where_conditions.append("id = ?")
-                params.append(value)
-            else:
-                if isinstance(value, dict):
-                    # Handle operators like $gt, $lt, etc.
-                    for op, op_val in value.items():
-                        match op:
-                            case "$eq":
-                                where_conditions.append(
-                                    f"json_extract(data, '$.{field}') = ?"
-                                )
-                                params.append(op_val)
-                            case "$gt":
-                                where_conditions.append(
-                                    f"json_extract(data, '$.{field}') > ?"
-                                )
-                                params.append(op_val)
-                            case "$lt":
-                                where_conditions.append(
-                                    f"json_extract(data, '$.{field}') < ?"
-                                )
-                                params.append(op_val)
-                            case "$gte":
-                                where_conditions.append(
-                                    f"json_extract(data, '$.{field}') >= ?"
-                                )
-                                params.append(op_val)
-                            case "$lte":
-                                where_conditions.append(
-                                    f"json_extract(data, '$.{field}') <= ?"
-                                )
-                                params.append(op_val)
-                            case "$in":
-                                placeholders = ", ".join("?" for _ in op_val)
-                                where_conditions.append(
-                                    f"json_extract(data, '$.{field}') IN ({placeholders})"
-                                )
-                                params.extend(op_val)
-                            case "$ne":
-                                where_conditions.append(
-                                    f"json_extract(data, '$.{field}') != ?"
-                                )
-                                params.append(op_val)
-                            case "$nin":
-                                placeholders = ", ".join("?" for _ in op_val)
-                                where_conditions.append(
-                                    f"json_extract(data, '$.{field}') NOT IN ({placeholders})"
-                                )
-                                params.extend(op_val)
-                else:
-                    # Simple equality
-                    where_conditions.append(
-                        f"json_extract(data, '$.{field}') = ?"
-                    )
-                    params.append(value)
-
-        where_clause = ""
-        if where_conditions:
-            where_clause = "WHERE " + " AND ".join(where_conditions)
-
-        # Create filtered temporary table
+        # Create filtered temporary table for regular match operations
         match_stage = {"$match": match_spec}
         new_table = create_temp(
             match_stage, f"SELECT * FROM {current_table} {where_clause}", params
@@ -639,30 +575,15 @@ class TemporaryTableAggregationProcessor:
         Returns:
             str: Name of the newly created temporary table with sorted/skipped/limited results
         """
-        # Build ORDER BY clause
+        # Use SQLTranslator to build ORDER BY clause
         order_clause = ""
         if sort_spec:
-            order_parts = []
-            for field, direction in sort_spec.items():
-                if field == "_id":
-                    order_parts.append(
-                        f"id {'DESC' if direction == -1 else 'ASC'}"
-                    )
-                else:
-                    order_parts.append(
-                        f"json_extract(data, '$.{field}') {'DESC' if direction == -1 else 'ASC'}"
-                    )
-            order_clause = "ORDER BY " + ", ".join(order_parts)
+            order_clause = self.sql_translator.translate_sort(sort_spec)
 
-        # Build LIMIT/OFFSET clause
-        limit_clause = ""
-        if limit_value is not None:
-            if skip_value > 0:
-                limit_clause = f"LIMIT {limit_value} OFFSET {skip_value}"
-            else:
-                limit_clause = f"LIMIT {limit_value}"
-        elif skip_value > 0:
-            limit_clause = f"LIMIT -1 OFFSET {skip_value}"  # SQLite requires LIMIT with OFFSET
+        # Use SQLTranslator to build LIMIT/OFFSET clause
+        limit_clause = self.sql_translator.translate_skip_limit(
+            limit_value, skip_value
+        )
 
         # Create a stage spec for naming (use the first non-null stage type)
         stage_spec: Dict[str, Any] = {}
@@ -794,10 +715,38 @@ def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
             # Reject pipelines with $text search operations
             # as temporary table implementation doesn't properly handle text search
             # on intermediate (unwound) results
-            if "$text" in match_spec:
+            if _contains_text_search(match_spec):
                 return False
 
     return True
+
+
+def _contains_text_search(match_spec: Dict[str, Any]) -> bool:
+    """
+    Check if a match specification contains text search operations.
+
+    Args:
+        match_spec: The match specification to check
+
+    Returns:
+        True if the match specification contains text search operations, False otherwise
+    """
+    if "$text" in match_spec:
+        return True
+
+    # Check for text search in logical operators
+    for field, value in match_spec.items():
+        if field in ("$and", "$or", "$nor"):
+            if isinstance(value, list):
+                for condition in value:
+                    if isinstance(condition, dict) and _contains_text_search(
+                        condition
+                    ):
+                        return True
+        elif field == "$not":
+            if isinstance(value, dict) and _contains_text_search(value):
+                return True
+    return False
 
 
 def execute_2nd_tier_aggregation(

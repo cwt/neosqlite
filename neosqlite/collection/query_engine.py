@@ -12,6 +12,7 @@ from ..results import (
     UpdateResult,
 )
 from .query_helper import QueryHelper
+from .sql_translator_unified import SQLTranslator
 from neosqlite.collection.json_helpers import (
     neosqlite_json_dumps,
     neosqlite_json_loads,
@@ -43,6 +44,7 @@ class QueryEngine:
         """
         self.collection = collection
         self.helpers = QueryHelper(collection)
+        self.sql_translator = SQLTranslator(collection.name, "data", "id")
 
     def insert_one(self, document: Dict[str, Any]) -> InsertOneResult:
         """
@@ -129,11 +131,13 @@ class QueryEngine:
         Returns:
             UpdateResult: A result object containing information about the update operation.
         """
-        where_result = self.helpers._build_simple_where_clause(filter)
+        # Try to use SQLTranslator for the WHERE clause
+        where_clause, where_params = self.sql_translator.translate_match(filter)
+
+        # Get the update clause using existing helper
         update_result = self.helpers._build_update_clause(update)
 
-        if where_result is not None and update_result is not None:
-            where_clause, where_params = where_result
+        if where_clause is not None and update_result is not None:
             set_clause, set_params = update_result
             cmd = (
                 f"UPDATE {self.collection.name} SET {set_clause} {where_clause}"
@@ -185,9 +189,9 @@ class QueryEngine:
         Returns:
             DeleteResult: A result object indicating whether the deletion was successful or not.
         """
-        where_result = self.helpers._build_simple_where_clause(filter)
-        if where_result is not None:
-            where_clause, params = where_result
+        # Try to use SQLTranslator for the WHERE clause
+        where_clause, params = self.sql_translator.translate_match(filter)
+        if where_clause is not None:
             cmd = f"DELETE FROM {self.collection.name} {where_clause}"
             cursor = self.collection.db.execute(cmd, params)
             return DeleteResult(deleted_count=cursor.rowcount)
@@ -395,9 +399,9 @@ class QueryEngine:
         Returns:
             int: The number of documents matching the filter.
         """
-        where_result = self.helpers._build_simple_where_clause(filter)
-        if where_result is not None:
-            where_clause, params = where_result
+        # Try to use SQLTranslator for the WHERE clause
+        where_clause, params = self.sql_translator.translate_match(filter)
+        if where_clause is not None:
             cmd = f"SELECT COUNT(id) FROM {self.collection.name} {where_clause}"
             row = self.collection.db.execute(cmd, params).fetchone()
             return row[0] if row else 0
@@ -431,9 +435,8 @@ class QueryEngine:
         where_clause = ""
 
         if filter:
-            where_result = self.helpers._build_simple_where_clause(filter)
-            if where_result:
-                where_clause, params = where_result
+            # Try to use SQLTranslator for the WHERE clause
+            where_clause, params = self.sql_translator.translate_match(filter)
 
         cmd = (
             f"SELECT DISTINCT json_extract(data, '$.{key}') "
