@@ -11,6 +11,7 @@ Submodules
    neosqlite.collection.json_helpers
    neosqlite.collection.query_engine
    neosqlite.collection.query_helper
+   neosqlite.collection.sql_translator_unified
    neosqlite.collection.temporary_table_aggregation
 
 Module contents
