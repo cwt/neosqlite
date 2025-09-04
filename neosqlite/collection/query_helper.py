@@ -2309,9 +2309,13 @@ class QueryHelper:
                 if isinstance(key, (int, float)):
                     value = key
                 elif isinstance(key, dict):
-                    # Complex expression like {"$multiply": [...]}, not supported in Python fallback
-                    # Skip this field
-                    continue
+                    # Check if this is one of our new N-value operators
+                    if op in {"$firstN", "$lastN", "$minN", "$maxN"}:
+                        # These operators use dict format, so we'll process them normally
+                        value = None  # Value will be extracted inside the operator case
+                    else:
+                        # Complex expression like {"$multiply": [...]}, not supported in Python fallback
+                        continue
                 else:
                     value = self.collection._get_val(doc, key)
 
@@ -2324,9 +2328,25 @@ class QueryHelper:
                         avg_info["count"] += 1
                         group[field] = avg_info
                     case "$min":
-                        group[field] = min(group.get(field, value), value)
+                        current = group.get(field, value)
+                        if current is not None and value is not None:
+                            group[field] = min(current, value)
+                        elif value is not None:
+                            group[field] = value
+                        elif current is not None:
+                            group[field] = current
+                        else:
+                            group[field] = None
                     case "$max":
-                        group[field] = max(group.get(field, value), value)
+                        current = group.get(field, value)
+                        if current is not None and value is not None:
+                            group[field] = max(current, value)
+                        elif value is not None:
+                            group[field] = value
+                        elif current is not None:
+                            group[field] = current
+                        else:
+                            group[field] = None
                     case "$push":
                         group.setdefault(field, []).append(value)
                     case "$addToSet":
@@ -2375,39 +2395,86 @@ class QueryHelper:
                             group[field] = {}
                         if isinstance(value, dict):
                             group[field].update(value)
+                    case "$firstN":
+                        # Get first N values
+                            input_value = self.collection._get_val(doc, key["input"].lstrip("$")) if isinstance(key["input"], str) and key["input"].startswith("$") else key["input"]
+                            n = key["n"]
+                            if field not in group:
+                                group[field] = {"values": [], "n": n, "type": "firstN"}
+                            if len(group[field]["values"]) < n:
+                                group[field]["values"].append(input_value)
+                    case "$lastN":
+                        # Get last N values
+                        if isinstance(key, dict) and "input" in key and "n" in key:
+                            input_value = self.collection._get_val(doc, key["input"].lstrip("$")) if isinstance(key["input"], str) and key["input"].startswith("$") else key["input"]
+                            n = key["n"]
+                            if field not in group:
+                                group[field] = {"values": [], "n": n, "type": "lastN"}
+                            if len(group[field]["values"]) < n:
+                                group[field]["values"].append(input_value)
+                            else:
+                                # Remove first element and add new one at the end (sliding window)
+                                group[field]["values"] = group[field]["values"][1:] + [input_value]
+                    case "$minN":
+                        # Get N minimum values
+                        if isinstance(key, dict) and "input" in key and "n" in key:
+                            input_value = self.collection._get_val(doc, key["input"].lstrip("$")) if isinstance(key["input"], str) and key["input"].startswith("$") else key["input"]
+                            n = key["n"]
+                            if field not in group:
+                                group[field] = {"values": [], "n": n, "type": "minN"}
+                            group[field]["values"].append(input_value)
+                    case "$maxN":
+                        # Get N maximum values
+                        if isinstance(key, dict) and "input" in key and "n" in key:
+                            input_value = self.collection._get_val(doc, key["input"].lstrip("$")) if isinstance(key["input"], str) and key["input"].startswith("$") else key["input"]
+                            n = key["n"]
+                            if field not in group:
+                                group[field] = {"values": [], "n": n, "type": "maxN"}
+                            group[field]["values"].append(input_value)
 
         # Finalize results (e.g., calculate average and standard deviation)
         for group in grouped_docs.values():
             for field, value in group.items():
-                if (
-                    isinstance(value, dict)
-                    and "sum" in value
-                    and "count" in value
-                ):
-                    # Check if this is for average calculation
-                    if "sum_squares" not in value:
-                        # Average calculation
-                        if value["count"] > 0:
-                            group[field] = value["sum"] / value["count"]
+                if isinstance(value, dict):
+                    # Check if this is for average or standard deviation calculation
+                    if "sum" in value and "count" in value:
+                        # Check if this is for average calculation
+                        if "sum_squares" not in value and "values" not in value:
+                            # Average calculation
+                            if value["count"] > 0:
+                                group[field] = value["sum"] / value["count"]
+                            else:
+                                group[field] = 0  # or None?
+                        elif "sum_squares" in value:
+                            # Standard deviation calculation
+                            count = value["count"]
+                            if count == 0:
+                                group[field] = 0
+                            elif count == 1:
+                                group[field] = 0
+                            else:
+                                variance = (
+                                    value["sum_squares"]
+                                    - (value["sum"] ** 2) / count
+                                ) / (
+                                    count
+                                    if value["type"] == "stdDevPop"
+                                    else (count - 1)
+                                )
+                                group[field] = variance**0.5 if variance >= 0 else 0
+                    elif "values" in value:
+                        # Handle N-value accumulators
+                        if value["type"] == "minN":
+                            # Sort and take first N values
+                            sorted_values = sorted(value["values"])
+                            group[field] = sorted_values[:value["n"]]
+                        elif value["type"] == "maxN":
+                            # Sort in descending order and take first N values
+                            sorted_values = sorted(value["values"], reverse=True)
+                            group[field] = sorted_values[:value["n"]]
                         else:
-                            group[field] = 0  # or None?
-                    else:
-                        # Standard deviation calculation
-                        count = value["count"]
-                        if count == 0:
-                            group[field] = 0
-                        elif count == 1:
-                            group[field] = 0
-                        else:
-                            variance = (
-                                value["sum_squares"]
-                                - (value["sum"] ** 2) / count
-                            ) / (
-                                count
-                                if value["type"] == "stdDevPop"
-                                else (count - 1)
-                            )
-                            group[field] = variance**0.5 if variance >= 0 else 0
+                            # For firstN and lastN, values are already in correct order
+                            group[field] = value["values"]
 
         return list(grouped_docs.values())
 
