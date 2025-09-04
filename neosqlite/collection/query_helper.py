@@ -2397,39 +2397,97 @@ class QueryHelper:
                             group[field].update(value)
                     case "$firstN":
                         # Get first N values
-                            input_value = self.collection._get_val(doc, key["input"].lstrip("$")) if isinstance(key["input"], str) and key["input"].startswith("$") else key["input"]
-                            n = key["n"]
-                            if field not in group:
-                                group[field] = {"values": [], "n": n, "type": "firstN"}
-                            if len(group[field]["values"]) < n:
-                                group[field]["values"].append(input_value)
+                        input_value = (
+                            self.collection._get_val(
+                                doc, key["input"].lstrip("$")
+                            )
+                            if isinstance(key["input"], str)
+                            and key["input"].startswith("$")
+                            else key["input"]
+                        )
+                        n = key["n"]
+                        if field not in group:
+                            group[field] = {
+                                "values": [],
+                                "n": n,
+                                "type": "firstN",
+                            }
+                        if len(group[field]["values"]) < n:
+                            group[field]["values"].append(input_value)
                     case "$lastN":
                         # Get last N values
-                        if isinstance(key, dict) and "input" in key and "n" in key:
-                            input_value = self.collection._get_val(doc, key["input"].lstrip("$")) if isinstance(key["input"], str) and key["input"].startswith("$") else key["input"]
+                        if (
+                            isinstance(key, dict)
+                            and "input" in key
+                            and "n" in key
+                        ):
+                            input_value = (
+                                self.collection._get_val(
+                                    doc, key["input"].lstrip("$")
+                                )
+                                if isinstance(key["input"], str)
+                                and key["input"].startswith("$")
+                                else key["input"]
+                            )
                             n = key["n"]
                             if field not in group:
-                                group[field] = {"values": [], "n": n, "type": "lastN"}
+                                group[field] = {
+                                    "values": [],
+                                    "n": n,
+                                    "type": "lastN",
+                                }
                             if len(group[field]["values"]) < n:
                                 group[field]["values"].append(input_value)
                             else:
                                 # Remove first element and add new one at the end (sliding window)
-                                group[field]["values"] = group[field]["values"][1:] + [input_value]
+                                group[field]["values"] = group[field]["values"][
+                                    1:
+                                ] + [input_value]
                     case "$minN":
                         # Get N minimum values
-                        if isinstance(key, dict) and "input" in key and "n" in key:
-                            input_value = self.collection._get_val(doc, key["input"].lstrip("$")) if isinstance(key["input"], str) and key["input"].startswith("$") else key["input"]
+                        if (
+                            isinstance(key, dict)
+                            and "input" in key
+                            and "n" in key
+                        ):
+                            input_value = (
+                                self.collection._get_val(
+                                    doc, key["input"].lstrip("$")
+                                )
+                                if isinstance(key["input"], str)
+                                and key["input"].startswith("$")
+                                else key["input"]
+                            )
                             n = key["n"]
                             if field not in group:
-                                group[field] = {"values": [], "n": n, "type": "minN"}
+                                group[field] = {
+                                    "values": [],
+                                    "n": n,
+                                    "type": "minN",
+                                }
                             group[field]["values"].append(input_value)
                     case "$maxN":
                         # Get N maximum values
-                        if isinstance(key, dict) and "input" in key and "n" in key:
-                            input_value = self.collection._get_val(doc, key["input"].lstrip("$")) if isinstance(key["input"], str) and key["input"].startswith("$") else key["input"]
+                        if (
+                            isinstance(key, dict)
+                            and "input" in key
+                            and "n" in key
+                        ):
+                            input_value = (
+                                self.collection._get_val(
+                                    doc, key["input"].lstrip("$")
+                                )
+                                if isinstance(key["input"], str)
+                                and key["input"].startswith("$")
+                                else key["input"]
+                            )
                             n = key["n"]
                             if field not in group:
-                                group[field] = {"values": [], "n": n, "type": "maxN"}
+                                group[field] = {
+                                    "values": [],
+                                    "n": n,
+                                    "type": "maxN",
+                                }
                             group[field]["values"].append(input_value)
 
         # Finalize results (e.g., calculate average and standard deviation)
@@ -2461,17 +2519,21 @@ class QueryHelper:
                                     if value["type"] == "stdDevPop"
                                     else (count - 1)
                                 )
-                                group[field] = variance**0.5 if variance >= 0 else 0
+                                group[field] = (
+                                    variance**0.5 if variance >= 0 else 0
+                                )
                     elif "values" in value:
                         # Handle N-value accumulators
                         if value["type"] == "minN":
                             # Sort and take first N values
                             sorted_values = sorted(value["values"])
-                            group[field] = sorted_values[:value["n"]]
+                            group[field] = sorted_values[: value["n"]]
                         elif value["type"] == "maxN":
                             # Sort in descending order and take first N values
-                            sorted_values = sorted(value["values"], reverse=True)
-                            group[field] = sorted_values[:value["n"]]
+                            sorted_values = sorted(
+                                value["values"], reverse=True
+                            )
+                            group[field] = sorted_values[: value["n"]]
                         else:
                             # For firstN and lastN, values are already in correct order
                             group[field] = value["values"]

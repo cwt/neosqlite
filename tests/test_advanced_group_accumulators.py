@@ -24,7 +24,12 @@ def test_group_stage_with_first_n_accumulator():
 
         # Test group with $firstN (get first 2 values)
         pipeline = [
-            {"$group": {"_id": "$category", "first_values": {"$firstN": {"input": "$value", "n": 2}}}},
+            {
+                "$group": {
+                    "_id": "$category",
+                    "first_values": {"$firstN": {"input": "$value", "n": 2}},
+                }
+            },
             {"$sort": {"_id": 1}},
         ]
 
@@ -55,7 +60,12 @@ def test_group_stage_with_last_n_accumulator():
 
         # Test group with $lastN (get last 2 values)
         pipeline = [
-            {"$group": {"_id": "$category", "last_values": {"$lastN": {"input": "$value", "n": 2}}}},
+            {
+                "$group": {
+                    "_id": "$category",
+                    "last_values": {"$lastN": {"input": "$value", "n": 2}},
+                }
+            },
             {"$sort": {"_id": 1}},
         ]
 
@@ -86,7 +96,12 @@ def test_group_stage_with_min_n_accumulator():
 
         # Test group with $minN (get 2 minimum values)
         pipeline = [
-            {"$group": {"_id": "$category", "min_values": {"$minN": {"input": "$value", "n": 2}}}},
+            {
+                "$group": {
+                    "_id": "$category",
+                    "min_values": {"$minN": {"input": "$value", "n": 2}},
+                }
+            },
             {"$sort": {"_id": 1}},
         ]
 
@@ -117,7 +132,12 @@ def test_group_stage_with_max_n_accumulator():
 
         # Test group with $maxN (get 2 maximum values)
         pipeline = [
-            {"$group": {"_id": "$category", "max_values": {"$maxN": {"input": "$value", "n": 2}}}},
+            {
+                "$group": {
+                    "_id": "$category",
+                    "max_values": {"$maxN": {"input": "$value", "n": 2}},
+                }
+            },
             {"$sort": {"_id": 1}},
         ]
 
@@ -145,7 +165,12 @@ def test_group_stage_with_first_n_edge_cases():
 
         # Test group with $firstN where n=5 but only 2/1 documents exist
         pipeline = [
-            {"$group": {"_id": "$category", "first_values": {"$firstN": {"input": "$value", "n": 5}}}},
+            {
+                "$group": {
+                    "_id": "$category",
+                    "first_values": {"$firstN": {"input": "$value", "n": 5}},
+                }
+            },
             {"$sort": {"_id": 1}},
         ]
 
@@ -173,7 +198,12 @@ def test_group_stage_with_last_n_edge_cases():
 
         # Test group with $lastN where n=5 but only 2/1 documents exist
         pipeline = [
-            {"$group": {"_id": "$category", "last_values": {"$lastN": {"input": "$value", "n": 5}}}},
+            {
+                "$group": {
+                    "_id": "$category",
+                    "last_values": {"$lastN": {"input": "$value", "n": 5}},
+                }
+            },
             {"$sort": {"_id": 1}},
         ]
 
@@ -202,7 +232,12 @@ def test_group_stage_with_min_n_edge_cases():
 
         # Test group with $minN
         pipeline = [
-            {"$group": {"_id": "$category", "min_values": {"$minN": {"input": "$value", "n": 3}}}},
+            {
+                "$group": {
+                    "_id": "$category",
+                    "min_values": {"$minN": {"input": "$value", "n": 3}},
+                }
+            },
             {"$sort": {"_id": 1}},
         ]
 
@@ -231,7 +266,12 @@ def test_group_stage_with_max_n_edge_cases():
 
         # Test group with $maxN
         pipeline = [
-            {"$group": {"_id": "$category", "max_values": {"$maxN": {"input": "$value", "n": 3}}}},
+            {
+                "$group": {
+                    "_id": "$category",
+                    "max_values": {"$maxN": {"input": "$value", "n": 3}},
+                }
+            },
             {"$sort": {"_id": 1}},
         ]
 
@@ -265,7 +305,9 @@ def test_group_stage_combined_advanced_accumulators():
             {
                 "$group": {
                     "_id": "$category",
-                    "first_two_values": {"$firstN": {"input": "$value", "n": 2}},
+                    "first_two_values": {
+                        "$firstN": {"input": "$value", "n": 2}
+                    },
                     "last_two_scores": {"$lastN": {"input": "$score", "n": 2}},
                     "top_two_scores": {"$maxN": {"input": "$score", "n": 2}},
                 }
@@ -280,12 +322,18 @@ def test_group_stage_combined_advanced_accumulators():
         assert result[0]["_id"] == "A"
         assert result[0]["first_two_values"] == [10, 30]
         assert result[0]["last_two_scores"] == [150, 300]
-        assert result[0]["top_two_scores"] == [300, 200]  # Top 2 scores: 300, 200
+        assert result[0]["top_two_scores"] == [
+            300,
+            200,
+        ]  # Top 2 scores: 300, 200
         # Category B
         assert result[1]["_id"] == "B"
         assert result[1]["first_two_values"] == [20, 40]
         assert result[1]["last_two_scores"] == [250, 180]
-        assert result[1]["top_two_scores"] == [250, 180]  # Top 2 scores: 250, 180
+        assert result[1]["top_two_scores"] == [
+            250,
+            180,
+        ]  # Top 2 scores: 250, 180
 
 
 if __name__ == "__main__":
