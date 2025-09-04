@@ -2336,8 +2336,47 @@ class QueryHelper:
                         # Only add the value if it's not already in the list
                         if value not in group[field]:
                             group[field].append(value)
+                    case "$first":
+                        # Only set the value if it hasn't been set yet (first document in group)
+                        if field not in group:
+                            group[field] = value
+                    case "$last":
+                        # Always update with the latest value (last document in group)
+                        group[field] = value
+                    case "$stdDevPop":
+                        # Track sum, sum of squares, and count for population standard deviation
+                        if field not in group:
+                            group[field] = {
+                                "sum": 0,
+                                "sum_squares": 0,
+                                "count": 0,
+                                "type": "stdDevPop",
+                            }
+                        if value is not None:
+                            group[field]["sum"] += value
+                            group[field]["sum_squares"] += value * value
+                            group[field]["count"] += 1
+                    case "$stdDevSamp":
+                        # Track sum, sum of squares, and count for sample standard deviation
+                        if field not in group:
+                            group[field] = {
+                                "sum": 0,
+                                "sum_squares": 0,
+                                "count": 0,
+                                "type": "stdDevSamp",
+                            }
+                        if value is not None:
+                            group[field]["sum"] += value
+                            group[field]["sum_squares"] += value * value
+                            group[field]["count"] += 1
+                    case "$mergeObjects":
+                        # Merge objects, with later values overwriting earlier ones
+                        if field not in group:
+                            group[field] = {}
+                        if isinstance(value, dict):
+                            group[field].update(value)
 
-        # Finalize results (e.g., calculate average)
+        # Finalize results (e.g., calculate average and standard deviation)
         for group in grouped_docs.values():
             for field, value in group.items():
                 if (
@@ -2345,7 +2384,30 @@ class QueryHelper:
                     and "sum" in value
                     and "count" in value
                 ):
-                    group[field] = value["sum"] / value["count"]
+                    # Check if this is for average calculation
+                    if "sum_squares" not in value:
+                        # Average calculation
+                        if value["count"] > 0:
+                            group[field] = value["sum"] / value["count"]
+                        else:
+                            group[field] = 0  # or None?
+                    else:
+                        # Standard deviation calculation
+                        count = value["count"]
+                        if count == 0:
+                            group[field] = 0
+                        elif count == 1:
+                            group[field] = 0
+                        else:
+                            variance = (
+                                value["sum_squares"]
+                                - (value["sum"] ** 2) / count
+                            ) / (
+                                count
+                                if value["type"] == "stdDevPop"
+                                else (count - 1)
+                            )
+                            group[field] = variance**0.5 if variance >= 0 else 0
 
         return list(grouped_docs.values())
 
