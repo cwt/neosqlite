@@ -1,7 +1,7 @@
 from .. import query_operators
-from ..cursor import DESCENDING
-from ..exceptions import MalformedDocument, MalformedQueryException
 from ..binary import Binary
+from ..exceptions import MalformedDocument, MalformedQueryException
+from .cursor import DESCENDING
 from copy import deepcopy
 from neosqlite.collection.json_helpers import (
     neosqlite_json_dumps,

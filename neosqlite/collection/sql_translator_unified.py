@@ -6,24 +6,47 @@ into SQL statements that can be used both for direct execution and for
 temporary table generation.
 """
 
-from typing import Any, Dict, List, Tuple, Optional, Union
-from ..cursor import DESCENDING
+from typing import Any, Dict, List, Tuple
+from .cursor import DESCENDING
 
 
 def _empty_result() -> Tuple[str, List[Any]]:
-    """Return an empty result tuple for fallback cases."""
+    """
+    Return an empty result tuple for fallback cases.
+
+    Returns:
+        Tuple[str, List[Any]]: A tuple containing an empty string and an empty list.
+    """
     return "", []
 
 
-def _text_search_result() -> Tuple[None, List[Any]]:
-    """Return a text search result tuple for fallback cases."""
+def _text_search_fallback() -> Tuple[None, List[Any]]:
+    """
+    Return a text search result tuple for fallback cases.
+
+    Returns:
+        Tuple[None, List[Any]]: A tuple containing None and an empty list.
+    """
     return None, []
 
 
 class SQLFieldAccessor:
-    """Handles field access patterns for different contexts."""
+    """
+    Handles field access patterns for different contexts.
+
+    This class provides methods to generate appropriate SQL expressions
+    for accessing fields in different contexts, such as direct table access
+    or temporary table access.
+    """
 
     def __init__(self, data_column: str = "data", id_column: str = "id"):
+        """
+        Initialize the SQLFieldAccessor with column names.
+
+        Args:
+            data_column: The name of the column containing JSON data (default: "data")
+            id_column: The name of the column containing document IDs (default: "id")
+        """
         self.data_column = data_column
         self.id_column = id_column
 
@@ -31,9 +54,14 @@ class SQLFieldAccessor:
         """
         Generate field access SQL based on field name and context.
 
+        This method generates appropriate SQL expressions for accessing fields
+        based on the field name and context. For the special "_id" field, it returns
+        the ID column name. For other fields, it generates a json_extract expression
+        to access the field from the JSON data column.
+
         Args:
             field: The field name to access
-            context: The context ('direct', 'temp_table', etc.)
+            context: The context for field access (default: "direct")
 
         Returns:
             SQL expression for accessing the field
@@ -47,16 +75,38 @@ class SQLFieldAccessor:
 
 
 class SQLOperatorTranslator:
-    """Translates MongoDB operators to SQL expressions."""
+    """
+    Translates MongoDB operators to SQL expressions.
 
-    def __init__(self, field_accessor: Optional[SQLFieldAccessor] = None):
+    This class handles the translation of MongoDB query operators (like $eq, $gt, $in, etc.)
+    into equivalent SQL expressions. It uses an SQLFieldAccessor to generate appropriate
+    field access expressions for different contexts.
+    """
+
+    def __init__(self, field_accessor: SQLFieldAccessor | None = None):
+        """
+        Initialize the SQLOperatorTranslator with an optional field accessor.
+
+        Args:
+            field_accessor: An SQLFieldAccessor instance to use for field access expressions.
+                            If None, a default SQLFieldAccessor will be created.
+        """
         self.field_accessor = field_accessor or SQLFieldAccessor()
 
     def translate_operator(
         self, field_access: str, operator: str, value: Any
-    ) -> Tuple[Optional[str], List[Any]]:
+    ) -> Tuple[str | None, List[Any]]:
         """
         Translate a MongoDB operator to SQL.
+
+        This method handles the translation of MongoDB query operators into equivalent
+        SQL expressions. It supports various operators including comparison operators
+        ($eq, $gt, $lt, $gte, $lte, $ne), array operators ($in, $nin), existence checks
+        ($exists), modulo operations ($mod), array size checks ($size), and substring
+        searches ($contains).
+
+        Special handling is included for Binary objects which are serialized using
+        the compact format for SQL comparisons.
 
         Args:
             field_access: The SQL expression for accessing the field
@@ -66,6 +116,8 @@ class SQLOperatorTranslator:
         Returns:
             Tuple of (SQL expression, parameters) or (None, []) if unsupported
         """
+        # default `sql` and `params`
+        sql: str | None = None
         params: List[Any] = []
 
         # Serialize Binary objects for SQL comparisons using compact format
@@ -98,17 +150,11 @@ class SQLOperatorTranslator:
                     placeholders = ", ".join("?" for _ in value)
                     sql = f"{field_access} IN ({placeholders})"
                     params = list(value)
-                else:
-                    # Invalid format for $in
-                    return None, []
             case "$nin":
                 if isinstance(value, (list, tuple)):
                     placeholders = ", ".join("?" for _ in value)
                     sql = f"{field_access} NOT IN ({placeholders})"
                     params = list(value)
-                else:
-                    # Invalid format for $nin
-                    return None, []
             case "$exists":
                 # Handle boolean value for $exists
                 if value is True:
@@ -117,26 +163,17 @@ class SQLOperatorTranslator:
                 elif value is False:
                     sql = f"{field_access} IS NULL"
                     params = []
-                else:
-                    # Invalid value for $exists
-                    return None, []
             case "$mod":
                 # Handle [divisor, remainder] array
                 if isinstance(value, (list, tuple)) and len(value) == 2:
                     divisor, remainder = value
                     sql = f"{field_access} % ? = ?"
                     params = [divisor, remainder]
-                else:
-                    # Invalid format for $mod
-                    return None, []
             case "$size":
                 # Handle array size comparison
                 if isinstance(value, int):
                     sql = f"json_array_length({field_access}) = ?"
                     params = [value]
-                else:
-                    # Invalid value for $size
-                    return None, []
             case "$contains":
                 # Handle case-insensitive substring search
                 # Convert value to string to match Python implementation behavior
@@ -145,19 +182,35 @@ class SQLOperatorTranslator:
                 params = [f"%{str_value.lower()}%"]
             case _:
                 # Unsupported operator
-                return None, []
+                pass
 
         return sql, params
 
 
 class SQLClauseBuilder:
-    """Builds SQL clauses with reusable components."""
+    """
+    Builds SQL clauses with reusable components.
+
+    This class provides methods to build various SQL clauses including WHERE, ORDER BY,
+    and LIMIT/OFFSET clauses. It uses SQLFieldAccessor for field access and
+    SQLOperatorTranslator for operator translations to create SQL expressions from
+    MongoDB-style query specifications.
+    """
 
     def __init__(
         self,
-        field_accessor: Optional[SQLFieldAccessor] = None,
-        operator_translator: Optional[SQLOperatorTranslator] = None,
+        field_accessor: SQLFieldAccessor | None = None,
+        operator_translator: SQLOperatorTranslator | None = None,
     ):
+        """
+        Initialize the SQLClauseBuilder with optional field accessor and operator translator.
+
+        Args:
+            field_accessor: An SQLFieldAccessor instance to use for field access expressions.
+                            If None, a default SQLFieldAccessor will be created.
+            operator_translator: An SQLOperatorTranslator instance to use for operator translations.
+                                 If None, a default SQLOperatorTranslator will be created.
+        """
         self.field_accessor = field_accessor or SQLFieldAccessor()
         self.operator_translator = (
             operator_translator or SQLOperatorTranslator()
@@ -168,23 +221,30 @@ class SQLClauseBuilder:
         operator: str,
         conditions: List[Dict[str, Any]],
         context: str = "direct",
-    ) -> Tuple[Optional[str], List[Any]]:
+    ) -> Tuple[str | None, List[Any]]:
         """
         Build a logical condition ($and, $or, $nor, $not).
 
+        This method handles the construction of SQL expressions for MongoDB logical operators.
+        It recursively processes nested conditions and builds appropriate SQL expressions
+        with proper parentheses grouping.
+
         Args:
-            operator: The logical operator
+            operator: The logical operator ($and, $or, $nor)
             conditions: List of condition dictionaries
-            context: The context for field access
+            context: The context for field access (default: "direct")
 
         Returns:
             Tuple of (SQL expression, parameters) or (None, []) if unsupported
         """
+        # default `sql` and `params`
+        sql: str | None = None
+        params: List[Any] = []
+
         if not isinstance(conditions, list):
-            return None, []
+            return sql, params
 
         clauses: List[str] = []
-        params: List[Any] = []
 
         for condition in conditions:
             if isinstance(condition, dict):
@@ -193,19 +253,15 @@ class SQLClauseBuilder:
                     condition, context, is_nested=True
                 )
                 if clause is None:
-                    return None, []  # Unsupported condition, fallback to Python
-                if clause:
+                    break
+                else:
                     # Remove "WHERE " prefix if present
                     if clause.startswith("WHERE "):
                         clause = clause[6:]
                     clauses.append(f"({clause})")
                     params.extend(clause_params)
-                else:
-                    # Empty condition
-                    return None, []
             else:
-                # Invalid condition format
-                return None, []
+                break
 
         if not clauses:
             return _empty_result()
@@ -219,7 +275,7 @@ class SQLClauseBuilder:
                 sql = "NOT (" + " OR ".join(clauses) + ")"
             case _:
                 # Unsupported logical operator
-                return None, []
+                pass
 
         return sql, params
 
@@ -228,20 +284,27 @@ class SQLClauseBuilder:
         query: Dict[str, Any],
         context: str = "direct",
         is_nested: bool = False,
-    ) -> Tuple[Optional[str], List[Any]]:
+    ) -> Tuple[str | None, List[Any]]:
         """
         Build a WHERE clause from a MongoDB-style query.
 
+        This method translates a MongoDB-style query specification into an SQL WHERE clause.
+        It handles both simple field conditions and complex logical operators ($and, $or, $nor, $not).
+        The method recursively processes nested conditions and properly groups them with parentheses.
+
         Args:
             query: The MongoDB-style query
-            context: The context for field access
-            is_nested: Whether this is a nested condition within a logical operator
+            context: The context for field access (default: "direct")
+            is_nested: Whether this is a nested condition within a logical operator (default: False)
 
         Returns:
             Tuple of (WHERE clause, parameters) or (None, []) if unsupported
         """
-        clauses: List[str] = []
+        # default `sql` and `params`
+        sql: str | None = None
         params: List[Any] = []
+        # default `clauses`
+        clauses: List[str] = []
 
         for field, value in query.items():
             if field in ("$and", "$or", "$nor"):
@@ -253,7 +316,7 @@ class SQLClauseBuilder:
                     return (
                         _empty_result()
                     )  # Unsupported condition, fallback to Python
-                if sql:  # Only add if not empty
+                else:  # Only add if not empty
                     clauses.append(sql)
                     params.extend(clause_params)
             elif field == "$not":
@@ -292,10 +355,8 @@ class SQLClauseBuilder:
                             )
                         )
                         if sql is None:
-                            return (
-                                None,
-                                [],
-                            )  # Unsupported operator, fallback to Python
+                            # Unsupported operator, fallback to Python
+                            return None, []
                         clauses.append(sql)
                         params.extend(clause_params)
                 else:
@@ -319,12 +380,15 @@ class SQLClauseBuilder:
         """
         Build an ORDER BY clause from a sort specification.
 
+        This method translates a MongoDB-style sort specification into an SQL ORDER BY clause.
+        It handles multiple sort fields with their respective sort directions (ascending or descending).
+
         Args:
-            sort_spec: The sort specification
-            context: The context for field access
+            sort_spec: The sort specification mapping field names to sort directions
+            context: The context for field access (default: "direct")
 
         Returns:
-            ORDER BY clause
+            ORDER BY clause as a string
         """
         if not sort_spec:
             return ""
@@ -339,17 +403,20 @@ class SQLClauseBuilder:
         return "ORDER BY " + ", ".join(order_parts)
 
     def build_limit_offset_clause(
-        self, limit_value: Optional[int] = None, skip_value: int = 0
+        self, limit_value: int | None = None, skip_value: int = 0
     ) -> str:
         """
         Build LIMIT and OFFSET clauses.
 
+        This method constructs SQL LIMIT and OFFSET clauses based on the provided limit and skip values.
+        It handles the special case where SQLite requires a LIMIT clause when using OFFSET.
+
         Args:
-            limit_value: The limit value
-            skip_value: The skip value
+            limit_value: The limit value (default: None)
+            skip_value: The skip value (default: 0)
 
         Returns:
-            LIMIT and OFFSET clauses
+            LIMIT and OFFSET clauses as a string
         """
         limit_clause = ""
         if limit_value is not None:
@@ -368,14 +435,26 @@ class SQLTranslator:
     """
     Unified SQL translator that can be used for both direct SQL generation
     and temporary table generation.
+
+    This class provides a high-level interface for translating MongoDB-style query
+    operations into SQL clauses. It integrates SQLFieldAccessor, SQLOperatorTranslator,
+    and SQLClauseBuilder to provide comprehensive SQL translation capabilities.
     """
 
     def __init__(
         self,
-        table_name: Optional[str] = None,
+        table_name: str | None = None,
         data_column: str = "data",
         id_column: str = "id",
     ):
+        """
+        Initialize the SQLTranslator with table and column names.
+
+        Args:
+            table_name: The name of the table to query (default: "collection")
+            data_column: The name of the column containing JSON data (default: "data")
+            id_column: The name of the column containing document IDs (default: "id")
+        """
         self.table_name = table_name or "collection"
         self.data_column = data_column
         self.id_column = id_column
@@ -389,13 +468,18 @@ class SQLTranslator:
 
     def translate_match(
         self, match_spec: Dict[str, Any], context: str = "direct"
-    ) -> Tuple[Optional[str], List[Any]]:
+    ) -> Tuple[str | None, List[Any]]:
         """
         Translate a $match stage to SQL WHERE clause.
 
+        This method translates a MongoDB $match specification into an SQL WHERE clause.
+        It handles special cases like text search queries by returning None to indicate
+        that fallback to Python implementation is required. For regular queries, it delegates
+        to the SQLClauseBuilder's build_where_clause method.
+
         Args:
             match_spec: The $match specification
-            context: The context for field access
+            context: The context for field access (default: "direct")
 
         Returns:
             Tuple of (WHERE clause, parameters) or (None, []) for text search
@@ -403,13 +487,13 @@ class SQLTranslator:
         # Handle text search queries separately
         if "$text" in match_spec:
             return (
-                _text_search_result()
+                _text_search_fallback()
             )  # Special handling required, return None to fallback
 
         # Check for nested $text operators in logical operators
         if self._contains_text_operator(match_spec):
             return (
-                _text_search_result()
+                _text_search_fallback()
             )  # Special handling required, return None to fallback
 
         return self.clause_builder.build_where_clause(match_spec, context)
@@ -417,6 +501,11 @@ class SQLTranslator:
     def _contains_text_operator(self, query: Dict[str, Any]) -> bool:
         """
         Check if a query contains any $text operators, including nested in logical operators.
+
+        This method recursively traverses a MongoDB query specification to detect the presence
+        of $text operators, which require special handling and fallback to Python implementation.
+        It checks both top-level $text operators and those nested within logical operators
+        ($and, $or, $nor, $not).
 
         Args:
             query: The query to check
@@ -450,9 +539,14 @@ class SQLTranslator:
         """
         Translate a $sort stage to SQL ORDER BY clause.
 
+        This method translates a MongoDB $sort specification into an SQL ORDER BY clause.
+        It delegates to the SQLClauseBuilder's build_order_by_clause method to perform
+        the actual translation, handling multiple sort fields with their respective
+        sort directions (ascending or descending).
+
         Args:
             sort_spec: The $sort specification
-            context: The context for field access
+            context: The context for field access (default: "direct")
 
         Returns:
             ORDER BY clause
@@ -460,14 +554,18 @@ class SQLTranslator:
         return self.clause_builder.build_order_by_clause(sort_spec, context)
 
     def translate_skip_limit(
-        self, limit_value: Optional[int] = None, skip_value: int = 0
+        self, limit_value: int | None = None, skip_value: int = 0
     ) -> str:
         """
         Translate $skip and $limit stages to SQL LIMIT/OFFSET clauses.
 
+        This method translates MongoDB $skip and $limit specifications into SQL LIMIT and OFFSET clauses.
+        It delegates to the SQLClauseBuilder's build_limit_offset_clause method to perform the actual
+        translation, handling both limit and skip values appropriately for SQLite syntax.
+
         Args:
-            limit_value: The limit value
-            skip_value: The skip value
+            limit_value: The limit value (default: None)
+            skip_value: The skip value (default: 0)
 
         Returns:
             LIMIT and OFFSET clauses
@@ -482,9 +580,15 @@ class SQLTranslator:
         """
         Translate field access for a given field and context.
 
+        This method generates the appropriate SQL expression for accessing a field
+        based on the field name and context. It delegates to the SQLFieldAccessor's
+        get_field_access method to perform the actual translation, handling special
+        cases like the "_id" field which maps to the ID column, and regular fields
+        which use json_extract expressions.
+
         Args:
             field: The field name
-            context: The context for field access
+            context: The context for field access (default: "direct")
 
         Returns:
             SQL expression for accessing the field
@@ -501,11 +605,15 @@ class SQLTranslator:
         """
         Translate sort/skip/limit stages to SQL clauses.
 
+        This method translates MongoDB sort, skip, and limit specifications into their
+        corresponding SQL clauses. It combines the functionality of translate_sort and
+        translate_skip_limit to generate ORDER BY, LIMIT, and OFFSET clauses in a single call.
+
         Args:
-            sort_spec: The $sort specification
-            skip_value: The skip value
-            limit_value: The limit value
-            context: The context for field access
+            sort_spec: The $sort specification (default: None)
+            skip_value: The skip value (default: 0)
+            limit_value: The limit value (default: None)
+            context: The context for field access (default: "direct")
 
         Returns:
             Tuple of (ORDER BY clause, LIMIT clause, OFFSET clause)

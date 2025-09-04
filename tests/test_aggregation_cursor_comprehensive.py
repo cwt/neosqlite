@@ -4,7 +4,7 @@ Tests for the AggregationCursor class.
 
 import pytest
 import neosqlite
-from neosqlite.aggregation_cursor import AggregationCursor
+from neosqlite.collection.aggregation_cursor import AggregationCursor
 
 
 class TestAggregationCursor:

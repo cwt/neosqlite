@@ -1,8 +1,6 @@
 from __future__ import annotations
 from ..bulk_operations import BulkOperationExecutor
-from ..cursor import Cursor, DESCENDING
 from ..exceptions import MalformedQueryException
-from ..raw_batch_cursor import RawBatchCursor
 from ..requests import DeleteOne, InsertOne, UpdateOne
 from ..results import (
     BulkWriteResult,
@@ -11,7 +9,9 @@ from ..results import (
     InsertOneResult,
     UpdateResult,
 )
+from .cursor import Cursor, DESCENDING
 from .query_helper import QueryHelper
+from .raw_batch_cursor import RawBatchCursor
 from .sql_translator_unified import SQLTranslator
 from neosqlite.collection.json_helpers import (
     neosqlite_json_dumps,

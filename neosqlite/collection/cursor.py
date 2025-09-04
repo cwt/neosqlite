@@ -4,7 +4,7 @@ from itertools import starmap
 from typing import Any, Dict, List, Iterator, Iterable, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .collection import Collection
+    from . import Collection
 
 ASCENDING = 1
 DESCENDING = -1

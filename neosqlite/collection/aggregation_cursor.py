@@ -2,7 +2,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Iterator, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .collection import Collection
+    from . import Collection
 
 # Try to import quez, but make it optional
 try:

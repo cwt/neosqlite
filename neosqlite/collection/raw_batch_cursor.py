@@ -3,7 +3,7 @@ from typing import Any, Dict, Iterator, Optional, TYPE_CHECKING
 import json
 
 if TYPE_CHECKING:
-    from .collection import Collection
+    from . import Collection
 
 
 class RawBatchCursor:

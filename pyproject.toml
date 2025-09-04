@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "neosqlite"
-version = "0.8.0"
+version = "0.8.1"
 description = "NoSQL for SQLite with PyMongo-like API"
 authors = ["Chaiwat Suttipongsakul <cwt@bashell.com>"]
 license = "MIT"

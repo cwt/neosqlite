@@ -4,16 +4,21 @@ This focuses on the core concept: using temporary tables to process complex pipe
 that the current implementation can't optimize with a single SQL query.
 """
 
-import hashlib
+from .sql_translator_unified import SQLTranslator
 from contextlib import contextmanager
 from typing import Any, Dict, List, Callable
-from ..cursor import DESCENDING
-from .json_helpers import neosqlite_json_dumps
-from .sql_translator_unified import SQLTranslator
+import hashlib
 
 
 class DeterministicTempTableManager:
-    """Manager for deterministic temporary table names."""
+    """
+    Manager for deterministic temporary table names.
+
+    This class generates unique but deterministic temporary table names based on
+    pipeline stages and a pipeline ID. It ensures that the same pipeline stage
+    will always generate the same table name within the same pipeline execution,
+    which is useful for caching and optimization purposes.
+    """
 
     def __init__(self, pipeline_id: str):
         """
@@ -689,6 +694,11 @@ class TemporaryTableAggregationProcessor:
         """
         Apply Python-based text search to a document.
 
+        This method uses the unified_text_search function to determine if a document
+        matches a given search term. It's used as a fallback when text search cannot
+        be efficiently handled with SQL queries, particularly in cases involving
+        unwound elements or complex text search operations.
+
         Args:
             document (Dict[str, Any]): The document to search in
             search_term (str): The term to search for
@@ -696,6 +706,7 @@ class TemporaryTableAggregationProcessor:
         Returns:
             bool: True if the document matches the text search, False otherwise
         """
+
         from neosqlite.collection.text_search import unified_text_search
 
         return unified_text_search(document, search_term)
@@ -705,6 +716,11 @@ class TemporaryTableAggregationProcessor:
     ) -> None:
         """
         Insert multiple documents into a temporary table efficiently.
+
+        This method provides an optimized way to insert multiple documents into a
+        temporary table by using a single INSERT statement with multiple value sets.
+        It's used primarily in the text search processing where documents need to be
+        filtered and inserted into a result table.
 
         Args:
             table_name (str): The name of the table to insert into
@@ -726,6 +742,33 @@ class TemporaryTableAggregationProcessor:
     ) -> str:
         """
         Process a $text search stage using Python-based filtering.
+
+        This method handles $text search operations that cannot be efficiently processed
+        with SQL queries. It creates a temporary table containing only documents that
+        match the text search criteria, using the unified_text_search function for
+        matching. This approach is used as a fallback when text search involves
+        complex operations or unwound elements that aren't supported by SQL translation.
+
+        The method works by:
+        1. Extracting and validating the search term from the match specification
+        2. Generating a deterministic table name for the results
+        3. Creating a temporary table to store the filtered results
+        4. Iterating through documents in the current table
+        5. Applying text search to each document using Python-based matching
+        6. Inserting matching documents into the result table in batches for efficiency
+
+        Args:
+            create_temp (Callable): Function to create temporary tables
+            current_table (str): Name of the current temporary table containing input data
+            match_spec (Dict[str, Any]): The $match stage specification containing the
+                                        $text operator with a $search term
+
+        Returns:
+            str: Name of the newly created temporary table with text search results
+
+        Raises:
+            ValueError: If the $text operator specification is invalid or the search
+                        term is not a string
         """
         # Extract and validate search term
         if "$text" not in match_spec or "$search" not in match_spec["$text"]:
@@ -735,10 +778,6 @@ class TemporaryTableAggregationProcessor:
         if not isinstance(search_term, str):
             raise ValueError("$text search term must be a string")
 
-        # Generate deterministic table name
-        import hashlib
-
-        text_stage = {"$text": {"$search": search_term}}
         result_table_name = f"temp_text_filtered_{hashlib.sha256(str(match_spec).encode()).hexdigest()[:8]}"
 
         # Create result temporary table
@@ -783,6 +822,10 @@ def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
     by the temporary table processing approach. It verifies that each stage in
     the pipeline is one of the supported stage types.
 
+    Additionally, it handles special cases for text search operations:
+    - Pipelines with text search and unwind operations cannot be processed with temporary tables
+    - Pure text search operations are now supported with hybrid processing
+
     Args:
         pipeline (List[Dict[str, Any]]): List of aggregation pipeline stages to check
 
@@ -792,13 +835,13 @@ def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
     """
     # Check if all stages are supported
     supported_stages = {
-        "$match",
-        "$unwind",
-        "$sort",
-        "$skip",
+        "$addFields",
         "$limit",
         "$lookup",
-        "$addFields",  # Added support for $addFields
+        "$match",
+        "$skip",
+        "$sort",
+        "$unwind",
     }
 
     # Check if pipeline has text search operations
@@ -825,10 +868,6 @@ def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
         if stage_name not in supported_stages:
             return False
 
-        # Additionally, check if $match stages contain unsupported operations
-        # Note: $text search operations are now supported with hybrid processing
-        # so we don't reject pipelines with $text operators anymore
-
     return True
 
 
@@ -836,11 +875,15 @@ def _contains_text_search(match_spec: Dict[str, Any]) -> bool:
     """
     Check if a match specification contains text search operations.
 
+    This function recursively examines a match specification to determine if it
+    contains any $text search operators. It checks both top-level operators and
+    nested operators within logical operators ($and, $or, $nor, $not).
+
     Args:
-        match_spec: The match specification to check
+        match_spec (Dict[str, Any]): The match specification to check for text search operations
 
     Returns:
-        True if the match specification contains text search operations, False otherwise
+        bool: True if the match specification contains text search operations, False otherwise
     """
     if "$text" in match_spec:
         return True

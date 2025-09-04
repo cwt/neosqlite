@@ -1,20 +1,22 @@
-from .aggregation_cursor import AggregationCursor
 from .binary import Binary
 from .bulk_operations import BulkOperationExecutor
 from .changestream import ChangeStream
 from .collection import Collection
 from .connection import Connection
-from .cursor import Cursor, ASCENDING, DESCENDING
 from .exceptions import MalformedQueryException, MalformedDocument
-from .raw_batch_cursor import RawBatchCursor
 from .requests import InsertOne, UpdateOne, DeleteOne
 from .results import (
-    InsertOneResult,
-    InsertManyResult,
-    UpdateResult,
-    DeleteResult,
     BulkWriteResult,
+    DeleteResult,
+    InsertManyResult,
+    InsertOneResult,
+    UpdateResult,
 )
+
+# Import cursor classes from collection module
+from .collection.aggregation_cursor import AggregationCursor
+from .collection.cursor import Cursor, ASCENDING, DESCENDING
+from .collection.raw_batch_cursor import RawBatchCursor
 
 # GridFS support
 try:
@@ -25,26 +27,26 @@ except ImportError:
     _HAS_GRIDFS = False
 
 __all__ = [
-    "Connection",
-    "Collection",
-    "Cursor",
     "ASCENDING",
-    "DESCENDING",
-    "InsertOneResult",
-    "InsertManyResult",
-    "UpdateResult",
-    "DeleteResult",
-    "BulkWriteResult",
-    "InsertOne",
-    "UpdateOne",
-    "DeleteOne",
-    "MalformedQueryException",
-    "MalformedDocument",
-    "ChangeStream",
-    "RawBatchCursor",
-    "BulkOperationExecutor",
-    "Binary",
     "AggregationCursor",
+    "Binary",
+    "BulkOperationExecutor",
+    "BulkWriteResult",
+    "ChangeStream",
+    "Collection",
+    "Connection",
+    "Cursor",
+    "DESCENDING",
+    "DeleteOne",
+    "DeleteResult",
+    "InsertManyResult",
+    "InsertOne",
+    "InsertOneResult",
+    "MalformedDocument",
+    "MalformedQueryException",
+    "RawBatchCursor",
+    "UpdateOne",
+    "UpdateResult",
 ]
 
 # Add GridFS to __all__ if available

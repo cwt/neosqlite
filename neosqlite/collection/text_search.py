@@ -2,14 +2,22 @@
 Enhanced text search functionality for NeoSQLite with international character support.
 """
 
+from functools import lru_cache
+from typing import Any, Dict
 import re
 import unicodedata
-from typing import Any, Dict, List
-from functools import lru_cache
 
 
 class TextSearchOptimizer:
-    """Optimize text search operations with caching and Unicode support."""
+    """
+    Optimize text search operations with caching and Unicode support.
+
+    This class provides optimized text search functionality with:
+    - LRU caching for compiled regex patterns
+    - Unicode normalization for international character support
+    - Diacritic-insensitive matching
+    - Case-insensitive searching
+    """
 
     @staticmethod
     @lru_cache(maxsize=1000)
@@ -89,7 +97,6 @@ def unified_text_search(document: Dict[str, Any], search_term: str) -> bool:
     # Get compiled patterns for performance
     exact_pattern = TextSearchOptimizer.compile_pattern(search_term)
     normalized_pattern = TextSearchOptimizer.get_normalized_pattern(search_term)
-    normalized_search = TextSearchOptimizer.normalize_text(search_term)
 
     def search_in_value(value: Any, term: str) -> bool:
         """
