@@ -6,7 +6,10 @@ import math
 import pytest
 import neosqlite
 from neosqlite import Connection
-from neosqlite.collection.aggregation_cursor import AggregationCursor
+from neosqlite.collection.aggregation_cursor import (
+    AggregationCursor,
+    QUEZ_AVAILABLE,
+)
 from neosqlite.collection.temporary_table_aggregation import (
     execute_2nd_tier_aggregation,
     can_process_with_temporary_tables,
@@ -864,6 +867,429 @@ def test_aggregation_cursor_iteration(collection):
     assert len(results2) == 2
     assert results2[0]["a"] == 1
     assert results2[1]["a"] == 2
+
+
+def test_aggregation_cursor_quez_functionality(collection):
+    """Test AggregationCursor with quez functionality."""
+    # Skip if quez is not available
+    if not QUEZ_AVAILABLE:
+        pytest.skip("Quez not available")
+
+    collection.insert_many([{"a": i} for i in range(20)])
+    pipeline = [{"$match": {"a": {"$gte": 5}}}]
+    cursor = AggregationCursor(collection, pipeline)
+
+    # Enable quez
+    cursor.use_quez(True)
+
+    # Should be able to iterate
+    results = list(cursor)
+    assert len(results) == 15  # Values 5-19
+    assert all(5 <= doc["a"] <= 19 for doc in results)
+
+    # Test get_quez_stats (should be None since quez wasn't actually used due to small result size)
+    stats = cursor.get_quez_stats()
+    # Stats could be None or have data depending on implementation details
+    # We're primarily testing that the method doesn't crash
+
+
+def test_aggregation_cursor_quez_stats_when_used(collection):
+    """Test get_quez_stats when quez is actually used."""
+    # Skip if quez is not available
+    if not QUEZ_AVAILABLE:
+        pytest.skip("Quez not available")
+
+    # Insert many documents to trigger quez usage
+    collection.insert_many([{"a": i, "data": "x" * 100} for i in range(1000)])
+    pipeline = [{"$match": {"a": {"$gte": 500}}}]
+    cursor = AggregationCursor(collection, pipeline)
+
+    # Enable quez and set a low memory threshold to force quez usage
+    cursor.use_quez(True)
+    cursor._memory_threshold = 1000  # Very low threshold
+
+    # Execute the cursor
+    results = list(cursor)
+    assert len(results) == 500  # Values 500-999
+
+    # Test get_quez_stats
+    stats = cursor.get_quez_stats()
+    # Should return a dict with stats or None
+    assert stats is None or isinstance(stats, dict)
+
+
+def test_aggregation_cursor_len_with_quez(collection):
+    """Test __len__ method with quez."""
+    # Skip if quez is not available
+    if not QUEZ_AVAILABLE:
+        pytest.skip("Quez not available")
+
+    collection.insert_many([{"a": i} for i in range(10)])
+    pipeline = [{"$match": {"a": {"$gte": 3}}}]
+    cursor = AggregationCursor(collection, pipeline)
+
+    # Enable quez and set low threshold
+    cursor.use_quez(True)
+    cursor._memory_threshold = 1000
+
+    # Test len
+    length = len(cursor)
+    assert length == 7  # Values 3-9
+
+
+def test_aggregation_cursor_next_with_empty_results(collection):
+    """Test __next__ method error handling with empty results."""
+    collection.insert_many([{"a": 1}, {"a": 2}])
+    pipeline = [{"$match": {"a": {"$gt": 10}}}]  # No matches
+    cursor = AggregationCursor(collection, pipeline)
+
+    # Should raise StopIteration immediately
+    with pytest.raises(StopIteration):
+        next(cursor)
+
+
+def test_aggregation_cursor_sort_with_quez_raises_error(collection):
+    """Test that sort raises NotImplementedError with quez."""
+    # Skip if quez is not available
+    if not QUEZ_AVAILABLE:
+        pytest.skip("Quez not available")
+
+    collection.insert_many([{"a": i} for i in range(10)])
+    pipeline = [{"$match": {"a": {"$gte": 5}}}]
+    cursor = AggregationCursor(collection, pipeline)
+
+    # Enable quez and set low threshold
+    cursor.use_quez(True)
+    cursor._memory_threshold = 1000
+
+    # Should raise NotImplementedError when trying to sort
+    with pytest.raises(
+        NotImplementedError, match="Sorting not supported with quez"
+    ):
+        cursor.sort(key=lambda x: x["a"])
+
+
+def test_aggregation_cursor_getitem_with_quez_raises_error(collection):
+    """Test that __getitem__ raises NotImplementedError with quez."""
+    # Skip if quez is not available
+    if not QUEZ_AVAILABLE:
+        pytest.skip("Quez not available")
+
+    collection.insert_many([{"a": i} for i in range(10)])
+    pipeline = [{"$match": {"a": {"$gte": 5}}}]
+    cursor = AggregationCursor(collection, pipeline)
+
+    # Enable quez and set low threshold
+    cursor.use_quez(True)
+    cursor._memory_threshold = 1000
+
+    # Should raise NotImplementedError when trying to index
+    with pytest.raises(
+        NotImplementedError, match="Indexing not supported with quez"
+    ):
+        _ = cursor[0]
+
+
+def test_aggregation_cursor_to_list_with_quez(collection):
+    """Test to_list method with quez."""
+    # Skip if quez is not available
+    if not QUEZ_AVAILABLE:
+        pytest.skip("Quez not available")
+
+    collection.insert_many([{"a": i} for i in range(20)])
+    pipeline = [{"$match": {"a": {"$gte": 15}}}]
+    cursor = AggregationCursor(collection, pipeline)
+
+    # Enable quez and set low threshold
+    cursor.use_quez(True)
+    cursor._memory_threshold = 1000
+
+    # Should be able to convert to list
+    results = cursor.to_list()
+    assert len(results) == 5  # Values 15-19
+    assert all(15 <= doc["a"] <= 19 for doc in results)
+
+
+def test_aggregation_cursor_sort_with_none_results(collection):
+    """Test sort method when results is None."""
+    pipeline = [{"$match": {"nonexistent": "value"}}]
+    cursor = AggregationCursor(collection, pipeline)
+
+    # Should return self without error
+    result = cursor.sort(key=lambda x: x.get("a", 0))
+    assert result is cursor
+
+
+def test_aggregation_cursor_next_after_exhaustion(collection):
+    """Test __next__ method after all results are exhausted."""
+    collection.insert_many([{"a": 1}])
+    pipeline = [{"$match": {"a": 1}}]
+    cursor = AggregationCursor(collection, pipeline)
+
+    # Get the first (and only) result
+    result = next(cursor)
+    assert result["a"] == 1
+
+    # Next call should raise StopIteration
+    with pytest.raises(StopIteration):
+        next(cursor)
+
+
+def test_aggregation_cursor_quez_get_exception_handling(
+    monkeypatch, collection
+):
+    """Test exception handling in CompressedQueue get() method."""
+    # Skip if quez is not available
+    if not QUEZ_AVAILABLE:
+        pytest.skip("Quez not available")
+
+    # Import CompressedQueue for mocking
+    from neosqlite.collection.aggregation_cursor import CompressedQueue
+
+    # Create a mock queue class
+    class MockQueue:
+        def get(self, block=False):
+            raise Exception("Queue error")
+
+        @property
+        def empty(self):
+            return False
+
+    collection.insert_many([{"a": i} for i in range(5)])
+    pipeline = [{"$match": {"a": {"$gte": 2}}}]
+    cursor = AggregationCursor(collection, pipeline)
+
+    # Force the cursor to use our mock queue
+    cursor.use_quez(True)
+    cursor._results = MockQueue()
+    cursor._executed = True
+
+    # Should raise StopIteration when get() fails
+    with pytest.raises(StopIteration):
+        next(cursor)
+
+
+def test_aggregation_cursor_quez_to_list_exception_handling(
+    monkeypatch, collection
+):
+    """Test exception handling in to_list with CompressedQueue."""
+    # Skip if quez is not available
+    if not QUEZ_AVAILABLE:
+        pytest.skip("Quez not available")
+
+    # Create a mock queue class
+    class MockQueue:
+        def get(self, block=False):
+            raise Exception("Queue error")
+
+        @property
+        def empty(self):
+            return False
+
+    collection.insert_many([{"a": i} for i in range(5)])
+    pipeline = [{"$match": {"a": {"$gte": 2}}}]
+    cursor = AggregationCursor(collection, pipeline)
+
+    # Force the cursor to use our mock queue
+    cursor.use_quez(True)
+    cursor._results = MockQueue()
+    cursor._executed = True
+
+    # Should return empty list when get() fails
+    results = cursor.to_list()
+    assert results == []
+
+
+def test_aggregation_cursor_len_none_results(collection):
+    """Test __len__ method when results is None."""
+    pipeline = [{"$match": {"nonexistent": "value"}}]
+    cursor = AggregationCursor(collection, pipeline)
+
+    # Should return 0 without error
+    length = len(cursor)
+    assert length == 0
+
+
+def test_aggregation_cursor_getitem_none_results(collection):
+    """Test __getitem__ method when results is None."""
+    # Create a cursor but don't execute it yet
+    pipeline = [{"$match": {"nonexistent": "value"}}]
+    cursor = AggregationCursor(collection, pipeline)
+
+    # Manually set results to None to test the specific code path
+    cursor._results = None
+    cursor._executed = True
+
+    # Should raise IndexError with specific message
+    with pytest.raises(IndexError, match="Cursor has no results"):
+        _ = cursor[0]
+
+
+def test_aggregation_cursor_getitem_unsupported_type_results(collection):
+    """Test __getitem__ method when results is an unsupported type."""
+    # Create a cursor but don't execute it yet
+    pipeline = [{"$match": {"a": 1}}]
+    cursor = AggregationCursor(collection, pipeline)
+
+    # Manually set results to an unsupported type to test the specific code path
+    cursor._results = "unsupported_type"
+    cursor._executed = True
+
+    # Should raise IndexError with specific message
+    with pytest.raises(IndexError, match="Cursor has no results"):
+        _ = cursor[0]
+
+
+def test_aggregation_cursor_sort_unsupported_type_results(collection):
+    """Test sort method when results is an unsupported type."""
+    # Create a cursor but don't execute it yet
+    pipeline = [{"$match": {"a": 1}}]
+    cursor = AggregationCursor(collection, pipeline)
+
+    # Manually set results to an unsupported type to test the specific code path
+    cursor._results = "unsupported_type"
+    cursor._executed = True
+
+    # Should return self without error
+    result = cursor.sort(key=lambda x: x.get("a", 0))
+    assert result is cursor
+
+
+def test_aggregation_cursor_len_unsupported_type_results(collection):
+    """Test __len__ method when results is an unsupported type."""
+    # Create a cursor but don't execute it yet
+    pipeline = [{"$match": {"a": 1}}]
+    cursor = AggregationCursor(collection, pipeline)
+
+    # Manually set results to an unsupported type to test the specific code path
+    cursor._results = "unsupported_type"
+    cursor._executed = True
+
+    # Should return 0 without error
+    length = len(cursor)
+    assert length == 0
+
+
+def test_aggregation_cursor_to_list_unsupported_type_results(collection):
+    """Test to_list method when results is an unsupported type."""
+    # Create a cursor but don't execute it yet
+    pipeline = [{"$match": {"a": 1}}]
+    cursor = AggregationCursor(collection, pipeline)
+
+    # Manually set results to an unsupported type to test the specific code path
+    cursor._results = "unsupported_type"
+    cursor._executed = True
+
+    # Should return empty list without error
+    results = cursor.to_list()
+    assert results == []
+
+
+def test_aggregation_cursor_to_list_none_results(collection):
+    """Test to_list method when results is None."""
+    # Create a cursor but don't execute it yet
+    pipeline = [{"$match": {"nonexistent": "value"}}]
+    cursor = AggregationCursor(collection, pipeline)
+
+    # Manually set results to None to test the specific code path
+    cursor._results = None
+    cursor._executed = True
+
+    # Should return empty list without error
+    results = cursor.to_list()
+    assert results == []
+
+
+def test_aggregation_cursor_import_error_path():
+    """Test the import error path for quez."""
+    # This test is more for coverage of the import try/except block
+    # We can't easily test the ImportError path without manipulating the import system
+    # But we can at least verify that QUEZ_AVAILABLE is properly set
+    from neosqlite.collection.aggregation_cursor import (
+        QUEZ_AVAILABLE,
+        CompressedQueue,
+    )
+
+    # If we get here, the import either succeeded or failed gracefully
+    assert isinstance(QUEZ_AVAILABLE, bool)
+    if QUEZ_AVAILABLE:
+        # quez is available, so CompressedQueue should be the actual class
+        assert CompressedQueue is not None
+    else:
+        # quez is not available, so CompressedQueue should be None
+        assert CompressedQueue is None
+
+
+def test_aggregation_cursor_next_method(collection):
+    """Test the next() method."""
+    collection.insert_many([{"a": 1}, {"a": 2}])
+    pipeline = [{"$match": {"a": {"$gte": 1}}}]
+    cursor = AggregationCursor(collection, pipeline)
+
+    # next() should work the same as __next__()
+    result1 = cursor.next()
+    result2 = cursor.next()
+
+    assert result1["a"] == 1
+    assert result2["a"] == 2
+
+    # Should raise StopIteration when exhausted
+    with pytest.raises(StopIteration):
+        cursor.next()
+
+
+def test_aggregation_cursor_execute_with_constraints(monkeypatch, collection):
+    """Test _execute method with aggregate_with_constraints path."""
+    # Skip if quez is not available
+    if not QUEZ_AVAILABLE:
+        pytest.skip("Quez not available")
+
+    collection.insert_many([{"a": i} for i in range(100)])
+    pipeline = [{"$match": {"a": {"$gte": 50}}}]
+    cursor = AggregationCursor(collection, pipeline)
+
+    # Enable quez and set low threshold to force constraint path
+    cursor.use_quez(True)
+    cursor._memory_threshold = 1000  # Low threshold
+
+    # Mock the estimate to return a large value to trigger constraints path
+    def mock_estimate_result_size(*args, **kwargs):
+        return 200 * 1024 * 1024  # 200MB
+
+    monkeypatch.setattr(
+        cursor, "_estimate_result_size", mock_estimate_result_size
+    )
+
+    # Mock aggregate_with_constraints to return a simple list
+    mock_results = [{"a": i} for i in range(50, 100)]
+
+    # Track if the method was called
+    called_with_args = []
+    original_method = collection.query_engine.aggregate_with_constraints
+
+    def mock_aggregate_with_constraints(*args, **kwargs):
+        called_with_args.append((args, kwargs))
+        return mock_results
+
+    monkeypatch.setattr(
+        collection.query_engine,
+        "aggregate_with_constraints",
+        mock_aggregate_with_constraints,
+    )
+
+    # Execute the cursor
+    results = list(cursor)
+
+    # Verify that aggregate_with_constraints was called
+    assert len(called_with_args) == 1
+    args, kwargs = called_with_args[0]
+    assert args[0] == pipeline
+    assert kwargs.get("batch_size") == 1000
+    assert kwargs.get("memory_constrained") == True
+
+    # Verify results
+    assert len(results) == 50
+    assert all(50 <= doc["a"] <= 99 for doc in results)
 
 
 # ================================
