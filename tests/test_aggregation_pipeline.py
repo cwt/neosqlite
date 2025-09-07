@@ -1430,7 +1430,7 @@ def test_group_stage_with_merge_objects_complex():
         assert result[0]["merged_config"] == expected_config
 
 
-def test_group_stage_with_push_accumulator():
+def test_group_stage_with_push_accumulator_alt():
     """Test $group stage with $push accumulator to build arrays"""
     with neosqlite.Connection(":memory:") as conn:
         collection = conn["test_group_push"]
@@ -1465,7 +1465,7 @@ def test_group_stage_with_push_accumulator():
         assert categories == ["A", "B"]
 
 
-def test_group_stage_with_add_to_set_accumulator():
+def test_group_stage_with_add_to_set_accumulator_alt():
     """Test $group stage with $addToSet accumulator to build unique value arrays"""
     with neosqlite.Connection(":memory:") as conn:
         collection = conn["test_group_add_to_set"]
@@ -1683,7 +1683,7 @@ def test_group_stage_with_add_to_set_null_values():
         assert categories == ["A", "B"]
 
 
-def test_group_stage_with_first_n_accumulator():
+def test_group_stage_with_first_n_accumulator_alt():
     """Test $group stage with $firstN accumulator to get first N values in group"""
     with neosqlite.Connection(":memory:") as conn:
         collection = conn["test_group_first_n"]
@@ -1719,7 +1719,7 @@ def test_group_stage_with_first_n_accumulator():
         assert {"_id": "B", "first_values": [20, 40]} in result
 
 
-def test_group_stage_with_last_n_accumulator():
+def test_group_stage_with_last_n_accumulator_alt():
     """Test $group stage with $lastN accumulator to get last N values in group"""
     with neosqlite.Connection(":memory:") as conn:
         collection = conn["test_group_last_n"]

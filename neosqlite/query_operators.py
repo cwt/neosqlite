@@ -18,7 +18,7 @@ def _get_nested_field(field: str, document: Dict[str, Any]) -> Any:
         return document.get(field, None)
 
     # Handle nested fields
-    doc_value = document
+    doc_value: Any = document
     for path in field.split("."):
         if not isinstance(doc_value, dict) or path not in doc_value:
             return None
@@ -252,7 +252,7 @@ def _exists(field: str, value: bool, document: Dict[str, Any]) -> bool:
 
     # Handle nested fields
     if "." in field:
-        doc_value = document
+        doc_value: Any = document
         field_parts = field.split(".")
         for i, path in enumerate(field_parts):
             if not isinstance(doc_value, dict) or path not in doc_value:

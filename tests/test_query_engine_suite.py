@@ -1310,7 +1310,7 @@ def test_group_push_addtoset_consistency():
         assert sorted(result_optimized[1]["uniqueTags"]) == ["red", "yellow"]
 
 
-def test_force_fallback_flag():
+def test_force_fallback_flag_alt():
     """Test that the force fallback flag can be set and retrieved"""
     # Initially should be False
     assert get_force_fallback() is False

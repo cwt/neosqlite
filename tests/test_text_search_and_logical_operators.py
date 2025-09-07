@@ -880,7 +880,7 @@ def test_text_search_multiple_indexes_current_behavior(collection, capsys):
     print(captured.out)
 
 
-def test_text_search_multiple_indexes_expected_behavior(collection):
+def test_text_search_multiple_indexes_expected_behavior_alt(collection):
     """Test expected behavior with multiple FTS indexes - should find all matching documents"""
     # Insert documents
     collection.insert_one(
