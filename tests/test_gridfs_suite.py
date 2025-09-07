@@ -1,10 +1,10 @@
-# coding: utf-8
 """
 Consolidated tests for GridFS functionality.
 """
+
 from neosqlite import Connection
 from neosqlite.gridfs import GridFS, GridFSBucket, NoFile, FileExists
-from neosqlite.gridfs.grid_file import GridOut
+from neosqlite.gridfs.grid_file import GridIn, GridOut
 from neosqlite.gridfs.errors import (
     CorruptGridFile,
     FileExists as FileExistsError,
@@ -2111,3 +2111,330 @@ class TestGridFSExceptions:
         # Test with empty error labels
         exc = NoFileError("test", [])
         assert exc.has_error_label("any_label") is False
+
+
+# ================================
+# Additional GridFS Coverage Tests
+# ================================
+
+
+def test_gridoutcursor_complex_metadata_filters(bucket):
+    """Test GridOutCursor with complex metadata filters."""
+    # Upload files with various metadata
+    bucket.upload_from_stream(
+        "file1.txt", b"Content 1", metadata={"type": "text", "version": 1}
+    )
+    bucket.upload_from_stream(
+        "file2.log", b"Content 2", metadata={"type": "log", "version": 2}
+    )
+    bucket.upload_from_stream(
+        "file3.txt", b"Content 3", metadata={"type": "text", "version": 2}
+    )
+
+    # Test metadata filter with $regex operator
+    cursor = bucket.find({"metadata": {"$regex": "log"}})
+    files = list(cursor)
+    assert len(files) == 1
+    assert files[0].filename == "file2.log"
+
+    # Test metadata filter with $ne operator
+    cursor = bucket.find({"metadata": {"$ne": '{"type": "log", "version": 2}'}})
+    files = list(cursor)
+    # Should match file1.txt and file3.txt (both have type "text")
+    assert len(files) == 2
+    filenames = [f.filename for f in files]
+    assert "file1.txt" in filenames
+    assert "file3.txt" in filenames
+
+
+def test_gridoutcursor_chunksize_filters(bucket):
+    """Test GridOutCursor with chunkSize filters."""
+    # Upload files
+    bucket.upload_from_stream("file1.txt", b"Content 1")
+    bucket.upload_from_stream("file2.txt", b"Content 2")
+
+    # Test chunkSize filter with $gt operator
+    cursor = bucket.find({"chunkSize": {"$gt": 100000}})  # Greater than 100KB
+    files = list(cursor)
+    # Should match files with default chunk size (255KB)
+    assert len(files) == 2
+
+    # Test chunkSize filter with $lt operator
+    cursor = bucket.find({"chunkSize": {"$lt": 300000}})  # Less than 300KB
+    files = list(cursor)
+    # Should match files with default chunk size (255KB)
+    assert len(files) == 2
+
+
+def test_gridoutcursor_unsupported_operators(bucket):
+    """Test GridOutCursor with unsupported operators that should fall back to exact match."""
+    # Upload files
+    bucket.upload_from_stream("file1.txt", b"Content 1")
+    bucket.upload_from_stream("file2.txt", b"Content 2")
+
+    # Test unsupported operator that should fall back to exact match
+    cursor = bucket.find({"filename": {"$unsupported": "file1.txt"}})
+    files = list(cursor)
+    # Should fall back to exact match, but since "filename = '$unsupportedfile1.txt'" won't match anything
+    assert len(files) == 0
+
+
+def test_gridoutcursor_metadata_filter_edge_cases(bucket):
+    """Test GridOutCursor metadata filter edge cases."""
+    # Upload files with various metadata formats
+    bucket.upload_from_stream(
+        "file1.txt", b"Content 1", metadata={"key": "value"}
+    )
+    bucket.upload_from_stream(
+        "file2.txt", b"Content 2", metadata={"number": 42}
+    )
+    bucket.upload_from_stream(
+        "file3.txt", b"Content 3", metadata={"bool": True}
+    )
+
+    # Test metadata filter with non-string value (should be converted to string)
+    cursor = bucket.find({"metadata": {"$regex": "42"}})
+    files = list(cursor)
+    assert len(files) == 1
+    assert files[0].filename == "file2.txt"
+
+    # Test metadata filter with boolean value
+    cursor = bucket.find({"metadata": {"$regex": "true"}})
+    files = list(cursor)
+    assert len(files) == 1
+    assert files[0].filename == "file3.txt"
+
+
+def test_gridoutcursor_metadata_ne_operator(bucket):
+    """Test GridOutCursor metadata filter with $ne operator."""
+    # Upload files with metadata
+    bucket.upload_from_stream(
+        "file1.txt", b"Content 1", metadata={"type": "text"}
+    )
+    bucket.upload_from_stream(
+        "file2.txt", b"Content 2", metadata={"type": "log"}
+    )
+
+    # Test metadata $ne operator
+    cursor = bucket.find({"metadata": {"$ne": '{"type": "log"}'}})
+    files = list(cursor)
+    assert len(files) == 1
+    assert files[0].filename == "file1.txt"
+
+
+def test_gridoutcursor_unsupported_metadata_operator(bucket):
+    """Test GridOutCursor with unsupported metadata operator."""
+    # Upload file with metadata
+    bucket.upload_from_stream(
+        "file1.txt", b"Content 1", metadata={"type": "text"}
+    )
+
+    # Test unsupported operator that should fall back to LIKE pattern
+    # The pattern will be "%$unsupported%text%" which won't match the JSON metadata
+    cursor = bucket.find({"metadata": {"$unsupported": "text"}})
+    files = list(cursor)
+    # Should not match anything since the JSON metadata won't contain "$unsupported"
+    assert len(files) == 0
+
+
+# ================================
+# GridIn/Out Serialization Tests
+# ================================
+
+
+class NotJSONSerializable:
+    """A class that cannot be serialized to JSON."""
+
+    def __init__(self):
+        self.value = "test"
+
+    def __repr__(self):
+        return "NotJSONSerializable()"
+
+
+def test_gridin_serialize_metadata_json_failure(connection):
+    """Test GridIn._serialize_metadata with JSON serialization failures."""
+    # Create a GridIn instance
+    bucket = GridFSBucket(connection.db)
+    grid_in = GridIn(
+        db=connection.db,
+        bucket_name="fs",
+        chunk_size_bytes=255 * 1024,
+        filename="test.txt",
+        metadata={"custom": NotJSONSerializable()},
+    )
+
+    # Test that _serialize_metadata falls back to string representation
+    serialized = grid_in._serialize_metadata({"custom": NotJSONSerializable()})
+    assert serialized is not None
+    assert "NotJSONSerializable" in serialized
+
+
+def test_gridin_deserialize_metadata_json_failure(connection):
+    """Test GridIn._deserialize_metadata with JSON decode failures."""
+    # Create a GridIn instance
+    bucket = GridFSBucket(connection.db)
+    grid_in = GridIn(
+        db=connection.db,
+        bucket_name="fs",
+        chunk_size_bytes=255 * 1024,
+        filename="test.txt",
+    )
+
+    # Test with invalid JSON that should fall back to literal eval
+    invalid_json = "{'key': 'value'}"  # Single quotes instead of double quotes
+    deserialized = grid_in._deserialize_metadata(invalid_json)
+    assert deserialized is not None
+    # In this case, ast.literal_eval should succeed and return a dict
+    assert "key" in deserialized
+    assert deserialized["key"] == "value"
+
+
+def test_gridin_deserialize_metadata_literal_eval_failure(connection):
+    """Test GridIn._deserialize_metadata with ast.literal_eval failures."""
+    # Create a GridIn instance
+    bucket = GridFSBucket(connection.db)
+    grid_in = GridIn(
+        db=connection.db,
+        bucket_name="fs",
+        chunk_size_bytes=255 * 1024,
+        filename="test.txt",
+    )
+
+    # Test with completely invalid data that should fall back to _metadata dict
+    invalid_data = "{invalid: data"  # Malformed data
+    deserialized = grid_in._deserialize_metadata(invalid_data)
+    assert deserialized is not None
+    assert "_metadata" in deserialized
+    assert deserialized["_metadata"] == invalid_data
+
+
+def test_gridout_deserialize_metadata_json_failure(connection):
+    """Test GridOut._deserialize_metadata with JSON decode failures."""
+    # First upload a file
+    bucket = GridFSBucket(connection.db)
+
+    # Upload file
+    data = b"test data"
+    file_id = bucket.upload_from_stream("test.txt", data)
+
+    # Create a GridOut instance
+    grid_out = GridOut(connection.db, "fs", file_id)
+
+    # Test with invalid JSON that should fall back to literal eval
+    invalid_json = "{'key': 'value'}"  # Single quotes instead of double quotes
+    deserialized = grid_out._deserialize_metadata(invalid_json)
+    assert deserialized is not None
+    # In this case, ast.literal_eval should succeed and return a dict
+    assert "key" in deserialized
+    assert deserialized["key"] == "value"
+
+
+def test_gridout_deserialize_metadata_literal_eval_failure(connection):
+    """Test GridOut._deserialize_metadata with ast.literal_eval failures."""
+    # First upload a file
+    bucket = GridFSBucket(connection.db)
+
+    # Upload file
+    data = b"test data"
+    file_id = bucket.upload_from_stream("test.txt", data)
+
+    # Create a GridOut instance
+    grid_out = GridOut(connection.db, "fs", file_id)
+
+    # Test with completely invalid data that should fall back to _metadata dict
+    invalid_data = "{invalid: data"  # Malformed data
+    deserialized = grid_out._deserialize_metadata(invalid_data)
+    assert deserialized is not None
+    assert "_metadata" in deserialized
+    assert deserialized["_metadata"] == invalid_data
+
+
+def test_gridin_write_with_bytearray(connection):
+    """Test GridIn.write with bytearray input."""
+    bucket = GridFSBucket(connection.db)
+
+    # Test data as bytearray
+    test_data = bytearray(b"Hello, GridFS World! This is bytearray data.")
+
+    # Write using GridIn
+    with bucket.open_upload_stream("bytearray_test.txt") as grid_in:
+        bytes_written = grid_in.write(test_data)
+        assert bytes_written == len(test_data)
+
+    # Read it back
+    with bucket.open_download_stream_by_name("bytearray_test.txt") as grid_out:
+        downloaded_data = grid_out.read()
+        assert downloaded_data == bytes(test_data)
+
+
+def test_gridin_write_with_invalid_data_type(connection):
+    """Test GridIn.write with invalid data types."""
+    bucket = GridFSBucket(connection.db)
+
+    # Test with invalid data type
+    with bucket.open_upload_stream("invalid_test.txt") as grid_in:
+        with pytest.raises(TypeError):
+            grid_in.write("This is a string, not bytes")
+
+        with pytest.raises(TypeError):
+            grid_in.write(12345)  # Integer
+
+
+def test_gridin_context_manager_exit(connection):
+    """Test GridIn.__exit__ method."""
+    bucket = GridFSBucket(connection.db)
+
+    # Test normal context manager exit
+    with bucket.open_upload_stream("exit_test.txt") as grid_in:
+        grid_in.write(b"Test data")
+        # Stream should not be closed yet
+        assert not grid_in._closed
+
+    # After context manager exits, stream should be closed
+    # We can't directly access the grid_in object outside the context,
+    # but we can verify the file was properly stored
+    with bucket.open_download_stream_by_name("exit_test.txt") as grid_out:
+        data = grid_out.read()
+        assert data == b"Test data"
+
+
+def test_gridout_context_manager_exit(connection):
+    """Test GridOut.__exit__ method."""
+    bucket = GridFSBucket(connection.db)
+
+    # Upload a file first
+    file_id = bucket.upload_from_stream("exit_test.txt", b"Test data")
+
+    # Test normal context manager exit
+    with bucket.open_download_stream(file_id) as grid_out:
+        data = grid_out.read()
+        assert data == b"Test data"
+        # Stream should not be closed yet
+        assert not grid_out._closed
+
+    # After context manager exits, stream should be closed
+    # We can't directly access the grid_out object outside the context,
+    # but we can create a new one to verify it works
+
+
+def test_gridin_flush_chunk_with_file_id(connection):
+    """Test GridIn._flush_chunk when file_id is not None."""
+    bucket = GridFSBucket(connection.db)
+
+    # Upload using streaming with custom file ID to test _flush_chunk with file_id already set
+    custom_id = 999
+    data = b"x" * 2048  # 2 chunks worth of data
+
+    with bucket.open_upload_stream_with_id(
+        custom_id, "flush_test.txt"
+    ) as grid_in:
+        # At this point, the file document should be created with the custom ID
+        # Write enough data to trigger _flush_chunk
+        grid_in.write(data)
+        # The _flush_chunk method should be called with file_id already set
+
+    # Verify the file was created correctly
+    with bucket.open_download_stream(custom_id) as grid_out:
+        downloaded_data = grid_out.read()
+        assert downloaded_data == data

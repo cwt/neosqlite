@@ -378,6 +378,710 @@ def test_query_helper_can_use_sql_updates_edge_cases():
 
 
 # ================================
+# Query Helper New Tests
+# ================================
+
+
+def test_convert_bytes_to_binary():
+    """Test the _convert_bytes_to_binary function"""
+    from neosqlite.collection.query_helper import _convert_bytes_to_binary
+    from neosqlite import Binary
+
+    # Test with bytes object
+    result = _convert_bytes_to_binary(b"test data")
+    assert isinstance(result, Binary)
+    assert result == b"test data"
+
+    # Test with Binary object (should remain unchanged)
+    binary_data = Binary(b"test data", 1)
+    result = _convert_bytes_to_binary(binary_data)
+    assert result is binary_data  # Should be the same object
+    assert result.subtype == 1
+
+    # Test with dictionary containing bytes
+    test_dict = {
+        "data": b"test",
+        "binary": Binary(b"binary", 2),
+        "text": "normal",
+    }
+    result = _convert_bytes_to_binary(test_dict)
+    assert isinstance(result["data"], Binary)
+    assert result["data"] == b"test"
+    assert result["binary"] is test_dict["binary"]  # Should be unchanged
+    assert result["text"] == "normal"
+
+    # Test with list containing bytes
+    test_list = [b"test", Binary(b"binary", 3), "normal"]
+    result = _convert_bytes_to_binary(test_list)
+    assert isinstance(result[0], Binary)
+    assert result[0] == b"test"
+    assert result[1] is test_list[1]  # Should be unchanged
+    assert result[2] == "normal"
+
+    # Test with other types (should remain unchanged)
+    assert _convert_bytes_to_binary("string") == "string"
+    assert _convert_bytes_to_binary(123) == 123
+    assert _convert_bytes_to_binary(None) is None
+
+
+def test_force_fallback_flag():
+    """Test that the force fallback flag can be set and retrieved"""
+    # Initially should be False
+    assert get_force_fallback() is False
+
+    # Set to True
+    set_force_fallback(True)
+    assert get_force_fallback() is True
+
+    # Set back to False
+    set_force_fallback(False)
+    assert get_force_fallback() is False
+
+
+def test_query_helper_basic_operations():
+    """Test basic QueryHelper operations."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn.test_collection
+        helper = QueryHelper(collection)
+
+        # Test _internal_insert
+        doc = {"name": "test", "value": 42}
+        doc_id = helper._internal_insert(doc)
+        assert doc_id is not None
+        assert doc["_id"] == doc_id
+
+        # Test _internal_insert with bytes
+        doc_with_bytes = {"name": "test", "data": b"binary data"}
+        doc_id2 = helper._internal_insert(doc_with_bytes)
+        assert doc_id2 is not None
+        assert doc_with_bytes["_id"] == doc_id2
+        # After insertion, bytes should be converted to Binary in the database
+        # Let's retrieve it to verify
+        retrieved_doc = collection.find_one({"_id": doc_id2})
+        assert isinstance(retrieved_doc["data"], neosqlite.Binary)
+
+        # Test _internal_insert with existing _id
+        # Note: The database generates its own _id, so we can't force a specific value
+        doc_with_id = {"_id": 999, "name": "test"}
+        doc_id3 = helper._internal_insert(doc_with_id)
+        assert doc_id3 is not None
+        assert doc_with_id["_id"] == doc_id3
+
+        # Test _internal_delete
+        helper._internal_delete(doc_id)
+        # Verify document is deleted
+        result = collection.find_one({"_id": doc_id})
+        assert result is None
+
+
+def test_query_helper_update_operations():
+    """Test QueryHelper update operations."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn.test_collection
+        helper = QueryHelper(collection)
+
+        # Insert a test document
+        doc = {"name": "test", "value": 42, "tags": ["a", "b"]}
+        doc_id = helper._internal_insert(doc)
+
+        # Test _internal_update with SQL updates
+        updated_doc = helper._internal_update(
+            doc_id, {"$set": {"value": 100}}, doc
+        )
+        assert updated_doc["value"] == 100
+
+        # Test _internal_update with Python updates (unsupported operation)
+        updated_doc = helper._internal_update(
+            doc_id, {"$push": {"tags": "c"}}, updated_doc
+        )
+        assert "c" in updated_doc["tags"]
+
+        # Test _internal_update with upsert (doc_id = 0)
+        new_doc = {"name": "new"}
+        updated_doc = helper._internal_update(
+            0, {"$set": {"value": 50}}, new_doc
+        )
+        assert updated_doc["value"] == 50
+        assert "_id" not in updated_doc  # Should not have _id for upsert
+
+
+def test_query_helper_replace_and_text_search():
+    """Test QueryHelper replace and text search methods."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn.test_collection
+        helper = QueryHelper(collection)
+
+        # Insert a test document
+        doc = {"name": "test", "value": 42}
+        doc_id = helper._internal_insert(doc)
+
+        # Test _internal_replace
+        replacement = {"name": "replacement", "new_field": "new_value"}
+        helper._internal_replace(doc_id, replacement)
+
+        # Verify replacement
+        result = collection.find_one({"_id": doc_id})
+        assert result["name"] == "replacement"
+        assert result["new_field"] == "new_value"
+        assert "value" not in result  # Original field should be gone
+
+        # Test _is_text_search_query
+        assert (
+            helper._is_text_search_query({"$text": {"$search": "test"}}) == True
+        )
+        assert helper._is_text_search_query({"name": "test"}) == False
+
+        # Test _build_text_search_query with no FTS tables
+        result = helper._build_text_search_query({"$text": {"$search": "test"}})
+        assert result is None
+
+        # Test _build_text_search_query with invalid format
+        assert helper._build_text_search_query({"$text": "invalid"}) is None
+        assert (
+            helper._build_text_search_query({"$text": {"$search": 123}}) is None
+        )
+
+
+def test_query_helper_aggregation_and_query_building():
+    """Test QueryHelper aggregation and query building methods."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn.test_collection
+        helper = QueryHelper(collection)
+
+        # Test _build_simple_where_clause with simple query
+        clause, params = helper._build_simple_where_clause({"name": "test"})
+        assert "json_extract" in clause
+        assert params == ["test"]
+
+        # Test _build_simple_where_clause with _id field
+        clause, params = helper._build_simple_where_clause({"_id": 1})
+        assert "id = ?" in clause
+        assert params == [1]
+
+        # Test _build_simple_where_clause with operators
+        clause, params = helper._build_simple_where_clause(
+            {"value": {"$gt": 10}}
+        )
+        assert "json_extract" in clause
+        assert ">" in clause
+        assert params == [10]
+
+        # Test _build_simple_where_clause with logical operators (should fallback)
+        result = helper._build_simple_where_clause({"$and": [{"name": "test"}]})
+        assert result is None
+
+        # Test _build_operator_clause
+        clause, params = helper._build_operator_clause("'$.value'", {"$eq": 5})
+        assert clause == "json_extract(data, '$.value') = ?"
+        assert params == [5]
+
+        # Test _build_operator_clause with unsupported operator
+        clause, params = helper._build_operator_clause(
+            "'$.value'", {"$unsupported": 5}
+        )
+        assert clause is None
+        assert params == []
+
+        # Test _get_operator_fn with valid operator
+        func = helper._get_operator_fn("$eq")
+        assert func is not None
+
+        # Test _get_operator_fn with invalid operator
+        try:
+            helper._get_operator_fn("invalid")
+            assert False, "Should have raised exception"
+        except Exception:
+            pass  # Expected
+
+        # Test _get_operator_fn with non-$ operator
+        try:
+            helper._get_operator_fn("eq")
+            assert False, "Should have raised exception"
+        except Exception:
+            pass  # Expected
+
+
+def test_query_helper_group_and_unwind():
+    """Test QueryHelper group and unwind methods."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn.test_collection
+        helper = QueryHelper(collection)
+
+        # Test _build_group_query with simple group
+        group_spec = {
+            "_id": "$category",
+            "count": {"$sum": 1},
+            "total": {"$sum": "$value"},
+        }
+        result = helper._build_group_query(group_spec)
+        assert result is not None
+        select_clause, group_by_clause, output_fields = result
+        assert "GROUP BY" in group_by_clause
+        assert "COUNT(*)" in select_clause
+        assert "SUM" in select_clause
+
+        # Test _build_group_query with $push
+        group_spec = {"_id": "$category", "items": {"$push": "$name"}}
+        result = helper._build_group_query(group_spec)
+        assert result is not None
+        select_clause, group_by_clause, output_fields = result
+        assert "json_group_array" in select_clause
+
+        # Test _build_group_query with $addToSet
+        group_spec = {
+            "_id": "$category",
+            "unique_items": {"$addToSet": "$name"},
+        }
+        result = helper._build_group_query(group_spec)
+        assert result is not None
+        select_clause, group_by_clause, output_fields = result
+        assert "json_group_array(DISTINCT" in select_clause
+
+        # Test _build_group_query with invalid format
+        group_spec = {
+            "_id": "$category",
+            "count": {"$sum": "$value", "extra": "invalid"},  # Invalid format
+        }
+        result = helper._build_group_query(group_spec)
+        assert result is None
+
+        # Test _build_group_query with complex _id (should fallback)
+        group_spec = {
+            "_id": {"$toUpper": "$name"},  # Complex expression
+            "count": {"$sum": 1},
+        }
+        result = helper._build_group_query(group_spec)
+        assert result is None
+
+
+def test_query_helper_apply_query_and_projection():
+    """Test QueryHelper apply query and projection methods."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn.test_collection
+        helper = QueryHelper(collection)
+
+        # Test _apply_query with simple match
+        doc = {"name": "test", "value": 42}
+        result = helper._apply_query({"name": "test"}, doc)
+        assert result == True
+
+        # Test _apply_query with no match
+        result = helper._apply_query({"name": "other"}, doc)
+        assert result == False
+
+        # Test _apply_query with operator
+        result = helper._apply_query({"value": {"$gt": 40}}, doc)
+        assert result == True
+
+        # Test _apply_query with $and
+        result = helper._apply_query(
+            {"$and": [{"name": "test"}, {"value": {"$gt": 40}}]}, doc
+        )
+        assert result == True
+
+        # Test _apply_query with $or
+        result = helper._apply_query(
+            {"$or": [{"name": "test"}, {"name": "other"}]}, doc
+        )
+        assert result == True
+
+        # Test _apply_projection with inclusion
+        doc = {"_id": 1, "name": "test", "value": 42, "hidden": "secret"}
+        result = helper._apply_projection({"name": 1, "value": 1}, doc)
+        assert "name" in result
+        assert "value" in result
+        assert "hidden" not in result
+        assert "_id" in result  # _id included by default
+
+        # Test _apply_projection with exclusion
+        result = helper._apply_projection({"hidden": 0}, doc)
+        assert "name" in result
+        assert "value" in result
+        assert "hidden" not in result
+
+        # Test _apply_projection with empty projection
+        result = helper._apply_projection({}, doc)
+        assert result == doc
+
+
+def test_query_helper_process_group_stage():
+    """Test QueryHelper _process_group_stage method."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn.test_collection
+        helper = QueryHelper(collection)
+
+        # Test _process_group_stage with $sum
+        docs = [
+            {"category": "A", "value": 10},
+            {"category": "A", "value": 20},
+            {"category": "B", "value": 30},
+        ]
+
+        group_spec = {"_id": "$category", "total": {"$sum": "$value"}}
+
+        result = helper._process_group_stage(group_spec, docs)
+        assert len(result) == 2
+
+        # Find group A and B
+        group_a = next((g for g in result if g["_id"] == "A"), None)
+        group_b = next((g for g in result if g["_id"] == "B"), None)
+
+        assert group_a is not None
+        assert group_b is not None
+        assert group_a["total"] == 30  # 10 + 20
+        assert group_b["total"] == 30  # 30
+
+        # Test _process_group_stage with $push
+        group_spec = {"_id": "$category", "values": {"$push": "$value"}}
+
+        result = helper._process_group_stage(group_spec, docs)
+        assert len(result) == 2
+
+        group_a = next((g for g in result if g["_id"] == "A"), None)
+        group_b = next((g for g in result if g["_id"] == "B"), None)
+
+        assert group_a is not None
+        assert group_b is not None
+        assert group_a["values"] == [10, 20]
+        assert group_b["values"] == [30]
+
+        # Test _process_group_stage with $count
+        group_spec = {"_id": "$category", "count": {"$count": {}}}
+
+        result = helper._process_group_stage(group_spec, docs)
+        assert len(result) == 2
+
+        group_a = next((g for g in result if g["_id"] == "A"), None)
+        group_b = next((g for g in result if g["_id"] == "B"), None)
+
+        assert group_a is not None
+        assert group_b is not None
+        assert group_a["count"] == 2
+        assert group_b["count"] == 1
+
+
+def test_query_helper_build_unwind_methods():
+    """Test QueryHelper _build_unwind_from_clause and _find_parent_unwind methods."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn.test_collection
+        helper = QueryHelper(collection)
+
+        # Test _find_parent_unwind
+        unwound_fields = {"tags": "je1", "tags.items": "je2"}
+
+        # Should find parent for nested field
+        parent_field, parent_alias = helper._find_parent_unwind(
+            "tags.items.subitems", unwound_fields
+        )
+        assert parent_field == "tags.items"
+        assert parent_alias == "je2"
+
+        # Should find parent for direct child
+        parent_field, parent_alias = helper._find_parent_unwind(
+            "tags.items", unwound_fields
+        )
+        assert parent_field == "tags"
+        assert parent_alias == "je1"
+
+        # Should not find parent for unrelated field
+        parent_field, parent_alias = helper._find_parent_unwind(
+            "other.field", unwound_fields
+        )
+        assert parent_field is None
+        assert parent_alias is None
+
+        # Test _build_unwind_from_clause
+        field_names = ["tags", "scores"]
+        from_clause, unwound_fields = helper._build_unwind_from_clause(
+            field_names
+        )
+
+        assert "FROM test_collection" in from_clause
+        assert "json_each" in from_clause
+        assert "je1" in from_clause
+        assert "je2" in from_clause
+        assert "tags" in str(unwound_fields)
+        assert "scores" in str(unwound_fields)
+
+
+def test_query_helper_build_sort_skip_limit_clauses():
+    """Test QueryHelper _build_sort_skip_limit_clauses method."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn.test_collection
+        helper = QueryHelper(collection)
+
+        # Test simple sort
+        pipeline = [{"$sort": {"name": 1}}]
+        unwound_fields = {}
+
+        order_by, limit, offset = helper._build_sort_skip_limit_clauses(
+            pipeline, 0, len(pipeline), unwound_fields
+        )
+
+        assert "ORDER BY" in order_by
+        assert "name" in order_by
+        assert limit == ""
+        assert offset == ""
+
+        # Test sort with skip and limit
+        pipeline = [{"$sort": {"name": -1}}, {"$skip": 5}, {"$limit": 10}]
+
+        order_by, limit, offset = helper._build_sort_skip_limit_clauses(
+            pipeline, 0, len(pipeline), unwound_fields
+        )
+
+        assert "ORDER BY" in order_by
+        assert "DESC" in order_by
+        assert "LIMIT 10" in limit
+        assert "OFFSET 5" in offset
+
+
+def test_query_helper_optimization_methods():
+    """Test QueryHelper optimization methods."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn.test_collection
+        helper = QueryHelper(collection)
+
+        # Test _optimize_match_pushdown
+        pipeline = [{"$unwind": "$tags"}, {"$match": {"name": "test"}}]
+
+        optimized = helper._optimize_match_pushdown(pipeline)
+        # Should move match before unwind
+        assert optimized[0]["$match"] == {"name": "test"}
+        assert optimized[1]["$unwind"] == "$tags"
+
+        # Test _reorder_pipeline_for_indexes
+        pipeline = [{"$match": {"name": "test"}}, {"$sort": {"value": 1}}]
+
+        reordered = helper._reorder_pipeline_for_indexes(pipeline)
+        # Should keep same order since no indexes are defined
+        assert len(reordered) == 2
+
+
+def test_query_helper_estimate_methods():
+    """Test QueryHelper estimation methods."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn.test_collection
+        helper = QueryHelper(collection)
+
+        # Insert some test data to get a count
+        collection.insert_many(
+            [{"name": "test1", "value": 10}, {"name": "test2", "value": 20}]
+        )
+
+        # Test _estimate_result_size
+        pipeline = [{"$match": {"name": "test1"}}, {"$limit": 5}]
+
+        size_estimate = helper._estimate_result_size(pipeline)
+        assert size_estimate >= 0  # Should return a non-negative value
+
+        # Test _estimate_query_cost
+        query = {"name": "test1"}
+        cost = helper._estimate_query_cost(query)
+        assert cost > 0  # Should return a positive value
+
+        # Test _estimate_pipeline_cost
+        pipeline_cost = helper._estimate_pipeline_cost(pipeline)
+        assert pipeline_cost > 0  # Should return a positive value
+
+
+def test_query_helper_get_indexed_fields():
+    """Test QueryHelper _get_indexed_fields method."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn.test_collection
+        helper = QueryHelper(collection)
+
+        # Test with no indexes
+        indexed_fields = helper._get_indexed_fields()
+        assert isinstance(indexed_fields, list)
+        # Should be empty since we haven't created any indexes
+        assert len(indexed_fields) == 0
+
+        # Create an index
+        collection.create_index("name")
+
+        # Test with indexes
+        indexed_fields = helper._get_indexed_fields()
+        assert isinstance(indexed_fields, list)
+        # Should contain "name" now
+        assert "name" in indexed_fields
+
+
+def test_query_helper_edge_cases():
+    """Test edge cases in QueryHelper methods."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn.test_collection
+        helper = QueryHelper(collection)
+
+        # Test _build_operator_clause with $exists operator
+        clause, params = helper._build_operator_clause(
+            "'$.field'", {"$exists": True}
+        )
+        assert "IS NOT NULL" in clause
+        assert params == []
+
+        clause, params = helper._build_operator_clause(
+            "'$.field'", {"$exists": False}
+        )
+        assert "IS NULL" in clause
+        assert params == []
+
+        # Test _build_operator_clause with $mod operator
+        clause, params = helper._build_operator_clause(
+            "'$.field'", {"$mod": [2, 0]}
+        )
+        assert "%" in clause
+        assert params == [2, 0]
+
+        # Test _build_operator_clause with $size operator
+        clause, params = helper._build_operator_clause(
+            "'$.field'", {"$size": 3}
+        )
+        assert "json_array_length" in clause
+        assert params == [3]
+
+        # Test _build_operator_clause with $contains operator
+        clause, params = helper._build_operator_clause(
+            "'$.field'", {"$contains": "test"}
+        )
+        assert "LIKE" in clause
+        assert params == ["%test%"]
+
+        # Test _build_update_clause with $unset operator
+        clause, params = helper._build_update_clause({"$unset": {"field": ""}})
+        assert "json_remove" in clause
+
+        # Test _build_update_clause with $inc operator
+        clause, params = helper._build_update_clause({"$inc": {"count": 1}})
+        assert "json_extract" in clause
+        assert "+" in clause
+
+        # Test _build_update_clause with $mul operator
+        clause, params = helper._build_update_clause({"$mul": {"value": 2}})
+        assert "json_extract" in clause
+        assert "*" in clause
+
+        # Test _build_sql_update_clause with $min operator
+        clauses, params = helper._build_sql_update_clause("$min", {"field": 5})
+        assert "min(" in str(clauses)
+        assert 5 in params
+
+        # Test _build_sql_update_clause with $max operator
+        clauses, params = helper._build_sql_update_clause("$max", {"field": 10})
+        assert "max(" in str(clauses)
+        assert 10 in params
+
+
+def test_query_helper_complex_update_scenarios():
+    """Test complex update scenarios in QueryHelper."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn.test_collection
+        helper = QueryHelper(collection)
+
+        # Insert a test document
+        doc = {"name": "test", "count": 5, "value": 10, "tags": ["a", "b"]}
+        doc_id = helper._internal_insert(doc)
+
+        # Test _internal_update with $inc
+        updated_doc = helper._internal_update(
+            doc_id, {"$inc": {"count": 3}}, doc
+        )
+        assert updated_doc["count"] == 8
+
+        # Test _internal_update with $mul
+        updated_doc = helper._internal_update(
+            doc_id, {"$mul": {"value": 2}}, updated_doc
+        )
+        assert updated_doc["value"] == 20
+
+        # Test _internal_update with $min
+        updated_doc = helper._internal_update(
+            doc_id, {"$min": {"value": 15}}, updated_doc
+        )
+        assert updated_doc["value"] == 15  # min(20, 15) = 15
+
+        # Test _internal_update with $max
+        updated_doc = helper._internal_update(
+            doc_id, {"$max": {"value": 25}}, updated_doc
+        )
+        assert updated_doc["value"] == 25  # max(15, 25) = 25
+
+        # Test _internal_update with $unset
+        updated_doc = helper._internal_update(
+            doc_id, {"$unset": {"name": ""}}, updated_doc
+        )
+        assert "name" not in updated_doc
+
+
+def test_query_helper_process_group_stage_advanced():
+    """Test advanced scenarios in _process_group_stage method."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn.test_collection
+        helper = QueryHelper(collection)
+
+        # Test _process_group_stage with $avg
+        docs = [
+            {"category": "A", "value": 10},
+            {"category": "A", "value": 20},
+            {"category": "B", "value": 30},
+        ]
+
+        group_spec = {"_id": "$category", "average": {"$avg": "$value"}}
+
+        result = helper._process_group_stage(group_spec, docs)
+        assert len(result) == 2
+
+        group_a = next((g for g in result if g["_id"] == "A"), None)
+        group_b = next((g for g in result if g["_id"] == "B"), None)
+
+        assert group_a is not None
+        assert group_b is not None
+        assert group_a["average"] == 15  # (10 + 20) / 2
+        assert group_b["average"] == 30  # 30 / 1
+
+        # Test _process_group_stage with $min and $max
+        group_spec = {
+            "_id": "$category",
+            "min_value": {"$min": "$value"},
+            "max_value": {"$max": "$value"},
+        }
+
+        result = helper._process_group_stage(group_spec, docs)
+        assert len(result) == 2
+
+        group_a = next((g for g in result if g["_id"] == "A"), None)
+        group_b = next((g for g in result if g["_id"] == "B"), None)
+
+        assert group_a is not None
+        assert group_b is not None
+        assert group_a["min_value"] == 10
+        assert group_a["max_value"] == 20
+        assert group_b["min_value"] == 30
+        assert group_b["max_value"] == 30
+
+        # Test _process_group_stage with $addToSet
+        docs = [
+            {"category": "A", "tag": "red"},
+            {"category": "A", "tag": "blue"},
+            {"category": "A", "tag": "red"},  # Duplicate
+            {"category": "B", "tag": "green"},
+        ]
+
+        group_spec = {"_id": "$category", "unique_tags": {"$addToSet": "$tag"}}
+
+        result = helper._process_group_stage(group_spec, docs)
+        assert len(result) == 2
+
+        group_a = next((g for g in result if g["_id"] == "A"), None)
+        group_b = next((g for g in result if g["_id"] == "B"), None)
+
+        assert group_a is not None
+        assert group_b is not None
+        assert set(group_a["unique_tags"]) == {"red", "blue"}
+        assert group_b["unique_tags"] == ["green"]
+
+
+# ================================
 # Fallback Mechanisms Tests
 # ================================
 
