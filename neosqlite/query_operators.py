@@ -3,6 +3,29 @@ from typing import Any, Dict, List
 import re
 
 
+def _get_nested_field(field: str, document: Dict[str, Any]) -> Any:
+    """
+    Get a nested field value from a document using dot notation.
+
+    Args:
+        field (str): The field path using dot notation (e.g., "profile.age").
+        document (Dict[str, Any]): The document to get the field value from.
+
+    Returns:
+        Any: The field value, or None if the field doesn't exist.
+    """
+    if "." not in field:
+        return document.get(field, None)
+
+    # Handle nested fields
+    doc_value = document
+    for path in field.split("."):
+        if not isinstance(doc_value, dict) or path not in doc_value:
+            return None
+        doc_value = doc_value.get(path, None)
+    return doc_value
+
+
 # Query operators
 def _eq(field: str, value: Any, document: Dict[str, Any]) -> bool:
     """
@@ -17,7 +40,8 @@ def _eq(field: str, value: Any, document: Dict[str, Any]) -> bool:
         bool: True if the field value equals the given value, False otherwise.
     """
     try:
-        return document.get(field, None) == value
+        doc_value = _get_nested_field(field, document)
+        return doc_value == value
     except (TypeError, AttributeError):
         return False
 
@@ -35,7 +59,8 @@ def _gt(field: str, value: Any, document: Dict[str, Any]) -> bool:
         bool: True if the field value is greater than the given value, False otherwise.
     """
     try:
-        return document.get(field, None) > value
+        doc_value = _get_nested_field(field, document)
+        return doc_value > value
     except TypeError:
         return False
 
@@ -53,7 +78,8 @@ def _lt(field: str, value: Any, document: Dict[str, Any]) -> bool:
         bool: True if the field value is less than the given value, False otherwise.
     """
     try:
-        return document.get(field, None) < value
+        doc_value = _get_nested_field(field, document)
+        return doc_value < value
     except TypeError:
         return False
 
@@ -71,7 +97,8 @@ def _gte(field: str, value: Any, document: Dict[str, Any]) -> bool:
         bool: True if the field value is greater than or equal to the given value, False otherwise.
     """
     try:
-        return document.get(field, None) >= value
+        doc_value = _get_nested_field(field, document)
+        return doc_value >= value
     except TypeError:
         return False
 
@@ -89,7 +116,8 @@ def _lte(field: str, value: Any, document: Dict[str, Any]) -> bool:
         bool: True if the field value is less than or equal to the given value, False otherwise.
     """
     try:
-        return document.get(field, None) <= value
+        doc_value = _get_nested_field(field, document)
+        return doc_value <= value
     except TypeError:
         return False
 
@@ -111,7 +139,8 @@ def _all(field: str, value: List[Any], document: Dict[str, Any]) -> bool:
     except TypeError:
         raise MalformedQueryException("'$all' must accept an iterable")
     try:
-        b = set(document.get(field, []))
+        doc_value = _get_nested_field(field, document)
+        b = set(doc_value if isinstance(doc_value, list) else [])
     except TypeError:
         return False
     else:
@@ -130,11 +159,17 @@ def _in(field: str, value: List[Any], document: Dict[str, Any]) -> bool:
     Returns:
         bool: True if the field value is present in the list, False otherwise.
     """
-    try:
-        values = iter(value)
-    except TypeError:
-        raise MalformedQueryException("'$in' must accept an iterable")
-    return document.get(field, None) in values
+    if not isinstance(value, list):
+        raise MalformedQueryException("$in must be followed by an array")
+
+    doc_value = _get_nested_field(field, document)
+
+    # If the field value is a list, check if any element is in the provided list
+    if isinstance(doc_value, list):
+        return any(item in value for item in doc_value)
+    else:
+        # If the field value is not a list, check if it's in the provided list
+        return doc_value in value
 
 
 def _ne(field: str, value: Any, document: Dict[str, Any]) -> bool:
@@ -149,7 +184,8 @@ def _ne(field: str, value: Any, document: Dict[str, Any]) -> bool:
     Returns:
         bool: True if the field value is not equal to the given value, False otherwise.
     """
-    return document.get(field, None) != value
+    doc_value = _get_nested_field(field, document)
+    return doc_value != value
 
 
 def _nin(field: str, value: List[Any], document: Dict[str, Any]) -> bool:
@@ -168,7 +204,8 @@ def _nin(field: str, value: List[Any], document: Dict[str, Any]) -> bool:
         values = iter(value)
     except TypeError:
         raise MalformedQueryException("'$nin' must accept an iterable")
-    return document.get(field, None) not in values
+    doc_value = _get_nested_field(field, document)
+    return doc_value not in values
 
 
 def _mod(field: str, value: List[int], document: Dict[str, Any]) -> bool:
@@ -212,7 +249,22 @@ def _exists(field: str, value: bool, document: Dict[str, Any]) -> bool:
     """
     if not isinstance(value, bool):
         raise MalformedQueryException("'$exists' must be supplied a boolean")
-    return (field in document) if value else (field not in document)
+
+    # Handle nested fields
+    if "." in field:
+        doc_value = document
+        field_parts = field.split(".")
+        for i, path in enumerate(field_parts):
+            if not isinstance(doc_value, dict) or path not in doc_value:
+                # Field doesn't exist
+                return not value if value else True
+            if i == len(field_parts) - 1:
+                # We've reached the final field
+                return value
+            doc_value = doc_value.get(path, None)
+        return not value if value else True
+    else:
+        return (field in document) if value else (field not in document)
 
 
 def _regex(field: str, value: str, document: Dict[str, Any]) -> bool:
@@ -270,7 +322,7 @@ def _size(field: str, value: int, document: Dict[str, Any]) -> bool:
     Returns:
         bool: True if the size of the array field matches the specified value, False otherwise.
     """
-    field_val = document.get(field)
+    field_val = _get_nested_field(field, document)
     if not isinstance(field_val, list):
         return False
     return len(field_val) == value

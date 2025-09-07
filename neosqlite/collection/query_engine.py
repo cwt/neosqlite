@@ -9,7 +9,7 @@ from ..results import (
     InsertOneResult,
     UpdateResult,
 )
-from .cursor import Cursor, DESCENDING
+from .cursor import Cursor, ASCENDING, DESCENDING
 from .query_helper import QueryHelper
 from .raw_batch_cursor import RawBatchCursor
 from .sql_translator_unified import SQLTranslator
@@ -583,8 +583,20 @@ class QueryEngine:
                 case "$sort":
                     sort_spec = stage["$sort"]
                     for key, direction in reversed(list(sort_spec.items())):
+
+                        def make_sort_key(key, dir):
+                            def sort_key(doc):
+                                val = self.collection._get_val(doc, key)
+                                # Handle None values - sort them last for ascending, first for descending
+                                if val is None:
+                                    return (0 if dir == DESCENDING else 1, None)
+                                return (0, val)
+
+                            return sort_key
+
+                        sort_key_func = make_sort_key(key, direction)
                         docs.sort(
-                            key=lambda doc: self.collection._get_val(doc, key),
+                            key=sort_key_func,
                             reverse=direction == DESCENDING,
                         )
                 case "$skip":
