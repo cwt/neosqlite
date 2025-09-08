@@ -58,7 +58,8 @@ This document provides a prioritized roadmap for implementing missing PyMongo-co
 - **Impact**: Medium
 - **Dependencies**: None
 
-### 7. Collection.aggregate_raw_batches() Method
+### ~~7. Collection.aggregate_raw_batches() Method~~
+- **Status**: ✅ COMPLETED
 - **Why**: Important for performance with large aggregation results
 - **Effort**: Medium
 - **Impact**: Medium
@@ -131,8 +132,6 @@ This document provides a prioritized roadmap for implementing missing PyMongo-co
 - Connection.list_collection_names()
 
 ### Phase 2 ( Weeks 3-4): P1 Items - IN PROGRESS
-- Connection.list_collections()
-- Collection.aggregate_raw_batches()
 - Initial search index APIs
 
 ### Phase 4 (Weeks 7-8): P2 Items

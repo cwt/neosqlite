@@ -118,9 +118,10 @@ This document outlines a comprehensive plan for implementing missing PyMongo-com
 
 ## Medium Priority Implementations
 
-### Advanced Aggregation
+### ~~Advanced Aggregation~~
 
-#### `aggregate_raw_batches()`
+#### ~~`aggregate_raw_batches()`~~
+- **Status**: ✅ COMPLETED
 - **Purpose**: Perform aggregation and retrieve raw BSON batches
 - **Location**: `neosqlite/collection/__init__.py`
 - **Implementation**:

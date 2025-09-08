@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, Dict, Iterator, Optional, TYPE_CHECKING
+from typing import Any, Dict, Iterator, List, Optional, TYPE_CHECKING
 import json
 
 if TYPE_CHECKING:
@@ -16,6 +16,7 @@ class RawBatchCursor:
         projection: Optional[Dict[str, Any]] = None,
         hint: Optional[str] = None,
         batch_size: int = 100,
+        pipeline: Optional[List[Dict[str, Any]]] = None,
     ):
         """
         Initialize a RawBatchCursor object.
@@ -26,6 +27,7 @@ class RawBatchCursor:
             projection (Dict[str, Any]): A dictionary representing the projection criteria for the documents.
             hint (str): A string hinting at the index to use for the query.
             batch_size (int): The number of documents to return in each batch.
+            pipeline (List[Dict[str, Any]]): An optional aggregation pipeline to execute.
         """
         self._collection = collection
         self._query_helpers = collection.query_engine.helpers
@@ -36,6 +38,7 @@ class RawBatchCursor:
         self._skip = 0
         self._limit: Optional[int] = None
         self._sort: Optional[Dict[str, int]] = None
+        self._pipeline = pipeline
 
     def batch_size(self, batch_size: int) -> RawBatchCursor:
         """
@@ -57,6 +60,19 @@ class RawBatchCursor:
         Returns:
             Iterator[bytes]: An iterator that yields raw batches of JSON data.
         """
+        # If we have a pipeline, use aggregation
+        if self._pipeline is not None:
+            # Execute the aggregation pipeline
+            results = list(self._collection.aggregate(self._pipeline))
+
+            # Split results into batches
+            for i in range(0, len(results), self._batch_size):
+                batch = results[i : i + self._batch_size]
+                # Convert each document to JSON and join with newlines
+                batch_json = "\n".join(json.dumps(doc) for doc in batch)
+                yield batch_json.encode("utf-8")
+            return
+
         # Build the query using the collection's SQL-building methods
         where_result = self._query_helpers._build_simple_where_clause(
             self._filter

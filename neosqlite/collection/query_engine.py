@@ -754,6 +754,32 @@ class QueryEngine:
                     )
         return docs
 
+    def aggregate_raw_batches(
+        self,
+        pipeline: List[Dict[str, Any]],
+        batch_size: int = 100,
+    ) -> RawBatchCursor:
+        """
+        Perform aggregation and retrieve batches of raw JSON.
+
+        Similar to the :meth:`aggregate` method but returns a
+        :class:`~neosqlite.raw_batch_cursor.RawBatchCursor`.
+
+        This method returns raw JSON batches which can be more efficient for
+        certain use cases where you want to process data in batches rather than
+        individual documents.
+
+        Args:
+            pipeline (List[Dict[str, Any]]): A list of aggregation pipeline stages to apply.
+            batch_size (int): The number of documents to include in each batch.
+
+        Returns:
+            RawBatchCursor instance.
+        """
+        return RawBatchCursor(
+            self.collection, None, None, None, batch_size, pipeline=pipeline
+        )
+
     # --- Bulk Write methods ---
     def bulk_write(
         self,

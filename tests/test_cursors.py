@@ -369,3 +369,128 @@ def test_raw_batch_cursor_limit_smaller_than_batch():
         batch_str = batches[0].decode("utf-8")
         doc_strings = [s for s in batch_str.split("\n") if s]
         assert len(doc_strings) == 5
+
+
+# Tests for aggregate_raw_batches method
+
+
+def test_aggregate_raw_batches_basic():
+    """Test basic aggregate_raw_batches functionality."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn.test_collection
+        docs = [
+            {"name": "Alice", "age": 30, "city": "New York"},
+            {"name": "Bob", "age": 25, "city": "Los Angeles"},
+            {"name": "Charlie", "age": 35, "city": "Chicago"},
+            {"name": "David", "age": 28, "city": "Houston"},
+            {"name": "Eve", "age": 32, "city": "Phoenix"},
+        ]
+        collection.insert_many(docs)
+        pipeline = [{"$match": {"age": {"$gte": 30}}}]
+        cursor = collection.aggregate_raw_batches(pipeline)
+        batches = list(cursor)
+        assert len(batches) > 0
+        for batch in batches:
+            assert isinstance(batch, bytes)
+            batch_str = batch.decode("utf-8")
+            doc_strings = [s for s in batch_str.split("\n") if s]
+            for doc_str in doc_strings:
+                doc = json.loads(doc_str)
+                assert isinstance(doc, dict)
+                assert "age" in doc
+                assert doc["age"] >= 30
+
+
+def test_aggregate_raw_batches_empty():
+    """Test aggregate_raw_batches with empty result."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn.test_collection
+        docs = [
+            {"name": "Alice", "age": 30},
+            {"name": "Bob", "age": 25},
+        ]
+        collection.insert_many(docs)
+        pipeline = [{"$match": {"age": {"$gt": 40}}}]
+        cursor = collection.aggregate_raw_batches(pipeline)
+        batches = list(cursor)
+        assert len(batches) == 0
+
+
+def test_aggregate_raw_batches_with_group():
+    """Test aggregate_raw_batches with group stage."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn.test_collection
+        docs = [
+            {"store": "A", "item": "apple", "price": 10},
+            {"store": "A", "item": "banana", "price": 5},
+            {"store": "B", "item": "apple", "price": 12},
+            {"store": "B", "item": "orange", "price": 8},
+        ]
+        collection.insert_many(docs)
+        pipeline = [
+            {"$group": {"_id": "$store", "total": {"$sum": "$price"}}},
+            {"$sort": {"_id": 1}},
+        ]
+        cursor = collection.aggregate_raw_batches(pipeline)
+        batches = list(cursor)
+        assert len(batches) > 0
+        all_docs = []
+        for batch in batches:
+            batch_str = batch.decode("utf-8")
+            doc_strings = [s for s in batch_str.split("\n") if s]
+            for doc_str in doc_strings:
+                doc = json.loads(doc_str)
+                all_docs.append(doc)
+        assert len(all_docs) == 2
+        assert all_docs[0]["_id"] == "A"
+        assert all_docs[0]["total"] == 15
+        assert all_docs[1]["_id"] == "B"
+        assert all_docs[1]["total"] == 20
+
+
+def test_aggregate_raw_batches_with_project():
+    """Test aggregate_raw_batches with project stage."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn.test_collection
+        docs = [
+            {"name": "Alice", "age": 30, "city": "New York"},
+            {"name": "Bob", "age": 25, "city": "Los Angeles"},
+        ]
+        collection.insert_many(docs)
+        pipeline = [{"$project": {"name": 1, "age": 1, "_id": 0}}]
+        cursor = collection.aggregate_raw_batches(pipeline)
+        batches = list(cursor)
+        assert len(batches) > 0
+        all_docs = []
+        for batch in batches:
+            batch_str = batch.decode("utf-8")
+            doc_strings = [s for s in batch_str.split("\n") if s]
+            for doc_str in doc_strings:
+                doc = json.loads(doc_str)
+                all_docs.append(doc)
+        assert len(all_docs) == 2
+        for doc in all_docs:
+            assert "name" in doc
+            assert "age" in doc
+            assert "_id" not in doc
+
+
+def test_aggregate_raw_batches_sort_skip_limit():
+    """Test aggregate_raw_batches with sort, skip, and limit stages."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn.test_collection
+        docs = [{"num": i} for i in range(20)]
+        collection.insert_many(docs)
+        pipeline = [{"$sort": {"num": 1}}, {"$skip": 5}, {"$limit": 8}]
+        cursor = collection.aggregate_raw_batches(pipeline)
+        batches = list(cursor)
+        all_docs = []
+        for batch in batches:
+            batch_str = batch.decode("utf-8")
+            doc_strings = [s for s in batch_str.split("\n") if s]
+            for doc_str in doc_strings:
+                doc = json.loads(doc_str)
+                all_docs.append(doc)
+        assert len(all_docs) == 8
+        nums = [doc["num"] for doc in all_docs]
+        assert nums == list(range(5, 13))

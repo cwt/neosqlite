@@ -398,6 +398,17 @@ class Collection:
         """
         return AggregationCursor(self, pipeline)
 
+    def aggregate_raw_batches(
+        self,
+        pipeline: List[Dict[str, Any]],
+        batch_size: int = 100,
+    ) -> RawBatchCursor:
+        """
+        This is a delegating method. For implementation details, see the
+        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.aggregate_raw_batches`.
+        """
+        return self.query_engine.aggregate_raw_batches(pipeline, batch_size)
+
     def distinct(self, key: str, filter: Dict[str, Any] | None = None) -> set:
         """
         This is a delegating method. For implementation details, see the
