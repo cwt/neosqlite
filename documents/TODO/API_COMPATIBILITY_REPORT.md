@@ -64,14 +64,7 @@ None - All high-priority APIs have been implemented.
 1. **Collection Management**
    - `with_options()` - Get a clone with different options
 
-2. **Index Management (Atlas-specific)**
-   - `create_search_index()` - Create a single search index
-   - `create_search_indexes()` - Create multiple search indexes
-   - `drop_search_index()` - Drop a search index
-   - `list_search_indexes()` - List search indexes
-   - `update_search_index()` - Update a search index
-
-3. **Database Operations**
+2. **Database Operations**
    - `validate_collection()` - Validate collection integrity
 
 ### Lower Priority Missing APIs

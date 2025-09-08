@@ -136,7 +136,8 @@ This document outlines a comprehensive plan for implementing missing PyMongo-com
 
 ### Index Management (Atlas-like features)
 
-#### Search Index APIs
+#### ~~Search Index APIs~~
+- **Status**: ✅ COMPLETED
 - **Purpose**: Provide search index functionality (FTS5-based)
 - **Location**: `neosqlite/collection/index_manager.py`
 - **Implementation**:
@@ -235,9 +236,8 @@ This document outlines a comprehensive plan for implementing missing PyMongo-com
 
 ### Phase 2: Enhanced Functionality (Medium Priority)
 1. Add `aggregate_raw_batches()` method
-2. Implement search index APIs
-3. Add database validation methods
-4. Implement evaluation operators
+2. Add database validation methods
+3. Implement evaluation operators
 
 ### Phase 3: Advanced Features (Lower Priority)
 1. Enhance utility methods

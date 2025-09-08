@@ -65,32 +65,9 @@ This document provides a prioritized roadmap for implementing missing PyMongo-co
 - **Impact**: Medium
 - **Dependencies**: RawBatchCursor enhancements
 
-### ~~8. Search Index APIs~~
-- **Status**: ✅ COMPLETED
-- **Why**: Important for text search capabilities
-- **Effort**: High
-- **Impact**: Medium
-- **APIs**:
-  - `create_search_index()`
-  - `create_search_indexes()`
-  - `drop_search_index()`
-  - `list_search_indexes()`
-  - `update_search_index()`
-
 ## P2 - Medium Priority
 
-### 8. Search Index APIs
-- **Why**: Important for text search capabilities
-- **Effort**: High
-- **Impact**: Medium
-- **APIs**:
-  - `create_search_index()`
-  - `create_search_indexes()`
-  - `drop_search_index()`
-  - `list_search_indexes()`
-  - `update_search_index()`
-
-### 9. Evaluation Operators
+### 8. Evaluation Operators
 - **Why**: Important for advanced queries
 - **Effort**: High
 - **Impact**: Medium
@@ -98,13 +75,13 @@ This document provides a prioritized roadmap for implementing missing PyMongo-co
   - `$expr` - Expression evaluation
   - `$jsonSchema` - Schema validation
 
-### 10. Connection.validate_collection() Method
+### 9. Connection.validate_collection() Method
 - **Why**: Useful for database maintenance
 - **Effort**: Low
 - **Impact**: Low
 - **Dependencies**: SQLite integrity checks
 
-### 11. Collection.with_options() Method
+### 10. Collection.with_options() Method
 - **Why**: Useful for collection cloning with different options
 - **Effort**: Low
 - **Impact**: Low
@@ -112,7 +89,7 @@ This document provides a prioritized roadmap for implementing missing PyMongo-co
 
 ## P3 - Low Priority
 
-### 12. Geospatial Operators
+### 11. Geospatial Operators
 - **Why**: Specialized use case
 - **Effort**: High
 - **Impact**: Low
@@ -122,14 +99,14 @@ This document provides a prioritized roadmap for implementing missing PyMongo-co
   - `$near`
   - `$nearSphere`
 
-### 13. Enhanced Utility Methods
+### 12. Enhanced Utility Methods
 - **Why**: Minor usability improvements
 - **Effort**: Low
 - **Impact**: Low
 - **Methods**:
   - Enhanced `__getitem__()` and `__getattr__()`
 
-### 14. Array Projection Operators
+### 13. Array Projection Operators
 - **Why**: Specialized projection use cases
 - **Effort**: Medium
 - **Impact**: Low
@@ -144,7 +121,7 @@ This document provides a prioritized roadmap for implementing missing PyMongo-co
 - Connection.list_collection_names()
 
 ### Phase 2 ( Weeks 3-4): P1 Items - IN PROGRESS
-- Initial search index APIs
+- Complete remaining P1 implementations
 
 ### Phase 4 (Weeks 7-8): P2 Items
 - Evaluation operators
