@@ -258,6 +258,10 @@ users.create_indexes([
     [('name', neosqlite.ASCENDING), ('age', neosqlite.DESCENDING)],
     'profile.followers'
 ])
+
+# Create FTS search indexes for text search
+users.create_search_index('bio')
+users.create_search_indexes(['title', 'content', 'description'])
 ```
 
 Indexes are automatically used by `find()` operations where possible. You can also provide a `hint` to force the use of a specific index.
@@ -302,6 +306,27 @@ articles.create_index("content", fts=True)
 
 # Perform text search
 results = articles.find({"$text": {"$search": "python programming"}})
+```
+
+### Dedicated Search Index APIs
+
+NeoSQLite also provides dedicated search index APIs for more explicit control:
+
+```python
+# Create a single search index
+articles.create_search_index("content")
+
+# Create multiple search indexes at once
+articles.create_search_indexes(["title", "content", "description"])
+
+# List all search indexes
+indexes = articles.list_search_indexes()
+
+# Drop a search index
+articles.drop_search_index("content")
+
+# Update a search index (drops and recreates)
+articles.update_search_index("content")
 ```
 
 ### Custom FTS5 Tokenizers

@@ -13,6 +13,27 @@ collection.create_index("metadata.description", fts=True)
 
 Unlike MongoDB, NeoSQLite creates separate FTS tables for each field. When searching, it automatically queries all relevant FTS tables and combines the results.
 
+### Search Index APIs
+
+NeoSQLite also provides dedicated search index APIs for more explicit control:
+
+```python
+# Create a single search index
+collection.create_search_index("content")
+
+# Create multiple search indexes at once
+collection.create_search_indexes(["title", "content", "description"])
+
+# List all search indexes
+indexes = collection.list_search_indexes()
+
+# Drop a search index
+collection.drop_search_index("content")
+
+# Update a search index (drops and recreates)
+collection.update_search_index("content")
+```
+
 ### Custom FTS5 Tokenizers
 
 You can use custom FTS5 tokenizers for language-specific text processing.
@@ -73,6 +94,7 @@ NeoSQLite's `$text` operator is designed for compatibility with PyMongo, but the
 - Basic syntax: `{"$text": {"$search": "..."}}`
 - Case-insensitive search
 - Searching across multiple indexed fields
+- Dedicated search index APIs
 
 ### Incompatible or Missing Features
 - **Advanced Parameters**: `$language`, `$caseSensitive`, `$diacriticSensitive` are not supported.

@@ -56,6 +56,7 @@
 ### Text Search
 - [x] $text operator with FTS5 integration (see [text search documentation](TEXT_SEARCH.md) for details)
 - [x] Text search integration with $unwind operations (see [JSON_EACH_ENHANCEMENTS.md](JSON_EACH_ENHANCEMENTS.md) for details)
+- [x] Search Index APIs (create_search_index, create_search_indexes, drop_search_index, list_search_indexes, update_search_index)
 
 ### GridFS Support
 - [x] GridFSBucket API (modern PyMongo API)

@@ -46,6 +46,7 @@ Benchmark results demonstrate that NeoSQLite's SQL optimizations provide **signi
 - **Multiple $unwind**: 30,000 documents processed in 0.2 seconds
 - **$unwind + $group**: 10,000 operations in 0.0039 seconds
 - **$unwind + $sort + $limit**: Native SQLite sorting and limiting
+- **$unwind + $text**: 10-100x faster than Python-based processing
 
 ### Moderate Performance Improvements
 
