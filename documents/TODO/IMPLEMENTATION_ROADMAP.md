@@ -65,6 +65,18 @@ This document provides a prioritized roadmap for implementing missing PyMongo-co
 - **Impact**: Medium
 - **Dependencies**: RawBatchCursor enhancements
 
+### ~~8. Search Index APIs~~
+- **Status**: ✅ COMPLETED
+- **Why**: Important for text search capabilities
+- **Effort**: High
+- **Impact**: Medium
+- **APIs**:
+  - `create_search_index()`
+  - `create_search_indexes()`
+  - `drop_search_index()`
+  - `list_search_indexes()`
+  - `update_search_index()`
+
 ## P2 - Medium Priority
 
 ### 8. Search Index APIs
@@ -136,7 +148,6 @@ This document provides a prioritized roadmap for implementing missing PyMongo-co
 
 ### Phase 4 (Weeks 7-8): P2 Items
 - Evaluation operators
-- Remaining search index APIs
 - Database validation methods
 
 ### Phase 5 (Weeks 9+): P2-P3 Items

@@ -23,6 +23,13 @@ This document summarizes the progress made in implementing missing PyMongo-compa
 3. **Advanced Aggregation**
    - `Collection.aggregate_raw_batches()` - Perform aggregation and retrieve raw BSON batches
 
+4. **Search Index APIs**
+   - `create_search_index()` - Create a single search index
+   - `create_search_indexes()` - Create multiple search indexes
+   - `drop_search_index()` - Drop a search index
+   - `list_search_indexes()` - List search indexes
+   - `update_search_index()` - Update a search index
+
 ### Implementation Details
 
 All implementations were completed following the PyMongo API specifications while maintaining compatibility with SQLite's capabilities.
@@ -31,12 +38,7 @@ All implementations were completed following the PyMongo API specifications whil
 
 ### Medium Priority APIs
 
-1. **Search Index APIs**
-   - `create_search_index()` - Create a single search index
-   - `create_search_indexes()` - Create multiple search indexes
-   - `drop_search_index()` - Drop a search index
-   - `list_search_indexes()` - List search indexes
-   - `update_search_index()` - Update a search index
+None currently in progress.
 
 ## Remaining Implementations (⏳)
 
@@ -57,15 +59,14 @@ All implementations were completed following the PyMongo API specifications whil
 
 ## Implementation Statistics
 
-- **Completion Rate**: ~80% of planned implementations completed
+- **Completion Rate**: ~85% of planned implementations completed
 - **API Coverage**: Increased from 85% to 95%+ PyMongo API compatibility
 - **Code Quality**: All implementations maintain backward compatibility
 - **Testing**: 100% test coverage for new implementations
 
 ## Next Focus Areas
 
-1. Implement search index functionality
-2. Add evaluation operators for advanced queries
-3. Enhance database introspection capabilities
+1. Add evaluation operators for advanced queries
+2. Enhance database introspection capabilities
 
 This progress represents a significant step forward in NeoSQLite's PyMongo compatibility, bringing it closer to feature parity with the official MongoDB driver.

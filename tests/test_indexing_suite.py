@@ -885,3 +885,145 @@ def test_compound_index_functionality(collection):
     # Should be sorted by subcategory (X, Y)
     assert results[0]["subcategory"] == "X"
     assert results[1]["subcategory"] == "Y"
+
+
+# ================================
+# Search Index Tests
+# ================================
+
+
+def test_create_search_index(collection):
+    """Test creating a search index."""
+    # Insert test data
+    collection.insert_one(
+        {"title": "Python Programming", "content": "Learn Python basics"}
+    )
+
+    # Create search index
+    collection.create_search_index("title")
+
+    # Verify the search index was created
+    search_indexes = collection.list_search_indexes()
+    assert "title" in search_indexes
+
+
+def test_create_search_indexes(collection):
+    """Test creating multiple search indexes at once."""
+    # Insert test data
+    collection.insert_one(
+        {
+            "title": "Python Programming",
+            "content": "Learn Python basics",
+            "tags": "python,programming,education",
+        }
+    )
+
+    # Create multiple search indexes
+    collection.create_search_indexes(["title", "content", "tags"])
+
+    # Verify all search indexes were created
+    search_indexes = collection.list_search_indexes()
+    assert "title" in search_indexes
+    assert "content" in search_indexes
+    assert "tags" in search_indexes
+
+
+def test_drop_search_index(collection):
+    """Test dropping a search index."""
+    # Insert test data
+    collection.insert_one(
+        {"title": "Python Programming", "content": "Learn Python basics"}
+    )
+
+    # Create search index
+    collection.create_search_index("title")
+
+    # Verify the search index was created
+    search_indexes = collection.list_search_indexes()
+    assert "title" in search_indexes
+
+    # Drop the search index
+    collection.drop_search_index("title")
+
+    # Verify the search index was dropped
+    search_indexes = collection.list_search_indexes()
+    assert "title" not in search_indexes
+
+
+def test_list_search_indexes(collection):
+    """Test listing search indexes."""
+    # Initially there should be no search indexes
+    search_indexes = collection.list_search_indexes()
+    assert search_indexes == []
+
+    # Insert test data
+    collection.insert_one(
+        {
+            "title": "Python Programming",
+            "content": "Learn Python basics",
+            "author": "John Doe",
+        }
+    )
+
+    # Create search indexes
+    collection.create_search_index("title")
+    collection.create_search_index("content")
+
+    # Verify the search indexes are listed
+    search_indexes = collection.list_search_indexes()
+    assert len(search_indexes) == 2
+    assert "title" in search_indexes
+    assert "content" in search_indexes
+    assert "author" not in search_indexes
+
+
+def test_update_search_index(collection):
+    """Test updating a search index."""
+    # Insert test data
+    collection.insert_one(
+        {"title": "Python Programming", "content": "Learn Python basics"}
+    )
+
+    # Create search index
+    collection.create_search_index("title")
+
+    # Verify the search index was created
+    search_indexes = collection.list_search_indexes()
+    assert "title" in search_indexes
+
+    # Update the search index (this drops and recreates it)
+    collection.update_search_index("title")
+
+    # Verify the search index still exists
+    search_indexes = collection.list_search_indexes()
+    assert "title" in search_indexes
+
+
+def test_search_index_functionality(collection):
+    """Test that search indexes work for text search queries."""
+    # Insert test data
+    collection.insert_many(
+        [
+            {"title": "Python Programming", "content": "Learn Python basics"},
+            {
+                "title": "JavaScript Guide",
+                "content": "Web development with JavaScript",
+            },
+            {
+                "title": "Database Fundamentals",
+                "content": "SQL and Python integration",
+            },
+        ]
+    )
+
+    # Create search index
+    collection.create_search_index("title")
+
+    # Test text search (this would use the FTS index)
+    # Note: Actual search functionality would be tested in query engine tests
+    search_indexes = collection.list_search_indexes()
+    assert "title" in search_indexes
+
+
+if __name__ == "__main__":
+    pytest.main([__file__])

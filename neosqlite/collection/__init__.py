@@ -458,6 +458,26 @@ class Collection:
         """
         self.indexes.create_index(key, reindex, sparse, unique, fts, tokenizer)
 
+    def create_search_index(
+        self,
+        key: str,
+        tokenizer: str | None = None,
+    ):
+        """
+        Create a search index on the specified key for text search functionality.
+
+        This is a convenience method that creates an FTS5 index for efficient text search.
+        It is equivalent to calling create_index(key, fts=True, tokenizer=tokenizer).
+
+        Args:
+            key: A string representing the field to index for text search.
+            tokenizer: Optional tokenizer to use for the FTS index (e.g., 'icu').
+
+        Returns:
+            The result of the index creation operation.
+        """
+        return self.create_index(key, fts=True, tokenizer=tokenizer)
+
     def create_indexes(
         self,
         indexes: List[str | List[str] | List[Tuple[str, int]] | Dict[str, Any]],
@@ -467,6 +487,31 @@ class Collection:
         core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.create_indexes`.
         """
         return self.indexes.create_indexes(indexes)
+
+    def create_search_indexes(
+        self,
+        indexes: List[str],
+    ) -> List[str]:
+        """
+        Create multiple search indexes at once for text search functionality.
+
+        This is a convenience method that creates multiple FTS5 indexes for efficient text search.
+        It is equivalent to calling create_index(key, fts=True) for each key.
+
+        Args:
+            indexes: A list of strings representing the fields to index for text search.
+
+        Returns:
+            List[str]: A list of the names of the search indexes that were created.
+        """
+        created_indexes = []
+        for key in indexes:
+            # Call create_index with fts=True for each key
+            self.create_index(key, fts=True)
+            # Generate the index name the same way as in IndexManager
+            index_name = key.replace(".", "_")
+            created_indexes.append(f"idx_{self.name}_{index_name}")
+        return created_indexes
 
     def reindex(
         self,
@@ -500,12 +545,87 @@ class Collection:
             # Inside this block, Mypy knows 'as_keys' is Literal[False].
             return self.indexes.list_indexes(as_keys)
 
+    def list_search_indexes(self) -> List[str]:
+        """
+        List all search indexes for the collection.
+
+        This method returns a list of all FTS5 search indexes associated with the collection.
+        Note: This implementation scans for FTS virtual tables in the database schema.
+
+        Returns:
+            List[str]: A list of search index names.
+        """
+        # Get all FTS tables from sqlite_master
+        # FTS tables have a specific naming pattern: {collection}_{field}_fts
+        fts_tables = self.db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE ?",
+            (f"{self.name}_%_fts",),
+        ).fetchall()
+
+        # Extract the field names from the FTS table names
+        search_indexes = []
+        prefix_len = len(f"{self.name}_")
+        suffix_len = len("_fts")
+
+        for (table_name,) in fts_tables:
+            # Extract field name from FTS table name
+            # Format: {collection}_{field}_fts
+            field_name = table_name[prefix_len:-suffix_len]
+            search_indexes.append(field_name)
+
+        return search_indexes
+
+    def update_search_index(self, key: str, tokenizer: str | None = None):
+        """
+        Update a search index by recreating it with potentially new options.
+
+        This method drops and recreates a search index, allowing for updates to
+        tokenizer settings or other index options.
+
+        Args:
+            key: The field name for which to update the search index.
+            tokenizer: Optional new tokenizer to use for the FTS index.
+        """
+        # Drop the existing FTS index
+        self.drop_search_index(key)
+
+        # Create a new FTS index with the updated options
+        self.create_search_index(key, tokenizer=tokenizer)
+
     def drop_index(self, index: str):
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.drop_index`.
         """
         self.indexes.drop_index(index)
+
+    def drop_search_index(self, index: str):
+        """
+        Drop a search index from the collection.
+
+        This is a convenience method for dropping FTS5 search indexes.
+
+        Args:
+            index (str): The name of the search index to drop (field name).
+        """
+        # For FTS indexes, we need to drop the FTS virtual table and its triggers
+        # FTS tables have a specific naming pattern: {collection}_{field}_fts
+        index_name = index.replace(".", "_")
+        fts_table_name = f"{self.name}_{index_name}_fts"
+
+        # Drop the FTS table
+        self.db.execute(f"DROP TABLE IF EXISTS {fts_table_name}")
+
+        # Drop the triggers associated with the FTS table
+        self.db.execute(
+            f"DROP TRIGGER IF EXISTS {self.name}_{index_name}_fts_insert"
+        )
+        self.db.execute(
+            f"DROP TRIGGER IF EXISTS {self.name}_{index_name}_fts_update"
+        )
+        self.db.execute(
+            f"DROP TRIGGER IF EXISTS {self.name}_{index_name}_fts_delete"
+        )
 
     def drop_indexes(self):
         """
