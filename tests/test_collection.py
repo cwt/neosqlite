@@ -17,8 +17,20 @@ try:
         sqlite3.IntegrityError,
         sqlite3_with_jsonb.IntegrityError,
     )
+
+    OperationalError: Tuple[Type[Exception], ...] = (
+        sqlite3.OperationalError,
+        sqlite3_with_jsonb.OperationalError,
+    )
+
+    Error: Tuple[Type[Exception], ...] = (
+        sqlite3.Error,
+        sqlite3_with_jsonb.Error,
+    )
 except ImportError:
     IntegrityError = (sqlite3.IntegrityError,)
+    OperationalError = (sqlite3.OperationalError,)
+    Error = (sqlite3.Error,)
 
 from neosqlite import InsertOne, UpdateOne, DeleteOne
 from neosqlite.query_operators import _eq, _gt, _lt, _lte, _in
@@ -35,8 +47,14 @@ def test_rename_collection_already_exists():
     collection2.insert_one({"baz": "qux"})
 
     # Try to rename collection1 to collection2's name
-    with pytest.raises(sqlite3.Error):
-        collection1.rename("test2")
+    # Use the appropriate error type based on what's available
+    if len(Error) > 1:
+        # If we have both sqlite3 and pysqlite3, expect the pysqlite3 one
+        with pytest.raises(Error[1]):
+            collection1.rename("test2")
+    else:
+        with pytest.raises(Error[0]):
+            collection1.rename("test2")
 
 
 # Tests for collection operations
@@ -771,7 +789,12 @@ def test_collection_create_without_jsonb_support():
 
     def execute_side_effect(query, *args, **kwargs):
         if "jsonb(" in query.lower():
-            raise sqlite3.OperationalError("JSONB not supported")
+            # Raise the appropriate OperationalError based on what's available
+            if len(OperationalError) > 1:
+                # If we have both sqlite3 and pysqlite3, raise the pysqlite3 one
+                raise OperationalError[1]("JSONB not supported")
+            else:
+                raise OperationalError[0]("JSONB not supported")
         elif "CREATE TABLE" in query:
             mock_db.create_table_query = query
             return MagicMock()
