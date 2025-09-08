@@ -57,7 +57,7 @@ This document outlines a comprehensive plan for implementing missing PyMongo-com
 - **Testing**: Verify correct listing of tables
 
 #### ~~`list_collections()` (Connection level)~~
-- **Status**: 🔄 IN PROGRESS
+- **Status**: ✅ COMPLETED
 - **Purpose**: Get detailed information about collections
 - **Location**: `neosqlite/connection.py`
 - **Implementation**:

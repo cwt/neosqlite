@@ -51,7 +51,8 @@ This document provides a prioritized roadmap for implementing missing PyMongo-co
   - `$all` - Array matching
   - `$type` - Type checking
 
-### 6. Connection.list_collections() Method
+### ~~6. Connection.list_collections() Method~~
+- **Status**: ✅ COMPLETED
 - **Why**: Detailed database introspection
 - **Effort**: Low
 - **Impact**: Medium

@@ -228,3 +228,135 @@ def test_list_collection_names_manual_table(connection):
 
     # Should include the manually created table
     assert "manual_table" in names
+
+
+# Tests for Connection.list_collections() method
+
+
+def test_list_collections_empty_database(connection):
+    """Test listing collections on an empty database."""
+    # Should return an empty list when no collections exist
+    collections = connection.list_collections()
+    assert isinstance(collections, list)
+    assert len(collections) == 0
+
+
+def test_list_collections_with_collections(connection):
+    """Test listing collections with existing collections."""
+    # Create some collections
+    collection1 = connection.create_collection("test_collection_1")
+    collection2 = connection.create_collection("test_collection_2")
+
+    # Add some data to make sure tables are created
+    collection1.insert_one({"foo": "bar"})
+    collection2.insert_one({"baz": "qux"})
+
+    # List collections
+    collections = connection.list_collections()
+
+    # Should contain our collections with detailed information
+    assert isinstance(collections, list)
+    assert len(collections) >= 2
+
+    # Find our collections in the result
+    collection1_info = None
+    collection2_info = None
+
+    for collection_info in collections:
+        if collection_info["name"] == "test_collection_1":
+            collection1_info = collection_info
+        elif collection_info["name"] == "test_collection_2":
+            collection2_info = collection_info
+
+    # Verify both collections were found
+    assert collection1_info is not None
+    assert collection2_info is not None
+
+    # Verify the structure of collection info
+    assert "name" in collection1_info
+    assert "options" in collection1_info
+    assert collection1_info["name"] == "test_collection_1"
+
+    assert "name" in collection2_info
+    assert "options" in collection2_info
+    assert collection2_info["name"] == "test_collection_2"
+
+
+def test_list_collections_after_drop(connection):
+    """Test listing collections after dropping a collection."""
+    # Create some collections
+    collection1 = connection.create_collection("test_collection_1")
+    collection2 = connection.create_collection("test_collection_2")
+
+    # Add some data to make sure tables are created
+    collection1.insert_one({"foo": "bar"})
+    collection2.insert_one({"baz": "qux"})
+
+    # Drop one collection
+    collection1.drop()
+
+    # List collections
+    collections = connection.list_collections()
+
+    # Should only contain the remaining collection
+    assert isinstance(collections, list)
+
+    # Find our collections in the result
+    collection1_found = False
+    collection2_found = False
+
+    for collection_info in collections:
+        if collection_info["name"] == "test_collection_1":
+            collection1_found = True
+        elif collection_info["name"] == "test_collection_2":
+            collection2_found = True
+
+    # Verify collection1 was dropped and collection2 still exists
+    assert not collection1_found
+    assert collection2_found
+
+
+def test_list_collections_manual_table(connection):
+    """Test listing collections includes manually created tables."""
+    # Create a table manually through SQL
+    connection.db.execute(
+        "CREATE TABLE manual_table (id INTEGER PRIMARY KEY, data TEXT)"
+    )
+
+    # List collections
+    collections = connection.list_collections()
+
+    # Should include the manually created table
+    manual_table_found = False
+    for collection_info in collections:
+        if collection_info["name"] == "manual_table":
+            manual_table_found = True
+            break
+
+    assert manual_table_found
+
+
+def test_list_collections_structure(connection):
+    """Test the structure of collection information returned."""
+    # Create a collection
+    collection = connection.create_collection("test_structure")
+    collection.insert_one({"test": "data"})
+
+    # List collections
+    collections = connection.list_collections()
+
+    # Find our collection
+    collection_info = None
+    for info in collections:
+        if info["name"] == "test_structure":
+            collection_info = info
+            break
+
+    # Verify structure
+    assert collection_info is not None
+    assert isinstance(collection_info, dict)
+    assert "name" in collection_info
+    assert "options" in collection_info
+    assert isinstance(collection_info["name"], str)
+    # options should contain SQL definition or be None/empty
+    assert isinstance(collection_info["options"], (str, type(None)))

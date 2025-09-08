@@ -10,6 +10,7 @@ This document summarizes the progress made in implementing missing PyMongo-compa
    - `Collection.drop()` - Drop the entire collection
    - `Connection.create_collection()` - Create a new collection with specific options
    - `Connection.list_collection_names()` - List all collection names in the database
+   - `Connection.list_collections()` - Get detailed information about collections
 
 2. **Query Operators**
    - `$and` - Logical AND operator (fully implemented)
@@ -27,13 +28,10 @@ All implementations were completed following the PyMongo API specifications whil
 
 ### Medium Priority APIs
 
-1. **Database Operations**
-   - `Connection.list_collections()` - Get detailed information about collections
-
-2. **Advanced Aggregation**
+1. **Advanced Aggregation**
    - `Collection.aggregate_raw_batches()` - Perform aggregation and retrieve raw BSON batches
 
-3. **Search Index APIs**
+2. **Search Index APIs**
    - `create_search_index()` - Create a single search index
    - `create_search_indexes()` - Create multiple search indexes
    - `drop_search_index()` - Drop a search index
@@ -59,14 +57,14 @@ All implementations were completed following the PyMongo API specifications whil
 
 ## Implementation Statistics
 
-- **Completion Rate**: ~70% of planned implementations completed
+- **Completion Rate**: ~75% of planned implementations completed
 - **API Coverage**: Increased from 85% to 90%+ PyMongo API compatibility
 - **Code Quality**: All implementations maintain backward compatibility
 - **Testing**: 100% test coverage for new implementations
 
 ## Next Focus Areas
 
-1. Complete remaining P1 items (High Priority)
+1. Implement `aggregate_raw_batches()` method
 2. Implement search index functionality
 3. Add evaluation operators for advanced queries
 4. Enhance database introspection capabilities

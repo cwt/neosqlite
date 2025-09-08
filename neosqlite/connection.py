@@ -166,6 +166,21 @@ class Connection:
         )
         return [row[0] for row in cursor.fetchall()]
 
+    def list_collections(self):
+        """
+        Get detailed information about collections in the database.
+
+        Returns:
+            List[Dict[str, Any]]: A list of dictionaries containing collection information.
+                                Each dictionary has 'name' and 'options' keys.
+        """
+        cursor = self.db.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type='table'"
+        )
+        return [
+            {"name": row[0], "options": row[1]} for row in cursor.fetchall()
+        ]
+
     @contextmanager
     def transaction(self) -> Iterator[None]:
         """

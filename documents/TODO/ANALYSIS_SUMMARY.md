@@ -26,7 +26,7 @@ NeoSQLite provides a comprehensive PyMongo-compatible API for SQLite databases, 
 ## Key Findings
 
 ### High Priority Missing APIs
-- Database operations: `list_collection_names()` - ✅ COMPLETED
+- Database operations: `list_collections()` - ✅ COMPLETED
 - Advanced aggregation: `aggregate_raw_batches()` - IN PROGRESS
 
 ### High Priority Missing Operators
@@ -45,6 +45,6 @@ NeoSQLite provides a comprehensive PyMongo-compatible API for SQLite databases, 
 1. Review the implementation plan in MISSING_APIS_IMPLEMENTATION_PLAN.md
 2. Continue following the prioritized roadmap in IMPLEMENTATION_ROADMAP.md
 3. Use the compatibility report in API_COMPATIBILITY_REPORT.md as a reference
-4. Focus on implementing remaining P1-P3 items
+4. Focus on implementing remaining P1-P3 items (specifically `aggregate_raw_batches()`)
 
 This analysis provides a clear path forward for enhancing NeoSQLite's PyMongo compatibility while maintaining its unique advantages as a SQLite-based NoSQL solution.

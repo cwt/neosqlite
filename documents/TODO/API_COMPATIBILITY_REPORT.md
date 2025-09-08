@@ -39,6 +39,9 @@ NeoSQLite has successfully implemented the majority of PyMongo's core Collection
 - `rename()` - ✓
 - `options()` - ✓
 
+### Database Operations
+- `list_collections()` - ✓
+
 ### Utility Methods
 - `count_documents()` - ✓
 - `estimated_document_count()` - ✓
@@ -48,10 +51,7 @@ NeoSQLite has successfully implemented the majority of PyMongo's core Collection
 
 ### High Priority Missing APIs
 
-1. **Database-level Operations**
-   - `list_collections()` - Get detailed information about collections
-
-2. **Advanced Aggregation**
+1. **Advanced Aggregation**
    - `aggregate_raw_batches()` - Perform aggregation and retrieve raw BSON batches
 
 ### Medium Priority Missing APIs
