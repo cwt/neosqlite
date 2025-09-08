@@ -551,6 +551,15 @@ class Collection:
             case _:
                 return False
 
+    def drop(self):
+        """
+        Drop the entire collection.
+
+        This method removes the collection (table) from the database. After calling
+        this method, the collection will no longer exist in the database.
+        """
+        self.db.execute(f"DROP TABLE IF EXISTS {self.name}")
+
     def watch(
         self,
         pipeline: List[Dict[str, Any]] | None = None,

@@ -12,3 +12,11 @@ class MalformedDocument(Exception):
     """
 
     pass
+
+
+class CollectionInvalid(Exception):
+    """
+    Exception raised when a collection is invalid.
+    """
+
+    pass

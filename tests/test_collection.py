@@ -1327,3 +1327,63 @@ def test_update_many_fallback(collection):
 
     # Note: The exact behavior of $regex depends on the implementation
     # In some cases it might use SQL, in others it might use the fallback path
+
+
+# Tests for collection drop functionality
+
+
+def test_collection_drop(connection):
+    """Test dropping a collection."""
+    # Create a collection and add some data
+    collection = connection["test_drop"]
+    collection.insert_one({"foo": "bar"})
+    assert collection.count_documents({}) == 1
+
+    # Drop the collection
+    collection.drop()
+
+    # Verify the table no longer exists in the database
+    cursor = connection.db.execute(
+        "SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = ?",
+        ("test_drop",),
+    )
+    assert cursor.fetchone()[0] == 0
+
+
+def test_collection_drop_nonexistent_collection(connection):
+    """Test dropping a collection that doesn't exist."""
+    # Create a collection but don't add any data
+    collection = connection["empty_collection"]
+
+    # Drop the collection (should not raise an error)
+    collection.drop()
+
+    # Verify the collection is dropped
+    cursor = connection.db.execute(
+        "SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = ?",
+        ("empty_collection",),
+    )
+    assert cursor.fetchone()[0] == 0
+
+
+def test_collection_drop_with_indexes(connection):
+    """Test dropping a collection with indexes."""
+    # Create a collection with indexes
+    collection = connection["test_drop_indexes"]
+    collection.insert_one({"foo": "bar", "baz": 123})
+    collection.create_index("foo")
+    collection.create_index("baz")
+
+    # Verify indexes exist
+    indexes = collection.list_indexes()
+    assert len(indexes) > 0  # Should have at least the indexes we created
+
+    # Drop the collection
+    collection.drop()
+
+    # Verify the table no longer exists in the database
+    cursor = connection.db.execute(
+        "SELECT COUNT(1) FROM sqlite_master WHERE type = 'table' AND name = ?",
+        ("test_drop_indexes",),
+    )
+    assert cursor.fetchone()[0] == 0

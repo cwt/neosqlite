@@ -10,9 +10,10 @@ This document outlines a comprehensive plan for implementing missing PyMongo-com
 
 ## High Priority Implementations
 
-### Collection Management APIs
+### ~~Collection Management APIs~~
 
-#### `drop()`
+#### ~~`drop()`~~
+- **Status**: ✅ COMPLETED
 - **Purpose**: Drop the entire collection (table in SQLite)
 - **Location**: `neosqlite/collection/__init__.py`
 - **Implementation**:
@@ -24,7 +25,8 @@ This document outlines a comprehensive plan for implementing missing PyMongo-com
 - **Dependencies**: None
 - **Testing**: Verify table is removed from database
 
-#### `create_collection()` (Connection level)
+#### ~~`create_collection()` (Connection level)~~
+- **Status**: ✅ COMPLETED
 - **Purpose**: Create a new collection with specific options
 - **Location**: `neosqlite/connection.py`
 - **Implementation**:
@@ -40,7 +42,8 @@ This document outlines a comprehensive plan for implementing missing PyMongo-com
 - **Dependencies**: Collection class enhancements
 - **Testing**: Verify collection creation with options
 
-#### `list_collection_names()` (Connection level)
+#### ~~`list_collection_names()` (Connection level)~~
+- **Status**: ✅ COMPLETED
 - **Purpose**: List all collection names in the database
 - **Location**: `neosqlite/connection.py`
 - **Implementation**:
@@ -53,7 +56,8 @@ This document outlines a comprehensive plan for implementing missing PyMongo-com
 - **Dependencies**: None
 - **Testing**: Verify correct listing of tables
 
-#### `list_collections()` (Connection level)
+#### ~~`list_collections()` (Connection level)~~
+- **Status**: 🔄 IN PROGRESS
 - **Purpose**: Get detailed information about collections
 - **Location**: `neosqlite/connection.py`
 - **Implementation**:
@@ -66,9 +70,10 @@ This document outlines a comprehensive plan for implementing missing PyMongo-com
 - **Dependencies**: None
 - **Testing**: Verify detailed collection information
 
-### Query Operators
+### ~~Query Operators~~
 
-#### `$and`, `$or`, `$not`, `$nor` Logical Operators
+#### ~~`$and`, `$or`, `$not`, `$nor` Logical Operators~~
+- **Status**: ✅ COMPLETED
 - **Purpose**: Complete logical operator support
 - **Location**: `neosqlite/query_operators.py` and `neosqlite/collection/sql_translator_unified.py`
 - **Implementation**:
@@ -77,7 +82,8 @@ This document outlines a comprehensive plan for implementing missing PyMongo-com
 - **Dependencies**: Existing logical operator partial implementation
 - **Testing**: Complex nested logical queries
 
-#### `$all` Array Operator
+#### ~~`$all` Array Operator~~
+- **Status**: ✅ COMPLETED
 - **Purpose**: Matches arrays that contain all elements specified
 - **Location**: `neosqlite/query_operators.py`
 - **Implementation**:
@@ -92,7 +98,8 @@ This document outlines a comprehensive plan for implementing missing PyMongo-com
 - **Dependencies**: None
 - **Testing**: Array matching scenarios
 
-#### `$type` Element Operator
+#### ~~`$type` Element Operator~~
+- **Status**: ✅ COMPLETED
 - **Purpose**: Select documents based on field type
 - **Location**: `neosqlite/query_operators.py`
 - **Implementation**:

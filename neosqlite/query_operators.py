@@ -348,3 +348,42 @@ def _contains(field: str, value: str, document: Dict[str, Any]) -> bool:
         return str(value).lower() in str(field_val).lower()
     except (TypeError, AttributeError):
         return False
+
+
+def _type(field: str, value: Any, document: Dict[str, Any]) -> bool:
+    """
+    Check if field is of specified type.
+
+    Args:
+        field (str): The document field to check.
+        value (Any): The type to check against (as a number or type object).
+        document (Dict[str, Any]): The document to check the field value from.
+
+    Returns:
+        bool: True if the field is of the specified type, False otherwise.
+    """
+    doc_value = _get_nested_field(field, document)
+
+    # MongoDB type mapping
+    type_mapping = {
+        1: float,
+        2: str,
+        3: dict,
+        4: list,
+        8: bool,
+        10: type(None),
+        16: int,
+        18: int,
+        19: int,
+    }
+
+    # If value is a number, get the corresponding type from mapping
+    # Otherwise, use the value directly as a type
+    if isinstance(value, int):
+        expected_type = type_mapping.get(value)
+        if expected_type is None:
+            return False
+    else:
+        expected_type = value
+
+    return isinstance(doc_value, expected_type)

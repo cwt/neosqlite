@@ -3,7 +3,11 @@ from .bulk_operations import BulkOperationExecutor
 from .changestream import ChangeStream
 from .collection import Collection
 from .connection import Connection
-from .exceptions import MalformedQueryException, MalformedDocument
+from .exceptions import (
+    MalformedQueryException,
+    MalformedDocument,
+    CollectionInvalid,
+)
 from .requests import InsertOne, UpdateOne, DeleteOne
 from .results import (
     BulkWriteResult,
@@ -34,6 +38,7 @@ __all__ = [
     "BulkWriteResult",
     "ChangeStream",
     "Collection",
+    "CollectionInvalid",
     "Connection",
     "Cursor",
     "DESCENDING",

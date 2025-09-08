@@ -1,5 +1,6 @@
 from __future__ import annotations
 from .collection import Collection
+from .exceptions import CollectionInvalid
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Tuple
 from typing_extensions import Literal
@@ -130,6 +131,40 @@ class Connection:
                         the use of `IF EXISTS` in the SQL command.
         """
         self.db.execute(f"DROP TABLE IF EXISTS {name}")
+
+    def create_collection(self, name: str, **kwargs):
+        """
+        Create a new collection with specific options.
+
+        Args:
+            name (str): The name of the collection to create.
+            **kwargs: Additional options for collection creation.
+
+        Returns:
+            Collection: The newly created collection.
+
+        Raises:
+            CollectionInvalid: If a collection with the given name already exists.
+        """
+        if name in self._collections:
+            raise CollectionInvalid(f"Collection {name} already exists")
+        collection = Collection(
+            self.db, name, create=True, database=self, **kwargs
+        )
+        self._collections[name] = collection
+        return collection
+
+    def list_collection_names(self):
+        """
+        List all collection names in the database.
+
+        Returns:
+            List[str]: A list of all collection names in the database.
+        """
+        cursor = self.db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+        return [row[0] for row in cursor.fetchall()]
 
     @contextmanager
     def transaction(self) -> Iterator[None]:

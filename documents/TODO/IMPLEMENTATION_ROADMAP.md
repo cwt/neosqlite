@@ -11,54 +11,39 @@ This document provides a prioritized roadmap for implementing missing PyMongo-co
 
 ## P0 - Critical Priority
 
-### 1. Collection.drop() Method
+### ~~1. Collection.drop() Method~~
+- **Status**: ✅ COMPLETED
 - **Why**: Essential for collection management
 - **Effort**: Low
 - **Impact**: High
 - **Dependencies**: None
-```python
-def drop(self):
-    """Drop the entire collection."""
-    self.db.execute(f"DROP TABLE IF EXISTS {self.name}")
-```
 
-### 2. Connection.create_collection() Method
+### ~~2. Connection.create_collection() Method~~
+- **Status**: ✅ COMPLETED
 - **Why**: Essential for explicit collection creation with options
 - **Effort**: Low
 - **Impact**: High
 - **Dependencies**: Collection class
-```python
-def create_collection(self, name, **kwargs):
-    """Create a new collection with specific options."""
-    if name in self._collections:
-        raise CollectionInvalid(f"Collection {name} already exists")
-    collection = Collection(self.db, name, create=True, database=self, **kwargs)
-    self._collections[name] = collection
-    return collection
-```
 
-### 3. Connection.list_collection_names() Method
+### ~~3. Connection.list_collection_names() Method~~
+- **Status**: ✅ COMPLETED
 - **Why**: Essential for database introspection
 - **Effort**: Low
 - **Impact**: High
 - **Dependencies**: None
-```python
-def list_collection_names(self):
-    """List all collection names in the database."""
-    cursor = self.db.execute("SELECT name FROM sqlite_master WHERE type='table'")
-    return [row[0] for row in cursor.fetchall()]
-```
 
 ## P1 - High Priority
 
-### 4. Complete Logical Operator Support
+### ~~4. Complete Logical Operator Support~~
+- **Status**: ✅ COMPLETED
 - **Why**: Essential for complex queries
 - **Effort**: Medium
 - **Impact**: High
 - **Dependencies**: SQL translator enhancements
 - **Operators**: `$and`, `$or`, `$not`, `$nor`
 
-### 5. Missing Query Operators
+### ~~5. Missing Query Operators~~
+- **Status**: ✅ COMPLETED
 - **Why**: Important for query completeness
 - **Effort**: Medium
 - **Impact**: High
@@ -139,17 +124,13 @@ def list_collection_names(self):
 
 ## Implementation Timeline
 
-### Phase 1 (Weeks 1-2): P0 Items
+### Phase 1 ( Weeks 1-2): P0 Items ✅ COMPLETED
 - Collection.drop()
 - Connection.create_collection()
 - Connection.list_collection_names()
 
-### Phase 2 (Weeks 3-4): P1 Items
-- Complete logical operators
-- Missing query operators ($all, $type)
+### Phase 2 ( Weeks 3-4): P1 Items - IN PROGRESS
 - Connection.list_collections()
-
-### Phase 3 (Weeks 5-6): P1 Continued
 - Collection.aggregate_raw_batches()
 - Initial search index APIs
 
