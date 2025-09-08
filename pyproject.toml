@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "neosqlite"
-version = "0.8.1"
+version = "0.9.0"
 description = "NoSQL for SQLite with PyMongo-like API"
 authors = ["Chaiwat Suttipongsakul <cwt@bashell.com>"]
 license = "MIT"
@@ -34,7 +34,7 @@ memory-constrained = ["quez"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.4"
-pytest-cov = "^6.2"
+pytest-cov = "^6.3"
 mypy = "^1.17"
 pytest-xdist = "^3.8.0"
 

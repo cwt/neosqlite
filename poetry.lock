@@ -1018,4 +1018,4 @@ memory-constrained = ["quez"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.10"
-content-hash = "8927a3aea4d7ba31192a9d85aa3d97a212be24bce867debf6e1d0645833dd107"
+content-hash = "f5e98ccd86237483a5b2015f9a9742897717f5433df031ef9dd19a86aed0c357"
