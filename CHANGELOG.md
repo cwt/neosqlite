@@ -1,5 +1,49 @@
 # CHANGELOG
 
+## 0.9.1
+
+### Improved Code Organization
+
+- **Index Management Refactoring**: All search index methods (`create_search_index`, `create_search_indexes`, `list_search_indexes`, `update_search_index`, and `drop_search_index`) have been properly delegated from the Collection class to the IndexManager class, following the established pattern for other index operations
+- **Consistent API Implementation**: The Collection class now consistently delegates all index-related operations to the IndexManager, improving code organization and maintainability
+- **Reduced Code Duplication**: Search index functionality is now implemented in a single location (IndexManager) rather than being duplicated between the Collection and IndexManager classes
+
+### Code Quality Improvements
+
+- **Bug Fixes**: Fixed undefined variable issues related to import statements in example files
+- **Code Cleanup**: Removed unnecessary import statements and fixed linting issues with ruff
+- **Improved Maintainability**: Better organized code structure makes the codebase more approachable for new contributors
+
+### New Features
+
+#### Index Management Enhancements
+
+- **Proper Delegation Pattern**: All search index methods in the Collection class now properly delegate to the corresponding methods in the IndexManager class:
+  - `create_search_index()` now delegates to `IndexManager.create_search_index()`
+  - `create_search_indexes()` now delegates to `IndexManager.create_search_indexes()`
+  - `list_search_indexes()` now delegates to `IndexManager.list_search_indexes()`
+  - `update_search_index()` now delegates to `IndexManager.update_search_index()`
+  - `drop_search_index()` now delegates to `IndexManager.drop_search_index()`
+
+#### Code Quality Improvements
+
+- **Import Statement Cleanup**: Removed unused import statements from example files
+- **Linting Fixes**: Fixed various linting issues identified by ruff
+- **Variable Scope Fixes**: Resolved undefined variable issues in example code
+
+### Performance Improvements
+
+- **Memory Efficiency**: Reduced memory footprint by removing unnecessary import statements
+- **Improved Code Maintainability**: Better organized code structure leads to more efficient development and debugging
+
+### Technical Benefits
+
+- **Better Code Organization**: All index-related functionality is now consistently located in the IndexManager class
+- **Enhanced Maintainability**: Improved code structure makes it easier to maintain and extend index functionality
+- **Reduced Code Duplication**: Eliminated duplicated code between Collection and IndexManager classes
+- **Improved Testability**: Centralized index management functionality makes it easier to test and verify behavior
+- **Backward Compatibility**: All existing APIs remain accessible through the same import paths
+
 ## 0.9.0
 
 ### Enhanced Aggregation Pipeline Processing
