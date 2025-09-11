@@ -8,6 +8,7 @@ for the three cases with performance gain less than 1.5x.
 
 import neosqlite
 import time
+from neosqlite.collection import query_helper
 from typing import List, Dict, Any, Callable, Optional
 
 # Add debugging to track SQL execution
@@ -47,18 +48,16 @@ def setup_debugging():
     global original_build_unwind_query
     if original_build_unwind_query is None:
         original_build_unwind_query = (
-            neosqlite.collection.query_helper.QueryHelper._build_unwind_query
+            query_helper.QueryHelper._build_unwind_query
         )
-        neosqlite.collection.query_helper.QueryHelper._build_unwind_query = (
-            debug_build_unwind_query
-        )
+        query_helper.QueryHelper._build_unwind_query = debug_build_unwind_query
 
 
 def teardown_debugging():
     """Restore original functions."""
     global original_build_unwind_query
     if original_build_unwind_query is not None:
-        neosqlite.collection.query_helper.QueryHelper._build_unwind_query = (
+        query_helper.QueryHelper._build_unwind_query = (
             original_build_unwind_query
         )
         original_build_unwind_query = None
@@ -71,7 +70,7 @@ def test_unwind_execution(
     print(f"\n--- {description} ---")
 
     # Test optimized path
-    neosqlite.collection.query_helper.set_force_fallback(False)
+    query_helper.set_force_fallback(False)
 
     start_time = time.perf_counter()
     cursor_optimized = collection.aggregate(pipeline)
@@ -79,7 +78,7 @@ def test_unwind_execution(
     optimized_time = time.perf_counter() - start_time
 
     # Test fallback path
-    neosqlite.collection.query_helper.set_force_fallback(True)
+    query_helper.set_force_fallback(True)
 
     start_time = time.perf_counter()
     cursor_fallback = collection.aggregate(pipeline)
@@ -87,7 +86,7 @@ def test_unwind_execution(
     fallback_time = time.perf_counter() - start_time
 
     # Reset to normal operation
-    neosqlite.collection.query_helper.set_force_fallback(False)
+    query_helper.set_force_fallback(False)
 
     # Verify results are identical
     result_count_match = len(result_optimized) == len(result_fallback)
@@ -207,7 +206,7 @@ def main():
                 )
             users.insert_many(user_docs)
             print(
-                f"   Updated users with nested project/task arrays for nested unwind test"
+                "   Updated users with nested project/task arrays for nested unwind test"
             )
 
             results["$unwind (nested)"] = test_unwind_execution(

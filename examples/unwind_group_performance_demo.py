@@ -48,7 +48,7 @@ def main():
         )
 
         # Show some results
-        print(f"\nSample results (first 5 groups):")
+        print("\nSample results (first 5 groups):")
         for i, doc in enumerate(result[:5]):
             print(f"  {doc['_id']}: {doc['count']}")
 
@@ -68,7 +68,7 @@ def main():
         )
 
         # Show some results
-        print(f"\nSample results (first 5 groups):")
+        print("\nSample results (first 5 groups):")
         for i, doc in enumerate(result[:5]):
             print(f"  {doc['_id']}: {doc['count']}")
 

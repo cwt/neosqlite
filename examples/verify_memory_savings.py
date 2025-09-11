@@ -117,7 +117,7 @@ def test_actual_memory_savings():
             print(f"   Object savings: {object_savings:.1f}%")
 
         # Verify results are the same
-        print(f"\n4. Result verification:")
+        print("\n4. Result verification:")
         print(
             f"   Both methods processed same number of documents: {len(results_normal) == len(results_quez)}"
         )

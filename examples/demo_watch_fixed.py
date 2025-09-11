@@ -86,7 +86,7 @@ def demonstrate_watch_feature():
                 except StopIteration:
                     # No more changes
                     break
-                except Exception as e:
+                except Exception:
                     # Continue watching
                     time.sleep(0.1)
                     continue
@@ -98,12 +98,12 @@ def demonstrate_watch_feature():
         finally:
             change_stream.close()
 
-        print(f"\n4. Summary:")
+        print("\n4. Summary:")
         print(f"   - Received {changes_received} change notifications")
-        print(f"   - Demonstrated INSERT, UPDATE, and DELETE operations")
+        print("   - Demonstrated INSERT, UPDATE, and DELETE operations")
 
         # Show current users in the collection
-        print(f"\n5. Current users in collection:")
+        print("\n5. Current users in collection:")
         for user in users.find():
             print(f"   - {user}")
 

@@ -2,9 +2,6 @@
 Tests for the $type query operator.
 """
 
-import pytest
-import neosqlite
-
 
 def test_type_operator_with_string_type(collection):
     """Test $type operator with string type."""

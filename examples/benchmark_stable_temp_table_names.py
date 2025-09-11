@@ -85,11 +85,11 @@ def benchmark_temp_table_naming(num_runs: int = 10000) -> Dict[str, float]:
         else float("inf")
     )
 
-    print(f"  Deterministic naming:")
+    print("  Deterministic naming:")
     print(f"    Average time: {deterministic_avg*1000000:.2f} μs")
     print(f"    Std dev:      {deterministic_stdev*1000000:.2f} μs")
 
-    print(f"  Random naming:")
+    print("  Random naming:")
     print(f"    Average time: {random_avg*1000000:.2f} μs")
     print(f"    Std dev:      {random_stdev*1000000:.2f} μs")
 

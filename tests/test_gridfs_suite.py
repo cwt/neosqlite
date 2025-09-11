@@ -2,7 +2,6 @@
 Consolidated tests for GridFS functionality.
 """
 
-from neosqlite import Connection
 from neosqlite.gridfs import GridFS, GridFSBucket, NoFile, FileExists
 from neosqlite.gridfs.grid_file import GridIn, GridOut
 from neosqlite.gridfs.errors import (

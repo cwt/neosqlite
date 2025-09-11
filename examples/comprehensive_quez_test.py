@@ -4,7 +4,6 @@ Comprehensive test to verify quez integration is working correctly without deadl
 """
 
 import neosqlite
-import time
 
 
 def comprehensive_quez_test():

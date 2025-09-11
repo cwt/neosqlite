@@ -52,7 +52,7 @@ def simple_benchmark_with_quez_stats():
         # Get initial stats
         stats = cursor.get_quez_stats()
         if stats:
-            print(f"   Initial statistics:")
+            print("   Initial statistics:")
             print(f"     Documents: {stats['count']:,}")
             print(f"     Raw size: {stats['raw_size_bytes'] / 1024:.1f} KB")
             print(
@@ -68,7 +68,7 @@ def simple_benchmark_with_quez_stats():
                 print(f"     Memory savings: {savings / 1024:.1f} KB")
 
         # Process documents
-        print(f"\n   Processing documents:")
+        print("\n   Processing documents:")
         count = 0
         start_time = time.perf_counter()
 

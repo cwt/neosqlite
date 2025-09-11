@@ -2,8 +2,6 @@
 Comprehensive tests for nested field queries and unwind operations.
 """
 
-import pytest
-import neosqlite
 import time
 
 

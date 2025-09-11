@@ -91,7 +91,7 @@ def test_hint_index(collection):
     # We can't easily mock the execute call in the same way.
     # We'll trust the implementation detail that hint is used.
     docs_with_hint = list(
-        collection.find({"foo": "bar", "a": 2}, hint=f"idx_foo_foo")
+        collection.find({"foo": "bar", "a": 2}, hint="idx_foo_foo")
     )
     assert len(docs_with_hint) == 1
     assert docs_with_hint[0]["a"] == 2

@@ -2,7 +2,6 @@
 Tests for the SQL translator unified module.
 """
 
-import pytest
 from neosqlite.collection.sql_translator_unified import (
     _empty_result,
     _text_search_fallback,
@@ -11,7 +10,6 @@ from neosqlite.collection.sql_translator_unified import (
     SQLClauseBuilder,
     SQLTranslator,
 )
-from neosqlite.collection.json_helpers import neosqlite_json_dumps_for_sql
 
 
 def test_empty_result():

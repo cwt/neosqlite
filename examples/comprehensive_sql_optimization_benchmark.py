@@ -9,6 +9,7 @@ to demonstrate the performance benefits of SQL optimization without taking too l
 import neosqlite
 import time
 import statistics
+from neosqlite.collection import query_helper
 from typing import List, Dict, Any
 
 
@@ -19,7 +20,7 @@ def benchmark_feature(
     print(f"\n--- {name} ---")
 
     # Test optimized path
-    neosqlite.collection.query_helper.set_force_fallback(False)
+    query_helper.set_force_fallback(False)
     optimized_times = []
     for _ in range(num_runs):
         start_time = time.perf_counter()
@@ -31,7 +32,7 @@ def benchmark_feature(
     avg_optimized = statistics.mean(optimized_times)
 
     # Test fallback path
-    neosqlite.collection.query_helper.set_force_fallback(True)
+    query_helper.set_force_fallback(True)
     fallback_times = []
     for _ in range(num_runs):
         start_time = time.perf_counter()
@@ -43,7 +44,7 @@ def benchmark_feature(
     avg_fallback = statistics.mean(fallback_times)
 
     # Reset to normal operation
-    neosqlite.collection.query_helper.set_force_fallback(False)
+    query_helper.set_force_fallback(False)
 
     # Verify results are identical (for simple counts)
     result_count_match = len(result_optimized) == len(result_fallback)
@@ -269,7 +270,7 @@ def main():
 
         # 13. $lookup optimization (simple) - simplified test
         print("\n--- Simple $lookup operation ---")
-        neosqlite.collection.query_helper.set_force_fallback(False)
+        query_helper.set_force_fallback(False)
         start_time = time.perf_counter()
         cursor_lookup_opt = orders.aggregate(
             [
@@ -286,7 +287,7 @@ def main():
         result_lookup_opt = list(cursor_lookup_opt)
         optimized_time = time.perf_counter() - start_time
 
-        neosqlite.collection.query_helper.set_force_fallback(True)
+        query_helper.set_force_fallback(True)
         start_time = time.perf_counter()
         cursor_lookup_fallback = orders.aggregate(
             [
@@ -303,7 +304,7 @@ def main():
         result_lookup_fallback = list(cursor_lookup_fallback)
         fallback_time = time.perf_counter() - start_time
 
-        neosqlite.collection.query_helper.set_force_fallback(False)
+        query_helper.set_force_fallback(False)
         speedup = (
             fallback_time / optimized_time
             if optimized_time > 0
@@ -319,8 +320,9 @@ def main():
             "optimized_time": optimized_time,
             "fallback_time": fallback_time,
             "speedup": speedup,
-            "results_match": len(result_lookup_opt)
-            == len(result_lookup_fallback),
+            "results_match": (
+                len(result_lookup_opt) == len(result_lookup_fallback)
+            ),
         }
 
         # 14. Advanced $unwind with includeArrayIndex (fallback only)
@@ -383,20 +385,20 @@ def main():
         ]
 
         # Test optimized path
-        neosqlite.collection.query_helper.set_force_fallback(False)
+        query_helper.set_force_fallback(False)
         start_time = time.perf_counter()
         cursor_reorder_opt = products.aggregate(pipeline_reorder)
         result_reorder_opt = list(cursor_reorder_opt)
         reorder_optimized_time = time.perf_counter() - start_time
 
         # Test fallback path
-        neosqlite.collection.query_helper.set_force_fallback(True)
+        query_helper.set_force_fallback(True)
         start_time = time.perf_counter()
         cursor_reorder_fallback = products.aggregate(pipeline_reorder)
         result_reorder_fallback = list(cursor_reorder_fallback)
         reorder_fallback_time = time.perf_counter() - start_time
 
-        neosqlite.collection.query_helper.set_force_fallback(False)
+        query_helper.set_force_fallback(False)
         reorder_speedup = (
             reorder_fallback_time / reorder_optimized_time
             if reorder_optimized_time > 0
@@ -413,8 +415,9 @@ def main():
             "optimized_time": reorder_optimized_time,
             "fallback_time": reorder_fallback_time,
             "speedup": reorder_speedup,
-            "results_match": len(result_reorder_opt)
-            == len(result_reorder_fallback),
+            "results_match": (
+                len(result_reorder_opt) == len(result_reorder_fallback)
+            ),
         }
 
         # 17. Memory-constrained processing with quez
@@ -423,7 +426,7 @@ def main():
         pipeline_large = [{"$unwind": "$tags"}]
 
         # Test without quez (normal processing)
-        neosqlite.collection.query_helper.set_force_fallback(False)
+        query_helper.set_force_fallback(False)
         start_time = time.perf_counter()
         cursor_normal = products.aggregate(pipeline_large)
         result_normal = list(cursor_normal)

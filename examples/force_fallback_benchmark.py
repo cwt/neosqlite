@@ -4,6 +4,7 @@ Example script demonstrating how to use the force fallback kill switch for bench
 """
 import neosqlite
 import time
+from neosqlite.collection import query_helper
 
 
 def benchmark_aggregation_performance():
@@ -37,7 +38,7 @@ def benchmark_aggregation_performance():
         print("\nRunning benchmark...")
 
         # Test optimized path
-        neosqlite.collection.query_helper.set_force_fallback(False)
+        query_helper.set_force_fallback(False)
         start_time = time.perf_counter()
         cursor_optimized = collection.aggregate(pipeline)
         # Force execution by converting to list to get accurate timing
@@ -45,7 +46,7 @@ def benchmark_aggregation_performance():
         optimized_time = time.perf_counter() - start_time
 
         # Test fallback path
-        neosqlite.collection.query_helper.set_force_fallback(True)
+        query_helper.set_force_fallback(True)
         start_time = time.perf_counter()
         cursor_fallback = collection.aggregate(pipeline)
         # Force execution by converting to list to get accurate timing
@@ -53,7 +54,7 @@ def benchmark_aggregation_performance():
         fallback_time = time.perf_counter() - start_time
 
         # Reset to normal operation
-        neosqlite.collection.query_helper.set_force_fallback(False)
+        query_helper.set_force_fallback(False)
 
         # Verify results are identical
         print(f"Optimized result count: {len(result_optimized)}")
@@ -65,7 +66,7 @@ def benchmark_aggregation_performance():
         )
 
         # Print performance results
-        print(f"\nPerformance Results:")
+        print("\nPerformance Results:")
         print(f"  Optimized path: {optimized_time:.4f} seconds")
         print(f"  Fallback path:  {fallback_time:.4f} seconds")
         if optimized_time > 0:
@@ -75,7 +76,7 @@ def benchmark_aggregation_performance():
             )
 
         # Show sample results
-        print(f"\nSample Results (first 3):")
+        print("\nSample Results (first 3):")
         for i, doc in enumerate(result_optimized[:3]):
             print(
                 f"  {i+1}. Category: {doc['category']}, Tag: {doc['tags']}, Value: {doc['value']}"
@@ -88,21 +89,15 @@ def demonstrate_force_fallback_usage():
     print("=== Force Fallback Demonstration ===")
 
     # Check initial state
-    print(
-        f"Initial fallback state: {neosqlite.collection.query_helper.get_force_fallback()}"
-    )
+    print(f"Initial fallback state: {query_helper.get_force_fallback()}")
 
     # Enable fallback
-    neosqlite.collection.query_helper.set_force_fallback(True)
-    print(
-        f"After enabling fallback: {neosqlite.collection.query_helper.get_force_fallback()}"
-    )
+    query_helper.set_force_fallback(True)
+    print(f"After enabling fallback: {query_helper.get_force_fallback()}")
 
     # Disable fallback
-    neosqlite.collection.query_helper.set_force_fallback(False)
-    print(
-        f"After disabling fallback: {neosqlite.collection.query_helper.get_force_fallback()}"
-    )
+    query_helper.set_force_fallback(False)
+    print(f"After disabling fallback: {query_helper.get_force_fallback()}")
 
 
 if __name__ == "__main__":

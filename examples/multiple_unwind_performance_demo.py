@@ -46,7 +46,7 @@ def main():
         )
 
         # Show what the result looks like
-        print(f"\nResult structure example:")
+        print("\nResult structure example:")
         if result:
             print(f"  First document: {result[0]}")
             print(f"  Second document: {result[1]}")

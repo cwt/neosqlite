@@ -78,12 +78,12 @@ def demonstrate_watch_feature():
 
         change_stream.close()
 
-        print(f"\n4. Summary:")
+        print("\n4. Summary:")
         print(f"   - Collected {len(changes)} change notifications")
-        print(f"   - Demonstrated INSERT, UPDATE, and DELETE operations")
+        print("   - Demonstrated INSERT, UPDATE, and DELETE operations")
 
         # Show current users in the collection
-        print(f"\n5. Current users in collection:")
+        print("\n5. Current users in collection:")
         for user in users.find():
             print(f"   - {user}")
 

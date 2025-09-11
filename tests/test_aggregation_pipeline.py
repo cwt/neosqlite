@@ -1044,7 +1044,6 @@ def test_aggregation_cursor_quez_get_exception_handling(
         pytest.skip("Quez not available")
 
     # Import CompressedQueue for mocking
-    from neosqlite.collection.aggregation_cursor import CompressedQueue
 
     # Create a mock queue class
     class MockQueue:

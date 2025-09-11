@@ -1397,7 +1397,7 @@ class QueryHelper:
                             # Handle _id field
                             if group_id_field == unwind_field_name:
                                 # Grouping by the unwound field
-                                select_expressions.append(f"je.value AS _id")
+                                select_expressions.append("je.value AS _id")
                                 group_by_clause = "GROUP BY je.value"
                             else:
                                 # Grouping by another field
@@ -1516,7 +1516,7 @@ class QueryHelper:
                             # Handle _id field
                             if group_id_field == unwind_field_name:
                                 # Grouping by the unwound field
-                                select_expressions.append(f"je.value AS _id")
+                                select_expressions.append("je.value AS _id")
                                 group_by_clause = "GROUP BY je.value"
                             else:
                                 # Grouping by another field

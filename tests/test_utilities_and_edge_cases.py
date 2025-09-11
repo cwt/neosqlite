@@ -3,11 +3,10 @@ Consolidated tests for utilities, edges cases, and miscellaneous functionality.
 """
 
 import base64
-import json
 import os
 import tempfile
 import uuid
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 import neosqlite
@@ -19,12 +18,6 @@ from neosqlite.collection.query_helper import (
     QueryHelper,
 )
 from neosqlite.exceptions import MalformedDocument, MalformedQueryException
-from neosqlite.collection.temporary_table_aggregation import (
-    TemporaryTableAggregationProcessor,
-    can_process_with_temporary_tables,
-    aggregation_pipeline_context,
-    execute_2nd_tier_aggregation,
-)
 
 
 # ================================

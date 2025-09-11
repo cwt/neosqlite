@@ -9,7 +9,7 @@ from ..results import (
     InsertOneResult,
     UpdateResult,
 )
-from .cursor import Cursor, ASCENDING, DESCENDING
+from .cursor import Cursor, DESCENDING
 from .query_helper import QueryHelper
 from .raw_batch_cursor import RawBatchCursor
 from .sql_translator_unified import SQLTranslator

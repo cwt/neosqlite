@@ -7,7 +7,6 @@ performance by moving indexed $match operations to the beginning of pipelines.
 """
 
 import neosqlite
-import time
 
 
 def main():
@@ -96,7 +95,7 @@ def main():
         result1 = list(products.aggregate(pipeline1))
         result2 = list(products.aggregate(pipeline2))
 
-        print(f"\n   Results comparison:")
+        print("\n   Results comparison:")
         print(f"   Pipeline 1 found: {len(result1)} documents")
         print(f"   Pipeline 2 found: {len(result2)} documents")
         # Compare just the essential data since _id fields will differ
@@ -143,7 +142,7 @@ def main():
             optimized_pipeline
         )
 
-        print(f"\n   Cost estimation:")
+        print("\n   Cost estimation:")
         print(f"   Original pipeline cost: {original_cost:.2f}")
         print(f"   Optimized pipeline cost: {optimized_cost:.2f}")
         if original_cost > 0:
@@ -184,7 +183,7 @@ def main():
             optimized_complex
         )
 
-        print(f"\n   Cost estimation:")
+        print("\n   Cost estimation:")
         print(f"   Original complex pipeline cost: {original_complex_cost:.2f}")
         print(
             f"   Optimized complex pipeline cost: {optimized_complex_cost:.2f}"

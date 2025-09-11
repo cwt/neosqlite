@@ -60,7 +60,7 @@ def demonstrate_quez_stats():
         # Get quez stats before processing
         stats_before = cursor_quez.get_quez_stats()
         if stats_before:
-            print(f"   Before processing:")
+            print("   Before processing:")
             print(f"     Documents in queue: {stats_before['count']:,}")
             print(
                 f"     Raw size: {stats_before['raw_size_bytes'] / 1024:.1f} KB"
@@ -81,7 +81,7 @@ def demonstrate_quez_stats():
                 )
 
         # Process some documents
-        print(f"\n   Processing first 10 documents:")
+        print("\n   Processing first 10 documents:")
         count = 0
         for doc in cursor_quez:
             count += 1

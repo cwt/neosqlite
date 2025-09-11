@@ -649,7 +649,7 @@ def test_hint_index(collection):
     )
     collection.create_index("foo")
     docs_with_hint = list(
-        collection.find({"foo": "bar", "a": 2}, hint=f"idx_foo_foo")
+        collection.find({"foo": "bar", "a": 2}, hint="idx_foo_foo")
     )
     assert len(docs_with_hint) == 1
     assert docs_with_hint[0]["a"] == 2
@@ -1139,8 +1139,6 @@ def test_apply_query_size(collection):
 Comprehensive tests for update operations.
 """
 
-import pytest
-import neosqlite
 from neosqlite import MalformedDocument
 
 

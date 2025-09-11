@@ -5,7 +5,6 @@ Consolidated tests for query engine functionality and fallback mechanisms.
 import pytest
 import neosqlite
 import time
-import copy
 from neosqlite import Connection
 from neosqlite.query_operators import (
     _eq,
@@ -32,7 +31,6 @@ from neosqlite.collection.query_helper import (
 )
 from neosqlite.collection.temporary_table_aggregation import (
     execute_2nd_tier_aggregation,
-    can_process_with_temporary_tables,
 )
 
 

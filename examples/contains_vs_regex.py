@@ -46,7 +46,7 @@ def main():
         print(f"Found {len(results)} documents in {regex_time:.4f} seconds")
 
         # Compare performance
-        print(f"\nPerformance comparison:")
+        print("\nPerformance comparison:")
         print(f"$contains: {contains_time:.4f} seconds")
         print(f"$regex: {regex_time:.4f} seconds")
         print(
@@ -64,7 +64,7 @@ def main():
             f"Found {len(results)} documents in {simple_regex_time:.4f} seconds"
         )
 
-        print(f"\nWith simpler regex pattern:")
+        print("\nWith simpler regex pattern:")
         print(f"$contains: {contains_time:.4f} seconds")
         print(f"$regex (simple): {simple_regex_time:.4f} seconds")
         print(

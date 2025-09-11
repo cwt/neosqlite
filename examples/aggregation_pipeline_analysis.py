@@ -11,10 +11,6 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import neosqlite
-from neosqlite.collection.temporary_table_aggregation import (
-    TemporaryTableAggregationProcessor,
-    can_process_with_temporary_tables,
-)
 
 
 def analyze_current_implementation():
@@ -224,7 +220,7 @@ def analyze_current_implementation():
             )
             print()
 
-        print(f"Summary:")
+        print("Summary:")
         print(
             f"  - Currently SQL Optimizable: {sql_optimizable_count}/{len(test_cases)} pipeline types"
         )

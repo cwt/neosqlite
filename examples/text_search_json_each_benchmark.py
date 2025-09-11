@@ -9,6 +9,7 @@ which combines full-text search with array operations for improved performance.
 import neosqlite
 import time
 import statistics
+from neosqlite.collection import query_helper
 from typing import List, Dict, Any
 
 
@@ -19,7 +20,7 @@ def benchmark_feature(
     print(f"\n--- {name} ---")
 
     # Test optimized path
-    neosqlite.collection.query_helper.set_force_fallback(False)
+    query_helper.set_force_fallback(False)
     optimized_times = []
     for _ in range(num_runs):
         start_time = time.perf_counter()
@@ -31,7 +32,7 @@ def benchmark_feature(
     avg_optimized = statistics.mean(optimized_times)
 
     # Test fallback path
-    neosqlite.collection.query_helper.set_force_fallback(True)
+    query_helper.set_force_fallback(True)
     fallback_times = []
     for _ in range(num_runs):
         start_time = time.perf_counter()
@@ -43,7 +44,7 @@ def benchmark_feature(
     avg_fallback = statistics.mean(fallback_times)
 
     # Reset to normal operation
-    neosqlite.collection.query_helper.set_force_fallback(False)
+    query_helper.set_force_fallback(False)
 
     # Verify results are identical (for simple counts)
     result_count_match = len(result_optimized) == len(result_fallback)

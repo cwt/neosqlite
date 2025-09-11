@@ -8,6 +8,7 @@ performance characteristics continue to improve with even larger datasets.
 
 import neosqlite
 import time
+from neosqlite.collection import query_helper
 from typing import List, Dict, Any
 
 
@@ -18,7 +19,7 @@ def test_unwind_execution(
     print(f"\n--- {description} ---")
 
     # Test optimized path
-    neosqlite.collection.query_helper.set_force_fallback(False)
+    query_helper.set_force_fallback(False)
 
     start_time = time.perf_counter()
     cursor_optimized = collection.aggregate(pipeline)
@@ -26,7 +27,7 @@ def test_unwind_execution(
     optimized_time = time.perf_counter() - start_time
 
     # Test fallback path
-    neosqlite.collection.query_helper.set_force_fallback(True)
+    query_helper.set_force_fallback(True)
 
     start_time = time.perf_counter()
     cursor_fallback = collection.aggregate(pipeline)
@@ -34,7 +35,7 @@ def test_unwind_execution(
     fallback_time = time.perf_counter() - start_time
 
     # Reset to normal operation
-    neosqlite.collection.query_helper.set_force_fallback(False)
+    query_helper.set_force_fallback(False)
 
     # Verify results are identical
     result_count_match = len(result_optimized) == len(result_fallback)

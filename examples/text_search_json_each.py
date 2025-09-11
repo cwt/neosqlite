@@ -96,7 +96,7 @@ def main():
     ]
 
     results3 = list(articles.aggregate(pipeline3))
-    print(f"   Showing first 2 results:")
+    print("   Showing first 2 results:")
     for doc in results3:
         print(f"   • {doc['author']}: \"{doc['comments']}\"")
 
