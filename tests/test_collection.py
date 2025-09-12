@@ -1408,3 +1408,57 @@ def test_collection_drop_with_indexes(connection):
         ("test_drop_indexes",),
     )
     assert cursor.fetchone()[0] == 0
+
+
+def test_insert_valid_document_with_array_indexing():
+    """Test inserting a valid document and accessing fields with array indexing."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test_array_indexing"]
+
+    # Insert a document with arrays
+    doc = {
+        "name": "test",
+        "tags": ["red", "green", "blue"],
+        "orders": [
+            {"id": 1, "items": ["apple", "banana"]},
+            {"id": 2, "items": ["orange", "grape"]},
+        ],
+    }
+    result = collection.insert_one(doc)
+    assert result.inserted_id == 1
+
+    # Find the document back
+    found_doc = collection.find_one({"_id": 1})
+    assert found_doc is not None
+    assert found_doc["name"] == "test"
+    assert found_doc["tags"] == ["red", "green", "blue"]
+    assert len(found_doc["orders"]) == 2
+
+
+def test_insert_invalid_json_document():
+    """Test that inserting an invalid JSON document raises an error."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test_invalid_json"]
+
+    # Try to insert a document that would create invalid JSON
+    # This is a bit tricky to test since the Python dict structure prevents
+    # truly invalid JSON, but we can test the validation mechanism
+
+    # Mock the JSON serialization to return invalid JSON
+    import neosqlite.collection.json_helpers as json_helpers
+
+    original_dumps = json_helpers.neosqlite_json_dumps
+
+    def mock_dumps(obj, **kwargs):
+        # Return deliberately invalid JSON
+        return '{"name": "test", "value":}'  # Missing value after colon
+
+    # Temporarily replace the dumps function
+    json_helpers.neosqlite_json_dumps = mock_dumps
+
+    try:
+        with pytest.raises(ValueError, match="Invalid JSON document"):
+            collection.insert_one({"name": "test", "value": "invalid"})
+    finally:
+        # Restore the original function
+        json_helpers.neosqlite_json_dumps = original_dumps

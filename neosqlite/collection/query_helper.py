@@ -92,16 +92,32 @@ class QueryHelper:
             collection: The collection instance this QueryHelper will operate on.
         """
         self.collection = collection
+        # Access debug flag from the database connection if available
+        self.debug = (
+            getattr(collection.database, "debug", False)
+            if hasattr(collection, "database")
+            else False
+        )
 
     def _internal_insert(self, document: Dict[str, Any]) -> int:
         """
         Inserts a document into the collection and returns the inserted document's _id.
+
+        This method inserts a document into the collection after converting any bytes
+        objects to Binary objects for proper JSON serialization and validating the
+        resulting JSON string. It handles both databases with JSON1 support and those
+        without by providing appropriate fallbacks.
 
         Args:
             document (dict): The document to insert. Must be a dictionary.
 
         Returns:
             int: The _id of the inserted document.
+
+        Raises:
+            MalformedDocument: If the document is not a dictionary
+            ValueError: If the document contains invalid JSON
+            sqlite3.Error: If database operations fail
         """
         if not isinstance(document, dict):
             raise MalformedDocument(
@@ -114,9 +130,25 @@ class QueryHelper:
         # Convert any bytes objects to Binary objects for proper JSON serialization
         doc_to_insert = _convert_bytes_to_binary(doc_to_insert)
 
+        # Serialize to JSON string
+        from neosqlite.collection.json_helpers import neosqlite_json_dumps
+
+        json_str = neosqlite_json_dumps(doc_to_insert)
+
+        # Validate JSON
+        if not self._validate_json_document(json_str):
+            # Try to get error position for better error reporting
+            error_pos = self._get_json_error_position(json_str)
+            if error_pos >= 0:
+                raise ValueError(
+                    f"Invalid JSON document at position {error_pos}"
+                )
+            else:
+                raise ValueError("Invalid JSON document")
+
         cursor = self.collection.db.execute(
             f"INSERT INTO {self.collection.name}(data) VALUES (?)",
-            (neosqlite_json_dumps(doc_to_insert),),
+            (json_str,),
         )
         inserted_id = cursor.lastrowid
 
@@ -125,6 +157,65 @@ class QueryHelper:
 
         document["_id"] = inserted_id
         return inserted_id
+
+    def _validate_json_document(self, json_str: str) -> bool:
+        """
+        Validate JSON document using SQLite's json_valid function.
+
+        This method validates a JSON string using SQLite's built-in json_valid function
+        if available. For databases without JSON1 support, it falls back to Python's
+        json.loads for validation.
+
+        Args:
+            json_str (str): The JSON string to validate
+
+        Returns:
+            bool: True if the JSON is valid, False otherwise
+        """
+        try:
+            # Try to use SQLite's json_valid function
+            cursor = self.collection.db.execute(
+                "SELECT json_valid(?)", (json_str,)
+            )
+            result = cursor.fetchone()
+            if result and result[0] is not None:
+                return bool(result[0])
+            else:
+                # json_valid not supported, fall back to Python validation
+                import json
+
+                json.loads(json_str)
+                return True
+        except (json.JSONDecodeError, Exception):
+            return False
+
+    def _get_json_error_position(self, json_str: str) -> int:
+        """
+        Get position of JSON error using json_error_position().
+
+        This method attempts to get the position of the first syntax error in a
+        JSON string using SQLite's json_error_position function if available.
+        Returns -1 if the function is not supported or if the JSON is valid.
+
+        Args:
+            json_str (str): The JSON string to check for errors
+
+        Returns:
+            int: Position of the first syntax error, or -1 if valid/not supported
+        """
+        try:
+            # Try to use SQLite's json_error_position function (SQLite 3.38.0+)
+            cursor = self.collection.db.execute(
+                "SELECT json_error_position(?)", (json_str,)
+            )
+            result = cursor.fetchone()
+            if result and result[0] is not None:
+                return int(result[0])
+            else:
+                return -1
+        except Exception:
+            # json_error_position not supported
+            return -1
 
     # --- Helper Methods ---
     def _internal_update(
@@ -894,14 +985,21 @@ class QueryHelper:
         etc. for fields stored in JSON data. For more complex queries, it returns
         None, indicating that a Python-based method should be used instead.
 
+        When the force fallback flag is set, this method returns None to force
+        Python-based processing for benchmarking and debugging purposes.
+
         Args:
             query (Dict[str, Any]): A dictionary representing the query criteria.
 
         Returns:
             tuple[str, List[Any]] | None: A tuple containing the SQL WHERE clause
                                           and a list of parameters, or None if the
-                                          query contains unsupported operators.
+                                          query is too complex or force fallback is enabled.
         """
+        # Check force fallback flag
+        if get_force_fallback():
+            return None  # Force fallback to Python implementation
+
         # Handle text search queries separately
         if self._is_text_search_query(query):
             return self._build_text_search_query(query)
@@ -979,6 +1077,9 @@ class QueryHelper:
                                           parameters. If the operator is unsupported,
                                           returns (None, []).
         """
+        clauses = []
+        params = []
+
         for op, op_val in operators.items():
             # Serialize Binary objects for SQL comparisons using compact format
             if isinstance(op_val, bytes) and hasattr(
@@ -988,38 +1089,45 @@ class QueryHelper:
 
             match op:
                 case "$eq":
-                    return f"json_extract(data, {json_path}) = ?", [op_val]
+                    clauses.append(f"json_extract(data, {json_path}) = ?")
+                    params.append(op_val)
                 case "$gt":
-                    return f"json_extract(data, {json_path}) > ?", [op_val]
+                    clauses.append(f"json_extract(data, {json_path}) > ?")
+                    params.append(op_val)
                 case "$lt":
-                    return f"json_extract(data, {json_path}) < ?", [op_val]
+                    clauses.append(f"json_extract(data, {json_path}) < ?")
+                    params.append(op_val)
                 case "$gte":
-                    return f"json_extract(data, {json_path}) >= ?", [op_val]
+                    clauses.append(f"json_extract(data, {json_path}) >= ?")
+                    params.append(op_val)
                 case "$lte":
-                    return f"json_extract(data, {json_path}) <= ?", [op_val]
+                    clauses.append(f"json_extract(data, {json_path}) <= ?")
+                    params.append(op_val)
                 case "$ne":
-                    return f"json_extract(data, {json_path}) != ?", [op_val]
+                    clauses.append(f"json_extract(data, {json_path}) != ?")
+                    params.append(op_val)
                 case "$in":
                     placeholders = ", ".join("?" for _ in op_val)
-                    return (
-                        f"json_extract(data, {json_path}) IN ({placeholders})",
-                        op_val,
+                    clauses.append(
+                        f"json_extract(data, {json_path}) IN ({placeholders})"
                     )
+                    params.extend(op_val)
                 case "$nin":
                     placeholders = ", ".join("?" for _ in op_val)
-                    return (
-                        f"json_extract(data, {json_path}) NOT IN ({placeholders})",
-                        op_val,
+                    clauses.append(
+                        f"json_extract(data, {json_path}) NOT IN ({placeholders})"
                     )
+                    params.extend(op_val)
                 case "$exists":
                     # Handle boolean value for $exists
                     if op_val is True:
-                        return (
-                            f"json_extract(data, {json_path}) IS NOT NULL",
-                            [],
+                        clauses.append(
+                            f"json_extract(data, {json_path}) IS NOT NULL"
                         )
                     elif op_val is False:
-                        return f"json_extract(data, {json_path}) IS NULL", []
+                        clauses.append(
+                            f"json_extract(data, {json_path}) IS NULL"
+                        )
                     else:
                         # Invalid value for $exists, fallback to Python
                         return None, []
@@ -1027,36 +1135,43 @@ class QueryHelper:
                     # Handle [divisor, remainder] array
                     if isinstance(op_val, (list, tuple)) and len(op_val) == 2:
                         divisor, remainder = op_val
-                        return f"json_extract(data, {json_path}) % ? = ?", [
-                            divisor,
-                            remainder,
-                        ]
+                        clauses.append(
+                            f"json_extract(data, {json_path}) % ? = ?"
+                        )
+                        params.extend([divisor, remainder])
                     else:
                         # Invalid format for $mod, fallback to Python
                         return None, []
                 case "$size":
                     # Handle array size comparison
                     if isinstance(op_val, int):
-                        return (
-                            f"json_array_length(json_extract(data, {json_path})) = ?",
-                            [op_val],
+                        clauses.append(
+                            f"json_array_length(json_extract(data, {json_path})) = ?"
                         )
+                        params.append(op_val)
                     else:
                         # Invalid value for $size, fallback to Python
                         return None, []
                 case "$contains":
                     # Handle case-insensitive substring search
                     if isinstance(op_val, str):
-                        return (
-                            f"lower(json_extract(data, {json_path})) LIKE ?",
-                            [f"%{op_val.lower()}%"],
+                        clauses.append(
+                            f"lower(json_extract(data, {json_path})) LIKE ?"
                         )
+                        params.append(f"%{op_val.lower()}%")
                     else:
                         # Invalid value for $contains, fallback to Python
                         return None, []
                 case _:
                     # Unsupported operator, fallback to Python
                     return None, []
+
+        if not clauses:
+            return None, []
+
+        # Combine all clauses with AND
+        combined_clause = " AND ".join(clauses)
+        return combined_clause, params
 
         # This shouldn't happen, but just in case
         return None, []
@@ -1290,8 +1405,7 @@ class QueryHelper:
                                           or complex queries.
         """
         # Check if we should force fallback for benchmarking/debugging
-        global _FORCE_FALLBACK
-        if _FORCE_FALLBACK:
+        if get_force_fallback():
             return None  # Force fallback to Python implementation
 
         # Try to optimize the pipeline by reordering for better index usage
@@ -1453,11 +1567,52 @@ class QueryHelper:
                                 # Build the FROM clause with json_each for unwinding
                                 from_clause = f"FROM {self.collection.name}, json_each(json_extract({self.collection.name}.data, '$.{unwind_field_name}')) as je"
 
-                                # Add ordering by _id for consistent results
-                                order_by_clause = "ORDER BY _id"
+                                # Process subsequent stages (sort, skip, limit)
+                                limit_clause = ""
+                                offset_clause = ""
 
-                                # Construct the full SQL command
-                                cmd = f"{modified_select} {from_clause} {modified_group_by} {order_by_clause}"
+                                # Check stages after the group stage (index i+2 since i is unwind, i+1 is group)
+                                for j in range(i + 2, len(pipeline)):
+                                    next_stage = pipeline[j]
+                                    next_stage_name = next(
+                                        iter(next_stage.keys())
+                                    )
+
+                                    if next_stage_name == "$sort":
+                                        sort_spec = next_stage["$sort"]
+                                        sort_clauses = []
+                                        for key, direction in sort_spec.items():
+                                            sort_clauses.append(
+                                                f"{key} {'DESC' if direction == DESCENDING else 'ASC'}"
+                                            )
+                                        order_by_clause = (
+                                            "ORDER BY "
+                                            + ", ".join(sort_clauses)
+                                        )
+                                    elif next_stage_name == "$skip":
+                                        count = next_stage["$skip"]
+                                        offset_clause = f"OFFSET {count}"
+                                    elif next_stage_name == "$limit":
+                                        count = next_stage["$limit"]
+                                        limit_clause = f"LIMIT {count}"
+                                    else:
+                                        # Stop at first unsupported stage
+                                        break
+
+                                # Combine all clauses
+                                all_clauses = [
+                                    modified_group_by,
+                                    order_by_clause,
+                                    limit_clause,
+                                    offset_clause,
+                                ]
+                                non_empty_clauses = [
+                                    clause for clause in all_clauses if clause
+                                ]
+                                cmd = f"{modified_select} {from_clause} {' '.join(non_empty_clauses)}"
+
+                                # Skip the $unwind and $group stages and subsequent processed stages
+                                i = j - 1  # Will be incremented by the loop
                                 return cmd, [], group_output_fields
                             else:
                                 # If we can't build the group query, fall back to Python
@@ -1473,9 +1628,58 @@ class QueryHelper:
                                 # Add ordering by _id for consistent results
                                 order_by_clause = "ORDER BY _id"
 
-                                cmd = f"{select_clause} {from_clause} {group_by_clause} {order_by_clause}"
-                                # Skip both the $unwind and $group stages
-                                i = 1  # Will be incremented to 2 by the loop
+                                # Process subsequent stages (sort, skip, limit)
+                                limit_clause = ""
+                                offset_clause = ""
+
+                                # Check stages after the group stage (index i+2 since i is unwind, i+1 is group)
+                                for j in range(i + 2, len(pipeline)):
+                                    next_stage = pipeline[j]
+                                    next_stage_name = next(
+                                        iter(next_stage.keys())
+                                    )
+
+                                    if next_stage_name == "$sort":
+                                        sort_spec = next_stage["$sort"]
+                                        sort_clauses = []
+                                        for key, direction in sort_spec.items():
+                                            sort_clauses.append(
+                                                f"{key} {'DESC' if direction == DESCENDING else 'ASC'}"
+                                            )
+                                        order_by_clause = (
+                                            "ORDER BY "
+                                            + ", ".join(sort_clauses)
+                                        )
+                                    elif next_stage_name == "$skip":
+                                        count = next_stage["$skip"]
+                                        offset_clause = f"OFFSET {count}"
+                                    elif next_stage_name == "$limit":
+                                        count = next_stage["$limit"]
+                                        limit_clause = f"LIMIT {count}"
+                                    else:
+                                        # Stop at first unsupported stage
+                                        break
+
+                                # Combine all clauses
+                                all_clauses = [
+                                    group_by_clause,
+                                    order_by_clause,
+                                    limit_clause,
+                                    offset_clause,
+                                ]
+                                non_empty_clauses = [
+                                    clause for clause in all_clauses if clause
+                                ]
+                                cmd = f"{select_clause} {from_clause} {' '.join(non_empty_clauses)}"
+
+                                # DEBUG PRINT
+                                if self.debug:
+                                    print(
+                                        f"DEBUG: Generated SQL command: {cmd}"
+                                    )
+
+                                # Skip the $unwind and $group stages and subsequent processed stages
+                                i = j - 1  # Will be incremented by the loop
                                 return cmd, [], output_fields
                             else:
                                 # If we can't optimize the $unwind + $group combination,
@@ -1628,13 +1832,61 @@ class QueryHelper:
                                     where_clause = ""
                                     params = []
 
-                                # Add ordering by _id for consistent results
-                                order_by_clause = "ORDER BY _id"
+                                # Process subsequent stages (sort, skip, limit)
+                                limit_clause = ""
+                                offset_clause = ""
+                                order_by_clause = ""
 
-                                cmd = f"{select_clause} {from_clause} {where_clause} {group_by_clause} {order_by_clause}"
-                                # Skip the $match, $unwind, and $group stages
-                                i = 2  # Will be incremented to 3 by the loop
-                                return cmd, params, output_fields
+                                # Check stages after the group stage (index i+2 since i is unwind, i+1 is group)
+                                for j in range(i + 2, len(pipeline)):
+                                    next_stage = pipeline[j]
+                                    next_stage_name = next(
+                                        iter(next_stage.keys())
+                                    )
+
+                                    if next_stage_name == "$sort":
+                                        sort_spec = next_stage["$sort"]
+                                        sort_clauses = []
+                                        for key, direction in sort_spec.items():
+                                            sort_clauses.append(
+                                                f"{key} {'DESC' if direction == DESCENDING else 'ASC'}"
+                                            )
+                                        order_by_clause = (
+                                            "ORDER BY "
+                                            + ", ".join(sort_clauses)
+                                        )
+                                    elif next_stage_name == "$skip":
+                                        count = next_stage["$skip"]
+                                        offset_clause = f"OFFSET {count}"
+                                    elif next_stage_name == "$limit":
+                                        count = next_stage["$limit"]
+                                        limit_clause = f"LIMIT {count}"
+                                    else:
+                                        # Stop at first unsupported stage
+                                        break
+
+                                # Combine all clauses
+                                all_clauses = [
+                                    where_clause,
+                                    group_by_clause,
+                                    order_by_clause,
+                                    limit_clause,
+                                    offset_clause,
+                                ]
+                                non_empty_clauses = [
+                                    clause for clause in all_clauses if clause
+                                ]
+                                full_query = f"{select_clause} {from_clause} {' '.join(non_empty_clauses)}"
+
+                                # DEBUG PRINT
+                                if self.debug:
+                                    print(
+                                        f"DEBUG: Generated SQL command: {full_query}"
+                                    )
+
+                                # Skip the $match, $unwind, $group, and subsequent processed stages
+                                i = j - 1  # Will be incremented by the loop
+                                return full_query, params, output_fields
                             else:
                                 # If we can't optimize the $unwind + $group combination,
                                 # fall back to Python processing for the entire pipeline

@@ -50,14 +50,84 @@ class SQLFieldAccessor:
         self.data_column = data_column
         self.id_column = id_column
 
+    def _parse_json_path(self, field: str) -> str:
+        """
+        Convert dot notation with array indexing to JSON path syntax.
+
+        Supports:
+        - Simple fields: "name" -> "$.name"
+        - Nested fields: "address.street" -> "$.address.street"
+        - Array indexing: "tags[0]" -> "$.tags[0]"
+        - Nested array access: "orders.items[2].name" -> "$.orders.items[2].name"
+        - Complex paths: "a.b[0].c[1].d" -> "$.a.b[0].c[1].d"
+
+        Args:
+            field (str): The field path in dot notation with optional array indices
+
+        Returns:
+            str: Properly formatted JSON path
+        """
+
+        # Handle special case for _id
+        if field == "_id":
+            return field
+
+        # Pattern to match field names with optional array indices
+        # This pattern matches sequences like "field", "field[0]", "field[0][1]", etc.
+        pattern = r"([^.\[]+)(?:$(\d+)$)*"
+
+        # Split the field path by dots while preserving array indices
+        parts = []
+        current_part = ""
+
+        i = 0
+        while i < len(field):
+            if field[i] == ".":
+                if current_part:
+                    parts.append(current_part)
+                    current_part = ""
+            elif field[i] == "[":
+                # Find the closing bracket
+                bracket_end = field.find("]", i)
+                if bracket_end != -1:
+                    # Add the array index to current part
+                    current_part += field[i : bracket_end + 1]
+                    i = bracket_end
+                else:
+                    # Malformed array index, treat as regular character
+                    current_part += field[i]
+            else:
+                current_part += field[i]
+            i += 1
+
+        # Add the last part
+        if current_part:
+            parts.append(current_part)
+
+        # Convert each part to JSON path format
+        json_parts = []
+        for part in parts:
+            # Check if part contains array indices
+            if "[" in part:
+                # Split field name from array indices
+                field_name_end = part.find("[")
+                field_name = part[:field_name_end]
+                array_indices = part[field_name_end:]
+                json_parts.append(f"{field_name}{array_indices}")
+            else:
+                json_parts.append(part)
+
+        return f"$.{'.'.join(json_parts)}"
+
     def get_field_access(self, field: str, context: str = "direct") -> str:
         """
-        Generate field access SQL based on field name and context.
+        Generate field access SQL with enhanced JSON path support.
 
         This method generates appropriate SQL expressions for accessing fields
         based on the field name and context. For the special "_id" field, it returns
         the ID column name. For other fields, it generates a json_extract expression
-        to access the field from the JSON data column.
+        to access the field from the JSON data column, with support for complex
+        JSON paths including array indexing.
 
         Args:
             field: The field name to access
@@ -70,8 +140,9 @@ class SQLFieldAccessor:
             # Special handling for _id field
             return self.id_column
         else:
-            # Use json_extract for regular fields
-            return f"json_extract({self.data_column}, '$.{field}')"
+            # Use enhanced JSON path parsing
+            json_path = self._parse_json_path(field)
+            return f"json_extract({self.data_column}, '{json_path}')"
 
 
 class SQLOperatorTranslator:

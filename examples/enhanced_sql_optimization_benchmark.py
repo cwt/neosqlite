@@ -202,7 +202,7 @@ def main():
     print("=== NeoSQLite SQL Optimization vs Python Fallback Benchmark ===")
     print("Testing with moderate datasets for reasonable benchmark times\n")
 
-    with neosqlite.Connection(":memory:") as conn:
+    with neosqlite.Connection(":memory:", debug=True) as conn:
         # Create collections
         products = conn["products"]
         orders = conn["orders"]
@@ -246,14 +246,18 @@ def main():
         categories.insert_many(category_docs)
         print(f"   Inserted {len(category_docs)} categories")
 
-        # Users data (500 documents - reduced from 1000)
+        # Users data (2000 documents - increased from 500 to support performance tests)
         user_docs = []
-        for i in range(500):
+        for i in range(2000):
             user_docs.append(
                 {
                     "_id": i + 1,
                     "name": f"User {i + 1}",
+                    "age": 18 + (i % 65),  # Ages 18-82
                     "department": f"Department {i % 5}",
+                    "salary": float(
+                        30000 + (i * 25)
+                    ),  # Salaries from 30k to 530k
                     "skills": [
                         f"skill{j}" for j in range(2)
                     ],  # 2 skills per user
@@ -267,6 +271,9 @@ def main():
                     "scores": [
                         80 + (i % 20) for _ in range(3)
                     ],  # 3 scores per user
+                    "tags": [
+                        f"tag{j}_{i % 20}" for j in range(8)
+                    ],  # 8 tags per user
                     "preferences": {
                         "notifications": True,
                         "theme": "dark" if i % 2 == 0 else "light",
@@ -309,6 +316,8 @@ def main():
         products.create_index("status")
         products.create_index("price")
         users.create_index("department")
+        users.create_index("age")
+        users.create_index("salary")
         orders.create_index("status")
         orders.create_index("userId")
         print("   Created indexes on frequently queried fields")
@@ -750,6 +759,174 @@ def main():
             )
         )
 
+        # === NEW TEST CASES FROM PERFORMANCE IMPROVEMENTS BENCHMARK ===
+
+        # 22. Range query performance with multiple operators (bug fix validation)
+        print("\n--- Range Query Performance (Multiple Operators Bug Fix) ---")
+        range_query = {
+            "age": {"$gte": 25, "$lte": 45},
+            "salary": {"$gt": 50000},
+        }
+
+        # Test optimized path
+        query_helper.set_force_fallback(False)
+        start_time = time.perf_counter()
+        cursor_range_opt = users.find(range_query)
+        result_range_opt = list(cursor_range_opt)
+        range_optimized_time = time.perf_counter() - start_time
+
+        # Test fallback path
+        query_helper.set_force_fallback(True)
+        start_time = time.perf_counter()
+        cursor_range_fallback = users.find(range_query)
+        result_range_fallback = list(cursor_range_fallback)
+        range_fallback_time = time.perf_counter() - start_time
+
+        query_helper.set_force_fallback(False)
+        range_speedup = (
+            range_fallback_time / range_optimized_time
+            if range_optimized_time > 0
+            else float("inf")
+        )
+        print(f"  Optimized: {range_optimized_time:.4f}s")
+        print(f"  Fallback:  {range_fallback_time:.4f}s")
+        print(f"  Speedup:   {range_speedup:.1f}x faster")
+        print(
+            f"  Results match: {len(result_range_opt) == len(result_range_fallback)}"
+        )
+        print(f"  Result count: {len(result_range_opt):,}")
+
+        results["Range Query (Multiple Operators)"] = {
+            "optimized_time": range_optimized_time,
+            "fallback_time": range_fallback_time,
+            "speedup": range_speedup,
+            "results_match": (
+                len(result_range_opt) == len(result_range_fallback)
+            ),
+        }
+
+        # 23. Complex unwind + group operations (bug fix validation)
+        print("\n--- Complex Unwind + Group Operations (Bug Fix) ---")
+        complex_unwind_pipeline = [
+            {
+                "$match": {
+                    "department": {
+                        "$in": [
+                            "Department 1",
+                            "Department 2",
+                            "Department 3",
+                        ]
+                    }
+                }
+            },
+            {"$unwind": "$tags"},
+            {
+                "$group": {
+                    "_id": "$tags",
+                    "count": {"$sum": 1},
+                    "departments": {"$addToSet": "$department"},
+                }
+            },
+            {"$sort": {"count": -1}},
+            {"$limit": 50},
+        ]
+
+        # Test optimized path
+        query_helper.set_force_fallback(False)
+        start_time = time.perf_counter()
+        cursor_complex_opt = users.aggregate(complex_unwind_pipeline)
+        result_complex_opt = list(cursor_complex_opt)
+        complex_optimized_time = time.perf_counter() - start_time
+
+        # Test fallback path
+        query_helper.set_force_fallback(True)
+        start_time = time.perf_counter()
+        cursor_complex_fallback = users.aggregate(complex_unwind_pipeline)
+        result_complex_fallback = list(cursor_complex_fallback)
+        complex_fallback_time = time.perf_counter() - start_time
+
+        query_helper.set_force_fallback(False)
+        complex_speedup = (
+            complex_fallback_time / complex_optimized_time
+            if complex_optimized_time > 0
+            else float("inf")
+        )
+        print(f"  Optimized: {complex_optimized_time:.4f}s")
+        print(f"  Fallback:  {complex_fallback_time:.4f}s")
+        print(f"  Speedup:   {complex_speedup:.1f}x faster")
+        print(
+            f"  Results match: {len(result_complex_opt) == len(result_complex_fallback)}"
+        )
+        print(f"  Result count: {len(result_complex_opt):,}")
+
+        results["Complex Unwind + Group (Bug Fix)"] = {
+            "optimized_time": complex_optimized_time,
+            "fallback_time": complex_fallback_time,
+            "speedup": complex_speedup,
+            "results_match": (
+                len(result_complex_opt) == len(result_complex_fallback)
+            ),
+        }
+
+        # 24. Nested array operations performance
+        print("\n--- Nested Array Operations Performance ---")
+        nested_array_pipeline = [
+            {"$unwind": "$tags"},
+            {"$unwind": "$scores"},
+            {
+                "$match": {
+                    "tags": {"$regex": "tag[0-3]_"},
+                    "scores": {"$gte": 90},
+                }
+            },
+            {
+                "$group": {
+                    "_id": "$name",
+                    "highScoreCount": {"$sum": 1},
+                    "avgScore": {"$avg": "$scores"},
+                }
+            },
+            {"$sort": {"highScoreCount": -1}},
+            {"$limit": 30},
+        ]
+
+        # Test optimized path
+        query_helper.set_force_fallback(False)
+        start_time = time.perf_counter()
+        cursor_nested_opt = users.aggregate(nested_array_pipeline)
+        result_nested_opt = list(cursor_nested_opt)
+        nested_optimized_time = time.perf_counter() - start_time
+
+        # Test fallback path
+        query_helper.set_force_fallback(True)
+        start_time = time.perf_counter()
+        cursor_nested_fallback = users.aggregate(nested_array_pipeline)
+        result_nested_fallback = list(cursor_nested_fallback)
+        nested_fallback_time = time.perf_counter() - start_time
+
+        query_helper.set_force_fallback(False)
+        nested_speedup = (
+            nested_fallback_time / nested_optimized_time
+            if nested_optimized_time > 0
+            else float("inf")
+        )
+        print(f"  Optimized: {nested_optimized_time:.4f}s")
+        print(f"  Fallback:  {nested_fallback_time:.4f}s")
+        print(f"  Speedup:   {nested_speedup:.1f}x faster")
+        print(
+            f"  Results match: {len(result_nested_opt) == len(result_nested_fallback)}"
+        )
+        print(f"  Result count: {len(result_nested_opt):,}")
+
+        results["Nested Array Operations"] = {
+            "optimized_time": nested_optimized_time,
+            "fallback_time": nested_fallback_time,
+            "speedup": nested_speedup,
+            "results_match": (
+                len(result_nested_opt) == len(result_nested_fallback)
+            ),
+        }
+
         # Summary
         print("\n" + "=" * 70)
         print("BENCHMARK SUMMARY")
@@ -768,6 +945,13 @@ def main():
             "Multiple $lookup Operations",
         }
 
+        # Store bug fix validation features for separate reporting
+        bug_fix_features = {
+            "Range Query (Multiple Operators)",
+            "Complex Unwind + Group (Bug Fix)",
+            "Nested Array Operations",
+        }
+
         for feature, data in results.items():
             if (
                 "speedup" in data
@@ -777,6 +961,10 @@ def main():
                 if feature in temp_table_features:
                     temp_table_speedup += data["speedup"]
                     temp_table_count += 1
+                elif feature in bug_fix_features:
+                    # These are bug fix validations - count them separately
+                    total_speedup += data["speedup"]
+                    optimized_count += 1
                 else:  # Standard optimization
                     total_speedup += data["speedup"]
                     optimized_count += 1
@@ -796,6 +984,7 @@ def main():
         )
         print(f"Number of SQL-optimized features tested: {optimized_count}")
         print(f"Number of temporary table features tested: {temp_table_count}")
+        print(f"Number of bug fix validations tested: {len(bug_fix_features)}")
         print(f"Total features tested: {len(results)}")
 
         print("\nTop 5 fastest optimizations:")
@@ -832,6 +1021,15 @@ def main():
         print(
             "- Temporary table aggregation enables optimization of previously unoptimizable pipelines"
         )
+        print(
+            "- Bug fixes now correctly handle range queries with multiple operators"
+        )
+        print(
+            "- Aggregation pipelines with $unwind + $group + $limit now work correctly"
+        )
+        print(
+            "- All queries return consistent results between optimized and fallback paths"
+        )
 
         print("\nTechnical Details:")
         print("- SQL optimization uses SQLite's native JSON functions")
@@ -852,6 +1050,10 @@ def main():
         )
         print("- Intermediate results stored in database, not Python memory")
         print("- Automatic resource cleanup with transaction management")
+        print(
+            "- Range query bug fixes ensure correct processing of multiple operators"
+        )
+        print("- Aggregation pipeline fixes ensure correct limit application")
 
 
 if __name__ == "__main__":

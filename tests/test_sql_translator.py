@@ -69,6 +69,54 @@ class TestSQLFieldAccessor:
         result = accessor.get_field_access("name", context="temp")
         assert result == "json_extract(data, '$.name')"
 
+    def test_parse_json_path_simple_field(self):
+        """Test parsing simple field path."""
+        accessor = SQLFieldAccessor()
+        result = accessor._parse_json_path("name")
+        assert result == "$.name"
+
+    def test_parse_json_path_nested_field(self):
+        """Test parsing nested field path."""
+        accessor = SQLFieldAccessor()
+        result = accessor._parse_json_path("address.street")
+        assert result == "$.address.street"
+
+    def test_parse_json_path_array_indexing(self):
+        """Test parsing field with array indexing."""
+        accessor = SQLFieldAccessor()
+        result = accessor._parse_json_path("tags[0]")
+        assert result == "$.tags[0]"
+
+    def test_parse_json_path_nested_array_access(self):
+        """Test parsing nested array access."""
+        accessor = SQLFieldAccessor()
+        result = accessor._parse_json_path("orders.items[2].name")
+        assert result == "$.orders.items[2].name"
+
+    def test_parse_json_path_complex_path(self):
+        """Test parsing complex path with multiple array indices."""
+        accessor = SQLFieldAccessor()
+        result = accessor._parse_json_path("a.b[0].c[1].d")
+        assert result == "$.a.b[0].c[1].d"
+
+    def test_parse_json_path_id_field(self):
+        """Test parsing _id field (special case)."""
+        accessor = SQLFieldAccessor()
+        result = accessor._parse_json_path("_id")
+        assert result == "_id"
+
+    def test_get_field_access_with_array_indexing(self):
+        """Test field access with array indexing."""
+        accessor = SQLFieldAccessor()
+        result = accessor.get_field_access("tags[0]")
+        assert result == "json_extract(data, '$.tags[0]')"
+
+    def test_get_field_access_with_nested_array_access(self):
+        """Test field access with nested array access."""
+        accessor = SQLFieldAccessor()
+        result = accessor.get_field_access("orders.items[2].name")
+        assert result == "json_extract(data, '$.orders.items[2].name')"
+
 
 class TestSQLOperatorTranslator:
     """Tests for the SQLOperatorTranslator class."""

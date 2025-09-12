@@ -5,6 +5,7 @@ Consolidated tests for query engine functionality and fallback mechanisms.
 import pytest
 import neosqlite
 import time
+from unittest.mock import MagicMock
 from neosqlite import Connection
 from neosqlite.query_operators import (
     _eq,
@@ -32,6 +33,19 @@ from neosqlite.collection.query_helper import (
 from neosqlite.collection.temporary_table_aggregation import (
     execute_2nd_tier_aggregation,
 )
+
+
+# ================================
+# Mock Classes for Testing
+# ================================
+
+
+class MockCollection:
+    """Mock collection for testing QueryHelper methods."""
+
+    def __init__(self):
+        self.name = "test_collection"
+        self.db = MagicMock()
 
 
 # ================================
@@ -1789,3 +1803,159 @@ def test_complex_pipeline_with_text_operator():
         # Specific documents should be found
         assert result[0]["name"] == "Python Data Scientist"
         assert result[1]["name"] == "Python Developer"
+
+
+# ================================
+# Query Helper Validation Tests
+# ================================
+
+
+def test_validate_json_document_valid():
+    """Test validation of valid JSON document."""
+    collection = MockCollection()
+    helper = QueryHelper(collection)
+
+    # Mock database to return valid result
+    collection.db.execute.return_value.fetchone.return_value = [1]
+
+    json_str = '{"name": "test", "value": 123}'
+    result = helper._validate_json_document(json_str)
+    assert result is True
+
+
+def test_validate_json_document_invalid():
+    """Test validation of invalid JSON document."""
+    collection = MockCollection()
+    helper = QueryHelper(collection)
+
+    # Mock database to return invalid result
+    collection.db.execute.return_value.fetchone.return_value = [0]
+
+    json_str = '{"name": "test", "value":}'  # Invalid JSON
+    result = helper._validate_json_document(json_str)
+    assert result is False
+
+
+def test_validate_json_document_no_json1_support():
+    """Test validation when json_valid is not supported."""
+    collection = MockCollection()
+    helper = QueryHelper(collection)
+
+    # Mock database to simulate no JSON1 support
+    collection.db.execute.return_value.fetchone.return_value = None
+
+    # Valid JSON should still pass with Python fallback
+    json_str = '{"name": "test", "value": 123}'
+    result = helper._validate_json_document(json_str)
+    assert result is True
+
+
+def test_validate_json_document_no_json1_support_invalid():
+    """Test validation of invalid JSON when json_valid is not supported."""
+    collection = MockCollection()
+    helper = QueryHelper(collection)
+
+    # Mock database to simulate no JSON1 support
+    collection.db.execute.return_value.fetchone.return_value = None
+
+    # Invalid JSON should still fail with Python fallback
+    json_str = '{"name": "test", "value":}'  # Invalid JSON
+    result = helper._validate_json_document(json_str)
+    assert result is False
+
+
+def test_get_json_error_position_supported():
+    """Test getting JSON error position when supported."""
+    collection = MockCollection()
+    helper = QueryHelper(collection)
+
+    # Mock database to return error position
+    collection.db.execute.return_value.fetchone.return_value = [15]
+
+    json_str = '{"name": "test", "value":}'  # Invalid JSON
+    result = helper._get_json_error_position(json_str)
+    assert result == 15
+
+
+def test_get_json_error_position_not_supported():
+    """Test getting JSON error position when not supported."""
+    collection = MockCollection()
+    helper = QueryHelper(collection)
+
+    # Mock database to simulate no json_error_position support
+    collection.db.execute.return_value.fetchone.return_value = None
+
+    json_str = '{"name": "test", "value":}'  # Invalid JSON
+    result = helper._get_json_error_position(json_str)
+    assert result == -1
+
+
+def test_get_json_error_position_exception():
+    """Test getting JSON error position when exception occurs."""
+    collection = MockCollection()
+    helper = QueryHelper(collection)
+
+    # Mock database to raise exception
+    collection.db.execute.side_effect = Exception("Function not supported")
+
+    json_str = '{"name": "test", "value":}'  # Invalid JSON
+    result = helper._get_json_error_position(json_str)
+    assert result == -1
+
+
+def test_internal_insert_valid_document():
+    """Test inserting a valid document."""
+    collection = MockCollection()
+    helper = QueryHelper(collection)
+
+    # Mock validation methods
+    helper._validate_json_document = MagicMock(return_value=True)
+    helper._get_json_error_position = MagicMock(return_value=-1)
+
+    # Mock database execute
+    mock_cursor = MagicMock()
+    mock_cursor.lastrowid = 1
+    collection.db.execute.return_value = mock_cursor
+
+    document = {"name": "test", "value": 123}
+    result = helper._internal_insert(document)
+    assert result == 1
+    assert document["_id"] == 1
+
+
+def test_internal_insert_invalid_document():
+    """Test inserting an invalid document."""
+    collection = MockCollection()
+    helper = QueryHelper(collection)
+
+    # Mock validation methods to return invalid
+    helper._validate_json_document = MagicMock(return_value=False)
+    helper._get_json_error_position = MagicMock(return_value=15)
+
+    # Create a document that would produce invalid JSON when serialized
+    document = {
+        "name": "test",
+        "value": "invalid",
+    }  # This will be mocked to produce invalid JSON
+    with pytest.raises(
+        ValueError, match="Invalid JSON document at position 15"
+    ):
+        helper._internal_insert(document)
+
+
+def test_internal_insert_invalid_document_no_position():
+    """Test inserting an invalid document when position info is not available."""
+    collection = MockCollection()
+    helper = QueryHelper(collection)
+
+    # Mock validation methods to return invalid
+    helper._validate_json_document = MagicMock(return_value=False)
+    helper._get_json_error_position = MagicMock(return_value=-1)
+
+    # Create a document that would produce invalid JSON when serialized
+    document = {
+        "name": "test",
+        "value": "invalid",
+    }  # This will be mocked to produce invalid JSON
+    with pytest.raises(ValueError, match="Invalid JSON document"):
+        helper._internal_insert(document)

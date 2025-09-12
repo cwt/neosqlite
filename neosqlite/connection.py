@@ -25,9 +25,11 @@ class Connection:
             **kwargs: Keyword arguments passed to sqlite3.connect().
                      Special kwargs:
                      - tokenizers: List of tuples (name, path) for FTS5 tokenizers to load
+                     - debug: Boolean flag to enable debug printing
         """
         self._collections: Dict[str, Collection] = {}
         self._tokenizers: List[Tuple[str, str]] = kwargs.pop("tokenizers", [])
+        self.debug: bool = kwargs.pop("debug", False)
         self.connect(*args, **kwargs)
 
     def connect(self, *args: Any, **kwargs: Any):
