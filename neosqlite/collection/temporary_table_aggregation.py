@@ -5,9 +5,15 @@ that the current implementation can't optimize with a single SQL query.
 """
 
 from .sql_translator_unified import SQLTranslator
+from .jsonb_support import supports_jsonb
 from contextlib import contextmanager
 from typing import Any, Dict, List, Callable
 import hashlib
+
+try:
+    from pysqlite3 import dbapi2 as sqlite3
+except ImportError:
+    pass  # type: ignore
 
 
 class DeterministicTempTableManager:
@@ -232,6 +238,8 @@ class TemporaryTableAggregationProcessor:
         self.db = collection.db
         self.query_engine = query_engine
         self.sql_translator = SQLTranslator(collection.name, "data", "id")
+        # Check if JSONB is supported for this connection
+        self._jsonb_supported = supports_jsonb(self.db)
 
     def process_pipeline(
         self, pipeline: List[Dict[str, Any]]
@@ -461,19 +469,36 @@ class TemporaryTableAggregationProcessor:
                 field_name = field[1:]  # Remove leading $
 
                 unwind_stage = {"$unwind": field}
-                current_temp_table = create_temp(
-                    unwind_stage,
-                    f"""
-                    SELECT {self.collection.name}.id,
-                           json_set({self.collection.name}.data,
-                                    '$."{field_name}"', je.value) as data
-                    FROM {current_temp_table} as {self.collection.name},
-                         json_each(json_extract({self.collection.name}.data,
-                                                '$.{field_name}')) as je
-                    WHERE json_type(json_extract({self.collection.name}.data,
-                                                 '$.{field_name}')) = 'array'
-                    """,
-                )
+
+                # Use jsonb_* functions when supported for better performance
+                if self._jsonb_supported:
+                    current_temp_table = create_temp(
+                        unwind_stage,
+                        f"""
+                        SELECT {self.collection.name}.id,
+                               jsonb_set({self.collection.name}.data,
+                                        '$."{field_name}"', je.value) as data
+                        FROM {current_table} as {self.collection.name},
+                             json_each(jsonb_extract({self.collection.name}.data,
+                                                    '$.{field_name}')) as je
+                        WHERE json_type(jsonb_extract({self.collection.name}.data,
+                                                     '$.{field_name}')) = 'array'
+                        """,
+                    )
+                else:
+                    current_temp_table = create_temp(
+                        unwind_stage,
+                        f"""
+                        SELECT {self.collection.name}.id,
+                               json_set({self.collection.name}.data,
+                                        '$."{field_name}"', je.value) as data
+                        FROM {current_table} as {self.collection.name},
+                             json_each(json_extract({self.collection.name}.data,
+                                                   '$.{field_name}')) as je
+                        WHERE json_type(json_extract({self.collection.name}.data,
+                                                     '$.{field_name}')) = 'array'
+                        """,
+                    )
             else:
                 raise ValueError(f"Invalid unwind specification: {field}")
 
@@ -532,16 +557,29 @@ class TemporaryTableAggregationProcessor:
                 f"json_extract({self.collection.name}.data, '$.{local_field}')"
             )
 
-        select_clause = (
-            f"SELECT {self.collection.name}.id, "
-            f"json_set({self.collection.name}.data, '$.\"{as_field}\"', "
-            f"coalesce(( "
-            f"  SELECT json_group_array(json(related.data)) "
-            f"  FROM {from_collection} as related "
-            f"  WHERE {foreign_extract} = "
-            f"        {local_extract} "
-            f"), '[]')) as data"
-        )
+        # Use jsonb_* functions when supported for better performance
+        if self._jsonb_supported:
+            select_clause = (
+                f"SELECT {self.collection.name}.id, "
+                f"jsonb_set({self.collection.name}.data, '$.\"{as_field}\"', "
+                f"coalesce(( "
+                f"  SELECT jsonb_group_array(related.data) "
+                f"  FROM {from_collection} as related "
+                f"  WHERE {foreign_extract} = "
+                f"        {local_extract} "
+                f"), '[]')) as data"
+            )
+        else:
+            select_clause = (
+                f"SELECT {self.collection.name}.id, "
+                f"json_set({self.collection.name}.data, '$.\"{as_field}\"', "
+                f"coalesce(( "
+                f"  SELECT json_group_array(json(related.data)) "
+                f"  FROM {from_collection} as related "
+                f"  WHERE {foreign_extract} = "
+                f"        {local_extract} "
+                f"), '[]')) as data"
+            )
 
         from_clause = f"FROM {current_table} as {self.collection.name}"
 
@@ -651,19 +689,38 @@ class TemporaryTableAggregationProcessor:
                 source_field_name = source_field[1:]  # Remove leading $
                 if source_field_name == "_id":
                     # Special handling for _id field
-                    data_expr = f"json_set({data_expr}, '$.{new_field}', id)"
+                    if self._jsonb_supported:
+                        data_expr = (
+                            f"jsonb_set({data_expr}, '$.{new_field}', id)"
+                        )
+                    else:
+                        data_expr = (
+                            f"json_set({data_expr}, '$.{new_field}', id)"
+                        )
                 else:
-                    # Use json_extract to get the source field value
-                    data_expr = f"json_set({data_expr}, '$.{new_field}', json_extract(data, '$.{source_field_name}'))"
+                    # Use json_extract/jsonb_extract to get the source field value
+                    if self._jsonb_supported:
+                        data_expr = f"jsonb_set({data_expr}, '$.{new_field}', jsonb_extract(data, '$.{source_field_name}'))"
+                    else:
+                        data_expr = f"json_set({data_expr}, '$.{new_field}', json_extract(data, '$.{source_field_name}'))"
             # For this basic implementation, we won't handle complex expressions
 
         # Create addFields temporary table
         add_fields_stage = {"$addFields": add_fields_spec}
-        new_table = create_temp(
-            add_fields_stage,
-            f"SELECT id, {data_expr} as data FROM {current_table}",
-            params if params else None,
-        )
+
+        # When using JSONB, we need to convert final output to text JSON for Python
+        if self._jsonb_supported:
+            new_table = create_temp(
+                add_fields_stage,
+                f"SELECT id, json({data_expr}) as data FROM {current_table}",
+                params if params else None,
+            )
+        else:
+            new_table = create_temp(
+                add_fields_stage,
+                f"SELECT id, {data_expr} as data FROM {current_table}",
+                params if params else None,
+            )
         return new_table
 
     def _get_results_from_table(self, table_name: str) -> List[Dict[str, Any]]:
@@ -681,7 +738,13 @@ class TemporaryTableAggregationProcessor:
             List[Dict[str, Any]]: List of documents retrieved from the temporary table,
                                   with each document represented as a dictionary
         """
-        cursor = self.db.execute(f"SELECT * FROM {table_name}")
+        # When using JSONB, we need to convert data back to text JSON for Python
+        if self._jsonb_supported:
+            cursor = self.db.execute(
+                f"SELECT id, json(data) as data FROM {table_name}"
+            )
+        else:
+            cursor = self.db.execute(f"SELECT * FROM {table_name}")
         results = []
         for row in cursor.fetchall():
             doc = self.collection._load(row[0], row[1])
@@ -780,10 +843,15 @@ class TemporaryTableAggregationProcessor:
 
         result_table_name = f"temp_text_filtered_{hashlib.sha256(str(match_spec).encode()).hexdigest()[:8]}"
 
-        # Create result temporary table
-        self.db.execute(
-            f"CREATE TEMP TABLE {result_table_name} (id INTEGER, data TEXT)"
-        )
+        # Create result temporary table with optimal column type
+        if self._jsonb_supported:
+            self.db.execute(
+                f"CREATE TEMP TABLE {result_table_name} (id INTEGER, data JSONB)"
+            )
+        else:
+            self.db.execute(
+                f"CREATE TEMP TABLE {result_table_name} (id INTEGER, data TEXT)"
+            )
 
         # Process documents with cursor
         cursor = self.db.execute(f"SELECT id, data FROM {current_table}")
@@ -877,7 +945,7 @@ def _contains_text_search(match_spec: Dict[str, Any]) -> bool:
 
     This function recursively examines a match specification to determine if it
     contains any $text search operators. It checks both top-level operators and
-    nested operators within logical operators ($and, $or, $nor, $not).
+        nested operators within logical operators ($and, $or, $nor, $not).
 
     Args:
         match_spec (Dict[str, Any]): The match specification to check for text search operations
@@ -924,6 +992,14 @@ def execute_2nd_tier_aggregation(
     Returns:
         List[Dict[str, Any]]: List of result documents after processing the pipeline
     """
+    # Check if we should force fallback for benchmarking/debugging
+    from .query_helper import get_force_fallback
+
+    if get_force_fallback():
+        raise NotImplementedError(
+            "Temporary table aggregation skipped due to force fallback flag"
+        )
+
     # Process the pipeline with temporary tables if possible
     if can_process_with_temporary_tables(pipeline):
         try:

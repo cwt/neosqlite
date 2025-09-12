@@ -133,9 +133,17 @@ class Collection:
         storing JSON data. If the JSONB data type is supported, it will be used,
         otherwise, TEXT data type will be used.
         """
-        try:
-            self.db.execute("""SELECT jsonb('{"key": "value"}')""")
-        except sqlite3.OperationalError:
+        from .jsonb_support import supports_jsonb
+
+        if supports_jsonb(self.db):
+            self.db.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS {self.name} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    data JSONB NOT NULL
+                )"""
+            )
+        else:
             self.db.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {self.name} (
@@ -143,14 +151,6 @@ class Collection:
                     data TEXT NOT NULL
                 )
                 """
-            )
-        else:
-            self.db.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {self.name} (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    data JSONB NOT NULL
-                )"""
             )
 
     def rename(self, new_name: str) -> None:

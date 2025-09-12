@@ -1602,12 +1602,13 @@ def test_force_fallback_kill_switch():
         set_force_fallback(True)
         assert get_force_fallback() == True
 
-        # With kill switch on, should fall back to Python even for supported pipelines
-        results = execute_2nd_tier_aggregation(query_engine, pipeline)
-        assert len(results) == 2
-        for doc in results:
-            assert "userName" in doc
-            assert doc["userName"] == doc["name"]
+        # With kill switch on, should raise NotImplementedError to signal fallback needed
+        try:
+            results = execute_2nd_tier_aggregation(query_engine, pipeline)
+            assert False, "Should have raised NotImplementedError"
+        except NotImplementedError:
+            # This is expected - the query engine would catch this and fall back to Python
+            pass
 
         # Turn off the kill switch
         set_force_fallback(False)
