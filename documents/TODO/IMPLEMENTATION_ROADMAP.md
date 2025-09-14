@@ -124,6 +124,13 @@ This document provides a prioritized roadmap for implementing missing PyMongo-co
 - **Operators**:
   - `$slice`
 
+### 14. MapReduce API
+- **Why**: Deprecated MongoDB feature (removed in 5.0)
+- **Effort**: High
+- **Impact**: Low (use aggregation pipeline instead)
+- **Status**: Will not implement
+- **Reason**: MapReduce was deprecated in MongoDB 4.2 and removed in 5.0 in favor of the more efficient aggregation pipeline. NeoSQLite will not implement this API to encourage users to use the modern aggregation pipeline approach.
+
 ## Implementation Timeline
 
 ### Phase 1 ( Weeks 1-2): P0 Items ✅ COMPLETED

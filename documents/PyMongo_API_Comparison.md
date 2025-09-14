@@ -93,7 +93,7 @@
 - [x] Binary data support (outside of GridFS)
 
 ### Aggregation Enhancements
-- [ ] map_reduce()
+- [ ] map_reduce() - Will not implement (deprecated in MongoDB 4.2, removed in 5.0; use aggregation pipeline instead)
 - [x] distinct() with query filter
 
 ### Utility Methods
