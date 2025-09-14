@@ -11,6 +11,7 @@ Submodules
    neosqlite.collection.cursor
    neosqlite.collection.index_manager
    neosqlite.collection.json_helpers
+   neosqlite.collection.jsonb_support
    neosqlite.collection.query_engine
    neosqlite.collection.query_helper
    neosqlite.collection.raw_batch_cursor
