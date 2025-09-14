@@ -5,6 +5,7 @@ Consolidated tests for query engine functionality and fallback mechanisms.
 import pytest
 import neosqlite
 import time
+import json
 from unittest.mock import MagicMock
 from neosqlite import Connection
 from neosqlite.query_operators import (
@@ -30,6 +31,7 @@ from neosqlite.collection.query_helper import (
     set_force_fallback,
     get_force_fallback,
 )
+from neosqlite.collection.jsonb_support import supports_jsonb
 from neosqlite.collection.temporary_table_aggregation import (
     execute_2nd_tier_aggregation,
 )
@@ -1334,20 +1336,6 @@ def test_group_push_addtoset_consistency():
         assert sorted(result_optimized[1]["uniqueTags"]) == ["red", "yellow"]
 
 
-def test_force_fallback_flag_alt():
-    """Test that the force fallback flag can be set and retrieved"""
-    # Initially should be False
-    assert get_force_fallback() is False
-
-    # Set to True
-    set_force_fallback(True)
-    assert get_force_fallback() is True
-
-    # Set back to False
-    set_force_fallback(False)
-    assert get_force_fallback() is False
-
-
 def test_force_fallback_with_unwind_only():
     """Test force fallback with simple unwind operations"""
     with neosqlite.Connection(":memory:") as conn:
@@ -1972,3 +1960,734 @@ def test_internal_insert_invalid_document_no_position():
     }  # This will be mocked to produce invalid JSON
     with pytest.raises(ValueError, match="Invalid JSON document"):
         helper._internal_insert(document)
+
+
+def test_insert_invalid_json_document_with_syntax_error():
+    """Test inserting an invalid JSON document with syntax error."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test_collection"]
+
+    # Test with a document that would create invalid JSON
+    # This is a bit tricky since we're working with Python dicts,
+    # but we can test edge cases that would create invalid JSON
+
+    # Try to insert a document with a non-serializable object
+    class NonSerializable:
+        pass
+
+    doc = {"name": "John", "invalid": NonSerializable()}
+
+    # This should raise a TypeError when trying to serialize
+    with pytest.raises(TypeError):
+        collection.insert_one(doc)
+
+
+def test_insert_document_with_nan_values():
+    """Test inserting a document with NaN values."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test_collection"]
+
+    # Test with NaN values (JSON doesn't support NaN)
+    doc = {"name": "John", "score": float("nan")}
+
+    # This should raise a ValueError when trying to serialize
+    with pytest.raises(ValueError):
+        collection.insert_one(doc)
+
+
+def test_insert_document_with_infinity_values():
+    """Test inserting a document with infinity values."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test_collection"]
+
+    # Test with infinity values (JSON doesn't support infinity)
+    doc = {"name": "John", "score": float("inf")}
+
+    # This should raise a ValueError when trying to serialize
+    with pytest.raises(ValueError):
+        collection.insert_one(doc)
+
+
+def test_insert_document_with_negative_infinity_values():
+    """Test inserting a document with negative infinity values."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test_collection"]
+
+    # Test with negative infinity values (JSON doesn't support infinity)
+    doc = {"name": "John", "score": float("-inf")}
+
+    # This should raise a ValueError when trying to serialize
+    with pytest.raises(ValueError):
+        collection.insert_one(doc)
+
+
+def test_json_validation_with_database_level_checks():
+    """Test that database-level JSON validation works correctly."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test_collection"]
+
+    # First insert a valid document to ensure the collection is working
+    valid_doc = {"name": "John", "age": 30}
+    result = collection.insert_one(valid_doc)
+    assert result.inserted_id == 1
+
+    # Test that we can retrieve the document
+    found = collection.find_one({"_id": 1})
+    assert found["name"] == "John"
+    assert found["age"] == 30
+
+
+def test_json_validation_edge_cases():
+    """Test edge cases for JSON validation."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test_collection"]
+
+    # Test with empty document
+    doc = {}
+    result = collection.insert_one(doc)
+    assert result.inserted_id == 1
+
+    # Test with document containing only _id placeholder
+    doc2 = {"_id": None}  # _id will be removed before insertion
+    result2 = collection.insert_one(doc2)
+    assert result2.inserted_id == 2
+
+
+def test_json_validation_with_complex_nested_structures():
+    """Test JSON validation with complex nested structures."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test_collection"]
+
+    # Test with deeply nested structure
+    doc = {
+        "level1": {
+            "level2": {"level3": {"level4": {"value": "deeply nested"}}}
+        },
+        "array_of_objects": [
+            {"name": "item1", "props": {"color": "red"}},
+            {"name": "item2", "props": {"color": "blue"}},
+        ],
+    }
+    result = collection.insert_one(doc)
+    assert result.inserted_id == 1
+
+    # Verify the document was inserted correctly
+    found = collection.find_one({"_id": 1})
+    assert (
+        found["level1"]["level2"]["level3"]["level4"]["value"]
+        == "deeply nested"
+    )
+    assert found["array_of_objects"][0]["name"] == "item1"
+    assert found["array_of_objects"][1]["props"]["color"] == "blue"
+
+
+# ================================
+# JSON Validation Integration Tests
+# ================================
+
+
+def test_json_validation_integration_valid_documents():
+    """Test JSON validation integration with valid documents."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test_collection"]
+
+    # Test various valid JSON documents
+    valid_docs = [
+        {"name": "John", "age": 30},
+        {"nested": {"deep": {"value": "test"}}},
+        {"array": [1, 2, 3, "four", {"five": 5}]},
+        {"mixed": [None, True, False, 123.45]},
+        {"unicode": "Hello 世界", "emoji": "😀😃😄😁"},
+        {},  # Empty document
+    ]
+
+    for i, doc in enumerate(valid_docs):
+        result = collection.insert_one(doc)
+        assert result.inserted_id == i + 1
+        # Verify document was inserted correctly
+        found = collection.find_one({"_id": i + 1})
+        assert found is not None
+
+
+def test_json_validation_integration_invalid_documents():
+    """Test JSON validation integration with documents that would create invalid JSON."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test_collection"]
+
+    # Test with non-serializable objects
+    class NonSerializable:
+        pass
+
+    # Test with NaN values (should raise ValueError during serialization)
+    with pytest.raises(ValueError):
+        collection.insert_one({"name": "John", "score": float("nan")})
+
+    # Test with infinity values (should raise ValueError during serialization)
+    with pytest.raises(ValueError):
+        collection.insert_one({"name": "John", "score": float("inf")})
+
+    # Test with negative infinity values (should raise ValueError during serialization)
+    with pytest.raises(ValueError):
+        collection.insert_one({"name": "John", "score": float("-inf")})
+
+    # Test with non-serializable objects (should raise TypeError during serialization)
+    with pytest.raises(TypeError):
+        collection.insert_one({"name": "John", "invalid": NonSerializable()})
+
+
+def test_json_validation_with_complex_structures():
+    """Test JSON validation with complex nested structures."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test_collection"]
+
+    # Test with deeply nested structure
+    complex_doc = {
+        "level1": {
+            "level2": {"level3": {"level4": {"value": "deeply nested"}}}
+        },
+        "array_of_objects": [
+            {
+                "name": "item1",
+                "props": {"color": "red", "tags": ["tag1", "tag2"]},
+            },
+            {
+                "name": "item2",
+                "props": {"color": "blue", "tags": ["tag3", "tag4"]},
+            },
+        ],
+        "mixed_array": [1, "two", {"three": [4, 5]}, None, True, False],
+    }
+
+    result = collection.insert_one(complex_doc)
+    assert result.inserted_id == 1
+
+    # Verify the document was inserted correctly
+    found = collection.find_one({"_id": 1})
+    assert (
+        found["level1"]["level2"]["level3"]["level4"]["value"]
+        == "deeply nested"
+    )
+    assert found["array_of_objects"][0]["name"] == "item1"
+    assert found["array_of_objects"][1]["props"]["color"] == "blue"
+    assert found["mixed_array"][2]["three"] == [4, 5]
+
+
+def test_json_validation_with_special_values():
+    """Test JSON validation with special JSON values."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test_collection"]
+
+    # Test with null values
+    doc_with_null = {"name": "John", "middle_name": None, "age": 30}
+    result = collection.insert_one(doc_with_null)
+    assert result.inserted_id == 1
+
+    found = collection.find_one({"_id": 1})
+    assert found["middle_name"] is None
+
+    # Test with boolean values
+    doc_with_bool = {"name": "John", "is_active": True, "is_deleted": False}
+    result = collection.insert_one(doc_with_bool)
+    assert result.inserted_id == 2
+
+    found = collection.find_one({"_id": 2})
+    assert found["is_active"] is True
+    assert found["is_deleted"] is False
+
+
+def test_json_validation_with_unicode_and_emoji():
+    """Test JSON validation with Unicode and emoji characters."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test_collection"]
+
+    # Test with Unicode characters
+    doc_with_unicode = {
+        "english": "Hello",
+        "chinese": "你好",
+        "japanese": "こんにちは",
+        "korean": "안녕하세요",
+        "emoji": "😀😃😄😁",
+        "special": "café naïve résumé",
+    }
+
+    result = collection.insert_one(doc_with_unicode)
+    assert result.inserted_id == 1
+
+    found = collection.find_one({"_id": 1})
+    assert found["english"] == "Hello"
+    assert found["chinese"] == "你好"
+    assert found["emoji"] == "😀😃😄😁"
+
+
+def test_multiple_document_insertion_with_validation():
+    """Test inserting multiple documents with validation."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test_collection"]
+
+    # Test inserting multiple valid documents
+    docs = [
+        {"name": "John", "age": 30},
+        {"name": "Jane", "age": 25},
+        {"name": "Bob", "age": 35},
+        {"name": "Alice", "age": 28},
+    ]
+
+    result = collection.insert_many(docs)
+    assert len(result.inserted_ids) == 4
+    assert result.inserted_ids == [1, 2, 3, 4]
+
+    # Verify all documents were inserted correctly
+    assert collection.count_documents({}) == 4
+
+    john = collection.find_one({"name": "John"})
+    jane = collection.find_one({"name": "Jane"})
+    bob = collection.find_one({"name": "Bob"})
+    alice = collection.find_one({"name": "Alice"})
+
+    assert john["age"] == 30
+    assert jane["age"] == 25
+    assert bob["age"] == 35
+    assert alice["age"] == 28
+
+
+# ================================
+# JSON Validation Performance Tests
+# ================================
+
+
+def test_json_validation_performance_benchmark():
+    """Benchmark JSON validation performance."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test_collection"]
+
+    # Create a large document for testing
+    large_doc = {
+        "id": 1,
+        "name": "Test Document",
+        "data": [i for i in range(1000)],
+        "nested": {
+            "level1": {
+                "level2": {
+                    "level3": {"values": [f"value_{i}" for i in range(100)]}
+                }
+            }
+        },
+        "array_of_objects": [
+            {"id": i, "name": f"item_{i}", "props": {"value": i * 2}}
+            for i in range(100)
+        ],
+    }
+
+    # Measure insertion time
+    start_time = time.time()
+    result = collection.insert_one(large_doc)
+    end_time = time.time()
+
+    insertion_time = end_time - start_time
+    assert result.inserted_id == 1
+
+    # Verify document was inserted correctly
+    found = collection.find_one({"_id": 1})
+    assert found is not None
+    assert len(found["data"]) == 1000
+    assert len(found["array_of_objects"]) == 100
+
+    print(f"JSON validation and insertion time: {insertion_time:.6f} seconds")
+
+
+def test_multiple_document_insertion_performance():
+    """Benchmark multiple document insertion performance."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test_collection"]
+
+    # Create multiple medium-sized documents
+    docs = [
+        {
+            "id": i,
+            "name": f"Document {i}",
+            "data": [j for j in range(100)],
+            "nested": {"values": [f"value_{j}" for j in range(50)]},
+        }
+        for i in range(100)
+    ]
+
+    # Measure insertion time
+    start_time = time.time()
+    result = collection.insert_many(docs)
+    end_time = time.time()
+
+    insertion_time = end_time - start_time
+    assert len(result.inserted_ids) == 100
+
+    # Verify documents were inserted correctly
+    assert collection.count_documents({}) == 100
+
+    print(
+        f"JSON validation and insertion time for 100 documents: {insertion_time:.6f} seconds"
+    )
+
+
+def test_json_validation_vs_python_validation():
+    """Compare JSON validation performance between database and Python approaches."""
+    # Test with a simple document
+    simple_doc = {"name": "Test", "value": 123, "active": True}
+    json_string = json.dumps(simple_doc)
+
+    # Test Python validation
+    start_time = time.time()
+    for _ in range(1000):
+        try:
+            json.loads(json_string)
+            valid = True
+        except json.JSONDecodeError:
+            valid = False
+    python_time = time.time() - start_time
+
+    # Test database validation
+    db = neosqlite.Connection(":memory:")
+    start_time = time.time()
+    for _ in range(1000):
+        cursor = db.db.execute("SELECT json_valid(?)", (json_string,))
+        result = cursor.fetchone()
+        valid = bool(result[0]) if result and result[0] is not None else False
+    db_time = time.time() - start_time
+
+    print(
+        f"Python validation time for 1000 iterations: {python_time:.6f} seconds"
+    )
+    print(
+        f"Database validation time for 1000 iterations: {db_time:.6f} seconds"
+    )
+
+    # Both should produce the same result
+    assert valid is True
+
+
+# ================================
+# JSON Validation Architecture Tests
+# ================================
+
+
+def test_three_tier_json_validation_architecture():
+    """Test the three-tier architecture for JSON validation."""
+
+    # Tier 1: SQL optimization with json_valid
+    def test_tier_1_sql_optimization():
+        # Create a mock collection
+        mock_collection = MagicMock()
+        mock_collection.db = MagicMock()
+
+        # Create QueryHelper
+        helper = QueryHelper(mock_collection)
+
+        # Mock the database response for json_valid (success case)
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = [1]  # Valid JSON
+        mock_collection.db.execute.return_value = mock_cursor
+
+        # Test with valid JSON - should use SQL optimization
+        result = helper._validate_json_document('{"name": "test"}')
+        assert result is True
+
+        # Verify the correct function was called
+        mock_collection.db.execute.assert_called_with(
+            "SELECT json_valid(?)", ('{"name": "test"}',)
+        )
+
+        # Test with invalid JSON - should use SQL optimization
+        mock_cursor.fetchone.return_value = [0]  # Invalid JSON
+        result = helper._validate_json_document('{"name": "test"')
+        assert result is False
+
+    # Tier 2: Temporary table approach (not applicable for JSON validation)
+    # JSON validation is a simple operation that doesn't require temporary tables
+
+    # Tier 3: Python fallback
+    def test_tier_3_python_fallback():
+        # Create a mock collection
+        mock_collection = MagicMock()
+        mock_collection.db = MagicMock()
+
+        # Create QueryHelper
+        helper = QueryHelper(mock_collection)
+
+        # Mock the database response for no json_valid support (fallback case)
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = None  # No json_valid support
+        mock_collection.db.execute.return_value = mock_cursor
+
+        # Test with valid JSON - should fall back to Python validation
+        result = helper._validate_json_document('{"name": "test"}')
+        assert result is True
+
+        # Test with invalid JSON - should fall back to Python validation
+        result = helper._validate_json_document('{"name": "test"')
+        assert result is False
+
+    # Run all tier tests
+    test_tier_1_sql_optimization()
+    test_tier_3_python_fallback()
+
+
+def test_three_tier_json_error_position_architecture():
+    """Test the three-tier architecture for JSON error position reporting."""
+
+    # Tier 1: SQL optimization with json_error_position
+    def test_tier_1_sql_optimization():
+        # Create a mock collection
+        mock_collection = MagicMock()
+        mock_collection.db = MagicMock()
+
+        # Create QueryHelper
+        helper = QueryHelper(mock_collection)
+
+        # Mock the database response for json_error_position (success case)
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = [15]  # Error at position 15
+        mock_collection.db.execute.return_value = mock_cursor
+
+        # Test with invalid JSON - should use SQL optimization
+        result = helper._get_json_error_position('{"name": "test"')
+        assert result == 15
+
+        # Verify the correct function was called
+        mock_collection.db.execute.assert_called_with(
+            "SELECT json_error_position(?)", ('{"name": "test"',)
+        )
+
+    # Tier 2: Temporary table approach (not applicable for JSON error position)
+    # JSON error position is a simple operation that doesn't require temporary tables
+
+    # Tier 3: Python fallback (no fallback for error position)
+    def test_tier_3_python_fallback():
+        # Create a mock collection
+        mock_collection = MagicMock()
+        mock_collection.db = MagicMock()
+
+        # Create QueryHelper
+        helper = QueryHelper(mock_collection)
+
+        # Mock the database response for no json_error_position support (fallback case)
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = (
+            None  # No json_error_position support
+        )
+        mock_collection.db.execute.return_value = mock_cursor
+
+        # Test with invalid JSON - should return -1 (no position info)
+        result = helper._get_json_error_position('{"name": "test"')
+        assert result == -1
+
+    # Run all tier tests
+    test_tier_1_sql_optimization()
+    test_tier_3_python_fallback()
+
+
+def test_force_fallback_mechanism():
+    """Test the force fallback mechanism for benchmarking."""
+    from neosqlite.collection.query_helper import (
+        set_force_fallback,
+        get_force_fallback,
+    )
+
+    # Test that we can set and get the force fallback flag
+    assert get_force_fallback() is False
+
+    set_force_fallback(True)
+    assert get_force_fallback() is True
+
+    set_force_fallback(False)
+    assert get_force_fallback() is False
+
+
+def test_jsonb_support_detection_integration():
+    """Test JSONB support detection integration."""
+
+    # Test with an actual database connection
+    db = neosqlite.Connection(":memory:")
+
+    # Check if JSONB is supported (this will depend on the SQLite version)
+    jsonb_supported = supports_jsonb(db.db)
+
+    # The result will depend on the SQLite version, but it should be a boolean
+    assert isinstance(jsonb_supported, bool)
+
+    # Create a QueryHelper and check that it correctly detects JSONB support
+    collection = db["test_collection"]
+    helper = collection.query_engine.helpers
+
+    # The helper should have the correct JSONB support flag
+    assert isinstance(helper._jsonb_supported, bool)
+
+    # And it should match what we detected
+    assert helper._jsonb_supported == jsonb_supported
+
+
+def test_complete_document_insertion_workflow():
+    """Test the complete document insertion workflow with validation."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test_collection"]
+
+    # Test inserting a document through the complete workflow
+    doc = {"name": "John", "age": 30, "city": "New York"}
+
+    # This should go through:
+    # 1. Document preparation (_convert_bytes_to_binary)
+    # 2. JSON serialization (neosqlite_json_dumps)
+    # 3. JSON validation (_validate_json_document)
+    # 4. Database insertion
+    result = collection.insert_one(doc)
+
+    assert result.inserted_id == 1
+    assert doc["_id"] == 1
+
+    # Verify the document was inserted correctly
+    found = collection.find_one({"_id": 1})
+    assert found["name"] == "John"
+    assert found["age"] == 30
+    assert found["city"] == "New York"
+
+
+def test_insert_valid_json_document():
+    """Test inserting a valid JSON document."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test_collection"]
+
+    # Test with a valid document
+    doc = {"name": "John", "age": 30, "city": "New York"}
+    result = collection.insert_one(doc)
+
+    assert result.inserted_id == 1
+    assert doc["_id"] == 1
+    found = collection.find_one({"_id": 1})
+    assert found["name"] == "John"
+    assert found["age"] == 30
+    assert found["city"] == "New York"
+
+
+def test_insert_valid_nested_json_document():
+    """Test inserting a valid nested JSON document."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test_collection"]
+
+    # Test with a valid nested document
+    doc = {
+        "name": "John",
+        "age": 30,
+        "address": {
+            "street": "123 Main St",
+            "city": "New York",
+            "zipcode": "10001",
+        },
+        "hobbies": ["reading", "swimming", "coding"],
+    }
+    result = collection.insert_one(doc)
+
+    assert result.inserted_id == 1
+    assert doc["_id"] == 1
+    found = collection.find_one({"_id": 1})
+    assert found["name"] == "John"
+    assert found["address"]["street"] == "123 Main St"
+    assert found["hobbies"][0] == "reading"
+
+
+def test_insert_valid_array_document():
+    """Test inserting a valid array document."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test_collection"]
+
+    # Test with a document containing arrays
+    doc = {
+        "numbers": [1, 2, 3, 4, 5],
+        "mixed": [1, "two", {"three": 3}, [4, 5]],
+        "empty": [],
+    }
+    result = collection.insert_one(doc)
+
+    assert result.inserted_id == 1
+    assert doc["_id"] == 1
+    found = collection.find_one({"_id": 1})
+    assert found["numbers"] == [1, 2, 3, 4, 5]
+    assert found["mixed"][1] == "two"
+    assert found["empty"] == []
+
+
+def test_insert_multiple_valid_documents():
+    """Test inserting multiple valid JSON documents."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test_collection"]
+
+    # Test with multiple valid documents
+    docs = [
+        {"name": "John", "age": 30},
+        {"name": "Jane", "age": 25},
+        {"name": "Bob", "age": 35},
+    ]
+    result = collection.insert_many(docs)
+
+    assert len(result.inserted_ids) == 3
+    assert result.inserted_ids == [1, 2, 3]
+    assert collection.count_documents({}) == 3
+
+    # Verify all documents were inserted correctly
+    john = collection.find_one({"name": "John"})
+    jane = collection.find_one({"name": "Jane"})
+    bob = collection.find_one({"name": "Bob"})
+
+    assert john["age"] == 30
+    assert jane["age"] == 25
+    assert bob["age"] == 35
+
+
+def test_insert_document_with_special_characters():
+    """Test inserting a document with special characters."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test_collection"]
+
+    # Test with special characters
+    doc = {
+        "unicode": "Hello 世界",
+        "emoji": "😀😃😄😁",
+        "special_chars": "!@#$%^&*()_+-=[]{}|;':\",./<>?",
+    }
+    result = collection.insert_one(doc)
+
+    assert result.inserted_id == 1
+    assert doc["_id"] == 1
+    found = collection.find_one({"_id": 1})
+    assert found["unicode"] == "Hello 世界"
+    assert found["emoji"] == "😀😃😄😁"
+
+
+def test_insert_document_with_null_values():
+    """Test inserting a document with null values."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test_collection"]
+
+    # Test with null values
+    doc = {"name": "John", "middle_name": None, "age": 30}
+    result = collection.insert_one(doc)
+
+    assert result.inserted_id == 1
+    assert doc["_id"] == 1
+    found = collection.find_one({"_id": 1})
+    assert found["name"] == "John"
+    assert found["middle_name"] is None
+    assert found["age"] == 30
+
+
+def test_insert_document_with_boolean_values():
+    """Test inserting a document with boolean values."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test_collection"]
+
+    # Test with boolean values
+    doc = {"name": "John", "is_active": True, "is_deleted": False}
+    result = collection.insert_one(doc)
+
+    assert result.inserted_id == 1
+    assert doc["_id"] == 1
+    found = collection.find_one({"_id": 1})
+    assert found["name"] == "John"
+    assert found["is_active"] is True
+    assert found["is_deleted"] is False
