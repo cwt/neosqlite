@@ -8,6 +8,7 @@ temporary table generation.
 
 from typing import Any, Dict, List, Tuple
 from .cursor import DESCENDING
+from .jsonb_support import should_use_json_functions
 
 
 def _empty_result() -> Tuple[str, List[Any]]:
@@ -39,16 +40,23 @@ class SQLFieldAccessor:
     or temporary table access.
     """
 
-    def __init__(self, data_column: str = "data", id_column: str = "id"):
+    def __init__(
+        self,
+        data_column: str = "data",
+        id_column: str = "id",
+        jsonb_supported: bool = False,
+    ):
         """
         Initialize the SQLFieldAccessor with column names.
 
         Args:
             data_column: The name of the column containing JSON data (default: "data")
             id_column: The name of the column containing document IDs (default: "id")
+            jsonb_supported: Whether JSONB functions are supported (default: False)
         """
         self.data_column = data_column
         self.id_column = id_column
+        self.jsonb_supported = jsonb_supported
 
     def _parse_json_path(self, field: str) -> str:
         """
@@ -119,19 +127,22 @@ class SQLFieldAccessor:
 
         return f"$.{'.'.join(json_parts)}"
 
-    def get_field_access(self, field: str, context: str = "direct") -> str:
+    def get_field_access(
+        self, field: str, context: str = "direct", query: dict | None = None
+    ) -> str:
         """
         Generate field access SQL with enhanced JSON path support.
 
         This method generates appropriate SQL expressions for accessing fields
         based on the field name and context. For the special "_id" field, it returns
-        the ID column name. For other fields, it generates a json_extract expression
-        to access the field from the JSON data column, with support for complex
+        the ID column name. For other fields, it generates a json_extract or jsonb_extract
+        expression to access the field from the JSON data column, with support for complex
         JSON paths including array indexing.
 
         Args:
             field: The field name to access
             context: The context for field access (default: "direct")
+            query: The query being processed (used to determine if text search is needed)
 
         Returns:
             SQL expression for accessing the field
@@ -142,7 +153,12 @@ class SQLFieldAccessor:
         else:
             # Use enhanced JSON path parsing
             json_path = self._parse_json_path(field)
-            return f"json_extract({self.data_column}, '{json_path}')"
+
+            # Determine whether to use json_* or jsonb_* functions
+            use_json = should_use_json_functions(query, self.jsonb_supported)
+            function_name = "json_extract" if use_json else "jsonb_extract"
+
+            return f"{function_name}({self.data_column}, '{json_path}')"
 
 
 class SQLOperatorTranslator:
@@ -324,8 +340,9 @@ class SQLClauseBuilder:
                     condition, context, is_nested=True
                 )
                 if clause is None:
+                    # Break and return the clauses built so far
                     break
-                else:
+                elif clause:  # Only add non-empty clauses
                     # Remove "WHERE " prefix if present
                     if clause.startswith("WHERE "):
                         clause = clause[6:]
@@ -355,6 +372,7 @@ class SQLClauseBuilder:
         query: Dict[str, Any],
         context: str = "direct",
         is_nested: bool = False,
+        query_param: dict | None = None,
     ) -> Tuple[str | None, List[Any]]:
         """
         Build a WHERE clause from a MongoDB-style query.
@@ -367,6 +385,7 @@ class SQLClauseBuilder:
             query: The MongoDB-style query
             context: The context for field access (default: "direct")
             is_nested: Whether this is a nested condition within a logical operator (default: False)
+            query_param: The original query being processed (used to determine if text search is needed)
 
         Returns:
             Tuple of (WHERE clause, parameters) or (None, []) if unsupported
@@ -384,9 +403,7 @@ class SQLClauseBuilder:
                     field, value, context
                 )
                 if sql is None:
-                    return (
-                        _empty_result()
-                    )  # Unsupported condition, fallback to Python
+                    return None, []  # Unsupported condition, fallback to Python
                 else:  # Only add if not empty
                     clauses.append(sql)
                     params.extend(clause_params)
@@ -394,11 +411,12 @@ class SQLClauseBuilder:
                 # Handle $not logical operator (applies to single condition)
                 if isinstance(value, dict):
                     not_clause, not_params = self.build_where_clause(
-                        value, context, is_nested=True
+                        value, context, is_nested=True, query_param=query_param
                     )
                     if not_clause is None:
                         return (
-                            _empty_result()
+                            None,
+                            [],
                         )  # Unsupported condition, fallback to Python
                     if not_clause:
                         # Remove "WHERE " prefix if present
@@ -414,7 +432,7 @@ class SQLClauseBuilder:
                 # Regular field condition
                 # Get field access expression
                 field_access = self.field_accessor.get_field_access(
-                    field, context
+                    field, context, query_param
                 )
 
                 if isinstance(value, dict):
@@ -438,10 +456,11 @@ class SQLClauseBuilder:
         if not clauses:
             return _empty_result()
 
-        where_clause = " AND ".join(clauses)
-        # Only add "WHERE" prefix if this is not a nested condition
-        if not is_nested:
-            where_clause = "WHERE " + where_clause
+        # Build the final WHERE clause
+        where_clause = "WHERE " + " AND ".join(clauses)
+        if is_nested:
+            # Remove "WHERE " prefix for nested conditions
+            where_clause = where_clause[6:]
 
         return where_clause, params
 
@@ -517,6 +536,7 @@ class SQLTranslator:
         table_name: str | None = None,
         data_column: str = "data",
         id_column: str = "id",
+        jsonb_supported: bool = False,
     ):
         """
         Initialize the SQLTranslator with table and column names.
@@ -525,14 +545,18 @@ class SQLTranslator:
             table_name: The name of the table to query (default: "collection")
             data_column: The name of the column containing JSON data (default: "data")
             id_column: The name of the column containing document IDs (default: "id")
+            jsonb_supported: Whether JSONB functions are supported (default: False)
         """
         self.table_name = table_name or "collection"
         self.data_column = data_column
         self.id_column = id_column
+        self.jsonb_supported = jsonb_supported
 
         # Initialize components
-        self.field_accessor = SQLFieldAccessor(data_column, id_column)
-        self.operator_translator = SQLOperatorTranslator()
+        self.field_accessor = SQLFieldAccessor(
+            data_column, id_column, jsonb_supported
+        )
+        self.operator_translator = SQLOperatorTranslator(self.field_accessor)
         self.clause_builder = SQLClauseBuilder(
             self.field_accessor, self.operator_translator
         )
@@ -556,6 +580,9 @@ class SQLTranslator:
             Tuple of (WHERE clause, parameters) or (None, []) for text search
         """
         # Handle text search queries separately
+        if not isinstance(match_spec, dict):
+            return _text_search_fallback()  # Fallback for non-dict queries
+
         if "$text" in match_spec:
             return (
                 _text_search_fallback()
@@ -567,7 +594,10 @@ class SQLTranslator:
                 _text_search_fallback()
             )  # Special handling required, return None to fallback
 
-        return self.clause_builder.build_where_clause(match_spec, context)
+        # Pass the query to the clause builder so it can be used for field access decisions
+        return self.clause_builder.build_where_clause(
+            match_spec, context, query_param=match_spec
+        )
 
     def _contains_text_operator(self, query: Dict[str, Any]) -> bool:
         """

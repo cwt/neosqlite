@@ -562,7 +562,8 @@ def test_query_helper_aggregation_and_query_building():
 
         # Test _build_simple_where_clause with simple query
         clause, params = helper._build_simple_where_clause({"name": "test"})
-        assert "json_extract" in clause
+        # Check for either json_extract or jsonb_extract depending on support
+        assert "json_extract" in clause or "jsonb_extract" in clause
         assert params == ["test"]
 
         # Test _build_simple_where_clause with _id field
@@ -574,7 +575,8 @@ def test_query_helper_aggregation_and_query_building():
         clause, params = helper._build_simple_where_clause(
             {"value": {"$gt": 10}}
         )
-        assert "json_extract" in clause
+        # Check for either json_extract or jsonb_extract depending on support
+        assert "json_extract" in clause or "jsonb_extract" in clause
         assert ">" in clause
         assert params == [10]
 
@@ -584,7 +586,11 @@ def test_query_helper_aggregation_and_query_building():
 
         # Test _build_operator_clause
         clause, params = helper._build_operator_clause("'$.value'", {"$eq": 5})
-        assert clause == "json_extract(data, '$.value') = ?"
+        # Check for either json_extract or jsonb_extract depending on support
+        assert (
+            "json_extract(data, '$.value') = ?" in clause
+            or "jsonb_extract(data, '$.value') = ?" in clause
+        )
         assert params == [5]
 
         # Test _build_operator_clause with unsupported operator
@@ -637,6 +643,7 @@ def test_query_helper_group_and_unwind():
         result = helper._build_group_query(group_spec)
         assert result is not None
         select_clause, group_by_clause, output_fields = result
+        # Check for either json_group_array (which doesn't have a JSONB equivalent)
         assert "json_group_array" in select_clause
 
         # Test _build_group_query with $addToSet
@@ -647,6 +654,7 @@ def test_query_helper_group_and_unwind():
         result = helper._build_group_query(group_spec)
         assert result is not None
         select_clause, group_by_clause, output_fields = result
+        # Check for either json_group_array (which doesn't have a JSONB equivalent)
         assert "json_group_array(DISTINCT" in select_clause
 
         # Test _build_group_query with invalid format
@@ -809,6 +817,7 @@ def test_query_helper_build_unwind_methods():
         )
 
         assert "FROM test_collection" in from_clause
+        # Check for json_each (which doesn't have a JSONB equivalent)
         assert "json_each" in from_clause
         assert "je1" in from_clause
         assert "je2" in from_clause
@@ -961,16 +970,19 @@ def test_query_helper_edge_cases():
 
         # Test _build_update_clause with $unset operator
         clause, params = helper._build_update_clause({"$unset": {"field": ""}})
-        assert "json_remove" in clause
+        # Check for either json_remove or jsonb_remove depending on support
+        assert "json_remove" in clause or "jsonb_remove" in clause
 
         # Test _build_update_clause with $inc operator
         clause, params = helper._build_update_clause({"$inc": {"count": 1}})
-        assert "json_extract" in clause
+        # Check for either json_extract or jsonb_extract depending on support
+        assert "json_extract" in clause or "jsonb_extract" in clause
         assert "+" in clause
 
         # Test _build_update_clause with $mul operator
         clause, params = helper._build_update_clause({"$mul": {"value": 2}})
-        assert "json_extract" in clause
+        # Check for either json_extract or jsonb_extract depending on support
+        assert "json_extract" in clause or "jsonb_extract" in clause
         assert "*" in clause
 
         # Test _build_sql_update_clause with $min operator

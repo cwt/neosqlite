@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Any, Dict, Iterator, List, Optional, TYPE_CHECKING
 import json
+from .jsonb_support import should_use_json_functions
 
 if TYPE_CHECKING:
     from . import Collection
@@ -85,18 +86,33 @@ class RawBatchCursor:
             # Build ORDER BY clause if sorting is specified
             order_by = ""
             if self._sort:
+                # Determine whether to use json_* or jsonb_* functions
+                use_json = should_use_json_functions(
+                    None, self._collection.query_engine._jsonb_supported
+                )
+                function_name = "json_extract" if use_json else "jsonb_extract"
+
                 sort_clauses = []
                 for key, direction in self._sort.items():
                     sort_clauses.append(
-                        f"json_extract(data, '$.{key}') {'DESC' if direction == -1 else 'ASC'}"
+                        f"{function_name}(data, '$.{key}') {'DESC' if direction == -1 else 'ASC'}"
                     )
                 order_by = "ORDER BY " + ", ".join(sort_clauses)
 
+            # Use the collection's JSONB support flag to determine how to select data
+            jsonb_supported = self._collection.query_engine._jsonb_supported
+
             # Build the full query with proper WHERE clause handling
             if where_clause and where_clause.strip():
-                cmd = f"SELECT id, data FROM {self._collection.name} {where_clause} {order_by}"
+                if jsonb_supported:
+                    cmd = f"SELECT id, json(data) as data FROM {self._collection.name} {where_clause} {order_by}"
+                else:
+                    cmd = f"SELECT id, data FROM {self._collection.name} {where_clause} {order_by}"
             else:
-                cmd = f"SELECT id, data FROM {self._collection.name} {order_by}"
+                if jsonb_supported:
+                    cmd = f"SELECT id, json(data) as data FROM {self._collection.name} {order_by}"
+                else:
+                    cmd = f"SELECT id, data FROM {self._collection.name} {order_by}"
 
             # Execute and process in batches
             offset = self._skip

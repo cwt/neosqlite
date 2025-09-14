@@ -2,6 +2,7 @@ from .. import query_operators
 from ..binary import Binary
 from ..exceptions import MalformedDocument, MalformedQueryException
 from .cursor import DESCENDING
+from .jsonb_support import supports_jsonb
 from copy import deepcopy
 from neosqlite.collection.json_helpers import (
     neosqlite_json_dumps,
@@ -17,6 +18,34 @@ except ImportError:
 
 # Global flag to force fallback - for benchmarking and debugging
 _FORCE_FALLBACK = False
+
+
+def _get_json_function_prefix(jsonb_supported: bool) -> str:
+    """
+    Get the appropriate JSON function prefix based on JSONB support.
+
+    Args:
+        jsonb_supported: Whether JSONB functions are supported
+
+    Returns:
+        str: "jsonb" if JSONB is supported, "json" otherwise
+    """
+    return "jsonb" if jsonb_supported else "json"
+
+
+def _get_json_function(name: str, jsonb_supported: bool) -> str:
+    """
+    Get the appropriate JSON function name based on JSONB support.
+
+    Args:
+        name: The base function name (without json/jsonb prefix)
+        jsonb_supported: Whether JSONB functions are supported
+
+    Returns:
+        str: The full function name with appropriate prefix
+    """
+    prefix = _get_json_function_prefix(jsonb_supported)
+    return f"{prefix}_{name}"
 
 
 def _convert_bytes_to_binary(obj: Any) -> Any:
@@ -97,6 +126,12 @@ class QueryHelper:
             getattr(collection.database, "debug", False)
             if hasattr(collection, "database")
             else False
+        )
+        # Check if JSONB is supported for this connection
+        self._jsonb_supported = supports_jsonb(collection.db)
+        # Cache the function prefix for performance
+        self._json_function_prefix = _get_json_function_prefix(
+            self._jsonb_supported
         )
 
     def _internal_insert(self, document: Dict[str, Any]) -> int:
@@ -330,9 +365,10 @@ class QueryHelper:
         sql_params = []
         if unset_clauses:
             # Handle $unset operations with json_remove
+            func_name = _get_json_function("remove", self._jsonb_supported)
             cmd = (
                 f"UPDATE {self.collection.name} "
-                f"SET data = json_remove(data, {', '.join(unset_clauses)}) "
+                f"SET data = {func_name}(data, {', '.join(unset_clauses)}) "
                 "WHERE id = ?"
             )
             sql_params = unset_params + [doc_id]
@@ -340,9 +376,10 @@ class QueryHelper:
 
         if set_clauses:
             # Handle other operations with json_set
+            func_name = _get_json_function("set", self._jsonb_supported)
             cmd = (
                 f"UPDATE {self.collection.name} "
-                f"SET data = json_set(data, {', '.join(set_clauses)}) "
+                f"SET data = {func_name}(data, {', '.join(set_clauses)}) "
                 "WHERE id = ?"
             )
             sql_params = set_params + [doc_id]
@@ -356,10 +393,14 @@ class QueryHelper:
             raise RuntimeError("No valid operations to perform")
 
         # Fetch and return the updated document
-        if row := self.collection.db.execute(
-            f"SELECT data FROM {self.collection.name} WHERE id = ?", (doc_id,)
-        ).fetchone():
-            return self.collection._load(doc_id, row[0])
+        # Use the instance's JSONB support flag to determine how to select data
+        if self._jsonb_supported:
+            cmd = f"SELECT id, json(data) as data FROM {self.collection.name} WHERE id = ?"
+        else:
+            cmd = f"SELECT id, data FROM {self.collection.name} WHERE id = ?"
+
+        if row := self.collection.db.execute(cmd, (doc_id,)).fetchone():
+            return self.collection._load(row[0], row[1])
 
         # This shouldn't happen, but just in case
         raise RuntimeError("Failed to fetch updated document")
@@ -391,29 +432,33 @@ class QueryHelper:
                 case "$inc":
                     for field, field_val in value.items():
                         path = f"'$.{field}'"
+                        func_prefix = self._json_function_prefix
                         set_clauses.append(
-                            f"{path}, json_extract(data, {path}) + ?"
+                            f"{path}, {func_prefix}_extract(data, {path}) + ?"
                         )
                         params.append(field_val)
                 case "$mul":
                     for field, field_val in value.items():
                         path = f"'$.{field}'"
+                        func_prefix = self._json_function_prefix
                         set_clauses.append(
-                            f"{path}, json_extract(data, {path}) * ?"
+                            f"{path}, {func_prefix}_extract(data, {path}) * ?"
                         )
                         params.append(field_val)
                 case "$min":
                     for field, field_val in value.items():
                         path = f"'$.{field}'"
+                        func_prefix = self._json_function_prefix
                         set_clauses.append(
-                            f"{path}, min(json_extract(data, {path}), ?)"
+                            f"{path}, min({func_prefix}_extract(data, {path}), ?)"
                         )
                         params.append(field_val)
                 case "$max":
                     for field, field_val in value.items():
                         path = f"'$.{field}'"
+                        func_prefix = self._json_function_prefix
                         set_clauses.append(
-                            f"{path}, max(json_extract(data, {path}), ?)"
+                            f"{path}, max({func_prefix}_extract(data, {path}), ?)"
                         )
                         params.append(field_val)
                 case "$unset":
@@ -423,8 +468,11 @@ class QueryHelper:
                         set_clauses.append(path)
                     # json_remove has a different syntax
                     if set_clauses:
+                        func_name = _get_json_function(
+                            "remove", self._jsonb_supported
+                        )
                         return (
-                            f"data = json_remove(data, {', '.join(set_clauses)})",
+                            f"data = {func_name}(data, {', '.join(set_clauses)})",
                             params,
                         )
                     else:
@@ -442,7 +490,8 @@ class QueryHelper:
 
         # For $unset, we already returned above
         if "$unset" not in update:
-            return f"data = json_set(data, {', '.join(set_clauses)})", params
+            func_name = _get_json_function("set", self._jsonb_supported)
+            return f"data = {func_name}(data, {', '.join(set_clauses)})", params
         else:
             # This case should have been handled above
             return None
@@ -485,13 +534,15 @@ class QueryHelper:
                     converted_val = _convert_bytes_to_binary(field_val)
                     # If it's a Binary object, serialize it to JSON and use json() function
                     if isinstance(converted_val, Binary):
+                        func_prefix = self._json_function_prefix
                         clauses.append(
-                            f"{path}, json_extract(data, {path}) + json(?)"
+                            f"{path}, {func_prefix}_extract(data, {path}) + json(?)"
                         )
                         params.append(neosqlite_json_dumps(converted_val))
                     else:
+                        func_prefix = self._json_function_prefix
                         clauses.append(
-                            f"{path}, json_extract(data, {path}) + ?"
+                            f"{path}, {func_prefix}_extract(data, {path}) + json(?)"
                         )
                         params.append(converted_val)
             case "$mul":
@@ -506,22 +557,24 @@ class QueryHelper:
                         )
                         params.append(neosqlite_json_dumps(converted_val))
                     else:
+                        func_prefix = self._json_function_prefix
                         clauses.append(
-                            f"{path}, json_extract(data, {path}) * ?"
+                            f"{path}, {func_prefix}_extract(data, {path}) * ?"
                         )
                         params.append(converted_val)
             case "$min":
                 for field, field_val in value.items():
                     path = f"'$.{field}'"
+                    func_prefix = self._json_function_prefix
                     clauses.append(
-                        f"{path}, min(json_extract(data, {path}), ?)"
+                        f"{path}, min({func_prefix}_extract(data, {path}), ?)"
                     )
                     # Convert bytes to Binary for proper JSON serialization
                     converted_val = _convert_bytes_to_binary(field_val)
                     # If it's a Binary object, serialize it to JSON and use json() function
                     if isinstance(converted_val, Binary):
                         clauses[-1] = (
-                            f"{path}, min(json_extract(data, {path}), json(?))"
+                            f"{path}, min({func_prefix}_extract(data, {path}), json(?))"
                         )
                         params.append(neosqlite_json_dumps(converted_val))
                     else:
@@ -529,15 +582,16 @@ class QueryHelper:
             case "$max":
                 for field, field_val in value.items():
                     path = f"'$.{field}'"
+                    func_prefix = self._json_function_prefix
                     clauses.append(
-                        f"{path}, max(json_extract(data, {path}), ?)"
+                        f"{path}, max({func_prefix}_extract(data, {path}), ?)"
                     )
                     # Convert bytes to Binary for proper JSON serialization
                     converted_val = _convert_bytes_to_binary(field_val)
                     # If it's a Binary object, serialize it to JSON and use json() function
                     if isinstance(converted_val, Binary):
                         clauses[-1] = (
-                            f"{path}, max(json_extract(data, {path}), json(?))"
+                            f"{path}, max({func_prefix}_extract(data, {path}), json(?))"
                         )
                         params.append(neosqlite_json_dumps(converted_val))
                     else:
@@ -1041,7 +1095,10 @@ class QueryHelper:
                     params.extend(clause_params)
                 else:
                     # Simple equality check
-                    clauses.append(f"json_extract(data, {json_path}) = ?")
+                    func_prefix = self._json_function_prefix
+                    clauses.append(
+                        f"{func_prefix}_extract(data, {json_path}) = ?"
+                    )
                     # Serialize Binary objects for SQL comparisons using compact format
                     if isinstance(value, bytes) and hasattr(
                         value, "encode_for_storage"
@@ -1089,54 +1146,76 @@ class QueryHelper:
 
             match op:
                 case "$eq":
-                    clauses.append(f"json_extract(data, {json_path}) = ?")
+                    func_prefix = self._json_function_prefix
+                    clauses.append(
+                        f"{func_prefix}_extract(data, {json_path}) = ?"
+                    )
                     params.append(op_val)
                 case "$gt":
-                    clauses.append(f"json_extract(data, {json_path}) > ?")
+                    func_prefix = self._json_function_prefix
+                    clauses.append(
+                        f"{func_prefix}_extract(data, {json_path}) > ?"
+                    )
                     params.append(op_val)
                 case "$lt":
-                    clauses.append(f"json_extract(data, {json_path}) < ?")
+                    func_prefix = self._json_function_prefix
+                    clauses.append(
+                        f"{func_prefix}_extract(data, {json_path}) < ?"
+                    )
                     params.append(op_val)
                 case "$gte":
-                    clauses.append(f"json_extract(data, {json_path}) >= ?")
+                    func_prefix = self._json_function_prefix
+                    clauses.append(
+                        f"{func_prefix}_extract(data, {json_path}) >= ?"
+                    )
                     params.append(op_val)
                 case "$lte":
-                    clauses.append(f"json_extract(data, {json_path}) <= ?")
+                    func_prefix = self._json_function_prefix
+                    clauses.append(
+                        f"{func_prefix}_extract(data, {json_path}) <= ?"
+                    )
                     params.append(op_val)
                 case "$ne":
-                    clauses.append(f"json_extract(data, {json_path}) != ?")
+                    func_prefix = self._json_function_prefix
+                    clauses.append(
+                        f"{func_prefix}_extract(data, {json_path}) != ?"
+                    )
                     params.append(op_val)
                 case "$in":
+                    func_prefix = self._json_function_prefix
                     placeholders = ", ".join("?" for _ in op_val)
                     clauses.append(
-                        f"json_extract(data, {json_path}) IN ({placeholders})"
+                        f"{func_prefix}_extract(data, {json_path}) IN ({placeholders})"
                     )
                     params.extend(op_val)
                 case "$nin":
+                    func_prefix = self._json_function_prefix
                     placeholders = ", ".join("?" for _ in op_val)
                     clauses.append(
-                        f"json_extract(data, {json_path}) NOT IN ({placeholders})"
+                        f"{func_prefix}_extract(data, {json_path}) NOT IN ({placeholders})"
                     )
                     params.extend(op_val)
                 case "$exists":
                     # Handle boolean value for $exists
+                    func_prefix = self._json_function_prefix
                     if op_val is True:
                         clauses.append(
-                            f"json_extract(data, {json_path}) IS NOT NULL"
+                            f"{func_prefix}_extract(data, {json_path}) IS NOT NULL"
                         )
                     elif op_val is False:
                         clauses.append(
-                            f"json_extract(data, {json_path}) IS NULL"
+                            f"{func_prefix}_extract(data, {json_path}) IS NULL"
                         )
                     else:
                         # Invalid value for $exists, fallback to Python
                         return None, []
                 case "$mod":
                     # Handle [divisor, remainder] array
+                    func_prefix = self._json_function_prefix
                     if isinstance(op_val, (list, tuple)) and len(op_val) == 2:
                         divisor, remainder = op_val
                         clauses.append(
-                            f"json_extract(data, {json_path}) % ? = ?"
+                            f"{func_prefix}_extract(data, {json_path}) % ? = ?"
                         )
                         params.extend([divisor, remainder])
                     else:
@@ -1144,9 +1223,10 @@ class QueryHelper:
                         return None, []
                 case "$size":
                     # Handle array size comparison
+                    func_prefix = self._json_function_prefix
                     if isinstance(op_val, int):
                         clauses.append(
-                            f"json_array_length(json_extract(data, {json_path})) = ?"
+                            f"json_array_length({func_prefix}_extract(data, {json_path})) = ?"
                         )
                         params.append(op_val)
                     else:
@@ -1154,9 +1234,10 @@ class QueryHelper:
                         return None, []
                 case "$contains":
                     # Handle case-insensitive substring search
+                    func_prefix = self._json_function_prefix
                     if isinstance(op_val, str):
                         clauses.append(
-                            f"lower(json_extract(data, {json_path})) LIKE ?"
+                            f"lower({func_prefix}_extract(data, {json_path})) LIKE ?"
                         )
                         params.append(f"%{op_val.lower()}%")
                     else:
@@ -1454,8 +1535,9 @@ class QueryHelper:
                                 f"{key} {'DESC' if direction == DESCENDING else 'ASC'}"
                             )
                         else:
+                            func_prefix = self._json_function_prefix
                             sort_clauses.append(
-                                f"json_extract(data, '$.{key}') "
+                                f"{func_prefix}_extract(data, '$.{key}') "
                                 f"{'DESC' if direction == DESCENDING else 'ASC'}"
                             )
                     order_by = "ORDER BY " + ", ".join(sort_clauses)
@@ -1515,10 +1597,11 @@ class QueryHelper:
                                 group_by_clause = "GROUP BY je.value"
                             else:
                                 # Grouping by another field
+                                func_prefix = self._json_function_prefix
                                 select_expressions.append(
-                                    f"json_extract({self.collection.name}.data, '$.{group_id_field}') AS _id"
+                                    f"{func_prefix}_extract({self.collection.name}.data, '$.{group_id_field}') AS _id"
                                 )
-                                group_by_clause = f"GROUP BY json_extract({self.collection.name}.data, '$.{group_id_field}')"
+                                group_by_clause = f"GROUP BY {func_prefix}_extract({self.collection.name}.data, '$.{group_id_field}')"
 
                             # Try to build the group query using the general method
                             # This supports all accumulator operations including $avg, $min, $max
@@ -1539,8 +1622,9 @@ class QueryHelper:
                                 ]  # Remove leading $
                                 if group_id_field == unwind_field_name:
                                     # Replace the _id extraction with je.value
+                                    func_prefix = self._json_function_prefix
                                     modified_select = select_clause.replace(
-                                        f"json_extract(data, '$.{unwind_field_name}') AS _id",
+                                        f"{func_prefix}_extract(data, '$.{unwind_field_name}') AS _id",
                                         "je.value AS _id",
                                     )
                                 else:
@@ -1549,8 +1633,9 @@ class QueryHelper:
                                 # For accumulator expressions that reference the unwound field,
                                 # replace json_extract(data, '$.unwind_field_name') with je.value
                                 # This handles cases like $push: "$tags" or $addToSet: "$tags" where tags is the unwound field
+                                func_prefix = self._json_function_prefix
                                 modified_select = modified_select.replace(
-                                    f"json_extract(data, '$.{unwind_field_name}')",
+                                    f"{func_prefix}_extract(data, '$.{unwind_field_name}')",
                                     "je.value",
                                 )
 
@@ -1559,13 +1644,15 @@ class QueryHelper:
                                     modified_group_by = "GROUP BY je.value"
                                 else:
                                     # Keep the original GROUP BY but ensure it references the correct table
+                                    func_prefix = self._json_function_prefix
                                     modified_group_by = group_by_clause.replace(
-                                        "json_extract(data,",
-                                        f"json_extract({self.collection.name}.data,",
+                                        f"{func_prefix}_extract(data,",
+                                        f"{func_prefix}_extract({self.collection.name}.data,",
                                     )
 
                                 # Build the FROM clause with json_each for unwinding
-                                from_clause = f"FROM {self.collection.name}, json_each(json_extract({self.collection.name}.data, '$.{unwind_field_name}')) as je"
+                                func_prefix = self._json_function_prefix
+                                from_clause = f"FROM {self.collection.name}, json_each({func_prefix}_extract({self.collection.name}.data, '$.{unwind_field_name}')) as je"
 
                                 # Process subsequent stages (sort, skip, limit)
                                 limit_clause = ""
@@ -1623,7 +1710,8 @@ class QueryHelper:
                                 select_clause = "SELECT " + ", ".join(
                                     select_expressions
                                 )
-                                from_clause = f"FROM {self.collection.name}, json_each(json_extract({self.collection.name}.data, '$.{unwind_field_name}')) as je"
+                                func_prefix = self._json_function_prefix
+                                from_clause = f"FROM {self.collection.name}, json_each({func_prefix}_extract({self.collection.name}.data, '$.{unwind_field_name}')) as je"
 
                                 # Add ordering by _id for consistent results
                                 order_by_clause = "ORDER BY _id"
@@ -1724,10 +1812,11 @@ class QueryHelper:
                                 group_by_clause = "GROUP BY je.value"
                             else:
                                 # Grouping by another field
+                                func_prefix = self._json_function_prefix
                                 select_expressions.append(
-                                    f"json_extract({self.collection.name}.data, '$.{group_id_field}') AS _id"
+                                    f"{func_prefix}_extract({self.collection.name}.data, '$.{group_id_field}') AS _id"
                                 )
-                                group_by_clause = f"GROUP BY json_extract({self.collection.name}.data, '$.{group_id_field}')"
+                                group_by_clause = f"GROUP BY {func_prefix}_extract({self.collection.name}.data, '$.{group_id_field}')"
 
                             # Handle accumulator operations
                             for field, accumulator in group_stage.items():
@@ -1773,8 +1862,12 @@ class QueryHelper:
                                                 )
                                             else:
                                                 # Collect values from another field
+                                                # Use json_group_array for both JSON and JSONB (there's no jsonb_group_array in SQLite)
+                                                func_prefix = (
+                                                    self._json_function_prefix
+                                                )
                                                 select_expressions.append(
-                                                    f"json_group_array(json_extract({self.collection.name}.data, '$.{push_field}')) AS \"{field}\""
+                                                    f"json_group_array({func_prefix}_extract({self.collection.name}.data, '$.{push_field}')) AS \"{field}\""
                                                 )
                                             output_fields.append(field)
                                         else:
@@ -1799,8 +1892,11 @@ class QueryHelper:
                                                 )
                                             else:
                                                 # Collect unique values from another field
+                                                func_prefix = (
+                                                    self._json_function_prefix
+                                                )
                                                 select_expressions.append(
-                                                    f"json_group_array(DISTINCT json_extract({self.collection.name}.data, '$.{add_to_set_field}')) AS \"{field}\""
+                                                    f"json_group_array(DISTINCT {func_prefix}_extract({self.collection.name}.data, '$.{add_to_set_field}')) AS \"{field}\""
                                                 )
                                             output_fields.append(field)
                                         else:
@@ -1817,7 +1913,8 @@ class QueryHelper:
                                 select_clause = "SELECT " + ", ".join(
                                     select_expressions
                                 )
-                                from_clause = f"FROM {self.collection.name}, json_each(json_extract({self.collection.name}.data, '$.{unwind_field_name}')) as je"
+                                func_prefix = self._json_function_prefix
+                                from_clause = f"FROM {self.collection.name}, json_each({func_prefix}_extract({self.collection.name}.data, '$.{unwind_field_name}')) as je"
 
                                 # Add WHERE clause from $match
                                 where_result = self._build_simple_where_clause(
@@ -1939,7 +2036,8 @@ class QueryHelper:
                                 else:
                                     # Simple array of strings or objects
                                     select_clause = f"SELECT {self.collection.name}.id, je.value as data"
-                                    from_clause = f"FROM {self.collection.name}, json_each(json_extract({self.collection.name}.data, '$.{unwind_field}')) as je"
+                                    func_prefix = self._json_function_prefix
+                                    from_clause = f"FROM {self.collection.name}, json_each({func_prefix}_extract({self.collection.name}.data, '$.{unwind_field}')) as je"
                                     where_clause = (
                                         "WHERE lower(je.value) LIKE ?"
                                     )
@@ -2028,18 +2126,19 @@ class QueryHelper:
                     if foreign_field == "_id":
                         foreign_extract = "related.id"
                     else:
-                        foreign_extract = (
-                            f"json_extract(related.data, '$.{foreign_field}')"
-                        )
+                        func_prefix = self._json_function_prefix
+                        foreign_extract = f"{func_prefix}_extract(related.data, '$.{foreign_field}')"
 
                     if local_field == "_id":
                         local_extract = f"{self.collection.name}.id"
                     else:
-                        local_extract = f"json_extract({self.collection.name}.data, '$.{local_field}')"
+                        func_prefix = self._json_function_prefix
+                        local_extract = f"{func_prefix}_extract({self.collection.name}.data, '$.{local_field}')"
 
+                    func_prefix = self._json_function_prefix
                     select_clause = (
                         f"SELECT {self.collection.name}.id, "
-                        f"json_set({self.collection.name}.data, '$.\"{as_field}\"', "
+                        f"{func_prefix}_set({self.collection.name}.data, '$.\"{as_field}\"', "
                         f"coalesce(( "
                         f"  SELECT json_group_array(json(related.data)) "
                         f"  FROM {from_collection} as related "
@@ -2120,8 +2219,9 @@ class QueryHelper:
                     group_id_field = group_spec["_id"][1:]  # Remove leading $
                     if group_id_field == unwind_field:
                         # Replace the _id extraction with je.value
+                        func_prefix = self._json_function_prefix
                         modified_select = select_clause.replace(
-                            f"json_extract(data, '$.{unwind_field}') AS _id",
+                            f"{func_prefix}_extract(data, '$.{unwind_field}') AS _id",
                             "je.value AS _id",
                         )
                     else:
@@ -2132,13 +2232,15 @@ class QueryHelper:
                         modified_group_by = "GROUP BY je.value"
                     else:
                         # Keep the original GROUP BY but ensure it references the correct table
+                        func_prefix = self._json_function_prefix
                         modified_group_by = group_by_clause.replace(
-                            "json_extract(data,",
-                            f"json_extract({self.collection.name}.data,",
+                            f"{func_prefix}_extract(data,",
+                            f"{func_prefix}_extract({self.collection.name}.data,",
                         )
 
                     # Build the FROM clause with json_each for unwinding
-                    from_clause = f"FROM {self.collection.name}, json_each(json_extract({self.collection.name}.data, '$.{unwind_field}')) as je"
+                    func_prefix = self._json_function_prefix
+                    from_clause = f"FROM {self.collection.name}, json_each({func_prefix}_extract({self.collection.name}.data, '$.{unwind_field}')) as je"
 
                     # Add ordering by _id for consistent results
                     order_by_clause = "ORDER BY _id"
@@ -2224,12 +2326,14 @@ class QueryHelper:
             )
             if parent_field and parent_alias:
                 nested_path = field_name[len(parent_field) + 1 :]
+                func_prefix = self._json_function_prefix
                 all_where_clauses.append(
-                    f"json_type(json_extract({parent_alias}.value, '$.{nested_path}')) = 'array'"
+                    f"json_type({func_prefix}_extract({parent_alias}.value, '$.{nested_path}')) = 'array'"
                 )
             else:
+                func_prefix = self._json_function_prefix
                 all_where_clauses.append(
-                    f"json_type(json_extract({self.collection.name}.data, '$.{field_name}')) = 'array'"
+                    f"json_type({func_prefix}_extract({self.collection.name}.data, '$.{field_name}')) = 'array'"
                 )
 
         where_clause = ""
@@ -2279,12 +2383,14 @@ class QueryHelper:
 
             if parent_field and parent_alias:
                 nested_path = field_name[len(parent_field) + 1 :]
+                func_prefix = self._json_function_prefix
                 from_parts.append(
-                    f", json_each(json_extract({parent_alias}.value, '$.{nested_path}')) as {je_alias}"
+                    f", json_each({func_prefix}_extract({parent_alias}.value, '$.{nested_path}')) as {je_alias}"
                 )
             else:
+                func_prefix = self._json_function_prefix
                 from_parts.append(
-                    f", json_each(json_extract({self.collection.name}.data, '$.{field_name}')) as {je_alias}"
+                    f", json_each({func_prefix}_extract({self.collection.name}.data, '$.{field_name}')) as {je_alias}"
                 )
             unwound_fields[field_name] = je_alias
 
@@ -2375,10 +2481,11 @@ class QueryHelper:
                     parent_field, parent_alias = self._find_parent_unwind(
                         key, unwound_fields
                     )
+                    func_prefix = self._json_function_prefix
                     if parent_field and parent_alias:
                         nested_path = key[len(parent_field) + 1 :]
                         sort_clauses.append(
-                            f"json_extract({parent_alias}.value, '$.{nested_path}') "
+                            f"{func_prefix}_extract({parent_alias}.value, '$.{nested_path}') "
                             f"{'DESC' if direction == DESCENDING else 'ASC'}"
                         )
                     elif key in unwound_fields:
@@ -2388,7 +2495,7 @@ class QueryHelper:
                         )
                     else:
                         sort_clauses.append(
-                            f"json_extract({self.collection.name}.data, '$.{key}') "
+                            f"{func_prefix}_extract({self.collection.name}.data, '$.{key}') "
                             f"{'DESC' if direction == DESCENDING else 'ASC'}"
                         )
             if sort_clauses:
@@ -2437,11 +2544,12 @@ class QueryHelper:
             output_fields = ["_id"]
         elif isinstance(group_id_expr, str) and group_id_expr.startswith("$"):
             group_by_field = group_id_expr[1:]
+            func_prefix = self._json_function_prefix
             group_by_clause = (
-                f"GROUP BY json_extract(data, '$.{group_by_field}')"
+                f"GROUP BY {func_prefix}_extract(data, '$.{group_by_field}')"
             )
             select_expressions = [
-                f"json_extract(data, '$.{group_by_field}') AS _id"
+                f"{func_prefix}_extract(data, '$.{group_by_field}') AS _id"
             ]
             output_fields = ["_id"]
         else:
@@ -2466,8 +2574,9 @@ class QueryHelper:
                 if not isinstance(expr, str) or not expr.startswith("$"):
                     return None  # Fallback for complex accumulator expressions
                 field_name = expr[1:]
+                func_prefix = self._json_function_prefix
                 select_expressions.append(
-                    f"json_group_array(json_extract(data, '$.{field_name}')) AS \"{field}\""
+                    f"json_group_array({func_prefix}_extract(data, '$.{field_name}')) AS \"{field}\""
                 )
                 output_fields.append(field)
                 continue
@@ -2477,8 +2586,9 @@ class QueryHelper:
                 if not isinstance(expr, str) or not expr.startswith("$"):
                     return None  # Fallback for complex accumulator expressions
                 field_name = expr[1:]
+                func_prefix = self._json_function_prefix
                 select_expressions.append(
-                    f"json_group_array(DISTINCT json_extract(data, '$.{field_name}')) AS \"{field}\""
+                    f"json_group_array(DISTINCT {func_prefix}_extract(data, '$.{field_name}')) AS \"{field}\""
                 )
                 output_fields.append(field)
                 continue
@@ -2504,8 +2614,9 @@ class QueryHelper:
             if not sql_func:
                 return None  # Unsupported accumulator
 
+            func_prefix = self._json_function_prefix
             select_expressions.append(
-                f"{sql_func}(json_extract(data, '$.{field_name}')) AS {field}"
+                f"{sql_func}({func_prefix}_extract(data, '$.{field_name}')) AS {field}"
             )
             output_fields.append(field)
 

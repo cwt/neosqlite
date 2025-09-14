@@ -138,12 +138,20 @@ class Cursor:
         if where_result is not None:
             # Use SQL-based filtering
             where_clause, params = where_result
-            cmd = f"SELECT id, data FROM {self._collection.name} {where_clause}"
+            # Use the collection's JSONB support flag to determine how to select data
+            if self._collection.query_engine._jsonb_supported:
+                cmd = f"SELECT id, json(data) as data FROM {self._collection.name} {where_clause}"
+            else:
+                cmd = f"SELECT id, data FROM {self._collection.name} {where_clause}"
             db_cursor = self._collection.db.execute(cmd, params)
             return starmap(self._collection._load, db_cursor.fetchall())
         else:
             # Fallback to Python-based filtering for complex queries
-            cmd = f"SELECT id, data FROM {self._collection.name}"
+            # Use the collection's JSONB support flag to determine how to select data
+            if self._collection.query_engine._jsonb_supported:
+                cmd = f"SELECT id, json(data) as data FROM {self._collection.name}"
+            else:
+                cmd = f"SELECT id, data FROM {self._collection.name}"
             db_cursor = self._collection.db.execute(cmd)
             apply = partial(self._query_helpers._apply_query, self._filter)
             all_docs = starmap(self._collection._load, db_cursor.fetchall())

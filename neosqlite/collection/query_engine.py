@@ -17,6 +17,7 @@ from neosqlite.collection.json_helpers import (
     neosqlite_json_dumps,
     neosqlite_json_loads,
 )
+from neosqlite.collection.jsonb_support import supports_jsonb
 from typing import Any, Dict, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -44,7 +45,11 @@ class QueryEngine:
         """
         self.collection = collection
         self.helpers = QueryHelper(collection)
-        self.sql_translator = SQLTranslator(collection.name, "data", "id")
+        # Check if JSONB is supported for this connection
+        self._jsonb_supported = supports_jsonb(collection.db)
+        self.sql_translator = SQLTranslator(
+            collection.name, "data", "id", self._jsonb_supported
+        )
 
     def insert_one(self, document: Dict[str, Any]) -> InsertOneResult:
         """
@@ -438,8 +443,12 @@ class QueryEngine:
             # Try to use SQLTranslator for the WHERE clause
             where_clause, params = self.sql_translator.translate_match(filter)
 
+        # For distinct operations, always use json_* functions to avoid binary data issues
+        # Even if JSONB is supported, we use json_* for distinct to ensure proper text output
+        func_prefix = "json"
+
         cmd = (
-            f"SELECT DISTINCT json_extract(data, '$.{key}') "
+            f"SELECT DISTINCT {func_prefix}_extract(data, '$.{key}') "
             f"FROM {self.collection.name} {where_clause}"
         )
         cursor = self.collection.db.execute(cmd, params)

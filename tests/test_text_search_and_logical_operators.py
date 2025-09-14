@@ -26,7 +26,11 @@ def test_contains_operator_sql_generation():
         )
         assert result is not None
         sql, params = result
-        assert "lower(json_extract(data, '$.name')) LIKE ?" in sql
+        # Check for either json_extract or jsonb_extract depending on support
+        assert (
+            "lower(json_extract(data, '$.name')) LIKE ?" in sql
+            or "lower(jsonb_extract(data, '$.name')) LIKE ?" in sql
+        )
         assert params == ["%alice%"]
 
 

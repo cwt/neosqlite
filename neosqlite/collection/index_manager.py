@@ -1,4 +1,4 @@
-from ..exceptions import MalformedQueryException
+from .jsonb_support import supports_jsonb, _get_json_function_prefix
 from typing import Any, Dict, List, Tuple, overload
 from typing_extensions import Literal
 
@@ -11,6 +11,8 @@ except ImportError:
 class IndexManager:
     def __init__(self, collection):
         self.collection = collection
+        # Check if JSONB is supported for this connection
+        self._jsonb_supported = supports_jsonb(collection.db)
 
     def create_index(
         self,
@@ -45,12 +47,15 @@ class IndexManager:
                 # Create index name (replace dots with underscores for valid identifiers)
                 index_name = key.replace(".", "_")
 
-                # Create the index using json_extract
+                # Determine which function to use based on JSONB support
+                func_prefix = _get_json_function_prefix(self._jsonb_supported)
+
+                # Create the index using appropriate JSON/JSONB function
                 self.collection.db.execute(
                     (
                         f"CREATE {'UNIQUE ' if unique else ''}INDEX "
                         f"IF NOT EXISTS [idx_{self.collection.name}_{index_name}] "
-                        f"ON {self.collection.name}(json_extract(data, '$.{key}'))"
+                        f"ON {self.collection.name}({func_prefix}_extract(data, '$.{key}'))"
                     )
                 )
         else:
@@ -58,9 +63,12 @@ class IndexManager:
             # This is a simplified implementation - we could expand on this later
             index_name = "_".join(key).replace(".", "_")
 
-            # Create the compound index using multiple json_extract calls
+            # Determine which function to use based on JSONB support
+            func_prefix = _get_json_function_prefix(self._jsonb_supported)
+
+            # Create the compound index using multiple JSON/JSONB extract calls
             index_columns = ", ".join(
-                f"json_extract(data, '$.{k}')" for k in key
+                f"{func_prefix}_extract(data, '$.{k}')" for k in key
             )
             self.collection.db.execute(
                 (
@@ -74,66 +82,38 @@ class IndexManager:
         """
         Creates an FTS5 index on the specified field for text search.
 
+        For FTS indexes, we create both JSON and JSONB versions to ensure
+        compatibility with both types of queries.
+
         Args:
             field (str): The field to create the FTS index on.
             tokenizer (str, optional): Optional tokenizer to use for the FTS index.
-
-        Raises:
-            MalformedQueryException: If FTS5 is not available in the SQLite installation.
         """
-        # Create FTS5 virtual table
+        # Create index name (replace dots with underscores for valid identifiers)
         index_name = field.replace(".", "_")
         fts_table_name = f"{self.collection.name}_{index_name}_fts"
 
-        # Check if FTS5 is available by trying to create a simple FTS table
-        try:
-            # Try to create a temporary FTS table to check if FTS5 is available
-            self.collection.db.execute(
-                "CREATE VIRTUAL TABLE IF NOT EXISTS temp.fts_test USING fts5(test)"
-            )
-            self.collection.db.execute("DROP TABLE IF EXISTS temp.fts_test")
-        except sqlite3.OperationalError:
-            raise MalformedQueryException(
-                "FTS5 is not available in this SQLite installation"
-            )
-
-        # Create the FTS table with optional tokenizer
-        if tokenizer:
-            self.collection.db.execute(
-                f"""
-                CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name}
-                USING fts5(
-                    content='{self.collection.name}',
-                    content_rowid='id',
-                    {index_name},
-                    tokenize='{tokenizer}'
-                )
-                """
-            )
-        else:
-            self.collection.db.execute(
-                f"""
-                CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name}
-                USING fts5(
-                    content='{self.collection.name}',
-                    content_rowid='id',
-                    {index_name}
-                )
-                """
-            )
-
-        # Create triggers to keep the FTS index in sync with the main table
-        # Delete existing triggers if they exist
+        # Create FTS table with optional tokenizer
+        tokenizer_clause = f"TOKENIZE={tokenizer}" if tokenizer else ""
         self.collection.db.execute(
-            f"DROP TRIGGER IF EXISTS {self.collection.name}_{index_name}_fts_insert"
-        )
-        self.collection.db.execute(
-            f"DROP TRIGGER IF EXISTS {self.collection.name}_{index_name}_fts_update"
-        )
-        self.collection.db.execute(
-            f"DROP TRIGGER IF EXISTS {self.collection.name}_{index_name}_fts_delete"
+            f"""
+            CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name}
+            USING FTS5({index_name}, content='{self.collection.name}', {tokenizer_clause})
+            """
         )
 
+        # Populate the FTS table with data from the main table
+        # For FTS, we always use json_extract to maintain compatibility
+        self.collection.db.execute(
+            f"""
+            INSERT INTO {fts_table_name}(rowid, {index_name})
+            SELECT id, lower(json_extract(data, '$.{field}'))
+            FROM {self.collection.name}
+            WHERE json_extract(data, '$.{field}') IS NOT NULL
+            """
+        )
+
+        # Create triggers to keep FTS table in sync with main table
         # Insert trigger
         self.collection.db.execute(
             f"""
@@ -169,16 +149,6 @@ class IndexManager:
                 INSERT INTO {fts_table_name}({fts_table_name}, rowid, {index_name})
                 VALUES ('delete', old.id, lower(json_extract(old.data, '$.{field}')));
             END
-            """
-        )
-
-        # Populate the FTS index with existing data
-        self.collection.db.execute(
-            f"""
-            INSERT INTO {fts_table_name}(rowid, {index_name})
-            SELECT id, lower(json_extract(data, '$.{field}'))
-            FROM {self.collection.name}
-            WHERE json_extract(data, '$.{field}') IS NOT NULL
             """
         )
 
@@ -412,11 +382,12 @@ class IndexManager:
 
                 # Try to extract key information from the SQL
                 if idx_sql:
-                    # Extract key information from json_extract expressions
+                    # Extract key information from json_extract or jsonb_extract expressions
                     import re
 
+                    # Look for both json_extract and jsonb_extract
                     json_extract_matches = re.findall(
-                        r"json_extract\(data, '(\$..*?)'\)", idx_sql
+                        r"(?:json|jsonb)_extract\(data, '(\$..*?)'\)", idx_sql
                     )
                     if json_extract_matches:
                         # Convert SQLite JSON paths back to dot notation

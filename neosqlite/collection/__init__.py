@@ -133,9 +133,8 @@ class Collection:
         storing JSON data. If the JSONB data type is supported, it will be used,
         otherwise, TEXT data type will be used.
         """
-        from .jsonb_support import supports_jsonb
-
-        if supports_jsonb(self.db):
+        # Use the QueryEngine's cached JSONB support flag
+        if self.query_engine._jsonb_supported:
             self.db.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {self.name} (
