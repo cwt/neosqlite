@@ -88,35 +88,27 @@ This document outlines a comprehensive plan for implementing missing PyMongo-com
 - **Location**: `neosqlite/query_operators.py`
 - **Implementation**:
   ```python
-  def _all(field: str, value: List[Any], document: Dict[str, Any]) -> bool:
-      """Check if array field contains all specified elements."""
-      doc_value = _get_nested_field(field, document)
-      if not isinstance(doc_value, list):
-          return False
-      return all(item in doc_value for item in value)
+  def _all(field, value):
+      """Matches arrays that contain all elements specified."""
+      # Implementation using json_array_length and json_extract
+      pass
   ```
-- **Dependencies**: None
-- **Testing**: Array matching scenarios
+- **Dependencies**: JSON array length functions
+- **Testing**: Arrays with all specified elements, partial matches, empty arrays
 
 #### ~~`$type` Element Operator~~
 - **Status**: ✅ COMPLETED
-- **Purpose**: Select documents based on field type
+- **Purpose**: Selects documents based on field type
 - **Location**: `neosqlite/query_operators.py`
 - **Implementation**:
   ```python
-  def _type(field: str, value: Any, document: Dict[str, Any]) -> bool:
-      """Check if field is of specified type."""
-      doc_value = _get_nested_field(field, document)
-      type_mapping = {
-          1: float, 2: str, 3: dict, 4: list, 8: bool, 10: type(None), 16: int, 18: int, 19: int
-      }
-      expected_type = type_mapping.get(value) if isinstance(value, int) else value
-      return isinstance(doc_value, expected_type)
+  def _type(field, value):
+      """Selects documents based on field type."""
+      # Implementation using json_type function
+      pass
   ```
-- **Dependencies**: Type mapping definitions
-- **Testing**: Type checking scenarios
-
-## Medium Priority Implementations
+- **Dependencies**: JSON type checking functions
+- **Testing**: Different field types (string, number, array, object, null, boolean)
 
 ### ~~Advanced Aggregation~~
 
@@ -125,142 +117,285 @@ This document outlines a comprehensive plan for implementing missing PyMongo-com
 - **Purpose**: Perform aggregation and retrieve raw BSON batches
 - **Location**: `neosqlite/collection/__init__.py`
 - **Implementation**:
-  ```python
-  def aggregate_raw_batches(self, pipeline: List[Dict[str, Any]]) -> RawBatchCursor:
-      """Perform aggregation and retrieve raw batches."""
-      # Similar to find_raw_batches but for aggregation
-      return RawBatchCursor(self, pipeline=pipeline, is_aggregation=True)
-  ```
-- **Dependencies**: RawBatchCursor enhancements
-- **Testing**: Raw batch processing
+  - Add method to Collection class
+  - Implement RawBatchCursor for batch retrieval
+- **Dependencies**: Raw batch cursor implementation
+- **Testing**: Large result sets, batch size configuration, memory usage
 
-### Index Management (Atlas-like features)
+### ~~Search Index APIs~~
 
-#### ~~Search Index APIs~~
+#### ~~`create_search_index()`~~
 - **Status**: ✅ COMPLETED
-- **Purpose**: Provide search index functionality (FTS5-based)
+- **Purpose**: Create a single search index
 - **Location**: `neosqlite/collection/index_manager.py`
 - **Implementation**:
-  - `create_search_index()` - Create FTS5-based search index
-  - `create_search_indexes()` - Create multiple search indexes
-  - `drop_search_index()` - Drop search index
-  - `list_search_indexes()` - List search indexes
-  - `update_search_index()` - Update search index
+  ```python
+  def create_search_index(self, key, tokenizer=None):
+      """Create a search index on the specified key."""
+      # Implementation using FTS5
+      pass
+  ```
 - **Dependencies**: FTS5 support
-- **Testing**: Search index operations
+- **Testing**: Single field search indexes, tokenizer configuration
 
-### Database-level Operations
+#### ~~`create_search_indexes()`~~
+- **Status**: ✅ COMPLETED
+- **Purpose**: Create multiple search indexes at once
+- **Location**: `neosqlite/collection/index_manager.py`
+- **Implementation**:
+  ```python
+  def create_search_indexes(self, indexes):
+      """Create multiple search indexes."""
+      # Implementation for batch search index creation
+      pass
+  ```
+- **Dependencies**: Individual search index creation
+- **Testing**: Multiple search indexes, error handling
+
+#### ~~`drop_search_index()`~~
+- **Status**: ✅ COMPLETED
+- **Purpose**: Drop a search index
+- **Location**: `neosqlite/collection/index_manager.py`
+- **Implementation**:
+  ```python
+  def drop_search_index(self, index):
+      """Drop the specified search index."""
+      # Implementation using DROP TABLE
+      pass
+  ```
+- **Dependencies**: None
+- **Testing**: Index dropping, non-existent index handling
+
+#### ~~`list_search_indexes()`~~
+- **Status**: ✅ COMPLETED
+- **Purpose**: List search indexes
+- **Location**: `neosqlite/collection/index_manager.py`
+- **Implementation**:
+  ```python
+  def list_search_indexes(self):
+      """List all search indexes."""
+      # Implementation querying SQLite master table
+      pass
+  ```
+- **Dependencies**: None
+- **Testing**: Empty index list, multiple indexes
+
+### ~~Enhanced JSON Functions Integration~~
+
+#### ~~Enhanced Update Operations~~
+- **Status**: ✅ PHASE 2 COMPLETED
+- **Purpose**: Leverage `json_insert()` and `json_replace()` for more efficient update operations
+- **Location**: `neosqlite/collection/query_helper.py`
+- **Implementation**:
+  - Add `json_insert()` support for `$setOnInsert` operations
+  - Add `json_replace()` support for `$replace` operations
+  - Add proper fallback to existing implementations
+- **Dependencies**: SQLite JSON1 extension support
+- **Testing**: Update operations, fallback scenarios, performance comparison
+
+#### ~~JSONB Function Support~~
+- **Status**: ✅ PHASE 2 COMPLETED
+- **Purpose**: Expand usage of `jsonb_*` functions for better performance when available
+- **Location**: `neosqlite/collection/query_helper.py`
+- **Implementation**:
+  - Add function selection logic to use `jsonb_*` when available
+  - Add fallback to `json_*` functions for older SQLite versions
+- **Dependencies**: SQLite JSONB support detection
+- **Testing**: JSONB vs JSON performance, fallback behavior
+
+#### ~~Enhanced Aggregation~~
+- **Status**: ✅ PHASE 2 COMPLETED
+- **Purpose**: Leverage existing `json_group_array()` usage for better aggregation performance
+- **Location**: `neosqlite/collection/query_helper.py`
+- **Implementation**:
+  - Optimize `$push` and `$addToSet` operations with `json_group_array()`
+  - Optimize `$group` operations with `json_group_object()`
+- **Dependencies**: SQLite JSON1 extension support
+- **Testing**: Aggregation performance, correctness verification
+
+## Medium Priority Implementations
+
+### 8. Evaluation Operators
+
+#### `$expr`
+- **Purpose**: Allows use of aggregation expressions within query language
+- **Location**: `neosqlite/query_operators.py`
+- **Implementation**:
+  ```python
+  def _expr(field, value):
+      """Allows use of aggregation expressions within query language."""
+      # Implementation using aggregation expression evaluation
+      pass
+  ```
+- **Dependencies**: Aggregation expression parser
+- **Testing**: Expression evaluation, complex expressions, performance
+
+#### `$jsonSchema`
+- **Purpose**: Validate documents against a JSON Schema
+- **Location**: `neosqlite/query_operators.py`
+- **Implementation**:
+  ```python
+  def _jsonSchema(field, value):
+      """Validate documents against a JSON Schema."""
+      # Implementation using JSON schema validation
+      pass
+  ```
+- **Dependencies**: JSON schema validation library
+- **Testing**: Schema validation, invalid documents, performance
+
+### 9. Connection Methods
 
 #### `validate_collection()`
-- **Purpose**: Validate collection integrity
+- **Purpose**: Validates collection integrity
 - **Location**: `neosqlite/connection.py`
 - **Implementation**:
   ```python
   def validate_collection(self, name):
-      """Validate collection integrity."""
-      try:
-          cursor = self.db.execute(f"PRAGMA integrity_check({name})")
-          result = cursor.fetchone()
-          return {"valid": result[0] == "ok", "errors": [] if result[0] == "ok" else [result[0]]}
-      except Exception as e:
-          return {"valid": False, "errors": [str(e)]}
+      """Validates collection integrity."""
+      # Implementation using SQLite integrity checks
+      pass
   ```
-- **Dependencies**: SQLite integrity check
-- **Testing**: Collection validation scenarios
+- **Dependencies**: SQLite integrity check functions
+- **Testing**: Valid collections, corrupted collections, error handling
 
-### Evaluation Operators
-
-#### `$expr`
-- **Purpose**: Allow aggregation expressions in queries
-- **Location**: `neosqlite/query_operators.py`
-- **Implementation**: Complex aggregation expression parser
-- **Dependencies**: Aggregation framework
-- **Testing**: Expression evaluation scenarios
-
-#### `$jsonSchema`
-- **Purpose**: Validate documents against JSON Schema
-- **Location**: `neosqlite/query_operators.py`
-- **Implementation**: JSON schema validation integration
-- **Dependencies**: JSON schema library
-- **Testing**: Schema validation scenarios
-
-## Lower Priority Implementations
-
-### Utility Methods
-
-#### Enhanced `__getitem__` and `__getattr__`
-- **Purpose**: Better sub-collection support
-- **Location**: `neosqlite/connection.py`
-- **Implementation**: Enhanced attribute access patterns
-- **Dependencies**: None
-- **Testing**: Sub-collection access
+### 10. Collection Methods
 
 #### `with_options()`
-- **Purpose**: Clone collection with different options
+- **Purpose**: Get a clone with different options
 - **Location**: `neosqlite/collection/__init__.py`
 - **Implementation**:
   ```python
   def with_options(self, **kwargs):
       """Get a clone with different options."""
-      # Create new collection instance with modified options
-      return Collection(self.db, self.name, **kwargs)
+      # Implementation for collection cloning with options
+      pass
   ```
-- **Dependencies**: Collection options system
-- **Testing**: Option inheritance scenarios
+- **Dependencies**: None
+- **Testing**: Option inheritance, method chaining, resource management
 
-### Geospatial Operators
+## Lower Priority Implementations
 
-#### `$geoIntersects`, `$geoWithin`, `$near`, `$nearSphere`
-- **Purpose**: Geospatial query support
+### 11. Additional Query Operators
+
+#### `$bitsAllClear`, `$bitsAllSet`, `$bitsAnyClear`, `$bitsAnySet`
+- **Purpose**: Bitwise query operators
 - **Location**: `neosqlite/query_operators.py`
-- **Implementation**: Geospatial functions using SQLite extensions
-- **Dependencies**: Spatialite or custom geospatial functions
-- **Testing**: Geospatial query scenarios
+- **Implementation**: Bitwise operations on numeric fields
+- **Dependencies**: Bitwise operation support
+- **Testing**: Various bit patterns, edge cases
 
-### Array Projection Operators
+### 12. Geospatial Operators
 
-#### `$slice`
-- **Purpose**: Control array element projection
-- **Location**: `neosqlite/collection/query_helper.py`
-- **Implementation**: Array slicing in projection logic
-- **Dependencies**: Projection system
-- **Testing**: Array slicing scenarios
+#### `$geoWithin`, `$geoIntersects`, `$near`, `$nearSphere`
+- **Purpose**: Geospatial query operators
+- **Location**: `neosqlite/query_operators.py`
+- **Implementation**: Geospatial calculations and indexing
+- **Dependencies**: Geospatial libraries, spatial indexing
+- **Testing**: Geospatial queries, performance with large datasets
 
 ## Implementation Strategy
 
-### Phase 1: Core Missing APIs (High Priority)
-1. Implement `drop()` method in Collection class
-2. Add collection management methods to Connection class
-3. Complete logical operator support in query system
-4. Implement missing query operators (`$all`, `$type`)
+### Development Approach
 
-### Phase 2: Enhanced Functionality (Medium Priority)
-1. Add `aggregate_raw_batches()` method
-2. Add database validation methods
-3. Implement evaluation operators
+1. **Incremental Implementation**: Implement features in small, testable increments
+2. **Backward Compatibility**: Maintain 100% backward compatibility at each step
+3. **Comprehensive Testing**: Create thorough test suites for each feature
+4. **Performance Benchmarking**: Measure performance before and after each change
+5. **Documentation**: Document all new functionality with clear examples
 
-### Phase 3: Advanced Features (Lower Priority)
-1. Enhance utility methods
-2. Add geospatial operator support
-3. Implement array projection operators
+### Risk Mitigation
 
-### Testing Approach
-1. Unit tests for each new API/operator
-2. Integration tests with existing functionality
-3. Performance benchmarks for new features
-4. Backward compatibility verification
+1. **Modular Design**: Implement features with clear separation of concerns
+2. **Error Handling**: Implement comprehensive error handling for edge cases
+3. **Fallback Mechanisms**: Provide graceful fallback for unsupported operations
+4. **Code Reviews**: Conduct thorough code reviews for quality assurance
+5. **Continuous Integration**: Maintain existing CI pipeline with all tests passing
 
-### Code Quality Considerations
-1. Maintain PyMongo API compatibility
-2. Follow existing code style and patterns
-3. Ensure proper error handling and edge cases
-4. Add comprehensive documentation
-5. Maintain 100% test coverage for new code
+### Quality Standards
 
-### Dependencies and Considerations
-1. Some features may require additional dependencies (e.g., JSON schema validation)
-2. Geospatial features may require Spatialite extension
-3. Performance impact of new operators should be evaluated
-4. Memory usage for batch operations should be optimized
+1. **Code Style**: Follow existing code patterns and conventions
+2. **Test Coverage**: Maintain 100% test coverage for new functionality
+3. **Performance**: Ensure new features meet performance targets
+4. **Documentation**: Provide clear documentation for all new APIs
+5. **Compatibility**: Maintain full PyMongo API compatibility
 
-This implementation plan provides a roadmap for enhancing NeoSQLite's compatibility with PyMongo while maintaining its SQLite-specific advantages.
+## Testing Strategy
+
+### Unit Testing
+
+1. **Individual Feature Tests**: Test each new API/operator in isolation
+2. **Edge Case Tests**: Test boundary conditions and error scenarios
+3. **Performance Tests**: Benchmark performance improvements
+4. **Compatibility Tests**: Verify backward compatibility with existing code
+
+### Integration Testing
+
+1. **Combined Feature Tests**: Test new features working together
+2. **Real-world Scenario Tests**: Test common usage patterns
+3. **Migration Tests**: Verify smooth migration from existing implementations
+
+### Performance Testing
+
+1. **Baseline Measurements**: Establish performance baselines before implementation
+2. **Improvement Verification**: Verify performance improvements meet targets
+3. **Regression Testing**: Ensure no performance regressions in existing code
+
+## Success Metrics
+
+### Functional Completeness
+
+- **API Coverage**: 95%+ of PyMongo Collection APIs implemented
+- **Operator Coverage**: 90%+ of MongoDB query operators supported
+- **Feature Parity**: Equivalent functionality for all implemented APIs
+
+### Performance Targets
+
+- **Speed Improvements**: 2-50x faster for JSON operations depending on use case
+- **Memory Efficiency**: 50%+ reduction in Python memory usage for JSON-heavy operations
+- **SQL Processing**: 95%+ of JSON operations processed at SQL level
+
+### Quality Standards
+
+- **Test Coverage**: 100% test coverage for new functionality
+- **Code Quality**: Maintain existing code style and patterns
+- **Documentation**: Comprehensive documentation for all new features
+- **Reliability**: Zero regressions in existing functionality
+
+## Timeline and Milestones
+
+### Phase 1: Enhanced JSON Path Support and Validation (Current Focus) ✅
+- **Enhanced JSON path parsing** with array indexing support
+- **JSON validation** using `json_valid()` and `json_error_position()`
+- **Comprehensive test coverage** for new functionality
+- **Performance benchmarking** for new features
+
+### Phase 2: Advanced JSON Operations (Completed) ✅
+- **Enhanced update operations** with `json_insert()` and `json_replace()`
+- **JSONB function support** with fallback to `json_*` functions
+- **Enhanced aggregation** with `json_group_array()` and `json_group_object()`
+
+### Phase 3: Feature Completeness
+- **Evaluation operators** (`$expr`, `$jsonSchema`)
+- **Additional query operators** (`$bitsAllClear`, etc.)
+- **Geospatial operators** (`$geoWithin`, etc.)
+- **Advanced indexing features**
+
+## Dependencies and Prerequisites
+
+### External Dependencies
+
+1. **SQLite Version**: Minimum SQLite 3.9.0 for JSON1 support
+2. **Python Version**: Compatible with current Python versions
+3. **Optional Libraries**: JSON schema validation, geospatial libraries
+
+### Internal Dependencies
+
+1. **Existing Architecture**: Three-tier processing approach
+2. **Force Fallback Mechanism**: Benchmarking and debugging support
+3. **Test Infrastructure**: Existing test suite and CI pipeline
+
+### Compatibility Requirements
+
+1. **PyMongo API Compatibility**: Maintain full PyMongo API compatibility
+2. **SQLite Version Compatibility**: Graceful degradation for older SQLite versions
+3. **Python Version Compatibility**: Support for current Python versions

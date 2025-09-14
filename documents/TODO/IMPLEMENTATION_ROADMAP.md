@@ -65,9 +65,20 @@ This document provides a prioritized roadmap for implementing missing PyMongo-co
 - **Impact**: Medium
 - **Dependencies**: RawBatchCursor enhancements
 
+### ~~8. Enhanced JSON Functions Integration~~
+- **Status**: ✅ PHASE 2 COMPLETED
+- **Why**: Significant performance improvements through native JSON functions
+- **Effort**: High
+- **Impact**: High
+- **Dependencies**: SQLite JSON1 extension support
+- **Features**:
+  - Enhanced update operations with `json_insert()` and `json_replace()`
+  - JSONB function support with fallback to `json_*` functions
+  - Enhanced aggregation with `json_group_array()` and `json_group_object()`
+
 ## P2 - Medium Priority
 
-### 8. Evaluation Operators
+### 9. Evaluation Operators
 - **Why**: Important for advanced queries
 - **Effort**: High
 - **Impact**: Medium
@@ -75,13 +86,13 @@ This document provides a prioritized roadmap for implementing missing PyMongo-co
   - `$expr` - Expression evaluation
   - `$jsonSchema` - Schema validation
 
-### 9. Connection.validate_collection() Method
+### 10. Connection.validate_collection() Method
 - **Why**: Useful for database maintenance
 - **Effort**: Low
 - **Impact**: Low
 - **Dependencies**: SQLite integrity checks
 
-### 10. Collection.with_options() Method
+### 11. Collection.with_options() Method
 - **Why**: Useful for collection cloning with different options
 - **Effort**: Low
 - **Impact**: Low
