@@ -1466,9 +1466,6 @@ class QueryHelper:
         combined_clause = " AND ".join(clauses)
         return combined_clause, params
 
-        # This shouldn't happen, but just in case
-        return None, []
-
     def _apply_query(
         self,
         query: Dict[str, Any],

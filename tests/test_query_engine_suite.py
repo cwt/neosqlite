@@ -595,6 +595,29 @@ def test_query_helper_aggregation_and_query_building():
         )
         assert params == [5]
 
+        # Test _build_operator_clause with multiple operators
+        clause, params = helper._build_operator_clause(
+            "'$.value'", {"$gte": 10, "$lte": 20}
+        )
+        # Check that both conditions are present
+        assert ">=" in clause
+        assert "<=" in clause
+        # Check that they're combined with AND
+        assert "AND" in clause
+        assert params == [10, 20]
+
+        # Test _build_operator_clause with multiple operators including $ne
+        clause, params = helper._build_operator_clause(
+            "'$.value'", {"$gt": 5, "$lt": 15, "$ne": 10}
+        )
+        # Check that all conditions are present
+        assert ">" in clause
+        assert "<" in clause
+        assert "!=" in clause
+        # Check that they're combined with AND
+        assert clause.count("AND") == 2
+        assert params == [5, 15, 10]
+
         # Test _build_operator_clause with unsupported operator
         clause, params = helper._build_operator_clause(
             "'$.value'", {"$unsupported": 5}
