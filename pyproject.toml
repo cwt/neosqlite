@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "neosqlite"
-version = "0.9.1"
+version = "1.0.0"
 description = "NoSQL for SQLite with PyMongo-like API"
 authors = ["Chaiwat Suttipongsakul <cwt@bashell.com>"]
 license = "MIT"
@@ -10,7 +10,7 @@ documentation = "https://neosqlite.readthedocs.io/en/latest/"
 repository = "https://github.com/cwt/neosqlite"
 keywords = ["nosql", "sqlite", "pymongo"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
