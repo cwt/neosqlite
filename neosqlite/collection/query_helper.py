@@ -721,7 +721,7 @@ class QueryHelper:
                         path = f"'$.{field}'"
                         func_prefix = self._json_function_prefix
                         set_clauses.append(
-                            f"{path}, {func_prefix}_extract(data, {path}) + ?"
+                            f"{path}, COALESCE({func_prefix}_extract(data, {path}), 0) + ?"
                         )
                         params.append(field_val)
                 case "$mul":
@@ -729,7 +729,7 @@ class QueryHelper:
                         path = f"'$.{field}'"
                         func_prefix = self._json_function_prefix
                         set_clauses.append(
-                            f"{path}, {func_prefix}_extract(data, {path}) * ?"
+                            f"{path}, COALESCE({func_prefix}_extract(data, {path}), 0) * ?"
                         )
                         params.append(field_val)
                 case "$min":
@@ -823,13 +823,13 @@ class QueryHelper:
                     if isinstance(converted_val, Binary):
                         func_prefix = self._json_function_prefix
                         clauses.append(
-                            f"{path}, {func_prefix}_extract(data, {path}) + json(?)"
+                            f"{path}, COALESCE({func_prefix}_extract(data, {path}), 0) + json(?)"
                         )
                         params.append(neosqlite_json_dumps(converted_val))
                     else:
                         func_prefix = self._json_function_prefix
                         clauses.append(
-                            f"{path}, {func_prefix}_extract(data, {path}) + json(?)"
+                            f"{path}, COALESCE({func_prefix}_extract(data, {path}), 0) + ?"
                         )
                         params.append(converted_val)
             case "$mul":
@@ -840,13 +840,13 @@ class QueryHelper:
                     # If it's a Binary object, serialize it to JSON and use json() function
                     if isinstance(converted_val, Binary):
                         clauses.append(
-                            f"{path}, json_extract(data, {path}) * json(?)"
+                            f"{path}, COALESCE(json_extract(data, {path}), 0) * json(?)"
                         )
                         params.append(neosqlite_json_dumps(converted_val))
                     else:
                         func_prefix = self._json_function_prefix
                         clauses.append(
-                            f"{path}, {func_prefix}_extract(data, {path}) * ?"
+                            f"{path}, COALESCE({func_prefix}_extract(data, {path}), 0) * ?"
                         )
                         params.append(converted_val)
             case "$min":

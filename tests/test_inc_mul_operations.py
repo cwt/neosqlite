@@ -123,9 +123,6 @@ class TestIncMulOperations:
         updated_doc = self.collection.find_one({"_id": doc_id})
         assert updated_doc["value"] == 21.0
 
-    @pytest.mark.skip(
-        reason="Missing field behavior implementation detail, not core validation"
-    )
     def test_inc_with_missing_field_works(self):
         """Test that $inc works with missing fields (treated as 0)."""
         # Insert document without the field
@@ -137,9 +134,6 @@ class TestIncMulOperations:
         updated_doc = self.collection.find_one({"_id": doc_id})
         assert updated_doc["new_field"] == 5
 
-    @pytest.mark.skip(
-        reason="Missing field behavior implementation detail, not core validation"
-    )
     def test_mul_with_missing_field_works(self):
         """Test that $mul works with missing fields (treated as 0)."""
         # Insert document without the field
@@ -151,9 +145,6 @@ class TestIncMulOperations:
         updated_doc = self.collection.find_one({"_id": doc_id})
         assert updated_doc["new_field"] == 0
 
-    @pytest.mark.skip(
-        reason="None field behavior implementation detail, not core validation"
-    )
     def test_inc_with_none_field_works(self):
         """Test that $inc works with None fields (treated as 0)."""
         # Insert document with None field
@@ -164,7 +155,7 @@ class TestIncMulOperations:
         self.collection.update_one({"_id": doc_id}, {"$inc": {"value": 5}})
         updated_doc = self.collection.find_one({"_id": doc_id})
         # Note: In MongoDB, incrementing a null field sets it to the increment value
-        # This behavior might vary in implementation
+        assert updated_doc["value"] == 5
 
     def test_operations_with_complex_queries_force_python_implementation(self):
         """Test that complex queries force Python implementation with validation."""
