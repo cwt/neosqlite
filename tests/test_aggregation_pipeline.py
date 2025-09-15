@@ -888,7 +888,7 @@ def test_aggregation_cursor_quez_functionality(collection):
     assert all(5 <= doc["a"] <= 19 for doc in results)
 
     # Test get_quez_stats (should be None since quez wasn't actually used due to small result size)
-    stats = cursor.get_quez_stats()
+    cursor.get_quez_stats()
     # Stats could be None or have data depending on implementation details
     # We're primarily testing that the method doesn't crash
 
@@ -1264,7 +1264,6 @@ def test_aggregation_cursor_execute_with_constraints(monkeypatch, collection):
 
     # Track if the method was called
     called_with_args = []
-    original_method = collection.query_engine.aggregate_with_constraints
 
     def mock_aggregate_with_constraints(*args, **kwargs):
         called_with_args.append((args, kwargs))
@@ -1284,7 +1283,7 @@ def test_aggregation_cursor_execute_with_constraints(monkeypatch, collection):
     args, kwargs = called_with_args[0]
     assert args[0] == pipeline
     assert kwargs.get("batch_size") == 1000
-    assert kwargs.get("memory_constrained") == True
+    assert kwargs.get("memory_constrained")
 
     # Verify results
     assert len(results) == 50
@@ -2535,12 +2534,6 @@ def test_add_fields_python_fallback():
 
         # Test $addFields with a pipeline that includes an unsupported stage
         # This should force fallback to Python implementation
-        pipeline = [
-            {"$addFields": {"userName": "$name", "userAge": "$age"}},
-            {
-                "$out": "output_collection"
-            },  # Unsupported stage to force fallback
-        ]
 
         # This should raise an exception because $out is not supported
         # But let's test with a supported pipeline first
@@ -2951,7 +2944,6 @@ def test_mixed_indexed_and_non_indexed_fields():
     """Test pipeline reordering with mixed indexed and non-indexed fields"""
     with neosqlite.Connection(":memory:") as conn:
         collection = conn["test_collection"]
-        query_helper = collection.query_engine.helpers
 
         # Insert test data
         docs = []
@@ -3028,8 +3020,8 @@ def test_pipeline_with_multiple_match_stages():
 
         # Both match stages should be moved to the front
         # The order might vary but both should be before unwind
-        match_stages = [stage for stage in reordered if "$match" in stage]
-        unwind_stages = [stage for stage in reordered if "$unwind" in stage]
+        [stage for stage in reordered if "$match" in stage]
+        [stage for stage in reordered if "$unwind" in stage]
 
         # All match stages should come before unwind stages
         first_unwind_index = next(

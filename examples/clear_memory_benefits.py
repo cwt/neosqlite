@@ -99,7 +99,6 @@ def demonstrate_quez_memory_benefits():
         # Process documents incrementally (memory efficient)
         print("\n3. Processing documents incrementally:")
         processed_count = 0
-        max_memory_objects = 0
 
         for doc in cursor_quez:
             processed_count += 1

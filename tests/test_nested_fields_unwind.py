@@ -151,8 +151,8 @@ def test_nested_array_unwind_basic(collection):
     # After unwinding, doc["orders"] is the unwound order object
     # and doc["orders.items"] is the unwound item object
     order_ids = [doc["orders"]["orderId"] for doc in result]
-    products = [doc["orders.items"]["product"] for doc in result]
-    quantities = [doc["orders.items"]["quantity"] for doc in result]
+    [doc["orders.items"]["product"] for doc in result]
+    [doc["orders.items"]["quantity"] for doc in result]
 
     # Each order should appear as many times as it has items
     assert order_ids.count("A001") == 2  # First order has 2 items

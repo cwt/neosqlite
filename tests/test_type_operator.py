@@ -42,7 +42,7 @@ def test_type_operator_with_boolean_type(collection):
 
     # Should match only the first document
     assert len(result) == 1
-    assert result[0]["flag"] == True
+    assert result[0]["flag"]
 
 
 def test_type_operator_with_null_type(collection):

@@ -42,7 +42,7 @@ def test_query_with_jsonb_functions():
     """Test queries using JSONB functions when supported."""
     with Connection(":memory:") as conn:
         collection = conn["test_collection"]
-        jsonb_supported = supports_jsonb(conn.db)
+        supports_jsonb(conn.db)
 
         # Insert test data
         collection.insert_many(
@@ -68,7 +68,7 @@ def test_aggregation_with_jsonb_group_functions():
     """Test aggregation using JSONB group functions."""
     with Connection(":memory:") as conn:
         collection = conn["test_collection"]
-        jsonb_supported = supports_jsonb(conn.db)
+        supports_jsonb(conn.db)
 
         # Insert test data
         collection.insert_many(
@@ -136,9 +136,7 @@ def test_complex_json_paths_with_jsonb():
         # Query by array element (this should work with enhanced path parsing)
         # Note: This might require the enhanced JSON path support from Phase 1
         # For now, we test that basic nested queries work
-        doc = collection.find_one(
-            {"scores.0": {"$gte": 90}}
-        )  # First score >= 90
+        collection.find_one({"scores.0": {"$gte": 90}})  # First score >= 90
         # This might not work yet without Phase 1 implementation
 
 

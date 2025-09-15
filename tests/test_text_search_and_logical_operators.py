@@ -725,24 +725,24 @@ def test_text_search_function_unit():
 
     # Test basic functionality
     doc = {"name": "Python Developer", "description": "Works with Python"}
-    assert unified_text_search(doc, "python") == True
-    assert unified_text_search(doc, "Python") == True
-    assert unified_text_search(doc, "JAVA") == False
+    assert unified_text_search(doc, "python")
+    assert unified_text_search(doc, "Python")
+    assert not unified_text_search(doc, "JAVA")
 
     # Test international characters
     doc = {"name": "José María", "location": "España"}
-    assert unified_text_search(doc, "jose") == True
-    assert unified_text_search(doc, "espana") == True
+    assert unified_text_search(doc, "jose")
+    assert unified_text_search(doc, "espana")
 
     # Test nested documents
     doc = {"user": {"name": "Alice", "skills": ["Python", "Django"]}}
-    assert unified_text_search(doc, "python") == True
-    assert unified_text_search(doc, "django") == True
+    assert unified_text_search(doc, "python")
+    assert unified_text_search(doc, "django")
 
     # Test arrays
     doc = {"tags": ["Python", "Web", "Development"]}
-    assert unified_text_search(doc, "python") == True
-    assert unified_text_search(doc, "web") == True
+    assert unified_text_search(doc, "python")
+    assert unified_text_search(doc, "web")
 
 
 def test_roadmap_item_13_exact(collection):
@@ -1062,7 +1062,7 @@ def test_text_operator_python_fallback(collection):
     collection.insert_one({"title": "Lorem ipsum", "content": "dolor sit amet"})
 
     # Search without FTS index should fall back to Python implementation
-    with warnings.catch_warnings(record=True) as w:
+    with warnings.catch_warnings(record=True):
         warnings.simplefilter("always")
         results = list(collection.find({"$text": {"$search": "jumps"}}))
         # Should find the document with simple substring matching
@@ -1079,7 +1079,7 @@ def test_text_operator_multiple_words_python_fallback(collection):
     collection.insert_one({"title": "Lorem ipsum", "content": "dolor sit amet"})
 
     # Search for multiple words without FTS index
-    with warnings.catch_warnings(record=True) as w:
+    with warnings.catch_warnings(record=True):
         warnings.simplefilter("always")
         results = list(collection.find({"$text": {"$search": "quick brown"}}))
         # Should find the document with simple substring matching
@@ -1132,7 +1132,7 @@ def test_text_operator_no_matches_python_fallback(collection):
     collection.insert_one({"title": "Lorem ipsum", "content": "dolor sit amet"})
 
     # Search for term that doesn't exist without FTS index
-    with warnings.catch_warnings(record=True) as w:
+    with warnings.catch_warnings(record=True):
         warnings.simplefilter("always")
         results = list(collection.find({"$text": {"$search": "nonexistent"}}))
         assert len(results) == 0
@@ -1585,7 +1585,7 @@ def test_text_search_on_unwound_python_fallback(collection):
     # No FTS index created - should use Python fallback
 
     # Test: Unwind and search (should work with Python fallback)
-    with warnings.catch_warnings(record=True) as w:
+    with warnings.catch_warnings(record=True):
         warnings.simplefilter("always")
         pipeline = [
             {"$unwind": "$reviews"},

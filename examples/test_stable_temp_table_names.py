@@ -44,12 +44,6 @@ def test_deterministic_temp_table_names():
         print("2. Testing deterministic temp table names...")
 
         # Define a pipeline
-        pipeline = [
-            {"$match": {"status": "active"}},
-            {"$unwind": "$tags"},
-            {"$sort": {"tags": 1}},
-            {"$limit": 5},
-        ]
 
         # Generate a deterministic name for a stage
         def make_deterministic_name(stage):

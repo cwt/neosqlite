@@ -82,7 +82,6 @@ class SQLFieldAccessor:
 
         # Pattern to match field names with optional array indices
         # This pattern matches sequences like "field", "field[0]", "field[0][1]", etc.
-        pattern = r"([^.\[]+)(?:$(\d+)$)*"
 
         # Split the field path by dots while preserving array indices
         parts = []

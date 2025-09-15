@@ -372,7 +372,7 @@ def test_index_usage_performance_verification(collection):
     # Time a query with the index
     start_time = time.time()
     results_with_index = list(collection.find({"age": 25}))
-    time_with_index = time.time() - start_time
+    time.time() - start_time
 
     # The query should return results quickly
     assert len(results_with_index) > 0

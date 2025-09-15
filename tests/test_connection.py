@@ -15,7 +15,7 @@ def test_connect():
 
 def test_context_manager_closes_connection():
     """Test that context manager properly closes connection."""
-    with patch("neosqlite.connection.sqlite3") as sqlite:
+    with patch("neosqlite.connection.sqlite3"):
         with neosqlite.Connection() as conn:
             pass
         assert conn.db.close.called
@@ -34,7 +34,7 @@ def test_getitem_returns_collection():
 
 def test_getitem_returns_cached_collection():
     """Test that __getitem__ returns cached collection."""
-    with patch("neosqlite.connection.sqlite3") as sqlite:
+    with patch("neosqlite.connection.sqlite3"):
         conn = neosqlite.Connection()
         conn._collections["foo"] = "bar"
         assert conn["foo"] == "bar"
@@ -42,7 +42,7 @@ def test_getitem_returns_cached_collection():
 
 def test_drop_collection():
     """Test drop_collection functionality."""
-    with patch("neosqlite.connection.sqlite3") as sqlite:
+    with patch("neosqlite.connection.sqlite3"):
         conn = neosqlite.Connection()
         conn.drop_collection("foo")
         conn.db.execute.assert_called_with("DROP TABLE IF EXISTS foo")
@@ -50,16 +50,16 @@ def test_drop_collection():
 
 def test_getattr_returns_attribute():
     """Test that __getattr__ returns attributes."""
-    with patch("neosqlite.connection.sqlite3") as sqlite:
+    with patch("neosqlite.connection.sqlite3"):
         conn = neosqlite.Connection()
         assert conn.__getattr__("db") is not None
 
 
 def test_getattr_returns_collection():
     """Test that __getattr__ returns collection."""
-    with patch("neosqlite.connection.sqlite3") as sqlite:
+    with patch("neosqlite.connection.sqlite3"):
         conn = neosqlite.Connection()
-        foo = conn.__getattr__("foo")
+        conn.__getattr__("foo")
 
 
 def test_context_manager_exception_handling():

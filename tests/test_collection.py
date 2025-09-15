@@ -1190,9 +1190,9 @@ def test_update_operations_comprehensive(collection):
 
     # Verify updates
     bob = collection.find_one({"name": "Bob"})
-    assert bob["senior"] == True
+    assert bob["senior"]
     charlie = collection.find_one({"name": "Charlie"})
-    assert charlie["senior"] == True
+    assert charlie["senior"]
 
     # Test $unset operator
     result = collection.update_many(
@@ -1337,7 +1337,7 @@ def test_update_many_fallback(collection):
     )
 
     # Update using a complex query that should trigger the fallback
-    result = collection.update_many(
+    collection.update_many(
         {"name": {"$regex": "^A"}},  # This should trigger the fallback
         {"$inc": {"age": 1}},
     )

@@ -968,7 +968,7 @@ def test_find_with_upload_date_filter(bucket):
 
     # Get the actual upload dates for comparison
     grid_out1 = bucket.open_download_stream(file_id1)
-    grid_out2 = bucket.open_download_stream(file_id2)
+    bucket.open_download_stream(file_id2)
 
     # Find files uploaded after the first file
     cursor = bucket.find({"uploadDate": {"$gt": grid_out1.upload_date}})
@@ -983,7 +983,7 @@ def test_find_with_md5_filter(bucket):
     data2 = b"content2"
 
     file_id1 = bucket.upload_from_stream("file1.txt", data1)
-    file_id2 = bucket.upload_from_stream("file2.txt", data2)
+    bucket.upload_from_stream("file2.txt", data2)
 
     # Get the actual MD5 hashes
     grid_out1 = bucket.open_download_stream(file_id1)
@@ -1412,8 +1412,8 @@ def test_legacy_get_version(legacy_fs):
     data2 = b"Second version content"
 
     # Put two versions with the same name
-    file_id1 = legacy_fs.put(data1, filename="test.txt")
-    file_id2 = legacy_fs.put(data2, filename="test.txt")
+    legacy_fs.put(data1, filename="test.txt")
+    legacy_fs.put(data2, filename="test.txt")
 
     # Get first version (version 0)
     grid_out = legacy_fs.get_version("test.txt", 0)
@@ -1660,9 +1660,9 @@ def test_legacy_gridfs_multiple_versions_same_name(legacy_fs):
     data3 = b"Version 3 content"
 
     # Put multiple versions with the same name
-    file_id1 = legacy_fs.put(data1, filename="test.txt")
-    file_id2 = legacy_fs.put(data2, filename="test.txt")
-    file_id3 = legacy_fs.put(data3, filename="test.txt")
+    legacy_fs.put(data1, filename="test.txt")
+    legacy_fs.put(data2, filename="test.txt")
+    legacy_fs.put(data3, filename="test.txt")
 
     # Verify we can retrieve each version
     assert legacy_fs.get_version("test.txt", 0).read() == data1
@@ -1852,7 +1852,7 @@ def test_legacy_find_with_upload_date_filter(legacy_fs):
 
     # Get the actual upload dates for comparison
     grid_out1 = legacy_fs.get(file_id1)
-    grid_out2 = legacy_fs.get(file_id2)
+    legacy_fs.get(file_id2)
 
     # Find files uploaded after the first file
     cursor = legacy_fs.find({"uploadDate": {"$gt": grid_out1.upload_date}})
@@ -1867,7 +1867,7 @@ def test_legacy_find_with_md5_filter(legacy_fs):
     data2 = b"content2"
 
     file_id1 = legacy_fs.put(data1, filename="file1.txt")
-    file_id2 = legacy_fs.put(data2, filename="file2.txt")
+    legacy_fs.put(data2, filename="file2.txt")
 
     # Get the actual MD5 hashes
     grid_out1 = legacy_fs.get(file_id1)
@@ -2254,7 +2254,7 @@ class NotJSONSerializable:
 def test_gridin_serialize_metadata_json_failure(connection):
     """Test GridIn._serialize_metadata with JSON serialization failures."""
     # Create a GridIn instance
-    bucket = GridFSBucket(connection.db)
+    GridFSBucket(connection.db)
     grid_in = GridIn(
         db=connection.db,
         bucket_name="fs",
@@ -2272,7 +2272,7 @@ def test_gridin_serialize_metadata_json_failure(connection):
 def test_gridin_deserialize_metadata_json_failure(connection):
     """Test GridIn._deserialize_metadata with JSON decode failures."""
     # Create a GridIn instance
-    bucket = GridFSBucket(connection.db)
+    GridFSBucket(connection.db)
     grid_in = GridIn(
         db=connection.db,
         bucket_name="fs",
@@ -2292,7 +2292,7 @@ def test_gridin_deserialize_metadata_json_failure(connection):
 def test_gridin_deserialize_metadata_literal_eval_failure(connection):
     """Test GridIn._deserialize_metadata with ast.literal_eval failures."""
     # Create a GridIn instance
-    bucket = GridFSBucket(connection.db)
+    GridFSBucket(connection.db)
     grid_in = GridIn(
         db=connection.db,
         bucket_name="fs",

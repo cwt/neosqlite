@@ -908,23 +908,23 @@ def test_convert_bytes_to_binary_edge_cases():
 def test_force_fallback_functionality():
     """Test force fallback functionality."""
     # Check default state
-    assert get_force_fallback() == False
+    assert not get_force_fallback()
 
     # Turn on fallback
     set_force_fallback(True)
-    assert get_force_fallback() == True
+    assert get_force_fallback()
 
     # Turn off fallback
     set_force_fallback(False)
-    assert get_force_fallback() == False
+    assert not get_force_fallback()
 
     # Test with explicit False
     set_force_fallback(False)
-    assert get_force_fallback() == False
+    assert not get_force_fallback()
 
     # Test with explicit True
     set_force_fallback(True)
-    assert get_force_fallback() == True
+    assert get_force_fallback()
 
     # Reset to default for other tests
     set_force_fallback(False)
@@ -950,31 +950,31 @@ def test_can_use_sql_updates_with_binary_values():
         # Should return True because raw bytes don't have encode_for_storage attribute
         # The check is for isinstance(val, bytes) AND hasattr(val, "encode_for_storage")
         # Since raw bytes don't have encode_for_storage, this check fails
-        assert result == True
+        assert result
 
         # Test with Binary objects in update spec
         update_spec = {"$set": {"data": Binary(b"binary_data")}}
         result = helper._can_use_sql_updates(update_spec, 1)
         # Should return False because Binary objects have encode_for_storage attribute
-        assert result == False
+        assert not result
 
         # Test with regular values (should return True)
         update_spec = {"$set": {"data": "regular_data"}}
         result = helper._can_use_sql_updates(update_spec, 1)
         # Should return True for supported operations
-        assert result == True
+        assert result
 
         # Test with unsupported operations (should return False)
         update_spec = {"$rename": {"old": "new"}}
         result = helper._can_use_sql_updates(update_spec, 1)
         # Should return False for unsupported operations
-        assert result == False
+        assert not result
 
         # Test with upsert (doc_id = 0, should return False)
         update_spec = {"$set": {"data": "regular_data"}}
         result = helper._can_use_sql_updates(update_spec, 0)
         # Should return False for upserts
-        assert result == False
+        assert not result
 
 
 def test_build_sql_update_clause_with_binary():
@@ -1046,7 +1046,7 @@ def test_internal_insert_with_complex_document():
         assert retrieved_doc is not None
         assert retrieved_doc["name"] == "Test User"
         assert retrieved_doc["age"] == 30
-        assert retrieved_doc["active"] == True
+        assert retrieved_doc["active"]
         assert retrieved_doc["scores"] == [85, 92, 78]
         assert retrieved_doc["address"]["street"] == "123 Main St"
         assert retrieved_doc["address"]["city"] == "Test City"
@@ -1224,14 +1224,14 @@ def test_is_text_search_query():
         # Test with text search query
         query = {"$text": {"$search": "test"}}
         result = helper._is_text_search_query(query)
-        assert result == True
+        assert result
 
         # Test without text search query
         query = {"name": "test"}
         result = helper._is_text_search_query(query)
-        assert result == False
+        assert not result
 
         # Test with empty query
         query = {}
         result = helper._is_text_search_query(query)
-        assert result == False
+        assert not result

@@ -87,7 +87,7 @@ def benchmark_temporary_table_feature(
             for _ in range(num_runs):
                 start_time = time.perf_counter()
                 processor = TemporaryTableAggregationProcessor(collection)
-                result_temp_table = processor.process_pipeline(pipeline)
+                processor.process_pipeline(pipeline)
                 temp_table_times.append(time.perf_counter() - start_time)
 
             avg_temp_table = statistics.mean(temp_table_times)
@@ -99,7 +99,7 @@ def benchmark_temporary_table_feature(
             standard_times = []
             for _ in range(num_runs):
                 start_time = time.perf_counter()
-                result_standard = list(collection.aggregate(pipeline))
+                list(collection.aggregate(pipeline))
                 standard_times.append(time.perf_counter() - start_time)
 
             avg_standard = statistics.mean(standard_times)
@@ -148,9 +148,7 @@ def benchmark_complex_pipeline_with_temporary_tables(
         temp_table_times = []
         for _ in range(num_runs):
             start_time = time.perf_counter()
-            result_temp_table = execute_2nd_tier_aggregation(
-                collection1.query_engine, pipeline
-            )
+            execute_2nd_tier_aggregation(collection1.query_engine, pipeline)
             temp_table_times.append(time.perf_counter() - start_time)
 
         avg_temp_table = statistics.mean(temp_table_times)
@@ -162,7 +160,7 @@ def benchmark_complex_pipeline_with_temporary_tables(
         standard_times = []
         for _ in range(num_runs):
             start_time = time.perf_counter()
-            result_standard = list(collection1.aggregate(pipeline))
+            list(collection1.aggregate(pipeline))
             standard_times.append(time.perf_counter() - start_time)
 
         avg_standard = statistics.mean(standard_times)
@@ -187,7 +185,7 @@ def benchmark_complex_pipeline_with_temporary_tables(
         print(f"  Integration approach failed: {e}")
         # Fall back to standard approach timing
         start_time = time.perf_counter()
-        result_standard = list(collection1.aggregate(pipeline))
+        list(collection1.aggregate(pipeline))
         standard_time = time.perf_counter() - start_time
 
         # For fallback, both times are the same

@@ -204,7 +204,7 @@ def analyze_current_implementation():
 
         for i, test_case in enumerate(test_cases, 1):
             name = test_case["name"]
-            pipeline = test_case["pipeline"]
+            test_case["pipeline"]
             sql_optimizable = test_case["sql_optimizable"]
             temp_table_support = test_case["temp_table_support"]
 

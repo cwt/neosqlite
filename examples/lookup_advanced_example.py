@@ -300,33 +300,6 @@ def main():
         # Example 5: Nested $lookup (lookup within lookup results)
         print("8. Example: Advanced pattern - processing lookup results")
         print("   Show authors with their total comments across all posts")
-        pipeline5 = [
-            {
-                "$lookup": {
-                    "from": "posts",
-                    "localField": "_id",
-                    "foreignField": "userId",
-                    "as": "userPosts",
-                }
-            },
-            {"$unwind": "$userPosts"},
-            {
-                "$lookup": {
-                    "from": "comments",
-                    "localField": "userPosts._id",
-                    "foreignField": "postId",
-                    "as": "postComments",
-                }
-            },
-            {
-                "$group": {
-                    "_id": "$_id",
-                    "username": {"$first": "$username"},
-                    "totalComments": {"$sum": {"$size": "$postComments"}},
-                }
-            },
-            {"$sort": {"totalComments": -1}},
-        ]
 
         # This pipeline is quite complex and may not work perfectly with the current implementation
         # Let's simplify it to demonstrate the concept without triggering errors

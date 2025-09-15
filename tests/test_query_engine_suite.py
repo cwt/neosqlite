@@ -378,17 +378,17 @@ def test_query_helper_can_use_sql_updates_edge_cases():
 
         # Test case: upsert (doc_id = 0)
         result = helper._can_use_sql_updates({"$set": {"field": "value"}}, 0)
-        assert result == False
+        assert not result
 
         # Test case: unsupported operation
         result = helper._can_use_sql_updates({"$rename": {"old": "new"}}, 1)
-        assert result == False
+        assert not result
 
         # Test case: Binary object in update spec
         result = helper._can_use_sql_updates(
             {"$set": {"field": neosqlite.Binary(b"data")}}, 1
         )
-        assert result == False
+        assert not result
 
 
 # ================================
@@ -540,10 +540,8 @@ def test_query_helper_replace_and_text_search():
         assert "value" not in result  # Original field should be gone
 
         # Test _is_text_search_query
-        assert (
-            helper._is_text_search_query({"$text": {"$search": "test"}}) == True
-        )
-        assert helper._is_text_search_query({"name": "test"}) == False
+        assert helper._is_text_search_query({"$text": {"$search": "test"}})
+        assert not helper._is_text_search_query({"name": "test"})
 
         # Test _build_text_search_query with no FTS tables
         result = helper._build_text_search_query({"$text": {"$search": "test"}})
@@ -708,27 +706,27 @@ def test_query_helper_apply_query_and_projection():
         # Test _apply_query with simple match
         doc = {"name": "test", "value": 42}
         result = helper._apply_query({"name": "test"}, doc)
-        assert result == True
+        assert result
 
         # Test _apply_query with no match
         result = helper._apply_query({"name": "other"}, doc)
-        assert result == False
+        assert not result
 
         # Test _apply_query with operator
         result = helper._apply_query({"value": {"$gt": 40}}, doc)
-        assert result == True
+        assert result
 
         # Test _apply_query with $and
         result = helper._apply_query(
             {"$and": [{"name": "test"}, {"value": {"$gt": 40}}]}, doc
         )
-        assert result == True
+        assert result
 
         # Test _apply_query with $or
         result = helper._apply_query(
             {"$or": [{"name": "test"}, {"name": "other"}]}, doc
         )
-        assert result == True
+        assert result
 
         # Test _apply_projection with inclusion
         doc = {"_id": 1, "name": "test", "value": 42, "hidden": "secret"}
@@ -1606,7 +1604,7 @@ def test_force_fallback_kill_switch():
         )
 
         # Verify kill switch is off by default
-        assert get_force_fallback() == False
+        assert not get_force_fallback()
 
         # Test a pipeline that should work with temp tables
         pipeline = [
@@ -1623,7 +1621,7 @@ def test_force_fallback_kill_switch():
 
         # Turn on the kill switch
         set_force_fallback(True)
-        assert get_force_fallback() == True
+        assert get_force_fallback()
 
         # With kill switch on, should raise NotImplementedError to signal fallback needed
         try:
@@ -1635,7 +1633,7 @@ def test_force_fallback_kill_switch():
 
         # Turn off the kill switch
         set_force_fallback(False)
-        assert get_force_fallback() == False
+        assert not get_force_fallback()
 
         # Should work normally again
         results = execute_2nd_tier_aggregation(query_engine, pipeline)
