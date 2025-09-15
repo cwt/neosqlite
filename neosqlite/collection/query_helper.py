@@ -102,6 +102,67 @@ def get_force_fallback():
     return _FORCE_FALLBACK
 
 
+def _is_numeric_value(value: Any) -> bool:
+    """
+    Check if a value is numeric (int or float) or can be converted to a numeric value.
+
+    This function determines if a value can be safely used in arithmetic operations
+    like $inc and $mul. It considers:
+    - int and float values as numeric (excluding bool, NaN, and infinity)
+    - None as non-numeric (would cause issues in arithmetic)
+    - String representations of numbers as non-numeric (to match MongoDB behavior)
+
+    Args:
+        value: The value to check
+
+    Returns:
+        bool: True if the value is numeric, False otherwise
+    """
+    # Explicitly exclude boolean values (even though bool is subclass of int in Python)
+    if isinstance(value, bool):
+        return False
+
+    # Check for actual numeric types
+    if isinstance(value, (int, float)):
+        # Special case: check for NaN and infinity
+        if isinstance(value, float):
+            import math
+
+            if math.isnan(value) or math.isinf(value):
+                return False
+        return True
+
+    # Everything else is considered non-numeric for MongoDB compatibility
+    return False
+
+
+def _validate_inc_mul_field_value(
+    field_name: str, field_value: Any, operation: str
+) -> None:
+    """
+    Validate that a field value is appropriate for $inc or $mul operations.
+
+    Args:
+        field_name: The name of the field being validated
+        field_value: The current value of the field
+        operation: The operation being performed ("$inc" or "$mul")
+
+    Raises:
+        MalformedQueryException: If the field value is not appropriate for the operation
+    """
+    # If the field doesn't exist, it's acceptable as it will be treated as 0
+    if field_value is None:
+        return
+
+    # Check if the field value is numeric
+    if not _is_numeric_value(field_value):
+        raise MalformedQueryException(
+            f"Cannot apply {operation} to a value of non-numeric type. "
+            f"Field '{field_name}' has non-numeric type {type(field_value).__name__} "
+            f"with value {repr(field_value)}"
+        )
+
+
 class QueryHelper:
     """
     A helper class for the QueryEngine that provides methods for building queries,
@@ -273,6 +334,20 @@ class QueryHelper:
         Returns:
             Dict[str, Any]: The updated document.
         """
+        # Validate $inc and $mul operations before choosing implementation
+        # This ensures consistent behavior between SQL and Python implementations
+        for op, value in update_spec.items():
+            if op in {"$inc", "$mul"}:
+                for field_name in value.keys():
+                    # Get the current value of the field
+                    if field_name in original_doc:
+                        field_value = original_doc[field_name]
+                        # Validate the field value
+                        _validate_inc_mul_field_value(
+                            field_name, field_value, op
+                        )
+                    # If field doesn't exist, it will be treated as 0, which is valid
+
         # Try to use SQL-based updates for simple operations
         if self._can_use_sql_updates(update_spec, doc_id):
             # Use enhanced SQL update with json_insert/json_replace when possible
@@ -846,6 +921,9 @@ class QueryHelper:
                         doc_to_update.pop(k, None)
                 case "$inc":
                     for k, v in value.items():
+                        # Validate that the field value is numeric before performing operation
+                        current_value = doc_to_update.get(k)
+                        _validate_inc_mul_field_value(k, current_value, "$inc")
                         doc_to_update[k] = doc_to_update.get(k, 0) + v
                 case "$push":
                     for k, v in value.items():
@@ -868,7 +946,11 @@ class QueryHelper:
                             doc_to_update[v] = doc_to_update.pop(k)
                 case "$mul":
                     for k, v in value.items():
+                        # Validate that the field value is numeric before performing operation
                         if k in doc_to_update:
+                            _validate_inc_mul_field_value(
+                                k, doc_to_update[k], "$mul"
+                            )
                             doc_to_update[k] *= v
                 case "$min":
                     for k, v in value.items():
