@@ -18,8 +18,13 @@ def _get_expected_function_name():
     """Get the expected function name based on JSONB support."""
     # Create a temporary in-memory database to test JSONB support
     db = sqlite3.connect(":memory:")
-    jsonb_supported = supports_jsonb(db)
-    db.close()
+    try:
+        jsonb_supported = supports_jsonb(db)
+    except sqlite3.OperationalError:
+        # If JSONB is not supported, fall back to standard json
+        jsonb_supported = False
+    finally:
+        db.close()
 
     # Determine expected function name based on JSONB support
     return "jsonb_extract" if jsonb_supported else "json_extract"
@@ -69,8 +74,12 @@ class TestSQLFieldAccessor:
         expected_function = _get_expected_function_name()
         # Create a temporary in-memory database to test JSONB support
         db = sqlite3.connect(":memory:")
-        jsonb_supported = supports_jsonb(db)
-        db.close()
+        try:
+            jsonb_supported = supports_jsonb(db)
+        except sqlite3.OperationalError:
+            jsonb_supported = False
+        finally:
+            db.close()
         accessor = SQLFieldAccessor(jsonb_supported=jsonb_supported)
         result = accessor.get_field_access("name")
         assert result == f"{expected_function}(data, '$.name')"
@@ -80,8 +89,12 @@ class TestSQLFieldAccessor:
         expected_function = _get_expected_function_name()
         # Create a temporary in-memory database to test JSONB support
         db = sqlite3.connect(":memory:")
-        jsonb_supported = supports_jsonb(db)
-        db.close()
+        try:
+            jsonb_supported = supports_jsonb(db)
+        except sqlite3.OperationalError:
+            jsonb_supported = False
+        finally:
+            db.close()
         accessor = SQLFieldAccessor(
             data_column="json_data", jsonb_supported=jsonb_supported
         )
@@ -93,8 +106,12 @@ class TestSQLFieldAccessor:
         expected_function = _get_expected_function_name()
         # Create a temporary in-memory database to test JSONB support
         db = sqlite3.connect(":memory:")
-        jsonb_supported = supports_jsonb(db)
-        db.close()
+        try:
+            jsonb_supported = supports_jsonb(db)
+        except sqlite3.OperationalError:
+            jsonb_supported = False
+        finally:
+            db.close()
         accessor = SQLFieldAccessor(jsonb_supported=jsonb_supported)
         result = accessor.get_field_access("name", context="temp")
         assert result == f"{expected_function}(data, '$.name')"
@@ -140,8 +157,12 @@ class TestSQLFieldAccessor:
         expected_function = _get_expected_function_name()
         # Create a temporary in-memory database to test JSONB support
         db = sqlite3.connect(":memory:")
-        jsonb_supported = supports_jsonb(db)
-        db.close()
+        try:
+            jsonb_supported = supports_jsonb(db)
+        except sqlite3.OperationalError:
+            jsonb_supported = False
+        finally:
+            db.close()
         accessor = SQLFieldAccessor(jsonb_supported=jsonb_supported)
         result = accessor.get_field_access("tags[0]")
         assert result == f"{expected_function}(data, '$.tags[0]')"
@@ -151,8 +172,12 @@ class TestSQLFieldAccessor:
         expected_function = _get_expected_function_name()
         # Create a temporary in-memory database to test JSONB support
         db = sqlite3.connect(":memory:")
-        jsonb_supported = supports_jsonb(db)
-        db.close()
+        try:
+            jsonb_supported = supports_jsonb(db)
+        except sqlite3.OperationalError:
+            jsonb_supported = False
+        finally:
+            db.close()
         accessor = SQLFieldAccessor(jsonb_supported=jsonb_supported)
         result = accessor.get_field_access("orders.items[2].name")
         assert result == f"{expected_function}(data, '$.orders.items[2].name')"
