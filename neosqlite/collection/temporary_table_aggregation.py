@@ -10,11 +10,6 @@ from contextlib import contextmanager
 from typing import Any, Dict, List, Callable
 import hashlib
 
-try:
-    from pysqlite3 import dbapi2 as sqlite3
-except ImportError:
-    pass  # type: ignore
-
 
 class DeterministicTempTableManager:
     """
@@ -215,7 +210,7 @@ def aggregation_pipeline_context(db_connection, pipeline_id: str | None = None):
         for table_name in temp_tables:
             try:
                 db_connection.execute(f"DROP TABLE IF EXISTS {table_name}")
-            except:
+            except Exception:
                 pass
 
 

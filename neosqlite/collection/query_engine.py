@@ -19,12 +19,15 @@ from neosqlite.collection.json_helpers import (
 )
 from neosqlite.collection.jsonb_support import supports_jsonb
 from typing import Any, Dict, List, TYPE_CHECKING
+import importlib.util
+import json
+from copy import deepcopy
 
 if TYPE_CHECKING:
     from quez import CompressedQueue
 
-from copy import deepcopy
-import json
+# Check if quez is available
+_HAS_QUEZ = importlib.util.find_spec("quez") is not None
 
 
 class QueryEngine:
@@ -504,15 +507,10 @@ class QueryEngine:
             List[Dict[str, Any]] | CompressedQueue: The results as either a list or compressed queue.
         """
         # If memory_constrained is True and quez is available, use quez for processing
-        if memory_constrained:
-            try:
-                from quez import CompressedQueue
+        if memory_constrained and _HAS_QUEZ:
 
-                # Use quez for memory-constrained processing
-                return self._aggregate_with_quez(pipeline, batch_size)
-            except ImportError:
-                # Fall back to normal processing if quez is not available
-                pass
+            # Use quez for memory-constrained processing
+            return self._aggregate_with_quez(pipeline, batch_size)
 
         # Try existing SQL optimization first (this was previously missing)
         try:
@@ -542,7 +540,7 @@ class QueryEngine:
                                     processed_row.append(
                                         neosqlite_json_loads(value)
                                     )
-                                except:
+                                except Exception:
                                     processed_row.append(value)
                             else:
                                 processed_row.append(value)
@@ -856,11 +854,12 @@ class QueryEngine:
             CompressedQueue: A compressed queue containing the results.
         """
         try:
-            from quez import CompressedQueue
+            if _HAS_QUEZ:
+                from quez import CompressedQueue
 
-            # Create a compressed queue for results with a reasonable size
-            # Use unbounded queue to avoid blocking during population
-            result_queue = CompressedQueue()
+                # Create a compressed queue for results with a reasonable size
+                # Use unbounded queue to avoid blocking during population
+                result_queue = CompressedQueue()
 
             # Get results from normal aggregation
             results = self.aggregate(pipeline)

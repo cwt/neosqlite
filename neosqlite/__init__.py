@@ -22,12 +22,16 @@ from .collection.aggregation_cursor import AggregationCursor
 from .collection.cursor import Cursor, ASCENDING, DESCENDING
 from .collection.raw_batch_cursor import RawBatchCursor
 
+import importlib.util
+
 # GridFS support
-try:
-    from .gridfs import GridFSBucket, GridFS
+# Use importlib.util.find_spec to test for availability without triggering ruff F401
+gridfs_spec = importlib.util.find_spec(".gridfs", package=__package__)
+if gridfs_spec is not None:
+    from .gridfs import GridFSBucket, GridFS  # noqa: F401
 
     _HAS_GRIDFS = True
-except ImportError:
+else:
     _HAS_GRIDFS = False
 
 __all__ = [

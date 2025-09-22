@@ -1,1 +1,1 @@
-from sqlite3 import *
+from sqlite3 import *  # noqa: F403

@@ -33,6 +33,7 @@ except ImportError:
     Error = (sqlite3.Error,)
 
 from neosqlite import InsertOne, UpdateOne, DeleteOne
+from neosqlite import MalformedDocument
 from neosqlite.query_operators import _eq, _gt, _lt, _lte, _in
 
 
@@ -1138,8 +1139,6 @@ def test_apply_query_size(collection):
 """
 Comprehensive tests for update operations.
 """
-
-from neosqlite import MalformedDocument
 
 
 def test_update_operations_comprehensive(collection):

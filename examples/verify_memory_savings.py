@@ -15,7 +15,7 @@ def get_memory_usage():
     for obj in objects:
         try:
             total_size += sys.getsizeof(obj)
-        except:
+        except Exception:
             pass
     return total_size
 

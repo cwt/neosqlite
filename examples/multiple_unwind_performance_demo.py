@@ -23,7 +23,9 @@ def main():
                     "id": i,
                     "tags": [f"tag{j}" for j in range(5)],  # 5 tags
                     "categories": [f"cat{k}" for k in range(3)],  # 3 categories
-                    "levels": [f"level{l}" for l in range(2)],  # 2 levels
+                    "levels": [
+                        f"level{level_idx}" for level_idx in range(2)
+                    ],  # 2 levels
                 }
             )
 

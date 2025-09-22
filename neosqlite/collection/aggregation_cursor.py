@@ -78,7 +78,7 @@ class AggregationCursor:
         if QUEZ_AVAILABLE and isinstance(self._results, CompressedQueue):
             try:
                 return self._results.get(block=False)
-            except:
+            except Exception:
                 raise StopIteration
 
         # Handle list results
@@ -252,7 +252,7 @@ class AggregationCursor:
             while not self._results.empty():
                 try:
                     results.append(self._results.get(block=False))
-                except:
+                except Exception:
                     break
             return results
 
