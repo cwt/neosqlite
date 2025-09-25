@@ -19,6 +19,7 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 - **Advanced Indexing**: Supports single-key, compound-key, and nested-key indexes.
 - **Text Search**: Full-text search capabilities using SQLite's FTS5 extension with the `$text` operator.
 - **Modern API**: Aligned with modern `pymongo` practices (using methods like `insert_one`, `update_one`, `delete_many`, etc.).
+- **MongoDB-compatible ObjectId**: Full 12-byte ObjectId implementation following MongoDB specification with automatic generation and hex interchangeability
 - **Automatic JSON/JSONB Support**: Automatically detects and uses JSONB column type when available for better performance.
 - **GridFS Support**: Store and retrieve large files with a PyMongo-compatible GridFS implementation.
 
@@ -189,6 +190,51 @@ The `Binary` class supports different subtypes for specialized binary data:
 - And other standard BSON binary subtypes
 
 For large file storage, continue to use the GridFS support which is optimized for that use case.
+
+## MongoDB-compatible ObjectId Support
+
+`NeoSQLite` now includes full MongoDB-compatible ObjectId support with automatic generation and hex interchangeability:
+
+```python
+from neosqlite import Connection
+
+# Create connection
+with Connection(":memory:") as conn:
+    collection = conn.my_collection
+
+    # Insert document without _id - ObjectId automatically generated
+    result = collection.insert_one({"name": "auto_id_doc", "value": 123})
+    doc = collection.find_one({"_id": result.inserted_id})  # Uses integer ID returned from insert
+    print(f"Document with auto-generated ObjectId: {doc}")
+
+    # Document now has an ObjectId in the _id field
+    print(f"Auto-generated ObjectId: {doc['_id']}")
+    print(f"Type of _id: {type(doc['_id'])}")
+
+    # Insert document with manual _id
+    from neosqlite.objectid import ObjectId
+    manual_oid = ObjectId()
+    collection.insert_one({"_id": manual_oid, "name": "manual_id_doc", "value": 456})
+
+    # Find using ObjectId
+    found_doc = collection.find_one({"_id": manual_oid})
+    print(f"Found document with manual ObjectId: {found_doc}")
+
+    # Query using hex string (interchangeable with PyMongo)
+    hex_string = str(manual_oid)
+    found_by_hex = collection.find_one({"_id": hex_string})
+    print(f"Found document using hex string: {found_by_hex}")
+```
+
+The ObjectId implementation:
+- Follows MongoDB's 12-byte specification (timestamp + random + PID + counter)
+- Automatically generates ObjectIds when no `_id` is provided during insertion
+- Uses dedicated `_id` column with unique indexing for performance
+- Provides full hex string interchangeability with PyMongo ObjectIds
+- Maintains complete backward compatibility: existing documents keep integer ID as `_id` until updated
+- New documents get MongoDB-compatible ObjectId in `_id` field (integer ID still available in `id` field)
+- Uses JSONB type for optimized storage when available
+- Supports querying with both ObjectIds and integer IDs in the `_id` field
 
 ### Modern GridFSBucket API
 

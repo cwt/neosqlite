@@ -1,5 +1,113 @@
 # CHANGELOG
 
+## 1.1.0
+
+### Enhanced ObjectId Implementation
+
+- **MongoDB-compatible ObjectId**: Full 12-byte ObjectId implementation following MongoDB specification with automatic generation when no _id is provided
+- **Hex String Interchangeability**: Complete hex string compatibility with PyMongo ObjectIds for seamless data exchange
+- **Dedicated _id Column**: New `_id JSONB` column with unique indexing for faster lookups and proper ObjectId storage
+- **Backward Compatibility**: Full support for existing collections with automatic `_id` column addition via ALTER TABLE
+- **Performance Optimization**: _id column uses JSONB when available (same as data column) for enhanced performance
+- **Index Support**: Automatic unique index creation on `_id` column for efficient queries
+- **Integration**: Proper integration with all CRUD operations (insert, find, update, delete)
+
+### ObjectId Features
+
+- **12-Byte Structure**: Follows MongoDB specification (4 bytes timestamp, 3 bytes random, 2 bytes PID, 3 bytes counter)
+- **Automatic Generation**: New ObjectIds automatically generated when documents don't have `_id` field
+- **Manual Assignment**: Support for user-provided ObjectIds during document insertion
+- **Timestamp Extraction**: `generation_time()` method to extract creation timestamp
+- **Validation**: `is_valid()` method for ObjectId validation
+- **Serialization**: Proper JSON serialization/deserialization support with custom encoder
+- **Thread Safety**: Proper locking mechanisms for safe multi-threaded ObjectId generation
+
+### Query Support
+
+- **_id Queries**: Full support for queries against `_id` field with proper SQL optimization
+- **Mixed Queries**: Support for queries that combine integer IDs and ObjectIds
+- **Index Usage**: Query engine properly uses unique index on `_id` column for performance
+
+### Performance Improvements
+
+- **JSONB Optimization**: Both `data` and `_id` columns now use JSONB type when available in SQLite for better performance
+- **Index Usage**: Efficient unique indexing on `_id` column for fast ObjectId lookups
+- **Query Plan Optimization**: EXPLAIN query plan verification confirms index usage for ObjectId lookups
+- **Memory Efficiency**: Optimized storage and retrieval of ObjectId values using JSONB
+
+### New Features
+
+#### ObjectId Implementation
+
+- **`neosqlite.objectid.ObjectId`**: Complete implementation following MongoDB specification
+- **Automatic Generation**: ObjectIds automatically generated when no `_id` provided during insertion
+- **Manual Assignment**: Support for user-provided ObjectIds during document insertion
+- **Dedicated Storage**: New `_id` column with unique indexing for efficient storage and lookup
+- **JSON Serialization**: Proper JSON encoding/decoding support with custom encoder
+- **Thread Safety**: Proper locking for safe multi-threaded generation
+
+#### Enhanced Collection Schema
+
+- **New Schema**: Tables now use `(id INTEGER PRIMARY KEY AUTOINCREMENT, _id JSONB, data JSONB)` when JSONB support available
+- **Backward Compatibility**: Existing tables get `_id` column added via `ALTER TABLE` when accessed
+- **Unique Indexing**: Automatic unique index creation on `_id` column for performance
+- **SQL Translation**: Enhanced SQL translator to handle `_id` field queries properly
+
+#### Query Engine Updates
+
+- **_id Query Support**: Full support for queries against `_id` field with SQL optimization
+- **Mixed Type Queries**: Support for queries that combine integer IDs and ObjectIds
+- **Index Optimization**: Query engine now optimizes queries using the unique `_id` index
+- **Backward Compatibility**: Existing integer-based queries continue to work unchanged
+
+#### Test Coverage
+
+- **Comprehensive Test Suite**: Complete test coverage for ObjectId functionality including creation, validation, storage, and retrieval
+- **Interchangeability Tests**: Tests verifying hex string interchangeability with PyMongo
+- **Integration Tests**: Tests ensuring proper integration with all CRUD operations
+- **Index Usage Tests**: Tests verifying that `_id` index is properly used for queries
+
+### Technical Benefits
+
+- **MongoDB Compatibility**: Full compatibility with MongoDB ObjectId format and behavior
+- **Performance Optimization**: JSONB type and unique indexing provide enhanced performance
+- **Backward Compatibility**: Full support for existing data and code with automatic schema migration
+- **Thread Safety**: Proper locking mechanisms ensure safe concurrent ObjectId generation
+- **Memory Efficiency**: Optimized storage using JSONB format when available
+
+### Breaking Changes
+
+There are no intentional breaking changes in this release that would break existing application logic. All existing APIs and functionality remain fully compatible with previous versions. However, there are important behavioral changes to be aware of:
+
+- **_id Field Type Change**: For new documents, the `_id` field now contains a MongoDB-compatible ObjectId instead of the integer ID
+- **Backward Compatibility**: Existing documents continue to work as before, with the integer ID accessible as the `_id` field until the document is updated  
+- **Dual ID System**: The SQLite integer ID is still available through the `id` field for all documents
+
+### Migration Notes
+
+For existing databases, this release automatically adds the `_id` column to existing collections when they are first accessed. This process is transparent and maintains full backward compatibility. New collections will be created with the optimized schema using JSONB types when available.
+
+#### Important Behavioral Changes:
+
+1. **New Documents**: When inserting new documents without specifying an `_id`, the `_id` field will contain an auto-generated ObjectId (not the integer id)
+
+2. **Existing Documents**: Documents created before this release will continue to have their integer ID as the `_id` value until they are updated or replaced
+
+3. **Accessing Integer ID**: The integer ID is always available in the `id` field for all documents (both old and new)
+
+4. **Querying**: You can query using either the ObjectId (for new documents) or integer ID (for old documents) in the `_id` field, with the system handling the appropriate lookup
+
+### Interchangeability with PyMongo
+
+- **Hex String Compatibility**: NeoSQLite ObjectIds can be used to create PyMongo ObjectIds and vice versa
+- **Round-trip Conversion**: Complete conversion cycles (NeoSQLite → PyMongo → NeoSQLite) preserve the original hex representation
+- **MongoDB Integration**: Ready for integration with MongoDB systems using hex interchangeability
+- **Timestamp Compatibility**: Timestamp extraction works correctly in both implementations
+
+### Migration Notes
+
+For existing databases, this release automatically adds the `_id` column to existing collections when they are first accessed. This process is transparent and maintains full backward compatibility. New collections will be created with the optimized schema using JSONB types when available.
+
 ## 1.0.0
 
 ### Critical Bug Fixes
