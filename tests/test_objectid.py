@@ -242,3 +242,87 @@ def test_objectid_backward_compatibility():
         # Clean up the temporary database file
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
+
+
+def test_objectid_index_usage():
+    """Test that the _id index speeds up searches by ObjectId."""
+    from neosqlite import Connection
+
+    # Use in-memory database
+    db = Connection(":memory:")
+    collection = db["test_collection"]
+
+    # Insert multiple documents to make index performance meaningful
+    oids = []
+    for i in range(
+        100
+    ):  # Insert more documents to better test index performance
+        oid = ObjectId()
+        oids.append(oid)
+        collection.insert_one({"_id": oid, "name": f"doc_{i}", "value": i * 10})
+
+    # Test that searching by ObjectId works correctly
+    test_oid = oids[50]  # Pick one of the inserted ObjectIds
+
+    # Verify that the lookup works correctly
+    retrieved = collection.find_one({"_id": test_oid})
+    assert retrieved is not None
+    assert retrieved["_id"] == test_oid
+    assert retrieved["name"] == "doc_50"
+
+    # Test with hex string as well
+    retrieved_by_hex = collection.find_one({"_id": str(test_oid)})
+    assert retrieved_by_hex is not None
+    assert retrieved_by_hex["_id"] == test_oid
+
+    # Verify the index exists in the database
+    index_cursor = collection.db.execute(
+        f"SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = '{collection.name}'"
+    )
+    index_names = [row[0] for row in index_cursor.fetchall()]
+    expected_index_name = f"idx_{collection.name}_id"
+
+    # Check if our expected index exists
+    assert (
+        expected_index_name in index_names
+    ), f"The _id index {expected_index_name} should exist in the database"
+
+    # Check the query plan to verify the index is actually being used
+    explain_cursor = collection.db.execute(
+        f"EXPLAIN QUERY PLAN SELECT id, _id, data FROM {collection.name} WHERE _id = ?",
+        (str(test_oid),),
+    )
+    query_plan_rows = explain_cursor.fetchall()
+
+    # Check that the query plan includes the index name, indicating it's being used
+    query_plan_str = " ".join([str(row) for row in query_plan_rows]).lower()
+
+    # The plan should indicate that the index was used (different SQLite versions may use different terms)
+    # Common indicators: 'search', 'idx_', the specific index name, or 'using index'
+    index_used = any(
+        indicator in query_plan_str
+        for indicator in [
+            expected_index_name.lower(),
+            "search",
+            "eqp",
+            "using index",
+            "idx_",
+        ]
+    )
+
+    assert (
+        index_used
+    ), f"The query plan should indicate that the index was used: {query_plan_str}"
+
+    # Verify that searching with a non-existent ObjectId returns None
+    fake_oid = ObjectId()
+    not_found = collection.find_one({"_id": fake_oid})
+    assert not_found is None
+
+    # Test that multiple rapid searches by ObjectId work efficiently
+    for i in [10, 25, 75, 99]:
+        oid = oids[i]
+        retrieved_doc = collection.find_one({"_id": oid})
+        assert retrieved_doc is not None
+        assert retrieved_doc["_id"] == oid
+        assert retrieved_doc["name"] == f"doc_{i}"
