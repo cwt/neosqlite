@@ -88,7 +88,7 @@
 ## Missing Medium-Priority APIs
 
 ### Data Type Support
-- [ ] Better ObjectId support (Recommended: High Feasibility)
+- [x] Better ObjectId support - MongoDB-compatible 12-byte ObjectIds with full hex interchangeability (Completed: High Feasibility) 
 - [ ] Improved datetime handling (Recommended: High Feasibility) 
 - [x] Binary data support (outside of GridFS)
 

@@ -104,6 +104,12 @@ Less data movement between SQLite and Python processes
 - 50%+ reduction in Python memory usage
 - Temporary table aggregation enables processing of larger datasets that might not fit in Python memory by leveraging database storage
 
+### JSONB Performance Optimization
+- **JSONB Type Usage**: Both `data` and `_id` columns use JSONB type when available in SQLite, providing better performance than JSON/TEXT
+- **Database-level storage**: ObjectIds stored as native JSONB for faster retrieval and indexing
+- **Index compatibility**: JSONB type works efficiently with SQLite's unique indexing on `_id` column
+- **Fallback support**: Graceful degradation to JSON/TEXT types when JSONB is not available
+
 ## Optimization Techniques
 
 ### 1. json_each() Enhancements

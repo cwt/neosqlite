@@ -76,6 +76,21 @@ This document provides a prioritized roadmap for implementing missing PyMongo-co
   - JSONB function support with fallback to `json_*` functions
   - Enhanced aggregation with `json_group_array()` and `json_group_object()`
 
+### ~~9. ObjectId Support~~
+- **Status**: ✅ COMPLETED
+- **Why**: Essential for MongoDB compatibility and document identification
+- **Effort**: Medium
+- **Impact**: High
+- **Dependencies**: Collection schema modifications, JSON serialization updates
+- **Features**:
+  - MongoDB-compatible 12-byte ObjectId implementation
+  - Automatic generation when no _id provided
+  - Dedicated _id column with unique indexing for performance
+  - Full hex interchangeability with PyMongo ObjectIds
+  - Backward compatibility with existing collections
+  - JSON serialization and deserialization support
+  - Thread-safe implementation with proper locking
+
 ## P2 - Medium Priority
 
 ### 9. Evaluation Operators

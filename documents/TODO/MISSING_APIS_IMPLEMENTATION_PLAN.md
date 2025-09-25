@@ -275,7 +275,24 @@ This document outlines a comprehensive plan for implementing missing PyMongo-com
 
 ## Lower Priority Implementations
 
-### 11. Additional Query Operators
+### ~~Data Type Support~~
+
+#### ~~ObjectId Support~~
+- **Status**: ✅ COMPLETED
+- **Purpose**: MongoDB-compatible 12-byte ObjectIds with full hex interchangeability
+- **Location**: `neosqlite/objectid.py`, `neosqlite/collection/__init__.py`, `neosqlite/collection/json_helpers.py`
+- **Implementation**:
+  - Complete ObjectId class following MongoDB specification (timestamp + random + PID + counter)
+  - Automatic generation when no _id provided during document insertion
+  - Dedicated _id column with unique indexing for performance
+  - JSON serialization support with custom encoder integration
+  - Thread-safe implementation with proper locking mechanisms
+  - Full backward compatibility with existing collections
+  - Interchangeability testing with PyMongo ObjectIds
+- **Dependencies**: Collection schema modifications, JSON serialization updates
+- **Testing**: ObjectId creation, validation, serialization, storage/retrieval, backward compatibility, MongoDB interchangeability
+
+### ~~Utility Method Improvements~~
 
 #### `$bitsAllClear`, `$bitsAllSet`, `$bitsAnyClear`, `$bitsAnySet`
 - **Purpose**: Bitwise query operators
