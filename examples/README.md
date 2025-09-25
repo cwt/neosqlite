@@ -22,6 +22,14 @@ Additional benchmarks covering specialized optimizations:
 - Pipeline reordering with complex pipelines
 - Advanced $unwind with preserveNullAndEmptyArrays
 - Text search integration with json_each() for array processing
+
+### 3. `objectid_interchangeability_demo.py`
+Demonstrates MongoDB-compatible ObjectId interchangeability:
+- Hex string compatibility between NeoSQLite and PyMongo ObjectIds
+- Cross-conversion between NeoSQLite and PyMongo implementations
+- Timestamp compatibility verification
+- Round-trip conversion preservation
+- Integration patterns for MongoDB interoperability
 - Memory-constrained processing comparisons
 
 ### 3. `text_search_json_each_benchmark.py`
