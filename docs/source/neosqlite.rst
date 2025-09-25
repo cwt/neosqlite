@@ -21,6 +21,7 @@ Submodules
    neosqlite.changestream
    neosqlite.connection
    neosqlite.exceptions
+   neosqlite.objectid
    neosqlite.query_operators
    neosqlite.requests
    neosqlite.results
