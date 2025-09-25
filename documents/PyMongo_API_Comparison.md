@@ -88,22 +88,42 @@
 ## Missing Medium-Priority APIs
 
 ### Data Type Support
-- [ ] Better ObjectId support
-- [ ] Improved datetime handling
+- [ ] Better ObjectId support (Recommended: High Feasibility)
+- [ ] Improved datetime handling (Recommended: High Feasibility) 
 - [x] Binary data support (outside of GridFS)
 
 ### Aggregation Enhancements
-- [ ] map_reduce() - Will not implement (deprecated in MongoDB 4.2, removed in 5.0; use aggregation pipeline instead)
+- [ ] map_reduce() - Will not implement (deprecated in MongoDB 4.2, removed in 5.0; use aggregation pipeline instead) (Not Recommended: Low Feasibility)
 - [x] distinct() with query filter
 
 ### Utility Methods
 - [x] watch() (change streams)
-- [ ] parallel_scan()
+- [ ] parallel_scan() (Not Recommended: Low Feasibility)
 
 ### Text Search Enhancements
-- [ ] Text scoring with $meta
-- [ ] Advanced $text parameters ($language, $caseSensitive, $diacriticSensitive)
-- [ ] Phrase search and term exclusion syntax
+- [ ] Text scoring with $meta (Recommended: Medium Feasibility)
+- [ ] Advanced $text parameters ($language, $caseSensitive, $diacriticSensitive) (Recommended: Medium Feasibility)
+- [ ] Phrase search and term exclusion syntax (Recommended: Medium Feasibility)
+
+### Additional Missing APIs by Feasibility
+
+#### High Feasibility (Recommended for Implementation)
+- **find_and_modify()** - Legacy method, can be implemented as alias
+- **count()** - Legacy method, wrapper around count_documents()
+- **Collation support** - Can use SQLite collation features
+- **Basic session management** - Context managers for transaction handling
+
+#### Medium Feasibility (Consider for Implementation) 
+- **Advanced text search features** - FTS5 provides foundation but limited compared to MongoDB
+- **JSON Schema validation** - Possible but different from MongoDB validation
+- **Additional aggregation stages** - Possible with temporary table approach
+- **Write concern options** - Can simulate but different underlying semantics
+
+#### Low Feasibility (Not Recommended)
+- **map_reduce** - Against performance optimization goals
+- **parallel_scan** - Not aligned with SQLite's single-threaded nature
+- **Advanced transaction features** - Different model than MongoDB
+- **Geospatial operators** - Would require spatial extensions to SQLite
 
 ## Enhanced Features
 

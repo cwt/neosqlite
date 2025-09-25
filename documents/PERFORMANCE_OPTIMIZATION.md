@@ -210,6 +210,31 @@ Python fallback is used for:
 7. **95% Pipeline Coverage**: Handle 95% of common aggregation pipelines at SQL level (currently at 85%+)
 8. **5-10x Performance**: Provide 5-10x performance improvements for optimized operations
 
+## API Feasibility and Performance Implications
+
+### High Feasibility APIs (Performance Neutral or Positive)
+- **ObjectId Support**: Minimal overhead, JSON serialization only
+- **Enhanced Datetime**: No performance impact, standard Python datetime handling
+- **Method Aliases**: Zero performance impact, direct method delegation
+- **Basic Collation**: Moderate impact, depends on SQLite collation implementation
+- **Session Management**: Context managers have minimal overhead
+
+### Medium Feasibility APIs (Careful Implementation Required)
+- **Complex Aggregation Stages**: May require Python fallback, performance varies
+- **Advanced Text Search**: FTS5 provides good performance, but limited compared to MongoDB
+- **JSON Schema Validation**: Validation adds overhead on writes but provides data integrity
+
+### Low Feasibility APIs (Performance Degradation Risk)
+- **map_reduce**: Would significantly impact performance, not recommended
+- **Parallel Operations**: Not applicable to SQLite architecture
+- **Complex Distributed Features**: Not aligned with SQLite's local nature
+
+### Performance Considerations for New APIs
+1. **Maintain Three-Tier Approach**: New APIs should use SQL optimization → temporary tables → Python fallback
+2. **Preserve Current Optimizations**: New features should not degrade existing performance
+3. **Resource Management**: Ensure proper cleanup and memory management
+4. **Backward Compatibility**: Maintain performance of existing functionality
+
 ## Limitations
 
 - Performance benefits typically scale with dataset size, with larger datasets showing even greater absolute time savings from SQL optimization
