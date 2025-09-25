@@ -9,7 +9,7 @@ from neosqlite.collection.json_helpers import (
     neosqlite_json_dumps_for_sql,
 )
 from neosqlite.collection.text_search import unified_text_search
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Union
 
 try:
     from pysqlite3 import dbapi2 as sqlite3
@@ -208,7 +208,7 @@ class QueryHelper:
             document (dict): The document to insert. Must be a dictionary.
 
         Returns:
-            int: The _id of the inserted document.
+            int: The auto-increment id of the inserted document.
 
         Raises:
             MalformedDocument: If the document is not a dictionary
@@ -221,7 +221,10 @@ class QueryHelper:
             )
 
         doc_to_insert = deepcopy(document)
-        doc_to_insert.pop("_id", None)
+        original_has_id = "_id" in doc_to_insert
+        doc_to_insert.pop(
+            "_id", None
+        )  # Remove _id from doc_to_insert to avoid duplication
 
         # Convert any bytes objects to Binary objects for proper JSON serialization
         doc_to_insert = _convert_bytes_to_binary(doc_to_insert)
@@ -242,16 +245,51 @@ class QueryHelper:
             else:
                 raise ValueError("Invalid JSON document")
 
+        # Handle _id generation if not provided in the document
+        if not original_has_id:
+            # Generate a new ObjectId for the _id field
+            from ..objectid import ObjectId
+
+            generated_id: Union[ObjectId, Any] = ObjectId()
+        else:
+            # If _id was provided in the original document, use that value in the _id column
+            provided_id = document["_id"]
+            from ..objectid import ObjectId
+
+            if isinstance(provided_id, str) and len(provided_id) == 24:
+                try:
+                    generated_id = ObjectId(provided_id)
+                except ValueError:
+                    # If it's not a valid ObjectId string, keep the original
+                    generated_id = provided_id
+            elif isinstance(provided_id, ObjectId):
+                generated_id = provided_id
+            else:
+                # For other types, keep the original value
+                generated_id = provided_id
+
+        # Insert with the _id value in the dedicated column
         cursor = self.collection.db.execute(
-            f"INSERT INTO {self.collection.name}(data) VALUES (?)",
-            (json_str,),
+            f"INSERT INTO {self.collection.name}(data, _id) VALUES (?, ?)",
+            (
+                json_str,
+                (
+                    str(generated_id)
+                    if hasattr(generated_id, "__str__")
+                    else generated_id
+                ),
+            ),
         )
         inserted_id = cursor.lastrowid
 
         if inserted_id is None:
             raise sqlite3.Error("Failed to get last row id.")
 
-        document["_id"] = inserted_id
+        # Only add the _id field to the original document if it wasn't originally provided
+        # This preserves the user-provided _id value if one was given
+        if not original_has_id:
+            document["_id"] = generated_id
+
         return inserted_id
 
     def _validate_json_document(self, json_str: str) -> bool:
@@ -1091,6 +1129,10 @@ class QueryHelper:
             key_name = idx[0][len(f"idx_{self.collection.name}_") :]
             # Convert underscores back to dots for nested keys
             key_name = key_name.replace("_", ".")
+            # Skip the automatically created _id index since it should be hidden
+            # like MongoDB's automatic _id index
+            if key_name == "id":  # This corresponds to the _id column index
+                continue
             indexed_fields.append(key_name)
 
         return indexed_fields
@@ -1352,8 +1394,8 @@ class QueryHelper:
         if self._is_text_search_query(query):
             return self._build_text_search_query(query)
 
-        clauses = []
-        params = []
+        clauses: List[str] = []
+        params: List[Any] = []
 
         for field, value in query.items():
             # Handle logical operators by falling back to Python processing
@@ -1364,10 +1406,44 @@ class QueryHelper:
                 )
 
             elif field == "_id":
-                # Handle _id field specially since it's stored as a column,
-                # not in the JSON data
-                clauses.append(f"{self.collection.name}.id = ?")
-                params.append(value)
+                # Handle _id field specially since it's now stored in the dedicated _id column for new records
+                # For backward compatibility, we need to check both the _id column and the auto-increment id column
+                from ..objectid import ObjectId
+
+                # Convert the value to the appropriate format for storage
+                if isinstance(value, ObjectId):
+                    param_value = str(value)
+                    # Query the _id column
+                    clauses.append(f"{self.collection.name}._id = ?")
+                    params.append(param_value)
+                elif isinstance(value, str) and len(value) == 24:
+                    try:
+                        # Validate if it's a valid ObjectId string
+                        obj_id = ObjectId(value)
+                        param_value = str(obj_id)
+                        # Query the _id column
+                        clauses.append(f"{self.collection.name}._id = ?")
+                        params.append(param_value)
+                    except ValueError:
+                        # If not a valid ObjectId string, it might be an integer id
+                        try:
+                            int_id = int(
+                                value
+                            )  # Try to parse as integer for backward compatibility
+                            clauses.append(f"{self.collection.name}.id = ?")
+                            params.append(int_id)
+                        except ValueError:
+                            # Not an integer either, use as string in _id column
+                            clauses.append(f"{self.collection.name}._id = ?")
+                            params.append(value)
+                elif isinstance(value, int):
+                    # Direct integer value, likely referring to the old auto-increment id
+                    clauses.append(f"{self.collection.name}.id = ?")
+                    params.append(value)
+                else:
+                    # Other types, store as-is in _id column
+                    clauses.append(f"{self.collection.name}._id = ?")
+                    params.append(value)
                 continue
 
             else:

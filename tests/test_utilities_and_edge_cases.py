@@ -1039,7 +1039,10 @@ def test_internal_insert_with_complex_document():
         # Verify the document was inserted
         assert doc_id is not None
         assert "_id" in complex_doc
-        assert complex_doc["_id"] == doc_id
+        # With ObjectId implementation, the document should have an ObjectId in _id field
+        from neosqlite.objectid import ObjectId
+
+        assert isinstance(complex_doc["_id"], ObjectId)
 
         # Retrieve and verify the document
         retrieved_doc = collection.find_one({"_id": doc_id})

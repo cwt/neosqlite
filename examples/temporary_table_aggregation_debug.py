@@ -106,7 +106,7 @@ def test_temporary_table_approach():
             with aggregation_pipeline_context(users.db) as create_temp:
                 # Step 1: Create base table with all documents
                 base_table = create_temp(
-                    "base", f"SELECT id, data FROM {users.name}"
+                    "base", f"SELECT id, _id, data FROM {users.name}"
                 )
                 print(f"   Base table created: {base_table}")
 
@@ -123,6 +123,7 @@ def test_temporary_table_approach():
                     "unwound",
                     f"""
                     SELECT {users.name}.id,
+                           {users.name}._id,
                            json_set({users.name}.data, '$."tags"', je.value) as data
                     FROM {match_table} as {users.name},
                          json_each(json_extract({users.name}.data, '$.tags')) as je
@@ -135,7 +136,7 @@ def test_temporary_table_approach():
                 cursor = users.db.execute(f"SELECT * FROM {unwind_table}")
                 results = []
                 for row in cursor.fetchall():
-                    doc = users._load(row[0], row[1])
+                    doc = users._load_with_stored_id(row[0], row[2], row[1])
                     results.append(doc)
 
                 print(f"   Final results count: {len(results)}")
@@ -174,7 +175,7 @@ def test_temporary_table_approach():
             with aggregation_pipeline_context(users.db) as create_temp:
                 # Step 1: Create base table
                 base_table = create_temp(
-                    "base", f"SELECT id, data FROM {users.name}"
+                    "base", f"SELECT id, _id, data FROM {users.name}"
                 )
 
                 # Step 2: Create filtered table
@@ -189,6 +190,7 @@ def test_temporary_table_approach():
                     "final",
                     f"""
                     SELECT {users.name}.id,
+                           {users.name}._id,
                            json_set({users.name}.data, '$."tags"', je.value) as data
                     FROM {match_table} as {users.name},
                          json_each(json_extract({users.name}.data, '$.tags')) as je
@@ -201,7 +203,7 @@ def test_temporary_table_approach():
                 cursor = users.db.execute(f"SELECT * FROM {final_table}")
                 results = []
                 for row in cursor.fetchall():
-                    doc = users._load(row[0], row[1])
+                    doc = users._load_with_stored_id(row[0], row[2], row[1])
                     results.append(doc)
 
                 print(f"   Complex pipeline results count: {len(results)}")

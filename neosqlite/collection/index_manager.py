@@ -295,6 +295,10 @@ class IndexManager:
             ).fetchall()
             result = []
             for idx in indexes:
+                # Skip the automatically created _id index since it should be hidden
+                # like MongoDB's automatic _id index
+                if idx[0] == f"idx_{self.collection.name}_id":
+                    continue
                 # Extract key name from index name (idx_collection_key -> key)
                 key_name = idx[0][len(f"idx_{self.collection.name}_") :]
                 # Convert underscores back to dots for nested keys
@@ -302,12 +306,20 @@ class IndexManager:
                 result.append([key_name])
             return result
         # Return index names
-        return [
+        all_indexes = [
             idx[0]
             for idx in self.collection.db.execute(
                 cmd, (like_pattern,)
             ).fetchall()
         ]
+        # Filter out the automatically created _id index since it should be hidden
+        # like MongoDB's automatic _id index
+        filtered_indexes = [
+            idx_name
+            for idx_name in all_indexes
+            if idx_name != f"idx_{self.collection.name}_id"
+        ]
+        return filtered_indexes
 
     def drop_index(self, index: str):
         """
@@ -369,6 +381,11 @@ class IndexManager:
             ).fetchall()
 
             for idx_name, idx_sql in indexes:
+                # Skip the automatically created _id index since it should be hidden
+                # like MongoDB's automatic _id index
+                if idx_name == f"idx_{self.collection.name}_id":
+                    continue
+
                 # Parse the index information
                 index_info: Dict[str, Any] = {
                     "v": 2,  # Index version

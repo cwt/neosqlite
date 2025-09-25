@@ -160,7 +160,10 @@ def test_create_collection_and_use_it(connection):
     doc = collection.find_one({"foo": "bar"})
     assert doc is not None
     assert doc["foo"] == "bar"
-    assert doc["_id"] == 1
+    # With ObjectId implementation, the _id field should contain an ObjectId
+    from neosqlite.objectid import ObjectId
+
+    assert isinstance(doc["_id"], ObjectId)
 
 
 # Tests for Connection.list_collection_names() method

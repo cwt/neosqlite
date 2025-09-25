@@ -100,11 +100,39 @@ class QueryEngine:
                           including the count of matched and modified documents,
                           and the upserted ID if applicable.
         """
-        if doc := self.find_one(filter):
-            self.helpers._internal_update(doc["_id"], update, doc)
-            return UpdateResult(
-                matched_count=1, modified_count=1, upserted_id=None
-            )
+        # Find the document using the filter, but we need to work with integer IDs internally
+        # For internal operations, we need to retrieve the document differently to get the integer id
+        # We'll use a direct SQL query to get both the integer id and the stored _id
+        where_clause, params = self.sql_translator.translate_match(filter)
+        if where_clause:
+            # Get the integer id as well for internal operations
+            # Use the same approach as the original code considering JSONB support
+            if self.collection.query_engine._jsonb_supported:
+                cmd = f"SELECT id, _id, json(data) as data FROM {self.collection.name} {where_clause} LIMIT 1"
+            else:
+                cmd = f"SELECT id, _id, data FROM {self.collection.name} {where_clause} LIMIT 1"
+            cursor = self.collection.db.execute(cmd, params)
+            row = cursor.fetchone()
+            if row:
+                int_id, stored_id, data = row
+                # Load the document the normal way for the update processing
+                doc = self.collection._load_with_stored_id(
+                    int_id, data, stored_id
+                )
+                # Use the integer id for internal operations
+                self.helpers._internal_update(int_id, update, doc)
+                return UpdateResult(
+                    matched_count=1, modified_count=1, upserted_id=None
+                )
+        else:
+            # Fallback to find_one if translation doesn't work
+            if doc := self.find_one(filter):
+                # Get integer id by looking up the stored ObjectId
+                int_doc_id = self._get_integer_id_for_oid(doc["_id"])
+                self.helpers._internal_update(int_doc_id, update, doc)
+                return UpdateResult(
+                    matched_count=1, modified_count=1, upserted_id=None
+                )
 
         if upsert:
             # For upsert, we need to create a document that includes:
@@ -120,6 +148,24 @@ class QueryEngine:
             )
 
         return UpdateResult(matched_count=0, modified_count=0, upserted_id=None)
+
+    def _get_integer_id_for_oid(self, oid) -> int:
+        """
+        Get the integer ID for a given ObjectId.
+        """
+        # This method should find the integer id in the database that corresponds to the ObjectId
+        cursor = self.collection.db.execute(
+            f"SELECT id FROM {self.collection.name} WHERE _id = ?",
+            (str(oid) if hasattr(oid, "__str__") else oid,),
+        )
+        row = cursor.fetchone()
+        if row:
+            return row[0]
+        # If not found, it might be that the _id is not stored in the _id column
+        # This could happen for older records
+        if isinstance(oid, int):
+            return oid
+        raise ValueError(f"Could not find integer ID for ObjectId: {oid}")
 
     def update_many(
         self,
@@ -158,13 +204,38 @@ class QueryEngine:
             )
 
         # Fallback for complex queries
-        docs = list(self.find(filter))
+        # Get the integer IDs for the documents to update
+        where_clause, where_params = self.sql_translator.translate_match(filter)
+        if where_clause is not None:
+            cmd = f"SELECT id FROM {self.collection.name} {where_clause}"
+            cursor = self.collection.db.execute(cmd, where_params)
+            ids = [row[0] for row in cursor.fetchall()]
+        else:
+            # If we can't translate the filter, we'll need to get all docs and filter in memory
+            docs = list(self.find(filter))
+            ids = []
+            for doc in docs:
+                int_doc_id = self._get_integer_id_for_oid(doc["_id"])
+                ids.append(int_doc_id)
+
         modified_count = 0
-        for doc in docs:
-            self.helpers._internal_update(doc["_id"], update, doc)
-            modified_count += 1
+        for int_doc_id in ids:
+            # Get the document using the integer ID for the update
+            if self.collection.query_engine._jsonb_supported:
+                cmd = f"SELECT id, _id, json(data) as data FROM {self.collection.name} WHERE id = ?"
+            else:
+                cmd = f"SELECT id, _id, data FROM {self.collection.name} WHERE id = ?"
+            cursor = self.collection.db.execute(cmd, (int_doc_id,))
+            row = cursor.fetchone()
+            if row:
+                int_id, stored_id, data = row
+                doc = self.collection._load_with_stored_id(
+                    int_id, data, stored_id
+                )
+                self.helpers._internal_update(int_doc_id, update, doc)
+                modified_count += 1
         return UpdateResult(
-            matched_count=len(docs),
+            matched_count=len(ids),
             modified_count=modified_count,
             upserted_id=None,
         )
@@ -181,9 +252,24 @@ class QueryEngine:
             DeleteResult: A result object indicating whether the deletion was
                           successful or not.
         """
-        if doc := self.find_one(filter):
-            self.helpers._internal_delete(doc["_id"])
-            return DeleteResult(deleted_count=1)
+        # Use direct query to get integer ID for the delete operation
+        where_clause, params = self.sql_translator.translate_match(filter)
+        if where_clause:
+            cmd = (
+                f"SELECT id FROM {self.collection.name} {where_clause} LIMIT 1"
+            )
+            cursor = self.collection.db.execute(cmd, params)
+            row = cursor.fetchone()
+            if row:
+                int_id = row[0]
+                self.helpers._internal_delete(int_id)
+                return DeleteResult(deleted_count=1)
+        else:
+            # Fallback approach
+            if doc := self.find_one(filter):
+                int_doc_id = self._get_integer_id_for_oid(doc["_id"])
+                self.helpers._internal_delete(int_doc_id)
+                return DeleteResult(deleted_count=1)
         return DeleteResult(deleted_count=0)
 
     def delete_many(self, filter: Dict[str, Any]) -> DeleteResult:
@@ -205,17 +291,32 @@ class QueryEngine:
             return DeleteResult(deleted_count=cursor.rowcount)
 
         # Fallback for complex queries
-        docs = list(self.find(filter))
-        if not docs:
+        # Get integer IDs for the documents to delete
+        where_clause, params = self.sql_translator.translate_match(filter)
+        if where_clause is not None:
+            # Use direct SQL if possible
+            cmd = f"SELECT id FROM {self.collection.name} {where_clause}"
+            cursor = self.collection.db.execute(cmd, params)
+            ids = [row[0] for row in cursor.fetchall()]
+        else:
+            # Fallback to finding documents and getting their integer IDs
+            docs = list(self.find(filter))
+            if not docs:
+                return DeleteResult(deleted_count=0)
+            ids = []
+            for d in docs:
+                int_doc_id = self._get_integer_id_for_oid(d["_id"])
+                ids.append(int_doc_id)
+
+        if not ids:
             return DeleteResult(deleted_count=0)
 
-        ids = tuple(d["_id"] for d in docs)
         placeholders = ",".join("?" for _ in ids)
         self.collection.db.execute(
             f"DELETE FROM {self.collection.name} WHERE id IN ({placeholders})",
             ids,
         )
-        return DeleteResult(deleted_count=len(docs))
+        return DeleteResult(deleted_count=len(ids))
 
     def replace_one(
         self,
@@ -237,11 +338,29 @@ class QueryEngine:
             UpdateResult: A result object containing the number of matched and
                           modified documents and the upserted ID.
         """
-        if doc := self.find_one(filter):
-            self.helpers._internal_replace(doc["_id"], replacement)
-            return UpdateResult(
-                matched_count=1, modified_count=1, upserted_id=None
-            )
+        # Find the document using the filter, but get the integer ID for internal operations
+        where_clause, params = self.sql_translator.translate_match(filter)
+        if where_clause:
+            if self.collection.query_engine._jsonb_supported:
+                cmd = f"SELECT id, _id, json(data) as data FROM {self.collection.name} {where_clause} LIMIT 1"
+            else:
+                cmd = f"SELECT id, _id, data FROM {self.collection.name} {where_clause} LIMIT 1"
+            cursor = self.collection.db.execute(cmd, params)
+            row = cursor.fetchone()
+            if row:
+                int_id, stored_id, data = row
+                self.helpers._internal_replace(int_id, replacement)
+                return UpdateResult(
+                    matched_count=1, modified_count=1, upserted_id=None
+                )
+        else:
+            # Fallback approach
+            if doc := self.find_one(filter):
+                int_doc_id = self._get_integer_id_for_oid(doc["_id"])
+                self.helpers._internal_replace(int_doc_id, replacement)
+                return UpdateResult(
+                    matched_count=1, modified_count=1, upserted_id=None
+                )
 
         if upsert:
             inserted_id = self.insert_one(replacement).inserted_id
@@ -346,9 +465,29 @@ class QueryEngine:
             Dict[str, Any] | None: The document that was deleted,
                                    or None if no document matches.
         """
-        if doc := self.find_one(filter):
-            self.delete_one({"_id": doc["_id"]})
-        return doc
+        # Find document and get its integer ID for the delete operation
+        where_clause, params = self.sql_translator.translate_match(filter)
+        if where_clause:
+            if self.collection.query_engine._jsonb_supported:
+                cmd = f"SELECT id, _id, json(data) as data FROM {self.collection.name} {where_clause} LIMIT 1"
+            else:
+                cmd = f"SELECT id, _id, data FROM {self.collection.name} {where_clause} LIMIT 1"
+            cursor = self.collection.db.execute(cmd, params)
+            row = cursor.fetchone()
+            if row:
+                int_id, stored_id, data = row
+                doc = self.collection._load_with_stored_id(
+                    int_id, data, stored_id
+                )
+                self.helpers._internal_delete(int_id)
+                return doc
+        else:
+            # Fallback approach
+            if doc := self.find_one(filter):
+                int_doc_id = self._get_integer_id_for_oid(doc["_id"])
+                self.helpers._internal_delete(int_doc_id)
+                return doc
+        return None
 
     def find_one_and_replace(
         self,
@@ -370,9 +509,29 @@ class QueryEngine:
             Dict[str, Any] | None: The original document that was replaced,
                                    or None if no document was found and replaced.
         """
-        if doc := self.find_one(filter):
-            self.replace_one({"_id": doc["_id"]}, replacement)
-        return doc
+        # Find document and get its integer ID for the replace operation
+        where_clause, params = self.sql_translator.translate_match(filter)
+        if where_clause:
+            if self.collection.query_engine._jsonb_supported:
+                cmd = f"SELECT id, _id, json(data) as data FROM {self.collection.name} {where_clause} LIMIT 1"
+            else:
+                cmd = f"SELECT id, _id, data FROM {self.collection.name} {where_clause} LIMIT 1"
+            cursor = self.collection.db.execute(cmd, params)
+            row = cursor.fetchone()
+            if row:
+                int_id, stored_id, data = row
+                original_doc = self.collection._load_with_stored_id(
+                    int_id, data, stored_id
+                )
+                self.helpers._internal_replace(int_id, replacement)
+                return original_doc
+        else:
+            # Fallback approach
+            if doc := self.find_one(filter):
+                int_doc_id = self._get_integer_id_for_oid(doc["_id"])
+                self.helpers._internal_replace(int_doc_id, replacement)
+                return doc
+        return None
 
     def find_one_and_update(
         self,
@@ -394,7 +553,23 @@ class QueryEngine:
                                    or None if no document was found and updated.
         """
         if doc := self.find_one(filter):
-            self.update_one({"_id": doc["_id"]}, update)
+            # Get the integer id for the internal operation
+            int_doc_id = self._get_integer_id_for_oid(doc["_id"])
+            # Update by integer id to avoid conflicts
+            where_clause = "WHERE id = ?"
+            params = [int_doc_id]
+            if self.collection.query_engine._jsonb_supported:
+                cmd = f"SELECT id, _id, json(data) as data FROM {self.collection.name} {where_clause} LIMIT 1"
+            else:
+                cmd = f"SELECT id, _id, data FROM {self.collection.name} {where_clause} LIMIT 1"
+            cursor = self.collection.db.execute(cmd, params)
+            row = cursor.fetchone()
+            if row:
+                int_id, stored_id, data = row
+                doc_to_update = self.collection._load_with_stored_id(
+                    int_id, data, stored_id
+                )
+                self.helpers._internal_update(int_id, update, doc_to_update)
         return doc
 
     def count_documents(self, filter: Dict[str, Any]) -> int:

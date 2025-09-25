@@ -1223,7 +1223,10 @@ def test_text_search_with_fts_triggers(collection):
     # Search for updated text
     results = list(collection.find({"$text": {"$search": "updated"}}))
     assert len(results) == 1
-    assert results[0]["_id"] == doc_id
+    # With ObjectId implementation, the _id field should contain an ObjectId, not the integer ID
+    from neosqlite.objectid import ObjectId
+
+    assert isinstance(results[0]["_id"], ObjectId)
 
     # Search for original text (should not find anything)
     results = list(collection.find({"$text": {"$search": "original"}}))

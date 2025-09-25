@@ -76,8 +76,12 @@ def test_insert_one(collection):
     result = collection.insert_one(doc)
     assert isinstance(result, neosqlite.InsertOneResult)
     assert result.inserted_id == 1
-    assert doc["_id"] == 1
-    found = collection.find_one({"_id": 1})
+    # With ObjectId implementation, the original document gets an ObjectId as _id
+    from neosqlite.objectid import ObjectId
+
+    assert isinstance(doc["_id"], ObjectId)
+    # Find the document using the ObjectId
+    found = collection.find_one({"_id": doc["_id"]})
     assert found["foo"] == "bar"
 
 

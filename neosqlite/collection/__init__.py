@@ -8,13 +8,14 @@ from ..results import (
     InsertOneResult,
     UpdateResult,
 )
+from ..objectid import ObjectId
 from .aggregation_cursor import AggregationCursor
 from .cursor import Cursor
 from .index_manager import IndexManager
 from .query_engine import QueryEngine
 from .raw_batch_cursor import RawBatchCursor
 from neosqlite.collection.json_helpers import neosqlite_json_loads
-from typing import Any, Dict, List, Tuple, overload
+from typing import Any, Dict, List, Tuple, Union, overload
 from typing_extensions import Literal
 
 try:
@@ -73,8 +74,88 @@ class Collection:
         if isinstance(data, bytes):
             data = data.decode("utf-8")
         document: Dict[str, Any] = neosqlite_json_loads(data)
-        document["_id"] = id
+        # Try to get the _id from the dedicated _id column first, otherwise use the auto-increment id
+        _id = self._get_stored_id(id)
+        document["_id"] = _id if _id is not None else id
         return document
+
+    def _load_with_stored_id(
+        self, id_val: int, data: str | bytes, stored_id_val
+    ) -> Dict[str, Any]:
+        """
+        Deserialize and load a document with the stored _id value.
+
+        Args:
+            id_val (int): The auto-increment document ID.
+            data (str | bytes): The JSON string or bytes representing the document.
+            stored_id_val: The stored _id value from the _id column.
+
+        Returns:
+            Dict[str, Any]: The deserialized document with the _id field added.
+        """
+        if isinstance(data, bytes):
+            data = data.decode("utf-8")
+        document: Dict[str, Any] = neosqlite_json_loads(data)
+
+        # Use the stored _id value if available, otherwise fall back to the auto-increment id
+        _id: Union[ObjectId, Any]
+        if stored_id_val is not None:
+            # Try to decode as ObjectId if it looks like one
+            if isinstance(stored_id_val, str) and len(stored_id_val) == 24:
+                try:
+                    _id = ObjectId(stored_id_val)
+                except ValueError:
+                    _id = stored_id_val
+            else:
+                _id = stored_id_val
+        else:
+            # Fallback to the auto-increment ID for backward compatibility
+            _id = id_val
+
+        document["_id"] = _id
+        return document
+
+    def _get_stored_id(self, doc_id: int) -> ObjectId | int | str | None:
+        """
+        Retrieve the stored _id for a document from the _id column.
+
+        Args:
+            doc_id (int): The document ID.
+
+        Returns:
+            ObjectId | int | None: The stored _id value, or None if the column doesn't exist yet.
+        """
+        try:
+            # Check if the _id column exists
+            cursor = self.db.execute(
+                f"SELECT name FROM pragma_table_info('{self.name}') WHERE name = '_id'"
+            )
+            column_exists = cursor.fetchone() is not None
+
+            if column_exists:
+                cursor = self.db.execute(
+                    f"SELECT _id FROM {self.name} WHERE id = ?", (doc_id,)
+                )
+                row = cursor.fetchone()
+                if row and row[0] is not None:
+                    stored_id = row[0]
+                    # Try to decode as ObjectId if it matches ObjectId format
+                    if isinstance(stored_id, str) and len(stored_id) == 24:
+                        try:
+                            return ObjectId(stored_id)
+                        except ValueError:
+                            # Not a valid ObjectId, return as-is
+                            return stored_id
+                    return stored_id
+                else:
+                    # If no row is found or row[0] is None, return None
+                    return None
+            else:
+                # For backward compatibility, if _id column doesn't exist, return the original ID
+                return doc_id
+        except Exception:
+            # If there's any error retrieving the _id, return None
+            return None
 
     def _get_val(self, item: Dict[str, Any], key: str) -> Any:
         """
@@ -129,8 +210,9 @@ class Collection:
         """
         Initialize the collection table if it does not exist.
 
-        This method creates a table with an 'id' column and a 'data' column for
-        storing JSON data. If the JSONB data type is supported, it will be used,
+        This method creates a table with an 'id' column, a '_id' column for
+        ObjectId storage, and a 'data' column for storing JSON data.
+        If the JSONB data type is supported, it will be used,
         otherwise, TEXT data type will be used.
         """
         # Use the QueryEngine's cached JSONB support flag
@@ -139,6 +221,7 @@ class Collection:
                 f"""
                 CREATE TABLE IF NOT EXISTS {self.name} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    _id JSON,
                     data JSONB NOT NULL
                 )"""
             )
@@ -147,10 +230,59 @@ class Collection:
                 f"""
                 CREATE TABLE IF NOT EXISTS {self.name} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    _id JSON,
                     data TEXT NOT NULL
                 )
                 """
             )
+
+        # Create unique index on _id column for faster lookups
+        try:
+            self.db.execute(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{self.name}_id ON {self.name}(_id)"
+            )
+        except Exception:
+            # If we can't create the index (e.g., due to duplicate values), continue without it
+            pass
+
+        # Add the _id column if it doesn't exist (for backward compatibility)
+        self._ensure_id_column_exists()
+
+        # Create unique index on _id column for faster lookups
+        self._create_unique_index_for_id()
+
+    def _ensure_id_column_exists(self):
+        """
+        Ensure that the _id column exists in the collection table for backward compatibility.
+        """
+        try:
+            # Check if _id column exists
+            cursor = self.db.execute(
+                f"SELECT name FROM pragma_table_info('{self.name}') WHERE name = '_id'"
+            )
+            column_exists = cursor.fetchone() is not None
+
+            if not column_exists:
+                # Add the _id column
+                self.db.execute(f"ALTER TABLE {self.name} ADD COLUMN _id JSON")
+                # Create unique index on _id column for faster lookups
+                self._create_unique_index_for_id()
+        except Exception:
+            # If we can't add the column, continue without it (for backward compatibility)
+            pass
+
+    def _create_unique_index_for_id(self):
+        """
+        Create unique index on _id column for faster lookups.
+        """
+        try:
+            # Create unique index on _id column for faster lookups
+            self.db.execute(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{self.name}_id ON {self.name}(_id)"
+            )
+        except Exception:
+            # If we can't create the index (e.g., due to duplicate values), continue without it
+            pass
 
     def rename(self, new_name: str) -> None:
         """

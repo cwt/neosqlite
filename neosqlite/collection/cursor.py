@@ -1,6 +1,5 @@
 from __future__ import annotations
 from functools import partial
-from itertools import starmap
 from typing import Any, Dict, List, Iterator, Iterable, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -139,23 +138,43 @@ class Cursor:
             # Use SQL-based filtering
             where_clause, params = where_result
             # Use the collection's JSONB support flag to determine how to select data
+            # Include _id column to support both integer id and ObjectId _id
             if self._collection.query_engine._jsonb_supported:
-                cmd = f"SELECT id, json(data) as data FROM {self._collection.name} {where_clause}"
+                cmd = f"SELECT id, _id, json(data) as data FROM {self._collection.name} {where_clause}"
             else:
-                cmd = f"SELECT id, data FROM {self._collection.name} {where_clause}"
+                cmd = f"SELECT id, _id, data FROM {self._collection.name} {where_clause}"
             db_cursor = self._collection.db.execute(cmd, params)
-            return starmap(self._collection._load, db_cursor.fetchall())
+            return self._load_documents(db_cursor.fetchall())
         else:
             # Fallback to Python-based filtering for complex queries
             # Use the collection's JSONB support flag to determine how to select data
+            # Include _id column to support both integer id and ObjectId _id
             if self._collection.query_engine._jsonb_supported:
-                cmd = f"SELECT id, json(data) as data FROM {self._collection.name}"
+                cmd = f"SELECT id, _id, json(data) as data FROM {self._collection.name}"
             else:
-                cmd = f"SELECT id, data FROM {self._collection.name}"
+                cmd = f"SELECT id, _id, data FROM {self._collection.name}"
             db_cursor = self._collection.db.execute(cmd)
             apply = partial(self._query_helpers._apply_query, self._filter)
-            all_docs = starmap(self._collection._load, db_cursor.fetchall())
+            all_docs = self._load_documents(db_cursor.fetchall())
             return filter(apply, all_docs)
+
+    def _load_documents(self, rows) -> Iterable[Dict[str, Any]]:
+        """
+        Load documents from rows returned by the database query, including handling both id and _id.
+
+        Args:
+            rows: Database result rows containing id, _id, and data
+
+        Returns:
+            Iterable[Dict[str, Any]]: An iterable of loaded documents
+        """
+        for row in rows:
+            id_val, stored_id_val, data_val = row
+            # Use the collection's _load method which now handles both id and _id
+            doc = self._collection._load_with_stored_id(
+                id_val, data_val, stored_id_val
+            )
+            yield doc
 
     def _apply_sorting(
         self, docs: Iterable[Dict[str, Any]]

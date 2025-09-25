@@ -10,7 +10,7 @@ class NeoSQLiteJSONEncoder(json.JSONEncoder):
 
     def default(self, obj):
         """
-        Encodes Binary objects for JSON serialization.
+        Encodes Binary and ObjectId objects for JSON serialization.
 
         Args:
             obj: The object to encode.
@@ -20,6 +20,14 @@ class NeoSQLiteJSONEncoder(json.JSONEncoder):
         """
         if isinstance(obj, Binary):
             return obj.encode_for_storage()
+        # Import here to avoid circular imports
+        try:
+            from neosqlite.objectid import ObjectId
+
+            if isinstance(obj, ObjectId):
+                return obj.encode_for_storage()
+        except ImportError:
+            pass  # ObjectId module not available
         return super().default(obj)
 
 

@@ -1,0 +1,32 @@
+Analyze @documents/PyMongo_API_Comparison.md @documents/API_DEVELOPMENT_STRATEGY.md @documents/API_FEASIBILITY_ASSESSMENT.md , I would like to implement the objectId like the MongoDB:
+
+  Proposed Implementation Plan:
+
+   1. Create a Python `ObjectId` Class:
+       * This class will reside in a new file, perhaps neosqlite/objectid.py.
+       * It will generate a 12-byte value based on the MongoDB specification:
+           * 4 bytes: int(time.time())
+           * 3 bytes: os.urandom(3) (A random value is simpler and more robust than a MAC address for a local-only database).
+           * 2 bytes: os.getpid().to_bytes(2, 'big')
+           * 3 bytes: A static, incrementing counter within the class, seeded with a random value.
+       * The class will leverage the @neosqlite/binary.py for data conversion between Python's byte to JSON that can be stored in SQLite.
+
+   2. Modify Collection Table Schema:
+       * For new collections, the table schema should be (id INTEGER PRIMARY KEY AUTOINCREMENT, _id JSON UNIQUE, data JSON). Convert the the 12-byte raw ObjectId via @neosqlite/binary.py as a JSON, then also create UNIQUE INDEX for it.
+       * For backward compatibility, when the library opens an existing table that doesn't have _id, it should add the new column:
+          ALTER TABLE my_collection ADD COLUMN _id JSON UNIQUE.
+
+   3. Integrate into CRUD Operations (in Python):
+       * Insertion (`insert_one`, `insert_many`):
+           * The Python method will inspect the document(s) being inserted.
+           * If the user has not provided an _id field, the method will generate a new ObjectId() for each document.
+           * The 12-byte value of the ObjectId is inserted into the dedicated _id column.
+           * The JSON stored in the data column will not contain the _id, preventing data duplication.
+       * Retrieval (`find`, `find_one`, etc.):
+           * When a query is executed, the SELECT statement will fetch both the id column, _id column and the data column.
+           * Try to construct result with id and _id merged into JSON data within the SQLite if possible, else doing it in Python.
+
+   4. Adjust the test cases to match the new _id behavior, each document will have both `id` as the old auto-incremental integer, and the `_id` as the new ObjectId.
+
+Tell me what you are going to do before actually coding it.
+

@@ -1,7 +1,6 @@
 from __future__ import annotations
 from typing import Any, Dict, Iterator, List, Optional, TYPE_CHECKING
-import json
-from .jsonb_support import should_use_json_functions
+from .json_helpers import neosqlite_json_dumps
 
 if TYPE_CHECKING:
     from . import Collection
@@ -69,8 +68,10 @@ class RawBatchCursor:
             # Split results into batches
             for i in range(0, len(results), self._batch_size):
                 batch = results[i : i + self._batch_size]
-                # Convert each document to JSON and join with newlines
-                batch_json = "\n".join(json.dumps(doc) for doc in batch)
+                # Convert each document to JSON using the custom encoder and join with newlines
+                batch_json = "\n".join(
+                    neosqlite_json_dumps(doc) for doc in batch
+                )
                 yield batch_json.encode("utf-8")
             return
 
@@ -86,16 +87,10 @@ class RawBatchCursor:
             # Build ORDER BY clause if sorting is specified
             order_by = ""
             if self._sort:
-                # Determine whether to use json_* or jsonb_* functions
-                use_json = should_use_json_functions(
-                    None, self._collection.query_engine._jsonb_supported
-                )
-                function_name = "json_extract" if use_json else "jsonb_extract"
-
                 sort_clauses = []
                 for key, direction in self._sort.items():
                     sort_clauses.append(
-                        f"{function_name}(data, '$.{key}') {'DESC' if direction == -1 else 'ASC'}"
+                        f"json_extract(data, '$.{key}') {'DESC' if direction == -1 else 'ASC'}"
                     )
                 order_by = "ORDER BY " + ", ".join(sort_clauses)
 
@@ -138,8 +133,10 @@ class RawBatchCursor:
                 # Convert rows to documents
                 docs = [self._collection._load(row[0], row[1]) for row in rows]
 
-                # Convert to JSON batch
-                batch_json = "\n".join(json.dumps(doc) for doc in docs)
+                # Convert to JSON batch using custom encoder to handle ObjectIds
+                batch_json = "\n".join(
+                    neosqlite_json_dumps(doc) for doc in docs
+                )
                 yield batch_json.encode("utf-8")
 
                 # Update counters
@@ -172,6 +169,8 @@ class RawBatchCursor:
             # Split into batches
             for i in range(0, len(docs), self._batch_size):
                 batch = docs[i : i + self._batch_size]
-                # Convert each document to JSON and join with newlines
-                batch_json = "\n".join(json.dumps(doc) for doc in batch)
+                # Convert each document to JSON using the custom encoder and join with newlines
+                batch_json = "\n".join(
+                    neosqlite_json_dumps(doc) for doc in batch
+                )
                 yield batch_json.encode("utf-8")
