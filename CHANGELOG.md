@@ -1,5 +1,42 @@
 # CHANGELOG
 
+## 1.1.1
+
+### Enhanced Robustness Through Automatic ID Type Correction
+
+- **Intelligent Query Normalization**: Automatic detection and correction of common ID type mismatches between integer IDs and ObjectIds
+- **User Error Forgiveness**: Makes the API more robust by gracefully handling common user mistakes with ID types
+- **Transparent Operation**: Corrections happen automatically without requiring any code changes
+- **Cross-Operation Support**: Works seamlessly across all CRUD operations (find, update, delete, replace, count, etc.)
+
+### Automatic ID Type Detection and Correction
+
+- **Query Normalization**: Automatically normalizes queries when users mistakenly query the `id` field with ObjectId values
+- **Smart Type Conversion**: Intelligently converts between integer IDs and ObjectIds based on context and value type
+- **String Handling**: Properly handles integer strings and hex strings in ID queries for better user experience
+- **Zero Configuration**: No setup required - works automatically out of the box
+
+### Specific Corrections Implemented
+
+- **`id` field with ObjectId**: When users query `{'id': ObjectId(...)}`, it's automatically corrected to search the `_id` field
+- **`id` field with hex string**: When users query `{'id': 'hex_string'}`, it's automatically corrected to search the `_id` field  
+- **`_id` field with integer string**: When users query `{'_id': '123'}`, it's automatically converted to integer `123`
+- **All Value Types**: Handles strings, integers, ObjectIds, and hex strings appropriately in context
+
+### Technical Implementation
+
+- **Centralized Logic**: Implemented using DRY principles with centralized `_normalize_id_query` method in QueryHelper
+- **Performance Optimized**: Minimal overhead with efficient implementation that doesn't impact normal operations
+- **Type Safe**: Proper typing throughout implementation with comprehensive mypy compatibility
+- **Comprehensive Coverage**: Applied to all relevant QueryEngine methods for complete CRUD operation support
+
+### Developer Experience Improvements
+
+- **Reduced Errors**: Significantly reduces errors from common ID type mismatches
+- **Intuitive API**: More forgiving interface that handles common mistakes gracefully
+- **Backward Compatible**: All existing code continues to work unchanged while gaining robustness
+- **No Learning Curve**: Works automatically without requiring developers to learn new APIs or patterns
+
 ## 1.1.0
 
 ### Enhanced ObjectId Implementation

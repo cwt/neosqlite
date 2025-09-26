@@ -221,10 +221,20 @@ with Connection(":memory:") as conn:
     print(f"Found document with manual ObjectId: {found_doc}")
 
     # Query using hex string (interchangeable with PyMongo)
-    hex_string = str(manual_oid)
-    found_by_hex = collection.find_one({"_id": hex_string})
-    print(f"Found document using hex string: {found_by_hex}")
+    hex_result = collection.find_one({"_id": str(manual_oid)})
+    print(f"Found document using hex string: {hex_result}")
+    
+    # Automatic ID type correction makes querying more robust
+    # These all work automatically without requiring exact type matching:
+    found1 = collection.find_one({"id": manual_oid})  # Corrected to query _id field
+    found2 = collection.find_one({"id": str(manual_oid)})  # Corrected to query _id field
+    found3 = collection.find_one({"_id": "123"})  # Corrected to integer 123
 ```
+
+The ObjectId implementation automatically corrects common ID type mismatches:
+- Queries using `id` field with ObjectId/hex string are automatically redirected to `_id` field
+- Queries using `_id` field with integer strings are automatically converted to integers
+- Works across all CRUD operations (find, update, delete, etc.) for enhanced robustness
 
 The ObjectId implementation:
 - Follows MongoDB's 12-byte specification (timestamp + random + PID + counter)
