@@ -14,6 +14,7 @@ from .cursor import Cursor
 from .index_manager import IndexManager
 from .query_engine import QueryEngine
 from .raw_batch_cursor import RawBatchCursor
+
 from neosqlite.collection.json_helpers import neosqlite_json_loads
 from typing import Any, Dict, List, Tuple, Union, overload
 from typing_extensions import Literal

@@ -100,6 +100,8 @@ class QueryEngine:
                           including the count of matched and modified documents,
                           and the upserted ID if applicable.
         """
+        # Apply ID type normalization to handle cases where users query 'id' with ObjectId
+        filter = self.helpers._normalize_id_query(filter)
         # Find the document using the filter, but we need to work with integer IDs internally
         # For internal operations, we need to retrieve the document differently to get the integer id
         # We'll use a direct SQL query to get both the integer id and the stored _id
@@ -185,6 +187,8 @@ class QueryEngine:
         Returns:
             UpdateResult: A result object containing information about the update operation.
         """
+        # Apply ID type normalization to handle cases where users query 'id' with ObjectId
+        filter = self.helpers._normalize_id_query(filter)
         # Try to use SQLTranslator for the WHERE clause
         where_clause, where_params = self.sql_translator.translate_match(filter)
 
@@ -252,6 +256,8 @@ class QueryEngine:
             DeleteResult: A result object indicating whether the deletion was
                           successful or not.
         """
+        # Apply ID type normalization to handle cases where users query 'id' with ObjectId
+        filter = self.helpers._normalize_id_query(filter)
         # Use direct query to get integer ID for the delete operation
         where_clause, params = self.sql_translator.translate_match(filter)
         if where_clause:
@@ -283,6 +289,8 @@ class QueryEngine:
         Returns:
             DeleteResult: A result object indicating whether the deletion was successful or not.
         """
+        # Apply ID type normalization to handle cases where users query 'id' with ObjectId
+        filter = self.helpers._normalize_id_query(filter)
         # Try to use SQLTranslator for the WHERE clause
         where_clause, params = self.sql_translator.translate_match(filter)
         if where_clause is not None:
@@ -338,6 +346,8 @@ class QueryEngine:
             UpdateResult: A result object containing the number of matched and
                           modified documents and the upserted ID.
         """
+        # Apply ID type normalization to handle cases where users query 'id' with ObjectId
+        filter = self.helpers._normalize_id_query(filter)
         # Find the document using the filter, but get the integer ID for internal operations
         where_clause, params = self.sql_translator.translate_match(filter)
         if where_clause:
@@ -387,6 +397,9 @@ class QueryEngine:
         Returns:
             Cursor: A cursor object to iterate over the results.
         """
+        # Apply ID type normalization to handle cases where users query 'id' with ObjectId
+        if filter is not None:
+            filter = self.helpers._normalize_id_query(filter)
         return Cursor(self.collection, filter, projection, hint)
 
     def find_raw_batches(
@@ -446,6 +459,9 @@ class QueryEngine:
             Dict[str, Any]: A dictionary representing the found document,
                             or None if no document matches.
         """
+        # Apply ID type normalization to handle cases where users query 'id' with ObjectId
+        if filter is not None:
+            filter = self.helpers._normalize_id_query(filter)
         try:
             return next(iter(self.find(filter, projection, hint).limit(1)))
         except StopIteration:
@@ -465,6 +481,8 @@ class QueryEngine:
             Dict[str, Any] | None: The document that was deleted,
                                    or None if no document matches.
         """
+        # Apply ID type normalization to handle cases where users query 'id' with ObjectId
+        filter = self.helpers._normalize_id_query(filter)
         # Find document and get its integer ID for the delete operation
         where_clause, params = self.sql_translator.translate_match(filter)
         if where_clause:
@@ -509,6 +527,8 @@ class QueryEngine:
             Dict[str, Any] | None: The original document that was replaced,
                                    or None if no document was found and replaced.
         """
+        # Apply ID type normalization to handle cases where users query 'id' with ObjectId
+        filter = self.helpers._normalize_id_query(filter)
         # Find document and get its integer ID for the replace operation
         where_clause, params = self.sql_translator.translate_match(filter)
         if where_clause:
@@ -552,6 +572,8 @@ class QueryEngine:
             Dict[str, Any] | None: The document that was updated,
                                    or None if no document was found and updated.
         """
+        # Apply ID type normalization to handle cases where users query 'id' with ObjectId
+        filter = self.helpers._normalize_id_query(filter)
         if doc := self.find_one(filter):
             # Get the integer id for the internal operation
             int_doc_id = self._get_integer_id_for_oid(doc["_id"])
@@ -582,6 +604,8 @@ class QueryEngine:
         Returns:
             int: The number of documents matching the filter.
         """
+        # Apply ID type normalization to handle cases where users query 'id' with ObjectId
+        filter = self.helpers._normalize_id_query(filter)
         # Try to use SQLTranslator for the WHERE clause
         where_clause, params = self.sql_translator.translate_match(filter)
         if where_clause is not None:
@@ -614,6 +638,9 @@ class QueryEngine:
         Returns:
             Set[Any]: A set containing the distinct values from the specified key.
         """
+        # Apply ID type normalization to handle cases where users query 'id' with ObjectId
+        if filter is not None:
+            filter = self.helpers._normalize_id_query(filter)
         params: List[Any] = []
         where_clause = ""
 
