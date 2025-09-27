@@ -9,6 +9,9 @@ try:
 except ImportError:
     import sqlite3  # type: ignore
 
+# Import ObjectId for GridFS
+from ..objectid import ObjectId
+
 
 class GridFS:
     """
@@ -38,7 +41,7 @@ class GridFS:
         data: bytes | io.IOBase,
         filename: str | None = None,
         **kwargs: Any,
-    ) -> int:
+    ) -> ObjectId:
         """
         Put data into GridFS.
 
@@ -48,7 +51,7 @@ class GridFS:
             **kwargs: Additional metadata fields
 
         Returns:
-            The _id of the stored file document
+            The ObjectId of the stored file document
         """
         # Extract metadata from kwargs
         metadata = {}
@@ -65,15 +68,15 @@ class GridFS:
         if filename is None:
             filename = "file"
 
-        # Upload the data
+        # Upload the data - this will return an ObjectId
         return self._bucket.upload_from_stream(filename, data, metadata or None)
 
-    def get(self, file_id: int) -> GridOut:
+    def get(self, file_id: ObjectId | str | int) -> GridOut:
         """
         Get a file from GridFS by its _id.
 
         Args:
-            file_id: The _id of the file to retrieve
+            file_id: The _id of the file to retrieve (ObjectId, hex string, or integer ID)
 
         Returns:
             A GridOut instance for reading the file
@@ -105,12 +108,12 @@ class GridFS:
         """
         return self._bucket.open_download_stream_by_name(filename, -1)
 
-    def delete(self, file_id: int) -> None:
+    def delete(self, file_id: ObjectId | str | int) -> None:
         """
         Delete a file from GridFS by its _id.
 
         Args:
-            file_id: The _id of the file to delete
+            file_id: The _id of the file to delete (ObjectId, hex string, or integer ID)
         """
         try:
             self._bucket.delete(file_id)
@@ -160,12 +163,14 @@ class GridFS:
         except StopIteration:
             return None
 
-    def exists(self, file_id: int | None = None, **kwargs: Any) -> bool:
+    def exists(
+        self, file_id: ObjectId | str | int | None = None, **kwargs: Any
+    ) -> bool:
         """
         Check if a file exists in GridFS.
 
         Args:
-            file_id: The _id of the file to check
+            file_id: The _id of the file to check (ObjectId, hex string, or integer ID)
             **kwargs: Additional filter criteria (e.g., filename="test.txt")
 
         Returns:

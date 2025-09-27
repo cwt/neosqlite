@@ -11,6 +11,15 @@ try:
 except ImportError:
     import sqlite3  # type: ignore
 
+# Import ObjectId for MongoDB-compatible ID support
+from ..objectid import ObjectId
+
+# Import JSONB support utilities to reuse existing implementation
+from ..collection.jsonb_support import supports_jsonb
+
+# Import _normalize_id_query to reuse existing ID normalization logic
+from ..collection.query_helper import QueryHelper
+
 
 class GridFSBucket:
     """
@@ -97,22 +106,42 @@ class GridFSBucket:
 
     def _create_collections(self):
         """Create the files and chunks collections (tables) if they don't exist."""
-        # Create files collection (table)
-        self._db.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS `{self._files_collection}` (
-                _id INTEGER PRIMARY KEY AUTOINCREMENT,
-                filename TEXT,
-                length INTEGER,
-                chunkSize INTEGER,
-                uploadDate TEXT,
-                md5 TEXT,
-                metadata TEXT
-            )
-        """
-        )
+        # Check if JSONB is supported using the established utility
+        jsonb_supported = supports_jsonb(self._db)
 
-        # Create chunks collection (table)
+        # Create files collection (table)
+        if jsonb_supported:
+            self._db.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS `{self._files_collection}` (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    _id JSONB,
+                    filename TEXT,
+                    length INTEGER,
+                    chunkSize INTEGER,
+                    uploadDate TEXT,
+                    md5 TEXT,
+                    metadata TEXT
+                )
+            """
+            )
+        else:
+            self._db.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS `{self._files_collection}` (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    _id TEXT,
+                    filename TEXT,
+                    length INTEGER,
+                    chunkSize INTEGER,
+                    uploadDate TEXT,
+                    md5 TEXT,
+                    metadata TEXT
+                )
+            """
+            )
+
+        # Create chunks collection (table) - no change needed
         self._db.execute(
             f"""
             CREATE TABLE IF NOT EXISTS `{self._chunks_collection}` (
@@ -120,10 +149,34 @@ class GridFSBucket:
                 files_id INTEGER,
                 n INTEGER,
                 data BLOB,
-                FOREIGN KEY (files_id) REFERENCES `{self._files_collection}` (_id)
+                FOREIGN KEY (files_id) REFERENCES `{self._files_collection}` (id)
             )
         """
         )
+
+        # Create indexes for better performance
+        self._db.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS `idx_{self._files_collection}_filename`
+            ON `{self._files_collection}` (filename)
+        """
+        )
+
+        self._db.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS `idx_{self._chunks_collection}_files_id`
+            ON `{self._chunks_collection}` (files_id)
+        """
+        )
+
+        # Create unique index on _id column for faster lookups
+        try:
+            self._db.execute(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS `idx_{self._files_collection}_id` ON `{self._files_collection}`(_id)"
+            )
+        except Exception:
+            # If we can't create the index (e.g., due to duplicate values), continue without it
+            pass
 
         # Create indexes for better performance
         self._db.execute(
@@ -206,7 +259,7 @@ class GridFSBucket:
         filename: str,
         source: bytes | io.IOBase,
         metadata: Dict[str, Any] | None = None,
-    ) -> int:
+    ) -> ObjectId:
         """
         Uploads a user file to a GridFS bucket.
 
@@ -220,7 +273,7 @@ class GridFSBucket:
             metadata: Optional metadata for the file
 
         Returns:
-            The _id of the uploaded file document
+            The ObjectId of the uploaded file document
         """
         # Get the data from the source
         if isinstance(source, bytes):
@@ -235,16 +288,20 @@ class GridFSBucket:
         if not self._disable_md5:
             md5_hash = hashlib.md5(data).hexdigest()
 
+        # Generate ObjectId for the file
+        file_oid = ObjectId()
+
         # Insert file metadata first
         upload_date = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
         cursor = self._db.execute(
             f"""
             INSERT INTO `{self._files_collection}`
-            (filename, length, chunkSize, uploadDate, md5, metadata)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (id, _id, filename, length, chunkSize, uploadDate, md5, metadata)
+            VALUES (NULL, ?, ?, ?, ?, ?, ?, ?)
         """,
             (
+                str(file_oid),  # Store ObjectId as hex string
                 filename,
                 len(data),
                 self._chunk_size_bytes,
@@ -264,7 +321,7 @@ class GridFSBucket:
         # Force sync if write concern requires it
         self._force_sync_if_needed()
 
-        return file_id
+        return file_oid
 
     def _insert_chunks(self, file_id: int, data: bytes):
         """
@@ -287,22 +344,29 @@ class GridFSBucket:
                 (file_id, i // self._chunk_size_bytes, chunk_data),
             )
 
-    def download_to_stream(self, file_id: int, destination: io.IOBase) -> None:
+    def download_to_stream(
+        self, file_id: ObjectId | str | int, destination: io.IOBase
+    ) -> None:
         """
         Downloads the contents of the stored file specified by file_id
         and writes the contents to destination.
 
         Args:
-            file_id: The _id of the file document
+            file_id: The _id of the file document (ObjectId, hex string, or integer ID)
             destination: A file-like object to which the file contents will be written
         """
-        # Get file metadata
+        # Convert file_id to appropriate format for lookup
+        file_int_id = self._get_integer_id_for_file(file_id)
+        if file_int_id is None:
+            raise NoFile(f"File with id {file_id} not found")
+
+        # Get file metadata using integer ID
         row = self._db.execute(
             f"""
             SELECT length, chunkSize FROM `{self._files_collection}`
-            WHERE _id = ?
+            WHERE id = ?
         """,
-            (file_id,),
+            (file_int_id,),
         ).fetchone()
 
         if row is None:
@@ -315,12 +379,60 @@ class GridFSBucket:
             WHERE files_id = ?
             ORDER BY n ASC
         """,
-            (file_id,),
+            (file_int_id,),
         )
 
         # Write chunks to destination
         for chunk_row in cursor:
             destination.write(chunk_row[0])
+
+    def _get_integer_id_for_file(
+        self, file_id: ObjectId | str | int
+    ) -> int | None:
+        """
+        Convert a file identifier (ObjectId, hex string, or integer) to an integer ID.
+
+        Args:
+            file_id: The file identifier (ObjectId, hex string, or integer ID)
+
+        Returns:
+            The integer ID corresponding to the file, or None if not found
+        """
+        if isinstance(file_id, ObjectId):
+            # Look up by _id column containing ObjectId hex string
+            cursor = self._db.execute(
+                f"SELECT id FROM `{self._files_collection}` WHERE _id = ?",
+                (str(file_id),),
+            )
+        elif isinstance(file_id, str) and len(file_id) == 24:
+            # Check if it's a valid ObjectId hex string
+            try:
+                ObjectId(file_id)  # Validate the hex string
+                cursor = self._db.execute(
+                    f"SELECT id FROM `{self._files_collection}` WHERE _id = ?",
+                    (file_id,),
+                )
+            except ValueError:
+                # Not a valid ObjectId hex string, treat as integer string
+                try:
+                    int_file_id = int(file_id)
+                    cursor = self._db.execute(
+                        f"SELECT id FROM `{self._files_collection}` WHERE id = ?",
+                        (int_file_id,),
+                    )
+                except ValueError:
+                    # Not an integer string either
+                    return None
+        elif isinstance(file_id, int):
+            cursor = self._db.execute(
+                f"SELECT id FROM `{self._files_collection}` WHERE id = ?",
+                (file_id,),
+            )
+        else:
+            return None
+
+        row = cursor.fetchone()
+        return row[0] if row else None
 
     def download_to_stream_by_name(
         self, filename: str, destination: io.IOBase, revision: int = -1
@@ -346,13 +458,13 @@ class GridFSBucket:
             revision: The revision number (-1 for latest, 0 for first, etc.)
 
         Returns:
-            The _id of the file document
+            The integer _id of the file document
         """
         if revision == -1:
             # Get the latest revision
             row = self._db.execute(
                 f"""
-                SELECT _id FROM `{self._files_collection}`
+                SELECT id FROM `{self._files_collection}`
                 WHERE filename = ?
                 ORDER BY uploadDate DESC
                 LIMIT 1
@@ -363,7 +475,7 @@ class GridFSBucket:
             # Get specific revision (0-indexed)
             row = self._db.execute(
                 f"""
-                SELECT _id FROM `{self._files_collection}`
+                SELECT id FROM `{self._files_collection}`
                 WHERE filename = ?
                 ORDER BY uploadDate ASC
                 LIMIT 1 OFFSET ?
@@ -376,17 +488,21 @@ class GridFSBucket:
 
         return row[0]
 
-    def open_download_stream(self, file_id: int) -> GridOut:
+    def open_download_stream(self, file_id: ObjectId | str | int) -> GridOut:
         """
         Opens a stream to read the contents of the stored file specified by file_id.
 
         Args:
-            file_id: The _id of the file document
+            file_id: The _id of the file document (ObjectId, hex string, or integer ID)
 
         Returns:
             A GridOut instance to read the file contents
         """
-        return GridOut(self._db, self._bucket_name, file_id)
+        # Convert to integer ID for internal use
+        file_int_id = self._get_integer_id_for_file(file_id)
+        if file_int_id is None:
+            raise NoFile(f"File with id {file_id} not found")
+        return GridOut(self._db, self._bucket_name, file_int_id)
 
     def open_download_stream_by_name(
         self, filename: str, revision: int = -1
@@ -404,30 +520,35 @@ class GridFSBucket:
         file_id = self._get_file_id_by_name(filename, revision)
         return GridOut(self._db, self._bucket_name, file_id)
 
-    def delete(self, file_id: int) -> None:
+    def delete(self, file_id: ObjectId | str | int) -> None:
         """
         Given a file_id, delete the stored file's files collection document
         and associated chunks from a GridFS bucket.
 
         Args:
-            file_id: The _id of the file document
+            file_id: The _id of the file document (ObjectId, hex string, or integer ID)
         """
+        # Convert to integer ID for internal use
+        file_int_id = self._get_integer_id_for_file(file_id)
+        if file_int_id is None:
+            raise NoFile(f"File with id {file_id} not found")
+
         # Delete chunks first
         self._db.execute(
             f"""
             DELETE FROM `{self._chunks_collection}`
             WHERE files_id = ?
         """,
-            (file_id,),
+            (file_int_id,),
         )
 
         # Delete file document
         cursor = self._db.execute(
             f"""
             DELETE FROM `{self._files_collection}`
-            WHERE _id = ?
+            WHERE id = ?
         """,
-            (file_id,),
+            (file_int_id,),
         )
 
         if cursor.rowcount == 0:
@@ -443,7 +564,39 @@ class GridFSBucket:
         Returns:
             A GridOutCursor instance
         """
+        # Apply ID type normalization to handle cases where users query 'id' with ObjectId
+        # or other common type mismatches, reusing the collection's implementation
+        if filter is not None:
+            # Create a temporary QueryHelper instance to use its _normalize_id_query method
+            # This is how the collection system does it - by creating a temporary helper
+            temp_helper = QueryHelper(self._get_mock_collection())
+            filter = temp_helper._normalize_id_query(filter)
         return GridOutCursor(self._db, self._bucket_name, filter or {})
+
+    def _get_mock_collection(self):
+        """Create a minimal mock collection object to use QueryHelper's methods."""
+
+        class MockCollection:
+            def __init__(self, db, name):
+                self.db = db
+                self.name = name
+
+        return MockCollection(self._db, self._bucket_name + ".files")
+
+    def _normalize_id_query(self, query: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Normalize ID types in a query dictionary to correct common mismatches.
+        This reuses the exact same logic as the collection's implementation.
+
+        Args:
+            query: The query dictionary to process
+
+        Returns:
+            A new query dictionary with corrected ID types
+        """
+        # Create a temporary QueryHelper instance to reuse the exact same logic
+        temp_helper = QueryHelper(self._get_mock_collection())
+        return temp_helper._normalize_id_query(query)
 
     def open_upload_stream(
         self,
@@ -472,7 +625,7 @@ class GridFSBucket:
 
     def upload_from_stream_with_id(
         self,
-        file_id: int,
+        file_id: ObjectId | int,
         filename: str,
         source: bytes | io.IOBase,
         metadata: Dict[str, Any] | None = None,
@@ -481,18 +634,28 @@ class GridFSBucket:
         Uploads a user file to a GridFS bucket with a custom file id.
 
         Args:
-            file_id: The custom _id for the file document
+            file_id: The custom _id for the file document (ObjectId or integer ID)
             filename: The name of the file to upload
             source: The source data (bytes or file-like object)
             metadata: Optional metadata for the file
         """
+        # Convert file_id to appropriate format for storage
+        if isinstance(file_id, ObjectId):
+            id_for_lookup = str(
+                file_id
+            )  # Look up by the string representation of ObjectId
+        else:
+            id_for_lookup = str(
+                file_id
+            )  # Look up by string representation of integer
+
         # Check if file with this ID already exists
         row = self._db.execute(
             f"""
-            SELECT _id FROM `{self._files_collection}`
+            SELECT id FROM `{self._files_collection}`
             WHERE _id = ?
         """,
-            (file_id,),
+            (id_for_lookup,),
         ).fetchone()
 
         if row is not None:
@@ -514,32 +677,68 @@ class GridFSBucket:
         # Insert file metadata
         upload_date = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
-        self._db.execute(
-            f"""
-            INSERT INTO `{self._files_collection}`
-            (_id, filename, length, chunkSize, uploadDate, md5, metadata)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-            (
-                file_id,
-                filename,
-                len(data),
-                self._chunk_size_bytes,
-                upload_date,
-                md5_hash,
-                self._serialize_metadata(metadata),
-            ),
-        )
+        # When providing a custom ID, we need to handle it properly
+        if isinstance(file_id, ObjectId):
+            # Store the ObjectId in the _id column, let SQLite auto-generate the integer id
+            self._db.execute(
+                f"""
+                INSERT INTO `{self._files_collection}`
+                (id, _id, filename, length, chunkSize, uploadDate, md5, metadata)
+                VALUES (NULL, ?, ?, ?, ?, ?, ?, ?)
+            """,
+                (
+                    str(file_id),
+                    filename,
+                    len(data),
+                    self._chunk_size_bytes,
+                    upload_date,
+                    md5_hash,
+                    self._serialize_metadata(metadata),
+                ),
+            )
+        else:
+            # When using integer ID as custom ID, store it in both places but in appropriate formats
+            # The integer in the 'id' column as the primary key, and string representation in '_id' column
+            self._db.execute(
+                f"""
+                INSERT INTO `{self._files_collection}`
+                (id, _id, filename, length, chunkSize, uploadDate, md5, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+                (
+                    file_id,  # Use integer ID for the auto-increment column (for compatibility)
+                    str(
+                        file_id
+                    ),  # Store as string in _id column for general searchability
+                    filename,
+                    len(data),
+                    self._chunk_size_bytes,
+                    upload_date,
+                    md5_hash,
+                    self._serialize_metadata(metadata),
+                ),
+            )
+
+        # Get the integer ID that was used/created
+        if isinstance(file_id, ObjectId):
+            # If it was an ObjectId, get the auto-generated integer ID
+            file_int_id = self._db.execute(
+                f"SELECT id FROM `{self._files_collection}` WHERE _id = ?",
+                (str(file_id),),
+            ).fetchone()[0]
+        else:
+            # If it was an integer ID, that's the integer ID
+            file_int_id = file_id
 
         # Split data into chunks and insert them
-        self._insert_chunks(file_id, data)
+        self._insert_chunks(file_int_id, data)
 
         # Force sync if write concern requires it
         self._force_sync_if_needed()
 
     def open_upload_stream_with_id(
         self,
-        file_id: int,
+        file_id: ObjectId | int,
         filename: str,
         metadata: Dict[str, Any] | None = None,
     ) -> GridIn:
@@ -547,7 +746,7 @@ class GridFSBucket:
         Opens a stream for writing a file to a GridFS bucket with a custom file id.
 
         Args:
-            file_id: The custom _id for the file document
+            file_id: The custom _id for the file document (ObjectId or integer ID)
             filename: The name of the file to upload
             metadata: Optional metadata for the file
 
@@ -555,12 +754,19 @@ class GridFSBucket:
             A GridIn instance to write the file contents
         """
         # Check if file with this ID already exists
+        if isinstance(file_id, ObjectId):
+            id_for_lookup = str(file_id)
+        else:
+            id_for_lookup = str(
+                file_id
+            )  # Use string representation for consistency
+
         row = self._db.execute(
             f"""
-            SELECT _id FROM `{self._files_collection}`
+            SELECT id FROM `{self._files_collection}`
             WHERE _id = ?
         """,
-            (file_id,),
+            (id_for_lookup,),
         ).fetchone()
 
         if row is not None:
@@ -572,7 +778,7 @@ class GridFSBucket:
             self._chunk_size_bytes,
             filename,
             metadata,
-            file_id,
+            file_id,  # Can be ObjectId or int
             disable_md5=self._disable_md5,
             write_concern=self._write_concern,
         )
@@ -617,21 +823,25 @@ class GridFSBucket:
             (filename,),
         )
 
-    def rename(self, file_id: int, new_filename: str) -> None:
+    def rename(self, file_id: ObjectId | str | int, new_filename: str) -> None:
         """
         Rename a stored file with the specified file_id to a new filename.
 
         Args:
-            file_id: The _id of the file to rename
+            file_id: The _id of the file to rename (ObjectId, hex string, or integer ID)
             new_filename: The new name for the file
         """
+        file_int_id = self._get_integer_id_for_file(file_id)
+        if file_int_id is None:
+            raise NoFile(f"File with id {file_id} not found")
+
         cursor = self._db.execute(
             f"""
             UPDATE `{self._files_collection}`
             SET filename = ?
-            WHERE _id = ?
+            WHERE id = ?
         """,
-            (new_filename, file_id),
+            (new_filename, file_int_id),
         )
 
         if cursor.rowcount == 0:

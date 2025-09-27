@@ -10,6 +10,9 @@ try:
 except ImportError:
     import sqlite3  # type: ignore
 
+# Import ObjectId for GridIn and GridOut
+from ..objectid import ObjectId
+
 
 class GridIn:
     """
@@ -25,7 +28,7 @@ class GridIn:
         chunk_size_bytes: int,
         filename: str,
         metadata: Dict[str, Any] | None = None,
-        file_id: int | None = None,
+        file_id: ObjectId | int | None = None,
         disable_md5: bool = False,
         write_concern: Dict[str, Any] | None = None,
     ):
@@ -175,41 +178,92 @@ class GridIn:
         upload_date = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
         if self._file_id is None:
-            cursor = self._db.execute(
-                f"""
-                INSERT INTO `{self._files_collection}`
-                (filename, chunkSize, uploadDate, metadata)
-                VALUES (?, ?, ?, ?)
-            """,
-                (
-                    self._filename,
-                    self._chunk_size_bytes,
-                    upload_date,
-                    self._serialize_metadata(self._metadata),
-                ),
-            )
-            self._file_id = cursor.lastrowid
-        else:
+            # Generate an ObjectId for the new file
+            oid = ObjectId()
             self._db.execute(
                 f"""
                 INSERT INTO `{self._files_collection}`
-                (_id, filename, chunkSize, uploadDate, metadata)
-                VALUES (?, ?, ?, ?, ?)
+                (id, _id, filename, chunkSize, uploadDate, metadata)
+                VALUES (NULL, ?, ?, ?, ?, ?)
             """,
                 (
-                    self._file_id,
+                    str(oid),  # Store ObjectId as hex string
                     self._filename,
                     self._chunk_size_bytes,
                     upload_date,
                     self._serialize_metadata(self._metadata),
                 ),
             )
+            self._file_id = oid  # Store the ObjectId
+        else:
+            # Check if file_id is an ObjectId or integer
+            if isinstance(self._file_id, ObjectId):
+                # Store ObjectId in _id column, let SQLite auto-generate id
+                self._db.execute(
+                    f"""
+                    INSERT INTO `{self._files_collection}`
+                    (id, _id, filename, chunkSize, uploadDate, metadata)
+                    VALUES (NULL, ?, ?, ?, ?, ?)
+                """,
+                    (
+                        str(self._file_id),
+                        self._filename,
+                        self._chunk_size_bytes,
+                        upload_date,
+                        self._serialize_metadata(self._metadata),
+                    ),
+                )
+            else:
+                # Integer ID provided
+                self._db.execute(
+                    f"""
+                    INSERT INTO `{self._files_collection}`
+                    (id, _id, filename, chunkSize, uploadDate, metadata)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                    (
+                        self._file_id,
+                        str(self._file_id),  # Store as string for consistency
+                        self._filename,
+                        self._chunk_size_bytes,
+                        upload_date,
+                        self._serialize_metadata(self._metadata),
+                    ),
+                )
 
     def _get_file_id(self) -> int:
         """Get the file ID, creating the file document if necessary."""
         if self._file_id is None:
             self._create_file_document()
-        return self._file_id  # type: ignore
+
+        # Return the integer ID, which can be obtained by looking up the stored _id
+        if isinstance(self._file_id, ObjectId):
+            # Look up the integer ID for this ObjectId
+            cursor = self._db.execute(
+                f"SELECT id FROM `{self._files_collection}` WHERE _id = ?",
+                (str(self._file_id),),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise RuntimeError(
+                    f"File with ObjectId {self._file_id} not found in database"
+                )
+            return row[0]
+        elif isinstance(self._file_id, int):
+            # If file_id is already an integer, return it as-is
+            return self._file_id
+        else:
+            # For other types, try to look it up by value
+            cursor = self._db.execute(
+                f"SELECT id FROM `{self._files_collection}` WHERE _id = ?",
+                (str(self._file_id),),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise RuntimeError(
+                    f"File with ID {self._file_id} not found in database"
+                )
+            return row[0]
 
     def close(self) -> None:
         """Close the GridIn stream and finalize the file storage."""
@@ -222,6 +276,9 @@ class GridIn:
             if self._chunk_number == 0:
                 self._create_file_document()
 
+            # Get the integer ID for the file document (from the created document)
+            file_int_id = self._get_file_id()
+
             # Write the final chunk (which may be smaller than chunk_size_bytes)
             if self._buffer:
                 self._db.execute(
@@ -231,7 +288,7 @@ class GridIn:
                     VALUES (?, ?, ?)
                 """,
                     (
-                        self._get_file_id(),
+                        file_int_id,
                         self._chunk_number,
                         bytes(self._buffer),
                     ),
@@ -246,9 +303,9 @@ class GridIn:
                 f"""
                 UPDATE `{self._files_collection}`
                 SET length = ?, md5 = ?
-                WHERE _id = ?
+                WHERE id = ?
             """,
-                (self._position, md5_hash, self._get_file_id()),
+                (self._position, md5_hash, file_int_id),
             )
 
         # Force sync if write concern requires it
@@ -276,7 +333,7 @@ class GridOut:
         self,
         db: sqlite3.Connection,
         bucket_name: str,
-        file_id: int,
+        file_id: ObjectId | int,
     ):
         """
         Initialize a new GridOut instance.
@@ -284,22 +341,36 @@ class GridOut:
         Args:
             db: SQLite database connection
             bucket_name: The bucket name for the GridFS files
-            file_id: The ID of the file to read
+            file_id: The ID of the file to read (ObjectId or integer)
         """
         self._db = db
         self._bucket_name = bucket_name
-        self._file_id = file_id
+        # Convert file_id to integer for internal use
+        if isinstance(file_id, ObjectId):
+            # Look up the integer ID for this ObjectId
+            cursor = self._db.execute(
+                f"SELECT id FROM `{bucket_name}.files` WHERE _id = ?",
+                (str(file_id),),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise RuntimeError(
+                    f"File with ObjectId {file_id} not found in database"
+                )
+            self._int_file_id = row[0]  # Store the integer ID internally
+        else:
+            self._int_file_id = file_id  # Store the integer ID internally
         self._files_collection = f"{bucket_name}.files"
         self._chunks_collection = f"{bucket_name}.chunks"
 
-        # Get file metadata
+        # Get file metadata using the integer ID
         row = self._db.execute(
             f"""
-            SELECT filename, length, chunkSize, uploadDate, md5, metadata
+            SELECT filename, length, chunkSize, uploadDate, md5, metadata, _id
             FROM `{self._files_collection}`
-            WHERE _id = ?
+            WHERE id = ?
         """,
-            (file_id,),
+            (self._int_file_id,),
         ).fetchone()
 
         if row is None:
@@ -312,12 +383,60 @@ class GridOut:
             self._upload_date,
             self._md5,
             metadata_str,
+            self._stored_oid,  # Store the _id value (ObjectId hex string)
         ) = row
+
+        # Set the actual _id field to the appropriate type based on the stored value
+        if self._stored_oid is not None:
+            # Determine the appropriate type for the ID
+            if isinstance(self._stored_oid, int):
+                # If it's already an integer, use it directly
+                self._actual_id: ObjectId | int | str = self._stored_oid
+            elif isinstance(self._stored_oid, str):
+                if len(self._stored_oid) == 24:
+                    # Check if it's a valid ObjectId hex format
+                    try:
+                        self._actual_id = ObjectId(
+                            self._stored_oid
+                        )  # Convert to ObjectId
+                    except ValueError:
+                        # If it's not a valid ObjectId hex, try to convert to int
+                        try:
+                            self._actual_id = int(self._stored_oid)
+                        except ValueError:
+                            # Keep as string if it's neither a valid ObjectId nor integer
+                            self._actual_id = self._stored_oid
+                else:
+                    # For other length strings, try to convert to integer first
+                    try:
+                        self._actual_id = int(self._stored_oid)
+                    except ValueError:
+                        # If it's not an integer string, keep as is
+                        self._actual_id = self._stored_oid
+            else:
+                # For any other type, keep as is
+                self._actual_id = self._stored_oid  # type: ignore
+        else:
+            # If no stored _id, fall back to the integer ID
+            self._actual_id = file_id  # type: ignore
+
         self._metadata = self._deserialize_metadata(metadata_str)
         self._position = 0
         self._current_chunk_data = b""
         self._current_chunk_index = -1
         self._closed = False
+
+    @property
+    def _id(self):
+        """Get the file's actual ID, which may be an ObjectId or integer."""
+        return self._actual_id
+
+    @property
+    def _file_id(self):
+        """Get the file's actual ID that represents what the user expects as the ID.
+        For compatibility with the original API, this returns the actual ID (ObjectId or int).
+        """
+        return self._actual_id
 
     def _deserialize_metadata(
         self, metadata_str: str | None
@@ -410,18 +529,18 @@ class GridOut:
         if chunk_index == self._current_chunk_index:
             return
 
-        # Load the required chunk
+        # Load the required chunk using the integer file ID
         row = self._db.execute(
             f"""
             SELECT data FROM `{self._chunks_collection}`
             WHERE files_id = ? AND n = ?
         """,
-            (self._file_id, chunk_index),
+            (self._int_file_id, chunk_index),
         ).fetchone()
 
         if row is None:
             raise NoFile(
-                f"Chunk {chunk_index} for file id {self._file_id} not found"
+                f"Chunk {chunk_index} for file id {self._int_file_id} not found"
             )
 
         self._current_chunk_data = row[0]
@@ -505,7 +624,27 @@ class GridOutCursor:
             for key, value in filter.items():
                 match key:
                     case "_id":
-                        where_conditions.append("_id = ?")
+                        # Handle ObjectId hex strings and other ID formats
+                        if isinstance(value, ObjectId):
+                            where_conditions.append("_id = ?")
+                            params.append(str(value))
+                        elif isinstance(value, str) and len(value) == 24:
+                            # Check if it's a valid ObjectId hex string
+                            try:
+                                ObjectId(value)
+                                where_conditions.append("_id = ?")
+                                params.append(value)
+                            except ValueError:
+                                # Not a valid ObjectId, treat as regular string
+                                where_conditions.append("_id = ?")
+                                params.append(value)
+                        else:
+                            # Handle other types
+                            where_conditions.append("_id = ?")
+                            params.append(value)
+                    case "id":
+                        # For 'id' queries, we look in the integer id column
+                        where_conditions.append("id = ?")
                         params.append(value)
                     case "filename":
                         if isinstance(value, dict):
@@ -671,8 +810,8 @@ class GridOutCursor:
             if where_conditions:
                 where_clause = "WHERE " + " AND ".join(where_conditions)
 
-        # Execute query to get file IDs
-        query = f"SELECT _id FROM `{self._files_collection}` {where_clause}"
+        # Execute query to get integer file IDs (changed from _id to id for internal use)
+        query = f"SELECT id FROM `{self._files_collection}` {where_clause}"
         cursor = self._db.execute(query, params)
         self._file_ids = [row[0] for row in cursor.fetchall()]
         self._index = 0

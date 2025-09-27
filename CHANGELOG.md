@@ -1,5 +1,113 @@
 # CHANGELOG
 
+## 1.1.2
+
+### MongoDB-compatible ObjectId Support for GridFS
+
+- **GridFS ObjectId Implementation**: Complete MongoDB-compatible ObjectId support in GridFS operations with automatic generation and hex interchangeability
+- **Dual-ID System**: Supports both integer IDs (primary key) and ObjectIds (_id field) for maximum flexibility in GridFS
+- **Automatic Generation**: New ObjectIds automatically generated when no file ID provided during GridFS upload
+- **Manual Assignment**: Support for user-provided ObjectIds during GridFS file upload operations
+- **Enhanced Robustness**: Improved error handling and type safety throughout GridFS operations
+
+### Comprehensive GridFS Implementation
+
+- **PyMongo-compatible API**: Full GridFSBucket and legacy GridFS APIs compatible with PyMongo
+- **Performance Optimized**: Uses JSONB type when available for efficient ObjectId storage in GridFS
+- **Index Support**: Automatic indexing for faster GridFS lookups and queries
+- **Complete Feature Set**: Supports upload, download, streaming, metadata, and query operations in GridFS
+
+### GridFS with ObjectId Support
+
+- **GridFSBucket Class**: Complete PyMongo-compatible GridFSBucket implementation with ObjectId support
+- **GridFS Legacy Class**: Compatible with legacy PyMongo GridFS API with ObjectId enhancements
+- **Upload Operations**: `upload_from_stream()` returns ObjectIds with automatic generation when no ID provided
+- **Download Operations**: `download_to_stream()`, `open_download_stream()` compatible with ObjectId, integer, and hex string IDs
+- **Query Support**: `find()` operations support ObjectId queries against _id field in GridFS
+- **File Management**: Rename, delete, and other file operations work with both ID types in GridFS
+
+### Return Value and Parameter Updates
+
+- **Upload Methods Return ObjectIds**: `upload_from_stream()` and `put()` now return ObjectIds instead of integers for MongoDB compatibility
+- **Flexible File ID Parameters**: Methods accept ObjectId, integer, or hex string for file identification in GridFS
+- **Backward Compatibility**: All existing integer-based operations continue to work unchanged in GridFS
+- **Enhanced Flexibility**: ObjectIds, integers, or hex strings interchangeable in most GridFS operations
+
+### Technical Implementation
+
+- **JSONB Support**: Uses JSONB type when available for efficient ObjectId storage in GridFS
+- **Index Creation**: Automatic unique index on _id column for faster file lookups in GridFS
+- **Optimized Queries**: Enhanced query processing for GridFS operations with proper ID handling
+- **Memory Efficiency**: Streaming operations maintain memory efficiency for large files in GridFS
+
+### API Compatibility and Migration
+
+- **MongoDB Compatibility**: Full compatibility with MongoDB GridFS concepts and ObjectId usage in GridFS
+- **Backward Compatibility**: Full support for existing GridFS code with automatic migration
+- **Enhanced Error Handling**: Better error reporting and validation throughout GridFS operations
+- **Type Safety**: Improved type checking and validation for GridFS operations
+
+### Performance Improvements
+
+- **JSONB Optimization**: GridFS uses JSONB type when available for better performance with ObjectId storage
+- **Index Usage**: Unique indexing on _id column for fast ObjectId lookups in GridFS
+- **Memory Efficiency**: Optimized storage using JSONB format when available in GridFS operations
+- **Query Plan Optimization**: EXPLAIN query plan verification confirms index usage for ObjectId lookups in GridFS
+
+### New Features
+
+#### GridFS ObjectId Implementation
+
+- **`neosqlite.gridfs.grid_file.GridIn/GridOut`**: Complete implementation supporting both ObjectIds and integer IDs
+- **`neosqlite.gridfs.gridfs_bucket.GridFSBucket`**: PyMongo-compatible GridFSBucket with ObjectId support
+- **`neosqlite.gridfs.gridfs_legacy.GridFS`**: Legacy GridFS class with enhanced ObjectId compatibility
+- **Automatic Generation**: ObjectIds automatically generated when no file ID provided during upload
+- **Manual Assignment**: Support for user-provided ObjectIds during file upload operations
+- **Dedicated Storage**: Files stored with both integer primary key (id) and ObjectId (_id) for compatibility
+
+#### Enhanced GridFS Schema
+
+- **New Schema**: GridFS tables now use `(id INTEGER PRIMARY KEY AUTOINCREMENT, _id JSONB, filename TEXT, ...)` when JSONB support available
+- **Backward Compatibility**: Existing GridFS tables maintain compatibility while adding ObjectId support
+- **Unique Indexing**: Automatic unique index creation on `_id` column for GridFS performance
+- **SQL Translation**: Enhanced SQL translator to handle GridFS `_id` field queries properly
+
+#### GridFS Query Engine Updates
+
+- **_id Query Support**: Full support for GridFS queries against `_id` field with SQL optimization
+- **Mixed Type Queries**: Support for GridFS queries that combine integer IDs and ObjectIds
+- **Index Optimization**: Query engine now optimizes GridFS queries using the unique `_id` index
+- **Backward Compatibility**: Existing integer-based GridFS queries continue to work unchanged
+
+#### GridFS API Extensions
+
+- **Upload Methods**: `upload_from_stream()` returns ObjectId, accepts metadata
+- **Download Methods**: `download_to_stream()` accepts ObjectId, integer, or hex string file ID
+- **Query Methods**: `find()` supports ObjectId queries against _id field
+- **File Management**: `delete()` and `rename()` accept ObjectId, integer, or hex string file ID
+
+### Technical Benefits
+
+- **MongoDB Compatibility**: Full compatibility with MongoDB GridFS ObjectId format and behavior
+- **Performance Optimization**: JSONB type and unique indexing provide enhanced performance in GridFS
+- **Backward Compatibility**: Full support for existing GridFS data and code with automatic schema migration
+- **Thread Safety**: Proper locking mechanisms ensure safe concurrent ObjectId generation in GridFS
+- **Memory Efficiency**: Optimized storage using JSONB format when available in GridFS
+
+### Migration Notes
+
+For GridFS operations, the main change is that upload operations now return ObjectIds instead of integer IDs. All existing GridFS code continues to work unchanged, but code that expects integer IDs from upload operations will need to be updated to handle ObjectIds.
+
+### GridFS Schema Changes:
+
+1. **New Files**: When uploading new files without specifying an ID, the `_id` field will contain an auto-generated ObjectId (not the integer id)
+
+2. **Existing Files**: Files created before this release continue to work as before
+
+3. **Accessing Integer ID**: The integer ID remains available in the `id` field for all files
+
+4. **Querying**: You can query using either ObjectIds or integer IDs in the appropriate fields, with the system handling the appropriate lookup in GridFS
+
 ## 1.1.1
 
 ### Enhanced Robustness Through Automatic ID Type Correction

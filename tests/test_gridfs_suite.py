@@ -60,8 +60,9 @@ def test_upload_from_stream_bytes(bucket):
     test_data = b"Hello, GridFS World!"
     file_id = bucket.upload_from_stream("test.txt", test_data)
 
-    assert isinstance(file_id, int)
-    assert file_id > 0
+    from neosqlite.objectid import ObjectId
+
+    assert isinstance(file_id, ObjectId)
 
 
 def test_upload_and_download_bytes(bucket):
@@ -295,16 +296,18 @@ def test_grid_out_cursor_functionality(bucket):
 def test_write_concern_functionality(bucket):
     """Test write concern functionality."""
     # Test with j=True (journaling enabled)
+    from neosqlite.objectid import ObjectId
+
     bucket_journaled = GridFSBucket(bucket._db, write_concern={"j": True})
     file_id = bucket_journaled.upload_from_stream(
         "journaled.txt", b"Journaled data"
     )
-    assert isinstance(file_id, int)
+    assert isinstance(file_id, ObjectId)
 
     # Test with w=0 (no acknowledgment)
     bucket_no_ack = GridFSBucket(bucket._db, write_concern={"w": 0})
     file_id = bucket_no_ack.upload_from_stream("no_ack.txt", b"No ack data")
-    assert isinstance(file_id, int)
+    assert isinstance(file_id, ObjectId)
 
     # Test with invalid write concern values
     with pytest.raises(ValueError):
@@ -446,8 +449,16 @@ def test_metadata_serialization_edge_cases(bucket):
         "none_metadata.txt", b"Test data", metadata=None
     )
 
+    # Get the integer ID for the query by querying both id and _id columns
     cursor = bucket._db.execute(
-        "SELECT metadata FROM `fs.files` WHERE _id = ?", (file_id,)
+        "SELECT id FROM `fs.files` WHERE _id = ?", (str(file_id),)
+    )
+    row = cursor.fetchone()
+    assert row is not None
+    int_id = row[0]
+
+    cursor = bucket._db.execute(
+        "SELECT metadata FROM `fs.files` WHERE id = ?", (int_id,)
     )
     row = cursor.fetchone()
     assert row is not None
@@ -463,8 +474,16 @@ def test_metadata_serialization_edge_cases(bucket):
         "custom_metadata.txt", b"Test data", metadata=metadata
     )
 
+    # Get the integer ID for the query by querying both id and _id columns
     cursor = bucket._db.execute(
-        "SELECT metadata FROM `fs.files` WHERE _id = ?", (file_id,)
+        "SELECT id FROM `fs.files` WHERE _id = ?", (str(file_id),)
+    )
+    row = cursor.fetchone()
+    assert row is not None
+    int_id = row[0]
+
+    cursor = bucket._db.execute(
+        "SELECT metadata FROM `fs.files` WHERE id = ?", (int_id,)
     )
     row = cursor.fetchone()
     assert row is not None
@@ -474,9 +493,11 @@ def test_metadata_serialization_edge_cases(bucket):
 def test_chunk_size_validation(bucket):
     """Test chunk size validation."""
     # Test with valid chunk size
+    from neosqlite.objectid import ObjectId
+
     bucket_custom = GridFSBucket(bucket._db, chunk_size_bytes=1024)
     file_id = bucket_custom.upload_from_stream("valid_chunk.txt", b"Test data")
-    assert isinstance(file_id, int)
+    assert isinstance(file_id, ObjectId)
 
     # Test with invalid chunk size (should raise ValueError)
     with pytest.raises(ValueError):
@@ -597,18 +618,20 @@ def test_open_download_by_name_with_revision(bucket):
 def test_force_sync_functionality(bucket):
     """Test force sync functionality."""
     # Test with write concern that requires sync
+    from neosqlite.objectid import ObjectId
+
     bucket_sync = GridFSBucket(bucket._db, write_concern={"j": True})
 
     # This should trigger force sync
     file_id = bucket_sync.upload_from_stream("sync_test.txt", b"Sync test data")
-    assert isinstance(file_id, int)
+    assert isinstance(file_id, ObjectId)
 
     # Test with write concern that doesn't require sync
     bucket_no_sync = GridFSBucket(bucket._db, write_concern={"j": False})
     file_id = bucket_no_sync.upload_from_stream(
         "no_sync_test.txt", b"No sync test data"
     )
-    assert isinstance(file_id, int)
+    assert isinstance(file_id, ObjectId)
 
 
 def test_grid_in_closed_stream_operations(bucket):
@@ -800,7 +823,9 @@ def test_gridfs_write_concern_comprehensive(bucket):
 
         # Upload file
         file_id = bucket_test.upload_from_stream(filename, data)
-        assert isinstance(file_id, int)
+        from neosqlite.objectid import ObjectId
+
+        assert isinstance(file_id, ObjectId)
 
         # Verify content
         with bucket_test.open_download_stream(file_id) as grid_out:
@@ -1175,7 +1200,9 @@ def test_gridfsbucket_with_write_concern_validation(bucket):
     # Upload a file to ensure it works
     data = b"test data"
     file_id = bucket_valid.upload_from_stream("test.txt", data)
-    assert isinstance(file_id, int)
+    from neosqlite.objectid import ObjectId
+
+    assert isinstance(file_id, ObjectId)
 
 
 def test_gridin_with_disable_md5(bucket):
@@ -1216,6 +1243,8 @@ def test_gridin_with_md5_enabled(bucket):
 def test_write_concern_j_true(bucket):
     """Test GridFSBucket with j=True write concern."""
     # Create bucket with journal write concern
+    from neosqlite.objectid import ObjectId
+
     bucket_journal = GridFSBucket(bucket._db, write_concern={"j": True})
 
     # Upload a file
@@ -1223,7 +1252,7 @@ def test_write_concern_j_true(bucket):
     file_id = bucket_journal.upload_from_stream("test.txt", data)
 
     # Verify file was created correctly
-    assert isinstance(file_id, int)
+    assert isinstance(file_id, ObjectId)
 
     # Check file content
     grid_out = bucket_journal.open_download_stream(file_id)
@@ -1233,6 +1262,8 @@ def test_write_concern_j_true(bucket):
 def test_write_concern_w_zero(bucket):
     """Test GridFSBucket with w=0 write concern."""
     # Create bucket with no acknowledgment concern
+    from neosqlite.objectid import ObjectId
+
     bucket_no_ack = GridFSBucket(bucket._db, write_concern={"w": 0})
 
     # Upload a file
@@ -1240,7 +1271,7 @@ def test_write_concern_w_zero(bucket):
     file_id = bucket_no_ack.upload_from_stream("test.txt", data)
 
     # Verify file was created correctly
-    assert isinstance(file_id, int)
+    assert isinstance(file_id, ObjectId)
 
     # Check file content
     grid_out = bucket_no_ack.open_download_stream(file_id)
@@ -1250,6 +1281,8 @@ def test_write_concern_w_zero(bucket):
 def test_write_concern_w_majority(bucket):
     """Test GridFSBucket with w='majority' write concern."""
     # Create bucket with majority acknowledgment concern
+    from neosqlite.objectid import ObjectId
+
     bucket_majority = GridFSBucket(bucket._db, write_concern={"w": "majority"})
 
     # Upload a file
@@ -1257,7 +1290,7 @@ def test_write_concern_w_majority(bucket):
     file_id = bucket_majority.upload_from_stream("test.txt", data)
 
     # Verify file was created correctly
-    assert isinstance(file_id, int)
+    assert isinstance(file_id, ObjectId)
 
     # Check file content
     grid_out = bucket_majority.open_download_stream(file_id)
@@ -1340,11 +1373,12 @@ def test_legacy_gridfs_creation(legacy_fs):
 
 def test_legacy_put_bytes_data(legacy_fs):
     """Test putting bytes data into GridFS."""
+    from neosqlite.objectid import ObjectId
+
     data = b"Hello, GridFS World!"
     file_id = legacy_fs.put(data)
 
-    assert isinstance(file_id, int)
-    assert file_id > 0
+    assert isinstance(file_id, ObjectId)
 
     # Verify the file can be retrieved
     grid_out = legacy_fs.get(file_id)
@@ -1353,12 +1387,13 @@ def test_legacy_put_bytes_data(legacy_fs):
 
 def test_legacy_put_file_like_object(legacy_fs):
     """Test putting file-like object into GridFS."""
+    from neosqlite.objectid import ObjectId
+
     data = b"Hello, GridFS World!"
     file_like = io.BytesIO(data)
     file_id = legacy_fs.put(file_like)
 
-    assert isinstance(file_id, int)
-    assert file_id > 0
+    assert isinstance(file_id, ObjectId)
 
     # Verify the file can be retrieved
     grid_out = legacy_fs.get(file_id)
@@ -2317,8 +2352,11 @@ def test_gridout_deserialize_metadata_json_failure(connection):
     data = b"test data"
     file_id = bucket.upload_from_stream("test.txt", data)
 
-    # Create a GridOut instance
-    grid_out = GridOut(connection.db, "fs", file_id)
+    # Create a GridOut instance - convert ObjectId to integer ID for GridOut constructor
+    file_int_id = bucket._get_integer_id_for_file(
+        file_id
+    )  # Using internal method for testing
+    grid_out = GridOut(connection.db, "fs", file_int_id)
 
     # Test with invalid JSON that should fall back to literal eval
     invalid_json = "{'key': 'value'}"  # Single quotes instead of double quotes
@@ -2338,8 +2376,11 @@ def test_gridout_deserialize_metadata_literal_eval_failure(connection):
     data = b"test data"
     file_id = bucket.upload_from_stream("test.txt", data)
 
-    # Create a GridOut instance
-    grid_out = GridOut(connection.db, "fs", file_id)
+    # Create a GridOut instance - convert ObjectId to integer ID for GridOut constructor
+    file_int_id = bucket._get_integer_id_for_file(
+        file_id
+    )  # Using internal method for testing
+    grid_out = GridOut(connection.db, "fs", file_int_id)
 
     # Test with completely invalid data that should fall back to _metadata dict
     invalid_data = "{invalid: data"  # Malformed data
