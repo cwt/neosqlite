@@ -32,11 +32,12 @@ def compare_crud_operations():
 
         # insert_one
         result = neo_collection.insert_one({"name": "Alice", "age": 30})
-        print(f"insert_one: inserted_id = {result.inserted_id}")
+        print(f"insert_one: inserted_id (integer) = {result.inserted_id}")
 
         # find_one
         doc = neo_collection.find_one({"name": "Alice"})
         print(f"find_one: {doc}")
+        print(f"   Document _id (ObjectId) = {doc['_id']}")
 
         # insert_many
         result = neo_collection.insert_many(

@@ -18,7 +18,8 @@ def example_legacy_gridfs_usage():
         file_id = fs.put(
             file_data, filename="example.txt", author="NeoSQLite Team"
         )
-        print(f"Stored file with ID: {file_id}")
+        print(f"Stored file with ID (ObjectId): {file_id}")
+        print(f"   Type of ID: {type(file_id)}")
 
         # Get the file by ID
         grid_out = fs.get(file_id)

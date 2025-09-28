@@ -23,11 +23,12 @@ def example_binary_usage():
             }
         )
 
-        print(f"Inserted document with ID: {result.inserted_id}")
+        print(f"Inserted document with database ID: {result.inserted_id}")
 
         # Retrieve and use the binary data
         doc = collection.find_one({"name": "binary_example"})
 
+        print(f"Document _id (ObjectId): {doc['_id']}")
         print(f"Retrieved binary type: {type(doc['binary_field'])}")
         print(f"Retrieved binary data: {doc['binary_field']}")
         print(f"Binary subtype: {doc['binary_field'].subtype}")

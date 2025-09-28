@@ -40,7 +40,7 @@ def main():
 
         print("All users:")
         for user in users.find():
-            print(f"  {user['name']}: {user['bio']}")
+            print(f"  {user['name']}: {user['bio']} (ID: {user['_id']})")
 
         print("\nUsers whose bio contains 'python' (case-insensitive):")
         for user in users.find({"bio": {"$contains": "python"}}):

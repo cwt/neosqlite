@@ -18,6 +18,7 @@ def api_comparison_example():
             b"Hello from legacy API!", filename="legacy.txt", author="user"
         )
         print(f"   Put file with fs.put(): ID {file_id}")
+        print(f"   Type of ID: {type(file_id)}")
 
         # Get data (simple)
         grid_out = fs.get(file_id)
@@ -35,6 +36,7 @@ def api_comparison_example():
             "modern.txt", b"Hello from modern API!"
         )
         print(f"   Uploaded with bucket.upload_from_stream(): ID {file_id2}")
+        print(f"   Type of ID: {type(file_id2)}")
 
         # Download to stream (explicit)
         output = io.BytesIO()

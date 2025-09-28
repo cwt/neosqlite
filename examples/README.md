@@ -32,6 +32,15 @@ Demonstrates MongoDB-compatible ObjectId interchangeability:
 - Integration patterns for MongoDB interoperability
 - Memory-constrained processing comparisons
 
+### 4. `objectid_features_demo.py`
+Comprehensive demonstration of ObjectId features in NeoSQLite:
+- Automatic ObjectId generation when no _id is provided
+- Manual ObjectId assignment and usage
+- Querying with hex strings, ObjectIds, and integer IDs
+- Automatic ID type correction for common mismatches
+- Mixed ID types in the same collection
+- PyMongo compatibility features
+
 ### 3. `text_search_json_each_benchmark.py`
 Specialized benchmark for text search combined with array operations:
 - Basic $unwind + $text search

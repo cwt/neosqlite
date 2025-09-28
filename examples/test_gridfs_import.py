@@ -15,6 +15,7 @@ def test_gridfs_import():
 
         # Put and get a file
         file_id = fs.put(b"Test content", filename="test.txt")
+        print(f"File ID returned: {file_id} (type: {type(file_id)})")
         grid_out = fs.get(file_id)
         content = grid_out.read()
 

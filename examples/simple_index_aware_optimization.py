@@ -87,8 +87,20 @@ def main():
         )
         print(f"   Query with index: cost = {cost_with_index}")
 
-        cost_with_id = query_helper._estimate_query_cost({"_id": 1})
-        print(f"   Query with _id (always indexed): cost = {cost_with_id}")
+        # Query with integer ID (for backward compatibility and existing docs)
+        cost_with_int_id = query_helper._estimate_query_cost({"_id": 1})
+        print(
+            f"   Query with integer _id (always indexed): cost = {cost_with_int_id}"
+        )
+
+        # Query with ObjectId (for new documents)
+        from neosqlite.objectid import ObjectId
+
+        test_oid = ObjectId()
+        cost_with_oid = query_helper._estimate_query_cost({"_id": test_oid})
+        print(
+            f"   Query with ObjectId _id (always indexed): cost = {cost_with_oid}"
+        )
 
         # Show which fields are indexed
         indexed_fields = query_helper._get_indexed_fields()

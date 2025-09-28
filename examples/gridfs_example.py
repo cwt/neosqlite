@@ -13,7 +13,8 @@ def example_gridfs_usage():
         # Upload a file from bytes
         file_data = b"This is a sample file content for GridFS demonstration."
         file_id = bucket.upload_from_stream("example.txt", file_data)
-        print(f"Uploaded file with ID: {file_id}")
+        print(f"Uploaded file with ID (ObjectId): {file_id}")
+        print(f"   Type of ID: {type(file_id)}")
 
         # Download the file to a BytesIO stream
         output = io.BytesIO()
