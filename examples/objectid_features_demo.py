@@ -82,9 +82,7 @@ def main():
 
         print("7. Mixed ID types in same collection:")
         # Collection can have documents with both auto-generated ObjectIds and manual IDs
-        collection.insert_one(
-            {"name": "Integer ID doc"}
-        ).inserted_id
+        collection.insert_one({"name": "Integer ID doc"}).inserted_id
         collection.insert_one(
             {"_id": ObjectId(), "name": "Object ID doc"}
         ).inserted_id
