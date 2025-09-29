@@ -220,7 +220,7 @@ Python fallback is used for:
 
 ### High Feasibility APIs (Performance Neutral or Positive)
 - **ObjectId Support**: Minimal overhead, JSON serialization only
-- **Enhanced Datetime**: No performance impact, standard Python datetime handling
+- **Enhanced Datetime**: Three-tier optimization with performance benefits (SQL → Temporary Tables → Python fallback), using json_* functions for datetime string comparisons, with specialized DateTimeQueryProcessor for optimal performance
 - **Method Aliases**: Zero performance impact, direct method delegation
 - **Basic Collation**: Moderate impact, depends on SQLite collation implementation
 - **Session Management**: Context managers have minimal overhead

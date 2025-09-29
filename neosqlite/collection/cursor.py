@@ -125,11 +125,24 @@ class Cursor:
         """
         Retrieve documents based on the filter criteria, applying SQL-based filtering
         where possible, or falling back to Python-based filtering for complex queries.
+        For datetime queries, use the specialized datetime query processor.
 
         Returns:
             Iterable[Dict[str, Any]]: An iterable of dictionaries representing
                                       the documents that match the filter criteria.
         """
+        # Check if this is a datetime query that should use the specialized processor
+        if self._contains_datetime_operations(self._filter):
+            # Use the datetime query processor for datetime-specific queries
+            try:
+                from .datetime_query_processor import DateTimeQueryProcessor
+
+                datetime_processor = DateTimeQueryProcessor(self._collection)
+                return datetime_processor.process_datetime_query(self._filter)
+            except Exception:
+                # If datetime processor fails, fall back to normal processing
+                pass
+
         where_result = self._query_helpers._build_simple_where_clause(
             self._filter
         )
@@ -157,6 +170,130 @@ class Cursor:
             apply = partial(self._query_helpers._apply_query, self._filter)
             all_docs = self._load_documents(db_cursor.fetchall())
             return filter(apply, all_docs)
+
+    def _contains_datetime_operations(self, query: Dict[str, Any]) -> bool:
+        """
+        Check if a query contains datetime operations that should use the datetime processor.
+
+        Args:
+            query: MongoDB-style query dictionary
+
+        Returns:
+            True if query contains datetime operations, False otherwise
+        """
+        # Quick check for obvious datetime patterns in query
+        if not isinstance(query, dict):
+            return False
+
+        for field, value in query.items():
+            if field in ("$and", "$or", "$nor"):
+                if isinstance(value, list):
+                    for condition in value:
+                        if isinstance(
+                            condition, dict
+                        ) and self._contains_datetime_operations(condition):
+                            return True
+            elif field == "$not":
+                if isinstance(
+                    value, dict
+                ) and self._contains_datetime_operations(value):
+                    return True
+            elif isinstance(value, dict):
+                # Check for datetime-related operators
+                for operator, op_value in value.items():
+                    if operator in ("$gte", "$gt", "$lte", "$lt", "$eq", "$ne"):
+                        # Check if the value is a datetime object or datetime string
+                        if self._is_datetime_value(op_value):
+                            return True
+                    elif operator in ("$in", "$nin"):
+                        # For $in and $nin, check if any value in the list is a datetime
+                        if isinstance(op_value, list):
+                            if any(
+                                self._is_datetime_value(item)
+                                for item in op_value
+                            ):
+                                return True
+                    elif operator == "$type":
+                        # Check if looking for date type
+                        if op_value in (
+                            9,
+                            "date",
+                            "Date",
+                        ):  # 9 is date type in MongoDB
+                            return True
+                    elif operator == "$regex":
+                        # Check if it's a datetime regex pattern
+                        if self._is_datetime_regex(op_value):
+                            return True
+        return False
+
+    def _is_datetime_value(self, value: Any) -> bool:
+        """
+        Check if a value is a datetime object or datetime string.
+
+        Args:
+            value: Value to check
+
+        Returns:
+            True if value is datetime-related, False otherwise
+        """
+        import datetime
+        import re
+
+        if isinstance(value, (datetime.datetime, datetime.date)):
+            return True
+
+        if isinstance(value, str):
+            # Common datetime formats
+            datetime_patterns = [
+                r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}",  # ISO format
+                r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}",  # Alternative format
+                r"\d{4}-\d{2}-\d{2}",  # Date only
+                r"\d{2}/\d{2}/\d{4}",  # US format
+                r"\d{2}-\d{2}-\d{4}",  # Common format
+                r"\d{4}/\d{2}/\d{2}",  # Another common format
+            ]
+            for pattern in datetime_patterns:
+                if re.match(pattern, value):
+                    return True
+
+        # If it's a dict, check nested values
+        if isinstance(value, dict):
+            for v in value.values():
+                if self._is_datetime_value(v):
+                    return True
+
+        return False
+
+    def _is_datetime_regex(self, pattern: str) -> bool:
+        """
+        Check if a regex pattern is likely to be for datetime matching.
+
+        Args:
+            pattern: Regex pattern string
+
+        Returns:
+            True if pattern is likely datetime-related, False otherwise
+        """
+        if not isinstance(pattern, str):
+            return False
+
+        # Common datetime-related patterns
+        datetime_indicators = [
+            r"\d{4}-\d{2}-\d{2}",
+            r"\d{2}/\d{2}/\d{4}",
+            r"\d{4}/\d{2}/\d{2}",
+            r"\d{2}-\d{2}-\d{4}",
+            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}",
+        ]
+
+        import re
+
+        for indicator in datetime_indicators:
+            if re.search(indicator, pattern):
+                return True
+
+        return False
 
     def _load_documents(self, rows) -> Iterable[Dict[str, Any]]:
         """
