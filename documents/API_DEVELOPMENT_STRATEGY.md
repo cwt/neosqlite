@@ -30,21 +30,30 @@ Based on the feasibility analysis, this document outlines the strategic approach
 
 ### Tier 1: High Impact, High Feasibility (✅ COMPLETED)
 - ✅ ObjectId support - MongoDB-compatible 12-byte ObjectIds with full hex interchangeability
-- Enhanced datetime handling
-- Method aliases (find_and_modify, count, etc.)
-- Basic collation support
+- ✅ Enhanced datetime handling - Three-tier optimization with SQL, temporary tables, and Python fallback
+- ✅ Method aliases (find_and_modify, count, etc.) - Implemented as wrapper methods
+- ✅ Basic collation support - Implemented with SQLite collation features
+- ✅ Collection management APIs (drop, create_collection, list_collection_names, list_collections)
+- ✅ Logical operators ($and, $or, $not, $nor) - Full implementation with SQL and Python fallback
+- ✅ Array and element operators ($all, $type) - Complete implementation
+- ✅ Raw batch aggregation (aggregate_raw_batches) - Implemented with RawBatchCursor
+- ✅ Search index APIs (create_search_index, create_search_indexes, drop_search_index, list_search_indexes, update_search_index)
 
-### Tier 2: Medium Impact, Medium Feasibility (Recommended: Next 3-4 releases)
-- Advanced text search features (scoring, language options)
-- Additional aggregation stages that can use SQL optimization
-- JSON Schema validation
-- Basic session-like context managers
+### Tier 2: Medium Impact, Medium Feasibility (✅ COMPLETED)
+- ✅ Advanced text search features with FTS5 integration (scoring, language options)
+- ✅ Additional aggregation stages with SQL optimization
+- ✅ JSON Schema validation capabilities
+- ✅ Basic session-like context managers
+- ✅ Enhanced JSON functions integration with json_insert() and json_replace()
+- ✅ JSONB support for performance optimization
+- ✅ Index-aware query optimization with cost estimation
+- ✅ Hybrid text search processing with temporary table aggregation
 
 ### Tier 3: Low Priority or Avoid (Not Recommended)
-- map_reduce (performance degradation risk)
-- Parallel operations (architectural mismatch)
-- Complex distributed features (not aligned with SQLite)
-- Geospatial features (requires SQLite extensions)
+- map_reduce (performance degradation risk) - Will not implement; deprecated in MongoDB 4.2+
+- Parallel operations (architectural mismatch) - Not aligned with SQLite architecture
+- Complex distributed features (not aligned with SQLite) - SQLite is local-only by design
+- Geospatial features (requires SQLite extensions) - Would require spatial extensions
 
 ## Risk Mitigation
 
