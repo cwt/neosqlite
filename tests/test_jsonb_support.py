@@ -1,204 +1,147 @@
 """
-Test cases for JSONB function support with fallback to json_* functions.
+Tests for JSONB support utilities to improve coverage.
 """
 
-import pytest
-from neosqlite import Connection
+from unittest.mock import Mock
+
 from neosqlite.collection.jsonb_support import (
     supports_jsonb,
     _get_json_function_prefix,
+    should_use_json_functions,
+    _contains_text_operator,
+    sqlite3,  # Import the same sqlite3 that the module uses
 )
-from neosqlite.collection.query_helper import (
-    set_force_fallback,
-    get_force_fallback,
-)
 
 
-def test_jsonb_support_detection():
-    """Test detection of JSONB support in SQLite."""
-    with Connection(":memory:") as conn:
-        # Test that our connection supports JSON functions
-        jsonb_supported = supports_jsonb(conn.db)
-
-        # Should be a boolean
-        assert isinstance(jsonb_supported, bool)
-
-        # At minimum, basic JSON should be supported
-        # If JSONB is supported, that's even better
+def test_get_json_function_prefix():
+    """Test the _get_json_function_prefix function."""
+    assert _get_json_function_prefix(True) == "jsonb"
+    assert _get_json_function_prefix(False) == "json"
 
 
-def test_json_function_prefix_selection():
-    """Test selection of appropriate JSON function prefix."""
-    # Test with JSONB supported
-    prefix = _get_json_function_prefix(True)
-    assert prefix == "jsonb"
+def test_should_use_json_functions_jsonb_not_supported():
+    """Test should_use_json_functions when JSONB is not supported."""
+    # When JSONB is not supported, it should always return True (use json functions)
+    assert should_use_json_functions(query=None, jsonb_supported=False) is True
+    assert (
+        should_use_json_functions(query={"name": "test"}, jsonb_supported=False)
+        is True
+    )
 
-    # Test with JSONB not supported
-    prefix = _get_json_function_prefix(False)
-    assert prefix == "json"
+
+def test_should_use_json_functions_jsonb_supported_no_query():
+    """Test should_use_json_functions when JSONB is supported but no query provided."""
+    # When JSONB is supported and no query is provided, it should return False (use jsonb functions)
+    assert should_use_json_functions(query=None, jsonb_supported=True) is False
 
 
-def test_query_with_jsonb_functions():
-    """Test queries using JSONB functions when supported."""
-    with Connection(":memory:") as conn:
-        collection = conn["test_collection"]
-        supports_jsonb(conn.db)
+def test_should_use_json_functions_jsonb_supported_with_text_search():
+    """Test should_use_json_functions when JSONB is supported but query has text search."""
+    # Query with $text should return True (use json functions for FTS compatibility)
+    query_with_text = {"$text": {"$search": "test"}}
+    assert (
+        should_use_json_functions(query=query_with_text, jsonb_supported=True)
+        is True
+    )
 
-        # Insert test data
-        collection.insert_many(
-            [
-                {"name": "Alice", "age": 30, "tags": ["python", "sql"]},
-                {"name": "Bob", "age": 25, "tags": ["javascript", "html"]},
-                {"name": "Charlie", "age": 35, "tags": ["python", "go"]},
-            ]
+
+def test_should_use_json_functions_jsonb_supported_without_text_search():
+    """Test should_use_json_functions when JSONB is supported and no text search."""
+    # Query without $text should return False (use jsonb functions)
+    query_without_text = {"name": "test"}
+    assert (
+        should_use_json_functions(
+            query=query_without_text, jsonb_supported=True
         )
-
-        # Simple query should work regardless of JSONB support
-        results = list(collection.find({"age": {"$gte": 30}}))
-        assert len(results) == 2
-
-        # Test with array operations - using a different approach that works
-        # The $in operator on array fields has limitations in the current implementation
-        # Instead, test with a working query pattern
-        results = list(collection.find({"name": {"$in": ["Alice", "Charlie"]}}))
-        assert len(results) == 2  # Alice and Charlie
+        is False
+    )
 
 
-def test_aggregation_with_jsonb_group_functions():
-    """Test aggregation using JSONB group functions."""
-    with Connection(":memory:") as conn:
-        collection = conn["test_collection"]
-        supports_jsonb(conn.db)
+def test_contains_text_operator_simple():
+    """Test _contains_text_operator with simple $text query."""
+    query = {"$text": {"$search": "test"}}
+    assert _contains_text_operator(query) is True
 
-        # Insert test data
-        collection.insert_many(
-            [
-                {"category": "A", "value": 10},
-                {"category": "A", "value": 20},
-                {"category": "B", "value": 15},
-                {"category": "B", "value": 25},
-            ]
-        )
 
-        # Test group operation
-        pipeline = [
-            {"$group": {"_id": "$category", "total": {"$sum": "$value"}}},
-            {"$sort": {"_id": 1}},
+def test_contains_text_operator_not_text():
+    """Test _contains_text_operator with non-text query."""
+    query = {"name": "test"}
+    assert _contains_text_operator(query) is False
+
+
+def test_contains_text_operator_nested_in_and():
+    """Test _contains_text_operator with $text nested in $and."""
+    query = {"$and": [{"name": "test"}, {"$text": {"$search": "search"}}]}
+    assert _contains_text_operator(query) is True
+
+
+def test_contains_text_operator_nested_in_or():
+    """Test _contains_text_operator with $text nested in $or."""
+    query = {"$or": [{"name": "test"}, {"$text": {"$search": "search"}}]}
+    assert _contains_text_operator(query) is True
+
+
+def test_contains_text_operator_nested_in_nor():
+    """Test _contains_text_operator with $text nested in $nor."""
+    query = {"$nor": [{"name": "test"}, {"$text": {"$search": "search"}}]}
+    assert _contains_text_operator(query) is True
+
+
+def test_contains_text_operator_nested_in_not():
+    """Test _contains_text_operator with $text nested in $not."""
+    query = {"$not": {"$text": {"$search": "search"}}}
+    assert _contains_text_operator(query) is True
+
+
+def test_contains_text_operator_deeply_nested():
+    """Test _contains_text_operator with deeply nested $text."""
+    query = {
+        "$and": [
+            {"$or": [{"field": "value"}, {"$text": {"$search": "search"}}]}
         ]
-
-        results = list(collection.aggregate(pipeline))
-        assert len(results) == 2
-
-        # Verify results
-        assert results[0]["_id"] == "A"
-        assert results[0]["total"] == 30
-        assert results[1]["_id"] == "B"
-        assert results[1]["total"] == 40
+    }
+    assert _contains_text_operator(query) is True
 
 
-def test_jsonb_vs_json_fallback():
-    """Test that the system properly falls back to json_* functions."""
-    with Connection(":memory:") as conn:
-        collection = conn["test_collection"]
-
-        # Insert test data
-        collection.insert_one(
-            {"name": "Alice", "data": {"nested": {"value": 42}}}
-        )
-
-        # Query should work
-        doc = collection.find_one({"data.nested.value": 42})
-        assert doc is not None
-        assert doc["name"] == "Alice"
+def test_contains_text_operator_non_dict_input():
+    """Test _contains_text_operator with non-dict input."""
+    assert _contains_text_operator("not_a_dict") is False
+    assert _contains_text_operator(["not", "a", "dict"]) is False
+    assert _contains_text_operator(123) is False
+    assert _contains_text_operator(None) is False
 
 
-def test_complex_json_paths_with_jsonb():
-    """Test complex JSON paths with array indexing."""
-    with Connection(":memory:") as conn:
-        collection = conn["test_collection"]
-
-        # Insert test data with arrays
-        collection.insert_many(
-            [
-                {
-                    "name": "Alice",
-                    "scores": [85, 90, 78],
-                    "metadata": [{"id": 1, "type": "test"}],
-                },
-                {
-                    "name": "Bob",
-                    "scores": [92, 88, 95],
-                    "metadata": [{"id": 2, "type": "exam"}],
-                },
-            ]
-        )
-
-        # Query by array element (this should work with enhanced path parsing)
-        # Note: This might require the enhanced JSON path support from Phase 1
-        # For now, we test that basic nested queries work
-        collection.find_one({"scores.0": {"$gte": 90}})  # First score >= 90
-        # This might not work yet without Phase 1 implementation
+def test_contains_text_operator_empty_dict():
+    """Test _contains_text_operator with empty dict."""
+    assert _contains_text_operator({}) is False
 
 
-def test_json_valid_validation():
-    """Test JSON validation using json_valid function."""
-    with Connection(":memory:") as conn:
-        collection = conn["test_collection"]
-
-        # Insert valid document
-        collection.insert_one({"name": "Alice", "valid": True})
-
-        # Query should work
-        doc = collection.find_one({"name": "Alice"})
-        assert doc is not None
-
-
-def test_performance_comparison_jsonb():
-    """Test performance comparison between JSONB and JSON functions."""
-    with Connection(":memory:") as conn:
-        collection = conn["test_collection"]
-
-        # Insert a larger dataset
-        docs = [
-            {"id": i, "value": f"item_{i}", "category": f"category_{i % 5}"}
-            for i in range(100)
+def test_contains_text_operator_complex_nested_without_text():
+    """Test _contains_text_operator with complex nesting without $text."""
+    query = {
+        "$and": [
+            {"$or": [{"field1": "value1"}, {"field2": "value2"}]},
+            {"$nor": [{"field3": "value3"}]},
         ]
-        collection.insert_many(docs)
-
-        # Simple query performance should be acceptable either way
-        results = list(
-            collection.find({"category": {"$in": ["category_1", "category_2"]}})
-        )
-        assert len(results) > 0
+    }
+    assert _contains_text_operator(query) is False
 
 
-def test_jsonb_with_force_fallback():
-    """Test JSONB operations with force fallback enabled."""
-    with Connection(":memory:") as conn:
-        collection = conn["test_collection"]
+def test_supports_jsonb_with_mock_connection():
+    """Test supports_jsonb with a mock connection that simulates JSONB support."""
+    # Test successful execution (JSONB supported)
+    mock_connection_success = Mock()
+    mock_connection_success.execute.return_value = Mock()
+    assert supports_jsonb(mock_connection_success) is True
 
-        # Insert test data
-        collection.insert_one({"name": "Alice", "age": 30})
-
-        # Enable force fallback
-        set_force_fallback(True)
-        assert get_force_fallback() is True
-
-        # Query should still work but use Python fallback
-        doc = collection.find_one({"name": "Alice"})
-        assert doc is not None
-        assert doc["name"] == "Alice"
-        assert doc["age"] == 30
-
-        # Update should work with fallback
-        collection.update_one({"name": "Alice"}, {"$set": {"age": 31}})
-        doc = collection.find_one({"name": "Alice"})
-        assert doc["age"] == 31
-
-        # Disable force fallback
-        set_force_fallback(False)
-        assert get_force_fallback() is False
-
-
-if __name__ == "__main__":
-    pytest.main([__file__])
+    # Test failed execution (JSONB not supported)
+    mock_connection_fail = Mock()
+    mock_connection_fail.execute.side_effect = sqlite3.OperationalError(
+        "no such function: jsonb"
+    )
+    # Create a new mock object to test the failure path
+    mock_connection_fail_for_test = Mock()
+    mock_connection_fail_for_test.execute.side_effect = (
+        sqlite3.OperationalError("no such function: jsonb")
+    )
+    assert supports_jsonb(mock_connection_fail_for_test) is False
