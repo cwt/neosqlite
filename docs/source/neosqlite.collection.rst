@@ -9,8 +9,11 @@ Submodules
 
    neosqlite.collection.aggregation_cursor
    neosqlite.collection.cursor
+   neosqlite.collection.datetime_query_processor
+   neosqlite.collection.datetime_utils
    neosqlite.collection.index_manager
    neosqlite.collection.json_helpers
+   neosqlite.collection.json_path_utils
    neosqlite.collection.jsonb_support
    neosqlite.collection.query_engine
    neosqlite.collection.query_helper
