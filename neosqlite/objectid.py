@@ -3,8 +3,7 @@ ObjectId implementation for NeoSQLite that follows MongoDB's specification.
 
 Based on MongoDB's ObjectId specification:
 - 4 bytes: timestamp (seconds since Unix epoch)
-- 3 bytes: random value
-- 2 bytes: process ID
+- 5 bytes: random value (generated once per process)
 - 3 bytes: counter (incrementing from a random value)
 
 This implementation provides full compatibility with MongoDB ObjectIds
@@ -27,22 +26,26 @@ class ObjectId:
     """
     A MongoDB-compatible ObjectId implementation for NeoSQLite.
 
-    This class generates 12-byte identifiers following MongoDB's specification,
-    providing unique identifiers that work with NeoSQLite while maintaining
-    compatibility with PyMongo expectations.
+    This class generates 12-byte identifiers following MongoDB's specification:
+    - 4 bytes: timestamp (seconds since Unix epoch)
+    - 5 bytes: random value (generated once per process)
+    - 3 bytes: counter (incrementing from a random value)
+
+    Provides full compatibility with MongoDB ObjectIds while working with NeoSQLite.
     """
 
     _random_bytes: bytes | None = None
     _counter: int | None = None
     _counter_lock = threading.Lock()
 
-    def __init__(self, oid: str | bytes | ObjectId | None = None):
+    def __init__(self, oid: str | bytes | ObjectId | int | None = None):
         """
         Initialize a new ObjectId.
 
         Args:
             oid: Can be a 12-byte binary representation, a 24-character hex string,
-                 another ObjectId instance, or None to generate a new ObjectId.
+                 another ObjectId instance, an integer (which replaces the timestamp),
+                 or None to generate a new ObjectId.
 
         Raises:
             TypeError: If the input type is not supported
@@ -68,9 +71,18 @@ class ObjectId:
             if len(oid) != 12:
                 raise ValueError("ObjectId must be exactly 12 bytes")
             self._id = oid
+        elif isinstance(oid, int):
+            # If an integer is provided, it replaces the timestamp part
+            # according to MongoDB specification
+            if oid < 0 or oid > 0xFFFFFFFF:
+                raise ValueError(
+                    "Integer timestamp must be between 0 and 0xFFFFFFFF"
+                )
+            # Generate a new ObjectId but with the provided timestamp
+            self._id = self._generate_new_id_with_timestamp(oid)
         else:
             raise TypeError(
-                "ObjectId must be a string, bytes, ObjectId, or None"
+                "ObjectId must be a string, bytes, ObjectId, int, or None"
             )
 
     @classmethod
@@ -79,8 +91,8 @@ class ObjectId:
         # Ensure thread safety for random bytes and counter
         with cls._counter_lock:
             if cls._random_bytes is None:
-                # Generate random bytes once (3 bytes), similar to MongoDB
-                cls._random_bytes = os.urandom(3)
+                # Generate random bytes once (5 bytes), as per MongoDB spec
+                cls._random_bytes = os.urandom(5)
 
             if cls._counter is None:
                 # Initialize counter with a random value
@@ -89,20 +101,45 @@ class ObjectId:
             # Increment counter and keep only 3 bytes
             cls._counter = (cls._counter + 1) % 0x1000000
 
-        # Build the 12-byte ObjectId
-        # 4 bytes: timestamp (Unix timestamp)
+        # Build the 12-byte ObjectId according to MongoDB specification:
+        # 4 bytes: timestamp (Unix timestamp, big-endian)
         timestamp = int(time.time()).to_bytes(4, "big")
 
-        # 3 bytes: random value
+        # 5 bytes: random value (big-endian)
         random_bytes = cls._random_bytes
 
-        # 2 bytes: process ID
-        pid = os.getpid().to_bytes(2, "big")
-
-        # 3 bytes: counter
+        # 3 bytes: counter (big-endian)
         counter = cls._counter.to_bytes(3, "big")
 
-        return timestamp + random_bytes + pid + counter
+        return timestamp + random_bytes + counter
+
+    @classmethod
+    def _generate_new_id_with_timestamp(cls, timestamp: int) -> bytes:
+        """Generate a new 12-byte ObjectId value with a specific timestamp."""
+        # Ensure thread safety for random bytes and counter
+        with cls._counter_lock:
+            if cls._random_bytes is None:
+                # Generate random bytes once (5 bytes), as per MongoDB spec
+                cls._random_bytes = os.urandom(5)
+
+            if cls._counter is None:
+                # Initialize counter with a random value
+                cls._counter = random.randint(0, 0xFFFFFF)
+
+            # Increment counter and keep only 3 bytes
+            cls._counter = (cls._counter + 1) % 0x1000000
+
+        # Build the 12-byte ObjectId according to MongoDB specification:
+        # 4 bytes: provided timestamp (big-endian)
+        timestamp_bytes = timestamp.to_bytes(4, "big")
+
+        # 5 bytes: random value (big-endian)
+        random_bytes = cls._random_bytes
+
+        # 3 bytes: counter (big-endian)
+        counter = cls._counter.to_bytes(3, "big")
+
+        return timestamp_bytes + random_bytes + counter
 
     @classmethod
     def is_valid(cls, oid: Any) -> bool:
@@ -125,6 +162,8 @@ class ObjectId:
                 return True
             elif isinstance(oid, bytes):
                 return len(oid) == 12
+            elif isinstance(oid, int):
+                return 0 <= oid <= 0xFFFFFFFF
             else:
                 return False
         except (TypeError, ValueError):

@@ -89,8 +89,18 @@ def test_objectid_validation():
     oid = ObjectId()
     assert ObjectId.is_valid(oid)
 
+    # Valid integer values (within range 0 to 0xFFFFFFFF)
+    assert ObjectId.is_valid(
+        123
+    )  # According to MongoDB spec, integers are allowed as timestamps
+    assert ObjectId.is_valid(0)
+    assert ObjectId.is_valid(0xFFFFFFFF)
+
     # Invalid values
-    assert not ObjectId.is_valid(123)
+    assert not ObjectId.is_valid(-1)  # Negative integer
+    assert not ObjectId.is_valid(
+        0x100000000
+    )  # Too large integer (> 0xFFFFFFFF)
     assert not ObjectId.is_valid("invalid_hex")
     assert not ObjectId.is_valid([])
 
