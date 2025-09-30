@@ -7,7 +7,7 @@ from pytest import raises
 from typing import Tuple, Type
 from unittest.mock import MagicMock
 import neosqlite
-import sqlite3
+from neosqlite.collection import sqlite3
 
 # Handle both standard sqlite3 and pysqlite3 exceptions
 try:

@@ -7,7 +7,7 @@ import datetime
 import tempfile
 import os
 from unittest.mock import Mock
-import sqlite3
+from neosqlite.collection import sqlite3
 import json
 
 from neosqlite.collection.datetime_query_processor import (

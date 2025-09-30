@@ -5,7 +5,7 @@ Tests for bulk write operations.
 from pytest import raises
 from typing import Tuple, Type
 import neosqlite
-import sqlite3
+from neosqlite.collection import sqlite3
 from neosqlite import InsertOne, UpdateOne, DeleteOne
 
 # Handle both standard sqlite3 and pysqlite3 exceptions

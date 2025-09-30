@@ -4,7 +4,7 @@ Consolidated tests for indexing functionality.
 
 from pytest import raises
 from typing import Tuple, Type
-import sqlite3
+from neosqlite.collection import sqlite3
 import neosqlite
 import pytest
 import time

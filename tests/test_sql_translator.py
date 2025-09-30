@@ -11,7 +11,7 @@ from neosqlite.collection.sql_translator_unified import (
     SQLTranslator,
 )
 from neosqlite.collection.jsonb_support import supports_jsonb
-import sqlite3
+from neosqlite.collection import sqlite3
 
 
 def _get_expected_function_name():
