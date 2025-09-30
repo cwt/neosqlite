@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Any, Dict, Iterator, List, Optional, TYPE_CHECKING
 from .json_helpers import neosqlite_json_dumps
+from .json_path_utils import parse_json_path
 
 if TYPE_CHECKING:
     from . import Collection
@@ -90,7 +91,7 @@ class RawBatchCursor:
                 sort_clauses = []
                 for key, direction in self._sort.items():
                     sort_clauses.append(
-                        f"json_extract(data, '$.{key}') {'DESC' if direction == -1 else 'ASC'}"
+                        f"json_extract(data, '{parse_json_path(key)}') {'DESC' if direction == -1 else 'ASC'}"
                     )
                 order_by = "ORDER BY " + ", ".join(sort_clauses)
 

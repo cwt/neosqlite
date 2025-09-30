@@ -12,8 +12,6 @@ This extends the existing text search functionality to also use only json_* func
 """
 
 from typing import Any, Dict, List, Optional
-import datetime
-import re
 from .jsonb_support import supports_jsonb
 from .sql_translator_unified import SQLTranslator, SQLFieldAccessor
 from .temporary_table_aggregation import (
@@ -206,51 +204,40 @@ class DateTimeQueryProcessor:
         Returns:
             True if value is datetime-related, False otherwise
         """
-        if isinstance(value, (datetime.datetime, datetime.date)):
-            return True
+        from .datetime_utils import is_datetime_value
 
-        if isinstance(value, str):
-            # Common datetime formats
-            datetime_patterns = [
-                r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}",  # ISO format
-                r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}",  # Alternative format
-                r"\d{4}-\d{2}-\d{2}",  # Date only
-                r"\d{2}/\d{2}/\d{4}",  # US format
-                r"\d{2}-\d{2}-\d{4}",  # Common format
-                r"\d{4}/\d{2}/\d{2}",  # Another common format
-            ]
-            for pattern in datetime_patterns:
-                if re.match(pattern, value):
-                    return True
-
-        # If it's a dict, check nested values
-        if isinstance(value, dict):
-            for v in value.values():
-                if self._is_datetime_value(v):
-                    return True
-
-        return False
+        return is_datetime_value(value)
 
     def _is_datetime_regex(self, pattern: str) -> bool:
         """
-        Check if a regex pattern is likely to be for datetime matching.
+        Check if a pattern is likely to be datetime-related.
 
         Args:
-            pattern: Regex pattern string
+            pattern: Pattern string (could be a regex pattern or a datetime string)
 
         Returns:
             True if pattern is likely datetime-related, False otherwise
         """
+        import re
+        from .datetime_utils import is_datetime_value
+
+        # If it's not a string, return False
         if not isinstance(pattern, str):
             return False
 
-        # Common datetime-related patterns
+        # Check if the pattern itself looks like a datetime value
+        # This handles cases where people might use exact datetime strings
+        if is_datetime_value(pattern):
+            return True
+
+        # Check if the pattern contains common datetime-related regex patterns
+        # Common datetime-related patterns (for regex patterns)
         datetime_indicators = [
-            r"\d{4}-\d{2}-\d{2}",
-            r"\d{2}/\d{2}/\d{4}",
-            r"\d{4}/\d{2}/\d{2}",
-            r"\d{2}-\d{2}-\d{4}",
-            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}",
+            r"\\d{4}-\\d{2}-\\d{2}",  # Date format: \d{4}-\d{2}-\d{2}
+            r"\\d{2}/\\d{2}/\\d{4}",  # US date format: \d{2}/\d{2}/\d{4}
+            r"\\d{4}/\\d{2}/\\d{2}",  # Alternative date format: \d{4}/\d{2}/\d{2}
+            r"\\d{2}-\\d{2}-\\d{4}",  # Common date format: \d{2}-\d{2}-\d{4}
+            r"\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}",  # Datetime format: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}
         ]
 
         for indicator in datetime_indicators:

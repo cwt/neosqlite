@@ -212,65 +212,159 @@ class SQLOperatorTranslator:
 
             value = neosqlite_json_dumps_for_sql(value)
 
-        match operator:
-            case "$eq":
-                sql = f"{field_access} = ?"
-                params = [value]
-            case "$gt":
-                sql = f"{field_access} > ?"
-                params = [value]
-            case "$lt":
-                sql = f"{field_access} < ?"
-                params = [value]
-            case "$gte":
-                sql = f"{field_access} >= ?"
-                params = [value]
-            case "$lte":
-                sql = f"{field_access} <= ?"
-                params = [value]
-            case "$ne":
-                sql = f"{field_access} != ?"
-                params = [value]
-            case "$in":
-                if isinstance(value, (list, tuple)):
-                    placeholders = ", ".join("?" for _ in value)
-                    sql = f"{field_access} IN ({placeholders})"
-                    params = list(value)
-            case "$nin":
-                if isinstance(value, (list, tuple)):
-                    placeholders = ", ".join("?" for _ in value)
-                    sql = f"{field_access} NOT IN ({placeholders})"
-                    params = list(value)
-            case "$exists":
-                # Handle boolean value for $exists
-                if value is True:
-                    sql = f"{field_access} IS NOT NULL"
-                    params = []
-                elif value is False:
-                    sql = f"{field_access} IS NULL"
-                    params = []
-            case "$mod":
-                # Handle [divisor, remainder] array
-                if isinstance(value, (list, tuple)) and len(value) == 2:
-                    divisor, remainder = value
-                    sql = f"{field_access} % ? = ?"
-                    params = [divisor, remainder]
-            case "$size":
-                # Handle array size comparison
-                if isinstance(value, int):
-                    sql = f"json_array_length({field_access}) = ?"
+        # Check if this is a datetime comparison that should be wrapped with datetime() function
+        # This is needed when datetime fields are indexed using datetime(json_extract(...)) for timezone normalization
+        is_datetime_comparison = (
+            operator in ("$eq", "$gt", "$lt", "$gte", "$lte", "$ne")
+            and isinstance(value, str)
+            and self._is_datetime_value(value)
+        ) or (
+            operator in ("$in", "$nin")
+            and isinstance(value, (list, tuple))
+            and len(value) > 0  # Only if there are elements to check
+            and all(
+                isinstance(v, str) and self._is_datetime_value(v) for v in value
+            )
+        )
+
+        # If it's a datetime comparison, wrap both field and value with datetime() to match indexing strategy
+        if is_datetime_comparison:
+            # Wrap the field access with datetime() function for consistency with datetime indexes
+            datetime_field_access = f"datetime({field_access})"
+            match operator:
+                case "$eq":
+                    sql = f"{datetime_field_access} = datetime(?)"
                     params = [value]
-            case "$contains":
-                # Handle case-insensitive substring search
-                # Convert value to string to match Python implementation behavior
-                str_value = str(value)
-                sql = f"lower({field_access}) LIKE ?"
-                params = [f"%{str_value.lower()}%"]
-            case _:
-                # Unsupported operator
-                pass
+                case "$gt":
+                    sql = f"{datetime_field_access} > datetime(?)"
+                    params = [value]
+                case "$lt":
+                    sql = f"{datetime_field_access} < datetime(?)"
+                    params = [value]
+                case "$gte":
+                    sql = f"{datetime_field_access} >= datetime(?)"
+                    params = [value]
+                case "$lte":
+                    sql = f"{datetime_field_access} <= datetime(?)"
+                    params = [value]
+                case "$ne":
+                    sql = f"{datetime_field_access} != datetime(?)"
+                    params = [value]
+                case "$in":
+                    if isinstance(value, (list, tuple)):
+                        placeholders = ", ".join("datetime(?)" for _ in value)
+                        sql = f"{datetime_field_access} IN ({placeholders})"
+                        params = list(value)
+                case "$nin":
+                    if isinstance(value, (list, tuple)):
+                        placeholders = ", ".join("datetime(?)" for _ in value)
+                        sql = f"{datetime_field_access} NOT IN ({placeholders})"
+                        params = list(value)
+                case _:
+                    # For unsupported operators with datetime values, fall back to regular processing
+                    is_datetime_comparison = False
+                    # Use regular processing below
+        else:
+            # Regular processing for non-datetime values
+            match operator:
+                case "$eq":
+                    sql = f"{field_access} = ?"
+                    params = [value]
+                case "$gt":
+                    sql = f"{field_access} > ?"
+                    params = [value]
+                case "$lt":
+                    sql = f"{field_access} < ?"
+                    params = [value]
+                case "$gte":
+                    sql = f"{field_access} >= ?"
+                    params = [value]
+                case "$lte":
+                    sql = f"{field_access} <= ?"
+                    params = [value]
+                case "$ne":
+                    sql = f"{field_access} != ?"
+                    params = [value]
+                case "$in":
+                    if isinstance(value, (list, tuple)):
+                        # For $in operator, check if all values are datetime to decide whether to use datetime() wrapper
+                        # Only consider it as datetime if there are values AND all values are datetime strings
+                        if len(value) > 0 and all(
+                            isinstance(v, str) and self._is_datetime_value(v)
+                            for v in value
+                        ):
+                            placeholders = ", ".join(
+                                "datetime(?)" for _ in value
+                            )
+                            sql = (
+                                f"datetime({field_access}) IN ({placeholders})"
+                            )
+                            params = list(value)
+                        else:
+                            placeholders = ", ".join("?" for _ in value)
+                            sql = f"{field_access} IN ({placeholders})"
+                            params = list(value)
+                case "$nin":
+                    if isinstance(value, (list, tuple)):
+                        # For $nin operator, check if all values are datetime to decide whether to use datetime() wrapper
+                        # Only consider it as datetime if there are values AND all values are datetime strings
+                        if len(value) > 0 and all(
+                            isinstance(v, str) and self._is_datetime_value(v)
+                            for v in value
+                        ):
+                            placeholders = ", ".join(
+                                "datetime(?)" for _ in value
+                            )
+                            sql = f"datetime({field_access}) NOT IN ({placeholders})"
+                            params = list(value)
+                        else:
+                            placeholders = ", ".join("?" for _ in value)
+                            sql = f"{field_access} NOT IN ({placeholders})"
+                            params = list(value)
+                case "$exists":
+                    # Handle boolean value for $exists
+                    if value is True:
+                        sql = f"{field_access} IS NOT NULL"
+                        params = []
+                    elif value is False:
+                        sql = f"{field_access} IS NULL"
+                        params = []
+                case "$mod":
+                    # Handle [divisor, remainder] array
+                    if isinstance(value, (list, tuple)) and len(value) == 2:
+                        divisor, remainder = value
+                        sql = f"{field_access} % ? = ?"
+                        params = [divisor, remainder]
+                case "$size":
+                    # Handle array size comparison
+                    if isinstance(value, int):
+                        sql = f"json_array_length({field_access}) = ?"
+                        params = [value]
+                case "$contains":
+                    # Handle case-insensitive substring search
+                    # Convert value to string to match Python implementation behavior
+                    str_value = str(value)
+                    sql = f"lower({field_access}) LIKE ?"
+                    params = [f"%{str_value.lower()}%"]
+                case _:
+                    # Unsupported operator
+                    pass
 
         return sql, params
+
+    def _is_datetime_value(self, value: Any) -> bool:
+        """
+        Check if a value is a datetime string.
+
+        Args:
+            value: Value to check
+
+        Returns:
+            True if value is a datetime string, False otherwise
+        """
+        from .datetime_utils import is_datetime_value
+
+        return is_datetime_value(value)
 
 
 class SQLClauseBuilder:

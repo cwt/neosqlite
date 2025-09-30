@@ -590,12 +590,15 @@ class Collection:
         unique: bool = False,
         fts: bool = False,
         tokenizer: str | None = None,
+        datetime_field: bool = False,
     ):
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.create_index`.
         """
-        self.indexes.create_index(key, reindex, sparse, unique, fts, tokenizer)
+        self.indexes.create_index(
+            key, reindex, sparse, unique, fts, tokenizer, datetime_field
+        )
 
     def create_search_index(
         self,

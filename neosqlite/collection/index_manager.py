@@ -1,4 +1,5 @@
 from .jsonb_support import supports_jsonb, _get_json_function_prefix
+from .json_path_utils import parse_json_path
 from typing import Any, Dict, List, Tuple, overload
 from typing_extensions import Literal
 
@@ -22,6 +23,7 @@ class IndexManager:
         unique: bool = False,
         fts: bool = False,
         tokenizer: str | None = None,
+        datetime_field: bool = False,
     ):
         """
         Create an index on the specified key(s) for this collection.
@@ -37,9 +39,15 @@ class IndexManager:
             unique: Boolean indicating whether the index should be unique.
             fts: Boolean indicating whether to create an FTS index for text search.
             tokenizer: Optional tokenizer to use for FTS index (e.g., 'icu', 'icu_th').
+            datetime_field: Boolean indicating whether this is a datetime field that requires special indexing.
         """
-        # For single key indexes, we can use SQLite's native JSON indexing
-        if isinstance(key, str):
+        # For datetime fields, use special indexing.
+        if datetime_field:
+            if isinstance(key, str):
+                self._create_datetime_index(key, unique=unique)
+            else:
+                raise ValueError("Compound datetime indexes are not supported")
+        elif isinstance(key, str):
             if fts:
                 # Create FTS index with optional tokenizer
                 self._create_fts_index(key, tokenizer)
@@ -107,9 +115,9 @@ class IndexManager:
         self.collection.db.execute(
             f"""
             INSERT INTO {fts_table_name}(rowid, {index_name})
-            SELECT id, lower(json_extract(data, '$.{field}'))
+            SELECT id, lower(json_extract(data, '{parse_json_path(field)}'))
             FROM {self.collection.name}
-            WHERE json_extract(data, '$.{field}') IS NOT NULL
+            WHERE json_extract(data, '{parse_json_path(field)}') IS NOT NULL
             """
         )
 
@@ -121,7 +129,7 @@ class IndexManager:
             AFTER INSERT ON {self.collection.name}
             BEGIN
                 INSERT INTO {fts_table_name}(rowid, {index_name})
-                VALUES (new.id, lower(json_extract(new.data, '$.{field}')));
+                VALUES (new.id, lower(json_extract(new.data, '{parse_json_path(field)}')));
             END
             """
         )
@@ -133,9 +141,9 @@ class IndexManager:
             AFTER UPDATE ON {self.collection.name}
             BEGIN
                 INSERT INTO {fts_table_name}({fts_table_name}, rowid, {index_name})
-                VALUES ('delete', old.id, lower(json_extract(old.data, '$.{field}')));
+                VALUES ('delete', old.id, lower(json_extract(old.data, '{parse_json_path(field)}')));
                 INSERT INTO {fts_table_name}(rowid, {index_name})
-                VALUES (new.id, lower(json_extract(new.data, '$.{field}')));
+                VALUES (new.id, lower(json_extract(new.data, '{parse_json_path(field)}')));
             END
             """
         )
@@ -147,7 +155,7 @@ class IndexManager:
             AFTER DELETE ON {self.collection.name}
             BEGIN
                 INSERT INTO {fts_table_name}({fts_table_name}, rowid, {index_name})
-                VALUES ('delete', old.id, lower(json_extract(old.data, '$.{field}')));
+                VALUES ('delete', old.id, lower(json_extract(old.data, '{parse_json_path(field)}')));
             END
             """
         )
@@ -547,3 +555,24 @@ class IndexManager:
         self.collection.db.execute(
             f"DROP TRIGGER IF EXISTS {self.collection.name}_{index_name}_fts_delete"
         )
+
+    def _create_datetime_index(self, key: str, unique: bool = False):
+        """Create a timezone normalized datetime index.
+
+        This method creates a specialized datetime index with datetime() for timezone
+        normalization.
+
+        Args:
+            key: The field name to create the datetime index on (e.g., 'timestamp' or 'user.created_at')
+            unique: Whether the index should be unique
+        """
+        # Generate the column name by replacing dots with underscores and appending '_utc'
+        # This is just for naming consistency
+        column_name = f"{key.replace('.', '_')}_utc"
+
+        index_sql = f"""
+        CREATE {'UNIQUE ' if unique else ''}INDEX IF NOT EXISTS
+        idx_{self.collection.name}_{column_name}
+        ON {self.collection.name}(datetime(json_extract(data, '{parse_json_path(key)}')))
+        """
+        self.collection.db.execute(index_sql)

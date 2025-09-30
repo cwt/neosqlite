@@ -10,6 +10,7 @@ from neosqlite.collection.json_helpers import (
     neosqlite_json_dumps_for_sql,
 )
 from neosqlite.collection.text_search import unified_text_search
+from neosqlite.collection.json_path_utils import parse_json_path
 from typing import Any, Dict, List, Union
 
 try:
@@ -684,34 +685,35 @@ class QueryHelper:
                     # Our insert/replace logic doesn't work well with nested paths
                     if "." in field and field not in existing_fields:
                         # Use json_set for dotted field names to handle nested paths correctly
-                        path = f"'$.{field}'"
+                        json_path = f"'{parse_json_path(field)}'"
                         if use_json_func:
-                            set_clauses.append(f"{path}, json(?)")
+                            set_clauses.append(f"{json_path}, json(?)")
                         else:
-                            set_clauses.append(f"{path}, ?")
+                            set_clauses.append(f"{json_path}, ?")
                         set_params.append(param_value)
                     else:
                         # Check if field exists in the document
                         if field in existing_fields:
                             # Use json_replace for existing fields
-                            path = f"'$.{field}'"
+                            json_path = f"'{parse_json_path(field)}'"
                             if use_json_func:
-                                replace_clauses.append(f"{path}, json(?)")
+                                replace_clauses.append(f"{json_path}, json(?)")
                             else:
-                                replace_clauses.append(f"{path}, ?")
+                                replace_clauses.append(f"{json_path}, ?")
                             replace_params.append(param_value)
                         else:
                             # Use json_insert for new fields
-                            path = f"'$.{field}'"
+                            json_path = f"'{parse_json_path(field)}'"
                             if use_json_func:
-                                insert_clauses.append(f"{path}, json(?)")
+                                insert_clauses.append(f"{json_path}, json(?)")
                             else:
-                                insert_clauses.append(f"{path}, ?")
+                                insert_clauses.append(f"{json_path}, ?")
                             insert_params.append(param_value)
             elif op == "$unset":
                 # For $unset, we use json_remove
                 for field in value:
-                    unset_clauses.append(f"'$.{field}'")
+                    json_path = f"'{parse_json_path(field)}'"
+                    unset_clauses.append(json_path)
             else:
                 # For other operations, use the standard approach with json_set
                 clauses, params = self._build_sql_update_clause(op, value)
@@ -850,45 +852,46 @@ class QueryHelper:
             match op:
                 case "$set":
                     for field, field_val in value.items():
-                        set_clauses.append(f"'$.{field}', ?")
+                        json_path = f"'{parse_json_path(field)}'"
+                        set_clauses.append(f"{json_path}, ?")
                         params.append(field_val)
                 case "$inc":
                     for field, field_val in value.items():
-                        path = f"'$.{field}'"
+                        json_path = f"'{parse_json_path(field)}'"
                         func_prefix = self._json_function_prefix
                         set_clauses.append(
-                            f"{path}, COALESCE({func_prefix}_extract(data, {path}), 0) + ?"
+                            f"{json_path}, COALESCE({func_prefix}_extract(data, {json_path}), 0) + ?"
                         )
                         params.append(field_val)
                 case "$mul":
                     for field, field_val in value.items():
-                        path = f"'$.{field}'"
+                        json_path = f"'{parse_json_path(field)}'"
                         func_prefix = self._json_function_prefix
                         set_clauses.append(
-                            f"{path}, COALESCE({func_prefix}_extract(data, {path}), 0) * ?"
+                            f"{json_path}, COALESCE({func_prefix}_extract(data, {json_path}), 0) * ?"
                         )
                         params.append(field_val)
                 case "$min":
                     for field, field_val in value.items():
-                        path = f"'$.{field}'"
+                        json_path = f"'{parse_json_path(field)}'"
                         func_prefix = self._json_function_prefix
                         set_clauses.append(
-                            f"{path}, min({func_prefix}_extract(data, {path}), ?)"
+                            f"{json_path}, min({func_prefix}_extract(data, {json_path}), ?)"
                         )
                         params.append(field_val)
                 case "$max":
                     for field, field_val in value.items():
-                        path = f"'$.{field}'"
+                        json_path = f"'{parse_json_path(field)}'"
                         func_prefix = self._json_function_prefix
                         set_clauses.append(
-                            f"{path}, max({func_prefix}_extract(data, {path}), ?)"
+                            f"{json_path}, max({func_prefix}_extract(data, {json_path}), ?)"
                         )
                         params.append(field_val)
                 case "$unset":
                     # For $unset, we use json_remove
                     for field in value:
-                        path = f"'$.{field}'"
-                        set_clauses.append(path)
+                        json_path = f"'{parse_json_path(field)}'"
+                        set_clauses.append(json_path)
                     # json_remove has a different syntax
                     if set_clauses:
                         func_name = _get_json_function(
@@ -944,77 +947,78 @@ class QueryHelper:
                     # Convert bytes to Binary for proper JSON serialization
                     converted_val = _convert_bytes_to_binary(field_val)
                     # If it's a Binary object, serialize it to JSON and use json() function
+                    json_path = f"'{parse_json_path(field)}'"
                     if isinstance(converted_val, Binary):
-                        clauses.append(f"'$.{field}', json(?)")
+                        clauses.append(f"{json_path}, json(?)")
                         params.append(neosqlite_json_dumps(converted_val))
                     else:
-                        clauses.append(f"'$.{field}', ?")
+                        clauses.append(f"{json_path}, ?")
                         params.append(converted_val)
             case "$inc":
                 for field, field_val in value.items():
-                    path = f"'$.{field}'"
+                    json_path = f"'{parse_json_path(field)}'"
                     # Convert bytes to Binary for proper JSON serialization
                     converted_val = _convert_bytes_to_binary(field_val)
                     # If it's a Binary object, serialize it to JSON and use json() function
                     if isinstance(converted_val, Binary):
                         func_prefix = self._json_function_prefix
                         clauses.append(
-                            f"{path}, COALESCE({func_prefix}_extract(data, {path}), 0) + json(?)"
+                            f"{json_path}, COALESCE({func_prefix}_extract(data, {json_path}), 0) + json(?)"
                         )
                         params.append(neosqlite_json_dumps(converted_val))
                     else:
                         func_prefix = self._json_function_prefix
                         clauses.append(
-                            f"{path}, COALESCE({func_prefix}_extract(data, {path}), 0) + ?"
+                            f"{json_path}, COALESCE({func_prefix}_extract(data, {json_path}), 0) + ?"
                         )
                         params.append(converted_val)
             case "$mul":
                 for field, field_val in value.items():
-                    path = f"'$.{field}'"
+                    json_path = f"'{parse_json_path(field)}'"
                     # Convert bytes to Binary for proper JSON serialization
                     converted_val = _convert_bytes_to_binary(field_val)
                     # If it's a Binary object, serialize it to JSON and use json() function
                     if isinstance(converted_val, Binary):
                         clauses.append(
-                            f"{path}, COALESCE(json_extract(data, {path}), 0) * json(?)"
+                            f"{json_path}, COALESCE(json_extract(data, {json_path}), 0) * json(?)"
                         )
                         params.append(neosqlite_json_dumps(converted_val))
                     else:
                         func_prefix = self._json_function_prefix
                         clauses.append(
-                            f"{path}, COALESCE({func_prefix}_extract(data, {path}), 0) * ?"
+                            f"{json_path}, COALESCE({func_prefix}_extract(data, {json_path}), 0) * ?"
                         )
                         params.append(converted_val)
             case "$min":
                 for field, field_val in value.items():
-                    path = f"'$.{field}'"
+                    json_path = f"'{parse_json_path(field)}'"
                     func_prefix = self._json_function_prefix
                     clauses.append(
-                        f"{path}, min({func_prefix}_extract(data, {path}), ?)"
+                        f"{json_path}, min({func_prefix}_extract(data, {json_path}), ?)"
                     )
                     # Convert bytes to Binary for proper JSON serialization
                     converted_val = _convert_bytes_to_binary(field_val)
                     # If it's a Binary object, serialize it to JSON and use json() function
                     if isinstance(converted_val, Binary):
                         clauses[-1] = (
-                            f"{path}, min({func_prefix}_extract(data, {path}), json(?))"
+                            f"{json_path}, min({func_prefix}_extract(data, {json_path}), json(?))"
                         )
                         params.append(neosqlite_json_dumps(converted_val))
                     else:
                         params.append(converted_val)
             case "$max":
                 for field, field_val in value.items():
-                    path = f"'$.{field}'"
+                    json_path = f"'{parse_json_path(field)}'"
                     func_prefix = self._json_function_prefix
                     clauses.append(
-                        f"{path}, max({func_prefix}_extract(data, {path}), ?)"
+                        f"{json_path}, max({func_prefix}_extract(data, {json_path}), ?)"
                     )
                     # Convert bytes to Binary for proper JSON serialization
                     converted_val = _convert_bytes_to_binary(field_val)
                     # If it's a Binary object, serialize it to JSON and use json() function
                     if isinstance(converted_val, Binary):
                         clauses[-1] = (
-                            f"{path}, max({func_prefix}_extract(data, {path}), json(?))"
+                            f"{json_path}, max({func_prefix}_extract(data, {json_path}), json(?))"
                         )
                         params.append(neosqlite_json_dumps(converted_val))
                     else:
@@ -1022,8 +1026,8 @@ class QueryHelper:
             case "$unset":
                 # For $unset, we use json_remove
                 for field in value:
-                    path = f"'$.{field}'"
-                    clauses.append(path)
+                    json_path = f"'{parse_json_path(field)}'"
+                    clauses.append(json_path)
 
         return clauses, params
 
@@ -1461,6 +1465,31 @@ class QueryHelper:
 
         return optimized
 
+    def _is_datetime_indexed_field(self, field: str) -> bool:
+        """
+        Check if a field has a datetime index by looking for it in the database indexes.
+        Datetime indexes are created with the pattern: idx_{collection}_{field}_utc
+
+        Args:
+            field: The field name to check for datetime indexing
+
+        Returns:
+            bool: True if the field has a datetime index, False otherwise
+        """
+        # Construct the expected index name for datetime indexes
+        # Convert dots to underscores in field name
+        field_name_for_index = field.replace(".", "_")
+        expected_datetime_index_name = (
+            f"idx_{self.collection.name}_{field_name_for_index}_utc"
+        )
+
+        # Query the SQLite master table to check if this specific index exists
+        cursor = self.collection.db.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name = ?",
+            (expected_datetime_index_name,),
+        )
+        return cursor.fetchone() is not None
+
     def _build_simple_where_clause(
         self,
         query: Dict[str, Any],
@@ -1548,17 +1577,20 @@ class QueryHelper:
                 continue
 
             else:
+                # Check if this field has a datetime index
+                is_datetime_indexed = self._is_datetime_indexed_field(field)
+
                 # For all fields (including nested ones), use json_extract to get
                 # values from the JSON data.
 
                 # Convert dot notation to JSON path notation.
                 # (e.g., "profile.age" -> "$.profile.age")
-                json_path = f"'$.{field}'"
+                json_path = f"'{parse_json_path(field)}'"
 
                 if isinstance(value, dict):
                     # Handle query operators like $eq, $gt, $lt, etc.
                     clause, clause_params = self._build_operator_clause(
-                        json_path, value
+                        json_path, value, is_datetime_indexed
                     )
                     if clause is None:
                         return None  # Unsupported operator, fallback to Python
@@ -1567,16 +1599,23 @@ class QueryHelper:
                 else:
                     # Simple equality check
                     func_prefix = self._json_function_prefix
-                    clauses.append(
-                        f"{func_prefix}_extract(data, {json_path}) = ?"
-                    )
-                    # Serialize Binary objects for SQL comparisons using compact format
-                    if isinstance(value, bytes) and hasattr(
-                        value, "encode_for_storage"
-                    ):
-                        params.append(neosqlite_json_dumps_for_sql(value))
-                    else:
+                    if is_datetime_indexed:
+                        # For datetime-indexed fields, wrap the value with datetime() for proper timezone normalization
+                        clauses.append(
+                            f"{func_prefix}_extract(data, {json_path}) = datetime(?)"
+                        )
                         params.append(value)
+                    else:
+                        clauses.append(
+                            f"{func_prefix}_extract(data, {json_path}) = ?"
+                        )
+                        # Serialize Binary objects for SQL comparisons using compact format
+                        if isinstance(value, bytes) and hasattr(
+                            value, "encode_for_storage"
+                        ):
+                            params.append(neosqlite_json_dumps_for_sql(value))
+                        else:
+                            params.append(value)
 
         if not clauses:
             return "", []
@@ -1586,6 +1625,7 @@ class QueryHelper:
         self,
         json_path: str,
         operators: Dict[str, Any],
+        is_datetime_indexed: bool = False,
     ) -> tuple[str | None, List[Any]]:
         """
         Builds a SQL clause for query operators.
@@ -1599,6 +1639,7 @@ class QueryHelper:
         Args:
             json_path (str): The JSON path to extract the value from.
             operators (Dict[str, Any]): A dictionary of operators and their values.
+            is_datetime_indexed (bool): Whether the field has a datetime index that requires timezone normalization.
 
         Returns:
             tuple[str | None, List[Any]]: A tuple containing the SQL clause and
@@ -1618,54 +1659,112 @@ class QueryHelper:
             match op:
                 case "$eq":
                     func_prefix = self._json_function_prefix
-                    clauses.append(
-                        f"{func_prefix}_extract(data, {json_path}) = ?"
-                    )
-                    params.append(op_val)
+                    if is_datetime_indexed:
+                        # For datetime-indexed fields, wrap the value with datetime() for proper timezone normalization
+                        clauses.append(
+                            f"{func_prefix}_extract(data, {json_path}) = datetime(?)"
+                        )
+                        params.append(op_val)
+                    else:
+                        clauses.append(
+                            f"{func_prefix}_extract(data, {json_path}) = ?"
+                        )
+                        params.append(op_val)
                 case "$gt":
                     func_prefix = self._json_function_prefix
-                    clauses.append(
-                        f"{func_prefix}_extract(data, {json_path}) > ?"
-                    )
-                    params.append(op_val)
+                    if is_datetime_indexed:
+                        # For datetime-indexed fields, wrap the value with datetime() for proper timezone normalization
+                        clauses.append(
+                            f"{func_prefix}_extract(data, {json_path}) > datetime(?)"
+                        )
+                        params.append(op_val)
+                    else:
+                        clauses.append(
+                            f"{func_prefix}_extract(data, {json_path}) > ?"
+                        )
+                        params.append(op_val)
                 case "$lt":
                     func_prefix = self._json_function_prefix
-                    clauses.append(
-                        f"{func_prefix}_extract(data, {json_path}) < ?"
-                    )
-                    params.append(op_val)
+                    if is_datetime_indexed:
+                        # For datetime-indexed fields, wrap the value with datetime() for proper timezone normalization
+                        clauses.append(
+                            f"{func_prefix}_extract(data, {json_path}) < datetime(?)"
+                        )
+                        params.append(op_val)
+                    else:
+                        clauses.append(
+                            f"{func_prefix}_extract(data, {json_path}) < ?"
+                        )
+                        params.append(op_val)
                 case "$gte":
                     func_prefix = self._json_function_prefix
-                    clauses.append(
-                        f"{func_prefix}_extract(data, {json_path}) >= ?"
-                    )
-                    params.append(op_val)
+                    if is_datetime_indexed:
+                        # For datetime-indexed fields, wrap the value with datetime() for proper timezone normalization
+                        clauses.append(
+                            f"{func_prefix}_extract(data, {json_path}) >= datetime(?)"
+                        )
+                        params.append(op_val)
+                    else:
+                        clauses.append(
+                            f"{func_prefix}_extract(data, {json_path}) >= ?"
+                        )
+                        params.append(op_val)
                 case "$lte":
                     func_prefix = self._json_function_prefix
-                    clauses.append(
-                        f"{func_prefix}_extract(data, {json_path}) <= ?"
-                    )
-                    params.append(op_val)
+                    if is_datetime_indexed:
+                        # For datetime-indexed fields, wrap the value with datetime() for proper timezone normalization
+                        clauses.append(
+                            f"{func_prefix}_extract(data, {json_path}) <= datetime(?)"
+                        )
+                        params.append(op_val)
+                    else:
+                        clauses.append(
+                            f"{func_prefix}_extract(data, {json_path}) <= ?"
+                        )
+                        params.append(op_val)
                 case "$ne":
                     func_prefix = self._json_function_prefix
-                    clauses.append(
-                        f"{func_prefix}_extract(data, {json_path}) != ?"
-                    )
-                    params.append(op_val)
+                    if is_datetime_indexed:
+                        # For datetime-indexed fields, wrap the value with datetime() for proper timezone normalization
+                        clauses.append(
+                            f"{func_prefix}_extract(data, {json_path}) != datetime(?)"
+                        )
+                        params.append(op_val)
+                    else:
+                        clauses.append(
+                            f"{func_prefix}_extract(data, {json_path}) != ?"
+                        )
+                        params.append(op_val)
                 case "$in":
                     func_prefix = self._json_function_prefix
-                    placeholders = ", ".join("?" for _ in op_val)
-                    clauses.append(
-                        f"{func_prefix}_extract(data, {json_path}) IN ({placeholders})"
-                    )
-                    params.extend(op_val)
+                    if is_datetime_indexed:
+                        # For datetime-indexed fields, wrap the values with datetime() for proper timezone normalization
+                        placeholders = ", ".join("datetime(?)" for _ in op_val)
+                        clauses.append(
+                            f"{func_prefix}_extract(data, {json_path}) IN ({placeholders})"
+                        )
+                        params.extend(op_val)
+                    else:
+                        placeholders = ", ".join("?" for _ in op_val)
+                        clauses.append(
+                            f"{func_prefix}_extract(data, {json_path}) IN ({placeholders})"
+                        )
+                        params.extend(op_val)
                 case "$nin":
                     func_prefix = self._json_function_prefix
-                    placeholders = ", ".join("?" for _ in op_val)
-                    clauses.append(
-                        f"{func_prefix}_extract(data, {json_path}) NOT IN ({placeholders})"
-                    )
-                    params.extend(op_val)
+                    if is_datetime_indexed:
+                        # For datetime-indexed fields, wrap the values with datetime() for proper timezone normalization
+                        placeholders = ", ".join("datetime(?)" for _ in op_val)
+                        clauses.append(
+                            f"{func_prefix}_extract(data, {json_path}) NOT IN ({placeholders})"
+                        )
+                        params.extend(op_val)
+                    else:
+                        placeholders = ", ".join("?" for _ in op_val)
+                        clauses.append(
+                            f"{func_prefix}_extract(data, {json_path}) NOT IN ({placeholders})"
+                        )
+                        params.extend(op_val)
                 case "$exists":
                     # Handle boolean value for $exists
                     func_prefix = self._json_function_prefix

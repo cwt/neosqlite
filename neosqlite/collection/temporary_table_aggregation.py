@@ -6,6 +6,7 @@ that the current implementation can't optimize with a single SQL query.
 
 from .sql_translator_unified import SQLTranslator
 from .jsonb_support import supports_jsonb
+from .json_path_utils import parse_json_path
 from contextlib import contextmanager
 from typing import Any, Dict, List, Callable
 import hashlib
@@ -543,14 +544,12 @@ class TemporaryTableAggregationProcessor:
         if foreign_field == "_id":
             foreign_extract = "related.id"
         else:
-            foreign_extract = f"json_extract(related.data, '$.{foreign_field}')"
+            foreign_extract = f"json_extract(related.data, '{parse_json_path(foreign_field)}')"
 
         if local_field == "_id":
             local_extract = f"{self.collection.name}.id"
         else:
-            local_extract = (
-                f"json_extract({self.collection.name}.data, '$.{local_field}')"
-            )
+            local_extract = f"json_extract({self.collection.name}.data, '{parse_json_path(local_field)}')"
 
         # Use jsonb_* functions when supported for better performance
         if self._jsonb_supported:
@@ -697,7 +696,7 @@ class TemporaryTableAggregationProcessor:
                     if self._jsonb_supported:
                         data_expr = f"jsonb_set({data_expr}, '$.{new_field}', jsonb_extract(data, '$.{source_field_name}'))"
                     else:
-                        data_expr = f"json_set({data_expr}, '$.{new_field}', json_extract(data, '$.{source_field_name}'))"
+                        data_expr = f"json_set({data_expr}, '{parse_json_path(new_field)}', json_extract(data, '{parse_json_path(source_field_name)}'))"
             # For this basic implementation, we won't handle complex expressions
 
         # Create addFields temporary table
