@@ -1,5 +1,77 @@
 # CHANGELOG
 
+## 1.2.0
+
+### Enhanced Datetime Query Processing
+
+- **Three-Tier Datetime Processing**: Implemented sophisticated three-tier approach (SQL → Temporary Tables → Python) for handling datetime queries with automatic fallback mechanisms
+- **Specialized Datetime Indexing**: New `datetime_field` parameter for `create_index()` to create timezone-normalized datetime indexes using SQLite's `datetime()` function
+- **Automatic Datetime Detection**: Smart query analysis automatically detects datetime operations and routes them to the specialized processor
+- **Timezone Normalization**: Datetime indexes use `datetime(json_extract(...))` for consistent timezone normalization across all datetime comparisons
+- **Performance Optimization**: SQL-tier processing with dedicated JSON path support for datetime queries (uses json_* functions instead of jsonb_* for string comparison)
+
+### Advanced JSON Path Support
+
+- **Nested Field Handling**: Comprehensive JSON path parsing for complex nested fields with dot notation (e.g., `user.profile.created_at`)
+- **Array Index Access**: Full support for array indexing in field paths (e.g., `tags[0]`, `orders.items[2].name`)
+- **Proper Path Conversion**: Automatic conversion of dot notation with array indexing to proper JSON path syntax (e.g., `address.street` → `$.address.street`, `items[0]` → `$.items[0]`)
+- **Array Path Handling**: Support for complex nested array access patterns like `orders.items[2].name` and `a.b[0].c[1].d`
+- **Path Consistency**: All modules now use centralized `parse_json_path()` utility for consistent path handling across the codebase
+
+### Three-Tier Processing Architecture
+
+- **SQL Tier**: Direct SQL processing using json_* functions for datetime queries to ensure string comparison instead of byte comparison
+- **Temporary Table Tier**: Fallback to temporary table processing for complex datetime queries
+- **Python Tier**: Pure Python implementation as final fallback for advanced datetime operations
+- **Smart Routing**: Automatic detection and routing of datetime queries to appropriate processing tier
+- **Performance Monitoring**: Integration with existing force fallback kill switch for benchmarking and debugging
+
+### New Features
+
+#### Datetime Query Processing
+- **`neosqlite.collection.datetime_query_processor.DateTimeQueryProcessor`**: Complete three-tier datetime query processor with fallback mechanisms
+- **`neosqlite.collection.datetime_utils`**: Shared utility module with common datetime patterns and validation functions
+- **Automatic Detection**: `_contains_datetime_operations()` method in Cursor class automatically identifies datetime queries
+- **Specialized Processing**: `_is_datetime_value()` and `_is_datetime_regex()` methods for accurate datetime pattern recognition
+
+#### Enhanced Index Management
+- **Datetime Field Support**: `create_index()` method now accepts `datetime_field: bool = False` parameter for specialized datetime indexing
+- **Normalized Datetime Indexes**: New `_create_datetime_index()` method creates timezone-normalized indexes with `datetime(json_extract(...))` 
+- **Auto-Detection**: `_is_datetime_indexed_field()` method checks for existing datetime indexes in collection
+- **Proper Path Handling**: All FTS index operations now use `parse_json_path()` for consistent field path conversion
+
+#### JSON Path Utilities
+- **`neosqlite.collection.json_path_utils.parse_json_path()`**: Centralized utility for converting dot notation to JSON path syntax
+- **`build_json_extract_expression()`**: Helper for building complete json_extract SQL expressions
+- **`build_jsonb_extract_expression()`**: Helper for building complete jsonb_extract SQL expressions
+- **Array Support**: Full handling of array indexing in JSON paths (e.g., `field[0]`, `nested.array[2].value`)
+
+#### Query Processing Enhancements
+- **Datetime-Aware Operators**: Enhanced `_build_operator_clause()` now accepts `is_datetime_indexed` parameter for proper timezone normalization
+- **Index-Aware Processing**: Query engine automatically detects datetime indexes and applies timezone normalization
+- **Smart Field Detection**: `_is_datetime_indexed_field()` method identifies datetime-indexed fields in database schema
+- **Path Conversion**: All query operations now use proper JSON path conversion for nested field access
+
+#### ObjectId Improvements
+- **Enhanced Specification**: Updated to follow MongoDB specification more closely (4 bytes timestamp + 5 bytes random + 3 bytes counter vs. previous 4+3+2)
+- **Integer Timestamp Support**: ObjectId constructor now accepts integer timestamp values that replace the timestamp part during construction
+- **Validation Improvements**: Enhanced validation for integer timestamp values (0 to 0xFFFFFFFF range)
+
+### Performance Improvements
+- **Three-Tier Datetime Processing**: Optimized datetime queries with SQL → Temp Table → Python fallback for best performance
+- **JSON Path Consistency**: Centralized JSON path utilities ensure consistent and efficient path handling throughout the codebase
+- **Timezone Handling**: Proper timezone normalization ensures consistent datetime comparisons across different timezones
+- **Enhanced Robustness**: Improved error handling and fallback mechanisms for complex datetime operations
+
+### Technical Benefits
+- **Performance Optimization**: Three-tier datetime processing provides optimal performance for datetime queries while maintaining accuracy
+- **Timezone Handling**: Proper timezone normalization ensures consistent datetime comparisons across different timezones
+- **JSON Path Consistency**: Centralized JSON path utilities ensure consistent handling of nested fields and arrays throughout the codebase
+- **Backward Compatibility**: All existing functionality preserved while adding new capabilities
+- **Robustness**: Enhanced error handling and fallback mechanisms for complex datetime operations
+- **Scalability**: Efficient processing of large datasets with datetime queries using SQL optimization
+- **Type Safety**: Comprehensive type annotations throughout new datetime processing modules
+
 ## 1.1.2
 
 ### MongoDB-compatible ObjectId Support for GridFS
