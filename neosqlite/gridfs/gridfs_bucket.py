@@ -18,7 +18,9 @@ from ..objectid import ObjectId
 from ..collection.jsonb_support import supports_jsonb
 
 # Import _normalize_id_query to reuse existing ID normalization logic
-from ..collection.query_helper import QueryHelper
+
+# Import the centralized ID normalization function
+from ..collection.type_correction import normalize_id_query_for_db
 
 
 class GridFSBucket:
@@ -565,28 +567,15 @@ class GridFSBucket:
             A GridOutCursor instance
         """
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
-        # or other common type mismatches, reusing the collection's implementation
+        # or other common type mismatches, using the centralized function
         if filter is not None:
-            # Create a temporary QueryHelper instance to use its _normalize_id_query method
-            # This is how the collection system does it - by creating a temporary helper
-            temp_helper = QueryHelper(self._get_mock_collection())
-            filter = temp_helper._normalize_id_query(filter)
+            filter = normalize_id_query_for_db(filter)
         return GridOutCursor(self._db, self._bucket_name, filter or {})
-
-    def _get_mock_collection(self):
-        """Create a minimal mock collection object to use QueryHelper's methods."""
-
-        class MockCollection:
-            def __init__(self, db, name):
-                self.db = db
-                self.name = name
-
-        return MockCollection(self._db, self._bucket_name + ".files")
 
     def _normalize_id_query(self, query: Dict[str, Any]) -> Dict[str, Any]:
         """
         Normalize ID types in a query dictionary to correct common mismatches.
-        This reuses the exact same logic as the collection's implementation.
+        This reuses the centralized logic for consistent ID handling.
 
         Args:
             query: The query dictionary to process
@@ -594,9 +583,7 @@ class GridFSBucket:
         Returns:
             A new query dictionary with corrected ID types
         """
-        # Create a temporary QueryHelper instance to reuse the exact same logic
-        temp_helper = QueryHelper(self._get_mock_collection())
-        return temp_helper._normalize_id_query(query)
+        return normalize_id_query_for_db(query)
 
     def open_upload_stream(
         self,
