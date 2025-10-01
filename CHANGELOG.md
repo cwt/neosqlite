@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## 1.2.1
+
+### Internal Improvements and Bug Fixes
+
+- **Change Stream Enhancements**: Improved ObjectId handling in change streams with better storage of actual _id values separately
+- **ID Type Handling Improvements**: Centralized ID query normalization for more robust ObjectId handling
+- **Code Quality Improvements**: Enhanced type annotations and function signatures throughout the codebase
+- **Collection Module Updates**: Improved method signatures and fixed parameter handling
+- **SQL Translation Fixes**: Corrected SQL translation for _id field access
+- **Test Updates**: Updated test assertions to properly handle ObjectId return values instead of integer IDs
+- **Coverage Adjustment**: Reduced test coverage threshold from 85% to 80% to accommodate new changes
+
 ## 1.2.0
 
 ### Enhanced Datetime Query Processing
