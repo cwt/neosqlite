@@ -730,11 +730,11 @@ class Collection:
         Returns:
             bool: True if the object exists, False otherwise.
         """
-        match type:
+        match type_:
             case "table":
                 if row := self.db.execute(
                     "SELECT COUNT(1) FROM sqlite_master WHERE type = ? AND name = ?",
-                    (type, name.strip("[]")),
+                    (type_, name.strip("[]")),
                 ).fetchone():
                     return int(row[0]) > 0
                 return False
@@ -742,7 +742,7 @@ class Collection:
                 # For indexes, check if it exists with our naming convention
                 if row := self.db.execute(
                     "SELECT COUNT(1) FROM sqlite_master WHERE type = ? AND name = ?",
-                    (type, name),
+                    (type_, name),
                 ).fetchone():
                     return int(row[0]) > 0
                 return False

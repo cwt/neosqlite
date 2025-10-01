@@ -324,7 +324,7 @@ def test_distinct(collection):
     collection.insert_many(
         [{"foo": "bar"}, {"foo": "baz"}, {"foo": 10}, {"bar": "foo"}]
     )
-    assert set(("bar", "baz", 10)) == collection.distinct("foo")
+    assert set(("bar", "baz", 10)) == set(collection.distinct("foo"))
 
 
 def test_distinct_nested(collection):
@@ -337,19 +337,19 @@ def test_distinct_nested(collection):
             {"a": {"c": 1}},
         ]
     )
-    assert {1, 2} == collection.distinct("a.b")
+    assert {1, 2} == set(collection.distinct("a.b"))
 
 
 def test_distinct_no_match(collection):
     """Test distinct with no matching documents."""
     collection.insert_many([{"foo": "bar"}])
-    assert set() == collection.distinct("nonexistent")
+    assert set() == set(collection.distinct("nonexistent"))
 
 
 def test_distinct_with_null(collection):
     """Test distinct with null values."""
     collection.insert_many([{"foo": "bar"}, {"foo": None}])
-    assert {"bar"} == collection.distinct("foo")
+    assert {"bar"} == set(collection.distinct("foo"))
 
 
 def test_distinct_complex_types(collection):
@@ -382,7 +382,7 @@ def test_distinct_with_filter(collection):
             {"category": "A", "value": 1},
         ]
     )
-    assert {1, 2} == collection.distinct("value", filter={"category": "A"})
+    assert {1, 2} == set(collection.distinct("value", filter={"category": "A"}))
 
 
 def test_distinct_with_filter_no_match(collection):
@@ -393,7 +393,7 @@ def test_distinct_with_filter_no_match(collection):
             {"category": "B", "value": 2},
         ]
     )
-    assert set() == collection.distinct("value", filter={"category": "C"})
+    assert set() == set(collection.distinct("value", filter={"category": "C"}))
 
 
 def test_distinct_with_filter_and_nested_key(collection):
@@ -406,7 +406,9 @@ def test_distinct_with_filter_and_nested_key(collection):
             {"group": "X", "data": {"value": 30}},
         ]
     )
-    assert {10, 30} == collection.distinct("data.value", filter={"group": "X"})
+    assert {10, 30} == set(
+        collection.distinct("data.value", filter={"group": "X"})
+    )
 
 
 def test_rename(collection):
