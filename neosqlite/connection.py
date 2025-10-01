@@ -12,7 +12,7 @@ except ImportError:
 
 
 class Connection:
-    def __init__(self, *args: Any, **kwargs: Any):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         """
         Initialize a new database connection.
 
@@ -32,7 +32,7 @@ class Connection:
         self.debug: bool = kwargs.pop("debug", False)
         self.connect(*args, **kwargs)
 
-    def connect(self, *args: Any, **kwargs: Any):
+    def connect(self, *args: Any, **kwargs: Any) -> None:
         """
         Establish a connection to the SQLite database.
 
@@ -54,7 +54,7 @@ class Connection:
             for name, path in self._tokenizers:
                 self.db.execute(f"SELECT load_extension('{path}')")
 
-    def close(self):
+    def close(self) -> None:
         """
         Close the database connection.
 
@@ -123,7 +123,7 @@ class Connection:
         self.close()
         return False
 
-    def drop_collection(self, name: str):
+    def drop_collection(self, name: str) -> None:
         """
         Drop a collection (table) from the database.
 
@@ -134,7 +134,7 @@ class Connection:
         """
         self.db.execute(f"DROP TABLE IF EXISTS {name}")
 
-    def create_collection(self, name: str, **kwargs):
+    def create_collection(self, name: str, **kwargs) -> Collection:
         """
         Create a new collection with specific options.
 
@@ -156,7 +156,7 @@ class Connection:
         self._collections[name] = collection
         return collection
 
-    def list_collection_names(self):
+    def list_collection_names(self) -> List[str]:
         """
         List all collection names in the database.
 
@@ -168,7 +168,7 @@ class Connection:
         )
         return [row[0] for row in cursor.fetchall()]
 
-    def list_collections(self):
+    def list_collections(self) -> List[Dict[str, Any]]:
         """
         Get detailed information about collections in the database.
 

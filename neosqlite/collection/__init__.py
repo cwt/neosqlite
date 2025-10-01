@@ -46,7 +46,8 @@ class Collection:
         Args:
             db: Database object to which the collection belongs.
             name: Name of the collection.
-            **kwargs: Additional arguments for initialization.
+            create: Whether to create the collection table if it doesn't exist.
+            database: Database object that contains this collection.
         """
         self.db = db
         self.name = name
@@ -311,7 +312,7 @@ class Collection:
             return
 
         # Check if a collection with the new name already exists
-        if self._object_exists("table", new_name):
+        if self._object_exists(type_="table", name=new_name):
             raise sqlite3.Error(f"Collection '{new_name}' already exists")
 
         # Rename the table
@@ -548,7 +549,9 @@ class Collection:
         """
         return self.query_engine.aggregate_raw_batches(pipeline, batch_size)
 
-    def distinct(self, key: str, filter: Dict[str, Any] | None = None) -> set:
+    def distinct(
+        self, key: str, filter: Dict[str, Any] | None = None
+    ) -> List[Any]:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.distinct`.
@@ -712,16 +715,16 @@ class Collection:
         Get the database that this collection is a part of.
 
         Returns:
-            Database: The database this collection is associated with.
+            Connection: The connection object this collection is associated with.
         """
         return self._database
 
-    def _object_exists(self, type: str, name: str) -> bool:
+    def _object_exists(self, type_: str, name: str) -> bool:
         """
         Check if an object (table or index) of a specific type and name exists within the database.
 
         Args:
-            type (str): The type of object to check, either "table" or "index".
+            type_ (str): The type of object to check, either "table" or "index".
             name (str): The name of the object to check.
 
         Returns:

@@ -154,6 +154,15 @@ class QueryEngine:
     def _get_integer_id_for_oid(self, oid) -> int:
         """
         Get the integer ID for a given ObjectId.
+
+        Args:
+            oid: The ObjectId to look up.
+
+        Returns:
+            int: The corresponding integer ID from the database.
+
+        Raises:
+            ValueError: If the integer ID for the ObjectId cannot be found.
         """
         # This method should find the integer id in the database that corresponds to the ObjectId
         cursor = self.collection.db.execute(
@@ -562,14 +571,14 @@ class QueryEngine:
         Find and update a single document.
 
         Finds a document matching the given filter, updates it using the specified
-        update expression, and returns the updated document.
+        update expression, and returns the original document (before update).
 
         Args:
             filter (Dict[str, Any]): A dictionary specifying the filter criteria for the document to find.
             update (Dict[str, Any]): A dictionary specifying the update operations to perform on the document.
 
         Returns:
-            Dict[str, Any] | None: The document that was updated,
+            Dict[str, Any] | None: The original document (before update),
                                    or None if no document was found and updated.
         """
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
@@ -626,9 +635,11 @@ class QueryEngine:
         ).fetchone()
         return row[0] if row else 0
 
-    def distinct(self, key: str, filter: Dict[str, Any] | None = None) -> set:
+    def distinct(
+        self, key: str, filter: Dict[str, Any] | None = None
+    ) -> List[Any]:
         """
-        Return a set of distinct values from the specified key in the documents
+        Return a list of distinct values from the specified key in the documents
         of this collection, optionally filtered by a query.
 
         Args:
@@ -636,7 +647,7 @@ class QueryEngine:
             filter (Dict[str, Any] | None): An optional query filter to apply to the documents.
 
         Returns:
-            Set[Any]: A set containing the distinct values from the specified key.
+            List[Any]: A list containing the distinct values from the specified key.
         """
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         if filter is not None:
@@ -672,7 +683,7 @@ class QueryEngine:
                         results.add(val)
             except (json.JSONDecodeError, TypeError):
                 results.add(row[0])
-        return results
+        return list(results)
 
     def aggregate(self, pipeline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
