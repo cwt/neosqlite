@@ -61,13 +61,13 @@ class TestSQLFieldAccessor:
         """Test field access for _id field."""
         accessor = SQLFieldAccessor()
         result = accessor.get_field_access("_id")
-        assert result == "id"
+        assert result == "_id"
 
     def test_get_field_access_id_field_custom(self):
         """Test field access for _id field with custom id column."""
         accessor = SQLFieldAccessor(id_column="doc_id")
         result = accessor.get_field_access("_id")
-        assert result == "doc_id"
+        assert result == "_id"
 
     def test_get_field_access_simple_field(self):
         """Test field access for simple field."""
@@ -654,7 +654,7 @@ class TestSQLTranslator:
         """Test translating field access for _id field."""
         translator = SQLTranslator()
         result = translator.translate_field_access("_id")
-        assert result == "id"
+        assert result == "_id"
 
     def test_translate_field_access_regular_field(self):
         """Test translating field access for regular field."""
@@ -801,7 +801,7 @@ class TestSQLTranslator:
         """Test SQLFieldAccessor special handling for _id field."""
         accessor = SQLFieldAccessor(id_column="custom_id")
         result = accessor.get_field_access("_id", context="temp")
-        assert result == "custom_id"
+        assert result == "_id"
 
     def test_operator_translator_init_with_none(self):
         """Test SQLOperatorTranslator initialization with None field accessor."""

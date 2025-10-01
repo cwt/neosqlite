@@ -86,10 +86,13 @@ def test_jsonb_operations():
         }
 
         result = collection.insert_one(doc)
-        assert result.inserted_id == 1
+        assert result.inserted_id is not None
+        from neosqlite.objectid import ObjectId
 
-        # Retrieve and verify the document
-        found_doc = collection.find_one({"_id": 1})
+        assert isinstance(result.inserted_id, ObjectId)
+
+        # Retrieve and verify the document using the ObjectId
+        found_doc = collection.find_one({"_id": result.inserted_id})
         assert found_doc["name"] == "Test User"
         assert found_doc["profile"]["age"] == 30
         assert found_doc["profile"]["settings"]["theme"] == "dark"

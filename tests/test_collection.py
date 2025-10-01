@@ -75,10 +75,13 @@ def test_insert_one(collection):
     doc = {"foo": "bar"}
     result = collection.insert_one(doc)
     assert isinstance(result, neosqlite.InsertOneResult)
-    assert result.inserted_id == 1
-    # With ObjectId implementation, the original document gets an ObjectId as _id
+    assert result.inserted_id is not None
     from neosqlite.objectid import ObjectId
 
+    assert isinstance(
+        result.inserted_id, ObjectId
+    )  # Should be ObjectId, not integer
+    # With ObjectId implementation, the original document gets an ObjectId as _id
     assert isinstance(doc["_id"], ObjectId)
     # Find the document using the ObjectId
     found = collection.find_one({"_id": doc["_id"]})
@@ -90,7 +93,10 @@ def test_insert_many(collection):
     docs = [{"foo": "bar"}, {"foo": "baz"}]
     result = collection.insert_many(docs)
     assert isinstance(result, neosqlite.InsertManyResult)
-    assert result.inserted_ids == [1, 2]
+    assert len(result.inserted_ids) == 2
+    from neosqlite.objectid import ObjectId
+
+    assert all(isinstance(oid, ObjectId) for oid in result.inserted_ids)
     assert collection.count_documents({}) == 2
 
 
@@ -1428,10 +1434,13 @@ def test_insert_valid_document_with_array_indexing():
         ],
     }
     result = collection.insert_one(doc)
-    assert result.inserted_id == 1
+    assert result.inserted_id is not None
+    from neosqlite.objectid import ObjectId
 
-    # Find the document back
-    found_doc = collection.find_one({"_id": 1})
+    assert isinstance(result.inserted_id, ObjectId)
+
+    # Find the document back using the ObjectId
+    found_doc = collection.find_one({"_id": result.inserted_id})
     assert found_doc is not None
     assert found_doc["name"] == "test"
     assert found_doc["tags"] == ["red", "green", "blue"]

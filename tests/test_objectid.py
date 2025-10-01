@@ -139,8 +139,8 @@ def test_objectid_storage_integration():
         result = collection.insert_one(
             {"_id": oid, "name": "test_doc", "value": 42}
         )
-        # The inserted_id should be the auto-increment integer ID, not the ObjectId
-        assert isinstance(result.inserted_id, int)
+        # The inserted_id should be the _id (ObjectId), not the auto-increment integer ID
+        assert isinstance(result.inserted_id, ObjectId)
 
         # Retrieve the document by ObjectId
         retrieved = collection.find_one({"_id": oid})
@@ -159,7 +159,7 @@ def test_objectid_storage_integration():
         # Test inserting a document without _id (should generate ObjectId)
         result2 = collection.insert_one({"name": "auto_id_doc", "value": 123})
         assert result2.inserted_id is not None
-        assert isinstance(result2.inserted_id, int)  # Auto-increment ID
+        assert isinstance(result2.inserted_id, ObjectId)  # Generated ObjectId
 
         retrieved2 = collection.find_one({"_id": result2.inserted_id})
         assert retrieved2 is not None
@@ -235,7 +235,7 @@ def test_objectid_backward_compatibility():
         result2 = collection.insert_one(
             {"_id": oid, "name": "doc2", "value": 200}
         )
-        assert isinstance(result2.inserted_id, int)  # Should be integer ID
+        assert isinstance(result2.inserted_id, ObjectId)  # Should be ObjectId
 
         # Test that both work in the same collection
         retrieved_old = collection.find_one({"_id": old_style_id})

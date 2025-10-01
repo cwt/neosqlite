@@ -667,10 +667,13 @@ def test_collection_attribute_access():
 
         # Insert a document
         result = collection.insert_one({"test": "value"})
-        assert result.inserted_id == 1
+        assert result.inserted_id is not None
+        from neosqlite.objectid import ObjectId
+
+        assert isinstance(result.inserted_id, ObjectId)
 
         # Find the document
-        doc = collection.find_one({"test": "value"})
+        doc = collection.find_one({"_id": result.inserted_id})
         assert doc is not None
         assert doc["test"] == "value"
 

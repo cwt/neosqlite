@@ -1950,9 +1950,11 @@ def test_internal_insert_valid_document():
 
     document = {"name": "test", "value": 123}
     result = helper._internal_insert(document)
-    assert result == 1
-    # With ObjectId implementation, the document should have an ObjectId in _id field
+    # With ObjectId implementation, _internal_insert should return the generated ObjectId
     from neosqlite.objectid import ObjectId
+
+    assert isinstance(result, ObjectId)
+    # With ObjectId implementation, the document should have an ObjectId in _id field
 
     assert isinstance(document["_id"], ObjectId)
 
@@ -2062,10 +2064,13 @@ def test_json_validation_with_database_level_checks():
     # First insert a valid document to ensure the collection is working
     valid_doc = {"name": "John", "age": 30}
     result = collection.insert_one(valid_doc)
-    assert result.inserted_id == 1
+    assert result.inserted_id is not None
+    from neosqlite.objectid import ObjectId
+
+    assert isinstance(result.inserted_id, ObjectId)
 
     # Test that we can retrieve the document
-    found = collection.find_one({"_id": 1})
+    found = collection.find_one({"_id": result.inserted_id})
     assert found["name"] == "John"
     assert found["age"] == 30
 
@@ -2078,12 +2083,18 @@ def test_json_validation_edge_cases():
     # Test with empty document
     doc = {}
     result = collection.insert_one(doc)
-    assert result.inserted_id == 1
+    assert result.inserted_id is not None
+    from neosqlite.objectid import ObjectId
+
+    assert isinstance(result.inserted_id, ObjectId)
 
     # Test with document containing only _id placeholder
     doc2 = {"_id": None}  # _id will be removed before insertion
     result2 = collection.insert_one(doc2)
-    assert result2.inserted_id == 2
+    assert result2.inserted_id is not None
+    from neosqlite.objectid import ObjectId
+
+    assert isinstance(result2.inserted_id, ObjectId)
 
 
 def test_json_validation_with_complex_nested_structures():
@@ -2102,10 +2113,13 @@ def test_json_validation_with_complex_nested_structures():
         ],
     }
     result = collection.insert_one(doc)
-    assert result.inserted_id == 1
+    assert result.inserted_id is not None
+    from neosqlite.objectid import ObjectId
+
+    assert isinstance(result.inserted_id, ObjectId)
 
     # Verify the document was inserted correctly
-    found = collection.find_one({"_id": 1})
+    found = collection.find_one({"_id": result.inserted_id})
     assert (
         found["level1"]["level2"]["level3"]["level4"]["value"]
         == "deeply nested"
@@ -2134,11 +2148,17 @@ def test_json_validation_integration_valid_documents():
         {},  # Empty document
     ]
 
+    inserted_ids = []
     for i, doc in enumerate(valid_docs):
         result = collection.insert_one(doc)
-        assert result.inserted_id == i + 1
+        assert result.inserted_id is not None
+        from neosqlite.objectid import ObjectId
+
+        assert isinstance(result.inserted_id, ObjectId)
+        inserted_ids.append(result.inserted_id)
+
         # Verify document was inserted correctly
-        found = collection.find_one({"_id": i + 1})
+        found = collection.find_one({"_id": result.inserted_id})
         assert found is not None
 
 
@@ -2192,10 +2212,13 @@ def test_json_validation_with_complex_structures():
     }
 
     result = collection.insert_one(complex_doc)
-    assert result.inserted_id == 1
+    assert result.inserted_id is not None
+    from neosqlite.objectid import ObjectId
+
+    assert isinstance(result.inserted_id, ObjectId)
 
     # Verify the document was inserted correctly
-    found = collection.find_one({"_id": 1})
+    found = collection.find_one({"_id": result.inserted_id})
     assert (
         found["level1"]["level2"]["level3"]["level4"]["value"]
         == "deeply nested"
@@ -2213,7 +2236,10 @@ def test_json_validation_with_special_values():
     # Test with null values
     doc_with_null = {"name": "John", "middle_name": None, "age": 30}
     result = collection.insert_one(doc_with_null)
-    assert result.inserted_id == 1
+    assert result.inserted_id is not None
+    from neosqlite.objectid import ObjectId
+
+    assert isinstance(result.inserted_id, ObjectId)
 
     found = collection.find_one({"_id": 1})
     assert found["middle_name"] is None
@@ -2221,9 +2247,12 @@ def test_json_validation_with_special_values():
     # Test with boolean values
     doc_with_bool = {"name": "John", "is_active": True, "is_deleted": False}
     result = collection.insert_one(doc_with_bool)
-    assert result.inserted_id == 2
+    assert result.inserted_id is not None
+    from neosqlite.objectid import ObjectId
 
-    found = collection.find_one({"_id": 2})
+    assert isinstance(result.inserted_id, ObjectId)
+
+    found = collection.find_one({"_id": result.inserted_id})
     assert found["is_active"] is True
     assert found["is_deleted"] is False
 
@@ -2244,9 +2273,12 @@ def test_json_validation_with_unicode_and_emoji():
     }
 
     result = collection.insert_one(doc_with_unicode)
-    assert result.inserted_id == 1
+    assert result.inserted_id is not None
+    from neosqlite.objectid import ObjectId
 
-    found = collection.find_one({"_id": 1})
+    assert isinstance(result.inserted_id, ObjectId)
+
+    found = collection.find_one({"_id": result.inserted_id})
     assert found["english"] == "Hello"
     assert found["chinese"] == "你好"
     assert found["emoji"] == "😀😃😄😁"
@@ -2267,7 +2299,9 @@ def test_multiple_document_insertion_with_validation():
 
     result = collection.insert_many(docs)
     assert len(result.inserted_ids) == 4
-    assert result.inserted_ids == [1, 2, 3, 4]
+    from neosqlite.objectid import ObjectId
+
+    assert all(isinstance(oid, ObjectId) for oid in result.inserted_ids)
 
     # Verify all documents were inserted correctly
     assert collection.count_documents({}) == 4
@@ -2317,7 +2351,10 @@ def test_json_validation_performance_benchmark():
     end_time = time.time()
 
     insertion_time = end_time - start_time
-    assert result.inserted_id == 1
+    assert result.inserted_id is not None
+    from neosqlite.objectid import ObjectId
+
+    assert isinstance(result.inserted_id, ObjectId)
 
     # Verify document was inserted correctly
     found = collection.find_one({"_id": 1})
@@ -2571,14 +2608,16 @@ def test_complete_document_insertion_workflow():
     # 4. Database insertion
     result = collection.insert_one(doc)
 
-    assert result.inserted_id == 1
-    # With ObjectId implementation, the document should have an ObjectId in _id field
+    assert result.inserted_id is not None
     from neosqlite.objectid import ObjectId
+
+    assert isinstance(result.inserted_id, ObjectId)
+    # With ObjectId implementation, the document should have an ObjectId in _id field
 
     assert isinstance(doc["_id"], ObjectId)
 
     # Verify the document was inserted correctly
-    found = collection.find_one({"_id": 1})
+    found = collection.find_one({"_id": result.inserted_id})
     assert found["name"] == "John"
     assert found["age"] == 30
     assert found["city"] == "New York"
@@ -2593,12 +2632,14 @@ def test_insert_valid_json_document():
     doc = {"name": "John", "age": 30, "city": "New York"}
     result = collection.insert_one(doc)
 
-    assert result.inserted_id == 1
-    # With ObjectId implementation, the document should have an ObjectId in _id field
+    assert result.inserted_id is not None
     from neosqlite.objectid import ObjectId
 
+    assert isinstance(result.inserted_id, ObjectId)
+    # With ObjectId implementation, the document should have an ObjectId in _id field
+
     assert isinstance(doc["_id"], ObjectId)
-    found = collection.find_one({"_id": 1})
+    found = collection.find_one({"_id": result.inserted_id})
     assert found["name"] == "John"
     assert found["age"] == 30
     assert found["city"] == "New York"
@@ -2622,12 +2663,14 @@ def test_insert_valid_nested_json_document():
     }
     result = collection.insert_one(doc)
 
-    assert result.inserted_id == 1
-    # With ObjectId implementation, the document should have an ObjectId in _id field
+    assert result.inserted_id is not None
     from neosqlite.objectid import ObjectId
 
+    assert isinstance(result.inserted_id, ObjectId)
+    # With ObjectId implementation, the document should have an ObjectId in _id field
+
     assert isinstance(doc["_id"], ObjectId)
-    found = collection.find_one({"_id": 1})
+    found = collection.find_one({"_id": result.inserted_id})
     assert found["name"] == "John"
     assert found["address"]["street"] == "123 Main St"
     assert found["hobbies"][0] == "reading"
@@ -2646,12 +2689,14 @@ def test_insert_valid_array_document():
     }
     result = collection.insert_one(doc)
 
-    assert result.inserted_id == 1
-    # With ObjectId implementation, the document should have an ObjectId in _id field
+    assert result.inserted_id is not None
     from neosqlite.objectid import ObjectId
 
+    assert isinstance(result.inserted_id, ObjectId)
+    # With ObjectId implementation, the document should have an ObjectId in _id field
+
     assert isinstance(doc["_id"], ObjectId)
-    found = collection.find_one({"_id": 1})
+    found = collection.find_one({"_id": result.inserted_id})
     assert found["numbers"] == [1, 2, 3, 4, 5]
     assert found["mixed"][1] == "two"
     assert found["empty"] == []
@@ -2671,7 +2716,9 @@ def test_insert_multiple_valid_documents():
     result = collection.insert_many(docs)
 
     assert len(result.inserted_ids) == 3
-    assert result.inserted_ids == [1, 2, 3]
+    from neosqlite.objectid import ObjectId
+
+    assert all(isinstance(oid, ObjectId) for oid in result.inserted_ids)
     assert collection.count_documents({}) == 3
 
     # Verify all documents were inserted correctly
@@ -2698,12 +2745,14 @@ def test_insert_document_with_boolean_values():
     doc = {"name": "John", "is_active": True, "is_deleted": False}
     result = collection.insert_one(doc)
 
-    assert result.inserted_id == 1
-    # With ObjectId implementation, the document should have an ObjectId in _id field
+    assert result.inserted_id is not None
     from neosqlite.objectid import ObjectId
 
+    assert isinstance(result.inserted_id, ObjectId)
+    # With ObjectId implementation, the document should have an ObjectId in _id field
+
     assert isinstance(doc["_id"], ObjectId)
-    found = collection.find_one({"_id": 1})
+    found = collection.find_one({"_id": result.inserted_id})
     assert found["name"] == "John"
     assert found["is_active"] is True
     assert found["is_deleted"] is False

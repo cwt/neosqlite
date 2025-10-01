@@ -253,8 +253,12 @@ class QueryHelper:
                     # Non-string, non-ObjectId value - keep as is
                     corrected_query["id"] = value
             elif key == "_id":
+                # Check if the value is an ObjectId object
+                if isinstance(value, ObjectId):
+                    # Convert ObjectId to string representation for SQL compatibility
+                    corrected_query["_id"] = str(value)
                 # Check if the value is an integer string that should be converted to int
-                if isinstance(value, str):
+                elif isinstance(value, str):
                     # Check if it's a valid integer string
                     try:
                         int_val = int(value)
@@ -273,7 +277,7 @@ class QueryHelper:
                             # Not 24 chars and not integer, keep as string
                             corrected_query["_id"] = value
                 else:
-                    # Non-string value - keep as is
+                    # Non-string, non-ObjectId value - keep as is
                     corrected_query["_id"] = value
             elif isinstance(value, dict):
                 # Recursively process nested queries (e.g., $and, $or)
@@ -294,7 +298,39 @@ class QueryHelper:
 
         return corrected_query
 
-    def _internal_insert(self, document: Dict[str, Any]) -> int:
+    def _get_integer_id_for_oid(self, oid: Any) -> int:
+        """
+        Get the integer ID for a given ObjectId or other ID type.
+
+        Args:
+            oid: The ID value (can be ObjectId, int, str, etc.)
+
+        Returns:
+            int: The integer ID from the database
+        """
+        # If it's already an integer, return it directly
+        if isinstance(oid, int):
+            return oid
+
+        # For other types (ObjectId, str), we need to query the _id column to get the integer id
+        cursor = self.collection.db.execute(
+            f"SELECT id FROM {self.collection.name} WHERE _id = ?",
+            (
+                (str(oid) if hasattr(oid, "__str__") else oid,)
+                if oid is not None
+                else (None,)
+            ),
+        )
+        row = cursor.fetchone()
+        if row:
+            return row[0]
+        else:
+            # If not found and it's an int, return as is for backward compatibility
+            if isinstance(oid, int):
+                return oid
+            raise ValueError(f"Could not find integer ID for ObjectId: {oid}")
+
+    def _internal_insert(self, document: Dict[str, Any]) -> Any:
         """
         Inserts a document into the collection and returns the inserted document's _id.
 
@@ -355,7 +391,10 @@ class QueryHelper:
             provided_id = document["_id"]
             from ..objectid import ObjectId
 
-            if isinstance(provided_id, str) and len(provided_id) == 24:
+            if provided_id is None:
+                # If _id was explicitly set to None, generate a new ObjectId
+                generated_id = ObjectId()
+            elif isinstance(provided_id, str) and len(provided_id) == 24:
                 try:
                     generated_id = ObjectId(provided_id)
                 except ValueError:
@@ -389,7 +428,7 @@ class QueryHelper:
         if not original_has_id:
             document["_id"] = generated_id
 
-        return inserted_id
+        return generated_id
 
     def _validate_json_document(self, json_str: str) -> bool:
         """
@@ -453,7 +492,7 @@ class QueryHelper:
     # --- Helper Methods ---
     def _internal_update(
         self,
-        doc_id: int,
+        doc_id: Any,
         update_spec: Dict[str, Any],
         original_doc: Dict[str, Any],
     ) -> Dict[str, Any]:
@@ -464,7 +503,7 @@ class QueryHelper:
         Python-based updates for complex operations.
 
         Args:
-            doc_id (int): The ID of the document to update.
+            doc_id (Any): The ID of the document to update (can be ObjectId, int, etc.).
             update_spec (Dict[str, Any]): The update specification.
             original_doc (Dict[str, Any]): The original document before the update.
 
@@ -578,6 +617,9 @@ class QueryHelper:
                     set_clauses.extend(clauses)
                     set_params.extend(params)
 
+        # Get integer ID for the document
+        int_doc_id = self._get_integer_id_for_oid(doc_id)
+
         # Execute the SQL updates
         sql_params = []
         if unset_clauses:
@@ -588,7 +630,7 @@ class QueryHelper:
                 f"SET data = {func_name}(data, {', '.join(unset_clauses)}) "
                 "WHERE id = ?"
             )
-            sql_params = unset_params + [doc_id]
+            sql_params = unset_params + [int_doc_id]
             self.collection.db.execute(cmd, sql_params)
 
         if set_clauses:
@@ -599,7 +641,7 @@ class QueryHelper:
                 f"SET data = {func_name}(data, {', '.join(set_clauses)}) "
                 "WHERE id = ?"
             )
-            sql_params = set_params + [doc_id]
+            sql_params = set_params + [int_doc_id]
             cursor = self.collection.db.execute(cmd, sql_params)
 
             # Check if any rows were updated
@@ -616,7 +658,7 @@ class QueryHelper:
         else:
             cmd = f"SELECT id, data FROM {self.collection.name} WHERE id = ?"
 
-        if row := self.collection.db.execute(cmd, (doc_id,)).fetchone():
+        if row := self.collection.db.execute(cmd, (int_doc_id,)).fetchone():
             return self.collection._load(row[0], row[1])
 
         # This shouldn't happen, but just in case
@@ -624,7 +666,7 @@ class QueryHelper:
 
     def _perform_enhanced_sql_update(
         self,
-        doc_id: int,
+        doc_id: Any,
         update_spec: Dict[str, Any],
     ) -> Dict[str, Any]:
         """
@@ -721,6 +763,9 @@ class QueryHelper:
                     set_clauses.extend(clauses)
                     set_params.extend(params)
 
+        # Get integer ID for the document
+        int_doc_id = self._get_integer_id_for_oid(doc_id)
+
         # Execute the SQL updates in order: unset, insert, replace, set
         sql_params = []
 
@@ -732,7 +777,7 @@ class QueryHelper:
                 f"SET data = {func_name}(data, {', '.join(unset_clauses)}) "
                 "WHERE id = ?"
             )
-            sql_params = unset_params + [doc_id]
+            sql_params = unset_params + [int_doc_id]
             self.collection.db.execute(cmd, sql_params)
 
         # Handle json_insert for new fields
@@ -743,7 +788,7 @@ class QueryHelper:
                 f"SET data = {func_name}(data, {', '.join(insert_clauses)}) "
                 "WHERE id = ?"
             )
-            sql_params = insert_params + [doc_id]
+            sql_params = insert_params + [int_doc_id]
             self.collection.db.execute(cmd, sql_params)
 
         # Handle json_replace for existing fields
@@ -754,7 +799,7 @@ class QueryHelper:
                 f"SET data = {func_name}(data, {', '.join(replace_clauses)}) "
                 "WHERE id = ?"
             )
-            sql_params = replace_params + [doc_id]
+            sql_params = replace_params + [int_doc_id]
             self.collection.db.execute(cmd, sql_params)
 
         # Handle other operations with json_set (backward compatibility and dotted fields)
@@ -765,7 +810,7 @@ class QueryHelper:
                 f"SET data = {func_name}(data, {', '.join(set_clauses)}) "
                 "WHERE id = ?"
             )
-            sql_params = set_params + [doc_id]
+            sql_params = set_params + [int_doc_id]
             cursor = self.collection.db.execute(cmd, sql_params)
 
             # Check if any rows were updated
@@ -785,13 +830,13 @@ class QueryHelper:
         else:
             cmd = f"SELECT id, data FROM {self.collection.name} WHERE id = ?"
 
-        if row := self.collection.db.execute(cmd, (doc_id,)).fetchone():
+        if row := self.collection.db.execute(cmd, (int_doc_id,)).fetchone():
             return self.collection._load(row[0], row[1])
 
         # This shouldn't happen, but just in case
         raise RuntimeError("Failed to fetch updated document")
 
-    def _get_document_fields(self, doc_id: int) -> set:
+    def _get_document_fields(self, doc_id: Any) -> set:
         """
         Get the set of field names in a document.
 
@@ -800,18 +845,21 @@ class QueryHelper:
         and json_replace operations.
 
         Args:
-            doc_id (int): The ID of the document to analyze.
+            doc_id (Any): The ID of the document to analyze.
 
         Returns:
             set: A set of field names in the document.
         """
+        # Get the integer ID for the document
+        int_doc_id = self._get_integer_id_for_oid(doc_id)
+
         # Fetch the document data
         if self._jsonb_supported:
             cmd = f"SELECT json(data) as data FROM {self.collection.name} WHERE id = ?"
         else:
             cmd = f"SELECT data FROM {self.collection.name} WHERE id = ?"
 
-        row = self.collection.db.execute(cmd, (doc_id,)).fetchone()
+        row = self.collection.db.execute(cmd, (int_doc_id,)).fetchone()
         if not row:
             return set()
 
@@ -1033,7 +1081,7 @@ class QueryHelper:
 
     def _perform_python_update(
         self,
-        doc_id: int,
+        doc_id: Any,
         update_spec: Dict[str, Any],
         original_doc: Dict[str, Any],
     ) -> Dict[str, Any]:
@@ -1041,7 +1089,7 @@ class QueryHelper:
         Perform update operations using Python-based logic.
 
         Args:
-            doc_id (int): The document ID of the document to update.
+            doc_id (Any): The document ID of the document to update (can be ObjectId, int, etc.).
             update_spec (Dict[str, Any]): A dictionary specifying the update
                                           operations to perform.
             original_doc (Dict[str, Any]): The original document before applying
@@ -1108,35 +1156,41 @@ class QueryHelper:
         # If this is an upsert (doc_id == 0), we don't update the database
         # We just return the updated document for insertion by the caller
         if doc_id != 0:
+            # Convert the doc_id to integer ID for internal operations
+            int_doc_id = self._get_integer_id_for_oid(doc_id)
             self.collection.db.execute(
                 f"UPDATE {self.collection.name} SET data = ? WHERE id = ?",
-                (neosqlite_json_dumps(doc_to_update), doc_id),
+                (neosqlite_json_dumps(doc_to_update), int_doc_id),
             )
 
         return doc_to_update
 
-    def _internal_replace(self, doc_id: int, replacement: Dict[str, Any]):
+    def _internal_replace(self, doc_id: Any, replacement: Dict[str, Any]):
         """
         Replace the document with the specified ID with a new document.
 
         Args:
-            doc_id (int): The ID of the document to replace.
+            doc_id (Any): The ID of the document to replace (can be ObjectId, int, etc.).
             replacement (Dict[str, Any]): The new document to replace the existing one.
         """
+        # Convert the doc_id to integer ID for internal operations
+        int_doc_id = self._get_integer_id_for_oid(doc_id)
         self.collection.db.execute(
             f"UPDATE {self.collection.name} SET data = ? WHERE id = ?",
-            (neosqlite_json_dumps(replacement), doc_id),
+            (neosqlite_json_dumps(replacement), int_doc_id),
         )
 
-    def _internal_delete(self, doc_id: int):
+    def _internal_delete(self, doc_id: Any):
         """
         Deletes a document from the collection based on the document ID.
 
         Args:
-            doc_id (int): The ID of the document to delete.
+            doc_id (Any): The ID of the document to delete (can be ObjectId, int, etc.).
         """
+        # Convert the doc_id to integer ID for internal operations
+        int_doc_id = self._get_integer_id_for_oid(doc_id)
         self.collection.db.execute(
-            f"DELETE FROM {self.collection.name} WHERE id = ?", (doc_id,)
+            f"DELETE FROM {self.collection.name} WHERE id = ?", (int_doc_id,)
         )
 
     def _is_text_search_query(self, query: Dict[str, Any]) -> bool:

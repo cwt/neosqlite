@@ -1,4 +1,4 @@
-from typing import List
+from typing import Any, List
 
 
 class InsertOneResult:
@@ -6,22 +6,22 @@ class InsertOneResult:
     Represents the result of a single insert operation.
     """
 
-    def __init__(self, inserted_id: int):
+    def __init__(self, inserted_id: Any):
         """
         Initialize an InsertOneResult object.
 
         Args:
-            inserted_id (int): The ID of the inserted document.
+            inserted_id (Any): The ID of the inserted document.
         """
         self._inserted_id = inserted_id
 
     @property
-    def inserted_id(self) -> int:
+    def inserted_id(self) -> Any:
         """
         The ID of the inserted document.
 
         Returns:
-            int: The ID of the inserted document.
+            Any: The ID of the inserted document.
         """
         return self._inserted_id
 
@@ -31,22 +31,22 @@ class InsertManyResult:
     Represents the result of a multiple insert operation.
     """
 
-    def __init__(self, inserted_ids: List[int]):
+    def __init__(self, inserted_ids: List[Any]):
         """
         Initialize an InsertManyResult object.
 
         Args:
-            inserted_ids (List[int]): The IDs of the inserted documents.
+            inserted_ids (List[Any]): The IDs of the inserted documents.
         """
         self._inserted_ids = inserted_ids
 
     @property
-    def inserted_ids(self) -> List[int]:
+    def inserted_ids(self) -> List[Any]:
         """
         The IDs of the inserted documents.
 
         Returns:
-            List[int]: The IDs of the inserted documents.
+            List[Any]: The IDs of the inserted documents.
         """
         return self._inserted_ids
 
@@ -60,7 +60,7 @@ class UpdateResult:
         self,
         matched_count: int,
         modified_count: int,
-        upserted_id: int | None,
+        upserted_id: Any | None,
     ):
         """
         Initialize an UpdateResult object.
@@ -68,7 +68,7 @@ class UpdateResult:
         Args:
             matched_count (int): The number of documents that matched the filter criteria.
             modified_count (int): The number of documents that were modified.
-            upserted_id (int | None): The ID of the inserted document if an upsert
+            upserted_id (Any | None): The ID of the inserted document if an upsert
                                       operation was performed; None otherwise.
         """
         self._matched_count = matched_count
@@ -96,12 +96,12 @@ class UpdateResult:
         return self._modified_count
 
     @property
-    def upserted_id(self) -> int | None:
+    def upserted_id(self) -> Any | None:
         """
         The ID of the inserted document.
 
         Returns:
-            int | None: The ID of the inserted document if an upsert operation was
+            Any | None: The ID of the inserted document if an upsert operation was
                         performed; None otherwise.
         """
         return self._upserted_id

@@ -134,9 +134,9 @@ class SQLFieldAccessor:
 
         This method generates appropriate SQL expressions for accessing fields
         based on the field name and context. For the special "_id" field, it returns
-        the ID column name. For other fields, it generates a json_extract or jsonb_extract
-        expression to access the field from the JSON data column, with support for complex
-        JSON paths including array indexing.
+        the _id column name for direct access. For other fields, it generates a
+        json_extract or jsonb_extract expression to access the field from the JSON
+        data column, with support for complex JSON paths including array indexing.
 
         Args:
             field: The field name to access
@@ -147,8 +147,8 @@ class SQLFieldAccessor:
             SQL expression for accessing the field
         """
         if field == "_id":
-            # Special handling for _id field
-            return self.id_column
+            # Special handling for _id field - access the _id column directly
+            return "_id"
         else:
             # Use enhanced JSON path parsing
             json_path = self._parse_json_path(field)

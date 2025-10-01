@@ -154,7 +154,10 @@ def test_create_collection_and_use_it(connection):
     # Use it for insert operations
     result = collection.insert_one({"foo": "bar"})
     assert isinstance(result, neosqlite.InsertOneResult)
-    assert result.inserted_id == 1
+    assert result.inserted_id is not None
+    from neosqlite.objectid import ObjectId
+
+    assert isinstance(result.inserted_id, ObjectId)
 
     # Verify we can find the document
     doc = collection.find_one({"foo": "bar"})
