@@ -9,8 +9,8 @@ from neosqlite.collection.json_helpers import (
     neosqlite_json_dumps,
     neosqlite_json_dumps_for_sql,
 )
-from neosqlite.collection.text_search import unified_text_search
 from neosqlite.collection.json_path_utils import parse_json_path
+from neosqlite.collection.text_search import unified_text_search
 from typing import Any, Dict, List, Union
 
 try:

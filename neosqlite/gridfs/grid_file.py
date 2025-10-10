@@ -151,7 +151,14 @@ class GridIn:
         return len(data)
 
     def _flush_chunk(self) -> None:
-        """Flush a chunk from the buffer to the database."""
+        """
+        Flush a chunk from the buffer to the database.
+
+        This method extracts a chunk of data from the internal buffer and writes it to the
+        chunks collection in the database. If this is the first chunk being written
+        and no file ID has been set, it creates the corresponding file document first.
+        The chunk is inserted with its sequence number and associated with the file ID.
+        """
         if len(self._buffer) >= self._chunk_size_bytes:
             # Extract a chunk from the buffer
             chunk_data = bytes(self._buffer[: self._chunk_size_bytes])
@@ -174,7 +181,15 @@ class GridIn:
             self._chunk_number += 1
 
     def _create_file_document(self) -> None:
-        """Create the file document in the files collection."""
+        """
+        Create the file document in the files collection.
+
+        This method creates a new file document in the GridFS files collection with the
+        necessary metadata. It handles both ObjectId and integer file IDs, storing them
+        appropriately in the database. The method stores the filename, chunk size,
+        upload date, and serialized metadata. If no file ID is provided, it generates
+        a new ObjectId for the file.
+        """
         upload_date = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
         if self._file_id is None:
@@ -232,7 +247,20 @@ class GridIn:
                 )
 
     def _get_file_id(self) -> int:
-        """Get the file ID, creating the file document if necessary."""
+        """
+        Get the file ID, creating the file document if necessary.
+
+        This method returns the integer ID of the file, which is used internally for
+        database operations. If the file document hasn't been created yet, it creates
+        one first. The method handles both ObjectId and integer file IDs, looking up
+        the corresponding integer ID in the database when needed.
+
+        Returns:
+            int: The integer ID of the file for database operations
+
+        Raises:
+            RuntimeError: If the file cannot be found in the database
+        """
         if self._file_id is None:
             self._create_file_document()
 
@@ -266,7 +294,15 @@ class GridIn:
             return row[0]
 
     def close(self) -> None:
-        """Close the GridIn stream and finalize the file storage."""
+        """
+        Close the GridIn stream and finalize the file storage.
+
+        This method flushes any remaining data in the buffer to the database,
+        completes the file document with final metadata including length and MD5 hash,
+        and ensures the file is properly stored in GridFS. If no chunks have been
+        written yet, it still creates the file document. The method also handles
+        database synchronization if required by the write concern settings.
+        """
         if self._closed:
             return
 

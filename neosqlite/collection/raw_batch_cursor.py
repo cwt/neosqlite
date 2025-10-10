@@ -1,7 +1,7 @@
 from __future__ import annotations
-from typing import Any, Dict, Iterator, List, Optional, TYPE_CHECKING
 from .json_helpers import neosqlite_json_dumps
 from .json_path_utils import parse_json_path
+from typing import Any, Dict, Iterator, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from . import Collection

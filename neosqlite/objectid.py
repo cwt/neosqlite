@@ -11,12 +11,11 @@ while being optimized for NeoSQLite's local-only architecture.
 """
 
 from __future__ import annotations
-
+from typing import Any, TYPE_CHECKING
 import os
 import random
 import threading
 import time
-from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     pass
@@ -87,7 +86,21 @@ class ObjectId:
 
     @classmethod
     def _generate_new_id(cls) -> bytes:
-        """Generate a new 12-byte ObjectId value."""
+        """
+        Generate a new 12-byte ObjectId value according to MongoDB specification.
+
+        This method creates a unique 12-byte identifier consisting of:
+        - 4 bytes: timestamp (seconds since Unix epoch)
+        - 5 bytes: random value (generated once per process)
+        - 3 bytes: counter (incrementing from a random value)
+
+        The method ensures thread safety by using a lock when accessing shared
+        random bytes and counter values. The random bytes are generated once
+        per process, and the counter is incremented for each new ObjectId.
+
+        Returns:
+            bytes: A new 12-byte ObjectId value
+        """
         # Ensure thread safety for random bytes and counter
         with cls._counter_lock:
             if cls._random_bytes is None:
@@ -115,7 +128,24 @@ class ObjectId:
 
     @classmethod
     def _generate_new_id_with_timestamp(cls, timestamp: int) -> bytes:
-        """Generate a new 12-byte ObjectId value with a specific timestamp."""
+        """
+        Generate a new 12-byte ObjectId value with a specific timestamp according to MongoDB specification.
+
+        This method creates a unique 12-byte identifier with the provided timestamp and following MongoDB's format:
+        - 4 bytes: provided timestamp (instead of current time)
+        - 5 bytes: random value (generated once per process)
+        - 3 bytes: counter (incrementing from a random value)
+
+        The method ensures thread safety by using a lock when accessing shared
+        random bytes and counter values. The random bytes are generated once
+        per process, and the counter is incremented for each new ObjectId.
+
+        Args:
+            timestamp: An integer representing the Unix timestamp to use for the ObjectId
+
+        Returns:
+            bytes: A new 12-byte ObjectId value with the specified timestamp
+        """
         # Ensure thread safety for random bytes and counter
         with cls._counter_lock:
             if cls._random_bytes is None:

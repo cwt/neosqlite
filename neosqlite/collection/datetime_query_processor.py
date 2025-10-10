@@ -11,13 +11,13 @@ we need to compare the datetime string, querying with jsonb_* will get byte inst
 This extends the existing text search functionality to also use only json_* functions.
 """
 
-from typing import Any, Dict, List, Optional
 from .jsonb_support import supports_jsonb
+from .query_helper import QueryHelper
 from .sql_translator_unified import SQLTranslator, SQLFieldAccessor
 from .temporary_table_aggregation import (
     aggregation_pipeline_context,
 )
-from .query_helper import QueryHelper
+from typing import Any, Dict, List, Optional
 
 
 class DateTimeQueryProcessor:

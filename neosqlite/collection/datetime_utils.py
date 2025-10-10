@@ -5,8 +5,8 @@ This module provides common datetime patterns and utility functions
 to avoid code duplication across multiple modules.
 """
 
-import re
 from typing import Any
+import re
 
 
 # Define common datetime patterns as constants

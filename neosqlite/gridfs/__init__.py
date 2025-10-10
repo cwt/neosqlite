@@ -3,9 +3,9 @@ from .gridfs_bucket import GridFSBucket
 from .gridfs_legacy import GridFS
 
 __all__ = [
-    "GridFSBucket",
-    "GridFS",
-    "NoFile",
-    "FileExists",
     "CorruptGridFile",
+    "FileExists",
+    "GridFS",
+    "GridFSBucket",
+    "NoFile",
 ]

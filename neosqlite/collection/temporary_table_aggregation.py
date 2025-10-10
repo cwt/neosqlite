@@ -4,9 +4,9 @@ This focuses on the core concept: using temporary tables to process complex pipe
 that the current implementation can't optimize with a single SQL query.
 """
 
-from .sql_translator_unified import SQLTranslator
-from .jsonb_support import supports_jsonb
 from .json_path_utils import parse_json_path
+from .jsonb_support import supports_jsonb
+from .sql_translator_unified import SQLTranslator
 from contextlib import contextmanager
 from typing import Any, Dict, List, Callable
 import hashlib

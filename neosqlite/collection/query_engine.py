@@ -13,6 +13,7 @@ from .cursor import Cursor, DESCENDING
 from .query_helper import QueryHelper
 from .raw_batch_cursor import RawBatchCursor
 from .sql_translator_unified import SQLTranslator
+from copy import deepcopy
 from neosqlite.collection.json_helpers import (
     neosqlite_json_dumps,
     neosqlite_json_loads,
@@ -21,7 +22,6 @@ from neosqlite.collection.jsonb_support import supports_jsonb
 from typing import Any, Dict, List, TYPE_CHECKING
 import importlib.util
 import json
-from copy import deepcopy
 
 if TYPE_CHECKING:
     from quez import CompressedQueue

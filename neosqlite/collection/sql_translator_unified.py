@@ -6,9 +6,9 @@ into SQL statements that can be used both for direct execution and for
 temporary table generation.
 """
 
-from typing import Any, Dict, List, Tuple
 from .cursor import DESCENDING
 from .jsonb_support import should_use_json_functions
+from typing import Any, Dict, List, Tuple
 
 
 def _empty_result() -> Tuple[str, List[Any]]:

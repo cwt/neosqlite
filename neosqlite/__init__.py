@@ -4,9 +4,9 @@ from .changestream import ChangeStream
 from .collection import Collection
 from .connection import Connection
 from .exceptions import (
-    MalformedQueryException,
-    MalformedDocument,
     CollectionInvalid,
+    MalformedDocument,
+    MalformedQueryException,
 )
 from .requests import InsertOne, UpdateOne, DeleteOne
 from .results import (

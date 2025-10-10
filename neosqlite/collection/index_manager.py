@@ -1,5 +1,5 @@
-from .jsonb_support import supports_jsonb, _get_json_function_prefix
 from .json_path_utils import parse_json_path
+from .jsonb_support import supports_jsonb, _get_json_function_prefix
 from typing import Any, Dict, List, Tuple, overload
 from typing_extensions import Literal
 
@@ -10,7 +10,22 @@ except ImportError:
 
 
 class IndexManager:
+    """
+    Manages indexes for a NeoSQLite collection.
+
+    This class provides functionality to create, list, drop, and manage various types of indexes
+    including single-field, compound, unique, sparse, FTS (Full Text Search), and datetime indexes.
+    It handles both regular B-tree indexes using JSON extraction and specialized FTS5 virtual tables
+    for text search capabilities.
+    """
+
     def __init__(self, collection):
+        """
+        Initialize the IndexManager with a collection instance.
+
+        Args:
+            collection: The NeoSQLite collection instance to manage indexes for
+        """
         self.collection = collection
         # Check if JSONB is supported for this connection
         self._jsonb_supported = supports_jsonb(collection.db)
