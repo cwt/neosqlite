@@ -825,6 +825,10 @@ def test_aggregation_cursor_len_and_getitem(collection):
 
 def test_aggregation_cursor_methods_chaining(collection):
     """Test method chaining for cursor configuration."""
+    # Skip if quez is not available
+    if not QUEZ_AVAILABLE:
+        pytest.skip("Quez not available")
+
     pipeline = [{"$match": {"status": "active"}}]
     cursor = AggregationCursor(collection, pipeline)
 
