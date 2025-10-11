@@ -32,11 +32,11 @@ NeoSQLite provides a comprehensive PyMongo-compatible API for SQLite databases, 
 - Collection management: `drop()` - ✅ COMPLETED
 - Text search: Full FTS5 integration with search index APIs - ✅ COMPLETED
 
-### Query Operators (All ✅ COMPLETED)
+### Query Operators (Mostly COMPLETED)
 - Logical operators: `$and`, `$or`, `$not`, `$nor` - ✅ COMPLETED (full implementation)
 - Array operators: `$all` - ✅ COMPLETED
 - Element operators: `$type` - ✅ COMPLETED
-- Additional operators: `$expr`, `$jsonSchema`, `$bitsAllClear`, `$bitsAllSet`, `$bitsAnyClear`, `$bitsAnySet` - ✅ COMPLETED
+- Additional operators: `$expr`, `$jsonSchema`, `$bitsAllClear`, `$bitsAllSet`, `$bitsAnyClear`, `$bitsAnySet` - ❌ NOT IMPLEMENTED
 - Full support for complex nested queries and expressions
 
 ### Current API Coverage Status

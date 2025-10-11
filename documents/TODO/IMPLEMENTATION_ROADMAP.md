@@ -93,7 +93,8 @@ This document provides a prioritized roadmap for implementing missing PyMongo-co
 
 ## P2 - Medium Priority
 
-### 9. Evaluation Operators
+### ~~9. Evaluation Operators~~
+- **Status**: ❌ NOT IMPLEMENTED
 - **Why**: Important for advanced queries
 - **Effort**: High
 - **Impact**: Medium
@@ -101,13 +102,15 @@ This document provides a prioritized roadmap for implementing missing PyMongo-co
   - `$expr` - Expression evaluation
   - `$jsonSchema` - Schema validation
 
-### 10. Connection.validate_collection() Method
+### ~~10. Connection.validate_collection() Method~~
+- **Status**: ❌ NOT IMPLEMENTED
 - **Why**: Useful for database maintenance
 - **Effort**: Low
 - **Impact**: Low
 - **Dependencies**: SQLite integrity checks
 
-### 11. Collection.with_options() Method
+### ~~11. Collection.with_options() Method~~
+- **Status**: ✅ COMPLETED
 - **Why**: Useful for collection cloning with different options
 - **Effort**: Low
 - **Impact**: Low

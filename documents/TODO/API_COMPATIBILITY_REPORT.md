@@ -61,10 +61,7 @@ None - All high-priority APIs have been implemented.
 
 ### Medium Priority Missing APIs
 
-1. **Collection Management**
-   - `with_options()` - Get a clone with different options
-
-2. **Database Operations**
+1. **Database Operations**
    - `validate_collection()` - Validate collection integrity
 
 ### Lower Priority Missing APIs
@@ -98,6 +95,12 @@ None - All high-priority operators have been implemented.
    - `$jsonSchema` - Validate documents against JSON Schema
    - `$where` - Matches documents with JavaScript expressions (not applicable to SQLite)
 
+2. **Bitwise Operators** 
+   - `$bitsAllClear` - Matches documents where specified bits are clear
+   - `$bitsAllSet` - Matches documents where specified bits are set
+   - `$bitsAnyClear` - Matches documents where any of specified bits are clear
+   - `$bitsAnySet` - Matches documents where any of specified bits are set
+
 2. **Geospatial Operators**
    - `$geoIntersects` - Geospatial intersection queries
    - `$geoWithin` - Geospatial containment queries
@@ -111,6 +114,7 @@ None - All high-priority operators have been implemented.
 
 1. **Immediate Implementation**:
    - Implement evaluation operators (`$expr`, `$jsonSchema`)
+   - Implement bitwise operators (`$bitsAllClear`, `$bitsAllSet`, `$bitsAnyClear`, `$bitsAnySet`)
 
 2. **Short-term Implementation**:
    - None - search index functionality has been completed
