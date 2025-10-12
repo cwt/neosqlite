@@ -1,5 +1,14 @@
 # CHANGELOG
 
+## 1.2.2
+
+### $elemMatch Operator Enhancement
+
+- **Simple Value Support**: Enhanced $elemMatch operator to support simple value matching in JSON arrays, making it compatible with MongoDB behavior
+- **Backward Compatibility**: Maintains full backward compatibility with existing complex object matching functionality
+- **Bug Fix**: Fixes issue where `{"tags": {"$elemMatch": "c"}}` did not work with simple arrays like `["a", "b", "c", "d"]`
+- **MongoDB Compatibility**: Now supports both simple value matching (`{"tags": {"$elemMatch": "c"}}`) and complex object matching (`{"tags": {"$elemMatch": {"name": "value"}}}`) as per MongoDB specification
+
 ## 1.2.1
 
 ### Internal Improvements and Bug Fixes

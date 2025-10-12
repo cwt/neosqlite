@@ -340,6 +340,7 @@ Indexes are automatically used by `find()` operations where possible. You can al
 - `$regex` - Selects documents where values match a specified regular expression
 - `$elemMatch` - Selects documents if element in the array field matches all the specified conditions
 - `$contains` - **(NeoSQLite-specific and deprecated)** Performs a case-insensitive substring search on string values
+- `$elemMatch` - **Enhanced**: Now supports both simple value matching (`{"tags": {"$elemMatch": "c"}}` with `["a", "b", "c", "d"]`) and complex object matching (`{"tags": {"$elemMatch": {"name": "value"}}}` with `[{"name": "tag1"}, {"name": "tag2"}]`)
 
 Example usage of the `$contains` operator:
 > **DEPRECATED**: The `$contains` operator is deprecated and will be removed in a future version. Please use the `$text` operator with FTS5 indexing for better performance.
