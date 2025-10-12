@@ -150,10 +150,22 @@ def test_regex():
 
 
 def test_elemMatch():
+    # Test complex object matching (original functionality)
     assert _elemMatch("foo", {"a": 1}, {"foo": [{"a": 1}, {"b": 2}]})
     assert not _elemMatch("foo", {"a": 1}, {"foo": [{"a": 2}, {"b": 2}]})
     assert not _elemMatch("foo", {"a": 1}, {"foo": "bar"})
     assert not _elemMatch("foo", {"a": 1}, {})
+
+    # Test simple value matching (new functionality to fix the bug)
+    assert _elemMatch("tags", "c", {"tags": ["a", "b", "c", "d"]})
+    assert not _elemMatch("tags", "x", {"tags": ["a", "b", "c", "d"]})
+    assert _elemMatch("numbers", 3, {"numbers": [1, 2, 3, 4]})
+    assert not _elemMatch("numbers", 5, {"numbers": [1, 2, 3, 4]})
+    assert _elemMatch(
+        "mixed", "hello", {"mixed": [1, "hello", {"type": "object"}, 42]}
+    )
+    assert not _elemMatch("tags", "c", {"tags": []})
+    assert not _elemMatch("tags", "c", {"other": "value"})
 
 
 def test_size():

@@ -285,29 +285,37 @@ def _regex(field: str, value: str, document: Dict[str, Any]) -> bool:
         return False
 
 
-def _elemMatch(
-    field: str, value: Dict[str, Any], document: Dict[str, Any]
-) -> bool:
+def _elemMatch(field: str, value: Any, document: Dict[str, Any]) -> bool:
     """
-    Check if a field value matches all criteria in a provided dictionary.
+    Check if a field value matches all criteria in a provided dictionary or simple value.
 
     Args:
         field (str): The document field to compare.
-        value (Dict[str, Any]): A dictionary of field-value pairs to compare against.
+        value (Any): Either a simple value to match directly or a dictionary of field-value pairs to compare against.
         document (Dict[str, Any]): The document to compare the field value from.
 
     Returns:
-        bool: True if the field value matches all criteria in the provided dictionary, False otherwise.
+        bool: True if the field value matches the criteria, False otherwise.
     """
     field_val = document.get(field)
     if not isinstance(field_val, list):
         return False
-    for elem in field_val:
-        if isinstance(elem, dict) and all(
-            _eq(k, v, elem) for k, v in value.items()
-        ):
-            return True
-    return False
+
+    # If value is a dictionary, use the original complex matching logic
+    if isinstance(value, dict):
+        for elem in field_val:
+            if isinstance(elem, dict) and all(
+                _eq(k, v, elem) for k, v in value.items()
+            ):
+                return True
+        return False
+    else:
+        # If value is not a dictionary, check for simple equality match
+        # This handles cases like {"tags": {"$elemMatch": "c"}} where array contains simple values
+        for elem in field_val:
+            if elem == value:
+                return True
+        return False
 
 
 def _size(field: str, value: int, document: Dict[str, Any]) -> bool:
