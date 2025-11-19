@@ -99,8 +99,8 @@ This document provides an accurate summary of PyMongo-compatible APIs and operat
 
 ### Collection Methods
 
-#### `with_options()` 
-- **Status**: ✅ COMPLETED
+#### `with_options()`
+- **Status**: ❌ NOT IMPLEMENTED
 - **Purpose**: Get a clone with different options
 - **Location**: `neosqlite/collection/__init__.py`
 
@@ -119,7 +119,7 @@ The following features are actively not implemented in NeoSQLite, either because
 
 #### Active Development Items:
 - ❌ **`$expr` operator** - Not implemented
-- ❌ **`$jsonSchema` operator** - Not implemented  
+- ❌ **`$jsonSchema` operator** - Not implemented
 - ❌ **`validate_collection()` method** - Not implemented in Connection class (`connection.py`)
 - ❌ **Bitwise operators** (`$bitsAllClear`, `$bitsAllSet`, `$bitsAnyClear`, `$bitsAnySet`) - Not implemented
 - ❌ **Geospatial Operators** - Requires SQLite extension for full support
@@ -139,6 +139,42 @@ The following features are actively not implemented in NeoSQLite, either because
   - Command monitoring with events
   - Server monitoring and topology monitoring
   - Connection monitoring
+
+## Feasible Features Based on SQLite Capabilities
+
+Based on a comprehensive feasibility analysis considering SQLite's capabilities and limitations, the following features can be implemented with high probability of success:
+
+### Highly Feasible Features
+
+#### Aggregation Pipeline Enhancements
+- **`$bucket` and `$bucketAuto`** - ❌ NOT IMPLEMENTED - Can be implemented using SQL CASE statements and range functions for data analysis and grouping operations
+- **`$facet`** - ❌ NOT IMPLEMENTED - Can be implemented by running multiple concurrent queries and combining results for multi-dimensional analysis
+- **`$out` and `$merge`** - ❌ NOT IMPLEMENTED - Can be implemented using SQL INSERT/UPDATE statements to write aggregation results to other tables/collections for ETL operations
+- **`$addFields` improvements** - ✅ COMPLETED - Already enhanced with complex expressions to align with PyMongo behavior
+
+#### Advanced Query Operators
+- **`$elemMatch` in projections** - ❌ NOT IMPLEMENTED - Can be implemented using JSON path functions for currently missing functionality (Note: regular $elemMatch is implemented but not in projections)
+- **`$all` operator improvements** - ✅ COMPLETED - Already enhanced using JSON array functions and existence checks
+
+#### Performance and Monitoring Features
+- **Explain plan functionality** - ❌ NOT IMPLEMENTED - SQLite has built-in EXPLAIN QUERY PLAN functionality that can be exposed for query optimization and debugging (though used internally for testing)
+- **Collection statistics** - ❌ NOT IMPLEMENTED - SQLite provides table statistics via PRAGMA commands for performance analysis and monitoring
+- **Index usage statistics** - ❌ NOT IMPLEMENTED - SQLite provides index usage information that can support optimization and maintenance
+
+#### Session and Transaction Management
+- **Client sessions** - ❌ NOT IMPLEMENTED - Can be implemented at the application level for modern applications and distributed transactions
+- **Read/write concerns** - ❌ NOT IMPLEMENTED - Can be implemented as configuration options for consistency and reliability control
+- **Retryable writes** - ❌ NOT IMPLEMENTED - Can be implemented with exception handling and retry logic for resilience
+
+#### Advanced Indexing Features
+- **Partial indexes** - ✅ COMPLETED - SQLite supports partial indexes (WHERE clause in CREATE INDEX), already implemented for performance optimization with targeted indexes
+- **TTL indexes simulation** - ❌ NOT IMPLEMENTED - Can be implemented using triggers and background cleanup tasks for automatic cleanup of time-based data
+- **Advanced text index options** - ✅ COMPLETED - SQLite FTS5 already provides good text search with additional options implemented
+
+#### Connection Management Features
+- **Connection pooling** - ❌ NOT IMPLEMENTED - Can be implemented at the application level using connection pools for better performance in multi-threaded applications
+- **URI parsing** - ❌ NOT IMPLEMENTED - Standard Python functionality for standardization and configuration
+- **Timeout handling** - ❌ NOT IMPLEMENTED - SQLite supports timeout configuration for connection timeout and retry handling
 
 ## Missing PyMongo Features by Priority
 

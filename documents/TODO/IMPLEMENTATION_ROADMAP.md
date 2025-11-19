@@ -47,7 +47,7 @@ This document provides a prioritized roadmap for implementing missing PyMongo-co
 - **Why**: Important for query completeness
 - **Effort**: Medium
 - **Impact**: High
-- **Operators**: 
+- **Operators**:
   - `$all` - Array matching
   - `$type` - Type checking
 
@@ -110,7 +110,7 @@ This document provides a prioritized roadmap for implementing missing PyMongo-co
 - **Dependencies**: SQLite integrity checks
 
 ### ~~11. Collection.with_options() Method~~
-- **Status**: ✅ COMPLETED
+- **Status**: ❌ NOT IMPLEMENTED
 - **Why**: Useful for collection cloning with different options
 - **Effort**: Low
 - **Impact**: Low
@@ -140,47 +140,81 @@ This document provides a prioritized roadmap for implementing missing PyMongo-co
 - **Effort**: Medium
 - **Impact**: Low
 - **Operators**:
-  - `$slice`
+  - `$slice` in projections - ❌ NOT IMPLEMENTED
 
-### 14. MapReduce API
-- **Why**: Deprecated MongoDB feature (removed in 5.0)
+### 14. Highly Feasible Aggregation Pipeline Features
+- **Why**: Based on feasibility analysis of SQLite capabilities
 - **Effort**: High
-- **Impact**: Low (use aggregation pipeline instead)
-- **Status**: Will not implement
-- **Reason**: MapReduce was deprecated in MongoDB 4.2 and removed in 5.0 in favor of the more efficient aggregation pipeline. NeoSQLite will not implement this API to encourage users to use the modern aggregation pipeline approach.
+- **Impact**: High
+- **Features**:
+  - `$bucket` and `$bucketAuto` - ❌ NOT IMPLEMENTED - Can be implemented using SQL CASE statements and range functions
+  - `$facet` - ❌ NOT IMPLEMENTED - Can be implemented by running multiple concurrent queries and combining results
+  - `$out` and `$merge` - ❌ NOT IMPLEMENTED - Can be implemented using SQL INSERT/UPDATE statements to write aggregation results to other tables/collections
+  - `$addFields` improvements - ✅ COMPLETED - Already enhanced with complex expressions
 
-## Implementation Timeline
+### 15. Highly Feasible Advanced Query Operators
+- **Why**: Based on feasibility analysis of SQLite capabilities
+- **Effort**: Medium
+- **Impact**: High
+- **Features**:
+  - `$elemMatch` in projections - ❌ NOT IMPLEMENTED - Can be implemented using JSON path functions (Note: regular $elemMatch is implemented but not in projections)
+  - `$all` operator improvements - ✅ COMPLETED - Already enhanced using JSON array functions and existence checks
 
-### Phase 1 ( Weeks 1-2): P0 Items ✅ COMPLETED
-- Collection.drop()
-- Connection.create_collection()
-- Connection.list_collection_names()
+### 16. Performance and Monitoring Features
+- **Why**: Critical for query optimization and debugging
+- **Effort**: Low
+- **Impact**: High
+- **Features**:
+  - Explain plan functionality - ❌ NOT IMPLEMENTED - SQLite has built-in EXPLAIN QUERY PLAN functionality that can be exposed (though used internally for testing)
+  - Collection statistics - ❌ NOT IMPLEMENTED - SQLite provides table statistics via PRAGMA commands
+  - Index usage statistics - ❌ NOT IMPLEMENTED - SQLite provides index usage information
 
-### Phase 2 ( Weeks 3-4): P1 Items - IN PROGRESS
-- Complete remaining P1 implementations
+### 17. Session and Transaction Management
+- **Why**: For consistency and reliability control
+- **Effort**: Medium
+- **Impact**: Medium
+- **Features**:
+  - Client sessions - ❌ NOT IMPLEMENTED - Can be implemented at the application level
+  - Read/write concerns - ❌ NOT IMPLEMENTED - Can be implemented as configuration options
+  - Retryable writes - ❌ NOT IMPLEMENTED - Can be implemented with exception handling and retry logic
 
-### Phase 4 (Weeks 7-8): P2 Items
-- Evaluation operators
-- Database validation methods
+### 18. Advanced Indexing Features
+- **Why**: For performance optimization and specific use cases
+- **Effort**: Medium
+- **Impact**: Medium
+- **Features**:
+  - Partial indexes - ✅ COMPLETED - SQLite supports partial indexes (WHERE clause in CREATE INDEX), already implemented
+  - TTL indexes simulation - ❌ NOT IMPLEMENTED - Can be implemented using triggers and background cleanup tasks
+  - Advanced text index options - ✅ COMPLETED - SQLite FTS5 already provides good text search, with additional options implemented
 
-### Phase 5 (Weeks 9+): P2-P3 Items
-- Geospatial operators (if needed)
-- Enhanced utility methods
-- Array projection operators
+### 19. Connection Management Features
+- **Why**: For better performance in multi-threaded applications
+- **Effort**: Medium
+- **Impact**: Medium
+- **Features**:
+  - Connection pooling - ❌ NOT IMPLEMENTED - Can be implemented at the application level using connection pools
+  - URI parsing - ❌ NOT IMPLEMENTED - Standard Python functionality
+  - Timeout handling - ❌ NOT IMPLEMENTED - SQLite supports timeout configuration
 
-## Success Metrics
+## Not Feasible Due to SQLite Architecture
 
-1. **API Coverage**: Achieve 95%+ PyMongo API compatibility
-2. **Performance**: Maintain or improve query performance
-3. **Backward Compatibility**: 100% backward compatibility with existing code
-4. **Documentation**: Complete documentation for all new APIs
-5. **Testing**: 100% test coverage for new implementations
+### Distributed/Multi-node Features (Not Applicable)
+- **Why**: SQLite is single-file, not distributed
+- **Features**:
+  - Replica set support
+  - Read preferences
+  - Advanced security features (no user management in SQLite)
 
-## Risk Mitigation
+### Complex Operations (Not Applicable)
+- **Why**: Would require external processing or JavaScript engine
+- **Features**:
+  - `$graphLookup` - Limited recursive query capabilities in SQLite
+  - `$where` with JavaScript - SQLite doesn't have JavaScript engine
+  - MapReduce - Would require external processing framework
+  - Geospatial indexes (without spatialite extension)
 
-1. **Performance Impact**: Benchmark each new feature
-2. **Compatibility Issues**: Extensive testing with existing codebases
-3. **Complexity**: Implement features incrementally with thorough testing
-4. **Dependencies**: Minimize external dependencies
-
-This roadmap provides a structured approach to enhancing NeoSQLite's PyMongo compatibility while maintaining its core strengths as a SQLite-based NoSQL solution.
+### Server-level Features (Not Applicable)
+- **Why**: SQLite is embedded, no server process
+- **Features**:
+  - Server status monitoring
+  - Distributed transactions
