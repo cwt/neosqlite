@@ -28,6 +28,6 @@ Module contents
 
 .. automodule:: neosqlite.collection
    :members:
-   :undoc-members:
    :private-members:
    :show-inheritance:
+   :undoc-members:

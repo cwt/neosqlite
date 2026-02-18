@@ -17,6 +17,6 @@ Module contents
 
 .. automodule:: neosqlite.gridfs
    :members:
-   :undoc-members:
    :private-members:
    :show-inheritance:
+   :undoc-members:
