@@ -1,5 +1,19 @@
 # CHANGELOG
 
+## 1.2.3
+
+### Bug Fixes
+
+- **ObjectId Type Conversion for Reference Fields**: Fixed bug where `ObjectId` values in reference fields (e.g., `parent_post`, `author_id`, `user_id`) were not being properly converted for database queries
+- **Enhanced ID Normalization**: Extended `normalize_id_query_for_db()` to handle `ObjectId` conversion in all fields, not just `_id` and `id`
+- **Operator Support**: Added proper `ObjectId`-to-string conversion for values in `$in` and `$or` operators across reference fields
+- **MongoDB Compatibility**: Restored MongoDB-compatible API behavior for queries on reference fields containing `ObjectId` values
+
+### Testing
+
+- **Comprehensive Test Coverage**: Added 10 unit tests covering reference field `ObjectId` conversion scenarios
+- **Test Scenarios**: Tests cover basic conversion, multiple fields, mixed types, `$in` operator, `$or` operator, nested dicts, and complex queries
+
 ## 1.2.2
 
 ### $elemMatch Operator Enhancement
