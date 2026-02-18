@@ -431,5 +431,168 @@ def test_normalize_id_query_for_db__id_with_invalid_int_string():
     assert result == {"_id": invalid_int_str}  # Should remain unchanged
 
 
+# Tests for Bug #1: ObjectId conversion in reference fields
+def test_normalize_id_query_for_db_reference_field_with_objectid():
+    """Test normalize_id_query_for_db with reference field containing ObjectId.
+
+    This test verifies Bug #1 fix: ObjectId values in reference fields
+    (e.g., parent_post, user_id) should be converted to strings.
+    """
+    from neosqlite.objectid import ObjectId
+
+    oid = ObjectId("507f1f77bcf86cd799439011")
+    query = {"parent_post": oid}
+    result = normalize_id_query_for_db(query)
+    # Should convert ObjectId to string representation
+    assert result == {"parent_post": "507f1f77bcf86cd799439011"}
+
+
+def test_normalize_id_query_for_db_multiple_reference_fields_with_objectid():
+    """Test normalize_id_query_for_db with multiple reference fields containing ObjectId."""
+    from neosqlite.objectid import ObjectId
+
+    oid1 = ObjectId("507f1f77bcf86cd799439011")
+    oid2 = ObjectId("507f1f77bcf86cd799439012")
+    query = {"author_id": oid1, "parent_post": oid2, "title": "Test"}
+    result = normalize_id_query_for_db(query)
+    # Should convert all ObjectId values to strings
+    assert result == {
+        "author_id": "507f1f77bcf86cd799439011",
+        "parent_post": "507f1f77bcf86cd799439012",
+        "title": "Test",
+    }
+
+
+def test_normalize_id_query_for_db_reference_field_with_string():
+    """Test normalize_id_query_for_db with reference field containing hex string."""
+    # String values should remain unchanged
+    query = {"parent_post": "507f1f77bcf86cd799439011"}
+    result = normalize_id_query_for_db(query)
+    assert result == {"parent_post": "507f1f77bcf86cd799439011"}
+
+
+def test_normalize_id_query_for_db_reference_field_with_integer():
+    """Test normalize_id_query_for_db with reference field containing integer."""
+    # Integer values should remain unchanged
+    query = {"user_id": 123}
+    result = normalize_id_query_for_db(query)
+    assert result == {"user_id": 123}
+
+
+def test_normalize_id_query_for_db_reference_field_mixed_types():
+    """Test normalize_id_query_for_db with reference fields of mixed types."""
+    from neosqlite.objectid import ObjectId
+
+    oid = ObjectId("507f1f77bcf86cd799439011")
+    query = {
+        "author_id": oid,  # ObjectId -> string
+        "user_id": 456,  # int -> unchanged
+        "parent_post": "507f1f77bcf86cd799439012",  # string -> unchanged
+        "status": "active",  # string -> unchanged
+    }
+    result = normalize_id_query_for_db(query)
+    assert result == {
+        "author_id": "507f1f77bcf86cd799439011",
+        "user_id": 456,
+        "parent_post": "507f1f77bcf86cd799439012",
+        "status": "active",
+    }
+
+
+def test_normalize_id_query_for_db_in_operator_with_objectid_list():
+    """Test normalize_id_query_for_db with $in operator containing ObjectId values."""
+    from neosqlite.objectid import ObjectId
+
+    oid1 = ObjectId("507f1f77bcf86cd799439011")
+    oid2 = ObjectId("507f1f77bcf86cd799439012")
+    query = {"parent_post": {"$in": [oid1, oid2, "507f1f77bcf86cd799439013"]}}
+    result = normalize_id_query_for_db(query)
+    # Should convert ObjectId values in list to strings
+    assert result == {
+        "parent_post": {
+            "$in": [
+                "507f1f77bcf86cd799439011",
+                "507f1f77bcf86cd799439012",
+                "507f1f77bcf86cd799439013",
+            ]
+        }
+    }
+
+
+def test_normalize_id_query_for_db_or_operator_with_objectid():
+    """Test normalize_id_query_for_db with $or operator containing ObjectId in nested dicts."""
+    from neosqlite.objectid import ObjectId
+
+    oid1 = ObjectId("507f1f77bcf86cd799439011")
+    oid2 = ObjectId("507f1f77bcf86cd799439012")
+    query = {
+        "$or": [
+            {"author_id": oid1},
+            {"parent_post": oid2},
+        ]
+    }
+    result = normalize_id_query_for_db(query)
+    # Should recursively convert ObjectId in nested dicts
+    assert result == {
+        "$or": [
+            {"author_id": "507f1f77bcf86cd799439011"},
+            {"parent_post": "507f1f77bcf86cd799439012"},
+        ]
+    }
+
+
+def test_normalize_id_query_for_db_nested_reference_field_with_objectid():
+    """Test normalize_id_query_for_db with nested dict containing reference field with ObjectId."""
+    from neosqlite.objectid import ObjectId
+
+    oid = ObjectId("507f1f77bcf86cd799439011")
+    query = {"metadata": {"created_by": oid, "status": "active"}}
+    result = normalize_id_query_for_db(query)
+    # Should recursively process nested dict
+    assert result == {
+        "metadata": {
+            "created_by": "507f1f77bcf86cd799439011",
+            "status": "active",
+        }
+    }
+
+
+def test_normalize_id_query_for_db_reference_field_with_integer_string():
+    """Test normalize_id_query_for_db with reference field containing integer string."""
+    # Integer strings in non-_id fields should remain as strings
+    query = {"user_id": "123"}
+    result = normalize_id_query_for_db(query)
+    assert result == {"user_id": "123"}
+
+
+def test_normalize_id_query_for_db_complex_query_with_reference_fields():
+    """Test normalize_id_query_for_db with complex query mixing _id and reference fields."""
+    from neosqlite.objectid import ObjectId
+
+    oid1 = ObjectId("507f1f77bcf86cd799439011")
+    oid2 = ObjectId("507f1f77bcf86cd799439012")
+    query = {
+        "_id": oid1,  # Should convert to string
+        "author_id": oid2,  # Should convert to string
+        "status": "published",
+        "views": {"$gt": 100},
+        "$and": [
+            {"parent_post": oid1},  # Should convert to string
+            {"category_id": 5},  # Should remain unchanged
+        ],
+    }
+    result = normalize_id_query_for_db(query)
+    assert result == {
+        "_id": "507f1f77bcf86cd799439011",
+        "author_id": "507f1f77bcf86cd799439012",
+        "status": "published",
+        "views": {"$gt": 100},
+        "$and": [
+            {"parent_post": "507f1f77bcf86cd799439011"},
+            {"category_id": 5},
+        ],
+    }
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

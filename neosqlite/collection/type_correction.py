@@ -61,6 +61,7 @@ def normalize_id_query_for_db(query: Dict[str, Any]) -> Dict[str, Any]:
     - When 'id' field is queried with an ObjectId/hex string, it's converted to '_id'
     - When 'id' field is queried with an integer string, it's converted to integer
     - When '_id' field is queried with an integer string, it's converted to integer
+    - When any other field is queried with an ObjectId, it's converted to string
 
     Args:
         query: The query dictionary to process
@@ -138,16 +139,20 @@ def normalize_id_query_for_db(query: Dict[str, Any]) -> Dict[str, Any]:
             corrected_query[key] = normalize_id_query_for_db(value)
         elif isinstance(value, list):
             # Process list values (e.g., for $in, $or operators)
+            # Convert ObjectId values in the list to strings
             corrected_query[key] = [
                 (
                     normalize_id_query_for_db(item)
                     if isinstance(item, dict)
-                    else item
+                    else (str(item) if isinstance(item, ObjectId) else item)
                 )
                 for item in value
             ]
+        elif isinstance(value, ObjectId):
+            # Convert ObjectId to string for any other field (reference fields)
+            corrected_query[key] = str(value)
         else:
-            # Non-dict, non-list value - keep as is
+            # Non-dict, non-list, non-ObjectId value - keep as is
             corrected_query[key] = value
 
     return corrected_query
