@@ -5,6 +5,7 @@ from .cursor import DESCENDING
 from .jsonb_support import supports_jsonb
 from .type_correction import normalize_id_query_for_db
 from copy import deepcopy
+from datetime import datetime
 from neosqlite.collection.json_helpers import (
     neosqlite_json_dumps,
     neosqlite_json_dumps_for_sql,
@@ -866,6 +867,13 @@ class QueryHelper:
                     else:
                         # No fields to unset
                         return None
+                case "$currentDate":
+                    for field, type_spec in value.items():
+                        json_path = f"'{parse_json_path(field)}'"
+                        # Set to current datetime ISO string
+                        set_clauses.append(
+                            f"{json_path}, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+                        )
                 case "$rename":
                     # $rename is complex to do in SQL,
                     # so we'll fall back to the Python implementation
@@ -1062,6 +1070,10 @@ class QueryHelper:
                     for k, v in value.items():
                         if k not in doc_to_update or doc_to_update[k] < v:
                             doc_to_update[k] = v
+                case "$currentDate":
+                    for k, type_spec in value.items():
+                        # Set to current datetime ISO string
+                        doc_to_update[k] = datetime.now().isoformat()
                 case _:
                     raise MalformedQueryException(
                         f"Update operator '{op}' not supported"

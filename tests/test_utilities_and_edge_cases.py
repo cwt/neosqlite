@@ -1158,6 +1158,15 @@ def test_perform_python_update_operations():
         result = helper._perform_python_update(doc_id, update_spec, result)
         assert result["age"] == 60
 
+        # Test $currentDate operation
+        update_spec = {"$currentDate": {"lastModified": True}}
+        result = helper._perform_python_update(doc_id, update_spec, result)
+        assert "lastModified" in result
+        # Check that it's an ISO datetime string
+        from datetime import datetime
+
+        datetime.fromisoformat(result["lastModified"])
+
         # Test unsupported operation (should raise MalformedQueryException)
         update_spec = {"$unsupported": {"field": "value"}}
         with pytest.raises(MalformedQueryException):
