@@ -19,7 +19,7 @@ from neosqlite.collection.json_helpers import (
     neosqlite_json_loads,
 )
 from neosqlite.collection.jsonb_support import supports_jsonb
-from typing import Any, Dict, List, TYPE_CHECKING
+from typing import Any, Dict, List, TYPE_CHECKING, cast
 import importlib.util
 import json
 
@@ -1011,6 +1011,19 @@ class QueryEngine:
                             else:
                                 if keys[-1] in current:
                                     del current[keys[-1]]
+                case "$facet":
+                    facet_spec = stage["$facet"]
+                    facet_results: Dict[str, Any] = {}
+                    for facet_name, sub_pipeline in facet_spec.items():
+                        facet_result = self.aggregate_with_constraints(
+                            sub_pipeline, batch_size, memory_constrained
+                        )
+                        if isinstance(facet_result, list):
+                            facet_results[facet_name] = facet_result
+                        else:
+                            # CompressedQueue, convert to list
+                            facet_results[facet_name] = list(facet_result)
+                    docs = [cast(Dict[str, Any], facet_results)]
                 case "$count":
                     count_field = stage["$count"]
                     docs = [{count_field: len(docs)}]

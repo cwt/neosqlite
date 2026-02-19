@@ -265,6 +265,32 @@ def test_aggregate_unset(collection):
     assert len(result_list) == 2  # Original docs
 
 
+def test_aggregate_facet(collection):
+    """Test $facet aggregation stage."""
+    collection.insert_many(
+        [{"a": 1, "b": 1}, {"a": 2, "b": 2}, {"a": 3, "b": 3}]
+    )
+    pipeline = [
+        {
+            "$facet": {
+                "even": [{"$match": {"a": {"$mod": [2, 0]}}}],
+                "odd": [{"$match": {"a": {"$mod": [2, 1]}}}],
+                "count": [{"$count": "total"}],
+            }
+        }
+    ]
+    result = collection.aggregate(pipeline)
+    result_list = list(result)
+    assert len(result_list) == 1
+    facet_result = result_list[0]
+    assert "even" in facet_result
+    assert "odd" in facet_result
+    assert "count" in facet_result
+    assert len(facet_result["even"]) == 1  # a=2
+    assert len(facet_result["odd"]) == 2  # a=1,3
+    assert facet_result["count"] == [{"total": 3}]
+
+
 def test_aggregation_cursor_api():
     """Test that AggregationCursor implements the PyMongo API correctly."""
     with neosqlite.Connection(":memory:") as conn:
