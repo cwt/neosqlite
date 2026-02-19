@@ -788,6 +788,24 @@ class QueryEngine:
             # continue to fallback below
             pass
 
+        # Optimize $count in SQLite when possible
+        if (
+            pipeline
+            and isinstance(pipeline[-1], dict)
+            and "$count" in pipeline[-1]
+        ):
+            count_field = pipeline[-1]["$count"]
+            if not pipeline[:-1]:
+                # No previous stages, count all documents
+                count = self.estimated_document_count()
+                return [{count_field: count}]
+            elif len(pipeline) == 2 and "$match" in pipeline[0]:
+                # Only $match before $count, use count_documents
+                filter = pipeline[0]["$match"]
+                count = self.count_documents(filter)
+                return [{count_field: count}]
+            # For more complex pipelines, fall back to Python
+
         # Fallback to old method for complex queries (Python implementation)
         docs: List[Dict[str, Any]] = list(self.find())
         for stage in pipeline:
@@ -968,6 +986,15 @@ class QueryEngine:
                                 self.collection._set_val(
                                     doc, new_field, source_value
                                 )
+                case "$sample":
+                    sample_spec = stage["$sample"]
+                    sample_size = sample_spec["size"]
+                    import random
+
+                    docs = random.sample(docs, min(sample_size, len(docs)))
+                case "$count":
+                    count_field = stage["$count"]
+                    docs = [{count_field: len(docs)}]
                 case _:
                     raise MalformedQueryException(
                         f"Aggregation stage '{stage_name}' not supported"

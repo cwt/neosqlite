@@ -154,6 +154,75 @@ def test_aggregate_fast_path(collection):
     assert result_list[0]["a"] == 3
 
 
+def test_aggregate_count(collection):
+    """Test $count aggregation stage."""
+    # Test basic count
+    collection.insert_many([{"a": 1}, {"a": 2}, {"a": 3}])
+    pipeline = [{"$count": "total"}]
+    result = collection.aggregate(pipeline)
+    result_list = list(result)
+    assert len(result_list) == 1
+    assert result_list[0] == {"total": 3}
+
+    # Test count with match filter
+    pipeline = [{"$match": {"a": {"$gt": 1}}}, {"$count": "filtered_count"}]
+    result = collection.aggregate(pipeline)
+    result_list = list(result)
+    assert len(result_list) == 1
+    assert result_list[0] == {"filtered_count": 2}
+
+    # Test count with empty result
+    pipeline = [{"$match": {"a": {"$gt": 10}}}, {"$count": "zero_count"}]
+    result = collection.aggregate(pipeline)
+    result_list = list(result)
+    assert len(result_list) == 1
+    assert result_list[0] == {"zero_count": 0}
+
+    # Test count after group (fallback to Python len, since $group not in temp tables)
+    collection.insert_many([{"store": "A"}, {"store": "B"}, {"store": "A"}])
+    pipeline = [{"$group": {"_id": "$store"}}, {"$count": "store_count"}]
+    result = collection.aggregate(pipeline)
+    result_list = list(result)
+    assert len(result_list) == 1
+    assert result_list[0] == {
+        "store_count": 3
+    }  # Three groups: None (from previous docs), A, B
+
+
+def test_aggregate_sample(collection):
+    """Test $sample aggregation stage."""
+    # Test basic sample
+    collection.insert_many([{"a": i} for i in range(10)])
+    pipeline = [{"$sample": {"size": 3}}]
+    result = collection.aggregate(pipeline)
+    result_list = list(result)
+    assert len(result_list) == 3
+    # Check that all sampled docs are from the original
+    original_a = set(range(10))
+    result_a = {doc["a"] for doc in result_list}
+    assert result_a.issubset(original_a)
+
+    # Test sample with size larger than available docs
+    pipeline = [{"$sample": {"size": 20}}]
+    result = collection.aggregate(pipeline)
+    result_list = list(result)
+    assert len(result_list) == 10
+
+    # Test sample with match before
+    pipeline = [{"$match": {"a": {"$lt": 5}}}, {"$sample": {"size": 2}}]
+    result = collection.aggregate(pipeline)
+    result_list = list(result)
+    assert len(result_list) == 2
+    result_a = {doc["a"] for doc in result_list}
+    assert result_a.issubset({0, 1, 2, 3, 4})
+
+    # Test sample with size 0
+    pipeline = [{"$sample": {"size": 0}}]
+    result = collection.aggregate(pipeline)
+    result_list = list(result)
+    assert len(result_list) == 0
+
+
 def test_aggregation_cursor_api():
     """Test that AggregationCursor implements the PyMongo API correctly."""
     with neosqlite.Connection(":memory:") as conn:

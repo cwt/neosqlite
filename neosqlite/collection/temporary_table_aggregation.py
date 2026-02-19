@@ -238,7 +238,10 @@ class TemporaryTableAggregationProcessor:
         self._jsonb_supported = supports_jsonb(self.db)
 
     def process_pipeline(
-        self, pipeline: List[Dict[str, Any]]
+        self,
+        pipeline: List[Dict[str, Any]],
+        is_count: bool = False,
+        count_field: str | None = None,
     ) -> List[Dict[str, Any]]:
         """
         Process an aggregation pipeline using temporary tables for intermediate results.
@@ -258,6 +261,8 @@ class TemporaryTableAggregationProcessor:
         - $unwind: For deconstructing array fields
         - $lookup: For joining documents from different collections
         - $sort, $skip, $limit: For sorting and pagination
+        - $addFields: For adding fields to documents
+        - $count: For counting documents (optimized to use SQL COUNT)
 
         Args:
             pipeline (List[Dict[str, Any]]): A list of aggregation pipeline stages
@@ -270,6 +275,19 @@ class TemporaryTableAggregationProcessor:
         Raises:
             NotImplementedError: If the pipeline contains unsupported stages
         """
+        # Check if pipeline ends with $count for optimization
+        if (
+            pipeline
+            and isinstance(pipeline[-1], dict)
+            and "$count" in pipeline[-1]
+        ):
+            count_field = pipeline[-1]["$count"]
+            # Process pipeline without the $count stage
+            intermediate_pipeline = pipeline[:-1]
+            return self.process_pipeline(
+                intermediate_pipeline, is_count=True, count_field=count_field
+            )
+
         # Generate a deterministic pipeline ID based on the pipeline content
         pipeline_key = "".join(str(sorted(stage.items())) for stage in pipeline)
         pipeline_id = hashlib.sha256(pipeline_key.encode()).hexdigest()[:8]
@@ -352,6 +370,17 @@ class TemporaryTableAggregationProcessor:
                         )
                         i += 1
 
+                    case "$sample":
+                        sample_spec = stage["$sample"]
+                        sample_size = sample_spec["size"]
+                        sample_stage = {"$sample": sample_spec}
+                        new_table = create_temp(
+                            sample_stage,
+                            f"SELECT * FROM {current_table} ORDER BY RANDOM() LIMIT {sample_size}",
+                        )
+                        current_table = new_table
+                        i += 1
+
                     case _:
                         # For unsupported stages, we would need to fall back to Python
                         # But for this demonstration, we'll raise an exception
@@ -360,7 +389,9 @@ class TemporaryTableAggregationProcessor:
                         )
 
             # Return final results
-            return self._get_results_from_table(current_table)
+            return self._get_results_from_table(
+                current_table, is_count, count_field
+            )
 
     def _process_match_stage(
         self,
@@ -717,7 +748,12 @@ class TemporaryTableAggregationProcessor:
             )
         return new_table
 
-    def _get_results_from_table(self, table_name: str) -> List[Dict[str, Any]]:
+    def _get_results_from_table(
+        self,
+        table_name: str,
+        is_count: bool = False,
+        count_field: str | None = None,
+    ) -> List[Dict[str, Any]]:
         """
         Get results from a temporary table.
 
@@ -725,13 +761,24 @@ class TemporaryTableAggregationProcessor:
         them back into their Python dictionary representation using the collection's
         document loading mechanism.
 
+        For $count optimization, if is_count is True, it returns a single document
+        with the count from the table using SQL COUNT(*) instead of loading all documents.
+
         Args:
             table_name (str): Name of the temporary table to retrieve results from
+            is_count (bool): If True, return count document instead of all documents
+            count_field (str | None): The field name for the count if is_count is True
 
         Returns:
             List[Dict[str, Any]]: List of documents retrieved from the temporary table,
                                   with each document represented as a dictionary
         """
+        if is_count and count_field:
+            # Optimized path for $count: use SQL COUNT instead of loading all documents
+            cursor = self.db.execute(f"SELECT COUNT(*) FROM {table_name}")
+            count = cursor.fetchone()[0]
+            return [{count_field: count}]
+
         # When using JSONB, we need to convert data back to text JSON for Python
         if self._jsonb_supported:
             cursor = self.db.execute(
@@ -898,9 +945,11 @@ def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
     # Check if all stages are supported
     supported_stages = {
         "$addFields",
+        "$count",
         "$limit",
         "$lookup",
         "$match",
+        "$sample",
         "$skip",
         "$sort",
         "$unwind",
