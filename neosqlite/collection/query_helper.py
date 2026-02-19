@@ -874,6 +874,9 @@ class QueryHelper:
                         set_clauses.append(
                             f"{json_path}, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
                         )
+                case "$setOnInsert":
+                    # $setOnInsert is conditional on upsert, force Python fallback
+                    return None
                 case "$rename":
                     # $rename is complex to do in SQL,
                     # so we'll fall back to the Python implementation
@@ -1074,6 +1077,11 @@ class QueryHelper:
                     for k, type_spec in value.items():
                         # Set to current datetime ISO string
                         doc_to_update[k] = datetime.now().isoformat()
+                case "$setOnInsert":
+                    # Only apply on upsert (doc_id == 0)
+                    if doc_id == 0:
+                        for k, v in value.items():
+                            doc_to_update[k] = v
                 case _:
                     raise MalformedQueryException(
                         f"Update operator '{op}' not supported"

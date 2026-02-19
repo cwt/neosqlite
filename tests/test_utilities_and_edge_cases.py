@@ -1167,6 +1167,16 @@ def test_perform_python_update_operations():
 
         datetime.fromisoformat(result["lastModified"])
 
+        # Test $setOnInsert operation (only applies on upsert, doc_id=0)
+        update_spec = {"$setOnInsert": {"createdAt": "2023-01-01"}}
+        # For existing doc (doc_id != 0), should not apply
+        result = helper._perform_python_update(doc_id, update_spec, result)
+        assert "createdAt" not in result
+        # For upsert (doc_id == 0), should apply
+        upsert_doc = {"name": "New"}
+        result = helper._perform_python_update(0, update_spec, upsert_doc)
+        assert result["createdAt"] == "2023-01-01"
+
         # Test unsupported operation (should raise MalformedQueryException)
         update_spec = {"$unsupported": {"field": "value"}}
         with pytest.raises(MalformedQueryException):
