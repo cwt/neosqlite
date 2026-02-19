@@ -6,9 +6,9 @@ This document provides an accurate summary of PyMongo-compatible APIs and operat
 
 | Status | Count |
 |--------|-------|
-| ✅ Completed Features | 15+ |
-| ❌ Not Implemented Features | 4 core items |
-| 🔄 Planned Features | 50+ items by priority |
+| ✅ Completed Features | 25+ |
+| ❌ Not Implemented Features | 2 core items |
+| 🔄 Planned Features | 45+ items by priority |
 
 ## Implemented Features
 
@@ -57,6 +57,26 @@ This document provides an accurate summary of PyMongo-compatible APIs and operat
 - **Status**: ✅ COMPLETED
 - **Purpose**: Perform aggregation and retrieve raw BSON batches
 - **Location**: `neosqlite/collection/__init__.py`
+
+#### `$facet` Aggregation Stage
+- **Status**: ✅ COMPLETED
+- **Purpose**: Run multiple aggregation pipelines and combine results
+- **Location**: `neosqlite/collection/query_engine.py`, `temporary_table_aggregation.py`
+
+#### `$unset` Aggregation Stage
+- **Status**: ✅ COMPLETED
+- **Purpose**: Remove fields from documents in aggregation pipelines
+- **Location**: `neosqlite/collection/query_engine.py`, `temporary_table_aggregation.py`
+
+#### `$count` Aggregation Stage
+- **Status**: ✅ COMPLETED
+- **Purpose**: Count documents in aggregation pipelines
+- **Location**: `neosqlite/collection/query_engine.py`, `temporary_table_aggregation.py`
+
+#### `$sample` Aggregation Stage
+- **Status**: ✅ COMPLETED
+- **Purpose**: Randomly sample documents in aggregation pipelines
+- **Location**: `neosqlite/collection/query_engine.py`, `temporary_table_aggregation.py`
 
 ### Search Index APIs
 
@@ -111,6 +131,16 @@ This document provides an accurate summary of PyMongo-compatible APIs and operat
 - **Purpose**: MongoDB-compatible 12-byte ObjectIds with full hex interchangeability
 - **Location**: `neosqlite/objectid.py`, `neosqlite/collection/__init__.py`, `neosqlite/collection/json_helpers.py`
 
+#### `$currentDate` Update Operator
+- **Status**: ✅ COMPLETED
+- **Purpose**: Set fields to current datetime during updates
+- **Location**: `neosqlite/collection/query_helper.py`
+
+#### `$setOnInsert` Update Operator
+- **Status**: ✅ COMPLETED
+- **Purpose**: Set fields only during upsert insert operations
+- **Location**: `neosqlite/collection/query_helper.py`
+
 
 
 ## Currently Not Implemented Features
@@ -148,7 +178,7 @@ Based on a comprehensive feasibility analysis considering SQLite's capabilities 
 
 #### Aggregation Pipeline Enhancements
 - **`$bucket` and `$bucketAuto`** - ❌ NOT IMPLEMENTED - Can be implemented using SQL CASE statements and range functions for data analysis and grouping operations
-- **`$facet`** - ❌ NOT IMPLEMENTED - Can be implemented by running multiple concurrent queries and combining results for multi-dimensional analysis
+- **`$facet`** - ✅ COMPLETED - Implemented with broker-pattern approach for multi-dimensional analysis
 - **`$out` and `$merge`** - ❌ NOT IMPLEMENTED - Can be implemented using SQL INSERT/UPDATE statements to write aggregation results to other tables/collections for ETL operations
 - **`$addFields` improvements** - ✅ COMPLETED - Already enhanced with complex expressions to align with PyMongo behavior
 
