@@ -27,6 +27,10 @@
     - `$unwind` (including multiple, consecutive, and nested unwinds, see [JSON_EACH_ENHANCEMENTS.md](JSON_EACH_ENHANCEMENTS.md) for details)
     - `$lookup` (in any pipeline position)
     - `$addFields`
+    - `$facet` (parallel sub-pipelines with sequential execution)
+    - `$unset` (field removal)
+    - `$count` (document counting)
+    - `$sample` (random sampling)
 
 ### Indexing
 - [x] create_index()
