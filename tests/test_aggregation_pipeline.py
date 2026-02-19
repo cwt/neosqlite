@@ -223,6 +223,48 @@ def test_aggregate_sample(collection):
     assert len(result_list) == 0
 
 
+def test_aggregate_unset(collection):
+    """Test $unset aggregation stage."""
+    # Test unset single field
+    collection.insert_many([{"a": 1, "b": 2, "c": 3}, {"a": 4, "b": 5, "c": 6}])
+    pipeline = [{"$unset": "b"}]
+    result = collection.aggregate(pipeline)
+    result_list = list(result)
+    assert len(result_list) == 2
+    for doc in result_list:
+        assert "a" in doc
+        assert "c" in doc
+        assert "b" not in doc
+
+    # Test unset multiple fields
+    pipeline = [{"$unset": ["a", "c"]}]
+    result = collection.aggregate(pipeline)
+    result_list = list(result)
+    assert len(result_list) == 2
+    for doc in result_list:
+        assert "b" in doc
+        assert "a" not in doc
+        assert "c" not in doc
+
+    # Test unset nested field
+    collection.delete_many({})
+    collection.insert_many(
+        [{"nested": {"x": 1, "y": 2}}, {"nested": {"x": 3, "y": 4}}]
+    )
+    pipeline = [{"$unset": "nested.x"}]
+    result = collection.aggregate(pipeline)
+    result_list = list(result)
+    assert len(result_list) == 2
+    assert result_list[0]["nested"] == {"y": 2}
+    assert result_list[1]["nested"] == {"y": 4}
+
+    # Test unset non-existent field (should not error)
+    pipeline = [{"$unset": "nonexistent"}]
+    result = collection.aggregate(pipeline)
+    result_list = list(result)
+    assert len(result_list) == 2  # Original docs
+
+
 def test_aggregation_cursor_api():
     """Test that AggregationCursor implements the PyMongo API correctly."""
     with neosqlite.Connection(":memory:") as conn:

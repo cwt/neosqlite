@@ -992,6 +992,25 @@ class QueryEngine:
                     import random
 
                     docs = random.sample(docs, min(sample_size, len(docs)))
+                case "$unset":
+                    unset_spec = stage["$unset"]
+                    if isinstance(unset_spec, str):
+                        unset_fields = [unset_spec]
+                    else:
+                        unset_fields = unset_spec
+                    for doc in docs:
+                        for field in unset_fields:
+                            # Handle nested fields
+                            keys = field.split(".")
+                            current = doc
+                            for key in keys[:-1]:
+                                if isinstance(current, dict) and key in current:
+                                    current = current[key]
+                                else:
+                                    break
+                            else:
+                                if keys[-1] in current:
+                                    del current[keys[-1]]
                 case "$count":
                     count_field = stage["$count"]
                     docs = [{count_field: len(docs)}]

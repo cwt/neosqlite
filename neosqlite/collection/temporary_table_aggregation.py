@@ -381,6 +381,32 @@ class TemporaryTableAggregationProcessor:
                         current_table = new_table
                         i += 1
 
+                    case "$unset":
+                        unset_spec = stage["$unset"]
+                        if isinstance(unset_spec, str):
+                            unset_fields = [unset_spec]
+                        else:
+                            unset_fields = unset_spec
+                        # Build json_remove expressions
+                        data_expr = "data"
+                        for field in unset_fields:
+                            json_path = parse_json_path(field)
+                            if self._jsonb_supported:
+                                data_expr = (
+                                    f"jsonb_remove({data_expr}, '{json_path}')"
+                                )
+                            else:
+                                data_expr = (
+                                    f"json_remove({data_expr}, '{json_path}')"
+                                )
+                        unset_stage = {"$unset": unset_spec}
+                        new_table = create_temp(
+                            unset_stage,
+                            f"SELECT id, {data_expr} as data FROM {current_table}",
+                        )
+                        current_table = new_table
+                        i += 1
+
                     case _:
                         # For unsupported stages, we would need to fall back to Python
                         # But for this demonstration, we'll raise an exception
@@ -952,6 +978,7 @@ def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
         "$sample",
         "$skip",
         "$sort",
+        "$unset",
         "$unwind",
     }
 
