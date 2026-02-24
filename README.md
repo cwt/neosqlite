@@ -21,7 +21,9 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 - **Modern API**: Aligned with modern `pymongo` practices (using methods like `insert_one`, `update_one`, `delete_many`, etc.).
 - **MongoDB-compatible ObjectId**: Full 12-byte ObjectId implementation following MongoDB specification with automatic generation and hex interchangeability
 - **Automatic JSON/JSONB Support**: Automatically detects and uses JSONB column type when available for better performance.
-- **GridFS Support**: Store and retrieve large files with a PyMongo-compatible GridFS implementation.
+- **GridFS Support**: Store and retrieve large files with a PyMongo-compatible GridFS implementation with automatic legacy table migration.
+
+See [CHANGELOG.md](CHANGELOG.md) for the latest features and improvements.
 
 ## Performance Benchmarks
 

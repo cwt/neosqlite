@@ -43,13 +43,13 @@ def test_gridfs_bucket_creation(bucket):
     """Test that GridFSBucket can be created and tables are initialized."""
     # Check that the files table exists
     cursor = bucket._db.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='fs.files'"
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='fs_files'"
     )
     assert cursor.fetchone() is not None
 
     # Check that the chunks table exists
     cursor = bucket._db.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='fs.chunks'"
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='fs_chunks'"
     )
     assert cursor.fetchone() is not None
 
@@ -173,7 +173,7 @@ def test_grid_in_functionality(bucket):
 
     # Verify metadata was stored correctly
     cursor = bucket._db.execute(
-        "SELECT metadata FROM `fs.files` WHERE filename = ?",
+        "SELECT metadata FROM fs_files WHERE filename = ?",
         ("metadata_test.txt",),
     )
     row = cursor.fetchone()
@@ -190,7 +190,7 @@ def test_grid_in_functionality(bucket):
 
     # Verify MD5 is None when disabled
     cursor = bucket_no_md5._db.execute(
-        "SELECT md5 FROM `no_md5.files` WHERE filename = ?",
+        "SELECT md5 FROM no_md5_files WHERE filename = ?",
         ("no_md5_test.txt",),
     )
     row = cursor.fetchone()
@@ -262,7 +262,7 @@ def test_grid_out_cursor_functionality(bucket):
 
     # Test filter by _id
     file_id = bucket._db.execute(
-        "SELECT _id FROM `fs.files` WHERE filename = ?", ("file1.txt",)
+        "SELECT _id FROM fs_files WHERE filename = ?", ("file1.txt",)
     ).fetchone()[0]
     cursor = bucket.find({"_id": file_id})
     files = list(cursor)
@@ -433,11 +433,11 @@ def test_drop_functionality(bucket):
     assert len(files) == 0
 
     # Verify tables are empty but still exist
-    cursor = bucket._db.execute("SELECT COUNT(*) FROM `fs.files`")
+    cursor = bucket._db.execute("SELECT COUNT(*) FROM fs_files")
     count = cursor.fetchone()[0]
     assert count == 0
 
-    cursor = bucket._db.execute("SELECT COUNT(*) FROM `fs.chunks`")
+    cursor = bucket._db.execute("SELECT COUNT(*) FROM fs_chunks")
     count = cursor.fetchone()[0]
     assert count == 0
 
@@ -451,14 +451,14 @@ def test_metadata_serialization_edge_cases(bucket):
 
     # Get the integer ID for the query by querying both id and _id columns
     cursor = bucket._db.execute(
-        "SELECT id FROM `fs.files` WHERE _id = ?", (str(file_id),)
+        "SELECT id FROM fs_files WHERE _id = ?", (str(file_id),)
     )
     row = cursor.fetchone()
     assert row is not None
     int_id = row[0]
 
     cursor = bucket._db.execute(
-        "SELECT metadata FROM `fs.files` WHERE id = ?", (int_id,)
+        "SELECT metadata FROM fs_files WHERE id = ?", (int_id,)
     )
     row = cursor.fetchone()
     assert row is not None
@@ -476,14 +476,14 @@ def test_metadata_serialization_edge_cases(bucket):
 
     # Get the integer ID for the query by querying both id and _id columns
     cursor = bucket._db.execute(
-        "SELECT id FROM `fs.files` WHERE _id = ?", (str(file_id),)
+        "SELECT id FROM fs_files WHERE _id = ?", (str(file_id),)
     )
     row = cursor.fetchone()
     assert row is not None
     int_id = row[0]
 
     cursor = bucket._db.execute(
-        "SELECT metadata FROM `fs.files` WHERE id = ?", (int_id,)
+        "SELECT metadata FROM fs_files WHERE id = ?", (int_id,)
     )
     row = cursor.fetchone()
     assert row is not None
@@ -514,7 +514,7 @@ def test_grid_in_context_manager(bucket):
         grid_in.write(b"Context manager test")
         # File should not be finalized yet
         cursor = bucket._db.execute(
-            "SELECT COUNT(*) FROM `fs.files` WHERE filename = ?",
+            "SELECT COUNT(*) FROM fs_files WHERE filename = ?",
             ("context_test.txt",),
         )
         count = cursor.fetchone()[0]
@@ -522,7 +522,7 @@ def test_grid_in_context_manager(bucket):
 
     # After context manager exits, file should be finalized
     cursor = bucket._db.execute(
-        "SELECT COUNT(*) FROM `fs.files` WHERE filename = ?",
+        "SELECT COUNT(*) FROM fs_files WHERE filename = ?",
         ("context_test.txt",),
     )
     count = cursor.fetchone()[0]
@@ -1141,6 +1141,50 @@ def test_metadata_type_preservation(bucket):
     assert isinstance(grid_out.metadata["string"], str)
     assert isinstance(grid_out.metadata["list"], list)
     assert isinstance(grid_out.metadata["dict"], dict)
+
+
+def test_metadata_update_after_upload(bucket, connection):
+    """Test that file metadata can be modified after upload using PyMongo-style API."""
+    # Initial metadata
+    initial_metadata = {"status": "pending", "category": "temp"}
+    data = b"Test data for metadata update"
+
+    # Upload file with initial metadata
+    file_id = bucket.upload_from_stream(
+        "update_test.txt", data, initial_metadata
+    )
+
+    # Verify initial metadata
+    with bucket.open_download_stream(file_id) as grid_out:
+        assert grid_out.metadata == initial_metadata
+
+    # Update metadata using PyMongo-style nested access
+    updated_metadata = {"status": "processed", "category": "archive"}
+    result = connection.fs.files.update_one(
+        {"_id": file_id}, {"$set": {"metadata": updated_metadata}}
+    )
+
+    # Verify update was successful
+    assert result.modified_count == 1
+
+    # Verify updated metadata
+    with bucket.open_download_stream(file_id) as grid_out:
+        assert grid_out.metadata == updated_metadata
+
+    # Test partial metadata update
+    partial_update = {"metadata.priority": "high"}
+    result = connection.fs.files.update_one(
+        {"_id": file_id}, {"$set": partial_update}
+    )
+    assert result.modified_count == 1
+    # Verify partial update
+    expected_final_metadata = {
+        "status": "processed",
+        "category": "archive",
+        "priority": "high",
+    }
+    with bucket.open_download_stream(file_id) as grid_out:
+        assert grid_out.metadata == expected_final_metadata
 
 
 def test_gridfsbucket_with_disable_md5(bucket):

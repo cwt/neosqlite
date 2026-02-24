@@ -1,5 +1,36 @@
 # CHANGELOG
 
+## 1.3.0
+
+### Added
+- **PyMongo-style nested access**: Support for `connection.fs.files` and `connection.fs.chunks` syntax, enabling drop-in replacement for PyMongo GridFS operations
+- **Automatic GridFS table migration**: Seamless migration from dot-based table names (`fs.files`) to underscore-based names (`fs_files`) for better SQLite compatibility
+- **Backward compatibility**: Existing databases with old table names are automatically migrated on first access
+- **$count aggregation stage**: Implemented MongoDB-compatible `$count` aggregation stage
+- **$sample aggregation stage**: Implemented MongoDB-compatible `$sample` aggregation stage with random sampling
+- **$unset aggregation stage**: Implemented MongoDB-compatible `$unset` aggregation stage for field removal
+- **$currentDate update operator**: Implemented MongoDB-compatible `$currentDate` update operator
+- **$setOnInsert update operator**: Implemented MongoDB-compatible `$setOnInsert` update operator
+- **$facet aggregation stage**: Implemented MongoDB-compatible `$facet` aggregation stage with sequential sub-pipeline execution
+
+### Changed
+- **GridFS table naming**: Internal table names changed from `bucket.files` to `bucket_files` format to avoid SQLite identifier parsing issues
+- **Collection attribute access**: Added `__getattr__` support for nested sub-collection access (e.g., `db.fs.files`)
+- **Metadata storage**: New databases use `JSONB` type for metadata column; existing databases gradually migrate per-row on update (TEXT → JSONB)
+
+### Fixed
+- **SQLite dot handling**: Resolved "unknown database" errors when using dot-based table names
+- **Index creation**: Fixed backtick issues in CREATE INDEX statements
+
+### Migration Notes
+- **Automatic**: Existing GridFS tables are automatically renamed during first GridFS initialization
+- **Manual**: If needed, run `ALTER TABLE fs.files RENAME TO fs_files; ALTER TABLE fs.chunks RENAME TO fs_chunks;`
+- **Compatibility**: Migration preserves all data and maintains backward compatibility
+
+### Documentation
+- Added migration guide in `documents/gridfs-migration.md`
+- Updated GridFS usage examples to demonstrate PyMongo-like syntax
+
 ## 1.2.3
 
 ### Bug Fixes

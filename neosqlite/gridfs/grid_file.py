@@ -51,8 +51,8 @@ class GridIn:
         self._filename = filename
         self._metadata = metadata
         self._file_id = file_id
-        self._files_collection = f"{bucket_name}.files"
-        self._chunks_collection = f"{bucket_name}.chunks"
+        self._files_collection = f"{bucket_name}_files"
+        self._chunks_collection = f"{bucket_name}_chunks"
         self._disable_md5 = disable_md5
         self._write_concern = write_concern or {}
 
@@ -171,7 +171,7 @@ class GridIn:
             # Insert the chunk
             self._db.execute(
                 f"""
-                INSERT INTO `{self._chunks_collection}`
+                INSERT INTO {self._chunks_collection}
                 (files_id, n, data)
                 VALUES (?, ?, ?)
             """,
@@ -197,7 +197,7 @@ class GridIn:
             oid = ObjectId()
             self._db.execute(
                 f"""
-                INSERT INTO `{self._files_collection}`
+                INSERT INTO {self._files_collection}
                 (id, _id, filename, chunkSize, uploadDate, metadata)
                 VALUES (NULL, ?, ?, ?, ?, ?)
             """,
@@ -216,7 +216,7 @@ class GridIn:
                 # Store ObjectId in _id column, let SQLite auto-generate id
                 self._db.execute(
                     f"""
-                    INSERT INTO `{self._files_collection}`
+                    INSERT INTO {self._files_collection}
                     (id, _id, filename, chunkSize, uploadDate, metadata)
                     VALUES (NULL, ?, ?, ?, ?, ?)
                 """,
@@ -232,7 +232,7 @@ class GridIn:
                 # Integer ID provided
                 self._db.execute(
                     f"""
-                    INSERT INTO `{self._files_collection}`
+                    INSERT INTO {self._files_collection}
                     (id, _id, filename, chunkSize, uploadDate, metadata)
                     VALUES (?, ?, ?, ?, ?, ?)
                 """,
@@ -268,7 +268,7 @@ class GridIn:
         if isinstance(self._file_id, ObjectId):
             # Look up the integer ID for this ObjectId
             cursor = self._db.execute(
-                f"SELECT id FROM `{self._files_collection}` WHERE _id = ?",
+                f"SELECT id FROM {self._files_collection} WHERE _id = ?",
                 (str(self._file_id),),
             )
             row = cursor.fetchone()
@@ -283,7 +283,7 @@ class GridIn:
         else:
             # For other types, try to look it up by value
             cursor = self._db.execute(
-                f"SELECT id FROM `{self._files_collection}` WHERE _id = ?",
+                f"SELECT id FROM {self._files_collection} WHERE _id = ?",
                 (str(self._file_id),),
             )
             row = cursor.fetchone()
@@ -319,7 +319,7 @@ class GridIn:
             if self._buffer:
                 self._db.execute(
                     f"""
-                    INSERT INTO `{self._chunks_collection}`
+                    INSERT INTO {self._chunks_collection}
                     (files_id, n, data)
                     VALUES (?, ?, ?)
                 """,
@@ -337,7 +337,7 @@ class GridIn:
                 md5_hash = self._md5_hasher.hexdigest()
             self._db.execute(
                 f"""
-                UPDATE `{self._files_collection}`
+                UPDATE {self._files_collection}
                 SET length = ?, md5 = ?
                 WHERE id = ?
             """,
@@ -385,7 +385,7 @@ class GridOut:
         if isinstance(file_id, ObjectId):
             # Look up the integer ID for this ObjectId
             cursor = self._db.execute(
-                f"SELECT id FROM `{bucket_name}.files` WHERE _id = ?",
+                f"SELECT id FROM {bucket_name}_files WHERE _id = ?",
                 (str(file_id),),
             )
             row = cursor.fetchone()
@@ -396,14 +396,15 @@ class GridOut:
             self._int_file_id = row[0]  # Store the integer ID internally
         else:
             self._int_file_id = file_id  # Store the integer ID internally
-        self._files_collection = f"{bucket_name}.files"
-        self._chunks_collection = f"{bucket_name}.chunks"
+        self._files_collection = f"{bucket_name}_files"
+        self._chunks_collection = f"{bucket_name}_chunks"
 
         # Get file metadata using the integer ID
+        # Use json() wrapper to ensure JSONB columns are converted back to JSON text
         row = self._db.execute(
             f"""
-            SELECT filename, length, chunkSize, uploadDate, md5, metadata, _id
-            FROM `{self._files_collection}`
+            SELECT filename, length, chunkSize, uploadDate, md5, json(metadata), _id
+            FROM {self._files_collection}
             WHERE id = ?
         """,
             (self._int_file_id,),
@@ -568,7 +569,7 @@ class GridOut:
         # Load the required chunk using the integer file ID
         row = self._db.execute(
             f"""
-            SELECT data FROM `{self._chunks_collection}`
+            SELECT data FROM {self._chunks_collection}
             WHERE files_id = ? AND n = ?
         """,
             (self._int_file_id, chunk_index),
@@ -649,7 +650,7 @@ class GridOutCursor:
         self._db = db
         self._bucket_name = bucket_name
         self._filter = filter
-        self._files_collection = f"{bucket_name}.files"
+        self._files_collection = f"{bucket_name}_files"
 
         # Build query based on filter
         where_clause = ""
@@ -847,7 +848,7 @@ class GridOutCursor:
                 where_clause = "WHERE " + " AND ".join(where_conditions)
 
         # Execute query to get integer file IDs (changed from _id to id for internal use)
-        query = f"SELECT id FROM `{self._files_collection}` {where_clause}"
+        query = f"SELECT id FROM {self._files_collection} {where_clause}"
         cursor = self._db.execute(query, params)
         self._file_ids = [row[0] for row in cursor.fetchall()]
         self._index = 0

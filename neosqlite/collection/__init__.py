@@ -259,7 +259,7 @@ class Collection:
         try:
             # Check if _id column exists
             cursor = self.db.execute(
-                f"SELECT name FROM pragma_table_info('{self.name}') WHERE name = '_id'"
+                f"SELECT name FROM pragma_table_info({self.name}) WHERE name = '_id'"
             )
             column_exists = cursor.fetchone() is not None
 
@@ -278,6 +278,20 @@ class Collection:
         except Exception:
             # If we can't add the column, continue without it (for backward compatibility)
             pass
+
+    def __getattr__(self, name: str) -> Any:
+        """
+        Support GridFS-style nested access like collection.files, collection.chunks.
+
+        For GridFS compatibility, allow access to sub-collections like 'files' and 'chunks'
+        under a bucket name (e.g., db.fs.files).
+        """
+        if name in ("files", "chunks"):
+            full_name = f"{self.name}_{name}"
+            return Collection(self.db, full_name, database=self._database)
+        raise AttributeError(
+            f"'{self.__class__.__name__}' object has no attribute '{name}'"
+        )
 
     def _create_unique_index_for_id(self):
         """
@@ -315,7 +329,7 @@ class Collection:
             raise sqlite3.Error(f"Collection '{new_name}' already exists")
 
         # Rename the table
-        self.db.execute(f"ALTER TABLE {self.name} RENAME TO {new_name}")
+        self.db.execute(f"ALTER TABLE {self.name} RENAME TO [{new_name}]")
 
         # Update the collection name
         self.name = new_name

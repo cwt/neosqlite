@@ -54,8 +54,8 @@ class GridFSBucket:
         self._db = db
         self._bucket_name = bucket_name
         self._chunk_size_bytes = chunk_size_bytes
-        self._files_collection = f"{bucket_name}.files"
-        self._chunks_collection = f"{bucket_name}.chunks"
+        self._files_collection = f"{bucket_name}_files"
+        self._chunks_collection = f"{bucket_name}_chunks"
 
         # Process write concern settings
         self._write_concern = write_concern or {}
@@ -87,8 +87,40 @@ class GridFSBucket:
             ):
                 raise ValueError("write_concern 'j' must be a boolean")
 
+        # Check for and migrate old GridFS table names (dot-based to underscore-based)
+        self._migrate_legacy_tables_if_needed()
+
         # Create the necessary tables if they don't exist
         self._create_collections()
+
+    def _migrate_legacy_tables_if_needed(self):
+        """Migrate legacy GridFS tables from dot-based names to underscore-based names."""
+        old_files = f"{self._bucket_name}.files"
+        old_chunks = f"{self._bucket_name}.chunks"
+        new_files = f"{self._files_collection}"
+        new_chunks = f"{self._chunks_collection}"
+
+        # Check if old tables exist
+        cursor = self._db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (old_files,),
+        )
+        if cursor.fetchone():
+            # Old tables exist, attempt migration
+            try:
+                # Rename tables (quote old names that may contain dots)
+                self._db.execute(
+                    f'ALTER TABLE "{old_files}" RENAME TO {new_files}'
+                )
+                self._db.execute(
+                    f'ALTER TABLE "{old_chunks}" RENAME TO {new_chunks}'
+                )
+                # Note: Indexes are automatically renamed by SQLite when table is renamed
+            except Exception:
+                # If migration fails for any reason, fall back to old naming
+                # This ensures backward compatibility even if migration partially fails
+                self._files_collection = old_files
+                self._chunks_collection = old_chunks
 
     def _apply_write_concern(self):
         """Apply write concern settings to SQLite connection."""
@@ -115,7 +147,7 @@ class GridFSBucket:
         if jsonb_supported:
             self._db.execute(
                 f"""
-                CREATE TABLE IF NOT EXISTS `{self._files_collection}` (
+                CREATE TABLE IF NOT EXISTS {self._files_collection} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     _id JSONB,
                     filename TEXT,
@@ -123,14 +155,14 @@ class GridFSBucket:
                     chunkSize INTEGER,
                     uploadDate TEXT,
                     md5 TEXT,
-                    metadata TEXT
+                    metadata JSONB
                 )
             """
             )
         else:
             self._db.execute(
                 f"""
-                CREATE TABLE IF NOT EXISTS `{self._files_collection}` (
+                CREATE TABLE IF NOT EXISTS {self._files_collection} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     _id TEXT,
                     filename TEXT,
@@ -140,18 +172,18 @@ class GridFSBucket:
                     md5 TEXT,
                     metadata TEXT
                 )
-            """
+                """
             )
 
         # Create chunks collection (table) - no change needed
         self._db.execute(
             f"""
-            CREATE TABLE IF NOT EXISTS `{self._chunks_collection}` (
+            CREATE TABLE IF NOT EXISTS {self._chunks_collection} (
                 _id INTEGER PRIMARY KEY AUTOINCREMENT,
                 files_id INTEGER,
                 n INTEGER,
                 data BLOB,
-                FOREIGN KEY (files_id) REFERENCES `{self._files_collection}` (id)
+                FOREIGN KEY (files_id) REFERENCES {self._files_collection} (id)
             )
         """
         )
@@ -159,22 +191,22 @@ class GridFSBucket:
         # Create indexes for better performance
         self._db.execute(
             f"""
-            CREATE INDEX IF NOT EXISTS `idx_{self._files_collection}_filename`
-            ON `{self._files_collection}` (filename)
+            CREATE INDEX IF NOT EXISTS idx_{self._files_collection}_filename
+            ON {self._files_collection} (filename)
         """
         )
 
         self._db.execute(
             f"""
-            CREATE INDEX IF NOT EXISTS `idx_{self._chunks_collection}_files_id`
-            ON `{self._chunks_collection}` (files_id)
+            CREATE INDEX IF NOT EXISTS idx_{self._chunks_collection}_files_id
+            ON {self._chunks_collection} (files_id)
         """
         )
 
         # Create unique index on _id column for faster lookups
         try:
             self._db.execute(
-                f"CREATE UNIQUE INDEX IF NOT EXISTS `idx_{self._files_collection}_id` ON `{self._files_collection}`(_id)"
+                f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{self._files_collection}_id ON {self._files_collection}(_id)"
             )
         except Exception:
             # If we can't create the index (e.g., due to duplicate values), continue without it
@@ -183,15 +215,15 @@ class GridFSBucket:
         # Create indexes for better performance
         self._db.execute(
             f"""
-            CREATE INDEX IF NOT EXISTS `idx_{self._files_collection}_filename`
-            ON `{self._files_collection}` (filename)
+            CREATE INDEX IF NOT EXISTS idx_{self._files_collection}_filename
+            ON {self._files_collection} (filename)
         """
         )
 
         self._db.execute(
             f"""
-            CREATE INDEX IF NOT EXISTS `idx_{self._chunks_collection}_files_id`
-            ON `{self._chunks_collection}` (files_id)
+            CREATE INDEX IF NOT EXISTS idx_{self._chunks_collection}_files_id
+            ON {self._chunks_collection} (files_id)
         """
         )
 
@@ -298,7 +330,7 @@ class GridFSBucket:
 
         cursor = self._db.execute(
             f"""
-            INSERT INTO `{self._files_collection}`
+            INSERT INTO {self._files_collection}
             (id, _id, filename, length, chunkSize, uploadDate, md5, metadata)
             VALUES (NULL, ?, ?, ?, ?, ?, ?, ?)
         """,
@@ -339,7 +371,7 @@ class GridFSBucket:
 
             self._db.execute(
                 f"""
-                INSERT INTO `{self._chunks_collection}`
+                INSERT INTO {self._chunks_collection}
                 (files_id, n, data)
                 VALUES (?, ?, ?)
             """,
@@ -365,7 +397,7 @@ class GridFSBucket:
         # Get file metadata using integer ID
         row = self._db.execute(
             f"""
-            SELECT length, chunkSize FROM `{self._files_collection}`
+            SELECT length, chunkSize FROM {self._files_collection}
             WHERE id = ?
         """,
             (file_int_id,),
@@ -377,7 +409,7 @@ class GridFSBucket:
         # Get all chunks in order
         cursor = self._db.execute(
             f"""
-            SELECT data FROM `{self._chunks_collection}`
+            SELECT data FROM {self._chunks_collection}
             WHERE files_id = ?
             ORDER BY n ASC
         """,
@@ -403,7 +435,7 @@ class GridFSBucket:
         if isinstance(file_id, ObjectId):
             # Look up by _id column containing ObjectId hex string
             cursor = self._db.execute(
-                f"SELECT id FROM `{self._files_collection}` WHERE _id = ?",
+                f"SELECT id FROM {self._files_collection} WHERE _id = ?",
                 (str(file_id),),
             )
         elif isinstance(file_id, str) and len(file_id) == 24:
@@ -411,7 +443,7 @@ class GridFSBucket:
             try:
                 ObjectId(file_id)  # Validate the hex string
                 cursor = self._db.execute(
-                    f"SELECT id FROM `{self._files_collection}` WHERE _id = ?",
+                    f"SELECT id FROM {self._files_collection} WHERE _id = ?",
                     (file_id,),
                 )
             except ValueError:
@@ -419,7 +451,7 @@ class GridFSBucket:
                 try:
                     int_file_id = int(file_id)
                     cursor = self._db.execute(
-                        f"SELECT id FROM `{self._files_collection}` WHERE id = ?",
+                        f"SELECT id FROM {self._files_collection} WHERE id = ?",
                         (int_file_id,),
                     )
                 except ValueError:
@@ -427,7 +459,7 @@ class GridFSBucket:
                     return None
         elif isinstance(file_id, int):
             cursor = self._db.execute(
-                f"SELECT id FROM `{self._files_collection}` WHERE id = ?",
+                f"SELECT id FROM {self._files_collection} WHERE id = ?",
                 (file_id,),
             )
         else:
@@ -466,7 +498,7 @@ class GridFSBucket:
             # Get the latest revision
             row = self._db.execute(
                 f"""
-                SELECT id FROM `{self._files_collection}`
+                SELECT id FROM {self._files_collection}
                 WHERE filename = ?
                 ORDER BY uploadDate DESC
                 LIMIT 1
@@ -477,7 +509,7 @@ class GridFSBucket:
             # Get specific revision (0-indexed)
             row = self._db.execute(
                 f"""
-                SELECT id FROM `{self._files_collection}`
+                SELECT id FROM {self._files_collection}
                 WHERE filename = ?
                 ORDER BY uploadDate ASC
                 LIMIT 1 OFFSET ?
@@ -538,7 +570,7 @@ class GridFSBucket:
         # Delete chunks first
         self._db.execute(
             f"""
-            DELETE FROM `{self._chunks_collection}`
+            DELETE FROM {self._chunks_collection}
             WHERE files_id = ?
         """,
             (file_int_id,),
@@ -547,7 +579,7 @@ class GridFSBucket:
         # Delete file document
         cursor = self._db.execute(
             f"""
-            DELETE FROM `{self._files_collection}`
+            DELETE FROM {self._files_collection}
             WHERE id = ?
         """,
             (file_int_id,),
@@ -639,7 +671,7 @@ class GridFSBucket:
         # Check if file with this ID already exists
         row = self._db.execute(
             f"""
-            SELECT id FROM `{self._files_collection}`
+            SELECT id FROM {self._files_collection}
             WHERE _id = ?
         """,
             (id_for_lookup,),
@@ -669,7 +701,7 @@ class GridFSBucket:
             # Store the ObjectId in the _id column, let SQLite auto-generate the integer id
             self._db.execute(
                 f"""
-                INSERT INTO `{self._files_collection}`
+                INSERT INTO {self._files_collection}
                 (id, _id, filename, length, chunkSize, uploadDate, md5, metadata)
                 VALUES (NULL, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -688,7 +720,7 @@ class GridFSBucket:
             # The integer in the 'id' column as the primary key, and string representation in '_id' column
             self._db.execute(
                 f"""
-                INSERT INTO `{self._files_collection}`
+                INSERT INTO {self._files_collection}
                 (id, _id, filename, length, chunkSize, uploadDate, md5, metadata)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -710,7 +742,7 @@ class GridFSBucket:
         if isinstance(file_id, ObjectId):
             # If it was an ObjectId, get the auto-generated integer ID
             file_int_id = self._db.execute(
-                f"SELECT id FROM `{self._files_collection}` WHERE _id = ?",
+                f"SELECT id FROM {self._files_collection} WHERE _id = ?",
                 (str(file_id),),
             ).fetchone()[0]
         else:
@@ -750,7 +782,7 @@ class GridFSBucket:
 
         row = self._db.execute(
             f"""
-            SELECT id FROM `{self._files_collection}`
+            SELECT id FROM {self._files_collection}
             WHERE _id = ?
         """,
             (id_for_lookup,),
@@ -780,7 +812,7 @@ class GridFSBucket:
         # Get all file IDs with this filename
         cursor = self._db.execute(
             f"""
-            SELECT _id FROM `{self._files_collection}`
+            SELECT _id FROM {self._files_collection}
             WHERE filename = ?
         """,
             (filename,),
@@ -795,7 +827,7 @@ class GridFSBucket:
         placeholders = ",".join("?" * len(file_ids))
         self._db.execute(
             f"""
-            DELETE FROM `{self._chunks_collection}`
+            DELETE FROM {self._chunks_collection}
             WHERE files_id IN ({placeholders})
         """,
             file_ids,
@@ -804,7 +836,7 @@ class GridFSBucket:
         # Delete all file documents
         self._db.execute(
             f"""
-            DELETE FROM `{self._files_collection}`
+            DELETE FROM {self._files_collection}
             WHERE filename = ?
         """,
             (filename,),
@@ -824,7 +856,7 @@ class GridFSBucket:
 
         cursor = self._db.execute(
             f"""
-            UPDATE `{self._files_collection}`
+            UPDATE {self._files_collection}
             SET filename = ?
             WHERE id = ?
         """,
@@ -844,7 +876,7 @@ class GridFSBucket:
         """
         cursor = self._db.execute(
             f"""
-            UPDATE `{self._files_collection}`
+            UPDATE {self._files_collection}
             SET filename = ?
             WHERE filename = ?
         """,
@@ -862,7 +894,7 @@ class GridFSBucket:
         all files and their associated chunks.
         """
         # Delete all chunks first (foreign key constraint)
-        self._db.execute(f"DELETE FROM `{self._chunks_collection}`")
+        self._db.execute(f"DELETE FROM {self._chunks_collection}")
 
         # Delete all files
-        self._db.execute(f"DELETE FROM `{self._files_collection}`")
+        self._db.execute(f"DELETE FROM {self._files_collection}")

@@ -10,12 +10,18 @@ from ..results import (
     UpdateResult,
 )
 from .cursor import Cursor, DESCENDING
-from .query_helper import QueryHelper
+from .query_helper import (
+    QueryHelper,
+    _get_json_function,
+    _convert_bytes_to_binary,
+)
 from .raw_batch_cursor import RawBatchCursor
 from .sql_translator_unified import SQLTranslator
 from copy import deepcopy
+from neosqlite.binary import Binary
 from neosqlite.collection.json_helpers import (
     neosqlite_json_dumps,
+    neosqlite_json_dumps_for_sql,
     neosqlite_json_loads,
 )
 from neosqlite.collection.jsonb_support import supports_jsonb
@@ -100,8 +106,167 @@ class QueryEngine:
                           including the count of matched and modified documents,
                           and the upserted ID if applicable.
         """
+        # Special handling for GridFS files collections
+        if self.collection.name.endswith("_files"):
+            return self._update_gridfs_file(filter, update, upsert)
+
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         filter = self.helpers._normalize_id_query(filter)
+        # Find the document using the filter, but we need to work with integer IDs internally
+        # For internal operations, we need to retrieve the document differently to get the integer id
+        # We'll use a direct SQL query to get both the integer id and the stored _id
+        where_clause, params = self.sql_translator.translate_match(filter)
+        if where_clause:
+            # Get the integer id as well for internal operations
+            # Use the same approach as the original code considering JSONB support
+            if self.collection.query_engine._jsonb_supported:
+                cmd = f"SELECT id, _id, json(data) as data FROM {self.collection.name} {where_clause} LIMIT 1"
+            else:
+                cmd = f"SELECT id, _id, data FROM {self.collection.name} {where_clause} LIMIT 1"
+            cursor = self.collection.db.execute(cmd, params)
+            row = cursor.fetchone()
+            if row:
+                int_id, stored_id, data = row
+                # Load the document the normal way for the update processing
+                doc = self.collection._load_with_stored_id(
+                    int_id, data, stored_id
+                )
+                # Use the integer id for internal operations
+                self.helpers._internal_update(int_id, update, doc)
+                return UpdateResult(
+                    matched_count=1, modified_count=1, upserted_id=None
+                )
+        else:
+            # Fallback to find_one if translation doesn't work
+            if doc := self.find_one(filter):
+                # Get integer id by looking up the stored ObjectId
+                int_doc_id = self._get_integer_id_for_oid(doc["_id"])
+                self.helpers._internal_update(int_doc_id, update, doc)
+                return UpdateResult(
+                    matched_count=1, modified_count=1, upserted_id=None
+                )
+
+        if upsert:
+            # For upsert, we need to create a document that includes:
+            # 1. The filter fields (as base document)
+            # 2. Apply the update operations to that document
+            new_doc: Dict[str, Any] = dict(filter)  # Start with filter fields
+            new_doc = self.helpers._internal_update(
+                0, update, new_doc
+            )  # Apply updates
+            inserted_id = self.insert_one(new_doc).inserted_id
+            return UpdateResult(
+                matched_count=0, modified_count=0, upserted_id=inserted_id
+            )
+
+        return UpdateResult(matched_count=0, modified_count=0, upserted_id=None)
+
+    def _update_gridfs_file(
+        self,
+        filter: Dict[str, Any],
+        update: Dict[str, Any],
+        upsert: bool = False,
+    ) -> UpdateResult:
+        """Handle updates for GridFS files collections."""
+        from .json_path_utils import parse_json_path
+
+        # Get the integer ID for the file
+        filter = self.helpers._normalize_id_query(filter)
+        where_clause, params = self.sql_translator.translate_match(filter)
+        if not where_clause:
+            where_clause = ""
+
+        cmd = f"SELECT id FROM {self.collection.name} {where_clause} LIMIT 1"
+        cursor = self.collection.db.execute(cmd, params)
+        row = cursor.fetchone()
+        if not row:
+            if upsert:
+                # For upsert, we would need to create a new file, but that's complex
+                # For now, just return no match
+                return UpdateResult(
+                    matched_count=0, modified_count=0, upserted_id=None
+                )
+            return UpdateResult(
+                matched_count=0, modified_count=0, upserted_id=None
+            )
+
+        int_id = row[0]
+
+        # Handle $set operations on metadata using SQL JSON functions
+        if "$set" in update:
+            set_clauses = []
+            set_params = []
+
+            for key, value in update["$set"].items():
+                if key == "metadata":
+                    # Update entire metadata column directly
+                    # Use jsonb_set for consistency and gradual migration to JSONB storage
+                    func_name = _get_json_function("set", self._jsonb_supported)
+
+                    # Need to serialize dict/list to JSON for SQLite storage
+                    if isinstance(value, (dict, list)):
+                        if self._jsonb_supported:
+                            # Use jsonb_set to store as JSONB for better performance
+                            set_clauses.append(
+                                f"metadata = {func_name}(metadata, '$', json(?))"
+                            )
+                            set_params.append(
+                                neosqlite_json_dumps_for_sql(value)
+                            )
+                        else:
+                            # Fallback to json() for non-JSONB databases
+                            set_clauses.append("metadata = json(?)")
+                            set_params.append(
+                                neosqlite_json_dumps_for_sql(value)
+                            )
+                    else:
+                        set_clauses.append("metadata = ?")
+                        set_params.append(value)
+                elif key.startswith("metadata."):
+                    # Update nested field in metadata using json_set/jsonb_set
+                    # The field path is like "metadata.priority", we need to update
+                    # the metadata column with json_set(data, '$.priority', value)
+                    field_path = key[9:]  # Remove "metadata."
+                    json_path = f"'{parse_json_path(field_path)}'"
+
+                    # Convert bytes to Binary for proper JSON serialization
+                    converted_val = _convert_bytes_to_binary(value)
+
+                    # Determine if we should use jsonb_* or json_* functions
+                    func_name = _get_json_function("set", self._jsonb_supported)
+
+                    if isinstance(converted_val, (dict, list)):
+                        # For complex objects, serialize to JSON
+                        set_clauses.append(
+                            f"metadata = {func_name}(metadata, {json_path}, json(?))"
+                        )
+                        set_params.append(
+                            neosqlite_json_dumps_for_sql(converted_val)
+                        )
+                    elif isinstance(converted_val, Binary):
+                        set_clauses.append(
+                            f"metadata = {func_name}(metadata, {json_path}, json(?))"
+                        )
+                        set_params.append(
+                            neosqlite_json_dumps_for_sql(converted_val)
+                        )
+                    else:
+                        set_clauses.append(
+                            f"metadata = {func_name}(metadata, {json_path}, ?)"
+                        )
+                        set_params.append(converted_val)
+
+            # Execute the update if we have any clauses
+            if set_clauses:
+                cmd = (
+                    f"UPDATE {self.collection.name} "
+                    f"SET {', '.join(set_clauses)} "
+                    f"WHERE id = ?"
+                )
+                sql_params = set_params + [int_id]
+                self.collection.db.execute(cmd, sql_params)
+
+        return UpdateResult(matched_count=1, modified_count=1, upserted_id=None)
         # Find the document using the filter, but we need to work with integer IDs internally
         # For internal operations, we need to retrieve the document differently to get the integer id
         # We'll use a direct SQL query to get both the integer id and the stored _id
