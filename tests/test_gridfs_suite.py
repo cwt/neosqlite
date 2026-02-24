@@ -1187,6 +1187,165 @@ def test_metadata_update_after_upload(bucket, connection):
         assert grid_out.metadata == expected_final_metadata
 
 
+def test_gridfs_collection_access_limitations(bucket, connection):
+    """Test GridFS collection access patterns.
+
+    As of v1.3.1, Collection.find() on GridFS system collections automatically
+    delegates to GridFSBucket.find(), enabling PyMongo-style access patterns.
+    """
+    import uuid
+
+    # Upload test files with unique metadata (using UUID for uniqueness)
+    unique_id = str(uuid.uuid4())[:8]
+    file_id_1 = bucket.upload_from_stream(
+        f"test1_{unique_id}.txt", b"Data 1", {"test_run": unique_id}
+    )
+    bucket.upload_from_stream(
+        f"test2_{unique_id}.txt", b"Data 2", {"test_run": "other_" + unique_id}
+    )
+
+    # Test 1: update_one() works for metadata updates (this is supported)
+    result = connection.fs.files.update_one(
+        {"_id": file_id_1},
+        {"$set": {"metadata": {"test_run": unique_id, "updated": True}}},
+    )
+    assert result.modified_count == 1
+
+    # Verify the update worked
+    with bucket.open_download_stream(file_id_1) as grid_out:
+        assert grid_out.metadata == {"test_run": unique_id, "updated": True}
+
+    # Test 2: Direct collection find() now works via GridFSBucket delegation!
+    # As of v1.3.1, Collection.find() detects GridFS tables and delegates to GridFSBucket
+    cursor = connection.fs.files.find({"filename": f"test1_{unique_id}.txt"})
+    docs = list(cursor)
+    assert len(docs) == 1
+    assert docs[0].filename == f"test1_{unique_id}.txt"
+    assert docs[0].metadata == {"test_run": unique_id, "updated": True}
+
+    # Test 3: bucket.find() is still the recommended API for GridFS queries
+    # Find by unique filename using bucket API (recommended)
+    bucket_cursor = bucket.find({"filename": f"test1_{unique_id}.txt"})
+    bucket_docs = list(bucket_cursor)
+    assert len(bucket_docs) == 1
+    assert bucket_docs[0].filename == f"test1_{unique_id}.txt"
+
+    # Verify the updated metadata via the found document
+    assert bucket_docs[0].metadata == {"test_run": unique_id, "updated": True}
+
+    # Find all files using bucket API (recommended)
+    all_files_cursor = bucket.find({})
+    all_files = list(all_files_cursor)
+    assert len(all_files) >= 2  # At least our two test files
+
+    # Test 4: Direct SQL queries work for administrative operations
+    # For advanced users who need direct access to GridFS system tables
+    sql_cursor = connection.db.execute(
+        "SELECT filename, metadata FROM fs_files WHERE filename = ?",
+        (f"test1_{unique_id}.txt",),
+    )
+    sql_docs = list(sql_cursor)
+    assert len(sql_docs) == 1
+    assert sql_docs[0][0] == f"test1_{unique_id}.txt"
+
+
+def test_gridfs_recommended_usage_pattern(bucket, connection):
+    """Test the recommended GridFS usage pattern for common operations.
+
+    This test demonstrates the recommended API patterns:
+    - Use GridFSBucket for upload/download/delete operations
+    - Use nested collection access for administrative metadata updates
+    - Use bucket.find() for complex GridFS queries
+    """
+    import uuid
+
+    unique_id = str(uuid.uuid4())[:8]
+
+    # Recommended: Upload using GridFSBucket API
+    file_id = bucket.upload_from_stream(
+        f"recommended_{unique_id}.txt",
+        b"Test content",
+        metadata={"test_run": unique_id, "version": 1},
+    )
+    assert file_id is not None
+
+    # Recommended: Download using GridFSBucket API
+    with bucket.open_download_stream(file_id) as grid_out:
+        content = grid_out.read()
+        assert content == b"Test content"
+        assert grid_out.filename == f"recommended_{unique_id}.txt"
+
+    # Recommended: Update metadata using nested collection access
+    connection.fs.files.update_one(
+        {"_id": file_id},
+        {"$set": {"metadata": {"test_run": unique_id, "version": 2}}},
+    )
+
+    # Recommended: Query using bucket.find() for GridFS-aware results
+    # Use the unique test_run to ensure we only get our test file
+    cursor = bucket.find(
+        {"metadata.test_run": unique_id, "metadata.version": 2}
+    )
+    results = list(cursor)
+    assert len(results) == 1
+
+    # Recommended: Delete using GridFSBucket API
+    bucket.delete(file_id)
+
+    # Verify deletion
+    cursor = bucket.find({"_id": file_id})
+    results = list(cursor)
+    assert len(results) == 0
+
+
+def test_gridfs_collection_schema_detection(connection):
+    """Test that GridFS collection detection uses schema verification, not just naming.
+
+    This ensures that regular collections with names like 'my_files' or 'data_chunks'
+    are not incorrectly delegated to GridFSBucket.
+    """
+    # Test 1: Regular collection named 'my_files' should NOT be treated as GridFS
+    coll_files = connection.my_files
+    coll_files.insert_one({"name": "test", "value": 42})
+
+    # Should work as a regular collection (returns dict, not GridOut)
+    docs = list(coll_files.find({"name": "test"}))
+    assert len(docs) == 1
+    assert isinstance(docs[0], dict)
+    assert docs[0]["name"] == "test"
+    # Verify it's NOT using GridFS delegation (no filename attribute)
+    assert "filename" not in docs[0]
+
+    # Test 2: Regular collection named 'data_chunks' should NOT be treated as GridFS
+    coll_chunks = connection.data_chunks
+    coll_chunks.insert_one({"chunk": 1, "content": "data"})
+
+    # Should work as a regular collection
+    docs = list(coll_chunks.find({"chunk": 1}))
+    assert len(docs) == 1
+    assert isinstance(docs[0], dict)
+    assert docs[0]["chunk"] == 1
+
+    # Test 3: Actual GridFS collection SHOULD be detected and delegated
+    from neosqlite.gridfs import GridFSBucket
+
+    bucket = GridFSBucket(connection.db)
+    bucket.upload_from_stream("gridfs_test.txt", b"GridFS content")
+
+    # This should use GridFS delegation (returns GridOut, not dict)
+    cursor = connection.fs.files.find({"filename": "gridfs_test.txt"})
+    files = list(cursor)
+    assert len(files) == 1
+    # GridOut objects have filename attribute
+    assert hasattr(files[0], "filename")
+    assert files[0].filename == "gridfs_test.txt"
+
+    # Test 4: Actual GridFS chunks collection SHOULD be detected
+    cursor = connection.fs.chunks.find({"files_id": 1})
+    chunks = list(cursor)
+    assert len(chunks) > 0  # Should have at least one chunk
+
+
 def test_gridfsbucket_with_disable_md5(bucket):
     """Test GridFSBucket with disable_md5 option."""
     # Create bucket with MD5 disabled

@@ -447,17 +447,125 @@ class Collection:
 
     def delete_one(self, filter: Dict[str, Any]) -> DeleteResult:
         """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.delete_one`.
+        Delete a single document.
+
+        For GridFS system collections (e.g., fs_files, fs_chunks), this method
+        automatically delegates to GridFSBucket.delete() to handle the different schema
+        and properly clean up both files and chunks.
+
+        Args:
+            filter: Query filter to match document to delete
+
+        Returns:
+            DeleteResult: Result of the delete operation
         """
+        # Check if this is a GridFS system collection
+        if self._is_gridfs_collection():
+            return self._delete_one_as_gridfs(filter)
+
         return self.query_engine.delete_one(filter)
+
+    def _delete_one_as_gridfs(self, filter: Dict[str, Any]):
+        """
+        Delete a single document from a GridFS system collection using GridFSBucket API.
+
+        This properly handles GridFS deletion by removing both the file document
+        and associated chunks.
+
+        Args:
+            filter: Query filter to match document to delete
+
+        Returns:
+            DeleteResult: Result of the delete operation
+        """
+        from ..gridfs import GridFSBucket
+        from ..results import DeleteResult
+
+        # Extract bucket name from collection name
+        if self.name.endswith("_files"):
+            bucket_name = self.name[:-6]
+        elif self.name.endswith("_chunks"):
+            bucket_name = self.name[:-7]
+        else:
+            raise RuntimeError(f"Invalid GridFS collection name: {self.name}")
+
+        # Find the file(s) to delete
+        bucket = GridFSBucket(self.db, bucket_name=bucket_name)
+        cursor = bucket.find(filter)
+        files = list(cursor)
+
+        if not files:
+            # No files found, nothing deleted
+            return DeleteResult(0)
+
+        # Delete the first matching file (and its chunks)
+        file_to_delete = files[0]
+        bucket.delete(file_to_delete._id)
+
+        # Return DeleteResult with deleted count
+        return DeleteResult(1)
 
     def delete_many(self, filter: Dict[str, Any]) -> DeleteResult:
         """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.delete_many`.
+        Delete multiple documents.
+
+        For GridFS system collections (e.g., fs_files, fs_chunks), this method
+        automatically delegates to GridFSBucket.delete() to handle the different schema
+        and properly clean up both files and chunks.
+
+        Args:
+            filter: Query filter to match documents to delete
+
+        Returns:
+            DeleteResult: Result of the delete operation
         """
+        # Check if this is a GridFS system collection
+        if self._is_gridfs_collection():
+            return self._delete_many_as_gridfs(filter)
+
         return self.query_engine.delete_many(filter)
+
+    def _delete_many_as_gridfs(self, filter: Dict[str, Any]):
+        """
+        Delete multiple documents from a GridFS system collection using GridFSBucket API.
+
+        This properly handles GridFS deletion by removing both file documents
+        and associated chunks.
+
+        Args:
+            filter: Query filter to match documents to delete
+
+        Returns:
+            DeleteResult: Result of the delete operation
+        """
+        from ..gridfs import GridFSBucket
+        from ..results import DeleteResult
+
+        # Extract bucket name from collection name
+        if self.name.endswith("_files"):
+            bucket_name = self.name[:-6]
+        elif self.name.endswith("_chunks"):
+            bucket_name = self.name[:-7]
+        else:
+            raise RuntimeError(f"Invalid GridFS collection name: {self.name}")
+
+        # Find the files to delete
+        bucket = GridFSBucket(self.db, bucket_name=bucket_name)
+        cursor = bucket.find(filter)
+        files = list(cursor)
+
+        if not files:
+            # No files found, nothing deleted
+            return DeleteResult(0)
+
+        # Delete all matching files (and their chunks)
+        deleted_count = 0
+        for file in files:
+            bucket.delete(file._id)
+            deleted_count += 1
+
+        # Return DeleteResult with deleted count
+        return DeleteResult(deleted_count)
 
     def find(
         self,
@@ -466,10 +574,96 @@ class Collection:
         hint: str | None = None,
     ) -> Cursor:
         """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.find`.
+        Find documents in the collection.
+
+        For GridFS system collections (e.g., fs_files, fs_chunks), this method
+        automatically delegates to GridFSBucket.find() to handle the different schema.
+
+        Args:
+            filter: Query filter
+            projection: Field projection (not supported for GridFS collections)
+            hint: Index hint (not supported for GridFS collections)
+
+        Returns:
+            Cursor or GridOutCursor: Query results
         """
+        # Check if this is a GridFS system collection
+        if self._is_gridfs_collection():
+            return self._find_as_gridfs(filter)
+
         return self.query_engine.find(filter, projection, hint)
+
+    def _is_gridfs_collection(self) -> bool:
+        """
+        Check if this collection is a GridFS system collection.
+
+        Uses a two-step verification:
+        1. Check naming convention (ends with _files or _chunks)
+        2. Verify schema has GridFS-specific columns
+
+        Returns:
+            bool: True if this is a GridFS system collection
+        """
+        # Step 1: Check naming convention
+        if not (self.name.endswith("_files") or self.name.endswith("_chunks")):
+            return False
+
+        # Step 2: Verify schema has GridFS-specific columns
+        # GridFS files table has: filename, length, chunkSize, uploadDate, md5, metadata
+        # GridFS chunks table has: files_id, n, data
+        try:
+            cursor = self.db.execute(f"PRAGMA table_info({self.name})")
+            columns = {row[1] for row in cursor}  # Column names are in index 1
+
+            if self.name.endswith("_files"):
+                # Check for GridFS files table columns
+                gridfs_columns = {
+                    "filename",
+                    "length",
+                    "chunkSize",
+                    "uploadDate",
+                    "metadata",
+                }
+                return gridfs_columns.issubset(columns)
+            elif self.name.endswith("_chunks"):
+                # Check for GridFS chunks table columns
+                gridfs_columns = {"files_id", "n", "data"}
+                return gridfs_columns.issubset(columns)
+        except Exception:
+            # If we can't check schema, fall back to naming convention
+            pass
+
+        # Default to naming convention if schema check fails
+        return self.name.endswith("_files") or self.name.endswith("_chunks")
+
+    def _find_as_gridfs(self, filter: Dict[str, Any] | None = None):
+        """
+        Execute find on a GridFS system collection using GridFSBucket API.
+
+        This allows PyMongo-style access like db.fs.files.find({...}) to work
+        by delegating to the GridFSBucket.find() method which understands the
+        GridFS schema.
+
+        Args:
+            filter: Query filter
+
+        Returns:
+            GridOutCursor: Cursor over GridOut objects
+        """
+        from ..gridfs import GridFSBucket
+
+        # Extract bucket name from collection name (e.g., "fs_files" -> "fs")
+        if self.name.endswith("_files"):
+            bucket_name = self.name[:-6]  # Remove "_files"
+        elif self.name.endswith("_chunks"):
+            bucket_name = self.name[:-7]  # Remove "_chunks"
+        else:
+            # Should not happen if _is_gridfs_collection() is correct
+            raise RuntimeError(f"Invalid GridFS collection name: {self.name}")
+
+        # Create GridFSBucket and delegate find operation
+        bucket = GridFSBucket(self.db, bucket_name=bucket_name)
+        return bucket.find(filter)
 
     def find_raw_batches(
         self,
@@ -493,9 +687,27 @@ class Collection:
         hint: str | None = None,
     ) -> Dict[str, Any] | None:
         """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.find_one`.
+        Find a single document.
+
+        For GridFS system collections (e.g., fs_files, fs_chunks), this method
+        automatically delegates to GridFSBucket.find() to handle the different schema.
+
+        Args:
+            filter: Query filter
+            projection: Field projection (not supported for GridFS collections)
+            hint: Index hint (not supported for GridFS collections)
+
+        Returns:
+            Dict or GridOut or None: Query result
         """
+        # Check if this is a GridFS system collection
+        if self._is_gridfs_collection():
+            cursor = self._find_as_gridfs(filter)
+            # Return first result or None
+            for doc in cursor:
+                return doc
+            return None
+
         return self.query_engine.find_one(filter, projection, hint)
 
     def count_documents(self, filter: Dict[str, Any]) -> int:

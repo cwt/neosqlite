@@ -1,9 +1,26 @@
 # CHANGELOG
 
+## 1.3.1
+
+### Fixed
+- **GridFS Collection Queries**: `connection.fs.files.find()`, `find_one()`, `delete_one()`, and `delete_many()` now work correctly by automatically delegating to `GridFSBucket` methods
+- **Documentation**: Clarified GridFS collection access capabilities and corrected misleading "limitation" claims
+- **Release Notes**: Updated v1.3.0 notes to accurately reflect GridFS API scope
+
+### Added
+- **GridFS Auto-Delegation**: `Collection` methods (`find()`, `find_one()`, `delete_one()`, `delete_many()`) now detect GridFS system collections (tables ending with `_files` or `_chunks`) and automatically delegate to corresponding `GridFSBucket` methods
+- **Schema Verification**: GridFS detection uses two-step verification (naming convention + schema check) to prevent false positives with regular collections
+- **PyMongo Compatibility**: Enhanced compatibility with PyMongo-style `db.fs.files.find()`, `db.fs.files.delete_one()`, etc.
+
+### Documentation
+- **GridFS API Scope**: Documented that `connection.fs.files.find()`, `find_one()`, `delete_one()`, and `delete_many()` now work via automatic delegation
+- **Usage Guidance**: Updated examples to show both `bucket.find()` (recommended) and `conn.fs.files.find()` (now supported) for queries
+- **Known Limitations**: Clarified that insert operations still require `GridFSBucket` API (`bucket.upload_from_stream()`)
+
 ## 1.3.0
 
 ### Added
-- **PyMongo-style nested access**: Support for `connection.fs.files` and `connection.fs.chunks` syntax, enabling drop-in replacement for PyMongo GridFS operations
+- **PyMongo-style nested access**: Support for `connection.fs.files` and `connection.fs.chunks` syntax for GridFS system collection operations
 - **Automatic GridFS table migration**: Seamless migration from dot-based table names (`fs.files`) to underscore-based names (`fs_files`) for better SQLite compatibility
 - **Backward compatibility**: Existing databases with old table names are automatically migrated on first access
 - **$count aggregation stage**: Implemented MongoDB-compatible `$count` aggregation stage
@@ -30,6 +47,7 @@
 ### Documentation
 - Added migration guide in `documents/gridfs-migration.md`
 - Updated GridFS usage examples to demonstrate PyMongo-like syntax
+- **Note**: For full GridFS operations (upload, download, delete), use the `GridFSBucket` API. Nested collection access (`connection.fs.files`) is intended for administrative operations like metadata updates.
 
 ## 1.2.3
 
