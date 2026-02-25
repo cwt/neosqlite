@@ -1,252 +1,209 @@
-# NeoSQLite Missing APIs Implementation Roadmap
+# NeoSQLite Implementation Roadmap & Priority Analysis
 
-This document provides a prioritized roadmap for implementing missing PyMongo-compatible APIs and operators in NeoSQLite.
+This document provides a comprehensive analysis of unimplemented PyMongo-compatible features, organized by priority levels based on feasibility, user impact, and SQLite architectural constraints.
 
-## 🎉 Major Milestone Achieved: GridFS Implementation Complete
+## 🎉 Major Achievements - GridFS Implementation Complete
 
-### ✅ **GridFS Implementation Status: 100% COMPLETE**
-All previously missing GridFS features have been successfully implemented:
+### ✅ **GridFS Status: 100% COMPLETE**
+All previously missing GridFS features have been successfully implemented with enhanced metadata support.
 
-- ✅ **GridFSBucket.find_one()** - Direct method implementation
-- ✅ **GridFSBucket.get_last_version()** - Version management
-- ✅ **GridFSBucket.get_version()** - Revision-based file retrieval
-- ✅ **GridFSBucket.list()** - Filename listing
-- ✅ **GridFSBucket.get()** - Convenience file access
-- ✅ **Content Type Support** - MIME type storage and querying
-- ✅ **Aliases Support** - Multiple filename aliases with search
-- ✅ **Automatic Schema Migration** - Seamless database upgrades
-- ✅ **Collection Access Delegation** - PyMongo-style db.fs.files.* operations
+## 📊 Priority Analysis of Unimplemented Features
 
-**Impact**: NeoSQLite now provides 100% PyMongo API compatibility for GridFS operations with enhanced features beyond standard PyMongo.
+### 🚫 **P0 - CRITICAL: Not Applicable to SQLite Architecture**
+*(Cannot be implemented due to fundamental SQLite limitations)*
 
-## Priority Levels
+#### Distributed Database Features
+- Replica set awareness and automatic failover
+- Sharded cluster support
+- Mongos routing
+- Read from secondaries support
 
-- **P0 (Critical)**: Essential for basic functionality or widely used APIs
-- **P1 (High)**: Important for compatibility and commonly requested features
-- **P2 (Medium)**: Useful enhancements that improve completeness
-- **P3 (Low)**: Nice-to-have features for edge cases
+#### Advanced Security Features
+- Multiple authentication mechanisms (SCRAM-SHA-1, SCRAM-SHA-256, X.509, Kerberos, LDAP)
+- SSL/TLS configuration options
+- Client-side field level encryption
 
-## P0 - Critical Priority
+#### Advanced Monitoring Features
+- Command monitoring with events
+- Server monitoring and topology monitoring
+- Connection monitoring
 
-### ~~1. Collection.drop() Method~~
-- **Status**: ✅ COMPLETED
-- **GridFS Note**: Full GridFS support including drop() method now available
-- **Why**: Essential for collection management
-- **Effort**: Low
-- **Impact**: High
-- **Dependencies**: None
+**Total**: 11 features | **Status**: Not Applicable
 
-### ~~2. Connection.create_collection() Method~~
-- **Status**: ✅ COMPLETED
-- **Why**: Essential for explicit collection creation with options
-- **Effort**: Low
-- **Impact**: High
-- **Dependencies**: Collection class
+---
 
-### ~~3. Connection.list_collection_names() Method~~
-- **Status**: ✅ COMPLETED
-- **Why**: Essential for database introspection
-- **Effort**: Low
-- **Impact**: High
-- **Dependencies**: None
+### 🔴 **P1 - HIGH PRIORITY: Feasible & High Impact**
+*(Should be implemented next - high user demand & feasible with SQLite)*
 
-## P1 - High Priority
+#### Query Operators (4 features)
+- `$expr` operator - Expression evaluation in queries
+- `$jsonSchema` operator - JSON Schema validation
+- Bitwise operators (`$bitsAllClear`, `$bitsAllSet`, `$bitsAnyClear`, `$bitsAnySet`)
+- Geospatial Operators (with SpatiaLite extension)
 
-### ~~4. Complete Logical Operator Support~~
-- **Status**: ✅ COMPLETED
-- **Why**: Essential for complex queries
-- **Effort**: Medium
-- **Impact**: High
-- **Dependencies**: SQL translator enhancements
-- **Operators**: `$and`, `$or`, `$not`, `$nor`
+#### Aggregation Pipeline Enhancements (5 features)
+- `$bucket` and `$bucketAuto` stages - Data analysis and grouping
+- `$out` and `$merge` stages - ETL operations writing to collections
+- `$elemMatch` in projections - Array field filtering in projections
+- `$slice` in projections - Array element selection in projections
 
-### ~~5. Missing Query Operators~~
-- **Status**: ✅ COMPLETED
-- **Why**: Important for query completeness
-- **Effort**: Medium
-- **Impact**: High
-- **Operators**:
-  - `$all` - Array matching
-  - `$type` - Type checking
+#### Performance & Monitoring (3 features)
+- Explain plan functionality - Query optimization and debugging
+- Collection statistics - Performance analysis via PRAGMA commands
+- Index usage statistics - Optimization and maintenance support
 
-### ~~6. Connection.list_collections() Method~~
-- **Status**: ✅ COMPLETED
-- **Why**: Detailed database introspection
-- **Effort**: Low
-- **Impact**: Medium
-- **Dependencies**: None
+#### Session & Transaction Management (3 features)
+- Client sessions - Application-level session management
+- Read/write concerns - Consistency and reliability configuration
+- Retryable writes - Exception handling and retry logic
 
-### ~~7. Collection.aggregate_raw_batches() Method~~
-- **Status**: ✅ COMPLETED
-- **Why**: Important for performance with large aggregation results
-- **Effort**: Medium
-- **Impact**: Medium
-- **Dependencies**: RawBatchCursor enhancements
+#### Connection Management (3 features)
+- Connection pooling - Better performance in multi-threaded applications
+- URI parsing - Standardization and configuration
+- Timeout handling - Connection and query timeouts
 
-### ~~8. Enhanced JSON Functions Integration~~
-- **Status**: ✅ PHASE 2 COMPLETED
-- **Why**: Significant performance improvements through native JSON functions
-- **Effort**: High
-- **Impact**: High
-- **Dependencies**: SQLite JSON1 extension support
-- **Features**:
-  - Enhanced update operations with `json_insert()` and `json_replace()`
-  - JSONB function support with fallback to `json_*` functions
-  - Enhanced aggregation with `json_group_array()` and `json_group_object()`
+#### Advanced Indexing (1 feature)
+- TTL indexes simulation - Time-based data cleanup via triggers
 
-### ~~9. ObjectId Support~~
-- **Status**: ✅ COMPLETED
-- **Why**: Essential for MongoDB compatibility and document identification
-- **Effort**: Medium
-- **Impact**: High
-- **Dependencies**: Collection schema modifications, JSON serialization updates
-- **Features**:
-  - MongoDB-compatible 12-byte ObjectId implementation
-  - Automatic generation when no _id provided
-  - Dedicated _id column with unique indexing for performance
-  - Full hex interchangeability with PyMongo ObjectIds
-  - Backward compatibility with existing collections
-  - JSON serialization and deserialization support
-  - Thread-safe implementation with proper locking
+**Total**: 19 features | **Effort**: Medium-High | **Impact**: High
 
-## P2 - Medium Priority
+---
 
-### ~~9. Evaluation Operators~~
-- **Status**: ❌ NOT IMPLEMENTED
-- **Why**: Important for advanced queries
-- **Effort**: High
-- **Impact**: Medium
-- **Operators**:
-  - `$expr` - Expression evaluation
-  - `$jsonSchema` - Schema validation
+### 🟡 **P2 - MEDIUM PRIORITY: PyMongo Compatibility**
+*(Important for API completeness but lower user impact)*
 
-### ~~10. Connection.validate_collection() Method~~
-- **Status**: ❌ NOT IMPLEMENTED
-- **Why**: Useful for database maintenance
-- **Effort**: Low
-- **Impact**: Low
-- **Dependencies**: SQLite integrity checks
+#### Database Class Methods (7 features)
+- `server_info()` - Server information retrieval
+- `start_session()` - Basic session support
+- `list_databases()` / `list_database_names()` - Database enumeration
+- `drop_database()` - Database deletion
+- `get_default_database()` / `get_database()` - Database access
+- `Database.command()` - Database command execution
+- `Database.with_options()` - Database cloning with options
+- `Database.get_collection()` - Collection access with options
 
-### ~~11. Collection.with_options() Method~~
-- **Status**: ❌ NOT IMPLEMENTED
-- **Why**: Useful for collection cloning with different options
-- **Effort**: Low
-- **Impact**: Low
-- **Dependencies**: None
+#### Collection Class Methods (2 features)
+- `validate_collection()` - Collection validation
+- `Collection.with_options()` - Collection cloning with options
 
-## P3 - Low Priority
+#### Cursor Class Methods (8 features)
+- `explain()` - Query execution explanation
+- `hint()` - Index hint specification
+- `max_time_ms()` - Query timeout control
+- `batch_size()` - Memory-efficient batch control
+- `collation()` - Internationalization support
+- `comment()` - Query debugging comments
+- `allow_disk_use()` - Large dataset processing
+- `try_next()` - Non-blocking document access
 
-### 11. Geospatial Operators
-- **Why**: Specialized use case
-- **Effort**: High
-- **Impact**: Low
-- **Operators**:
-  - `$geoIntersects`
-  - `$geoWithin`
-  - `$near`
-  - `$nearSphere`
+#### Basic Command Support (1 feature)
+- `command()` method - Arbitrary database command execution
 
-### 12. Enhanced Utility Methods
-- **Why**: Minor usability improvements
-- **Effort**: Low
-- **Impact**: Low
-- **Methods**:
-  - Enhanced `__getitem__()` and `__getattr__()`
+#### Advanced Aggregation (2 features)
+- More pipeline stages (`$graphLookup`, `$addFields`)
+- Aggregation with `explain` option
 
-### 13. Array Projection Operators
-- **Why**: Specialized projection use cases
-- **Effort**: Medium
-- **Impact**: Low
-- **Operators**:
-  - `$slice` in projections - ❌ NOT IMPLEMENTED
+#### Index Management (3 features)
+- Text indexes with complex options
+- TTL indexes with advanced options
+- Partial indexes (advanced use cases)
 
-### 14. Highly Feasible Aggregation Pipeline Features
-- **Why**: Based on feasibility analysis of SQLite capabilities
-- **Effort**: High
-- **Impact**: High
-- **Features**:
-  - `$bucket` and `$bucketAuto` - ❌ NOT IMPLEMENTED - Can be implemented using SQL CASE statements and range functions
-  - `$facet` - ❌ NOT IMPLEMENTED - Can be implemented by running multiple concurrent queries and combining results
-  - `$out` and `$merge` - ❌ NOT IMPLEMENTED - Can be implemented using SQL INSERT/UPDATE statements to write aggregation results to other tables/collections
-  - `$addFields` improvements - ✅ COMPLETED - Already enhanced with complex expressions
+**Total**: 23 features | **Effort**: Medium | **Impact**: Medium
 
-### 15. Highly Feasible Advanced Query Operators
-- **Why**: Based on feasibility analysis of SQLite capabilities
-- **Effort**: Medium
-- **Impact**: High
-- **Features**:
-  - `$elemMatch` in projections - ❌ NOT IMPLEMENTED - Can be implemented using JSON path functions (Note: regular $elemMatch is implemented but not in projections)
-  - `$all` operator improvements - ✅ COMPLETED - Already enhanced using JSON array functions and existence checks
+---
 
-### 16. Performance and Monitoring Features
-- **Why**: Critical for query optimization and debugging
-- **Effort**: Low
-- **Impact**: High
-- **Features**:
-  - Explain plan functionality - ❌ NOT IMPLEMENTED - SQLite has built-in EXPLAIN QUERY PLAN functionality that can be exposed (though used internally for testing)
-  - Collection statistics - ❌ NOT IMPLEMENTED - SQLite provides table statistics via PRAGMA commands
-  - Index usage statistics - ❌ NOT IMPLEMENTED - SQLite provides index usage information
+### 🟢 **P3 - LOW PRIORITY: Nice-to-Have Features**
+*(Specialized features for edge cases)*
 
-### 17. Session and Transaction Management
-- **Why**: For consistency and reliability control
-- **Effort**: Medium
-- **Impact**: Medium
-- **Features**:
-  - Client sessions - ❌ NOT IMPLEMENTED - Can be implemented at the application level
-  - Read/write concerns - ❌ NOT IMPLEMENTED - Can be implemented as configuration options
-  - Retryable writes - ❌ NOT IMPLEMENTED - Can be implemented with exception handling and retry logic
+#### Advanced Collection Operations (2 features)
+- `stats()` - Detailed collection statistics
+- Enhanced `replace_one()` and `find_one_and_update()` options
 
-### 18. Advanced Indexing Features
-- **Why**: For performance optimization and specific use cases
-- **Effort**: Medium
-- **Impact**: Medium
-- **Features**:
-  - Partial indexes - ✅ COMPLETED - SQLite supports partial indexes (WHERE clause in CREATE INDEX), already implemented
-  - TTL indexes simulation - ❌ NOT IMPLEMENTED - Can be implemented using triggers and background cleanup tasks
-  - Advanced text index options - ✅ COMPLETED - SQLite FTS5 already provides good text search, with additional options implemented
+#### Specialized Indexing (2 features)
+- Geo index support (requires SpatiaLite)
+- Index collation (internationalization)
 
-### 19. Connection Management Features
-- **Why**: For better performance in multi-threaded applications
-- **Effort**: Medium
-- **Impact**: Medium
-- **Features**:
-  - Connection pooling - ❌ NOT IMPLEMENTED - Can be implemented at the application level using connection pools
-  - URI parsing - ❌ NOT IMPLEMENTED - Standard Python functionality
-  - Timeout handling - ❌ NOT IMPLEMENTED - SQLite supports timeout configuration
+#### Advanced Administrative Features (3 features)
+- User management commands
+- Role management commands
+- Database profiling commands
 
-## Implementation Summary
+**Total**: 7 features | **Effort**: Low-Medium | **Impact**: Low
 
-### ✅ **Major Achievements**
-- **GridFS Implementation**: 100% PyMongo API compatibility achieved
-- **Enhanced Features**: Content type and aliases support beyond standard PyMongo
-- **Schema Evolution**: Automatic migration system for existing databases
-- **Collection Access**: PyMongo-style db.fs.files.* operations fully functional
+---
 
-### 📊 **Current Compatibility Status**
-- **Core CRUD Operations**: 100% compatible
-- **Aggregation Pipeline**: 85%+ SQL optimization achieved
-- **GridFS Operations**: 100% compatible + enhancements
-- **Text Search**: Full FTS5 integration
-- **Overall API Compatibility**: ~98%+
+## 📈 Implementation Priority Summary
 
-## Future Roadmap
+| Priority | Feature Count | Category | Recommended Action |
+|----------|---------------|----------|-------------------|
+| **P0** | 11 | Not Applicable | Will not implement |
+| **P1** | 19 | High Impact/Feasible | Implement next |
+| **P2** | 23 | API Compatibility | Implement after P1 |
+| **P3** | 7 | Specialized | Implement as needed |
 
-### Phase 2: Advanced Features (Post-GridFS)
-- Enhanced JSON path parsing with array indexing support
-- Advanced aggregation pipeline optimizations
-- Additional query operator implementations
-- Performance monitoring and analytics features
+## 🎯 Recommended Implementation Order
 
-### Phase 3: Specialized Features
-- Geospatial query support (if feasible with SQLite extensions)
-- Advanced session and transaction management
-- Connection pooling implementations
-- Enhanced error handling and diagnostics
+### **Phase 1: Immediate Priority (P1)**
+1. **Query Operators**: `$expr`, `$jsonSchema`, bitwise operators (highest user impact)
+2. **Aggregation Enhancements**: `$bucket`, `$out`, `$merge` (commonly requested)
+3. **Performance Features**: Explain plan, collection statistics (developer experience)
+4. **Session Management**: Client sessions, read/write concerns (reliability)
 
-## Not Feasible Due to SQLite Architecture
+### **Phase 2: API Completeness (P2)**
+1. **Database Methods**: `server_info()`, `list_databases()`, `start_session()`
+2. **Cursor Enhancements**: `explain()`, `hint()`, `max_time_ms()`
+3. **Collection Methods**: `validate_collection()`, advanced options
+4. **Command Support**: Basic `command()` method implementation
 
-### Distributed/Multi-node Features (Not Applicable)
-- Replica set support
-- Read preferences
-- Server status monitoring
-- Distributed transactions
+### **Phase 3: Specialized Features (P3)**
+- Implement based on user demand and specific use cases
+
+## 📋 Detailed Implementation Plans
+
+### **P1 High Priority Implementation Plans**
+
+#### **1. $expr Operator**
+- **Implementation**: Extend query processing to handle JavaScript-like expressions
+- **SQLite Mapping**: Convert expressions to SQL WHERE clauses
+- **Complexity**: High (requires expression parsing)
+- **Dependencies**: Enhanced query parser
+
+#### **2. $jsonSchema Operator**
+- **Implementation**: Basic JSON Schema validation using SQLite's JSON functions
+- **Scope**: Support common validation patterns (type, required, enum)
+- **Complexity**: Medium
+- **Dependencies**: JSON schema parsing library
+
+#### **3. $bucket & $bucketAuto Stages**
+- **Implementation**: SQL CASE statements for range-based grouping
+- **Features**: Support for boundaries/default buckets
+- **Complexity**: Medium
+- **Dependencies**: Enhanced aggregation processing
+
+#### **4. Explain Plan Functionality**
+- **Implementation**: Expose SQLite's EXPLAIN QUERY PLAN
+- **API**: `cursor.explain()` method returning execution plan
+- **Complexity**: Low
+- **Dependencies**: Cursor class enhancement
+
+## 🔍 Current Status Analysis
+
+### **Completed Milestones**
+- ✅ **GridFS**: 100% PyMongo compatibility + enhancements
+- ✅ **Core CRUD**: 100% compatibility
+- ✅ **Basic Aggregation**: 85%+ SQL optimization
+- ✅ **Text Search**: Full FTS5 integration
+
+### **Current Compatibility**
+- **Overall API Coverage**: ~98%
+- **Production Ready**: Yes (core functionality complete)
+- **Missing Features**: Primarily advanced/specialized features
+
+## 🎯 Next Steps
+
+1. **Begin P1 Implementation**: Start with $expr operator and explain plan functionality
+2. **User Feedback Collection**: Gather input on most needed P1 features
+3. **Incremental Releases**: Release P1 features as they become available
+4. **Documentation Updates**: Maintain comprehensive API documentation
+
+This roadmap provides a clear path forward for NeoSQLite development, focusing on features that provide the most value to users while respecting SQLite's architectural constraints.
