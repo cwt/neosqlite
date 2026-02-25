@@ -201,7 +201,8 @@ class Cursor:
         else:
             # Fallback to Python evaluation
             expr = self._filter["$expr"]
-            evaluator = ExprEvaluator()
+            # Create evaluator with database connection for JSONB support detection
+            evaluator = ExprEvaluator(db_connection=self._collection.db)
 
             # Get all documents
             if self._collection.query_engine._jsonb_supported:

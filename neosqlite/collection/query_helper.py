@@ -1231,8 +1231,13 @@ class QueryHelper:
         from .expr_evaluator import ExprEvaluator
         from .expr_temp_table import TempTableExprEvaluator
 
-        # Create evaluator instances
-        tier1_evaluator = ExprEvaluator()
+        # Create evaluator instances with database connection for JSONB support detection
+        data_column = (
+            self.collection.query_engine._data_column
+            if hasattr(self.collection.query_engine, "_data_column")
+            else "data"
+        )
+        tier1_evaluator = ExprEvaluator(data_column, self.collection.db)
 
         # Determine complexity tier based on expression analysis
         tier = self._analyze_expr_complexity(expr)

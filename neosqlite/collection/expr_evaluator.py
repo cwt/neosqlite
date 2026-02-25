@@ -24,6 +24,13 @@ MongoDB $expr Compatibility:
 from __future__ import annotations
 from typing import Any, Dict, List, Tuple, Optional
 from .json_path_utils import build_json_extract_expression
+from .jsonb_support import (
+    supports_jsonb,
+    supports_jsonb_each,
+    _get_json_function_prefix,
+    _get_json_each_function,
+    _get_json_group_array_function,
+)
 
 
 class ExprEvaluator:
@@ -34,16 +41,46 @@ class ExprEvaluator:
     - Tier 1: Direct SQL WHERE clause using JSON functions
     - Tier 2: Temporary tables for complex expressions
     - Tier 3: Python fallback (always available for kill switch)
+
+    JSON/JSONB Support:
+    - Automatically uses jsonb_* functions when supported for better performance
+    - Falls back to json_* functions when JSONB is not available
+    - Detects SQLite 3.51.0+ features (jsonb_each, jsonb_tree) for maximum performance
     """
 
-    def __init__(self, data_column: str = "data"):
+    def __init__(self, data_column: str = "data", db_connection=None):
         """
         Initialize the expression evaluator.
 
         Args:
             data_column: Name of the column containing JSON data (default: "data")
+            db_connection: Optional SQLite database connection for JSONB detection.
+                          If provided, JSONB support will be auto-detected.
+                          If None, json_* functions will be used (safe fallback).
         """
         self.data_column = data_column
+        self._jsonb_supported = False
+        self._jsonb_each_supported = False
+        if db_connection is not None:
+            self._jsonb_supported = supports_jsonb(db_connection)
+            self._jsonb_each_supported = supports_jsonb_each(db_connection)
+
+    @property
+    def json_function_prefix(self) -> str:
+        """Get the appropriate JSON function prefix (json or jsonb)."""
+        return _get_json_function_prefix(self._jsonb_supported)
+
+    @property
+    def json_each_function(self) -> str:
+        """Get the appropriate json_each function name (json_each or jsonb_each)."""
+        return _get_json_each_function(
+            self._jsonb_supported, self._jsonb_each_supported
+        )
+
+    @property
+    def json_group_array_function(self) -> str:
+        """Get the appropriate json_group_array function name."""
+        return _get_json_group_array_function(self._jsonb_supported)
 
     def evaluate(
         self, expr: Dict[str, Any], tier: int = 1, force_python: bool = False
@@ -324,12 +361,21 @@ class ExprEvaluator:
     def _convert_array_operator(
         self, operator: str, operands: List[Any]
     ) -> Tuple[str, List[Any]]:
-        """Convert array operators to SQL."""
+        """Convert array operators to SQL.
+
+        Note: SQLite's json_each(), json_array_length(), json_type(), and json_group_array()
+        work with both JSON and JSONB data types. Starting from SQLite 3.51.0, jsonb_each()
+        and jsonb_group_array() are available for better performance with JSONB data.
+        """
+        # Get the appropriate function names based on SQLite version
+        json_each = self.json_each_function
+        json_group_array = self.json_group_array_function
+
         if operator == "$size":
             if len(operands) != 1:
                 raise ValueError("$size requires exactly 1 operand")
             array_sql, array_params = self._convert_operand_to_sql(operands[0])
-            # SQLite: json_array_length for JSON arrays
+            # SQLite: json_array_length for JSON arrays (works with both JSON and JSONB)
             sql = f"json_array_length({array_sql})"
             return sql, array_params
         elif operator == "$in":
@@ -337,8 +383,8 @@ class ExprEvaluator:
                 raise ValueError("$in requires exactly 2 operands")
             value_sql, value_params = self._convert_operand_to_sql(operands[0])
             array_sql, array_params = self._convert_operand_to_sql(operands[1])
-            # Check if value exists in JSON array
-            sql = f"EXISTS (SELECT 1 FROM json_each({array_sql}) WHERE value = {value_sql})"
+            # Check if value exists in JSON array - use jsonb_each when available
+            sql = f"EXISTS (SELECT 1 FROM {json_each}({array_sql}) WHERE value = {value_sql})"
             return sql, value_params + array_params
         elif operator == "$isArray":
             if len(operands) != 1:
@@ -358,9 +404,9 @@ class ExprEvaluator:
             # Use a correlated subquery to aggregate array elements
             # We filter out non-numeric values for $sum and $avg to match MongoDB
             if operator in ("$sum", "$avg"):
-                sql = f"(SELECT {sql_agg}(value) FROM json_each({array_sql}) WHERE typeof(value) IN ('integer', 'real'))"
+                sql = f"(SELECT {sql_agg}(value) FROM {json_each}({array_sql}) WHERE typeof(value) IN ('integer', 'real'))"
             else:
-                sql = f"(SELECT {sql_agg}(value) FROM json_each({array_sql}))"
+                sql = f"(SELECT {sql_agg}(value) FROM {json_each}({array_sql}))"
             return sql, array_params
         elif operator == "$slice":
             if not isinstance(operands, list) or len(operands) < 2:
@@ -372,19 +418,26 @@ class ExprEvaluator:
             skip = operands[2] if len(operands) > 2 else 0
 
             # SQL implementation using json_group_array and LIMIT/OFFSET
-            # This is complex in SQL, so we construct a subquery that re-groups the sliced elements
+            # Use jsonb_group_array when available for better performance
+            # Wrap with json() to convert JSONB binary to text for comparison
             if skip != 0:
-                sql = f"(SELECT json_group_array(value) FROM (SELECT value FROM json_each({array_sql}) LIMIT {count} OFFSET {skip}))"
+                if self._jsonb_supported:
+                    sql = f"(SELECT json({json_group_array}(value)) FROM (SELECT value FROM {json_each}({array_sql}) LIMIT {count} OFFSET {skip}))"
+                else:
+                    sql = f"(SELECT {json_group_array}(value) FROM (SELECT value FROM {json_each}({array_sql}) LIMIT {count} OFFSET {skip}))"
             else:
-                sql = f"(SELECT json_group_array(value) FROM (SELECT value FROM json_each({array_sql}) LIMIT {count}))"
+                if self._jsonb_supported:
+                    sql = f"(SELECT json({json_group_array}(value)) FROM (SELECT value FROM {json_each}({array_sql}) LIMIT {count}))"
+                else:
+                    sql = f"(SELECT {json_group_array}(value) FROM (SELECT value FROM {json_each}({array_sql}) LIMIT {count}))"
             return sql, array_params
         elif operator == "$indexOfArray":
             if len(operands) != 2:
                 raise ValueError("$indexOfArray requires exactly 2 operands")
             array_sql, array_params = self._convert_operand_to_sql(operands[0])
             value_sql, value_params = self._convert_operand_to_sql(operands[1])
-            # Use json_each to find index
-            sql = f"(SELECT key FROM json_each({array_sql}) WHERE value = {value_sql} LIMIT 1)"
+            # Use json_each to find index - use jsonb_each when available
+            sql = f"(SELECT key FROM {json_each}({array_sql}) WHERE value = {value_sql} LIMIT 1)"
             return sql, array_params + value_params
         else:
             raise NotImplementedError(
@@ -612,7 +665,13 @@ class ExprEvaluator:
     def _convert_object_operator(
         self, operator: str, operands: Any
     ) -> Tuple[str, List[Any]]:
-        """Convert object operators to SQL."""
+        """Convert object operators to SQL.
+
+        Note: json_patch() works with both JSON and JSONB data types.
+        Only json_extract/jsonb_extract, json_set/jsonb_set have JSONB variants.
+        """
+        json_prefix = self.json_function_prefix
+
         if operator == "$mergeObjects":
             if not isinstance(operands, list) or len(operands) < 1:
                 raise ValueError("$mergeObjects requires a list of objects")
@@ -622,7 +681,7 @@ class ExprEvaluator:
                 obj_sql, obj_params = self._convert_operand_to_sql(obj)
                 sql_parts.append(obj_sql)
                 all_params.extend(obj_params)
-            # Use json_patch to merge objects
+            # Use json_patch to merge objects (works with both JSON and JSONB)
             if len(sql_parts) == 1:
                 sql = sql_parts[0]
             else:
@@ -641,7 +700,7 @@ class ExprEvaluator:
                 )
             else:
                 input_sql, input_params = self.data_column, []
-            sql = f"json_extract({input_sql}, '$.{field}')"
+            sql = f"{json_prefix}_extract({input_sql}, '$.{field}')"
             return sql, input_params
         elif operator == "$setField":
             if not isinstance(operands, dict):
@@ -658,7 +717,7 @@ class ExprEvaluator:
             else:
                 input_sql, input_params = self.data_column, []
             value_sql, value_params = self._convert_operand_to_sql(value)
-            sql = f"json_set({input_sql}, '$.{field}', {value_sql})"
+            sql = f"{json_prefix}_set({input_sql}, '$.{field}', {value_sql})"
             return sql, input_params + value_params
         else:
             raise NotImplementedError(
@@ -670,17 +729,23 @@ class ExprEvaluator:
         Convert an operand to SQL expression.
 
         Handles:
-        - Field references: "$field" → json_extract expression
+        - Field references: "$field" → json_extract/jsonb_extract expression
         - Literals: numbers, strings, booleans
         - Nested expressions: {"$operator": [...]}
         """
         if isinstance(operand, str) and operand.startswith("$"):
             # Field reference
             field_path = operand[1:]  # Remove $
-            return (
-                build_json_extract_expression(self.data_column, field_path),
-                [],
+            # Use dynamic json/jsonb prefix based on support
+            json_path_expr = build_json_extract_expression(
+                self.data_column, field_path
             )
+            # Replace hardcoded "json_extract" with dynamic prefix
+            if self._jsonb_supported:
+                json_path_expr = json_path_expr.replace(
+                    "json_extract", "jsonb_extract"
+                )
+            return json_path_expr, []
 
         elif isinstance(operand, (list, dict)):
             # Check if it's an expression (dict with single key starting with $)
