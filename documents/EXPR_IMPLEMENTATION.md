@@ -86,7 +86,7 @@ collection.find({
 })
 ```
 
-### Arithmetic Operators (12/19 - 63%)
+### Arithmetic Operators (12/15 - 80%)
 
 | Operator | Description | SQL Support | Python Support |
 |----------|-------------|-------------|----------------|
@@ -102,10 +102,6 @@ collection.find({
 | `$trunc` | Truncate | ✅ | ✅ |
 | `$pow` | Power | ✅ | ✅ |
 | `$sqrt` | Square root | ✅ | ✅ |
-| `$sum` | Sum of array | ❌ | ❌ |
-| `$avg` | Average | ❌ | ❌ |
-| `$min` | Minimum | ❌ | ❌ |
-| `$max` | Maximum | ❌ | ❌ |
 | `$log` | Logarithm | ❌ | ❌ |
 | `$log10` | Base-10 log | ❌ | ❌ |
 | `$exp` | Exponential | ❌ | ❌ |
@@ -147,7 +143,7 @@ collection.find({
 })
 ```
 
-### Array Operators (8/16 - 50%)
+### Array Operators (8/8 - 100%)
 
 | Operator | Description | SQL Support | Python Support |
 |----------|-------------|-------------|----------------|
@@ -157,8 +153,17 @@ collection.find({
 | `$arrayElemAt` | Get element at index | ❌ | ✅ |
 | `$first` | First element | ❌ | ✅ |
 | `$last` | Last element | ❌ | ✅ |
-| `$slice` | Slice array | ❌ | ✅ |
+| `$slice` | Slice array | ✅ | ✅ |
 | `$indexOfArray` | Find element index | ✅ | ✅ |
+
+### Array Aggregation Operators (4/12 - 33%)
+
+| Operator | Description | SQL Support | Python Support |
+|----------|-------------|-------------|----------------|
+| `$sum` | Sum of array | ✅ | ✅ |
+| `$avg` | Average of array | ✅ | ✅ |
+| `$min` | Minimum of array | ✅ | ✅ |
+| `$max` | Maximum of array | ✅ | ✅ |
 | `$filter` | Filter array | ❌ | ❌ |
 | `$map` | Transform array | ❌ | ❌ |
 | `$reduce` | Reduce array | ❌ | ❌ |
@@ -176,7 +181,7 @@ collection.find({
 })
 ```
 
-### String Operators (12/19 - 63%)
+### String Operators (12/18 - 67%)
 
 | Operator | Description | SQL Support | Python Support |
 |----------|-------------|-------------|----------------|
@@ -293,7 +298,7 @@ collection.find({
 
 ## Missing Features Summary
 
-**Total:** 36 operators missing out of ~103 total implementable MongoDB $expr operators (**65% coverage**)
+**Total:** 27 operators missing out of ~94 total implementable MongoDB $expr operators (**71% coverage**)
 
 *Note: This analysis focuses on operators implementable in NeoSQLite's 3-tier architecture (SQL, Temp Tables, Python). Excluded are server-specific features (e.g., $rand, $function, $meta), window functions ($denseRank, $rank, etc.), time series operators ($tsIncrement, $tsSecond), encryption features ($encStrContains, etc.), and other SQLite-irrelevant operators.*
 
@@ -301,14 +306,15 @@ collection.find({
 |----------|-------------|---------|----------|
 | Comparison | 7 | **0** | 100% ✅ |
 | Logical | 4 | **0** | 100% ✅ |
-| Arithmetic | 12 | **7** | 63% |
+| Arithmetic | 12 | **3** | 80% |
 | Conditional | 3 | **0** | 100% ✅ |
-| Array | 8 | **8** | 50% |
-| String | 12 | **7** | 63% |
+| Array | 12 | **8** | 60% |
+| String | 12 | **6** | 67% |
 | Date/Time | 12 | **5** | 71% |
 | Object | 3 | **2** | 60% |
 | Type Conversion | 5 | **6** | 45% |
 | Other | 1 | **1** | 50% |
+| **Total** | **71** | **31** | **70%** |
 
 ## Missing Features by Priority
 
@@ -319,11 +325,8 @@ collection.find({
 - `$dateSubtract` - Subtract time from date
 - `$dateDiff` - Calculate difference between dates
 
-**Advanced Aggregation (4):**
-- `$sum` - Sum of array elements
-- `$avg` - Average of array elements
-- `$min` - Minimum of array elements
-- `$max` - Maximum of array elements
+**Advanced Aggregation (0):**
+- *All high-priority accumulators implemented ($sum, $avg, $min, $max)*
 
 **Array Transformation (3):**
 - `$filter` - Filter array elements
@@ -404,7 +407,6 @@ collection.find({
 | Category | Operators | Notes |
 |----------|-----------|-------|
 | **Date Arithmetic** | `$dateAdd`, `$dateSubtract`, `$dateDiff` | SQLite has limited date arithmetic |
-| **Advanced Aggregation** | `$sum`, `$avg`, `$min`, `$max` (array) | Requires array processing |
 | **Array Transformation** | `$filter`, `$map`, `$reduce` | Complex nested evaluation |
 | **Regex Operations** | `$regexFind`, `$regexFindAll` | SQLite REGEXP limitations |
 

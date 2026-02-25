@@ -149,6 +149,10 @@ class ExprEvaluator:
             "$isArray",
             "$slice",
             "$indexOfArray",
+            "$sum",
+            "$avg",
+            "$min",
+            "$max",
         ):
             return self._convert_array_operator(operator, operands)
         elif operator in (
@@ -343,15 +347,37 @@ class ExprEvaluator:
             # Check if value is a JSON array
             sql = f"json_type({value_sql}) = 'array'"
             return sql, value_params
+        elif operator in ("$sum", "$avg", "$min", "$max"):
+            if len(operands) != 1:
+                raise ValueError(f"{operator} requires exactly 1 operand")
+            array_sql, array_params = self._convert_operand_to_sql(operands[0])
+
+            # Map MongoDB accumulator to SQL aggregator
+            sql_agg = operator[1:].upper()
+
+            # Use a correlated subquery to aggregate array elements
+            # We filter out non-numeric values for $sum and $avg to match MongoDB
+            if operator in ("$sum", "$avg"):
+                sql = f"(SELECT {sql_agg}(value) FROM json_each({array_sql}) WHERE typeof(value) IN ('integer', 'real'))"
+            else:
+                sql = f"(SELECT {sql_agg}(value) FROM json_each({array_sql}))"
+            return sql, array_params
         elif operator == "$slice":
             if not isinstance(operands, list) or len(operands) < 2:
                 raise ValueError("$slice requires array and count/position")
             array_sql, array_params = self._convert_operand_to_sql(operands[0])
-            # For SQL, use json_each with LIMIT
-            # This is complex, so we'll fall back to Python for now
-            raise NotImplementedError(
-                "$slice requires Python evaluation for complex cases"
-            )
+
+            # Handle count/position parameters
+            count = operands[1]
+            skip = operands[2] if len(operands) > 2 else 0
+
+            # SQL implementation using json_group_array and LIMIT/OFFSET
+            # This is complex in SQL, so we construct a subquery that re-groups the sliced elements
+            if skip != 0:
+                sql = f"(SELECT json_group_array(value) FROM (SELECT value FROM json_each({array_sql}) LIMIT {count} OFFSET {skip}))"
+            else:
+                sql = f"(SELECT json_group_array(value) FROM (SELECT value FROM json_each({array_sql}) LIMIT {count}))"
+            return sql, array_params
         elif operator == "$indexOfArray":
             if len(operands) != 2:
                 raise ValueError("$indexOfArray requires exactly 2 operands")
@@ -656,12 +682,20 @@ class ExprEvaluator:
                 [],
             )
 
-        elif isinstance(operand, dict):
-            # Nested expression
-            return self._convert_expr_to_sql(operand)
+        elif isinstance(operand, (list, dict)):
+            # Check if it's an expression (dict with single key starting with $)
+            if isinstance(operand, dict) and len(operand) == 1:
+                key = next(iter(operand.keys()))
+                if key.startswith("$"):
+                    return self._convert_expr_to_sql(operand)
+
+            # Literal list or dict - convert to JSON for SQL
+            from neosqlite.collection.json_helpers import neosqlite_json_dumps
+
+            return "json(?)", [neosqlite_json_dumps(operand)]
 
         else:
-            # Literal value
+            # Literal value (scalar)
             return "?", [operand]
 
     def _map_comparison_operator(self, op: str) -> str:
@@ -753,6 +787,10 @@ class ExprEvaluator:
             "$last",
             "$slice",
             "$indexOfArray",
+            "$sum",
+            "$avg",
+            "$min",
+            "$max",
         ):
             return self._evaluate_array_python(operator, operands, document)
         elif operator in (
@@ -1022,6 +1060,34 @@ class ExprEvaluator:
                 raise ValueError("$isArray requires exactly 1 operand")
             value = self._evaluate_operand_python(operands[0], document)
             return isinstance(value, list)
+        elif operator in ("$sum", "$avg", "$min", "$max"):
+            if len(operands) != 1:
+                raise ValueError(f"{operator} requires exactly 1 operand")
+            array = self._evaluate_operand_python(operands[0], document)
+            if not isinstance(array, list):
+                return 0 if operator == "$sum" else None
+
+            # Filter numeric values for sum/avg
+            nums = [
+                v
+                for v in array
+                if isinstance(v, (int, float)) and not isinstance(v, bool)
+            ]
+
+            if not nums:
+                if operator == "$sum":
+                    return 0
+                return None
+
+            if operator == "$sum":
+                return sum(nums)
+            elif operator == "$avg":
+                return sum(nums) / len(nums)
+            elif operator == "$min":
+                return min(array)  # min/max work on all types
+            elif operator == "$max":
+                return max(array)
+            return None
         elif operator == "$arrayElemAt":
             if len(operands) != 2:
                 raise ValueError("$arrayElemAt requires exactly 2 operands")
