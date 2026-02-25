@@ -1371,10 +1371,18 @@ class QueryHelper:
                 "$last",
             ):
                 score += 2
+            elif operator in ("$filter", "$map", "$reduce"):
+                # Array transformation operators are complex
+                score += 3
             elif operator in ("$concat", "$toLower", "$toUpper", "$substr"):
                 score += 1
             elif operator in ("$abs", "$ceil", "$floor", "$round", "$trunc"):
                 score += 1
+            elif operator in ("$dateAdd", "$dateSubtract", "$dateDiff"):
+                score += 1
+            elif operator in ("$regexFind", "$regexFindAll"):
+                # Regex operations require Python evaluation
+                score += 2
             elif operator == "$cmp":
                 score += 1
             elif operator in ("$ifNull", "$type", "$toString", "$toInt"):

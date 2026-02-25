@@ -14,10 +14,14 @@ MongoDB $expr Compatibility:
 - Arithmetic operators: $add, $subtract, $multiply, $divide, $mod, $abs, $ceil, $floor, $round, $trunc
 - Conditional operators: $cond, $ifNull, $switch
 - Array operators: $size, $in, $arrayElemAt, $first, $last, $isArray
+- Array aggregation: $sum, $avg, $min, $max
+- Array transformation: $filter, $map, $reduce
 - String operators: $concat, $toLower, $toUpper, $strLenBytes, $substr, $trim
+- String regex: $regexMatch, $regexFind, $regexFindAll
+- Date operators: $year, $month, $dayOfMonth, $hour, $minute, $second, $dayOfWeek, $dayOfYear
+- Date arithmetic: $dateAdd, $dateSubtract, $dateDiff
 - Type operators: $type, $convert, $toString, $toInt, $toDouble, $toBool
-- Object operators: $mergeObjects, $objectToArray
-- Set operators: $setEquals, $setIntersection, $setUnion, $setDifference
+- Object operators: $mergeObjects, $getField, $setField
 - Other: $literal, $let
 """
 
@@ -224,6 +228,10 @@ class ExprEvaluator:
             "$millisecond",
         ):
             return self._convert_date_operator(operator, operands)
+        elif operator in ("$dateAdd", "$dateSubtract"):
+            return self._convert_date_arithmetic_operator(operator, operands)
+        elif operator == "$dateDiff":
+            return self._convert_date_diff_operator(operands)
         elif operator in ("$mergeObjects", "$getField", "$setField"):
             return self._convert_object_operator(operator, operands)
         else:
@@ -662,6 +670,119 @@ class ExprEvaluator:
 
         return sql, value_params
 
+    def _convert_date_arithmetic_operator(
+        self, operator: str, operands: List[Any]
+    ) -> Tuple[str, List[Any]]:
+        """Convert $dateAdd/$dateSubtract operators to SQL.
+
+        MongoDB syntax: {$dateAdd: [date, amount, unit]}
+        SQLite: datetime(date, '+N unit' or '-N unit')
+        """
+        if len(operands) < 2 or len(operands) > 3:
+            raise ValueError(
+                f"{operator} requires 2-3 operands: [date, amount, unit]"
+            )
+
+        date_sql, date_params = self._convert_operand_to_sql(operands[0])
+        amount = operands[1]  # Should be a literal number
+        unit = operands[2] if len(operands) > 2 else "day"  # Default to days
+
+        # Validate unit
+        valid_units = (
+            "day",
+            "hour",
+            "minute",
+            "second",
+            "week",
+            "month",
+            "year",
+        )
+        if not isinstance(unit, str) or unit not in valid_units:
+            raise ValueError(f"{operator} unit must be one of: {valid_units}")
+
+        # Handle year/month specially (SQLite doesn't support directly)
+        if unit == "year":
+            amount = amount * 12
+            unit = "month"
+
+        # Determine sign based on operator
+        sign = "+" if operator == "$dateAdd" else "-"
+
+        # Handle week conversion to days
+        sqlite_unit = unit
+        if unit == "week":
+            sqlite_unit = "day"
+            if isinstance(amount, (int, float)):
+                amount = amount * 7
+
+        # Build the modifier
+        if isinstance(amount, (int, float)):
+            modifier = f"'{sign}{amount} {sqlite_unit}s'"
+            sql = f"datetime({date_sql}, {modifier})"
+            return sql, date_params
+        else:
+            # Amount is a field reference - need to use CASE or build dynamically
+            # For simplicity, we'll use printf to build the modifier
+            amount_sql, amount_params = self._convert_operand_to_sql(
+                operands[1]
+            )
+            if sign == "-":
+                amount_sql = f"-({amount_sql})"
+            sql = f"datetime({date_sql}, printf('%+d {sqlite_unit}s', {amount_sql}))"
+            return sql, date_params + amount_params
+
+    def _convert_date_diff_operator(
+        self, operands: List[Any]
+    ) -> Tuple[str, List[Any]]:
+        """Convert $dateDiff operator to SQL.
+
+        MongoDB syntax: {$dateDiff: [date1, date2, unit]}
+        SQLite: julianday(date2) - julianday(date1) for days
+        """
+        if len(operands) < 2 or len(operands) > 3:
+            raise ValueError(
+                "$dateDiff requires 2-3 operands: [date1, date2, unit]"
+            )
+
+        date1_sql, date1_params = self._convert_operand_to_sql(operands[0])
+        date2_sql, date2_params = self._convert_operand_to_sql(operands[1])
+        unit = operands[2] if len(operands) > 2 else "day"
+
+        # Validate unit
+        valid_units = (
+            "day",
+            "hour",
+            "minute",
+            "second",
+            "week",
+            "month",
+            "year",
+        )
+        if not isinstance(unit, str) or unit not in valid_units:
+            raise ValueError(f"$dateDiff unit must be one of: {valid_units}")
+
+        # Base calculation: difference in days
+        sql = f"(julianday({date2_sql}) - julianday({date1_sql}))"
+
+        # Convert to requested unit
+        unit_multipliers = {
+            "day": 1,
+            "week": 1.0 / 7,
+            "month": 1.0 / 30.4375,  # Average days per month
+            "year": 1.0 / 365.25,
+            "hour": 24,
+            "minute": 24 * 60,
+            "second": 24 * 60 * 60,
+        }
+
+        multiplier = unit_multipliers.get(unit, 1)
+        if multiplier != 1:
+            sql = f"cast({sql} * {multiplier} as integer)"
+        else:
+            sql = f"cast({sql} as integer)"
+
+        return sql, date1_params + date2_params
+
     def _convert_object_operator(
         self, operator: str, operands: Any
     ) -> Tuple[str, List[Any]]:
@@ -858,6 +979,10 @@ class ExprEvaluator:
             "$max",
         ):
             return self._evaluate_array_python(operator, operands, document)
+        elif operator in ("$filter", "$map", "$reduce"):
+            return self._evaluate_array_transform_python(
+                operator, operands, document
+            )
         elif operator in (
             "$concat",
             "$toLower",
@@ -869,6 +994,8 @@ class ExprEvaluator:
             "$rtrim",
             "$indexOfBytes",
             "$regexMatch",
+            "$regexFind",
+            "$regexFindAll",
             "$split",
             "$replaceAll",
         ):
@@ -888,6 +1015,10 @@ class ExprEvaluator:
             "$millisecond",
         ):
             return self._evaluate_date_python(operator, operands, document)
+        elif operator in ("$dateAdd", "$dateSubtract", "$dateDiff"):
+            return self._evaluate_date_arithmetic_python(
+                operator, operands, document
+            )
         elif operator in ("$mergeObjects", "$getField", "$setField"):
             return self._evaluate_object_python(operator, operands, document)
         elif operator in (
@@ -1208,6 +1339,110 @@ class ExprEvaluator:
                 f"Array operator {operator} not supported in Python evaluation"
             )
 
+    def _evaluate_array_transform_python(
+        self, operator: str, operands: Any, document: Dict[str, Any]
+    ) -> Any:
+        """Evaluate $filter, $map, $reduce operators in Python.
+
+        These operators use variable scoping:
+        - $filter: {input: <array>, as: <var>, cond: <expr>}
+        - $map: {input: <array>, as: <var>, in: <expr>}
+        - $reduce: {input: <array>, initialValue: <val>, in: <expr>}
+        """
+        if operator == "$filter":
+            if not isinstance(operands, dict):
+                raise ValueError("$filter requires a dictionary")
+
+            input_array = self._evaluate_operand_python(
+                operands.get("input"), document
+            )
+            if not isinstance(input_array, list):
+                return []
+
+            as_var = operands.get("as", "item")
+            cond = operands.get("cond")
+
+            if cond is None:
+                raise ValueError("$filter requires 'cond' expression")
+
+            result = []
+            for i, item in enumerate(input_array):
+                # Create context with variable bindings
+                ctx = dict(document)
+                ctx[f"$${as_var}"] = item
+                ctx[f"$${as_var}Index"] = i
+
+                # Evaluate condition in context
+                if self._evaluate_expr_python(cond, ctx):
+                    result.append(item)
+
+            return result
+
+        elif operator == "$map":
+            if not isinstance(operands, dict):
+                raise ValueError("$map requires a dictionary")
+
+            input_array = self._evaluate_operand_python(
+                operands.get("input"), document
+            )
+            if not isinstance(input_array, list):
+                return []
+
+            as_var = operands.get("as", "item")
+            in_expr = operands.get("in")
+
+            if in_expr is None:
+                raise ValueError("$map requires 'in' expression")
+
+            result = []
+            for i, item in enumerate(input_array):
+                # Create context with variable bindings
+                ctx = dict(document)
+                ctx[f"$${as_var}"] = item
+                ctx[f"$${as_var}Index"] = i
+
+                # Evaluate expression in context
+                result.append(self._evaluate_operand_python(in_expr, ctx))
+
+            return result
+
+        elif operator == "$reduce":
+            if not isinstance(operands, dict):
+                raise ValueError("$reduce requires a dictionary")
+
+            input_array = self._evaluate_operand_python(
+                operands.get("input"), document
+            )
+            if not isinstance(input_array, list):
+                return None
+
+            initial_value = operands.get("initialValue")
+            in_expr = operands.get("in")
+
+            if in_expr is None:
+                raise ValueError("$reduce requires 'in' expression")
+
+            # Evaluate initial value
+            acc = self._evaluate_operand_python(initial_value, document)
+
+            for i, item in enumerate(input_array):
+                # Create context with variable bindings
+                # $$value is the accumulator, $$this is the current item
+                ctx = dict(document)
+                ctx["$$value"] = acc
+                ctx["$$this"] = item
+                ctx["$$index"] = i
+
+                # Evaluate expression in context to get new accumulator value
+                acc = self._evaluate_operand_python(in_expr, ctx)
+
+            return acc
+
+        else:
+            raise NotImplementedError(
+                f"Array transform operator {operator} not supported in Python evaluation"
+            )
+
     def _evaluate_string_python(
         self, operator: str, operands: List[Any], document: Dict[str, Any]
     ) -> Any:
@@ -1325,6 +1560,69 @@ class ExprEvaluator:
             if string is None:
                 return None
             return str(string).replace(str(find), str(replacement))
+        elif operator == "$regexFind":
+            if not isinstance(operands, dict) or "input" not in operands:
+                raise ValueError("$regexFind requires 'input' and 'regex'")
+            input_val = self._evaluate_operand_python(
+                operands["input"], document
+            )
+            regex = operands.get("regex", "")
+            options = operands.get("options", "")
+            if input_val is None:
+                return None
+
+            import re
+
+            flags = 0
+            if "i" in options:
+                flags |= re.IGNORECASE
+            if "m" in options:
+                flags |= re.MULTILINE
+            if "s" in options:
+                flags |= re.DOTALL
+
+            match = re.search(regex, str(input_val), flags)
+            if match:
+                result = {
+                    "match": match.group(),
+                    "index": match.start(),
+                }
+                if match.groups():
+                    result["captures"] = list(match.groups())
+                return result
+            return None
+        elif operator == "$regexFindAll":
+            if not isinstance(operands, dict) or "input" not in operands:
+                raise ValueError("$regexFindAll requires 'input' and 'regex'")
+            input_val = self._evaluate_operand_python(
+                operands["input"], document
+            )
+            regex = operands.get("regex", "")
+            options = operands.get("options", "")
+            if input_val is None:
+                return []
+
+            import re
+
+            flags = 0
+            if "i" in options:
+                flags |= re.IGNORECASE
+            if "m" in options:
+                flags |= re.MULTILINE
+            if "s" in options:
+                flags |= re.DOTALL
+
+            matches = list(re.finditer(regex, str(input_val), flags))
+            result = []
+            for match in matches:
+                match_obj = {
+                    "match": match.group(),
+                    "index": match.start(),
+                }
+                if match.groups():
+                    match_obj["captures"] = list(match.groups())
+                result.append(match_obj)
+            return result
         else:
             raise NotImplementedError(
                 f"String operator {operator} not supported in Python evaluation"
@@ -1383,6 +1681,138 @@ class ExprEvaluator:
         else:
             raise NotImplementedError(
                 f"Date operator {operator} not supported in Python evaluation"
+            )
+
+    def _evaluate_date_arithmetic_python(
+        self, operator: str, operands: List[Any], document: Dict[str, Any]
+    ) -> Any:
+        """Evaluate $dateAdd, $dateSubtract, $dateDiff operators in Python."""
+        from datetime import datetime, timedelta
+
+        if operator in ("$dateAdd", "$dateSubtract"):
+            if len(operands) < 2 or len(operands) > 3:
+                raise ValueError(
+                    f"{operator} requires 2-3 operands: [date, amount, unit]"
+                )
+
+            value = self._evaluate_operand_python(operands[0], document)
+            if value is None:
+                return None
+
+            amount = self._evaluate_operand_python(operands[1], document)
+            if amount is None:
+                return None
+
+            unit = operands[2] if len(operands) > 2 else "day"
+
+            # Parse date value
+            if isinstance(value, str):
+                try:
+                    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                except ValueError:
+                    return None
+            elif isinstance(value, datetime):
+                dt = value
+            else:
+                return None
+
+            # Create timedelta based on unit
+            if unit == "year":
+                # Handle years separately (not supported by timedelta directly)
+                years = amount if operator == "$dateAdd" else -amount
+                try:
+                    new_dt = dt.replace(year=dt.year + int(years))
+                    dt = new_dt
+                except ValueError:
+                    # Handle Feb 29 edge case
+                    new_dt = dt.replace(year=dt.year + int(years), day=28)
+                    dt = new_dt
+            elif unit == "month":
+                # Handle months separately
+                months = amount if operator == "$dateAdd" else -amount
+                new_month = dt.month + int(months)
+                new_year = dt.year + (new_month - 1) // 12
+                new_month = ((new_month - 1) % 12) + 1
+                try:
+                    dt = dt.replace(year=new_year, month=new_month)
+                except ValueError:
+                    # Handle day overflow (e.g., Jan 31 + 1 month)
+                    import calendar
+
+                    last_day = calendar.monthrange(new_year, new_month)[1]
+                    dt = dt.replace(
+                        year=new_year,
+                        month=new_month,
+                        day=min(dt.day, last_day),
+                    )
+            else:
+                # Convert to timedelta
+                delta_kwargs = {
+                    f"{unit}s": amount if operator == "$dateAdd" else -amount
+                }
+                delta = timedelta(**delta_kwargs)
+                dt = dt + delta
+
+            # Return ISO format string
+            return dt.isoformat()
+
+        elif operator == "$dateDiff":
+            if len(operands) < 2 or len(operands) > 3:
+                raise ValueError(
+                    "$dateDiff requires 2-3 operands: [date1, date2, unit]"
+                )
+
+            date1 = self._evaluate_operand_python(operands[0], document)
+            date2 = self._evaluate_operand_python(operands[1], document)
+            unit = operands[2] if len(operands) > 2 else "day"
+
+            if date1 is None or date2 is None:
+                return None
+
+            # Parse dates
+            def parse_date(val):
+                if isinstance(val, str):
+                    try:
+                        return datetime.fromisoformat(
+                            val.replace("Z", "+00:00")
+                        )
+                    except ValueError:
+                        return None
+                elif isinstance(val, datetime):
+                    return val
+                return None
+
+            dt1 = parse_date(date1)
+            dt2 = parse_date(date2)
+
+            if dt1 is None or dt2 is None:
+                return None
+
+            # Calculate difference
+            delta = dt2 - dt1
+
+            # Convert to requested unit
+            if unit == "day":
+                return int(delta.days)
+            elif unit == "week":
+                return int(delta.days // 7)
+            elif unit == "month":
+                # Approximate months
+                return int((dt2.year - dt1.year) * 12 + (dt2.month - dt1.month))
+            elif unit == "year":
+                return int(dt2.year - dt1.year)
+            elif unit == "hour":
+                return int(delta.total_seconds() // 3600)
+            elif unit == "minute":
+                return int(delta.total_seconds() // 60)
+            elif unit == "second":
+                return int(delta.total_seconds())
+            else:
+                raise ValueError(f"Unknown unit: {unit}")
+
+        else:
+            raise NotImplementedError(
+                f"Date arithmetic operator {operator} not supported in Python evaluation"
             )
 
     def _evaluate_object_python(
@@ -1513,6 +1943,14 @@ class ExprEvaluator:
         if isinstance(operand, str) and operand.startswith("$"):
             # Field reference - navigate document
             field_path = operand[1:]  # Remove $
+
+            # Handle $$variable syntax (for $filter, $map, $reduce)
+            if field_path.startswith("$"):
+                # $$var syntax - look up directly in document context
+                # field_path is now "$var", we need to look up "$$var"
+                var_name = "$" + field_path  # Reconstruct $$var
+                return document.get(var_name)
+
             keys = field_path.split(".")
             value: Optional[Any] = document
             for key in keys:

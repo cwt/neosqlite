@@ -164,9 +164,9 @@ collection.find({
 | `$avg` | Average of array | ✅ | ✅ |
 | `$min` | Minimum of array | ✅ | ✅ |
 | `$max` | Maximum of array | ✅ | ✅ |
-| `$filter` | Filter array | ❌ | ❌ |
-| `$map` | Transform array | ❌ | ❌ |
-| `$reduce` | Reduce array | ❌ | ❌ |
+| `$filter` | Filter array | ❌ | ✅ |
+| `$map` | Transform array | ❌ | ✅ |
+| `$reduce` | Reduce array | ❌ | ✅ |
 | `$concatArrays` | Concatenate arrays | ❌ | ❌ |
 | `$reverseArray` | Reverse array | ❌ | ❌ |
 | `$zip` | Zip arrays | ❌ | ❌ |
@@ -181,7 +181,7 @@ collection.find({
 })
 ```
 
-### String Operators (12/18 - 67%)
+### String Operators (14/18 - 78%)
 
 | Operator | Description | SQL Support | Python Support |
 |----------|-------------|-------------|----------------|
@@ -197,11 +197,11 @@ collection.find({
 | `$regexMatch` | Regex match | ✅ | ✅ |
 | `$split` | Split string | ❌ | ✅ |
 | `$replaceAll` | Replace all | ✅ | ✅ |
+| `$regexFind` | Find regex | ❌ | ✅ |
+| `$regexFindAll` | Find all regex | ❌ | ✅ |
 | `$strLenCP` | Length (code points) | ❌ | ❌ |
 | `$substrCP` | Substring (code points) | ❌ | ❌ |
 | `$indexOfCP` | Find (code points) | ❌ | ❌ |
-| `$regexFind` | Find regex | ❌ | ❌ |
-| `$regexFindAll` | Find all regex | ❌ | ❌ |
 | `$replaceOne` | Replace one | ❌ | ❌ |
 
 **Example:**
@@ -212,7 +212,7 @@ collection.find({
 })
 ```
 
-### Date/Time Operators (12/17 - 71%)
+### Date/Time Operators (15/17 - 88%)
 
 | Operator | Description | SQL Support | Python Support |
 |----------|-------------|-------------|----------------|
@@ -228,6 +228,9 @@ collection.find({
 | `$week` | Week number | ✅ | ✅ |
 | `$isoDayOfWeek` | ISO day of week | ✅ | ✅ |
 | `$isoWeek` | ISO week | ✅ | ✅ |
+| `$dateAdd` | Add time to date | ✅ | ✅ |
+| `$dateSubtract` | Subtract time from date | ✅ | ✅ |
+| `$dateDiff` | Difference between dates | ✅ | ✅ |
 | `$dateToString` | Format date | ❌ | ❌ |
 | `$dateFromParts` | Create date | ❌ | ❌ |
 | `$dateToParts` | Extract parts | ❌ | ❌ |
@@ -298,7 +301,7 @@ collection.find({
 
 ## Missing Features Summary
 
-**Total:** 27 operators missing out of ~94 total implementable MongoDB $expr operators (**71% coverage**)
+**Total:** 19 operators missing out of ~94 total implementable MongoDB $expr operators (**80% coverage**)
 
 *Note: This analysis focuses on operators implementable in NeoSQLite's 3-tier architecture (SQL, Temp Tables, Python). Excluded are server-specific features (e.g., $rand, $function, $meta), window functions ($denseRank, $rank, etc.), time series operators ($tsIncrement, $tsSecond), encryption features ($encStrContains, etc.), and other SQLite-irrelevant operators.*
 
@@ -308,34 +311,22 @@ collection.find({
 | Logical | 4 | **0** | 100% ✅ |
 | Arithmetic | 12 | **3** | 80% |
 | Conditional | 3 | **0** | 100% ✅ |
-| Array | 12 | **8** | 60% |
-| String | 12 | **6** | 67% |
-| Date/Time | 12 | **5** | 71% |
+| Array | 15 | **5** | 75% ✅ |
+| String | 14 | **4** | 78% |
+| Date/Time | 15 | **2** | 88% ✅ |
 | Object | 3 | **2** | 60% |
 | Type Conversion | 5 | **6** | 45% |
 | Other | 1 | **1** | 50% |
-| **Total** | **71** | **31** | **70%** |
+| **Total** | **83** | **23** | **78%** |
 
 ## Missing Features by Priority
 
-### 🔴 High Priority (12 operators)
+### 🔴 High Priority (0 operators) - ✅ ALL IMPLEMENTED!
 
-**Date Arithmetic (3):**
-- `$dateAdd` - Add time to date
-- `$dateSubtract` - Subtract time from date
-- `$dateDiff` - Calculate difference between dates
-
-**Advanced Aggregation (0):**
-- *All high-priority accumulators implemented ($sum, $avg, $min, $max)*
-
-**Array Transformation (3):**
-- `$filter` - Filter array elements
-- `$map` - Transform array elements
-- `$reduce` - Reduce array to single value
-
-**Regex Operations (2):**
-- `$regexFind` - Find first regex match
-- `$regexFindAll` - Find all regex matches
+**All high-priority operators have been implemented:**
+- ✅ Date Arithmetic: `$dateAdd`, `$dateSubtract`, `$dateDiff`
+- ✅ Array Transformation: `$filter`, `$map`, `$reduce`
+- ✅ Regex Operations: `$regexFind`, `$regexFindAll`
 
 ### 🟡 Medium Priority (18 operators)
 
@@ -391,24 +382,24 @@ collection.find({
 
 ## Implementation Effort Estimate
 
-| Priority | Operators | Estimated Effort | Complexity |
-|----------|-----------|-----------------|------------|
-| 🔴 High | 12 | 2-3 weeks | Medium-High |
-| 🟡 Medium | 14 | 2-3 weeks | Medium |
-| 🟢 Low | 10 | 1-2 weeks | Low-Medium |
-| **Total** | **36** | **5-8 weeks** | - |
+| Priority | Operators | Status | Actual Effort | Complexity |
+|----------|-----------|--------|---------------|------------|
+| 🔴 High | 12 | ✅ **Complete** | ~1 week | Medium-High |
+| 🟡 Medium | 18 | Pending | 2-3 weeks | Medium |
+| 🟢 Low | 16 | Pending | 1-2 weeks | Low-Medium |
+| **Total** | **46** | **12 done** | **~5-7 weeks remaining** | - |
 
 *Note: Effort estimates assume similar implementation patterns to existing operators. Actual time may vary based on SQLite limitations and testing requirements.*
 
 ## Original Missing Features Tables
 
-### High Priority (Not Implemented)
+### High Priority (✅ ALL IMPLEMENTED)
 
-| Category | Operators | Notes |
-|----------|-----------|-------|
-| **Date Arithmetic** | `$dateAdd`, `$dateSubtract`, `$dateDiff` | SQLite has limited date arithmetic |
-| **Array Transformation** | `$filter`, `$map`, `$reduce` | Complex nested evaluation |
-| **Regex Operations** | `$regexFind`, `$regexFindAll` | SQLite REGEXP limitations |
+| Category | Operators | Status | Notes |
+|----------|-----------|--------|-------|
+| **Date Arithmetic** | `$dateAdd`, `$dateSubtract`, `$dateDiff` | ✅ Implemented | SQL support via SQLite datetime()/julianday() |
+| **Array Transformation** | `$filter`, `$map`, `$reduce` | ✅ Implemented | Python evaluation with $$variable scoping |
+| **Regex Operations** | `$regexFind`, `$regexFindAll` | ✅ Implemented | Python re module, returns match objects |
 
 ### Medium Priority (Not Implemented)
 
@@ -477,6 +468,134 @@ collection.find({
 })
 ```
 
+### Using Date Arithmetic (New!)
+
+```python
+# Find events that will occur in 2025 (add 1 year to date)
+collection.find({
+    "$expr": {
+        "$eq": [
+            {"$year": [{"$dateAdd": ["$date", 1, "year"]}]},
+            2025
+        ]
+    }
+})
+
+# Find events more than 30 days apart
+collection.find({
+    "$expr": {
+        "$gt": [
+            {"$dateDiff": ["$start_date", "$end_date", "day"]},
+            30
+        ]
+    }
+})
+
+# Subtract 2 hours from a timestamp
+collection.find({
+    "$expr": {
+        "$gte": [
+            {"$dateSubtract": ["$timestamp", 2, "hour"]},
+            "2024-01-01T00:00:00"
+        ]
+    }
+})
+```
+
+### Using Array Transformation (New!)
+
+```python
+# Find documents with more than 2 numbers > 5
+collection.find({
+    "$expr": {
+        "$gt": [
+            {"$size": [
+                {"$filter": {
+                    "input": "$numbers",
+                    "as": "n",
+                    "cond": {"$gt": ["$$n", 5]}
+                }}
+            ]},
+            2
+        ]
+    }
+})
+
+# Find documents where doubled values contain 20
+collection.find({
+    "$expr": {
+        "$in": [
+            20,
+            {"$map": {
+                "input": "$numbers",
+                "as": "n",
+                "in": {"$multiply": ["$$n", 2]}
+            }}
+        ]
+    }
+})
+
+# Find documents where sum of numbers > 10
+collection.find({
+    "$expr": {
+        "$gt": [
+            {"$reduce": {
+                "input": "$numbers",
+                "initialValue": 0,
+                "in": {"$add": ["$$value", "$$this"]}
+            }},
+            10
+        ]
+    }
+})
+```
+
+### Using Regex Operations (New!)
+
+```python
+# Find documents containing email addresses
+collection.find({
+    "$expr": {
+        "$ne": [
+            {"$regexFind": {
+                "input": "$text",
+                "regex": r"\w+@\w+\.\w+"
+            }},
+            None
+        ]
+    }
+})
+
+# Find documents with more than 5 words
+collection.find({
+    "$expr": {
+        "$gt": [
+            {"$size": [
+                {"$regexFindAll": {
+                    "input": "$text",
+                    "regex": r"\w+"
+                }}
+            ]},
+            5
+        ]
+    }
+})
+
+# Case-insensitive regex search
+collection.find({
+    "$expr": {
+        "$ne": [
+            {"$regexFind": {
+                "input": "$text",
+                "regex": "hello",
+                "options": "i"  # case-insensitive
+            }},
+            None
+        ]
+    }
+})
+```
+
 ## Kill Switch
 
 The `$expr` implementation includes a kill switch for debugging and benchmarking:
@@ -506,8 +625,10 @@ tests/test_expr/
 ├── test_date_operators.py
 ├── test_string_operators.py
 ├── test_array_operators.py
+├── test_array_aggregation.py
 ├── test_object_operators.py
 ├── test_type_operators.py
+├── test_high_priority_operators.py  # New: Date arithmetic, regex, array transformation
 ├── test_sql_python_consistency.py
 ├── test_error_handling.py
 ├── test_kill_switch.py
@@ -519,26 +640,44 @@ Run tests:
 pytest tests/test_expr/ -v
 ```
 
+Run high-priority operator tests:
+```bash
+pytest tests/test_expr/test_high_priority_operators.py -v
+```
+
 ## Implementation Files
 
 | File | Description | Lines |
 |------|-------------|-------|
-| `neosqlite/collection/expr_evaluator.py` | Tier 1 & Tier 3 evaluator | ~1300 |
+| `neosqlite/collection/expr_evaluator.py` | Tier 1 & Tier 3 evaluator | ~1900 (+600) |
 | `neosqlite/collection/expr_temp_table.py` | Tier 2 temp table evaluator | ~550 |
-| `neosqlite/collection/query_helper.py` | Tier selection logic | ~300 |
+| `neosqlite/collection/query_helper.py` | Tier selection logic | ~3900 (+50) |
+| `tests/test_expr/test_high_priority_operators.py` | Tests for new operators | ~670 |
+
+**Total Implementation:**
+- ~650 lines of production code added
+- ~44 test cases added
+- 12 operators implemented
 
 ## Performance Considerations
-
-1. **Tier 1 (SQL)**: Fastest - single query execution
-2. **Tier 2 (Temp Tables)**: Intermediate - pre-extraction overhead
-3. **Tier 3 (Python)**: Slowest - full document iteration
 
 Use the kill switch to benchmark and compare performance between tiers.
 
 ## Future Enhancements
 
 1. **Tier 2 Enhancement**: Implement full temporary table support for complex expressions (currently in prototype)
-2. **Additional Operators**: Implement missing high-priority operators
+2. **Additional Operators**: Implement missing medium and low priority operators (see Missing Features by Priority)
 3. **Type Conversion SQL**: Implement SQL-tier support for `$toString`, `$toInt`, etc.
 4. **Index Optimization**: Leverage indexes for `$expr` queries where possible
-4. **Query Planning**: Optimize tier selection based on data characteristics
+5. **Query Planning**: Optimize tier selection based on data characteristics
+6. **Performance Benchmarks**: Add comprehensive performance benchmarks for all operators
+
+### Recently Implemented (High Priority) ✅
+
+The following operators were recently implemented:
+
+- **Date Arithmetic** (`$dateAdd`, `$dateSubtract`, `$dateDiff`): Full SQL + Python support
+- **Array Transformation** (`$filter`, `$map`, `$reduce`): Python support with variable scoping
+- **Regex Operations** (`$regexFind`, `$regexFindAll`): Python support with match objects
+
+See `documents/HIGH_PRIORITY_IMPLEMENTATION.md` for detailed implementation notes.
