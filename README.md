@@ -21,7 +21,7 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 - **Modern API**: Aligned with modern `pymongo` practices (using methods like `insert_one`, `update_one`, `delete_many`, etc.).
 - **MongoDB-compatible ObjectId**: Full 12-byte ObjectId implementation following MongoDB specification with automatic generation and hex interchangeability
 - **Automatic JSON/JSONB Support**: Automatically detects and uses JSONB column type when available for better performance.
-- **GridFS Support**: Store and retrieve large files with a PyMongo-compatible GridFS implementation with automatic legacy table migration.
+- **Full GridFS Support**: Complete PyMongo-compatible GridFS implementation with modern GridFSBucket API, legacy GridFS API, content type support, aliases, and automatic schema migration.
 
 See [CHANGELOG.md](CHANGELOG.md) for the latest features and improvements.
 
@@ -248,9 +248,9 @@ The ObjectId implementation:
 - Uses JSONB type for optimized storage when available
 - Supports querying with both ObjectIds and integer IDs in the `_id` field
 
-### Modern GridFSBucket API
+### Enhanced GridFSBucket API
 
-The implementation provides a PyMongo-compatible GridFSBucket interface:
+NeoSQLite provides a complete PyMongo-compatible GridFSBucket interface with enhanced features:
 
 ```python
 import io
@@ -261,19 +261,41 @@ from neosqlite.gridfs import GridFSBucket
 with Connection(":memory:") as conn:
     bucket = GridFSBucket(conn.db)
 
-    # Upload a file
-    file_data = b"Hello, GridFS!"
-    file_id = bucket.upload_from_stream("example.txt", file_data)
+    # Upload files with enhanced metadata
+    text_file_id = bucket.upload_from_stream(
+        "document.txt",
+        b"Hello, GridFS!",
+        content_type="text/plain",
+        aliases=["welcome", "greeting"]
+    )
 
-    # Download the file
-    output = io.BytesIO()
-    bucket.download_to_stream(file_id, output)
-    print(output.getvalue().decode('utf-8'))
+    image_file_id = bucket.upload_from_stream(
+        "photo.jpg",
+        b"fake_jpeg_data",
+        content_type="image/jpeg",
+        aliases=["vacation", "beach"]
+    )
+
+    # Use new convenience methods
+    latest_doc = bucket.get_last_version("document.txt")
+    all_files = bucket.list()  # ['document.txt', 'photo.jpg']
+    single_file = bucket.find_one({"aliases": "beach"})
+    file_stream = bucket.get(text_file_id)  # Alias for open_download_stream()
+
+    # Advanced querying with new fields
+    text_files = list(bucket.find({"content_type": "text/plain"}))
+    beach_files = list(bucket.find({"aliases": "beach"}))
+
+    # Access enhanced metadata
+    file = bucket.open_download_stream(text_file_id)
+    print(f"Content Type: {file.content_type}")  # "text/plain"
+    print(f"Aliases: {file.aliases}")           # ["welcome", "greeting"]
+    print(f"Data: {file.read().decode('utf-8')}")  # "Hello, GridFS!"
 ```
 
 ### Legacy GridFS API
 
-For users familiar with the legacy PyMongo GridFS API, `NeoSQLite` also provides the simpler `GridFS` class:
+For users familiar with the legacy PyMongo GridFS API, NeoSQLite also provides the simpler `GridFS` class:
 
 ```python
 import io
@@ -291,9 +313,25 @@ with Connection(":memory:") as conn:
     # Get the file
     grid_out = fs.get(file_id)
     print(grid_out.read().decode('utf-8'))
+
+    # Use legacy convenience methods
+    latest = fs.get_last_version("example.txt")
+    all_files = fs.list()  # ['example.txt']
 ```
 
-For more comprehensive examples, see the examples directory.
+### Collection Access with Auto-Delegation
+
+NeoSQLite supports PyMongo-style collection access with automatic GridFS delegation:
+
+```python
+# All operations delegate to GridFSBucket methods
+files = conn.fs.files.find({"filename": "document.txt"})
+file = conn.fs.files.find_one({"aliases": "beach"})
+conn.fs.files.delete_one({"_id": file_id})
+conn.fs.files.update_one({"_id": file_id}, {"$set": {"metadata": {"archived": True}}})
+```
+
+For more comprehensive examples including streaming operations and advanced querying, see the examples directory and [GridFS Documentation](documents/GRIDFS.md).
 
 ## Indexes
 

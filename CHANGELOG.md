@@ -1,5 +1,50 @@
 # CHANGELOG
 
+## 1.3.2
+
+### New Features
+
+#### Complete GridFS Implementation
+- **GridFSBucket.find_one()** - Direct method for single file lookup
+- **GridFSBucket.get_last_version()** - Get most recent version of a file
+- **GridFSBucket.get_version()** - Get specific version of a file by revision
+- **GridFSBucket.list()** - List all unique filenames in the GridFS bucket
+- **GridFSBucket.get()** - Convenience alias for `open_download_stream()`
+
+#### Enhanced GridFS Metadata Support
+- **Content Type Support** - Store and query MIME types with `content_type` parameter
+- **Aliases Support** - Multiple names per file with `aliases` list parameter
+- **Advanced Querying** - Search files by content_type and aliases fields
+- **Automatic Schema Migration** - Seamless upgrades for existing GridFS installations
+
+#### GridFS Collection Access Enhancements
+- **Enhanced Auto-Delegation** - Improved support for PyMongo-style `db.fs.files.*` operations
+- **Metadata Field Support** - Collection queries now support new content_type and aliases fields
+
+### Documentation
+
+#### Major Documentation Reorganization
+- **`documents/GRIDFS.md`** - New comprehensive GridFS documentation combining all GridFS-related information
+- **`documents/ANALYSIS_SUMMARY.md`** - Moved completed analysis documentation
+- **`README.md`** - Enhanced GridFS examples showing content_type and aliases usage
+- **`documents/PyMongo_API_Comparison.md`** - Updated with complete GridFS feature list
+
+#### Removed Outdated Documentation
+- **`documents/GRIDFS_MISSING_FEATURES.md`** - Superseded by implementation
+- **`documents/GRIDFS_MIGRATION.md`** - Content merged into GRIDFS.md
+
+### Enhancements
+
+#### Schema Evolution
+- **Automatic Column Addition** - New `content_type` and `aliases` columns added to existing GridFS tables
+- **JSONB Support** - Enhanced storage for aliases arrays when JSONB is available
+- **Backward Compatibility** - Zero-downtime migration for existing GridFS databases
+
+#### API Compatibility
+- **100% PyMongo Compatibility** - All standard GridFS operations now fully compatible
+- **Enhanced Features** - Content type and aliases support beyond standard PyMongo
+- **Collection Access** - PyMongo-style `db.fs.files.*` operations with auto-delegation
+
 ## 1.3.1
 
 ### Fixed

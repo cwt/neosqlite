@@ -155,7 +155,9 @@ class GridFSBucket:
                     chunkSize INTEGER,
                     uploadDate TEXT,
                     md5 TEXT,
-                    metadata JSONB
+                    metadata JSONB,
+                    content_type TEXT,
+                    aliases JSONB
                 )
             """
             )
@@ -170,7 +172,9 @@ class GridFSBucket:
                     chunkSize INTEGER,
                     uploadDate TEXT,
                     md5 TEXT,
-                    metadata TEXT
+                    metadata TEXT,
+                    content_type TEXT,
+                    aliases TEXT
                 )
                 """
             )
@@ -203,6 +207,9 @@ class GridFSBucket:
         """
         )
 
+        # Migrate existing tables to add new columns
+        self._migrate_table_schema()
+
         # Create unique index on _id column for faster lookups
         try:
             self._db.execute(
@@ -226,6 +233,30 @@ class GridFSBucket:
             ON {self._chunks_collection} (files_id)
         """
         )
+
+    def _migrate_table_schema(self):
+        """Migrate existing tables to add new columns for content_type and aliases."""
+        # Check if content_type column exists, add it if not
+        try:
+            cursor = self._db.execute(
+                f"PRAGMA table_info({self._files_collection})"
+            )
+            columns = {row[1] for row in cursor}  # Column names are in index 1
+
+            if "content_type" not in columns:
+                self._db.execute(
+                    f"ALTER TABLE {self._files_collection} ADD COLUMN content_type TEXT"
+                )
+
+            if "aliases" not in columns:
+                jsonb_supported = supports_jsonb(self._db)
+                column_type = "JSONB" if jsonb_supported else "TEXT"
+                self._db.execute(
+                    f"ALTER TABLE {self._files_collection} ADD COLUMN aliases {column_type}"
+                )
+        except Exception:
+            # If migration fails, continue (table might be in use or other issues)
+            pass
 
     def _serialize_metadata(
         self, metadata: Dict[str, Any] | None
@@ -293,6 +324,8 @@ class GridFSBucket:
         filename: str,
         source: bytes | io.IOBase,
         metadata: Dict[str, Any] | None = None,
+        content_type: str | None = None,
+        aliases: list[str] | None = None,
     ) -> ObjectId:
         """
         Uploads a user file to a GridFS bucket.
@@ -305,6 +338,8 @@ class GridFSBucket:
             filename: The name of the file to upload
             source: The source data (bytes or file-like object)
             metadata: Optional metadata for the file
+            content_type: Optional MIME type of the file
+            aliases: Optional list of alternative names for the file
 
         Returns:
             The ObjectId of the uploaded file document
@@ -328,11 +363,16 @@ class GridFSBucket:
         # Insert file metadata first
         upload_date = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
+        # Serialize aliases to JSON if provided
+        aliases_json = None
+        if aliases is not None:
+            aliases_json = json.dumps(aliases)
+
         cursor = self._db.execute(
             f"""
             INSERT INTO {self._files_collection}
-            (id, _id, filename, length, chunkSize, uploadDate, md5, metadata)
-            VALUES (NULL, ?, ?, ?, ?, ?, ?, ?)
+            (id, _id, filename, length, chunkSize, uploadDate, md5, metadata, content_type, aliases)
+            VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
             (
                 str(file_oid),  # Store ObjectId as hex string
@@ -342,6 +382,8 @@ class GridFSBucket:
                 upload_date,
                 md5_hash,
                 self._serialize_metadata(metadata),
+                content_type,
+                aliases_json,
             ),
         )
 
@@ -538,6 +580,20 @@ class GridFSBucket:
             raise NoFile(f"File with id {file_id} not found")
         return GridOut(self._db, self._bucket_name, file_int_id)
 
+    def get(self, file_id: ObjectId | str | int) -> GridOut:
+        """
+        Get a file from GridFS by its ID.
+
+        This is a convenience alias for open_download_stream().
+
+        Args:
+            file_id: The _id of the file document (ObjectId, hex string, or integer ID)
+
+        Returns:
+            A GridOut instance for reading the file
+        """
+        return self.open_download_stream(file_id)
+
     def open_download_stream_by_name(
         self, filename: str, revision: int = -1
     ) -> GridOut:
@@ -553,6 +609,31 @@ class GridFSBucket:
         """
         file_id = self._get_file_id_by_name(filename, revision)
         return GridOut(self._db, self._bucket_name, file_id)
+
+    def get_last_version(self, filename: str) -> GridOut:
+        """
+        Get the most recent version of a file by filename.
+
+        Args:
+            filename: The name of the file to retrieve
+
+        Returns:
+            A GridOut instance for reading the file
+        """
+        return self.open_download_stream_by_name(filename, revision=-1)
+
+    def get_version(self, filename: str, revision: int = -1) -> GridOut:
+        """
+        Get a specific version of a file by filename and revision.
+
+        Args:
+            filename: The name of the file to retrieve
+            revision: The revision number (-1 for latest, 0 for first, etc.)
+
+        Returns:
+            A GridOut instance for reading the file
+        """
+        return self.open_download_stream_by_name(filename, revision=revision)
 
     def delete(self, file_id: ObjectId | str | int) -> None:
         """
@@ -604,6 +685,22 @@ class GridFSBucket:
             filter = normalize_id_query_for_db(filter)
         return GridOutCursor(self._db, self._bucket_name, filter or {})
 
+    def find_one(self, filter: Dict[str, Any] | None = None) -> GridOut | None:
+        """
+        Find a single file that matches the filter.
+
+        Args:
+            filter: The filter to apply when searching for files
+
+        Returns:
+            A GridOut instance for the matching file, or None if not found
+        """
+        cursor = self.find(filter)
+        try:
+            return next(iter(cursor))
+        except StopIteration:
+            return None
+
     def _normalize_id_query(self, query: Dict[str, Any]) -> Dict[str, Any]:
         """
         Normalize ID types in a query dictionary to correct common mismatches.
@@ -621,6 +718,8 @@ class GridFSBucket:
         self,
         filename: str,
         metadata: Dict[str, Any] | None = None,
+        content_type: str | None = None,
+        aliases: list[str] | None = None,
     ) -> GridIn:
         """
         Opens a stream for writing a file to a GridFS bucket.
@@ -628,6 +727,8 @@ class GridFSBucket:
         Args:
             filename: The name of the file to upload
             metadata: Optional metadata for the file
+            content_type: Optional MIME type of the file
+            aliases: Optional list of alternative names for the file
 
         Returns:
             A GridIn instance to write the file contents
@@ -640,6 +741,8 @@ class GridFSBucket:
             metadata,
             disable_md5=self._disable_md5,
             write_concern=self._write_concern,
+            content_type=content_type,
+            aliases=aliases,
         )
 
     def upload_from_stream_with_id(
@@ -648,6 +751,8 @@ class GridFSBucket:
         filename: str,
         source: bytes | io.IOBase,
         metadata: Dict[str, Any] | None = None,
+        content_type: str | None = None,
+        aliases: list[str] | None = None,
     ):
         """
         Uploads a user file to a GridFS bucket with a custom file id.
@@ -657,6 +762,8 @@ class GridFSBucket:
             filename: The name of the file to upload
             source: The source data (bytes or file-like object)
             metadata: Optional metadata for the file
+            content_type: Optional MIME type of the file
+            aliases: Optional list of alternative names for the file
         """
         # Convert file_id to appropriate format for storage
         if isinstance(file_id, ObjectId):
@@ -696,14 +803,19 @@ class GridFSBucket:
         # Insert file metadata
         upload_date = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
+        # Serialize aliases to JSON if provided
+        aliases_json = None
+        if aliases is not None:
+            aliases_json = json.dumps(aliases)
+
         # When providing a custom ID, we need to handle it properly
         if isinstance(file_id, ObjectId):
             # Store the ObjectId in the _id column, let SQLite auto-generate the integer id
             self._db.execute(
                 f"""
                 INSERT INTO {self._files_collection}
-                (id, _id, filename, length, chunkSize, uploadDate, md5, metadata)
-                VALUES (NULL, ?, ?, ?, ?, ?, ?, ?)
+                (id, _id, filename, length, chunkSize, uploadDate, md5, metadata, content_type, aliases)
+                VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     str(file_id),
@@ -713,6 +825,8 @@ class GridFSBucket:
                     upload_date,
                     md5_hash,
                     self._serialize_metadata(metadata),
+                    content_type,
+                    aliases_json,
                 ),
             )
         else:
@@ -721,8 +835,8 @@ class GridFSBucket:
             self._db.execute(
                 f"""
                 INSERT INTO {self._files_collection}
-                (id, _id, filename, length, chunkSize, uploadDate, md5, metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (id, _id, filename, length, chunkSize, uploadDate, md5, metadata, content_type, aliases)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     file_id,  # Use integer ID for the auto-increment column (for compatibility)
@@ -735,6 +849,8 @@ class GridFSBucket:
                     upload_date,
                     md5_hash,
                     self._serialize_metadata(metadata),
+                    content_type,
+                    aliases_json,
                 ),
             )
 
@@ -760,6 +876,8 @@ class GridFSBucket:
         file_id: ObjectId | int,
         filename: str,
         metadata: Dict[str, Any] | None = None,
+        content_type: str | None = None,
+        aliases: list[str] | None = None,
     ) -> GridIn:
         """
         Opens a stream for writing a file to a GridFS bucket with a custom file id.
@@ -768,6 +886,8 @@ class GridFSBucket:
             file_id: The custom _id for the file document (ObjectId or integer ID)
             filename: The name of the file to upload
             metadata: Optional metadata for the file
+            content_type: Optional MIME type of the file
+            aliases: Optional list of alternative names for the file
 
         Returns:
             A GridIn instance to write the file contents
@@ -800,6 +920,8 @@ class GridFSBucket:
             file_id,  # Can be ObjectId or int
             disable_md5=self._disable_md5,
             write_concern=self._write_concern,
+            content_type=content_type,
+            aliases=aliases,
         )
 
     def delete_by_name(self, filename: str) -> None:
@@ -898,3 +1020,15 @@ class GridFSBucket:
 
         # Delete all files
         self._db.execute(f"DELETE FROM {self._files_collection}")
+
+    def list(self) -> list[str]:
+        """
+        List all unique filenames in the GridFS bucket.
+
+        Returns:
+            A list of unique filenames
+        """
+        cursor = self._db.execute(
+            f"SELECT DISTINCT filename FROM {self._files_collection} ORDER BY filename"
+        )
+        return [row[0] for row in cursor.fetchall()]

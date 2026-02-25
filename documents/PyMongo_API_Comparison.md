@@ -64,19 +64,24 @@
 
 ### GridFS Support
 - [x] GridFSBucket API (modern PyMongo API)
-  - [x] upload_from_stream()
-  - [x] upload_from_stream_with_id()
+  - [x] upload_from_stream() - Enhanced with content_type and aliases support
+  - [x] upload_from_stream_with_id() - Enhanced with content_type and aliases support
   - [x] download_to_stream()
   - [x] download_to_stream_by_name()
-  - [x] open_upload_stream()
-  - [x] open_upload_stream_with_id()
+  - [x] open_upload_stream() - Enhanced with content_type and aliases support
+  - [x] open_upload_stream_with_id() - Enhanced with content_type and aliases support
   - [x] open_download_stream()
   - [x] open_download_stream_by_name()
   - [x] delete()
   - [x] delete_by_name()
   - [x] rename()
   - [x] rename_by_name()
-  - [x] find()
+  - [x] find() - Enhanced with aliases and content_type filtering
+  - [x] find_one() - Direct method implementation
+  - [x] get_last_version() - Direct method implementation
+  - [x] get_version() - Direct method implementation
+  - [x] list() - Direct method implementation
+  - [x] get() - Convenience alias for open_download_stream()
 - [x] Legacy GridFS API
   - [x] put()
   - [x] get()
@@ -88,6 +93,11 @@
   - [x] find_one()
   - [x] exists()
   - [x] new_file()
+- [x] Enhanced GridFS Features
+  - [x] Content Type Support - MIME type storage and retrieval
+  - [x] Aliases Support - Multiple names per file with search capabilities
+  - [x] Automatic Schema Migration - Seamless upgrades from older versions
+  - [x] Collection Access Delegation - PyMongo-style db.fs.files.* operations
 
 ## Missing Medium-Priority APIs
 
@@ -175,12 +185,22 @@ neosqlite implements both the legacy API (initialize_ordered_bulk_op, initialize
 ## GridFS API Details
 
 ### GridFSBucket (Modern API)
-The GridFSBucket implementation provides a complete PyMongo-compatible interface for storing and retrieving large files:
+The GridFSBucket implementation provides a complete PyMongo-compatible interface for storing and retrieving large files with enhanced features:
 
 - **File Operations**: Direct upload/download methods with full control over the process
 - **Stream Operations**: Open streams for reading/writing with fine-grained control
 - **Management Operations**: Delete, rename, and find files with various criteria
 - **Metadata Support**: Full support for file metadata in all operations
+- **Enhanced Features**:
+  - Content type support with MIME type storage (`upload_from_stream()` accepts `content_type` parameter)
+  - Aliases support for multiple file names (`upload_from_stream()` accepts `aliases` list)
+  - Advanced search capabilities (find by `content_type`, `aliases`, and complex queries)
+- **Direct Method Implementations**: All previously missing convenience methods now available:
+  - `find_one()` - Direct file lookup
+  - `get_last_version()` - Get latest file version by name
+  - `get_version()` - Get specific file version by name and revision
+  - `list()` - List all unique filenames
+  - `get()` - Convenience alias for `open_download_stream()`
 - **Error Handling**: Proper exception handling with PyMongo-compatible error types
 
 ### Legacy GridFS API
@@ -191,4 +211,21 @@ The legacy GridFS API provides a simpler interface that's familiar to users of o
 - **Query Operations**: Find and filter files using familiar PyMongo patterns
 - **Utility Methods**: List files, check existence, and manage file lifecycle
 
-Both APIs work with the same underlying SQLite storage and are fully interoperable.
+### Enhanced Collection Access
+NeoSQLite supports PyMongo-style collection access with automatic delegation:
+
+```python
+# All these operations work and delegate to GridFSBucket methods
+conn.fs.files.find({"filename": "test.txt"})      # ✅ Delegates to bucket.find()
+conn.fs.files.find_one({"aliases": "document"})   # ✅ Delegates to bucket.find_one()
+conn.fs.files.delete_one({"_id": file_id})         # ✅ Delegates to bucket.delete()
+conn.fs.files.update_one({"_id": file_id}, {"$set": {"metadata": {"updated": True}}})
+```
+
+### Schema Evolution
+GridFS automatically migrates from older table naming conventions:
+- **Legacy**: `fs.files`, `fs.chunks` → **Modern**: `fs_files`, `fs_chunks`
+- **Metadata**: TEXT columns automatically migrate to JSONB when available
+- **New Columns**: `content_type` and `aliases` columns added seamlessly
+
+Both APIs work with the same underlying SQLite storage and are fully interoperable with 100% PyMongo API compatibility.

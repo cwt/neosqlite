@@ -31,6 +31,8 @@ class GridIn:
         file_id: ObjectId | int | None = None,
         disable_md5: bool = False,
         write_concern: Dict[str, Any] | None = None,
+        content_type: str | None = None,
+        aliases: list[str] | None = None,
     ):
         """
         Initialize a new GridIn instance.
@@ -44,6 +46,8 @@ class GridIn:
             file_id: Optional custom file ID
             disable_md5: Disable MD5 checksum calculation for performance
             write_concern: Write concern settings (simulated for compatibility)
+            content_type: Optional MIME type of the file
+            aliases: Optional list of alternative names for the file
         """
         self._db = db
         self._bucket_name = bucket_name
@@ -55,6 +59,8 @@ class GridIn:
         self._chunks_collection = f"{bucket_name}_chunks"
         self._disable_md5 = disable_md5
         self._write_concern = write_concern or {}
+        self._content_type = content_type
+        self._aliases = aliases
 
         # Stream state
         self._buffer = bytearray()
@@ -62,6 +68,23 @@ class GridIn:
         self._position = 0
         self._closed = False
         self._md5_hasher = None if disable_md5 else hashlib.md5()
+
+    def _serialize_aliases(self) -> str | None:
+        """
+        Serialize aliases to JSON string.
+
+        Args:
+            aliases: List of alias strings
+
+        Returns:
+            JSON string representation or None
+        """
+        if self._aliases is None:
+            return None
+        try:
+            return json.dumps(self._aliases)
+        except (TypeError, ValueError):
+            return str(self._aliases)
 
     def _serialize_metadata(
         self, metadata: Dict[str, Any] | None
@@ -198,8 +221,8 @@ class GridIn:
             self._db.execute(
                 f"""
                 INSERT INTO {self._files_collection}
-                (id, _id, filename, chunkSize, uploadDate, metadata)
-                VALUES (NULL, ?, ?, ?, ?, ?)
+                (id, _id, filename, chunkSize, uploadDate, metadata, content_type, aliases)
+                VALUES (NULL, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     str(oid),  # Store ObjectId as hex string
@@ -207,6 +230,8 @@ class GridIn:
                     self._chunk_size_bytes,
                     upload_date,
                     self._serialize_metadata(self._metadata),
+                    self._content_type,
+                    self._serialize_aliases(),
                 ),
             )
             self._file_id = oid  # Store the ObjectId
@@ -217,8 +242,8 @@ class GridIn:
                 self._db.execute(
                     f"""
                     INSERT INTO {self._files_collection}
-                    (id, _id, filename, chunkSize, uploadDate, metadata)
-                    VALUES (NULL, ?, ?, ?, ?, ?)
+                    (id, _id, filename, chunkSize, uploadDate, metadata, content_type, aliases)
+                    VALUES (NULL, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     (
                         str(self._file_id),
@@ -226,6 +251,8 @@ class GridIn:
                         self._chunk_size_bytes,
                         upload_date,
                         self._serialize_metadata(self._metadata),
+                        self._content_type,
+                        self._serialize_aliases(),
                     ),
                 )
             else:
@@ -233,8 +260,8 @@ class GridIn:
                 self._db.execute(
                     f"""
                     INSERT INTO {self._files_collection}
-                    (id, _id, filename, chunkSize, uploadDate, metadata)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    (id, _id, filename, chunkSize, uploadDate, metadata, content_type, aliases)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     (
                         self._file_id,
@@ -243,6 +270,8 @@ class GridIn:
                         self._chunk_size_bytes,
                         upload_date,
                         self._serialize_metadata(self._metadata),
+                        self._content_type,
+                        self._serialize_aliases(),
                     ),
                 )
 
@@ -400,28 +429,72 @@ class GridOut:
         self._chunks_collection = f"{bucket_name}_chunks"
 
         # Get file metadata using the integer ID
-        # Use json() wrapper to ensure JSONB columns are converted back to JSON text
-        row = self._db.execute(
-            f"""
-            SELECT filename, length, chunkSize, uploadDate, md5, json(metadata), _id
+        # Check if new columns exist to maintain backward compatibility
+        has_content_type = False
+        has_aliases = False
+        try:
+            cursor = self._db.execute(
+                f"PRAGMA table_info({self._files_collection})"
+            )
+            columns = {
+                row[1] for row in cursor.fetchall()
+            }  # Column names are in index 1
+            has_content_type = "content_type" in columns
+            has_aliases = "aliases" in columns
+        except (AttributeError, TypeError):
+            # Handle mocked databases in tests - assume old schema
+            pass
+
+        # Build dynamic SELECT query based on available columns
+        select_columns = [
+            "filename",
+            "length",
+            "chunkSize",
+            "uploadDate",
+            "md5",
+            "json(metadata)",
+            "_id",
+        ]
+        if has_content_type:
+            select_columns.append("content_type")
+        if has_aliases:
+            select_columns.append("json(aliases)")
+
+        query = f"""
+            SELECT {', '.join(select_columns)}
             FROM {self._files_collection}
             WHERE id = ?
-        """,
-            (self._int_file_id,),
-        ).fetchone()
+        """
+
+        row = self._db.execute(query, (self._int_file_id,)).fetchone()
 
         if row is None:
             raise NoFile(f"File with id {file_id} not found")
 
-        (
-            self._filename,
-            self._length,
-            self._chunk_size,
-            self._upload_date,
-            self._md5,
-            metadata_str,
-            self._stored_oid,  # Store the _id value (ObjectId hex string)
-        ) = row
+        # Unpack based on available columns
+        row_idx = 0
+        self._filename = row[row_idx]
+        row_idx += 1
+        self._length = row[row_idx]
+        row_idx += 1
+        self._chunk_size = row[row_idx]
+        row_idx += 1
+        self._upload_date = row[row_idx]
+        row_idx += 1
+        self._md5 = row[row_idx]
+        row_idx += 1
+        metadata_str = row[row_idx]
+        row_idx += 1
+        self._stored_oid = row[
+            row_idx
+        ]  # Store the _id value (ObjectId hex string)
+        row_idx += 1
+
+        # Handle optional columns with defaults
+        self._content_type = row[row_idx] if has_content_type else None
+        if has_content_type:
+            row_idx += 1
+        aliases_str = row[row_idx] if has_aliases else None
 
         # Set the actual _id field to the appropriate type based on the stored value
         if self._stored_oid is not None:
@@ -458,6 +531,7 @@ class GridOut:
             self._actual_id = file_id  # type: ignore
 
         self._metadata = self._deserialize_metadata(metadata_str)
+        self._aliases = self._deserialize_aliases(aliases_str)
         self._position = 0
         self._current_chunk_data = b""
         self._current_chunk_index = -1
@@ -504,6 +578,31 @@ class GridOut:
                 pass
             # Return as simple string in a dict for backward compatibility
             return {"_metadata": metadata_str}
+
+    def _deserialize_aliases(self, aliases_str: str | None) -> list[str] | None:
+        """
+        Deserialize aliases from JSON string.
+
+        Args:
+            aliases_str: JSON string representation of aliases
+
+        Returns:
+            List of alias strings or None
+        """
+        if aliases_str is None:
+            return None
+        try:
+            aliases = json.loads(aliases_str)
+            if isinstance(aliases, list):
+                return aliases
+            else:
+                # If it's not a list, wrap it in a list
+                return [str(aliases)]
+        except (TypeError, ValueError, json.JSONDecodeError):
+            # Fallback to parsing as a simple string or return as-is
+            if aliases_str:
+                return [aliases_str]
+            return None
 
     def read(self, size: int = -1) -> bytes:
         """
@@ -612,6 +711,16 @@ class GridOut:
     def metadata(self) -> Dict[str, Any] | None:
         """Get the metadata of the file."""
         return self._metadata
+
+    @property
+    def content_type(self) -> str | None:
+        """Get the content type (MIME type) of the file."""
+        return self._content_type
+
+    @property
+    def aliases(self) -> list[str] | None:
+        """Get the aliases (alternative names) for the file."""
+        return self._aliases
 
     def close(self) -> None:
         """Close the GridOut stream."""
@@ -843,6 +952,20 @@ class GridOutCursor:
                             # Direct metadata string matching
                             where_conditions.append("metadata LIKE ?")
                             params.append(f"%{value}%")
+                    case "aliases":
+                        # Check if the value is in the aliases JSON array
+                        where_conditions.append(
+                            "EXISTS (SELECT 1 FROM json_each(aliases) WHERE value = ?)"
+                        )
+                        params.append(value)
+                    case "content_type":
+                        if isinstance(value, dict) and "$ne" in value:
+                            where_conditions.append("content_type != ?")
+                            params.append(value["$ne"])
+                        else:
+                            # Direct value comparison
+                            where_conditions.append("content_type = ?")
+                            params.append(value)
 
             if where_conditions:
                 where_clause = "WHERE " + " AND ".join(where_conditions)

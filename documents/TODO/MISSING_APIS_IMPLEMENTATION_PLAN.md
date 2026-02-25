@@ -6,9 +6,10 @@ This document provides an accurate summary of PyMongo-compatible APIs and operat
 
 | Status | Count |
 |--------|-------|
-| ✅ Completed Features | 25+ |
+| ✅ Completed Features | 30+ |
 | ❌ Not Implemented Features | 2 core items |
-| 🔄 Planned Features | 45+ items by priority |
+| 🔄 Planned Features | 40+ items by priority |
+| 🆕 Recently Completed | GridFS Enhancements |
 
 ## Implemented Features
 
@@ -141,7 +142,41 @@ This document provides an accurate summary of PyMongo-compatible APIs and operat
 - **Purpose**: Set fields only during upsert insert operations
 - **Location**: `neosqlite/collection/query_helper.py`
 
+### GridFS Implementation (Recently Completed)
 
+#### GridFSBucket API Enhancements
+- **Status**: ✅ COMPLETED
+- **Purpose**: Full PyMongo-compatible GridFS implementation with enhanced features
+- **Location**: `neosqlite/gridfs/gridfs_bucket.py`
+- **Features**:
+  - `find_one()` - Direct method for single file lookup
+  - `get_last_version()` - Get most recent version of a file
+  - `get_version()` - Get specific version of a file by revision
+  - `list()` - List all unique filenames in the bucket
+  - `get()` - Convenience alias for `open_download_stream()`
+  - Content Type Support - MIME type storage and retrieval
+  - Aliases Support - Multiple names per file with search capabilities
+
+#### GridFS Schema Enhancements
+- **Status**: ✅ COMPLETED
+- **Purpose**: Enhanced GridFS metadata storage with automatic migration
+- **Location**: `neosqlite/gridfs/gridfs_bucket.py`
+- **Features**:
+  - Automatic schema migration for existing databases
+  - New `content_type` and `aliases` columns with proper JSONB support
+  - Backward compatibility with existing GridFS installations
+  - Enhanced querying capabilities for metadata fields
+
+#### GridFS Collection Access
+- **Status**: ✅ COMPLETED
+- **Purpose**: PyMongo-style collection access with automatic delegation
+- **Location**: `neosqlite/collection/__init__.py`
+- **Features**:
+  - `conn.fs.files.find()` - Automatic delegation to GridFSBucket.find()
+  - `conn.fs.files.find_one()` - Automatic delegation to GridFSBucket.find_one()
+  - `conn.fs.files.delete_one()` - Automatic delegation with proper cleanup
+  - `conn.fs.files.delete_many()` - Automatic delegation with proper cleanup
+  - Schema-aware detection of GridFS collections
 
 ## Currently Not Implemented Features
 
