@@ -143,6 +143,10 @@ class Cursor:
                 # If datetime processor fails, fall back to normal processing
                 pass
 
+        # Special handling for $expr queries
+        if "$expr" in self._filter:
+            return self._handle_expr_query()
+
         where_result = self._query_helpers._build_simple_where_clause(
             self._filter
         )
@@ -170,6 +174,53 @@ class Cursor:
             apply = partial(self._query_helpers._apply_query, self._filter)
             all_docs = self._load_documents(db_cursor.fetchall())
             return filter(apply, all_docs)
+
+    def _handle_expr_query(self) -> Iterable[Dict[str, Any]]:
+        """
+        Handle $expr queries with SQL evaluation when possible, Python fallback otherwise.
+
+        This method uses the query helper's _build_expr_where_clause to attempt SQL
+        evaluation, and falls back to Python evaluation if needed.
+        """
+        from .expr_evaluator import ExprEvaluator
+
+        # Try to build SQL WHERE clause with query helper
+        where_result = self._query_helpers._build_simple_where_clause(
+            self._filter
+        )
+
+        if where_result is not None:
+            # Use SQL-based filtering
+            where_clause, params = where_result
+            if self._collection.query_engine._jsonb_supported:
+                cmd = f"SELECT id, _id, json(data) as data FROM {self._collection.name} {where_clause}"
+            else:
+                cmd = f"SELECT id, _id, data FROM {self._collection.name} {where_clause}"
+            db_cursor = self._collection.db.execute(cmd, params)
+            return self._load_documents(db_cursor.fetchall())
+        else:
+            # Fallback to Python evaluation
+            expr = self._filter["$expr"]
+            evaluator = ExprEvaluator()
+
+            # Get all documents
+            if self._collection.query_engine._jsonb_supported:
+                cmd = f"SELECT id, _id, json(data) as data FROM {self._collection.name}"
+            else:
+                cmd = f"SELECT id, _id, data FROM {self._collection.name}"
+
+            db_cursor = self._collection.db.execute(cmd)
+            all_docs = self._load_documents(db_cursor.fetchall())
+
+            # Filter documents using $expr Python evaluation
+            def expr_filter(doc: Dict[str, Any]) -> bool:
+                try:
+                    return evaluator.evaluate_python(expr, doc)
+                except Exception:
+                    # If evaluation fails, exclude the document
+                    return False
+
+            return filter(expr_filter, all_docs)
 
     def _contains_datetime_operations(self, query: Dict[str, Any]) -> bool:
         """

@@ -10,7 +10,10 @@ from neosqlite.collection.json_helpers import (
     neosqlite_json_dumps,
     neosqlite_json_dumps_for_sql,
 )
-from neosqlite.collection.json_path_utils import parse_json_path
+from neosqlite.collection.json_path_utils import (
+    parse_json_path,
+    build_json_extract_expression,
+)
 from neosqlite.collection.text_search import unified_text_search
 from typing import Any, Dict, List, Union
 
@@ -1199,6 +1202,325 @@ class QueryHelper:
         """
         return where_clause, params
 
+    def _build_expr_where_clause(
+        self, query: Dict[str, Any]
+    ) -> tuple[str, List[Any]] | None:
+        """
+        Build a SQL WHERE clause for $expr queries using the 3-tier approach.
+        Also handles other query fields combined with $expr.
+
+        Tier Selection Logic:
+        - Tier 1 (Simple): Direct SQL WHERE with json_extract/jsonb_extract
+        - Tier 2 (Complex): Temporary tables with pre-computed field extractions
+        - Tier 3 (Fallback): Python evaluation for unsupported operations
+
+        Args:
+            query: Query dictionary containing $expr and potentially other fields
+
+        Returns:
+            Tuple of (SQL WHERE clause, parameters) or None for Python fallback
+        """
+        if "$expr" not in query:
+            return None
+
+        expr = query["$expr"]
+        if not isinstance(expr, dict):
+            return None
+
+        # Import here to avoid circular imports
+        from .expr_evaluator import ExprEvaluator
+        from .expr_temp_table import TempTableExprEvaluator
+
+        # Create evaluator instances
+        tier1_evaluator = ExprEvaluator()
+
+        # Determine complexity tier based on expression analysis
+        tier = self._analyze_expr_complexity(expr)
+
+        # Check for force fallback (kill switch)
+        force_python = get_force_fallback()
+
+        # Tier selection with kill switch awareness
+        if force_python or tier >= 3:
+            # Tier 3: Python fallback (kill switch or too complex)
+            return None
+
+        elif tier == 2:
+            # Tier 2: Try temporary tables approach
+            tier2_evaluator = TempTableExprEvaluator(
+                self.collection.db,
+                (
+                    self.collection.query_engine._data_column
+                    if hasattr(self.collection.query_engine, "_data_column")
+                    else "data"
+                ),
+            )
+
+            # Build full query with temp tables
+            other_fields_result = self._build_other_fields_clause(query, expr)
+            if other_fields_result is None:
+                # Can't handle other fields in SQL, fall back to Python
+                return None
+            other_fields_clause, other_params = other_fields_result
+
+            if other_fields_clause is None:
+                # Can't handle other fields in SQL, fall back to Python
+                return None
+
+            # Get the main query from Tier 2 evaluator
+            tier2_result = tier2_evaluator.evaluate(
+                expr, self.collection.name, None  # Filter expr not used yet
+            )
+            if tier2_result[0] is None:
+                # Tier 2 failed, fall back to Tier 1
+                pass
+            else:
+                main_query, params = tier2_result
+                # Success - return the full query
+                # Note: Tier 2 returns a full SELECT query, not just WHERE clause
+                # This needs special handling in the cursor
+                # For now, fall back to returning None to use Python evaluation
+                # TODO: Implement proper cursor support for Tier 2 queries
+                pass
+
+            # If Tier 2 fails, fall back to Tier 1
+            sql_expr, params = tier1_evaluator.evaluate(
+                expr, tier=1, force_python=False
+            )
+            if sql_expr is None:
+                return None
+
+            # Build WHERE clause with other fields
+            return self._combine_expr_with_other_fields(
+                sql_expr, params, query, expr
+            )
+
+        else:
+            # Tier 1: Direct SQL evaluation
+            sql_expr, params = tier1_evaluator.evaluate(
+                expr, tier=1, force_python=False
+            )
+
+            if sql_expr is None:
+                # Python fallback - return None to force Python filtering
+                return None
+
+            # Build WHERE clause with other fields
+            return self._combine_expr_with_other_fields(
+                sql_expr, params, query, expr
+            )
+
+    def _analyze_expr_complexity(self, expr: Dict[str, Any]) -> int:
+        """
+        Analyze expression complexity to determine appropriate tier.
+
+        Complexity scoring:
+        - Base expression: 1 point
+        - Each nested operator: +1 point
+        - Arithmetic operators: +1 point each
+        - Conditional operators: +2 points each
+        - Array operators: +2 points each
+        - Type conversion: +1 point each
+
+        Tier thresholds:
+        - 1-2: Tier 1 (simple SQL WHERE)
+        - 3-8: Tier 2 (temporary tables)
+        - 9+: Tier 3 (Python fallback)
+
+        Args:
+            expr: The $expr expression
+
+        Returns:
+            int: Complexity score
+        """
+        if not isinstance(expr, dict) or len(expr) != 1:
+            return 0
+
+        score = 1  # Base score
+
+        for operator, operands in expr.items():
+            # Recurse into operands for all operators
+            if isinstance(operands, list):
+                for op in operands:
+                    if isinstance(op, dict):
+                        score += self._analyze_expr_complexity(op)
+            elif isinstance(operands, dict):
+                score += self._analyze_expr_complexity(operands)
+
+            # Add operator-specific complexity
+            if operator in (
+                "$add",
+                "$subtract",
+                "$multiply",
+                "$divide",
+                "$mod",
+            ):
+                score += 1
+            elif operator in ("$cond", "$switch"):
+                score += 2
+            elif operator in (
+                "$size",
+                "$in",
+                "$arrayElemAt",
+                "$first",
+                "$last",
+            ):
+                score += 2
+            elif operator in ("$concat", "$toLower", "$toUpper", "$substr"):
+                score += 1
+            elif operator in ("$abs", "$ceil", "$floor", "$round", "$trunc"):
+                score += 1
+            elif operator == "$cmp":
+                score += 1
+            elif operator in ("$ifNull", "$type", "$toString", "$toInt"):
+                score += 1
+            # Comparison and logical operators don't add extra complexity
+            # (their complexity comes from their operands which are already counted)
+
+        return score
+
+    def _combine_expr_with_other_fields(
+        self,
+        sql_expr: str,
+        params: List[Any],
+        query: Dict[str, Any],
+        expr: Dict[str, Any],
+    ) -> tuple[str, List[Any]] | None:
+        """
+        Combine $expr SQL with other query fields.
+
+        Args:
+            sql_expr: The $expr SQL expression
+            params: SQL parameters
+            query: Full query dictionary
+            expr: The $expr expression
+
+        Returns:
+            Tuple of (WHERE clause, parameters) or None for Python fallback
+        """
+        # Build WHERE clause starting with $expr
+        where_parts = [f"({sql_expr})"]
+        all_params: List[Any] = list(params)
+
+        # Process other query fields (excluding $expr)
+        for field, value in query.items():
+            if field == "$expr":
+                continue
+
+            # Handle logical operators - fall back to Python
+            if field in ("$and", "$or", "$nor", "$not"):
+                return None
+
+            # Build clause for regular fields
+            field_result = self._build_field_clause(field, value)
+            if field_result is None:
+                # If any field can't be handled in SQL, fall back to Python
+                return None
+            field_clause, field_params = field_result
+            where_parts.append(field_clause)
+            all_params.extend(field_params)
+
+        return f"WHERE {' AND '.join(where_parts)}", all_params
+
+    def _build_other_fields_clause(
+        self, query: Dict[str, Any], expr: Dict[str, Any]
+    ) -> tuple[str, List[Any]] | None:
+        """
+        Build WHERE clause for non-$expr fields.
+
+        Args:
+            query: Full query dictionary
+            expr: The $expr expression
+
+        Returns:
+            Tuple of (WHERE clause, parameters) or None for Python fallback
+        """
+        clauses: List[str] = []
+        params: List[Any] = []
+
+        for field, value in query.items():
+            if field == "$expr":
+                continue
+
+            if field in ("$and", "$or", "$nor", "$not"):
+                return None
+
+            field_result = self._build_field_clause(field, value)
+            if field_result is None:
+                return None
+            field_clause, field_params = field_result
+
+            clauses.append(field_clause)
+            params.extend(field_params)
+
+        if clauses:
+            return " AND ".join(clauses), params
+        return "", params
+
+    def _build_field_clause(
+        self, field: str, value: Any
+    ) -> tuple[str, List[Any]] | None:
+        """
+        Build a WHERE clause for a single field.
+
+        Args:
+            field: Field name
+            value: Field value or operator dict
+
+        Returns:
+            Tuple of (SQL clause, parameters) or None for Python fallback
+        """
+        from ..objectid import ObjectId
+
+        if field == "_id":
+            # Handle _id field specially
+            if isinstance(value, ObjectId):
+                return f"{self.collection.name}._id = ?", [str(value)]
+            elif isinstance(value, str) and len(value) == 24:
+                try:
+                    obj_id = ObjectId(value)
+                    return f"{self.collection.name}._id = ?", [str(obj_id)]
+                except ValueError:
+                    try:
+                        int_id = int(value)
+                        return f"{self.collection.name}.id = ?", [int_id]
+                    except ValueError:
+                        return f"{self.collection.name}._id = ?", [value]
+            elif isinstance(value, int):
+                return f"{self.collection.name}.id = ?", [value]
+            else:
+                return f"{self.collection.name}._id = ?", [value]
+        else:
+            # Handle regular fields with json_extract
+            # Use "data" as the data column name (standard for NeoSQLite)
+            data_column = "data"
+            # Don't add $. prefix - build_json_extract_expression handles that via parse_json_path
+            extract_expr = build_json_extract_expression(data_column, field)
+
+            if isinstance(value, dict):
+                # Handle operators like $eq, $gt, etc.
+                if len(value) == 1:
+                    op, op_value = next(iter(value.items()))
+                    op_mapping = {
+                        "$eq": "=",
+                        "$gt": ">",
+                        "$gte": ">=",
+                        "$lt": "<",
+                        "$lte": "<=",
+                        "$ne": "!=",
+                    }
+                    if op in op_mapping:
+                        return f"{extract_expr} {op_mapping[op]} ?", [op_value]
+                    else:
+                        # Unsupported operator, fall back to Python
+                        return None
+                else:
+                    # Multiple operators, fall back to Python
+                    return None
+            else:
+                # Simple equality
+                return f"{extract_expr} = ?", [value]
+
     def _get_indexed_fields(self) -> List[str]:
         """
         Get a list of indexed fields for this collection.
@@ -1511,6 +1833,10 @@ class QueryHelper:
         # Handle text search queries separately
         if self._is_text_search_query(query):
             return self._build_text_search_query(query)
+
+        # Handle $expr queries
+        if "$expr" in query:
+            return self._build_expr_where_clause(query)
 
         clauses: List[str] = []
         params: List[Any] = []
