@@ -18,6 +18,21 @@ except ImportError:
 _jsonb_support_cache: Dict[int, Dict[str, bool]] = {}
 
 
+def clear_jsonb_cache(db_connection=None) -> None:
+    """
+    Clear the JSONB support cache.
+
+    Args:
+        db_connection: Optional specific connection to clear from cache.
+                      If None, clears the entire cache.
+    """
+    if db_connection is None:
+        _jsonb_support_cache.clear()
+    else:
+        conn_id = id(db_connection)
+        _jsonb_support_cache.pop(conn_id, None)
+
+
 def supports_jsonb(db_connection) -> bool:
     """
     Check if the SQLite connection supports JSONB functions.

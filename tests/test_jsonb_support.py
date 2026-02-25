@@ -9,6 +9,7 @@ from neosqlite.collection.jsonb_support import (
     _get_json_function_prefix,
     should_use_json_functions,
     _contains_text_operator,
+    clear_jsonb_cache,
     sqlite3,  # Import the same sqlite3 that the module uses
 )
 
@@ -129,17 +130,18 @@ def test_contains_text_operator_complex_nested_without_text():
 
 def test_supports_jsonb_with_mock_connection():
     """Test supports_jsonb with a mock connection that simulates JSONB support."""
+    # Clear cache to avoid stale results from other tests
+    clear_jsonb_cache()
+
     # Test successful execution (JSONB supported)
     mock_connection_success = Mock()
     mock_connection_success.execute.return_value = Mock()
     assert supports_jsonb(mock_connection_success) is True
 
+    # Clear cache before testing failure path
+    clear_jsonb_cache()
+
     # Test failed execution (JSONB not supported)
-    mock_connection_fail = Mock()
-    mock_connection_fail.execute.side_effect = sqlite3.OperationalError(
-        "no such function: jsonb"
-    )
-    # Create a new mock object to test the failure path
     mock_connection_fail_for_test = Mock()
     mock_connection_fail_for_test.execute.side_effect = (
         sqlite3.OperationalError("no such function: jsonb")
