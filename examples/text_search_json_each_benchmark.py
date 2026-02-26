@@ -136,7 +136,7 @@ def main():
         for i in range(200):
             text_docs.append(
                 {
-                    "_id": i + 1,
+                    "_id": i + 2000,
                     "title": f"Review {i + 1}",
                     "comments": [
                         {
