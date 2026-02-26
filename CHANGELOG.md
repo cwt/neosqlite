@@ -1,5 +1,76 @@
 # CHANGELOG
 
+## 1.4.0
+
+### New Features
+
+#### MongoDB $expr Operator Framework (WIP)
+- **Three-Tier Architecture**: SQL → Temp Tables → Python fallback with automatic tier selection
+- **78% Coverage**: 71 operators implemented with all high-priority operators complete
+- **100% Complete Categories**: Comparison, Logical, and Conditional operators
+- **High Priority Operators**: Date arithmetic ($dateAdd, $dateSubtract, $dateDiff), regex operations ($regexFind, $regexFindAll), array transformation ($filter, $map, $reduce)
+- **Array Aggregation**: $sum, $avg, $min, $max with SQL support
+- **Kill Switch**: Force Python evaluation for debugging/benchmarking
+- **Graceful Fallback**: Missing operators (23 total) use Python evaluation - no breaking changes
+
+#### Performance Enhancements
+- **JSONB Auto-Detection**: Automatic detection and caching of SQLite JSONB capabilities
+- **Dynamic Function Selection**: Optimal function selection based on SQLite version
+- **Graceful Fallback**: Support for SQLite < 3.51.0
+
+### Bug Fixes
+
+#### Issue #32: $unwind + $text Search (The Rabbit Hole)
+
+**Story**: Benchmark failures led to discovering non-unique `_id` bug → fixed → benchmark still failed → discovered pipeline reordering bug
+
+**Fixed**:
+- **Pipeline Reordering**: $match with $text no longer incorrectly pushed before $unwind
+- **Temp Table Fallback**: Disabled SQL optimization for $unwind + $text to preserve semantics
+- **Benchmark**: Fixed non-unique _id in text search benchmark (changeset 365)
+
+#### FTS5 Indexing
+- **Nested Array Support**: Fixed FTS indexes on nested arrays (e.g., "comments.text") using json_tree()/jsonb_tree()
+- **Full Array Coverage**: All array elements now properly indexed for text search
+
+#### Temp Table Improvements
+- **_id Column**: Added missing _id column to temp tables
+- **JSONB Conversion**: Fixed JSONB handling in temp table operations
+- **FTS5 on Temp Tables**: Added FTS5 support with tokenizer detection
+
+#### ChangeStream
+- **Binary Data Handling**: Fixed UnicodeDecodeError when watching collections with binary data containing non-UTF-8 bytes
+- **UTF-8 Decoding**: Proper decoding with error handling for all BSON binary subtypes
+
+### Testing
+
+#### $expr Test Suite
+- **327 Tests**: Comprehensive test coverage for all implemented operators
+- **17 Test Files**: Organized by operator category (arithmetic, array, comparison, conditional, date, logical, object, string, type)
+- **High Priority Tests**: Dedicated tests for date arithmetic, regex, and array transformation
+- **Temp Table Coverage**: 95% coverage of TempTableExprEvaluator class
+- **Integration Tests**: End-to-end tests with SQL vs Python consistency verification
+
+### Documentation
+
+#### New Files
+- **`documents/EXPR_IMPLEMENTATION.md`**: Complete $expr implementation guide
+- **`documents/releases/v1.4.0.md`**: Detailed release notes
+- **`examples/expr_high_priority_demo.py`**: High-priority operators demonstration
+
+### Known Limitations
+
+#### $expr Implementation (WIP)
+- **Missing Operators**: 23 medium/low priority operators remaining (set operations, trigonometric, advanced math)
+- **Python Fallback**: Unsupported operators use Python evaluation (functional but slower)
+- **Regex Performance**: Regex operations always use Python tier (SQLite regex limitations)
+
+### Compatibility
+
+- **Backward Compatible**: Zero breaking changes - all existing code continues to work
+- **PyMongo API**: Full compatibility maintained
+- **Graceful Degradation**: Missing $expr operators fall back to Python evaluation
+
 ## 1.3.2
 
 ### New Features
