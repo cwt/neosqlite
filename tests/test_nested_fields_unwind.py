@@ -149,10 +149,10 @@ def test_nested_array_unwind_basic(collection):
 
     # Check that both levels of unwinding worked
     # After unwinding, doc["orders"] is the unwound order object
-    # and doc["orders.items"] is the unwound item object
+    # and doc["orders"]["items"] is the unwound item object
     order_ids = [doc["orders"]["orderId"] for doc in result]
-    [doc["orders.items"]["product"] for doc in result]
-    [doc["orders.items"]["quantity"] for doc in result]
+    [doc["orders"]["items"]["product"] for doc in result]
+    [doc["orders"]["items"]["quantity"] for doc in result]
 
     # Each order should appear as many times as it has items
     assert order_ids.count("A001") == 2  # First order has 2 items
@@ -161,12 +161,12 @@ def test_nested_array_unwind_basic(collection):
     # Check specific items
     a001_items = [doc for doc in result if doc["orders"]["orderId"] == "A001"]
     assert len(a001_items) == 2
-    a001_products = {doc["orders.items"]["product"] for doc in a001_items}
+    a001_products = {doc["orders"]["items"]["product"] for doc in a001_items}
     assert a001_products == {"Book", "Pen"}
 
     a002_items = [doc for doc in result if doc["orders"]["orderId"] == "A002"]
     assert len(a002_items) == 1
-    assert a002_items[0]["orders.items"]["product"] == "Notebook"
+    assert a002_items[0]["orders"]["items"]["product"] == "Notebook"
 
 
 def test_nested_array_unwind_consistency(collection):
@@ -225,12 +225,12 @@ def test_nested_array_unwind_consistency(collection):
     for doc in result_list:
         assert "name" in doc
         assert "projects" in doc
-        assert "projects.tasks" in doc
+        assert "tasks" in doc["projects"]
         assert isinstance(doc["projects"], dict)
-        assert isinstance(doc["projects.tasks"], dict)
+        assert isinstance(doc["projects"]["tasks"], dict)
         assert "name" in doc["projects"]
-        assert "title" in doc["projects.tasks"]
-        assert "status" in doc["projects.tasks"]
+        assert "title" in doc["projects"]["tasks"]
+        assert "status" in doc["projects"]["tasks"]
 
 
 def test_multiple_consecutive_unwind_stages(collection):

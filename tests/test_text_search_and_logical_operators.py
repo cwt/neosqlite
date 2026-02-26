@@ -1658,6 +1658,65 @@ def test_text_search_on_unwound_mixed_with_regular_match(collection):
     assert "performance" in results[0]["comments"].lower()
 
 
+def test_simple_text_search_on_nested_array_field(collection):
+    """Test simple $text search on nested array fields without $unwind.
+
+    This test verifies that FTS indexing properly handles nested array fields
+    by indexing ALL array elements, not just the first one.
+
+    Regression test for: FTS index on nested array fields only indexed first element
+    """
+    # Insert documents with nested array fields
+    collection.insert_one(
+        {
+            "_id": 1,
+            "comments": [
+                {"text": "performance is great"},
+                {"text": "quality is good"},
+            ],
+        }
+    )
+    collection.insert_one(
+        {
+            "_id": 2,
+            "comments": [
+                {"text": "quality is excellent"},
+                {"text": "poor performance"},
+            ],
+        }
+    )
+    collection.insert_one(
+        {
+            "_id": 3,
+            "comments": [
+                {"text": "average quality"},
+                {"text": "standard features"},
+            ],
+        }
+    )
+
+    # Create FTS index on nested field
+    collection.create_index("comments.text", fts=True)
+
+    # Simple $text search without $unwind
+    # Should find documents 1 and 2 (both have at least one comment with "performance")
+    results = list(collection.find({"$text": {"$search": "performance"}}))
+
+    assert (
+        len(results) == 2
+    ), "Should find both documents with 'performance' in any comment"
+    result_ids = sorted([r["_id"] for r in results])
+    assert result_ids == [1, 2], "Should find documents 1 and 2"
+
+    # Also test with aggregate pipeline
+    pipeline = [{"$match": {"$text": {"$search": "performance"}}}]
+    agg_results = list(collection.aggregate(pipeline))
+
+    assert len(agg_results) == 2, "Aggregate should also find both documents"
+    agg_ids = sorted([r["_id"] for r in agg_results])
+    assert agg_ids == [1, 2], "Aggregate should find documents 1 and 2"
+
+
 # Tests that currently fall back to Python implementation due to projection complexity
 # These are documented limitations of the current implementation
 

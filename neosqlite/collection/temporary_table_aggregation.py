@@ -5,7 +5,11 @@ that the current implementation can't optimize with a single SQL query.
 """
 
 from .json_path_utils import parse_json_path
-from .jsonb_support import supports_jsonb
+from .jsonb_support import (
+    supports_jsonb,
+    supports_jsonb_each,
+    _get_json_function_prefix,
+)
 from .sql_translator_unified import SQLTranslator
 from contextlib import contextmanager
 from typing import Any, Dict, List, Callable
@@ -293,10 +297,10 @@ class TemporaryTableAggregationProcessor:
         pipeline_id = hashlib.sha256(pipeline_key.encode()).hexdigest()[:8]
 
         with aggregation_pipeline_context(self.db, pipeline_id) as create_temp:
-            # Start with base data
+            # Start with base data - include both id and _id for proper sorting support
             base_stage = {"_base": True}
             current_table = create_temp(
-                base_stage, f"SELECT id, data FROM {self.collection.name}"
+                base_stage, f"SELECT id, _id, data FROM {self.collection.name}"
             )
 
             # Process pipeline stages in groups that can be handled together
@@ -513,6 +517,9 @@ class TemporaryTableAggregationProcessor:
         Raises:
             ValueError: If an invalid unwind specification is encountered
         """
+        # Check if jsonb_each is supported (requires SQLite 3.51.0+)
+        jsonb_each_supported = supports_jsonb_each(self.db)
+
         # Process unwind stages one at a time to handle nested dependencies correctly
         current_temp_table = current_table
 
@@ -523,26 +530,31 @@ class TemporaryTableAggregationProcessor:
 
                 unwind_stage = {"$unwind": field}
 
-                # Use jsonb_* functions when supported for better performance
-                if self._jsonb_supported:
+                # Use appropriate JSON functions based on support
+                # jsonb_each is only available in SQLite 3.51.0+
+                # Also extract _id from JSON data for proper sorting support
+                if self._jsonb_supported and jsonb_each_supported:
                     current_temp_table = create_temp(
                         unwind_stage,
                         f"""
                         SELECT {self.collection.name}.id,
+                               {self.collection.name}._id as _id,
                                jsonb_set({self.collection.name}.data,
                                         '$."{field_name}"', je.value) as data
                         FROM {current_table} as {self.collection.name},
-                             json_each(jsonb_extract({self.collection.name}.data,
+                             jsonb_each(jsonb_extract({self.collection.name}.data,
                                                     '$.{field_name}')) as je
-                        WHERE json_type(jsonb_extract({self.collection.name}.data,
+                        WHERE jsonb_type(jsonb_extract({self.collection.name}.data,
                                                      '$.{field_name}')) = 'array'
                         """,
                     )
                 else:
+                    # Fall back to json_* functions when jsonb_each is not supported
                     current_temp_table = create_temp(
                         unwind_stage,
                         f"""
                         SELECT {self.collection.name}.id,
+                               {self.collection.name}._id as _id,
                                json_set({self.collection.name}.data,
                                         '$."{field_name}"', je.value) as data
                         FROM {current_table} as {self.collection.name},
@@ -805,13 +817,24 @@ class TemporaryTableAggregationProcessor:
             count = cursor.fetchone()[0]
             return [{count_field: count}]
 
-        # When using JSONB, we need to convert data back to text JSON for Python
-        if self._jsonb_supported:
+        # When data is stored as JSONB (binary), we need to convert it to text JSON for Python
+        # Check the column type of the table to determine if we need json() wrapper
+        cursor = self.db.execute(f"PRAGMA table_info({table_name})")
+        columns = cursor.fetchall()
+        data_column_type = None
+        for col in columns:
+            if col[1] == "data":  # col[1] is the column name
+                data_column_type = col[2].upper()  # col[2] is the column type
+                break
+
+        use_json_wrapper = data_column_type == "JSONB"
+
+        if use_json_wrapper:
             cursor = self.db.execute(
                 f"SELECT id, json(data) as data FROM {table_name}"
             )
         else:
-            cursor = self.db.execute(f"SELECT * FROM {table_name}")
+            cursor = self.db.execute(f"SELECT id, data FROM {table_name}")
         results = []
         for row in cursor.fetchall():
             doc = self.collection._load(row[0], row[1])
@@ -871,21 +894,12 @@ class TemporaryTableAggregationProcessor:
         match_spec: Dict[str, Any],
     ) -> str:
         """
-        Process a $text search stage using Python-based filtering.
+        Process a $text search stage using FTS5 on temporary table.
 
-        This method handles $text search operations that cannot be efficiently processed
-        with SQL queries. It creates a temporary table containing only documents that
-        match the text search criteria, using the unified_text_search function for
-        matching. This approach is used as a fallback when text search involves
-        complex operations or unwound elements that aren't supported by SQL translation.
-
-        The method works by:
-        1. Extracting and validating the search term from the match specification
-        2. Generating a deterministic table name for the results
-        3. Creating a temporary table to store the filtered results
-        4. Iterating through documents in the current table
-        5. Applying text search to each document using Python-based matching
-        6. Inserting matching documents into the result table in batches for efficiency
+        This method creates an FTS5 virtual table on the temporary data and uses
+        SQLite's FTS5 for efficient text search. The tokenizer configuration is
+        detected from the existing FTS index on the collection to ensure consistent
+        behavior.
 
         Args:
             create_temp (Callable): Function to create temporary tables
@@ -908,45 +922,128 @@ class TemporaryTableAggregationProcessor:
         if not isinstance(search_term, str):
             raise ValueError("$text search term must be a string")
 
+        # Detect tokenizer from existing FTS index on the collection
+        tokenizer_clause = self._detect_fts_tokenizer()
+
+        # Generate deterministic table names
+        fts_table_name = f"temp_text_fts_{hashlib.sha256(str(match_spec).encode()).hexdigest()[:8]}"
         result_table_name = f"temp_text_filtered_{hashlib.sha256(str(match_spec).encode()).hexdigest()[:8]}"
 
-        # Create result temporary table with optimal column type
-        if self._jsonb_supported:
-            self.db.execute(
-                f"CREATE TEMP TABLE {result_table_name} (id INTEGER, data JSONB)"
-            )
-        else:
-            self.db.execute(
-                f"CREATE TEMP TABLE {result_table_name} (id INTEGER, data TEXT)"
-            )
+        # Step 1: Create FTS5 virtual table with detected tokenizer
+        # We need to extract text content from the JSON data for indexing
+        # After $unwind, the unwound field contains the element (e.g., {"text": "...", ...})
+        # We try multiple paths to find text content and concatenate them
+        self.db.execute(
+            f"""
+            CREATE VIRTUAL TABLE {fts_table_name} USING fts5(src_rowid, id, content {tokenizer_clause})
+        """
+        )
 
-        # Process documents with cursor
-        cursor = self.db.execute(f"SELECT id, data FROM {current_table}")
+        # Step 2: Populate FTS5 table with text content from current table
+        # Extract text from common patterns and concatenate with space separator
+        # This handles various unwind scenarios:
+        # - Direct text field: $.text
+        # - String arrays (unwind): $.comments, $.tags, $.values
+        # - Object arrays (unwind): $.comments.text, $.value.text, $.content.text
+        # - Common fields: $.description, $.name
+        # Detect which JSON functions to use based on jsonb_each availability
+        jsonb_each_supported = supports_jsonb_each(self.db)
+        # Use jsonb_* functions only if BOTH jsonb AND jsonb_each are supported
+        use_jsonb = self._jsonb_supported and jsonb_each_supported
+        json_func_prefix = _get_json_function_prefix(use_jsonb)
+        json_extract_func = f"{json_func_prefix}_extract"
+        # When using jsonb_extract, we need to wrap with json() to get text output
+        json_wrapper = "json(" if use_jsonb else ""
 
-        # Batch insert for better performance
-        batch_inserts = []
-        batch_size = 1000
+        self.db.execute(
+            f"""
+            INSERT INTO {fts_table_name}(src_rowid, id, content)
+            SELECT c.rowid, c.id,
+                   TRIM(COALESCE(
+                       {json_wrapper}{json_extract_func}(data, '$.text') || ' ',
+                       ''
+                   ) || COALESCE(
+                       {json_wrapper}{json_extract_func}(data, '$.comments') || ' ',
+                       ''
+                   ) || COALESCE(
+                       {json_wrapper}{json_extract_func}(data, '$.comments.text') || ' ',
+                       ''
+                   ) || COALESCE(
+                       {json_wrapper}{json_extract_func}(data, '$.tags') || ' ',
+                       ''
+                   ) || COALESCE(
+                       {json_wrapper}{json_extract_func}(data, '$.value.text') || ' ',
+                       ''
+                   ) || COALESCE(
+                       {json_wrapper}{json_extract_func}(data, '$.value') || ' ',
+                       ''
+                   ) || COALESCE(
+                       {json_wrapper}{json_extract_func}(data, '$.content.text') || ' ',
+                       ''
+                   ) || COALESCE(
+                       {json_wrapper}{json_extract_func}(data, '$.content') || ' ',
+                       ''
+                   ) || COALESCE(
+                       {json_wrapper}{json_extract_func}(data, '$.description') || ' ',
+                       ''
+                   ) || COALESCE(
+                       {json_wrapper}{json_extract_func}(data, '$.name') || ' ',
+                       ''
+                   ) || COALESCE(
+                       {json_wrapper}{json_extract_func}(data, '$.reviews') || ' ',
+                       ''
+                   )) as content
+            FROM {current_table} c
+        """
+        )
 
-        for row_id, row_data in cursor:
-            # Load document
-            doc = self.collection._load(row_id, row_data)
+        # Step 3: Query FTS5 and create result table with matching documents
+        # Join on source rowid to get exact matching rows
+        # Also preserve _id column for proper sorting support
+        self.db.execute(f"DROP TABLE IF EXISTS {result_table_name}")
+        self.db.execute(
+            f"""
+            CREATE TEMP TABLE {result_table_name} AS
+            SELECT c.id, c._id, c.data
+            FROM {current_table} c
+            INNER JOIN {fts_table_name} f ON c.rowid = f.src_rowid
+            WHERE {fts_table_name} MATCH ?
+        """,
+            [search_term],
+        )
 
-            # Apply text search
-            if self._matches_text_search(doc, search_term):
-                batch_inserts.append((row_id, row_data))
-
-                # Process batch inserts
-                if len(batch_inserts) >= batch_size:
-                    self._batch_insert_documents(
-                        result_table_name, batch_inserts
-                    )
-                    batch_inserts = []
-
-        # Process remaining inserts
-        if batch_inserts:
-            self._batch_insert_documents(result_table_name, batch_inserts)
+        # Clean up FTS table
+        self.db.execute(f"DROP TABLE IF EXISTS {fts_table_name}")
 
         return result_table_name
+
+    def _detect_fts_tokenizer(self) -> str:
+        """
+        Detect the tokenizer configuration from existing FTS indexes on the collection.
+
+        Returns:
+            str: The tokenizer clause for FTS5 (e.g., ", tokenize=porter" or "")
+        """
+        # Query sqlite_master to find FTS tables for this collection
+        fts_table_pattern = f"{self.collection.name}_%_fts"
+        cursor = self.db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name LIKE ?",
+            (fts_table_pattern,),
+        )
+
+        for (sql,) in cursor.fetchall():
+            if sql:
+                # Parse tokenizer from CREATE VIRTUAL TABLE ... USING FTS5(..., tokenize=xxx)
+                # Example: "CREATE VIRTUAL TABLE test USING FTS5(content, tokenize=porter)"
+                import re
+
+                match = re.search(r"tokenize\s*=\s*(\w+)", sql, re.IGNORECASE)
+                if match:
+                    tokenizer = match.group(1)
+                    return f", tokenize={tokenizer}"
+
+        # Default: no tokenizer specified
+        return ""
 
 
 def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
@@ -958,8 +1055,9 @@ def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
     the pipeline is one of the supported stage types.
 
     Additionally, it handles special cases for text search operations:
-    - Pipelines with text search and unwind operations cannot be processed with temporary tables
-    - Pure text search operations are now supported with hybrid processing
+    - Pure text search operations are supported with hybrid processing
+    - Text search with simple unwind operations are supported (uses Python text search on temp tables)
+    - Complex nested unwinds (multiple unwinds or dotted paths) fall back to Python
 
     Args:
         pipeline (List[Dict[str, Any]]): List of aggregation pipeline stages to check
@@ -982,29 +1080,29 @@ def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
         "$unwind",
     }
 
-    # Check if pipeline has text search operations
-    has_text_search = any(
-        stage_name == "$match" and _contains_text_search(stage["$match"])
-        for stage in pipeline
-        if (stage_name := next(iter(stage.keys()))) == "$match"
-    )
-
-    # If pipeline has text search, we need to be more careful about which ones we can handle
-    if has_text_search:
-        # Check if pipeline has unwind operations
-        has_unwind = any(
-            next(iter(stage.keys())) == "$unwind" for stage in pipeline
-        )
-
-        # If pipeline has unwind operations, we can't handle it with temporary tables
-        # because our implementation doesn't properly support unwind operations
-        if has_unwind:
-            return False
+    # Count unwind stages and check for complex patterns
+    unwind_count = 0
+    has_nested_unwind = False
 
     for stage in pipeline:
         stage_name = next(iter(stage.keys()))
         if stage_name not in supported_stages:
             return False
+
+        if stage_name == "$unwind":
+            unwind_count += 1
+            unwind_spec = stage["$unwind"]
+            # Check for nested/dotted paths which are complex
+            if isinstance(unwind_spec, str) and "." in unwind_spec:
+                has_nested_unwind = True
+            elif isinstance(unwind_spec, dict):
+                path = unwind_spec.get("path", "")
+                if "." in path:
+                    has_nested_unwind = True
+
+    # Multiple unwinds or nested paths are complex - fall back to Python
+    if unwind_count > 1 or has_nested_unwind:
+        return False
 
     return True
 

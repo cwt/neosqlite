@@ -1,5 +1,10 @@
 from .json_path_utils import parse_json_path
-from .jsonb_support import supports_jsonb, _get_json_function_prefix
+from .jsonb_support import (
+    supports_jsonb,
+    supports_jsonb_each,
+    _get_json_function_prefix,
+    _get_json_tree_function,
+)
 from typing import Any, Dict, List, Tuple, overload
 from typing_extensions import Literal
 
@@ -108,6 +113,9 @@ class IndexManager:
         For FTS indexes, we create both JSON and JSONB versions to ensure
         compatibility with both types of queries.
 
+        For nested array fields (e.g., "comments.text"), we use json_tree() to
+        properly index all array elements, not just the first one.
+
         Args:
             field (str): The field to create the FTS index on.
             tokenizer (str, optional): Optional tokenizer to use for the FTS index.
@@ -117,60 +125,139 @@ class IndexManager:
         fts_table_name = f"{self.collection.name}_{index_name}_fts"
 
         # Create FTS table with optional tokenizer
+        # Note: We don't use the 'content' option because we manage the FTS data manually
+        # to properly support array fields with json_tree()
         tokenizer_clause = f"TOKENIZE={tokenizer}" if tokenizer else ""
         self.collection.db.execute(
             f"""
             CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name}
-            USING FTS5({index_name}, content='{self.collection.name}', {tokenizer_clause})
+            USING FTS5({index_name}, {tokenizer_clause})
             """
         )
 
-        # Populate the FTS table with data from the main table
-        # For FTS, we always use json_extract to maintain compatibility
-        self.collection.db.execute(
-            f"""
-            INSERT INTO {fts_table_name}(rowid, {index_name})
-            SELECT id, lower(json_extract(data, '{parse_json_path(field)}'))
-            FROM {self.collection.name}
-            WHERE json_extract(data, '{parse_json_path(field)}') IS NOT NULL
-            """
-        )
+        # For nested fields with arrays, use json_tree() to index all matching values
+        # Convert field path to json_tree fullkey pattern (e.g., "comments.text" -> "$.comments[*].text")
+        field_parts = field.split(".")
+        if len(field_parts) == 1:
+            # Simple field - use direct json_extract
+            json_path = parse_json_path(field)
+            self.collection.db.execute(
+                f"""
+                INSERT INTO {fts_table_name}(rowid, {index_name})
+                SELECT id, lower(json_extract(data, '{json_path}'))
+                FROM {self.collection.name}
+                WHERE json_extract(data, '{json_path}') IS NOT NULL
+                """
+            )
+        else:
+            # Nested field - use json_tree/jsonb_tree to find all matching values including array elements
+            # Concatenate all text values with spaces for FTS indexing
+            jsonb_each_supported = supports_jsonb_each(self.collection.db)
+            json_tree_func = _get_json_tree_function(
+                self._jsonb_supported, jsonb_each_supported
+            )
+            last_key = field_parts[-1]
+            self.collection.db.execute(
+                f"""
+                INSERT INTO {fts_table_name}(rowid, {index_name})
+                SELECT
+                    r.id,
+                    group_concat(lower(t.value), ' ')
+                FROM {self.collection.name} r
+                JOIN {json_tree_func}(r.data) t
+                WHERE t.key = ? AND t.type = 'text'
+                GROUP BY r.id
+                """,
+                [last_key],
+            )
 
         # Create triggers to keep FTS table in sync with main table
-        # Insert trigger
-        self.collection.db.execute(
-            f"""
-            CREATE TRIGGER IF NOT EXISTS {self.collection.name}_{index_name}_fts_insert
-            AFTER INSERT ON {self.collection.name}
-            BEGIN
-                INSERT INTO {fts_table_name}(rowid, {index_name})
-                VALUES (new.id, lower(json_extract(new.data, '{parse_json_path(field)}')));
-            END
-            """
-        )
+        # For array fields, we need to delete all entries for the rowid and re-insert all values
+        field_parts = field.split(".")
 
-        # Update trigger
-        self.collection.db.execute(
-            f"""
-            CREATE TRIGGER IF NOT EXISTS {self.collection.name}_{index_name}_fts_update
-            AFTER UPDATE ON {self.collection.name}
-            BEGIN
-                INSERT INTO {fts_table_name}({fts_table_name}, rowid, {index_name})
-                VALUES ('delete', old.id, lower(json_extract(old.data, '{parse_json_path(field)}')));
-                INSERT INTO {fts_table_name}(rowid, {index_name})
-                VALUES (new.id, lower(json_extract(new.data, '{parse_json_path(field)}')));
-            END
-            """
-        )
+        # Insert trigger - delete any existing entries and insert all matching values
+        if len(field_parts) == 1:
+            # Simple field
+            json_path = parse_json_path(field)
+            self.collection.db.execute(
+                f"""
+                CREATE TRIGGER IF NOT EXISTS {self.collection.name}_{index_name}_fts_insert
+                AFTER INSERT ON {self.collection.name}
+                BEGIN
+                    DELETE FROM {fts_table_name} WHERE rowid = new.id;
+                    INSERT INTO {fts_table_name}(rowid, {index_name})
+                    VALUES (new.id, lower(json_extract(new.data, '{json_path}')));
+                END
+                """
+            )
+        else:
+            # Nested field - use json_tree/jsonb_tree with GROUP BY
+            jsonb_each_supported = supports_jsonb_each(self.collection.db)
+            json_tree_func = _get_json_tree_function(
+                self._jsonb_supported, jsonb_each_supported
+            )
+            self.collection.db.execute(
+                f"""
+                CREATE TRIGGER IF NOT EXISTS {self.collection.name}_{index_name}_fts_insert
+                AFTER INSERT ON {self.collection.name}
+                BEGIN
+                    DELETE FROM {fts_table_name} WHERE rowid = new.id;
+                    INSERT INTO {fts_table_name}(rowid, {index_name})
+                    SELECT
+                        new.id,
+                        group_concat(lower(t.value), ' ')
+                    FROM {json_tree_func}(new.data) t
+                    WHERE t.key = '{last_key}' AND t.type = 'text'
+                    GROUP BY new.id;
+                END
+                """
+            )
 
-        # Delete trigger
+        # Update trigger - delete old entries and insert new ones
+        if len(field_parts) == 1:
+            # Simple field
+            json_path = parse_json_path(field)
+            self.collection.db.execute(
+                f"""
+                CREATE TRIGGER IF NOT EXISTS {self.collection.name}_{index_name}_fts_update
+                AFTER UPDATE ON {self.collection.name}
+                BEGIN
+                    DELETE FROM {fts_table_name} WHERE rowid = old.id;
+                    INSERT INTO {fts_table_name}(rowid, {index_name})
+                    VALUES (new.id, lower(json_extract(new.data, '{json_path}')));
+                END
+                """
+            )
+        else:
+            # Nested field - use json_tree/jsonb_tree with GROUP BY
+            jsonb_each_supported = supports_jsonb_each(self.collection.db)
+            json_tree_func = _get_json_tree_function(
+                self._jsonb_supported, jsonb_each_supported
+            )
+            self.collection.db.execute(
+                f"""
+                CREATE TRIGGER IF NOT EXISTS {self.collection.name}_{index_name}_fts_update
+                AFTER UPDATE ON {self.collection.name}
+                BEGIN
+                    DELETE FROM {fts_table_name} WHERE rowid = old.id;
+                    INSERT INTO {fts_table_name}(rowid, {index_name})
+                    SELECT
+                        new.id,
+                        group_concat(lower(t.value), ' ')
+                    FROM {json_tree_func}(new.data) t
+                    WHERE t.key = '{last_key}' AND t.type = 'text'
+                    GROUP BY new.id;
+                END
+                """
+            )
+
+        # Delete trigger - remove all entries for the deleted row
         self.collection.db.execute(
             f"""
             CREATE TRIGGER IF NOT EXISTS {self.collection.name}_{index_name}_fts_delete
             AFTER DELETE ON {self.collection.name}
             BEGIN
-                INSERT INTO {fts_table_name}({fts_table_name}, rowid, {index_name})
-                VALUES ('delete', old.id, lower(json_extract(old.data, '{parse_json_path(field)}')));
+                DELETE FROM {fts_table_name} WHERE rowid = old.id;
             END
             """
         )

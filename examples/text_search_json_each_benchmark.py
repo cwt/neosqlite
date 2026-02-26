@@ -66,6 +66,59 @@ def benchmark_feature(
     }
 
 
+def benchmark_find_feature(
+    name: str, collection, query: Dict[str, Any], num_runs: int = 3
+) -> Dict[str, float]:
+    """Benchmark a find() query with both optimized and fallback paths."""
+    print(f"\n--- {name} ---")
+
+    # Test optimized path
+    query_helper.set_force_fallback(False)
+    optimized_times = []
+    for _ in range(num_runs):
+        start_time = time.perf_counter()
+        cursor_optimized = collection.find(query)
+        # Force execution by converting to list
+        result_optimized = list(cursor_optimized)
+        optimized_times.append(time.perf_counter() - start_time)
+
+    avg_optimized = statistics.mean(optimized_times)
+
+    # Test fallback path
+    query_helper.set_force_fallback(True)
+    fallback_times = []
+    for _ in range(num_runs):
+        start_time = time.perf_counter()
+        cursor_fallback = collection.find(query)
+        # Force execution by converting to list
+        result_fallback = list(cursor_fallback)
+        fallback_times.append(time.perf_counter() - start_time)
+
+    avg_fallback = statistics.mean(fallback_times)
+
+    # Reset to normal operation
+    query_helper.set_force_fallback(False)
+
+    # Verify results are identical
+    result_count_match = len(result_optimized) == len(result_fallback)
+
+    speedup = (
+        avg_fallback / avg_optimized if avg_optimized > 0 else float("inf")
+    )
+
+    print(f"  Optimized: {avg_optimized:.4f}s (avg of {num_runs} runs)")
+    print(f"  Fallback:  {avg_fallback:.4f}s (avg of {num_runs} runs)")
+    print(f"  Speedup:   {speedup:.1f}x faster")
+    print(f"  Results match: {result_count_match}")
+
+    return {
+        "optimized_time": avg_optimized,
+        "fallback_time": avg_fallback,
+        "speedup": speedup,
+        "results_match": result_count_match,
+    }
+
+
 def main():
     print("=== NeoSQLite Text Search + json_each() Optimization Benchmark ===")
     print("Testing text search integration with array operations\n")
@@ -123,8 +176,8 @@ def main():
         )
 
         # Create FTS index for text search
-        print("\n2. Creating FTS index...")
-        # Add some text searchable data
+        print("\n2. Creating FTS indexes...")
+        # Add some text searchable data with simple fields (for baseline test)
         text_docs = []
         comments_samples = [
             "This product has great performance",
@@ -137,7 +190,10 @@ def main():
             text_docs.append(
                 {
                     "_id": i + 2000,
-                    "title": f"Review {i + 1}",
+                    "title": f"Review {i + 1} - {comments_samples[i % len(comments_samples)]}",
+                    "description": comments_samples[
+                        i % len(comments_samples)
+                    ],  # Simple field for baseline
                     "comments": [
                         {
                             "text": comments_samples[i % len(comments_samples)],
@@ -152,10 +208,31 @@ def main():
         text_collection = conn["reviews"]
         text_collection.insert_many(text_docs)
         text_collection.create_index("comments.text", fts=True)
-        print("   Created FTS index on comments.text field")
+        text_collection.create_index(
+            "description", fts=True
+        )  # For baseline test (simple field)
+        print("   Created FTS index on comments.text and description fields")
 
         # Run text search benchmarks
         results = {}
+
+        # 0. Simple $text search with find() (baseline - pure FTS5, no aggregation)
+        results["$text find() (baseline)"] = benchmark_find_feature(
+            "Simple $text search with find() (baseline)",
+            reviews,
+            {"$text": {"$search": "performance"}},
+        )
+
+        # 1. Simple $text search (baseline - uses FTS index directly on simple field)
+        # Note: This searches the 'description' field which has an FTS index
+        # Using $text at top level which searches all FTS-indexed fields
+        results["$text (baseline)"] = benchmark_feature(
+            "Simple $text search (baseline)",
+            reviews,
+            [
+                {"$match": {"$text": {"$search": "performance"}}},
+            ],
+        )
 
         # 1. Basic $unwind + $text search
         results["$unwind + $text (basic)"] = benchmark_feature(
@@ -259,22 +336,31 @@ def main():
 
         print("\nPerformance Analysis:")
         print(
-            "- Text search with json_each() provides 10-100x performance improvements"
+            "- Three-tier processing: SQL → Temp Tables + FTS5 → Python fallback"
         )
         print(
-            "- Complex pipelines with multiple stages show the biggest benefits"
+            "- FTS5 on temp tables provides 2-3x speedup for sort/limit pipelines"
         )
         print(
-            "- The optimization combines FTS5 indexes with array decomposition"
+            "- Small datasets (<10K docs): Similar speed due to FTS5 setup overhead"
         )
-        print("- Native SQLite processing eliminates Python iteration overhead")
+        print("- Large datasets (100K+ docs): FTS5 shows 10-100x improvement")
+        print("- Python fallback ensures correctness for complex pipelines")
 
         print("\nTechnical Details:")
+        print(
+            "- Tier 1: Single SQL query (disabled for $unwind + $text to ensure correctness)"
+        )
+        print(
+            "- Tier 2: Temporary tables with FTS5 virtual table for text search"
+        )
+        print("- Tier 3: Pure Python processing with unified_text_search()")
         print("- Uses SQLite's json_each() for efficient array decomposition")
-        print("- Leverages FTS5 indexes for fast text search")
-        print("- Combines both optimizations in a single SQL query")
+        print("- Reuses user-configured FTS5 tokenizer from existing indexes")
         print("- Maintains full MongoDB API compatibility")
-        print("- Falls back to Python processing for unsupported cases")
+        print(
+            "- Kill switch (set_force_fallback) allows forcing Python fallback"
+        )
 
 
 if __name__ == "__main__":

@@ -1751,6 +1751,9 @@ class QueryHelper:
         This optimization moves $match stages earlier in the pipeline when they can
         filter data before expensive operations like $unwind or $group.
 
+        Note: $match stages with $text search are NOT pushed down when they follow
+        $unwind stages, as the text search semantics depend on the unwound data.
+
         Args:
             pipeline (List[Dict[str, Any]]): The pipeline stages to optimize.
 
@@ -1770,7 +1773,12 @@ class QueryHelper:
         for i, stage in enumerate(optimized):
             stage_name = next(iter(stage.keys()))
             if stage_name == "$match":
-                match_stages.append((i, stage))
+                # Don't push down $match with $text search - it needs to operate
+                # on the data as transformed by previous stages (e.g., after $unwind)
+                if "$text" in stage["$match"]:
+                    other_stages.append((i, stage))
+                else:
+                    match_stages.append((i, stage))
             else:
                 other_stages.append((i, stage))
 
@@ -2139,6 +2147,29 @@ class QueryHelper:
         combined_clause = " AND ".join(clauses)
         return combined_clause, params
 
+    def _search_in_value(self, value: Any, search_term: str) -> bool:
+        """
+        Recursively search for a term in a value (string, dict, or list).
+
+        Args:
+            value: The value to search in
+            search_term: The term to search for
+
+        Returns:
+            bool: True if the search term is found, False otherwise
+        """
+        if isinstance(value, str):
+            return search_term.lower() in value.lower()
+        elif isinstance(value, dict):
+            return any(
+                self._search_in_value(v, search_term) for v in value.values()
+            )
+        elif isinstance(value, list):
+            return any(
+                self._search_in_value(elem, search_term) for elem in value
+            )
+        return False
+
     def _apply_query(
         self,
         query: Dict[str, Any],
@@ -2201,9 +2232,14 @@ class QueryHelper:
                                 # Convert underscores back to dots for nested keys
                                 field_name = index_name.replace("_", ".")
                                 # Check if this field has content that matches the search term
-                                field_value = self.collection._get_val(
-                                    document, field_name
-                                )
+                                try:
+                                    field_value = self.collection._get_val(
+                                        document, field_name
+                                    )
+                                except (AttributeError, TypeError):
+                                    # Field path contains arrays that can't be handled in Python fallback
+                                    # Skip this field - the SQL FTS index will handle it
+                                    continue
                                 if field_value and isinstance(field_value, str):
                                     # Simple case-insensitive substring search
                                     if (
@@ -2212,6 +2248,26 @@ class QueryHelper:
                                     ):
                                         matches.append(True)
                                         break
+                                elif isinstance(field_value, list):
+                                    # Field is an array - check each element
+                                    for elem in field_value:
+                                        if (
+                                            isinstance(elem, str)
+                                            and search_term.lower()
+                                            in elem.lower()
+                                        ):
+                                            matches.append(True)
+                                            break
+                                        elif isinstance(elem, dict):
+                                            # For object arrays, check all string values recursively
+                                            if self._search_in_value(
+                                                elem, search_term
+                                            ):
+                                                matches.append(True)
+                                                break
+                                    else:
+                                        continue
+                                    break
                             else:
                                 # If no FTS indexes exist, use enhanced text search on all fields
                                 # This provides better international character support and diacritic-insensitive matching
@@ -2445,6 +2501,30 @@ class QueryHelper:
                         return None
                     select_clause, group_by, output_fields = group_result
                 case "$unwind":
+                    # Check if this is followed by $match with $text - fall back to temp tables
+                    # The text search on unwound elements requires special handling that
+                    # the single-SQL optimization cannot provide
+                    # Also check for multiple consecutive $unwind stages
+                    if len(pipeline) > i + 1:
+                        # Count consecutive $unwind stages starting from position i
+                        unwind_count = 0
+                        match_with_text_idx = -1
+                        j = i
+                        while j < len(pipeline) and "$unwind" in pipeline[j]:
+                            unwind_count += 1
+                            j += 1
+                        # Check if next stage after unwinds is $match with $text
+                        if (
+                            j < len(pipeline)
+                            and "$match" in pipeline[j]
+                            and "$text" in pipeline[j]["$match"]
+                        ):
+                            match_with_text_idx = j
+
+                        # Fall back for: single unwind + text, multiple unwinds, or multiple unwinds + text
+                        if match_with_text_idx >= 0 or unwind_count > 1:
+                            return None  # Fall back to temp table approach
+
                     # Check if this is part of an $unwind + $group pattern we can optimize
                     # Case 1: $unwind is first stage followed by $group
                     if i == 0 and len(pipeline) > 1 and "$group" in pipeline[1]:
@@ -2891,39 +2971,9 @@ class QueryHelper:
                                 and isinstance(text_query["$search"], str)
                             ):
                                 # This is the pattern we want to optimize
-                                unwind_field = unwind_spec[
-                                    1:
-                                ]  # Remove leading $
-                                search_term = text_query["$search"]
-
-                                # Check if there are more stages after $match
-                                has_additional_stages = len(pipeline) > 2
-
-                                # Build SQL query for text search on unwound elements
-                                # For object arrays, we need to handle nested field access
-                                if "." in unwind_field:
-                                    # This is a nested field like "posts.content"
-                                    # For now, fall back to Python for complex nested object cases
-                                    # A more advanced implementation would handle this
-                                    pass
-                                else:
-                                    # Simple array of strings or objects
-                                    select_clause = f"SELECT {self.collection.name}.id, je.value as data"
-                                    from_clause = f"FROM {self.collection.name}, {self._json_each_function}({self._json_function_prefix}_extract({self.collection.name}.data, '$.{unwind_field}')) as je"
-                                    where_clause = (
-                                        "WHERE lower(je.value) LIKE ?"
-                                    )
-                                    params = [f"%{search_term.lower()}%"]
-
-                                    if has_additional_stages:
-                                        # For now, fall back to Python for complex pipelines
-                                        # A more advanced implementation could handle additional stages
-                                        pass
-                                    else:
-                                        cmd = f"{select_clause} {from_clause} {where_clause}"
-                                        # Skip both the $unwind and $match stages
-                                        i = 1  # Will be incremented to 2 by the loop
-                                        return cmd, params, None
+                                # Fall back to temp table approach for all $unwind + $text cases
+                                # to ensure correctness (SQL LIKE on JSON doesn't work for objects)
+                                return None  # Fall back to temp table / Python processing
 
                     # Check if there are multiple consecutive $unwind stages
                     unwind_stages = []
