@@ -236,3 +236,86 @@ def test_watch_different_collections(connection):
     assert change["documentKey"]["_id"] == doc_id
 
     change_stream.close()
+
+
+def test_watch_with_binary_data(collection):
+    """Test watch with binary data that may contain non-UTF-8 bytes"""
+    from neosqlite.binary import Binary
+
+    # Start watching with fullDocument lookup
+    change_stream = collection.watch(full_document="updateLookup")
+
+    # Insert a document with binary data containing non-UTF-8 bytes
+    # This simulates the bug where bytes like 0xcc can't be decoded as UTF-8
+    binary_data = Binary(b"\x00\x01\x02\xcc\xfe\xff\x00\x01\x02\x03")
+    result = collection.insert_one({"name": "BinaryTest", "data": binary_data})
+    doc_id = result.inserted_id
+
+    # Get the change - should not raise UnicodeDecodeError
+    change = next(change_stream)
+
+    # Verify basic change structure
+    assert change["operationType"] == "insert"
+    assert change["documentKey"]["_id"] == doc_id
+
+    # Full document should be included
+    assert "fullDocument" in change
+    assert change["fullDocument"]["name"] == "BinaryTest"
+
+    change_stream.close()
+
+
+def test_watch_with_various_binary_subtypes(collection):
+    """Test watch with different binary subtypes"""
+    from neosqlite.binary import Binary
+
+    # Start watching
+    change_stream = collection.watch(full_document="updateLookup")
+
+    # Test with different binary subtypes
+    test_cases = [
+        ("generic", Binary(b"\x00\xcc\xfe\xff", subtype=0)),
+        ("function", Binary(b"\x00\xcc\xfe\xff", subtype=1)),
+        ("uuid", Binary(b"\x00\xcc\xfe\xff" * 4, subtype=3)),
+        ("md5", Binary(b"\x00\xcc\xfe\xff" * 4, subtype=5)),
+    ]
+
+    for name, binary_data in test_cases:
+        result = collection.insert_one({"type": name, "binary": binary_data})
+        doc_id = result.inserted_id
+
+        # Should not raise UnicodeDecodeError
+        change = next(change_stream)
+        assert change["operationType"] == "insert"
+        assert change["documentKey"]["_id"] == doc_id
+
+    change_stream.close()
+
+
+def test_watch_update_with_binary_data(collection):
+    """Test watching update operations with binary data"""
+    from neosqlite.binary import Binary
+
+    # Insert a document first
+    result = collection.insert_one({"name": "UpdateTest", "value": 1})
+    doc_id = result.inserted_id
+
+    # Start watching
+    change_stream = collection.watch(full_document="updateLookup")
+
+    # Update with binary data containing non-UTF-8 bytes
+    binary_data = Binary(b"\xcc\xdd\xee\xff\x00\x11\x22\x33")
+    collection.update_one(
+        {"_id": doc_id}, {"$set": {"data": binary_data, "value": 2}}
+    )
+
+    # Get the change - should not raise UnicodeDecodeError
+    change = next(change_stream)
+
+    # Verify update change
+    assert change["operationType"] == "update"
+    assert change["documentKey"]["_id"] == doc_id
+    assert "fullDocument" in change
+    assert change["fullDocument"]["value"] == 2
+
+    change_stream.close()

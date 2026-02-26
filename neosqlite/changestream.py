@@ -262,12 +262,22 @@ class ChangeStream:
                     try:
                         import json
 
+                        # Handle bytes data - decode to string first
+                        if isinstance(document_data, bytes):
+                            try:
+                                document_str = document_data.decode("utf-8")
+                            except UnicodeDecodeError:
+                                # If UTF-8 decoding fails, use default ID
+                                document_str = None
+                        else:
+                            document_str = document_data
+
                         doc_dict = (
-                            json.loads(document_data)
-                            if isinstance(document_data, str)
-                            else document_data
+                            json.loads(document_str)
+                            if document_str is not None
+                            else None
                         )
-                        if "_id" in doc_dict:
+                        if doc_dict and "_id" in doc_dict:
                             actual_id = doc_dict["_id"]
                         else:
                             # If not in JSON, try to get from the _id column in the database
@@ -311,7 +321,17 @@ class ChangeStream:
                     try:
                         import json
 
-                        doc = json.loads(document_data)
+                        # Handle bytes data - decode to string first
+                        if isinstance(document_data, bytes):
+                            try:
+                                document_str = document_data.decode("utf-8")
+                            except UnicodeDecodeError:
+                                # If UTF-8 decoding fails, skip this change
+                                continue
+                        else:
+                            document_str = document_data
+
+                        doc = json.loads(document_str)
                         # Ensure the _id in the full document is correct
                         # Use the stored document_id_value if available (e.g., for deleted docs)
                         if document_id_value is not None:
