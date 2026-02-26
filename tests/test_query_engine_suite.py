@@ -861,8 +861,8 @@ def test_query_helper_build_unwind_methods():
         )
 
         assert "FROM test_collection" in from_clause
-        # Check for json_each (which doesn't have a JSONB equivalent)
-        assert "json_each" in from_clause
+        # Check for json_each or jsonb_each depending on SQLite version support
+        assert "json_each" in from_clause or "jsonb_each" in from_clause
         assert "je1" in from_clause
         assert "je2" in from_clause
         assert "tags" in str(unwound_fields)
