@@ -3213,3 +3213,140 @@ def test_complex_pipeline_cost_estimation():
 
         # The optimized pipeline should have lower cost
         assert optimized_cost < complex_cost
+
+
+# ================================
+# Aggregation Expression Tests (Phase 2)
+# ================================
+
+
+def test_multi_stage_pipeline_with_expressions():
+    """Test multi-stage pipeline with aggregation expressions."""
+    from neosqlite.collection.query_helper import set_force_fallback
+
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn["test_multi"]
+        collection.insert_many(
+            [
+                {"_id": 1, "category": "A", "price": 100, "quantity": 5},
+                {"_id": 2, "category": "A", "price": 50, "quantity": 10},
+                {"_id": 3, "category": "B", "price": 75, "quantity": 8},
+            ]
+        )
+
+        set_force_fallback(True)
+        try:
+            pipeline = [
+                {
+                    "$addFields": {
+                        "revenue": {"$multiply": ["$price", "$quantity"]}
+                    }
+                },
+                {"$match": {"revenue": {"$gte": 500}}},
+                {
+                    "$group": {
+                        "_id": "$category",
+                        "total_revenue": {"$sum": "$revenue"},
+                    }
+                },
+                {"$sort": {"total_revenue": -1}},
+            ]
+            results = list(collection.aggregate(pipeline))
+
+            assert len(results) == 2
+            # Category A: 500 + 500 = 1000
+            # Category B: 600
+            assert results[0]["_id"] == "A"
+            assert results[0]["total_revenue"] == 1000
+            assert results[1]["_id"] == "B"
+            assert results[1]["total_revenue"] == 600
+        finally:
+            set_force_fallback(False)
+
+
+def test_match_with_expr_in_aggregation():
+    """Test $match with $expr in aggregation pipeline."""
+    from neosqlite.collection.query_helper import set_force_fallback
+
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn["test_match_expr"]
+        collection.insert_many(
+            [
+                {"_id": 1, "name": "Alice", "salary": 50000},
+                {"_id": 2, "name": "Bob", "salary": 45000},
+                {"_id": 3, "name": "Charlie", "salary": 60000},
+            ]
+        )
+
+        set_force_fallback(True)
+        try:
+            pipeline = [{"$match": {"$expr": {"$gt": ["$salary", 50000]}}}]
+            results = list(collection.aggregate(pipeline))
+
+            assert len(results) == 1
+            assert results[0]["name"] == "Charlie"
+        finally:
+            set_force_fallback(False)
+
+
+def test_facet_with_expressions_in_subpipeline():
+    """Test $facet with expressions in sub-pipeline."""
+    from neosqlite.collection.query_helper import set_force_fallback
+
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn["test_facet"]
+        collection.insert_many(
+            [
+                {"_id": 1, "category": "A", "price": 100, "quantity": 5},
+                {"_id": 2, "category": "A", "price": 50, "quantity": 10},
+                {"_id": 3, "category": "B", "price": 75, "quantity": 8},
+                {"_id": 4, "category": "B", "price": 25, "quantity": 20},
+            ]
+        )
+
+        set_force_fallback(True)
+        try:
+            pipeline = [
+                {
+                    "$facet": {
+                        "by_category": [
+                            {
+                                "$group": {
+                                    "_id": "$category",
+                                    "total_revenue": {
+                                        "$sum": {
+                                            "$multiply": ["$price", "$quantity"]
+                                        }
+                                    },
+                                }
+                            }
+                        ],
+                        "high_value": [
+                            {
+                                "$addFields": {
+                                    "revenue": {
+                                        "$multiply": ["$price", "$quantity"]
+                                    }
+                                }
+                            },
+                            {"$match": {"revenue": {"$gte": 500}}},
+                        ],
+                    }
+                }
+            ]
+            results = list(collection.aggregate(pipeline))
+
+            assert len(results) == 1
+            facet_result = results[0]
+
+            # Check by_category facet
+            assert "by_category" in facet_result
+            assert len(facet_result["by_category"]) == 2
+
+            # Check high_value facet
+            assert "high_value" in facet_result
+            # Should have documents with revenue >= 500
+            for doc in facet_result["high_value"]:
+                assert doc["revenue"] >= 500
+        finally:
+            set_force_fallback(False)

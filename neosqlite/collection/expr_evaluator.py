@@ -46,6 +46,231 @@ from .jsonb_support import (
 )
 
 
+# Reserved field names that are NOT operators
+RESERVED_FIELDS = {
+    "$field",
+    "$index",  # Used in $let
+    # Add other reserved names as needed
+}
+
+
+class _RemoveSentinel:
+    """
+    Sentinel value for $$REMOVE in $project stage.
+
+    When a field is set to this value, it should be removed from the output document.
+    This is a singleton pattern - only one instance should exist.
+    """
+
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self):
+        return "$$REMOVE"
+
+    def __bool__(self):
+        return False
+
+
+# Singleton instance for $$REMOVE
+REMOVE_SENTINEL = _RemoveSentinel()
+
+
+class AggregationContext:
+    """
+    Manages variable scoping for aggregation expressions.
+
+    Aggregation expressions have different variable contexts than query expressions.
+    This class manages the lifecycle of aggregation variables like $$ROOT, $$CURRENT,
+    and $$REMOVE throughout pipeline execution.
+
+    Attributes:
+        variables: Dictionary mapping variable names to their values
+        stage_index: Current stage index in the pipeline
+        current_field: Name of the field being computed (for context)
+        pipeline_id: Unique identifier for the pipeline (for temp table correlation)
+    """
+
+    def __init__(self) -> None:
+        """Initialize aggregation context with default variables."""
+        self.variables: Dict[str, Any] = {
+            "$$ROOT": None,  # Original document
+            "$$CURRENT": None,  # Current document (may be modified)
+            "$$REMOVE": None,  # Sentinel for field removal
+        }
+        self.stage_index: int = 0
+        self.current_field: Optional[str] = None
+        self.pipeline_id: Optional[str] = None
+
+    def bind_document(self, doc: Dict[str, Any]) -> None:
+        """
+        Bind document to context.
+
+        Called at the start of pipeline execution to initialize
+        $$ROOT and $$CURRENT with the input document.
+
+        Args:
+            doc: The document to bind
+        """
+        self.variables["$$ROOT"] = doc
+        self.variables["$$CURRENT"] = doc
+
+    def update_current(self, doc: Dict[str, Any]) -> None:
+        """
+        Update current document after stage processing.
+
+        Called after each stage that modifies the document to update
+        the $$CURRENT variable.
+
+        Args:
+            doc: The updated document
+        """
+        self.variables["$$CURRENT"] = doc
+
+    def get_variable(self, name: str) -> Any:
+        """
+        Get variable value.
+
+        Args:
+            name: Variable name (e.g., "$$ROOT", "$$CURRENT")
+
+        Returns:
+            Variable value or None if not found
+        """
+        return self.variables.get(name)
+
+    def set_variable(self, name: str, value: Any) -> None:
+        """
+        Set variable value.
+
+        Args:
+            name: Variable name
+            value: Value to set
+        """
+        self.variables[name] = value
+
+
+def _is_expression(value: Any) -> bool:
+    """
+    Check if value is an aggregation expression.
+
+    An expression is a dict with exactly one key starting with '$'
+    that is not a reserved field name.
+
+    Args:
+        value: Value to check
+
+    Returns:
+        True if value is an expression, False otherwise
+
+    Examples:
+        >>> _is_expression({"$sin": "$angle"})
+        True
+        >>> _is_expression({"$field": "value"})  # Reserved
+        False
+        >>> _is_expression("$field")
+        False
+        >>> _is_expression(42)
+        False
+    """
+    if not isinstance(value, dict):
+        return False
+    if len(value) != 1:
+        return False  # Could be a literal dict
+    key = next(iter(value.keys()))
+    return key.startswith("$") and key not in RESERVED_FIELDS
+
+
+def _is_field_reference(value: Any) -> bool:
+    """
+    Check if value is a field reference.
+
+    Field references start with '$' but are not expressions
+    (i.e., they're simple strings like "$field" or "$nested.field").
+
+    Args:
+        value: Value to check
+
+    Returns:
+        True if value is a field reference, False otherwise
+
+    Examples:
+        >>> _is_field_reference("$field")
+        True
+        >>> _is_field_reference("$nested.field")
+        True
+        >>> _is_field_reference("$$ROOT")
+        False
+        >>> _is_field_reference({"$sin": "$angle"})
+        False
+    """
+    return (
+        isinstance(value, str)
+        and value.startswith("$")
+        and not value.startswith("$$")
+    )
+
+
+def _is_aggregation_variable(value: Any) -> bool:
+    """
+    Check for aggregation variables.
+
+    Aggregation variables start with '$$' (e.g., $$ROOT, $$CURRENT).
+
+    Args:
+        value: Value to check
+
+    Returns:
+        True if value is an aggregation variable, False otherwise
+
+    Examples:
+        >>> _is_aggregation_variable("$$ROOT")
+        True
+        >>> _is_aggregation_variable("$$CURRENT")
+        True
+        >>> _is_aggregation_variable("$field")
+        False
+    """
+    return isinstance(value, str) and value.startswith("$$")
+
+
+def _is_literal(value: Any) -> bool:
+    """
+    Check if value is a literal (not an expression or field reference).
+
+    Literals include: numbers, strings, booleans, None, arrays, and plain dicts.
+
+    Args:
+        value: Value to check
+
+    Returns:
+        True if value is a literal, False otherwise
+
+    Examples:
+        >>> _is_literal(42)
+        True
+        >>> _is_literal("string")
+        True
+        >>> _is_literal(True)
+        True
+        >>> _is_literal(None)
+        True
+        >>> _is_literal([1, 2, 3])
+        True
+        >>> _is_literal("$field")
+        False
+    """
+    if isinstance(value, str):
+        # Strings starting with $ are field refs or variables, not literals
+        return not value.startswith("$")
+    # All other types are literals
+    return True
+
+
 class ExprEvaluator:
     """
     Evaluator for MongoDB $expr operator.
@@ -156,6 +381,130 @@ class ExprEvaluator:
         # For now, this is a placeholder that will be called from query_helper
         # with the proper database connection
         return None, []
+
+    def evaluate_for_aggregation(
+        self,
+        expr: Any,
+        context: Optional[AggregationContext] = None,
+        as_alias: Optional[str] = None,
+    ) -> Tuple[str, List[Any]]:
+        """
+        Evaluate expression for aggregation pipeline.
+
+        This method evaluates expressions for use in aggregation pipeline stages
+        like $addFields, $project, $group, etc. Unlike the evaluate() method which
+        generates WHERE clause expressions, this method generates SELECT clause
+        expressions with optional aliases.
+
+        Args:
+            expr: Expression to evaluate. Can be:
+                  - Dict: Expression like {"$sin": "$angle"}
+                  - Str: Field reference like "$field" or variable like "$$ROOT"
+                  - Literal: Number, string, boolean, None, array, or dict
+            context: Aggregation context for variable scoping. If None, a new
+                     context will be created.
+            as_alias: Optional alias for SELECT clause (e.g., "AS field_name")
+
+        Returns:
+            Tuple of (SQL expression, parameters). The SQL expression will include
+            the alias if as_alias is provided.
+
+        Raises:
+            NotImplementedError: If the expression operator is not supported in
+                                 SQL tier for aggregation context
+
+        Examples:
+            >>> evaluator = ExprEvaluator()
+            >>> evaluator.evaluate_for_aggregation({"$sin": "$angle"})
+            ("sin(json_extract(data, '$.angle'))", [])
+
+            >>> evaluator.evaluate_for_aggregation({"$sin": "$angle"}, as_alias="sin_val")
+            ("sin(json_extract(data, '$.angle')) AS sin_val", [])
+
+            >>> evaluator.evaluate_for_aggregation("$field")
+            ("json_extract(data, '$.field')", [])
+
+            >>> evaluator.evaluate_for_aggregation(42)
+            ("?", [42])
+        """
+        if context is None:
+            context = AggregationContext()
+
+        sql, params = self._convert_operand_to_sql_agg(expr, context)
+
+        if as_alias:
+            sql = f"{sql} AS {as_alias}"
+
+        return sql, params
+
+    def _convert_operand_to_sql_agg(
+        self, operand: Any, context: AggregationContext
+    ) -> Tuple[str, List[Any]]:
+        """
+        Convert an operand to SQL for aggregation context.
+
+        This method handles different types of operands:
+        - Expressions: Recursively evaluate using _convert_expr_to_sql
+        - Field references: Convert to json_extract calls
+        - Aggregation variables: Handle $$ROOT, $$CURRENT, etc.
+        - Literals: Convert to parameterized SQL
+
+        Args:
+            operand: The operand to convert
+            context: Aggregation context for variable scoping
+
+        Returns:
+            Tuple of (SQL expression, parameters)
+
+        Raises:
+            NotImplementedError: If the operand type is not supported
+        """
+        # Handle aggregation variables first ($$ROOT, $$CURRENT, etc.)
+        if _is_aggregation_variable(operand):
+            return self._handle_aggregation_variable(operand, context)
+
+        # For other types, use the existing _convert_operand_to_sql method
+        # which handles expressions, field references, and literals
+        return self._convert_operand_to_sql(operand)
+
+    def _handle_aggregation_variable(
+        self, var_name: str, context: AggregationContext
+    ) -> Tuple[str, List[Any]]:
+        """
+        Handle aggregation variable references.
+
+        Args:
+            var_name: Variable name (e.g., "$$ROOT", "$$CURRENT")
+            context: Aggregation context
+
+        Returns:
+            Tuple of (SQL expression, parameters)
+
+        Raises:
+            NotImplementedError: If the variable is not supported
+        """
+        match var_name:
+            case "$$ROOT":
+                # Return the entire document as JSON
+                # In aggregation context, this is the data column itself
+                return self.data_column, []
+            case "$$CURRENT":
+                # Return the current document state
+                # For SQL tier, this is the same as $$ROOT since we don't
+                # modify documents in-place in SQL
+                return self.data_column, []
+            case "$$REMOVE":
+                # Sentinel value for field removal in $project
+                # This is handled at the application level, not SQL
+                # Return a special marker that can be detected
+                raise NotImplementedError(
+                    "$$REMOVE is handled at the application level (use REMOVE_SENTINEL)"
+                )
+            case _:
+                # Unknown variable
+                raise NotImplementedError(
+                    f"Aggregation variable {var_name} not supported in SQL tier"
+                )
 
     def _convert_expr_to_sql(
         self, expr: Dict[str, Any]
@@ -833,9 +1182,21 @@ class ExprEvaluator:
                 return sql, value_params
 
     def _convert_trig_operator(
-        self, operator: str, operands: List[Any]
+        self, operator: str, operands: Any
     ) -> Tuple[str, List[Any]]:
-        """Convert trigonometric and hyperbolic operators to SQL."""
+        """Convert trigonometric and hyperbolic operators to SQL.
+
+        Args:
+            operator: The trig operator ($sin, $cos, etc.)
+            operands: The operand(s). Can be:
+                      - A single value (string, number) for simple cases like {"$sin": "$angle"}
+                      - A list of values for array format like {"$sin": ["$angle"]}
+        """
+        # Normalize operands to handle both single values and lists
+        # MongoDB allows both: {$sin: "$angle"} and {$sin: ["$angle"]}
+        if not isinstance(operands, list):
+            operands = [operands]
+
         match operator:
             case "$atan2":
                 # Handle $atan2 separately (requires 2 operands)
@@ -1528,10 +1889,17 @@ class ExprEvaluator:
     def _evaluate_arithmetic_python(
         self, operator: str, operands: List[Any], document: Dict[str, Any]
     ) -> Optional[float]:
-        """Evaluate arithmetic operators in Python."""
+        """Evaluate arithmetic operators in Python.
+
+        Note: In MongoDB, arithmetic operations with null return null.
+        """
         values = [
             self._evaluate_operand_python(op, document) for op in operands
         ]
+
+        # If any operand is None, return None (MongoDB behavior)
+        if any(v is None for v in values):
+            return None
 
         match operator:
             case "$add":
@@ -2104,9 +2472,34 @@ class ExprEvaluator:
                 )
 
     def _evaluate_string_python(
-        self, operator: str, operands: List[Any], document: Dict[str, Any]
+        self, operator: str, operands: Any, document: Dict[str, Any]
     ) -> Any:
-        """Evaluate string operators in Python."""
+        """Evaluate string operators in Python.
+
+        Args:
+            operator: The string operator ($toUpper, $toLower, etc.)
+            operands: The operand(s). Can be:
+                      - A single value for simple cases like {"$toUpper": "$field"}
+                      - A list of values for array format
+                      - A dict for operators like $trim, $regexMatch
+            document: The document to evaluate against
+        """
+        # Normalize operands to handle both single values and lists
+        # MongoDB allows both: {$toUpper: "$field"} and {$toUpper: ["$field"]}
+        # But some operators like $trim, $regexMatch use dict format
+        if operator in (
+            "$trim",
+            "$ltrim",
+            "$rtrim",
+            "$regexMatch",
+            "$regexFind",
+            "$regexFindAll",
+        ):
+            # These operators use dict format, don't normalize
+            pass
+        elif not isinstance(operands, list):
+            operands = [operands]
+
         match operator:
             case "$concat":
                 values = [
@@ -2341,16 +2734,16 @@ class ExprEvaluator:
                     flags |= re.DOTALL
 
                 matches = list(re.finditer(regex, str(input_val), flags))
-                result = []
+                all_results: List[Dict[str, Any]] = []
                 for match in matches:
-                    match_obj = {
+                    match_obj: Dict[str, Any] = {
                         "match": match.group(),
                         "index": match.start(),
                     }
                     if match.groups():
                         match_obj["captures"] = list(match.groups())
-                    result.append(match_obj)
-                return result
+                    all_results.append(match_obj)
+                return all_results
             case _:
                 raise NotImplementedError(
                     f"String operator {operator} not supported in Python evaluation"
@@ -2906,11 +3299,14 @@ class ExprEvaluator:
                 # Field reference - navigate document
                 field_path = operand[1:]  # Remove $
 
-                # Handle $$variable syntax (for $filter, $map, $reduce)
+                # Handle $$variable syntax
                 if field_path.startswith("$"):
-                    # $$var syntax - look up directly in document context
-                    # field_path is now "$var", we need to look up "$$var"
+                    # $$var syntax - check for special variables
                     var_name = "$" + field_path  # Reconstruct $$var
+                    if var_name == "$$REMOVE":
+                        # Special sentinel for field removal in $project
+                        return REMOVE_SENTINEL
+                    # Otherwise look up directly in document context
                     return document.get(var_name)
 
                 keys = field_path.split(".")

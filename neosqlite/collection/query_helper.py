@@ -2197,6 +2197,15 @@ class QueryHelper:
 
         for field, value in query.items():
             match field:
+                case "$expr":
+                    # Handle $expr operator in Python fallback
+                    from .expr_evaluator import ExprEvaluator
+
+                    evaluator = ExprEvaluator(
+                        data_column="data", db_connection=self.collection.db
+                    )
+                    result = evaluator._evaluate_expr_python(value, document)
+                    matches.append(bool(result))
                 case "$text":
                     # Handle $text operator in Python fallback
                     # This is a simplified implementation that just does basic string matching
@@ -3549,17 +3558,28 @@ class QueryHelper:
             List[Dict[str, Any]]: A list of grouped documents with applied
                                   accumulator operations.
         """
+        from .expr_evaluator import ExprEvaluator, _is_expression
+
         grouped_docs: Dict[Any, Dict[str, Any]] = {}
         group_id_key = group_query.get("_id")
 
         # Create a copy of group_query without _id for processing accumulator operations
         accumulators = {k: v for k, v in group_query.items() if k != "_id"}
 
+        # Create expression evaluator for evaluating expressions in accumulators
+        evaluator = ExprEvaluator(
+            data_column="data", db_connection=self.collection.db
+        )
+
         for doc in docs:
             if group_id_key is None:
                 group_id = None
+            elif _is_expression(group_id_key):
+                # Evaluate expression for group key
+                group_id = evaluator._evaluate_expr_python(group_id_key, doc)
             else:
                 group_id = self.collection._get_val(doc, group_id_key)
+
             group = grouped_docs.setdefault(group_id, {"_id": group_id})
 
             for field, accumulator in accumulators.items():
@@ -3574,8 +3594,12 @@ class QueryHelper:
                     group[field] = group.get(field, 0) + 1
                     continue
 
+                # Handle expressions in accumulators
+                if _is_expression(key):
+                    # Evaluate expression for each document
+                    value = evaluator._evaluate_expr_python(key, doc)
                 # Handle literal values (e.g., $sum: 1 for counting)
-                if isinstance(key, (int, float)):
+                elif isinstance(key, (int, float)):
                     value = key
                 elif isinstance(key, dict):
                     # Check if this is one of our new N-value operators
@@ -3809,6 +3833,131 @@ class QueryHelper:
 
         return list(grouped_docs.values())
 
+    def _run_subpipeline(
+        self,
+        sub_pipeline: List[Dict[str, Any]],
+        docs: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """
+        Run a sub-pipeline (e.g., for $facet) on a list of documents.
+
+        This is a simplified pipeline execution for sub-pipelines that doesn't
+        preserve $$ROOT context (since sub-pipelines start fresh).
+
+        Args:
+            sub_pipeline: List of pipeline stages to execute
+            docs: Input documents
+
+        Returns:
+            List of processed documents
+        """
+        from .expr_evaluator import ExprEvaluator, _is_expression
+
+        for stage in sub_pipeline:
+            stage_name = next(iter(stage.keys()))
+            match stage_name:
+                case "$match":
+                    query = stage["$match"]
+                    docs = [
+                        doc for doc in docs if self._apply_query(query, doc)
+                    ]
+                case "$addFields":
+                    add_fields_spec = stage["$addFields"]
+                    evaluator = ExprEvaluator(
+                        data_column="data", db_connection=self.collection.db
+                    )
+                    for doc in docs:
+                        for new_field, expr in add_fields_spec.items():
+                            if _is_expression(expr):
+                                value = evaluator._evaluate_expr_python(
+                                    expr, doc
+                                )
+                                self.collection._set_val(doc, new_field, value)
+                            elif isinstance(expr, str) and expr.startswith("$"):
+                                if expr.startswith("$$"):
+                                    if expr == "$$ROOT":
+                                        value = doc.copy()
+                                    elif expr == "$$CURRENT":
+                                        value = doc.copy()
+                                    else:
+                                        value = None
+                                    self.collection._set_val(
+                                        doc, new_field, value
+                                    )
+                                else:
+                                    source_field_name = expr[1:]
+                                    source_value = self.collection._get_val(
+                                        doc, source_field_name
+                                    )
+                                    self.collection._set_val(
+                                        doc, new_field, source_value
+                                    )
+                            else:
+                                self.collection._set_val(doc, new_field, expr)
+                case "$project":
+                    projection = stage["$project"]
+                    docs = [
+                        self._apply_projection(projection, doc) for doc in docs
+                    ]
+                case "$group":
+                    group_spec = stage["$group"]
+                    docs = self._process_group_stage(group_spec, docs)
+                case "$sort":
+                    sort_spec = stage["$sort"]
+                    for key, direction in reversed(list(sort_spec.items())):
+
+                        def make_sort_key(key, dir):
+                            def sort_key(doc):
+                                val = self.collection._get_val(doc, key)
+                                if val is None:
+                                    return (0 if dir == DESCENDING else 1, None)
+                                return (0, val)
+
+                            return sort_key
+
+                        sort_key_func = make_sort_key(key, direction)
+                        docs.sort(
+                            key=sort_key_func,
+                            reverse=direction == DESCENDING,
+                        )
+                case "$skip":
+                    count = stage["$skip"]
+                    docs = docs[count:]
+                case "$limit":
+                    count = stage["$limit"]
+                    docs = docs[:count]
+                case "$unwind":
+                    # Simplified $unwind for sub-pipelines
+                    unwind_spec = stage["$unwind"]
+                    if isinstance(unwind_spec, str):
+                        field_path = unwind_spec.lstrip("$")
+                    elif isinstance(unwind_spec, dict):
+                        field_path = unwind_spec["path"].lstrip("$")
+                    else:
+                        continue
+                    unwound_docs = []
+                    for doc in docs:
+                        array_to_unwind = self.collection._get_val(
+                            doc, field_path
+                        )
+                        if isinstance(array_to_unwind, list):
+                            for item in array_to_unwind:
+                                new_doc = deepcopy(doc)
+                                self.collection._set_val(
+                                    new_doc, field_path, item
+                                )
+                                unwound_docs.append(new_doc)
+                        else:
+                            unwound_docs.append(doc)
+                    docs = unwound_docs
+                case "$count":
+                    count_field = stage["$count"]
+                    docs = [{count_field: len(docs)}]
+                case _:
+                    # Unsupported stage in sub-pipeline, skip
+                    pass
+        return docs
+
     def _apply_projection(
         self,
         projection: Dict[str, Any],
@@ -3826,6 +3975,13 @@ class QueryHelper:
         Returns:
             Dict[str, Any]: The document with fields applied based on the projection.
         """
+        from .expr_evaluator import (
+            ExprEvaluator,
+            AggregationContext,
+            _is_expression,
+            REMOVE_SENTINEL,
+        )
+
         if not projection:
             return document
 
@@ -3833,7 +3989,69 @@ class QueryHelper:
         projected_doc: Dict[str, Any] = {}
         include_id = projection.get("_id", 1) == 1
 
-        # Inclusion mode
+        # Check if this is an inclusion projection with expressions
+        has_expressions = any(
+            _is_expression(value)
+            or (
+                isinstance(value, str)
+                and value.startswith("$")
+                and not value.startswith("$$")
+            )
+            for value in projection.values()
+        )
+
+        if has_expressions:
+            # Inclusion mode with expressions - evaluate each field
+            evaluator = ExprEvaluator(
+                data_column="data", db_connection=self.collection.db
+            )
+            ctx = AggregationContext()
+            ctx.bind_document(document)
+
+            for key, value in projection.items():
+                if key == "_id":
+                    if include_id and "_id" in doc:
+                        projected_doc["_id"] = doc["_id"]
+                    continue
+
+                if _is_expression(value):
+                    # Evaluate expression
+                    projected_value = evaluator._evaluate_expr_python(
+                        value, document
+                    )
+                    # Check for $$REMOVE sentinel
+                    if projected_value is REMOVE_SENTINEL:
+                        # Skip this field (remove it)
+                        continue
+                    projected_doc[key] = projected_value
+                elif isinstance(value, str) and value.startswith("$"):
+                    # Field reference
+                    if value.startswith("$$"):
+                        # Aggregation variable
+                        if value == "$$ROOT":
+                            projected_doc[key] = document.copy()
+                        elif value == "$$CURRENT":
+                            projected_doc[key] = document.copy()
+                        elif value == "$$REMOVE":
+                            # Skip this field (remove it)
+                            continue
+                        else:
+                            projected_doc[key] = None
+                    else:
+                        # Regular field reference
+                        field_name = value[1:]
+                        projected_doc[key] = self.collection._get_val(
+                            document, field_name
+                        )
+                elif value == 1:
+                    # Simple inclusion
+                    if key in doc:
+                        projected_doc[key] = doc[key]
+                # value == 0 is exclusion, skip it
+
+            return projected_doc
+
+        # Inclusion mode (no expressions)
         if any(v == 1 for v in projection.values()):
             for key, value in projection.items():
                 if value == 1 and key in doc:

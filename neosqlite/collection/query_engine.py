@@ -17,6 +17,7 @@ from .query_helper import (
 )
 from .raw_batch_cursor import RawBatchCursor
 from .sql_translator_unified import SQLTranslator
+from .expr_evaluator import ExprEvaluator, AggregationContext, _is_expression
 from copy import deepcopy
 from neosqlite.binary import Binary
 from neosqlite.collection.json_helpers import (
@@ -25,7 +26,7 @@ from neosqlite.collection.json_helpers import (
     neosqlite_json_loads,
 )
 from neosqlite.collection.jsonb_support import supports_jsonb
-from typing import Any, Dict, List, TYPE_CHECKING, cast
+from typing import Any, Dict, List, TYPE_CHECKING
 import importlib.util
 import json
 
@@ -973,23 +974,32 @@ class QueryEngine:
 
         # Fallback to old method for complex queries (Python implementation)
         docs: List[Dict[str, Any]] = list(self.find())
+
+        # Store original documents for $$ROOT variable support
+        # Each document is wrapped with metadata for variable scoping
+        docs_with_context = [
+            {"__doc__": doc, "__root__": deepcopy(doc)} for doc in docs
+        ]
+
         for stage in pipeline:
             stage_name = next(iter(stage.keys()))
             match stage_name:
                 case "$match":
                     query = stage["$match"]
-                    docs = [
-                        doc
-                        for doc in docs
-                        if self.helpers._apply_query(query, doc)
+                    docs_with_context = [
+                        dc
+                        for dc in docs_with_context
+                        if self.helpers._apply_query(query, dc["__doc__"])
                     ]
                 case "$sort":
                     sort_spec = stage["$sort"]
                     for key, direction in reversed(list(sort_spec.items())):
 
                         def make_sort_key(key, dir):
-                            def sort_key(doc):
-                                val = self.collection._get_val(doc, key)
+                            def sort_key(dc):
+                                val = self.collection._get_val(
+                                    dc["__doc__"], key
+                                )
                                 # Handle None values - sort them last for ascending, first for descending
                                 if val is None:
                                     return (0 if dir == DESCENDING else 1, None)
@@ -998,25 +1008,37 @@ class QueryEngine:
                             return sort_key
 
                         sort_key_func = make_sort_key(key, direction)
-                        docs.sort(
+                        docs_with_context.sort(
                             key=sort_key_func,
                             reverse=direction == DESCENDING,
                         )
                 case "$skip":
                     count = stage["$skip"]
-                    docs = docs[count:]
+                    docs_with_context = docs_with_context[count:]
                 case "$limit":
                     count = stage["$limit"]
-                    docs = docs[:count]
+                    docs_with_context = docs_with_context[:count]
                 case "$project":
                     projection = stage["$project"]
-                    docs = [
-                        self.helpers._apply_projection(projection, doc)
-                        for doc in docs
+                    docs_with_context = [
+                        {
+                            "__doc__": self.helpers._apply_projection(
+                                projection, dc["__doc__"]
+                            ),
+                            "__root__": dc["__root__"],
+                        }
+                        for dc in docs_with_context
                     ]
                 case "$group":
                     group_spec = stage["$group"]
-                    docs = self.helpers._process_group_stage(group_spec, docs)
+                    # For $group, we don't preserve __root__ since grouping creates new documents
+                    grouped_docs = self.helpers._process_group_stage(
+                        group_spec, [dc["__doc__"] for dc in docs_with_context]
+                    )
+                    docs_with_context = [
+                        {"__doc__": doc, "__root__": doc}
+                        for doc in grouped_docs
+                    ]
                 case "$unwind":
                     # Handle both string and object forms of $unwind
                     unwind_spec = stage["$unwind"]
@@ -1039,8 +1061,10 @@ class QueryEngine:
                             f"Invalid $unwind specification: {unwind_spec}"
                         )
 
-                    unwound_docs = []
-                    for doc in docs:
+                    unwound_docs_with_context = []
+                    for dc in docs_with_context:
+                        doc = dc["__doc__"]
+                        root = dc["__root__"]
                         array_to_unwind = self.collection._get_val(
                             doc, field_path
                         )
@@ -1075,7 +1099,10 @@ class QueryEngine:
                                     # Add array index if requested
                                     if include_array_index:
                                         new_doc[include_array_index] = idx
-                                    unwound_docs.append(new_doc)
+                                    # Preserve __root__ for $$ROOT variable
+                                    unwound_docs_with_context.append(
+                                        {"__doc__": new_doc, "__root__": root}
+                                    )
                             elif preserve_null_and_empty:
                                 # Empty array but preserve is requested
                                 new_doc = deepcopy(doc)
@@ -1085,7 +1112,9 @@ class QueryEngine:
                                 # Add array index if requested
                                 if include_array_index:
                                     new_doc[include_array_index] = None
-                                unwound_docs.append(new_doc)
+                                unwound_docs_with_context.append(
+                                    {"__doc__": new_doc, "__root__": root}
+                                )
                             # If empty array and preserve is False, don't add any documents
                         elif (
                             not isinstance(array_to_unwind, list)
@@ -1098,10 +1127,12 @@ class QueryEngine:
                             # Add array index if requested
                             if include_array_index:
                                 new_doc[include_array_index] = None
-                            unwound_docs.append(new_doc)
+                            unwound_docs_with_context.append(
+                                {"__doc__": new_doc, "__root__": root}
+                            )
                         # Missing fields (field_path not in doc) are never preserved
                         # Default case: non-array values are ignored unless they exist and preserveNullAndEmptyArrays is True
-                    docs = unwound_docs
+                    docs_with_context = unwound_docs_with_context
                 case "$lookup":
                     # Python fallback implementation for $lookup
                     lookup_spec = stage["$lookup"]
@@ -1116,7 +1147,8 @@ class QueryEngine:
                     ]
 
                     # Process each document
-                    for doc in docs:
+                    for dc in docs_with_context:
+                        doc = dc["__doc__"]
                         # Get the local field value
                         local_value = self.collection._get_val(doc, local_field)
 
@@ -1136,34 +1168,76 @@ class QueryEngine:
                         doc[as_field] = matching_docs
                 case "$addFields":
                     add_fields_spec = stage["$addFields"]
-                    for doc in docs:
-                        for (
-                            new_field,
-                            source_field,
-                        ) in add_fields_spec.items():
-                            if isinstance(
-                                source_field, str
-                            ) and source_field.startswith("$"):
-                                source_field_name = source_field[1:]
-                                source_value = self.collection._get_val(
-                                    doc, source_field_name
+                    # Create expression evaluator for this stage
+                    evaluator = ExprEvaluator(
+                        data_column="data", db_connection=self.collection.db
+                    )
+
+                    for dc in docs_with_context:
+                        doc = dc["__doc__"]
+                        root = dc["__root__"]
+
+                        # Create context for this document
+                        ctx = AggregationContext()
+                        ctx.bind_document(
+                            root
+                        )  # Bind original document as $$ROOT
+                        ctx.update_current(doc)  # Set current document state
+
+                        for new_field, expr in add_fields_spec.items():
+                            if _is_expression(expr):
+                                # Full expression - evaluate in Python with current context
+                                value = evaluator._evaluate_expr_python(
+                                    expr, doc
                                 )
-                                self.collection._set_val(
-                                    doc, new_field, source_value
-                                )
+                                self.collection._set_val(doc, new_field, value)
+                            elif isinstance(expr, str) and expr.startswith("$"):
+                                # Field reference
+                                if expr.startswith("$$"):
+                                    # Aggregation variable
+                                    if expr == "$$ROOT":
+                                        # $$ROOT always refers to original document
+                                        value = root.copy()
+                                    elif expr == "$$CURRENT":
+                                        # $$CURRENT refers to document as it evolves
+                                        value = doc.copy()
+                                    else:
+                                        value = None
+                                    self.collection._set_val(
+                                        doc, new_field, value
+                                    )
+                                else:
+                                    # Regular field reference - may reference newly added field
+                                    source_field_name = expr[1:]
+                                    source_value = self.collection._get_val(
+                                        doc, source_field_name
+                                    )
+                                    self.collection._set_val(
+                                        doc, new_field, source_value
+                                    )
+                            else:
+                                # Literal value
+                                self.collection._set_val(doc, new_field, expr)
+
+                        # Update $$CURRENT after all fields are added
+                        ctx.update_current(doc)
                 case "$sample":
                     sample_spec = stage["$sample"]
                     sample_size = sample_spec["size"]
                     import random
 
-                    docs = random.sample(docs, min(sample_size, len(docs)))
+                    docs_with_context = random.sample(
+                        docs_with_context,
+                        min(sample_size, len(docs_with_context)),
+                    )
                 case "$unset":
                     unset_spec = stage["$unset"]
                     if isinstance(unset_spec, str):
                         unset_fields = [unset_spec]
                     else:
                         unset_fields = unset_spec
-                    for doc in docs:
+                    for dc in docs_with_context:
+                        doc = dc["__doc__"]
                         for field in unset_fields:
                             # Handle nested fields
                             keys = field.split(".")
@@ -1180,23 +1254,28 @@ class QueryEngine:
                     facet_spec = stage["$facet"]
                     facet_results: Dict[str, Any] = {}
                     for facet_name, sub_pipeline in facet_spec.items():
-                        facet_result = self.aggregate_with_constraints(
-                            sub_pipeline, batch_size, memory_constrained
+                        # Run sub-pipeline with current documents
+                        sub_docs = [dc["__doc__"] for dc in docs_with_context]
+                        facet_result = self.helpers._run_subpipeline(
+                            sub_pipeline, sub_docs
                         )
-                        if isinstance(facet_result, list):
-                            facet_results[facet_name] = facet_result
-                        else:
-                            # CompressedQueue, convert to list
-                            facet_results[facet_name] = list(facet_result)
-                    docs = [cast(Dict[str, Any], facet_results)]
+                        facet_results[facet_name] = facet_result
+                    docs_with_context = [
+                        {"__doc__": facet_results, "__root__": facet_results}
+                    ]
                 case "$count":
                     count_field = stage["$count"]
-                    docs = [{count_field: len(docs)}]
+                    docs_with_context = [
+                        {
+                            "__doc__": {count_field: len(docs_with_context)},
+                            "__root__": {count_field: len(docs_with_context)},
+                        }
+                    ]
                 case _:
                     raise MalformedQueryException(
                         f"Aggregation stage '{stage_name}' not supported"
                     )
-        return docs
+        return [dc["__doc__"] for dc in docs_with_context]
 
     def aggregate_raw_batches(
         self,
