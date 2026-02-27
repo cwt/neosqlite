@@ -9,6 +9,8 @@ from .jsonb_support import (
     supports_jsonb,
     supports_jsonb_each,
     _get_json_function_prefix,
+    _get_json_each_function,
+    _get_json_group_array_function,
 )
 from .sql_translator_unified import SQLTranslator
 from contextlib import contextmanager
@@ -240,6 +242,17 @@ class TemporaryTableAggregationProcessor:
         self.sql_translator = SQLTranslator(collection.name, "data", "id")
         # Check if JSONB is supported for this connection
         self._jsonb_supported = supports_jsonb(self.db)
+        self._jsonb_each_supported = supports_jsonb_each(self.db)
+        # Set appropriate JSON function prefixes and names based on support
+        self._json_function_prefix = _get_json_function_prefix(
+            self._jsonb_supported
+        )
+        self._json_each_function = _get_json_each_function(
+            self._jsonb_supported, self._jsonb_each_supported
+        )
+        self.json_group_array_function = _get_json_group_array_function(
+            self._jsonb_supported
+        )
 
     def process_pipeline(
         self,
@@ -371,6 +384,18 @@ class TemporaryTableAggregationProcessor:
                     case "$addFields":
                         current_table = self._process_add_fields_stage(
                             create_temp, current_table, stage["$addFields"]
+                        )
+                        i += 1
+
+                    case "$replaceRoot" | "$replaceWith":
+                        current_table = self._process_replace_root_stage(
+                            create_temp, current_table, stage[stage_name]
+                        )
+                        i += 1
+
+                    case "$group":
+                        current_table = self._process_group_stage(
+                            create_temp, current_table, stage["$group"]
                         )
                         i += 1
 
@@ -517,9 +542,6 @@ class TemporaryTableAggregationProcessor:
         Raises:
             ValueError: If an invalid unwind specification is encountered
         """
-        # Check if jsonb_each is supported (requires SQLite 3.51.0+)
-        jsonb_each_supported = supports_jsonb_each(self.db)
-
         # Process unwind stages one at a time to handle nested dependencies correctly
         current_temp_table = current_table
 
@@ -533,18 +555,18 @@ class TemporaryTableAggregationProcessor:
                 # Use appropriate JSON functions based on support
                 # jsonb_each is only available in SQLite 3.51.0+
                 # Also extract _id from JSON data for proper sorting support
-                if self._jsonb_supported and jsonb_each_supported:
+                if self._jsonb_supported and self._jsonb_each_supported:
                     current_temp_table = create_temp(
                         unwind_stage,
                         f"""
                         SELECT {self.collection.name}.id,
                                {self.collection.name}._id as _id,
-                               jsonb_set({self.collection.name}.data,
+                               {self._json_function_prefix}_set({self.collection.name}.data,
                                         '$."{field_name}"', je.value) as data
                         FROM {current_table} as {self.collection.name},
-                             jsonb_each(jsonb_extract({self.collection.name}.data,
-                                                    '$.{field_name}')) as je
-                        WHERE jsonb_type(jsonb_extract({self.collection.name}.data,
+                             {self._json_each_function}({self._json_function_prefix}_extract({self.collection.name}.data,
+                                                   '$.{field_name}')) as je
+                        WHERE json_type({self._json_function_prefix}_extract({self.collection.name}.data,
                                                      '$.{field_name}')) = 'array'
                         """,
                     )
@@ -555,12 +577,12 @@ class TemporaryTableAggregationProcessor:
                         f"""
                         SELECT {self.collection.name}.id,
                                {self.collection.name}._id as _id,
-                               json_set({self.collection.name}.data,
+                               {self._json_function_prefix}_set({self.collection.name}.data,
                                         '$."{field_name}"', je.value) as data
                         FROM {current_table} as {self.collection.name},
-                             json_each(json_extract({self.collection.name}.data,
+                             {self._json_each_function}({self._json_function_prefix}_extract({self.collection.name}.data,
                                                    '$.{field_name}')) as je
-                        WHERE json_type(json_extract({self.collection.name}.data,
+                        WHERE json_type({self._json_function_prefix}_extract({self.collection.name}.data,
                                                      '$.{field_name}')) = 'array'
                         """,
                     )
@@ -613,36 +635,23 @@ class TemporaryTableAggregationProcessor:
         if foreign_field == "_id":
             foreign_extract = "related.id"
         else:
-            foreign_extract = f"json_extract(related.data, '{parse_json_path(foreign_field)}')"
+            foreign_extract = f"{self._json_function_prefix}_extract(related.data, '{parse_json_path(foreign_field)}')"
 
         if local_field == "_id":
             local_extract = f"{self.collection.name}.id"
         else:
-            local_extract = f"json_extract({self.collection.name}.data, '{parse_json_path(local_field)}')"
+            local_extract = f"{self._json_function_prefix}_extract({self.collection.name}.data, '{parse_json_path(local_field)}')"
 
-        # Use jsonb_* functions when supported for better performance
-        if self._jsonb_supported:
-            select_clause = (
-                f"SELECT {self.collection.name}.id, "
-                f"jsonb_set({self.collection.name}.data, '$.\"{as_field}\"', "
-                f"coalesce(( "
-                f"  SELECT jsonb_group_array(related.data) "
-                f"  FROM {from_collection} as related "
-                f"  WHERE {foreign_extract} = "
-                f"        {local_extract} "
-                f"), '[]')) as data"
-            )
-        else:
-            select_clause = (
-                f"SELECT {self.collection.name}.id, "
-                f"json_set({self.collection.name}.data, '$.\"{as_field}\"', "
-                f"coalesce(( "
-                f"  SELECT json_group_array(json(related.data)) "
-                f"  FROM {from_collection} as related "
-                f"  WHERE {foreign_extract} = "
-                f"        {local_extract} "
-                f"), '[]')) as data"
-            )
+        select_clause = (
+            f"SELECT {self.collection.name}.id, "
+            f"{self._json_function_prefix}_set({self.collection.name}.data, '$.\"{as_field}\"', "
+            f"coalesce(( "
+            f"  SELECT {self.json_group_array_function}(json(related.data)) "
+            f"  FROM {from_collection} as related "
+            f"  WHERE {foreign_extract} = "
+            f"        {local_extract} "
+            f"), '[]')) as data"
+        )
 
         from_clause = f"FROM {current_table} as {self.collection.name}"
 
@@ -728,8 +737,10 @@ class TemporaryTableAggregationProcessor:
         This method implements the $addFields aggregation stage which adds new fields
         to documents. It uses SQLite's json_set function to add fields to the JSON data.
 
-        For this basic implementation, it handles simple field copying using json_extract
-        and json_set. A full implementation would handle computed fields and expressions.
+        Supports:
+        - Simple field copying: {"newField": "$existingField"}
+        - $replaceOne: {$replaceOne: {input: "$text", find: "old", replacement: "new"}}
+        - Literal values: {"field": "value"}
 
         Args:
             create_temp (Callable): Function to create temporary tables
@@ -747,26 +758,67 @@ class TemporaryTableAggregationProcessor:
 
         # Process each field to add
         for new_field, source_field in add_fields_spec.items():
+            # Handle $replaceOne operator
+            if isinstance(source_field, dict) and "$replaceOne" in source_field:
+                replace_spec = source_field["$replaceOne"]
+                if isinstance(replace_spec, dict):
+                    input_expr = replace_spec.get("input", "")
+                    find_str = replace_spec.get("find", "")
+                    replacement_str = replace_spec.get("replacement", "")
+
+                    # Escape single quotes for SQL
+                    find_str_escaped = find_str.replace("'", "''")
+                    replacement_str_escaped = replacement_str.replace("'", "''")
+
+                    # Build SQL for $replaceOne using instr() and substr()
+                    json_extract = f"{self._json_function_prefix}_extract"
+                    json_set_func = f"{self._json_function_prefix}_set"
+                    if isinstance(input_expr, str) and input_expr.startswith(
+                        "$"
+                    ):
+                        input_field = input_expr[1:]
+                        # SQL: substr(data, 1, instr-1) || replacement || substr(data, instr+len(find))
+                        data_expr = (
+                            f"{json_set_func}({data_expr}, '$.{new_field}', "
+                            f"CASE "
+                            f"WHEN instr({json_extract}(data, '$.{input_field}'), '{find_str_escaped}') > 0 THEN "
+                            f"substr({json_extract}(data, '$.{input_field}'), 1, "
+                            f"instr({json_extract}(data, '$.{input_field}'), '{find_str_escaped}') - 1) || "
+                            f"'{replacement_str_escaped}' || "
+                            f"substr({json_extract}(data, '$.{input_field}'), "
+                            f"instr({json_extract}(data, '$.{input_field}'), '{find_str_escaped}') + length('{find_str_escaped}')) "
+                            f"ELSE {json_extract}(data, '$.{input_field}') END)"
+                        )
+                    else:
+                        # For non-field input, fall back to Python
+                        raise NotImplementedError(
+                            "$replaceOne with non-field input requires Python fallback"
+                        )
+
             # Handle simple field copying (e.g., {"newField": "$existingField"})
-            if isinstance(source_field, str) and source_field.startswith("$"):
+            elif isinstance(source_field, str) and source_field.startswith("$"):
                 source_field_name = source_field[1:]  # Remove leading $
+                json_set_func = f"{self._json_function_prefix}_set"
                 if source_field_name == "_id":
                     # Special handling for _id field
-                    if self._jsonb_supported:
-                        data_expr = (
-                            f"jsonb_set({data_expr}, '$.{new_field}', id)"
-                        )
-                    else:
-                        data_expr = (
-                            f"json_set({data_expr}, '$.{new_field}', id)"
-                        )
+                    data_expr = (
+                        f"{json_set_func}({data_expr}, '$.{new_field}', id)"
+                    )
                 else:
                     # Use json_extract/jsonb_extract to get the source field value
-                    if self._jsonb_supported:
-                        data_expr = f"jsonb_set({data_expr}, '$.{new_field}', jsonb_extract(data, '$.{source_field_name}'))"
-                    else:
-                        data_expr = f"json_set({data_expr}, '{parse_json_path(new_field)}', json_extract(data, '{parse_json_path(source_field_name)}'))"
-            # For this basic implementation, we won't handle complex expressions
+                    json_extract = f"{self._json_function_prefix}_extract"
+                    data_expr = f"{json_set_func}({data_expr}, '{parse_json_path(new_field)}', {json_extract}(data, '{parse_json_path(source_field_name)}'))"
+
+            # Handle literal values
+            elif not isinstance(source_field, dict):
+                # For literal values, use json_set with parameterized value
+                json_set_func = f"{self._json_function_prefix}_set"
+                data_expr = (
+                    f"{json_set_func}({data_expr}, '$.{new_field}', json(?))"
+                )
+                params.append(source_field)
+            # For other complex expressions, fall back to Python
+            # (This is handled by raising NotImplementedError)
 
         # Create addFields temporary table
         add_fields_stage = {"$addFields": add_fields_spec}
@@ -785,6 +837,317 @@ class TemporaryTableAggregationProcessor:
                 params if params else None,
             )
         return new_table
+
+    def _process_replace_root_stage(
+        self,
+        create_temp: Callable,
+        current_table: str,
+        replace_spec: Any,
+    ) -> str:
+        """
+        Process a $replaceRoot or $replaceWith stage using temporary tables.
+
+        This method implements the $replaceRoot/$replaceWith aggregation stage which
+        replaces the root document with a specified field or expression.
+
+        MongoDB syntax:
+            {$replaceRoot: {newRoot: "$field"}}
+            {$replaceWith: "$field"}
+
+        Args:
+            create_temp (Callable): Function to create temporary tables
+            current_table (str): Name of the current temporary table containing input data
+            replace_spec (Any): The replace specification (field path or expression)
+
+        Returns:
+            str: Name of the newly created temporary table with replaced root documents
+        """
+        # Handle both $replaceRoot ({newRoot: ...}) and $replaceWith (direct value)
+        if isinstance(replace_spec, dict) and "newRoot" in replace_spec:
+            new_root_expr = replace_spec["newRoot"]
+        else:
+            new_root_expr = replace_spec
+
+        # Handle field reference (e.g., "$field")
+        if isinstance(new_root_expr, str) and new_root_expr.startswith("$"):
+            field_name = new_root_expr[1:]  # Remove leading $
+
+            # Create replaceRoot temporary table
+            replace_stage = {"$replaceRoot": {"newRoot": new_root_expr}}
+            json_extract = f"{self._json_function_prefix}_extract"
+
+            # Extract the field and use it as the new root document
+            new_table = create_temp(
+                replace_stage,
+                f"SELECT id, {json_extract}(data, '$.{field_name}') as data FROM {current_table}",
+            )
+            return new_table
+        else:
+            # For complex expressions, fall back to Python evaluation
+            # This handles cases like {$replaceRoot: {newRoot: {$mergeObjects: [...]}}}
+            raise NotImplementedError(
+                f"$replaceRoot with expression {new_root_expr} requires Python fallback"
+            )
+
+    def _process_group_stage(
+        self,
+        create_temp: Callable,
+        current_table: str,
+        group_spec: Dict[str, Any],
+    ) -> str:
+        """
+        Process a $group stage using temporary tables.
+
+        This method implements the $group aggregation stage which groups documents
+        by a specified key and performs accumulator operations.
+
+        Supports these accumulators in SQL tier:
+        - $sum, $avg, $min, $max: Standard SQL aggregators
+        - $count: COUNT(*)
+        - $first, $last: Using window functions or subqueries
+        - $addToSet: Using json_group_array(DISTINCT ...)
+        - $push: Using json_group_array(...)
+
+        Args:
+            create_temp (Callable): Function to create temporary tables
+            current_table (str): Name of the current temporary table containing input data
+            group_spec (Dict[str, Any]): The $group stage specification
+
+        Returns:
+            str: Name of the newly created temporary table with grouped results
+        """
+        group_id_expr = group_spec.get("_id")
+        select_parts = []
+        group_by_parts = []
+        array_fields = []  # Track fields that are arrays (from $push/$addToSet)
+
+        # Handle _id (group key)
+        if group_id_expr is None:
+            # Group all documents together
+            select_parts.append("NULL AS _id")
+        elif isinstance(group_id_expr, str) and group_id_expr.startswith("$"):
+            field_name = group_id_expr[1:]
+            if field_name == "_id":
+                # Special case: grouping by _id column
+                select_parts.append("_id AS _id")
+                group_by_parts.append("_id")
+            else:
+                # Group by extracted field
+                json_extract = f"{self._json_function_prefix}_extract"
+                select_parts.append(
+                    f"{json_extract}(data, '$.{field_name}') AS _id"
+                )
+                group_by_parts.append(f"{json_extract}(data, '$.{field_name}')")
+        else:
+            # For complex expressions, fall back to Python
+            raise NotImplementedError(
+                f"$group with expression key {group_id_expr} requires Python fallback"
+            )
+
+        # Handle accumulators
+        for field, accumulator in group_spec.items():
+            if field == "_id":
+                continue
+
+            if not isinstance(accumulator, dict) or len(accumulator) != 1:
+                raise NotImplementedError(
+                    f"$group accumulator {field} must be a single operator"
+                )
+
+            op, expr = next(iter(accumulator.items()))
+
+            # Extract field name from expression
+            if isinstance(expr, str) and expr.startswith("$"):
+                expr_field = expr[1:]
+            elif isinstance(expr, (int, float)):
+                expr_field = None  # Literal value
+            else:
+                # Complex expression - fall back to Python
+                raise NotImplementedError(
+                    f"$group accumulator {op} with expression {expr} requires Python fallback"
+                )
+
+            # Map accumulator to SQL
+            json_extract = f"{self._json_function_prefix}_extract"
+            json_group_array = self.json_group_array_function
+
+            match op:
+                case "$sum":
+                    if expr == 1:
+                        # Count operation
+                        select_parts.append(f"COUNT(*) AS {field}")
+                    elif expr_field:
+                        if expr_field == "_id":
+                            select_parts.append(f"SUM(_id) AS {field}")
+                        else:
+                            select_parts.append(
+                                f"SUM({json_extract}(data, '$.{expr_field}')) AS {field}"
+                            )
+                    else:
+                        select_parts.append(f"SUM({expr}) AS {field}")
+
+                case "$avg":
+                    if expr_field:
+                        if expr_field == "_id":
+                            select_parts.append(f"AVG(_id) AS {field}")
+                        else:
+                            select_parts.append(
+                                f"AVG({json_extract}(data, '$.{expr_field}')) AS {field}"
+                            )
+                    else:
+                        select_parts.append(f"AVG({expr}) AS {field}")
+
+                case "$min":
+                    if expr_field:
+                        if expr_field == "_id":
+                            select_parts.append(f"MIN(_id) AS {field}")
+                        else:
+                            select_parts.append(
+                                f"MIN({json_extract}(data, '$.{expr_field}')) AS {field}"
+                            )
+                    else:
+                        select_parts.append(f"MIN({expr}) AS {field}")
+
+                case "$max":
+                    if expr_field:
+                        if expr_field == "_id":
+                            select_parts.append(f"MAX(_id) AS {field}")
+                        else:
+                            select_parts.append(
+                                f"MAX({json_extract}(data, '$.{expr_field}')) AS {field}"
+                            )
+                    else:
+                        select_parts.append(f"MAX({expr}) AS {field}")
+
+                case "$count":
+                    select_parts.append(f"COUNT(*) AS {field}")
+
+                case "$first":
+                    # $first requires ordering - this is a simplified implementation
+                    # For proper $first, documents should be sorted before $group
+                    # Using a subquery approach that gets the first value per group
+                    if expr_field:
+                        if expr_field == "_id":
+                            # Use a correlated subquery to get first value
+                            # Note: This assumes the data is already sorted
+                            select_parts.append(
+                                f"(SELECT t2._id FROM {current_table} t2 "
+                                f"WHERE t2._id = _id LIMIT 1) AS {field}"
+                            )
+                        else:
+                            select_parts.append(
+                                f"(SELECT {json_extract}(t2.data, '$.{expr_field}') "
+                                f"FROM {current_table} t2 "
+                                f"WHERE t2._id = _id LIMIT 1) AS {field}"
+                            )
+                    # Note: This is a simplified implementation
+                    # A full implementation would need proper ordering within groups
+
+                case "$last":
+                    # $last requires ordering - use subquery with ORDER BY DESC LIMIT 1
+                    if expr_field:
+                        if expr_field == "_id":
+                            select_parts.append(
+                                f"(SELECT t2._id FROM {current_table} t2 "
+                                f"WHERE t2._id = _id "
+                                f"ORDER BY t2.id DESC LIMIT 1) AS {field}"
+                            )
+                        else:
+                            select_parts.append(
+                                f"(SELECT {json_extract}(t2.data, '$.{expr_field}') "
+                                f"FROM {current_table} t2 "
+                                f"WHERE t2._id = _id "
+                                f"ORDER BY t2.id DESC LIMIT 1) AS {field}"
+                            )
+
+                case "$addToSet":
+                    # Use json_group_array with DISTINCT
+                    # Track this field for post-processing
+                    array_fields.append(field)
+                    if expr_field:
+                        if expr_field == "_id":
+                            select_parts.append(
+                                f"{json_group_array}(DISTINCT _id) AS {field}"
+                            )
+                        else:
+                            select_parts.append(
+                                f"{json_group_array}(DISTINCT {json_extract}(data, '$.{expr_field}')) AS {field}"
+                            )
+
+                case "$push":
+                    # Use json_group_array
+                    # Track this field for post-processing
+                    array_fields.append(field)
+                    if expr_field:
+                        if expr_field == "_id":
+                            select_parts.append(
+                                f"{json_group_array}(_id) AS {field}"
+                            )
+                        else:
+                            select_parts.append(
+                                f"{json_group_array}({json_extract}(data, '$.{expr_field}')) AS {field}"
+                            )
+
+                case _:
+                    # Unsupported accumulator
+                    raise NotImplementedError(
+                        f"$group accumulator ${op} requires Python fallback"
+                    )
+
+        # Build GROUP BY clause
+        group_by_clause = ""
+        if group_by_parts:
+            group_by_clause = f"GROUP BY {', '.join(group_by_parts)}"
+
+        # Create group temporary table
+        group_stage = {"$group": group_spec}
+
+        # For grouped results, we need to properly construct the output
+        # The _id field should be the group key, and other fields are accumulators
+        # We'll create a JSON object with all the fields
+        json_args = self._id_to_json_object_args(select_parts)
+        json_object_func = f"{self._json_function_prefix}_object"
+        # Wrap with json() to ensure text output for Python consumption
+        # (jsonb_object returns binary JSONB which Python can't read directly)
+        json_output_func = f"json({json_object_func}"
+
+        new_table = create_temp(
+            group_stage,
+            "SELECT ROW_NUMBER() OVER () as id, "
+            + f"{json_output_func}({json_args})) as data "
+            + f"FROM {current_table} {group_by_clause}",
+        )
+
+        # Store array fields metadata for efficient post-processing
+        # This avoids scanning all fields in _get_results_from_table
+        if not hasattr(self, "_array_fields_map"):
+            self._array_fields_map = {}
+        self._array_fields_map[new_table] = array_fields
+
+        return new_table
+
+    def _id_to_json_object_args(self, select_parts: List[str]) -> str:
+        """
+        Convert SELECT parts to json_object arguments.
+
+        Args:
+            select_parts: List of SELECT column expressions (e.g., ["expr1 AS field1", "expr2 AS field2"])
+
+        Returns:
+            Comma-separated list of 'key', value pairs for json_object
+        """
+        args = []
+        for part in select_parts:
+            # Parse "expression AS alias"
+            if " AS " in part:
+                expr, alias = part.rsplit(" AS ", 1)
+                expr = expr.strip()
+                alias = alias.strip().strip('"').strip("'")
+                args.append(f"'{alias}', {expr}")
+            else:
+                # No alias, use the expression as-is (shouldn't happen normally)
+                args.append(f"'column', {part}")
+        return ", ".join(args)
 
     def _get_results_from_table(
         self,
@@ -837,7 +1200,31 @@ class TemporaryTableAggregationProcessor:
             cursor = self.db.execute(f"SELECT id, data FROM {table_name}")
         results = []
         for row in cursor.fetchall():
-            doc = self.collection._load(row[0], row[1])
+            # For grouped results, we need to preserve the _id from the JSON data
+            # instead of using the row id. Parse the JSON directly.
+            from neosqlite.collection.json_helpers import neosqlite_json_loads
+
+            doc = neosqlite_json_loads(row[1])
+
+            # Parse array fields that were created with json_group_array
+            # These are stored as JSON strings and need to be parsed
+            # Optimization: Only check fields we know are arrays (from $push/$addToSet)
+            array_fields = getattr(self, "_array_fields_map", {}).get(
+                table_name, []
+            )
+            for key in array_fields:
+                if key in doc:
+                    value = doc[key]
+                    if (
+                        isinstance(value, str)
+                        and value.startswith("[")
+                        and value.endswith("]")
+                    ):
+                        try:
+                            doc[key] = neosqlite_json_loads(value)
+                        except Exception:
+                            pass  # Keep as string if parsing fails
+
             results.append(doc)
         return results
 
@@ -947,9 +1334,8 @@ class TemporaryTableAggregationProcessor:
         # - Object arrays (unwind): $.comments.text, $.value.text, $.content.text
         # - Common fields: $.description, $.name
         # Detect which JSON functions to use based on jsonb_each availability
-        jsonb_each_supported = supports_jsonb_each(self.db)
         # Use jsonb_* functions only if BOTH jsonb AND jsonb_each are supported
-        use_jsonb = self._jsonb_supported and jsonb_each_supported
+        use_jsonb = self._jsonb_supported and self._jsonb_each_supported
         json_func_prefix = _get_json_function_prefix(use_jsonb)
         json_extract_func = f"{json_func_prefix}_extract"
         # When using jsonb_extract, we need to wrap with json() to get text output
@@ -1070,9 +1456,12 @@ def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
     supported_stages = {
         "$addFields",
         "$count",
+        "$group",
         "$limit",
         "$lookup",
         "$match",
+        "$replaceRoot",
+        "$replaceWith",
         "$sample",
         "$skip",
         "$sort",

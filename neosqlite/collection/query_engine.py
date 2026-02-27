@@ -18,6 +18,7 @@ from .query_helper import (
 from .raw_batch_cursor import RawBatchCursor
 from .sql_translator_unified import SQLTranslator
 from .expr_evaluator import ExprEvaluator, AggregationContext, _is_expression
+from .sql_tier_aggregator import SQLTierAggregator
 from copy import deepcopy
 from neosqlite.binary import Binary
 from neosqlite.collection.json_helpers import (
@@ -59,6 +60,13 @@ class QueryEngine:
         self._jsonb_supported = supports_jsonb(collection.db)
         self.sql_translator = SQLTranslator(
             collection.name, "data", "id", self._jsonb_supported
+        )
+        # Initialize SQL tier aggregator for optimized aggregation pipelines
+        self.sql_tier_aggregator = SQLTierAggregator(
+            collection,
+            expr_evaluator=ExprEvaluator(
+                data_column="data", db_connection=collection.db
+            ),
         )
 
     def insert_one(self, document: Dict[str, Any]) -> InsertOneResult:
@@ -891,7 +899,34 @@ class QueryEngine:
             # Use quez for memory-constrained processing
             return self._aggregate_with_quez(pipeline, batch_size)
 
-        # Try existing SQL optimization first (this was previously missing)
+        # Try SQL Tier 1 optimization first (new CTE-based approach)
+        try:
+            if self.sql_tier_aggregator.can_optimize_pipeline(pipeline):
+                sql, params = self.sql_tier_aggregator.build_pipeline_sql(
+                    pipeline
+                )
+                if sql is not None:
+                    db_cursor = self.collection.db.execute(sql, params)
+                    results = []
+                    for row in db_cursor.fetchall():
+                        # Load document from data column
+                        # Row structure: (id, data) or (id, root_data, data)
+                        if len(row) == 3:
+                            # root_data is present, data is in row[2]
+                            results.append(
+                                self.collection._load(row[0], row[2])
+                            )
+                        else:
+                            # No root_data, data is in row[1]
+                            results.append(
+                                self.collection._load(row[0], row[1])
+                            )
+                    return results
+        except Exception:
+            # If SQL tier optimization fails, continue to next approach
+            pass
+
+        # Try existing SQL optimization (legacy CTE-based approach)
         try:
             query_result = self.helpers._build_aggregation_query(pipeline)
             if query_result is not None:
@@ -1024,6 +1059,27 @@ class QueryEngine:
                         {
                             "__doc__": self.helpers._apply_projection(
                                 projection, dc["__doc__"]
+                            ),
+                            "__root__": dc["__root__"],
+                        }
+                        for dc in docs_with_context
+                    ]
+                case "$replaceRoot" | "$replaceWith":
+                    # Handle $replaceRoot and $replaceWith
+                    if stage_name == "$replaceRoot":
+                        new_root_expr = stage["$replaceRoot"].get("newRoot")
+                    else:  # $replaceWith
+                        new_root_expr = stage["$replaceWith"]
+
+                    docs_with_context = [
+                        {
+                            "__doc__": (
+                                self.collection._get_val(
+                                    dc["__doc__"], new_root_expr.lstrip("$")
+                                )
+                                if isinstance(new_root_expr, str)
+                                and new_root_expr.startswith("$")
+                                else dc["__doc__"]
                             ),
                             "__root__": dc["__root__"],
                         }

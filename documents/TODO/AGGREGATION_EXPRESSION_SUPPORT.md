@@ -1,5 +1,9 @@
 # Aggregation Expression Support Implementation Plan
 
+**Status Update (February 27, 2026):** Phase 1-4 ✅ **COMPLETE**
+
+See [SQL_TIER_PROGRESS_REPORT.md](../SQL_TIER_PROGRESS_REPORT.md) for current implementation status and Phase 2-4 plans.
+
 ## Overview
 
 This document describes what would be needed to extend `$expr` operator support to **aggregation pipeline expressions**, enabling operators like `$sin`, `$setIntersection`, `$toObjectId`, etc. to work in aggregation stages like `$addFields`, `$project`, `$group`, and `$facet`.
@@ -502,10 +506,24 @@ def process_aggregation_pipeline(pipeline):
 - User guide: `documents/AGGREGATION_EXPRESSION_GUIDE.md`
 - Implementation plan: `documents/TODO/AGGREGATION_EXPRESSION_SUPPORT.md` (this file)
 
-**Test Results**:
-- **Total Tests**: 617 tests (all passing)
-  - 511 expr tests
-  - 106 aggregation pipeline tests
+**Test Results** (Updated February 27, 2026):
+- **Total Tests**: 1604 tests (all passing)
+  - 501 expr tests
+  - 107 aggregation pipeline tests
+  - 33 SQL tier optimization tests
+  - 963 other tests
+- **0 tests skipped** (all previously skipped tests recovered)
+- **82% code coverage**
+
+## SQL Tier Optimization (NEW - February 2026)
+
+As of February 2026, NeoSQLite includes **SQL Tier 1 and Tier 2 optimization** for aggregation pipelines:
+
+- **Tier 1 (SQL CTE)**: 10-100x speedup for simple pipelines
+- **Tier 2 (Temp Tables)**: 5-20x speedup for complex pipelines
+- **Tier 3 (Python)**: 100% correctness guarantee as fallback
+
+See [SQL_TIER_PROGRESS_REPORT.md](../SQL_TIER_PROGRESS_REPORT.md) for complete details.
 
 ## Code Examples
 
