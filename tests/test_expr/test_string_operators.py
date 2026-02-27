@@ -3,10 +3,12 @@ Tests for $expr string operators.
 
 Basic: $concat, $toLower, $toUpper, $strLenBytes, $substr, $trim
 Extended: $ltrim, $rtrim, $indexOfBytes, $regexMatch, $split, $replaceAll
+Advanced: $strLenCP, $substrCP, $indexOfCP, $replaceOne
 """
 
 import neosqlite
 from neosqlite.collection.expr_evaluator import ExprEvaluator
+from neosqlite.collection.query_helper import set_force_fallback
 
 
 class TestStringOperatorsPython:
@@ -135,6 +137,117 @@ class TestStringOperatorsPython:
         result = evaluator._evaluate_expr_python(expr, {"text": "old text old"})
         assert result == "new text new"
 
+    def test_strLenCP_operator(self):
+        """Test $strLenCP operator."""
+        evaluator = ExprEvaluator()
+        expr = {"$strLenCP": ["$text"]}
+        # For ASCII, code points = bytes
+        assert evaluator._evaluate_expr_python(expr, {"text": "hello"}) == 5
+        # For Unicode, code points may differ from bytes
+        assert evaluator._evaluate_expr_python(expr, {"text": "你好"}) == 2
+
+    def test_indexOfCP_operator(self):
+        """Test $indexOfCP operator."""
+        evaluator = ExprEvaluator()
+        expr = {"$indexOfCP": ["$search", "$text"]}
+        result = evaluator._evaluate_expr_python(
+            expr, {"text": "hello world", "search": "world"}
+        )
+        assert result == 6
+
+    def test_replaceOne_operator(self):
+        """Test $replaceOne operator."""
+        evaluator = ExprEvaluator()
+        expr = {"$replaceOne": ["$text", "foo", "bar"]}
+        result = evaluator._evaluate_expr_python(expr, {"text": "foo bar foo"})
+        # Only first occurrence replaced
+        assert result == "bar bar foo"
+
+    def test_replaceOne_no_match(self):
+        """Test $replaceOne with no match."""
+        evaluator = ExprEvaluator()
+        expr = {"$replaceOne": ["$text", "xyz", "abc"]}
+        result = evaluator._evaluate_expr_python(expr, {"text": "hello world"})
+        assert result == "hello world"
+
+
+class TestStringIntegration:
+    """Integration tests for string operators."""
+
+    def test_strLenCP_integration(self):
+        """Test $strLenCP with database."""
+        with neosqlite.Connection(":memory:") as conn:
+            collection = conn["test"]
+            collection.insert_one({"text": "hello world"})
+
+            set_force_fallback(True)
+            try:
+                expr = {"$expr": {"$eq": [{"$strLenCP": "$text"}, 11]}}
+                results = list(collection.find(expr))
+                assert len(results) == 1
+            finally:
+                set_force_fallback(False)
+
+    def test_replaceOne_integration(self):
+        """Test $replaceOne with database."""
+        with neosqlite.Connection(":memory:") as conn:
+            collection = conn["test"]
+            collection.insert_one({"text": "foo bar foo"})
+
+            set_force_fallback(True)
+            try:
+                expr = {
+                    "$expr": {
+                        "$eq": [
+                            {"$replaceOne": ["$text", "foo", "bar"]},
+                            "bar bar foo",
+                        ]
+                    }
+                }
+                results = list(collection.find(expr))
+                assert len(results) == 1
+            finally:
+                set_force_fallback(False)
+
+    def test_concat_integration(self):
+        """Test $concat with database."""
+        with neosqlite.Connection(":memory:") as conn:
+            collection = conn["test"]
+            collection.insert_many(
+                [
+                    {"firstName": "John", "lastName": "Doe"},
+                    {"firstName": "Jane", "lastName": "Smith"},
+                ]
+            )
+
+            expr = {
+                "$expr": {
+                    "$eq": [
+                        {"$concat": ["$firstName", " ", "$lastName"]},
+                        "John Doe",
+                    ]
+                }
+            }
+            results = list(collection.find(expr))
+            assert len(results) == 1
+            assert results[0]["firstName"] == "John"
+
+    def test_toLower_integration(self):
+        """Test $toLower with database."""
+        with neosqlite.Connection(":memory:") as conn:
+            collection = conn["test"]
+            collection.insert_many(
+                [
+                    {"text": "HELLO"},
+                    {"text": "World"},
+                ]
+            )
+
+            expr = {"$expr": {"$eq": [{"$toLower": ["$text"]}, "hello"]}}
+            results = list(collection.find(expr))
+            assert len(results) == 1
+            assert results[0]["text"] == "HELLO"
+
 
 class TestStringOperatorsSQL:
     """Test string operators SQL conversion."""
@@ -229,46 +342,3 @@ class TestStringOperatorsSQL:
         sql, params = evaluator._evaluate_sql_tier1(expr)
         assert sql is not None
         assert "replace" in sql
-
-
-class TestStringIntegration:
-    """Integration tests for string operators."""
-
-    def test_concat_integration(self):
-        """Test $concat with database."""
-        with neosqlite.Connection(":memory:") as conn:
-            collection = conn["test"]
-            collection.insert_many(
-                [
-                    {"firstName": "John", "lastName": "Doe"},
-                    {"firstName": "Jane", "lastName": "Smith"},
-                ]
-            )
-
-            expr = {
-                "$expr": {
-                    "$eq": [
-                        {"$concat": ["$firstName", " ", "$lastName"]},
-                        "John Doe",
-                    ]
-                }
-            }
-            results = list(collection.find(expr))
-            assert len(results) == 1
-            assert results[0]["firstName"] == "John"
-
-    def test_toLower_integration(self):
-        """Test $toLower with database."""
-        with neosqlite.Connection(":memory:") as conn:
-            collection = conn["test"]
-            collection.insert_many(
-                [
-                    {"text": "HELLO"},
-                    {"text": "World"},
-                ]
-            )
-
-            expr = {"$expr": {"$eq": [{"$toLower": ["$text"]}, "hello"]}}
-            results = list(collection.find(expr))
-            assert len(results) == 1
-            assert results[0]["text"] == "HELLO"

@@ -23,10 +23,19 @@ MongoDB $expr Compatibility:
 - Type operators: $type, $convert, $toString, $toInt, $toDouble, $toBool
 - Object operators: $mergeObjects, $getField, $setField
 - Other: $literal, $let
+- Trigonometric: $sin, $cos, $tan, $asin, $acos, $atan, $atan2
+- Hyperbolic: $sinh, $cosh, $tanh, $asinh, $acosh, $atanh
+- Logarithmic: $ln, $log, $log10, $log2
+- Exponential/Sigmoid: $exp, $sigmoid
+- Angle conversion: $degreesToRadians, $radiansToDegrees
+
+Note: NeoSQLite extends MongoDB with $log2 (base-2 log) operator.
 """
 
 from __future__ import annotations
 from typing import Any, Dict, List, Tuple, Optional
+import math
+import warnings
 from .json_path_utils import build_json_extract_expression
 from .jsonb_support import (
     supports_jsonb,
@@ -65,6 +74,7 @@ class ExprEvaluator:
         self.data_column = data_column
         self._jsonb_supported = False
         self._jsonb_each_supported = False
+        self._log2_warned = False  # Track if we've warned about $log2
         if db_connection is not None:
             self._jsonb_supported = supports_jsonb(db_connection)
             self._jsonb_each_supported = supports_jsonb_each(db_connection)
@@ -178,7 +188,16 @@ class ExprEvaluator:
             return self._convert_cmp_operator(operands)
         elif operator in ("$add", "$subtract", "$multiply", "$divide", "$mod"):
             return self._convert_arithmetic_operator(operator, operands)
-        elif operator in ("$pow", "$sqrt"):
+        elif operator in (
+            "$pow",
+            "$sqrt",
+            "$ln",
+            "$log",
+            "$log10",
+            "$log2",
+            "$exp",
+            "$sigmoid",
+        ):
             return self._convert_math_operator(operator, operands)
         elif operator == "$cond":
             return self._convert_cond_operator(operands)
@@ -194,6 +213,13 @@ class ExprEvaluator:
             "$avg",
             "$min",
             "$max",
+            "$setEquals",
+            "$setIntersection",
+            "$setUnion",
+            "$setDifference",
+            "$setIsSubset",
+            "$anyElementTrue",
+            "$allElementsTrue",
         ):
             return self._convert_array_operator(operator, operands)
         elif operator in (
@@ -209,10 +235,31 @@ class ExprEvaluator:
             "$regexMatch",
             "$split",
             "$replaceAll",
+            "$replaceOne",
+            "$strLenCP",
+            "$indexOfCP",
         ):
             return self._convert_string_operator(operator, operands)
         elif operator in ("$abs", "$ceil", "$floor", "$round", "$trunc"):
             return self._convert_math_operator(operator, operands)
+        elif operator in (
+            "$sin",
+            "$cos",
+            "$tan",
+            "$asin",
+            "$acos",
+            "$atan",
+            "$atan2",
+            "$sinh",
+            "$cosh",
+            "$tanh",
+            "$asinh",
+            "$acosh",
+            "$atanh",
+        ):
+            return self._convert_trig_operator(operator, operands)
+        elif operator in ("$degreesToRadians", "$radiansToDegrees"):
+            return self._convert_angle_operator(operator, operands)
         elif operator in (
             "$year",
             "$month",
@@ -232,7 +279,13 @@ class ExprEvaluator:
             return self._convert_date_arithmetic_operator(operator, operands)
         elif operator == "$dateDiff":
             return self._convert_date_diff_operator(operands)
-        elif operator in ("$mergeObjects", "$getField", "$setField"):
+        elif operator in (
+            "$mergeObjects",
+            "$getField",
+            "$setField",
+            "$unsetField",
+            "$objectToArray",
+        ):
             return self._convert_object_operator(operator, operands)
         else:
             raise NotImplementedError(
@@ -447,6 +500,20 @@ class ExprEvaluator:
             # Use json_each to find index - use jsonb_each when available
             sql = f"(SELECT key FROM {json_each}({array_sql}) WHERE value = {value_sql} LIMIT 1)"
             return sql, array_params + value_params
+        elif operator in (
+            "$setEquals",
+            "$setIntersection",
+            "$setUnion",
+            "$setDifference",
+            "$setIsSubset",
+            "$anyElementTrue",
+            "$allElementsTrue",
+        ):
+            # Set operations are complex - fall back to Python for now
+            # Can be implemented in SQL using json_each and json_group_array
+            raise NotImplementedError(
+                f"Set operator {operator} not supported in SQL tier (use Python fallback)"
+            )
         else:
             raise NotImplementedError(
                 f"Array operator {operator} not supported in SQL tier"
@@ -586,6 +653,44 @@ class ExprEvaluator:
             )
             sql = f"replace({string_sql}, {find_sql}, {replace_sql})"
             return sql, string_params + find_params + replace_params
+        elif operator == "$replaceOne":
+            if len(operands) != 3:
+                raise ValueError(
+                    "$replaceOne requires string, find, and replacement"
+                )
+            string_sql, string_params = self._convert_operand_to_sql(
+                operands[0]
+            )
+            find_sql, find_params = self._convert_operand_to_sql(operands[1])
+            replace_sql, replace_params = self._convert_operand_to_sql(
+                operands[2]
+            )
+            # SQLite replace replaces all occurrences, same as replaceAll
+            # For replaceOne, we need a more complex approach - fall back to Python
+            raise NotImplementedError(
+                "$replaceOne not supported in SQL tier (use Python fallback)"
+            )
+        elif operator == "$strLenCP":
+            if len(operands) != 1:
+                raise ValueError("$strLenCP requires exactly 1 operand")
+            string_sql, string_params = self._convert_operand_to_sql(
+                operands[0]
+            )
+            # For BMP characters, length in bytes = length in code points
+            sql = f"length({string_sql})"
+            return sql, string_params
+        elif operator == "$indexOfCP":
+            if len(operands) < 2:
+                raise ValueError("$indexOfCP requires substring and string")
+            substr_sql, substr_params = self._convert_operand_to_sql(
+                operands[0]
+            )
+            string_sql, string_params = self._convert_operand_to_sql(
+                operands[1]
+            )
+            # SQLite instr returns 1-based index, convert to 0-based
+            sql = f"instr({string_sql}, {substr_sql}) - 1"
+            return sql, substr_params + string_params
         else:
             raise NotImplementedError(
                 f"String operator {operator} not supported in SQL tier"
@@ -603,6 +708,20 @@ class ExprEvaluator:
             exp_sql, exp_params = self._convert_operand_to_sql(operands[1])
             sql = f"pow({base_sql}, {exp_sql})"
             return sql, base_params + exp_params
+
+        # $log with custom base requires 2 operands: [number, base]
+        if operator == "$log":
+            if len(operands) != 2:
+                raise ValueError(
+                    "$log requires exactly 2 operands: [number, base]"
+                )
+            number_sql, number_params = self._convert_operand_to_sql(
+                operands[0]
+            )
+            base_sql, base_params = self._convert_operand_to_sql(operands[1])
+            # SQLite: log(base, number)
+            sql = f"log({base_sql}, {number_sql})"
+            return sql, number_params + base_params
 
         # All other math operators require 1 operand
         if len(operands) != 1:
@@ -622,9 +741,111 @@ class ExprEvaluator:
             sql = f"cast({value_sql} as integer)"
         elif operator == "$sqrt":
             sql = f"sqrt({value_sql})"
+        elif operator == "$ln":
+            # Natural logarithm (base e)
+            sql = f"ln({value_sql})"
+        elif operator == "$log10":
+            # Base-10 logarithm
+            sql = f"log10({value_sql})"
+        elif operator == "$log2":
+            # Base-2 logarithm
+            # Warn about NeoSQLite extension (not in MongoDB)
+            if not self._log2_warned:
+                warnings.warn(
+                    "$log2 is a NeoSQLite extension (not available in MongoDB). "
+                    "For MongoDB compatibility, use { $log: [ <number>, 2 ] } instead.",
+                    UserWarning,
+                    stacklevel=4,
+                )
+                self._log2_warned = True
+            sql = f"log2({value_sql})"
+        elif operator == "$exp":
+            # Exponential function (e^x)
+            sql = f"exp({value_sql})"
+        elif operator == "$sigmoid":
+            # Sigmoid function: 1 / (1 + e^(-x))
+            # Handle object format: { $sigmoid: { input: <expr>, onNull: <expr> } }
+            if isinstance(operands, dict):
+                input_sql, input_params = self._convert_operand_to_sql(
+                    operands.get("input")
+                )
+                on_null_sql, on_null_params = self._convert_operand_to_sql(
+                    operands.get("onNull")
+                )
+                sql = f"(CASE WHEN {input_sql} IS NULL THEN {on_null_sql} ELSE (1.0 / (1.0 + exp(-({input_sql})))) END)"
+                return sql, input_params + on_null_params
+            sql = f"(1.0 / (1.0 + exp(-({value_sql}))))"
         else:
             raise NotImplementedError(
                 f"Math operator {operator} not supported in SQL tier"
+            )
+
+        return sql, value_params
+
+    def _convert_trig_operator(
+        self, operator: str, operands: List[Any]
+    ) -> Tuple[str, List[Any]]:
+        """Convert trigonometric and hyperbolic operators to SQL."""
+        # Handle $atan2 separately (requires 2 operands)
+        if operator == "$atan2":
+            if len(operands) != 2:
+                raise ValueError("$atan2 requires exactly 2 operands")
+            y_sql, y_params = self._convert_operand_to_sql(operands[0])
+            x_sql, x_params = self._convert_operand_to_sql(operands[1])
+            sql = f"atan2({y_sql}, {x_sql})"
+            return sql, y_params + x_params
+
+        # All other trig operators require 1 operand
+        if len(operands) != 1:
+            raise ValueError(f"{operator} requires exactly 1 operand")
+
+        value_sql, value_params = self._convert_operand_to_sql(operands[0])
+
+        # Standard trigonometric functions
+        trig_map = {
+            "$sin": "sin",
+            "$cos": "cos",
+            "$tan": "tan",
+            "$asin": "asin",
+            "$acos": "acos",
+            "$atan": "atan",
+            # Hyperbolic functions
+            "$sinh": "sinh",
+            "$cosh": "cosh",
+            "$tanh": "tanh",
+            # Inverse hyperbolic functions
+            "$asinh": "asinh",
+            "$acosh": "acosh",
+            "$atanh": "atanh",
+        }
+
+        sql_func = trig_map.get(operator)
+        if sql_func is None:
+            raise NotImplementedError(
+                f"Trig operator {operator} not supported in SQL tier"
+            )
+
+        sql = f"{sql_func}({value_sql})"
+        return sql, value_params
+
+    def _convert_angle_operator(
+        self, operator: str, operands: List[Any]
+    ) -> Tuple[str, List[Any]]:
+        """Convert angle conversion operators to SQL."""
+        if len(operands) != 1:
+            raise ValueError(f"{operator} requires exactly 1 operand")
+
+        value_sql, value_params = self._convert_operand_to_sql(operands[0])
+
+        if operator == "$degreesToRadians":
+            # radians = degrees * pi() / 180
+            sql = f"({value_sql} * pi() / 180.0)"
+        elif operator == "$radiansToDegrees":
+            # degrees = radians * 180 / pi()
+            sql = f"({value_sql} * 180.0 / pi())"
+        else:
+            raise NotImplementedError(
+                f"Angle operator {operator} not supported in SQL tier"
             )
 
         return sql, value_params
@@ -840,10 +1061,87 @@ class ExprEvaluator:
             value_sql, value_params = self._convert_operand_to_sql(value)
             sql = f"{json_prefix}_set({input_sql}, '$.{field}', {value_sql})"
             return sql, input_params + value_params
+        elif operator == "$unsetField":
+            if not isinstance(operands, dict) or "field" not in operands:
+                raise ValueError("$unsetField requires 'field' specification")
+            field = operands["field"]
+            input_val = operands.get("input")
+            if input_val is not None:
+                input_sql, input_params = self._convert_operand_to_sql(
+                    input_val
+                )
+            else:
+                input_sql, input_params = self.data_column, []
+            # Use json_remove to remove field
+            sql = f"{json_prefix}_remove({input_sql}, '$.{field}')"
+            return sql, input_params
+        elif operator == "$objectToArray":
+            # Complex - convert object keys/values to array of {k, v} objects
+            # Fall back to Python for now
+            raise NotImplementedError(
+                "$objectToArray not supported in SQL tier (use Python fallback)"
+            )
         else:
             raise NotImplementedError(
                 f"Object operator {operator} not supported in SQL tier"
             )
+
+    def _convert_type_operator(
+        self, operator: str, operands: List[Any]
+    ) -> Tuple[str, List[Any]]:
+        """Convert type conversion operators to SQL."""
+        if len(operands) != 1:
+            raise ValueError(f"{operator} requires exactly 1 operand")
+
+        value_sql, value_params = self._convert_operand_to_sql(operands[0])
+
+        if operator == "$toString":
+            # Cast to text
+            sql = f"cast({value_sql} as text)"
+        elif operator == "$toInt":
+            # Cast to integer
+            sql = f"cast({value_sql} as integer)"
+        elif operator == "$toDouble":
+            # Cast to real/float
+            sql = f"cast({value_sql} as real)"
+        elif operator == "$toLong":
+            # SQLite integers are already 64-bit, same as toInt
+            sql = f"cast({value_sql} as integer)"
+        elif operator == "$toBool":
+            # Convert to boolean (0 or 1)
+            sql = f"CASE WHEN {value_sql} THEN 1 ELSE 0 END"
+        elif operator == "$toDecimal":
+            # SQLite doesn't have native Decimal128, use REAL
+            raise NotImplementedError(
+                "$toDecimal not supported in SQL tier (SQLite lacks Decimal128)"
+            )
+        elif operator == "$toObjectId":
+            # Cannot convert to ObjectId in SQL
+            raise NotImplementedError(
+                "$toObjectId not supported in SQL tier (use Python fallback)"
+            )
+        elif operator == "$convert":
+            # $convert is complex - requires 'to' field specification
+            # Fall back to Python
+            raise NotImplementedError(
+                "$convert not supported in SQL tier (use Python fallback)"
+            )
+        elif operator == "$toBinData":
+            # Cannot convert to binary in SQL
+            raise NotImplementedError(
+                "$toBinData not supported in SQL tier (use Python fallback)"
+            )
+        elif operator == "$toRegex":
+            # Cannot convert to regex in SQL
+            raise NotImplementedError(
+                "$toRegex not supported in SQL tier (use Python fallback)"
+            )
+        else:
+            raise NotImplementedError(
+                f"Type operator {operator} not supported in SQL tier"
+            )
+
+        return sql, value_params
 
     def _convert_operand_to_sql(self, operand: Any) -> Tuple[str, List[Any]]:
         """
@@ -954,10 +1252,30 @@ class ExprEvaluator:
             )
         elif operator in ("$abs", "$ceil", "$floor", "$round", "$trunc"):
             return self._evaluate_math_python(operator, operands, document)
+        elif operator in ("$ln", "$log", "$log10", "$log2", "$exp", "$sigmoid"):
+            return self._evaluate_math_python(operator, operands, document)
         elif operator == "$pow":
             return self._evaluate_pow_python(operands, document)
         elif operator == "$sqrt":
             return self._evaluate_sqrt_python(operands, document)
+        elif operator in (
+            "$sin",
+            "$cos",
+            "$tan",
+            "$asin",
+            "$acos",
+            "$atan",
+            "$atan2",
+            "$sinh",
+            "$cosh",
+            "$tanh",
+            "$asinh",
+            "$acosh",
+            "$atanh",
+        ):
+            return self._evaluate_trig_python(operator, operands, document)
+        elif operator in ("$degreesToRadians", "$radiansToDegrees"):
+            return self._evaluate_angle_python(operator, operands, document)
         elif operator == "$cond":
             return self._evaluate_cond_python(operands, document)
         elif operator == "$ifNull":
@@ -977,6 +1295,13 @@ class ExprEvaluator:
             "$avg",
             "$min",
             "$max",
+            "$setEquals",
+            "$setIntersection",
+            "$setUnion",
+            "$setDifference",
+            "$setIsSubset",
+            "$anyElementTrue",
+            "$allElementsTrue",
         ):
             return self._evaluate_array_python(operator, operands, document)
         elif operator in ("$filter", "$map", "$reduce"):
@@ -998,6 +1323,9 @@ class ExprEvaluator:
             "$regexFindAll",
             "$split",
             "$replaceAll",
+            "$replaceOne",
+            "$strLenCP",
+            "$indexOfCP",
         ):
             return self._evaluate_string_python(operator, operands, document)
         elif operator in (
@@ -1019,7 +1347,13 @@ class ExprEvaluator:
             return self._evaluate_date_arithmetic_python(
                 operator, operands, document
             )
-        elif operator in ("$mergeObjects", "$getField", "$setField"):
+        elif operator in (
+            "$mergeObjects",
+            "$getField",
+            "$setField",
+            "$unsetField",
+            "$objectToArray",
+        ):
             return self._evaluate_object_python(operator, operands, document)
         elif operator in (
             "$type",
@@ -1027,6 +1361,12 @@ class ExprEvaluator:
             "$toInt",
             "$toDouble",
             "$toBool",
+            "$toLong",
+            "$toDecimal",
+            "$toObjectId",
+            "$toBinData",
+            "$toRegex",
+            "$convert",
         ):
             return self._evaluate_type_python(operator, operands, document)
         elif operator == "$literal":
@@ -1130,12 +1470,47 @@ class ExprEvaluator:
         self, operator: str, operands: List[Any], document: Dict[str, Any]
     ) -> Optional[float]:
         """Evaluate math operators in Python."""
-        if len(operands) != 1:
+        # Handle $log with custom base separately (requires 2 operands)
+        if operator == "$log":
+            if not isinstance(operands, list) or len(operands) != 2:
+                raise ValueError(
+                    "$log requires exactly 2 operands: [number, base]"
+                )
+            number = self._evaluate_operand_python(operands[0], document)
+            base = self._evaluate_operand_python(operands[1], document)
+            if number is None or base is None:
+                return None
+            if number <= 0 or base <= 1:
+                return None
+            return math.log(number, base)
+
+        # $sigmoid can be either simple form or object form with onNull
+        if operator == "$sigmoid":
+            # Object format: { $sigmoid: { input: <expr>, onNull: <expr> } }
+            if isinstance(operands, dict):
+                # Handled in the operator-specific section below
+                pass
+            else:
+                # Simple format: { $sigmoid: <expr> }
+                operands = (
+                    [operands] if not isinstance(operands, list) else operands
+                )
+
+        # Handle both list and single operand formats for other operators
+        if operator != "$sigmoid" and not isinstance(operands, list):
+            operands = [operands]
+
+        if len(operands) != 1 and operator != "$sigmoid":
             raise ValueError(f"{operator} requires exactly 1 operand")
 
-        value = self._evaluate_operand_python(operands[0], document)
-
-        import math
+        if operator != "$sigmoid":
+            value = self._evaluate_operand_python(operands[0], document)
+        else:
+            value = (
+                self._evaluate_operand_python(operands[0], document)
+                if isinstance(operands, list)
+                else None
+            )
 
         if operator == "$abs":
             return abs(value) if value is not None else None
@@ -1147,6 +1522,43 @@ class ExprEvaluator:
             return round(value) if value is not None else None
         elif operator == "$trunc":
             return int(value) if value is not None else None
+        elif operator == "$ln":
+            # Natural logarithm (base e)
+            return math.log(value) if value is not None and value > 0 else None
+        elif operator == "$log10":
+            # Base-10 logarithm
+            return (
+                math.log10(value) if value is not None and value > 0 else None
+            )
+        elif operator == "$log2":
+            # Base-2 logarithm
+            # Warn about NeoSQLite extension (not in MongoDB)
+            if not self._log2_warned:
+                warnings.warn(
+                    "$log2 is a NeoSQLite extension (not available in MongoDB). "
+                    "For MongoDB compatibility, use { $log: [ <number>, 2 ] } instead.",
+                    UserWarning,
+                    stacklevel=4,
+                )
+                self._log2_warned = True
+            return math.log2(value) if value is not None and value > 0 else None
+        elif operator == "$exp":
+            # Exponential function (e^x)
+            return math.exp(value) if value is not None else None
+        elif operator == "$sigmoid":
+            # Sigmoid function: 1 / (1 + e^(-x))
+            # Handle object format: { $sigmoid: { input: <expr>, onNull: <expr> } }
+            if isinstance(operands, dict):
+                input_val = self._evaluate_operand_python(
+                    operands.get("input"), document
+                )
+                on_null = operands.get("onNull")
+                if input_val is None:
+                    return self._evaluate_operand_python(on_null, document)
+                return 1.0 / (1.0 + math.exp(-input_val))
+            if value is None:
+                return None
+            return 1.0 / (1.0 + math.exp(-value))
         else:
             raise ValueError(f"Unknown math operator: {operator}")
 
@@ -1169,9 +1581,87 @@ class ExprEvaluator:
         if len(operands) != 1:
             raise ValueError("$sqrt requires exactly 1 operand")
         value = self._evaluate_operand_python(operands[0], document)
-        import math
 
         return math.sqrt(value) if value is not None and value >= 0 else None
+
+    def _evaluate_trig_python(
+        self, operator: str, operands: List[Any], document: Dict[str, Any]
+    ) -> Optional[float]:
+        """Evaluate trigonometric operators in Python."""
+
+        # Handle both list and single operand formats
+        if not isinstance(operands, list):
+            operands = [operands]
+
+        # Handle $atan2 separately (requires 2 operands)
+        if operator == "$atan2":
+            if len(operands) != 2:
+                raise ValueError("$atan2 requires exactly 2 operands")
+            y = self._evaluate_operand_python(operands[0], document)
+            x = self._evaluate_operand_python(operands[1], document)
+            if y is None or x is None:
+                return None
+            return math.atan2(y, x)
+
+        # All other trig operators require 1 operand
+        if len(operands) != 1:
+            raise ValueError(f"{operator} requires exactly 1 operand")
+
+        value = self._evaluate_operand_python(operands[0], document)
+        if value is None:
+            return None
+
+        if operator == "$sin":
+            return math.sin(value)
+        elif operator == "$cos":
+            return math.cos(value)
+        elif operator == "$tan":
+            return math.tan(value)
+        elif operator == "$asin":
+            return math.asin(value) if -1 <= value <= 1 else None
+        elif operator == "$acos":
+            return math.acos(value) if -1 <= value <= 1 else None
+        elif operator == "$atan":
+            return math.atan(value)
+        # Hyperbolic functions
+        elif operator == "$sinh":
+            return math.sinh(value)
+        elif operator == "$cosh":
+            return math.cosh(value)
+        elif operator == "$tanh":
+            return math.tanh(value)
+        # Inverse hyperbolic functions
+        elif operator == "$asinh":
+            return math.asinh(value)
+        elif operator == "$acosh":
+            return math.acosh(value) if value >= 1 else None
+        elif operator == "$atanh":
+            return math.atanh(value) if -1 < value < 1 else None
+        else:
+            raise ValueError(f"Unknown trig operator: {operator}")
+
+    def _evaluate_angle_python(
+        self, operator: str, operands: List[Any], document: Dict[str, Any]
+    ) -> Optional[float]:
+        """Evaluate angle conversion operators in Python."""
+
+        # Handle both list and single operand formats
+        if not isinstance(operands, list):
+            operands = [operands]
+
+        if len(operands) != 1:
+            raise ValueError(f"{operator} requires exactly 1 operand")
+
+        value = self._evaluate_operand_python(operands[0], document)
+        if value is None:
+            return None
+
+        if operator == "$degreesToRadians":
+            return math.radians(value)
+        elif operator == "$radiansToDegrees":
+            return math.degrees(value)
+        else:
+            raise ValueError(f"Unknown angle operator: {operator}")
 
     def _evaluate_cond_python(
         self, operands: Dict[str, Any], document: Dict[str, Any]
@@ -1334,6 +1824,60 @@ class ExprEvaluator:
                 except ValueError:
                     return -1
             return -1
+        elif operator == "$setEquals":
+            if len(operands) != 2:
+                raise ValueError("$setEquals requires exactly 2 operands")
+            set1 = self._evaluate_operand_python(operands[0], document)
+            set2 = self._evaluate_operand_python(operands[1], document)
+            if isinstance(set1, list) and isinstance(set2, list):
+                return set(set1) == set(set2)
+            return False
+        elif operator == "$setIntersection":
+            if len(operands) != 2:
+                raise ValueError("$setIntersection requires exactly 2 operands")
+            set1 = self._evaluate_operand_python(operands[0], document)
+            set2 = self._evaluate_operand_python(operands[1], document)
+            if isinstance(set1, list) and isinstance(set2, list):
+                return list(set(set1) & set(set2))
+            return []
+        elif operator == "$setUnion":
+            if len(operands) != 2:
+                raise ValueError("$setUnion requires exactly 2 operands")
+            set1 = self._evaluate_operand_python(operands[0], document)
+            set2 = self._evaluate_operand_python(operands[1], document)
+            if isinstance(set1, list) and isinstance(set2, list):
+                return list(set(set1) | set(set2))
+            return []
+        elif operator == "$setDifference":
+            if len(operands) != 2:
+                raise ValueError("$setDifference requires exactly 2 operands")
+            set1 = self._evaluate_operand_python(operands[0], document)
+            set2 = self._evaluate_operand_python(operands[1], document)
+            if isinstance(set1, list) and isinstance(set2, list):
+                return list(set(set1) - set(set2))
+            return []
+        elif operator == "$setIsSubset":
+            if len(operands) != 2:
+                raise ValueError("$setIsSubset requires exactly 2 operands")
+            set1 = self._evaluate_operand_python(operands[0], document)
+            set2 = self._evaluate_operand_python(operands[1], document)
+            if isinstance(set1, list) and isinstance(set2, list):
+                return set(set1).issubset(set(set2))
+            return False
+        elif operator == "$anyElementTrue":
+            if len(operands) != 1:
+                raise ValueError("$anyElementTrue requires exactly 1 operand")
+            array = self._evaluate_operand_python(operands[0], document)
+            if isinstance(array, list):
+                return any(array)
+            return False
+        elif operator == "$allElementsTrue":
+            if len(operands) != 1:
+                raise ValueError("$allElementsTrue requires exactly 1 operand")
+            array = self._evaluate_operand_python(operands[0], document)
+            if isinstance(array, list):
+                return all(array)
+            return False
         else:
             raise NotImplementedError(
                 f"Array operator {operator} not supported in Python evaluation"
@@ -1560,6 +2104,54 @@ class ExprEvaluator:
             if string is None:
                 return None
             return str(string).replace(str(find), str(replacement))
+        elif operator == "$replaceOne":
+            if len(operands) != 3:
+                raise ValueError(
+                    "$replaceOne requires string, find, and replacement"
+                )
+            string = self._evaluate_operand_python(operands[0], document)
+            find = self._evaluate_operand_python(operands[1], document)
+            replacement = self._evaluate_operand_python(operands[2], document)
+            if string is None:
+                return None
+            # Replace only first occurrence
+            return str(string).replace(str(find), str(replacement), 1)
+        elif operator == "$strLenCP":
+            # String length in code points (Unicode characters)
+            # Handle both list and single operand formats
+            if not isinstance(operands, list):
+                operands = [operands]
+            if len(operands) != 1:
+                raise ValueError("$strLenCP requires exactly 1 operand")
+            value = self._evaluate_operand_python(operands[0], document)
+            if value is None:
+                return None
+            return len(str(value))
+        elif operator == "$substrCP":
+            # Substring by code points (not implemented - use $substr)
+            # Handle both list and single operand formats
+            if not isinstance(operands, list):
+                operands = [operands]
+            if len(operands) != 3:
+                raise ValueError("$substrCP requires exactly 3 operands")
+            string = self._evaluate_operand_python(operands[0], document)
+            start = self._evaluate_operand_python(operands[1], document)
+            length = self._evaluate_operand_python(operands[2], document)
+            if string is not None and start is not None and length is not None:
+                # For BMP characters, this is the same as $substr
+                # For full Unicode support, would need proper code point handling
+                return str(string)[int(start) : int(start) + int(length)]
+            return None
+        elif operator == "$indexOfCP":
+            # Find substring by code points
+            if len(operands) < 2:
+                raise ValueError("$indexOfCP requires substring and string")
+            substr = self._evaluate_operand_python(operands[0], document)
+            string = self._evaluate_operand_python(operands[1], document)
+            if substr is None or string is None:
+                return -1
+            idx = str(string).find(str(substr))
+            return idx
         elif operator == "$regexFind":
             if not isinstance(operands, dict) or "input" not in operands:
                 raise ValueError("$regexFind requires 'input' and 'regex'")
@@ -1857,6 +2449,26 @@ class ExprEvaluator:
             result = dict(obj)
             result[field] = self._evaluate_operand_python(value, document)
             return result
+        elif operator == "$unsetField":
+            if not isinstance(operands, dict) or "field" not in operands:
+                raise ValueError("$unsetField requires 'field' specification")
+            field = operands["field"]
+            input_val = operands.get("input")
+            if input_val is not None:
+                obj = self._evaluate_operand_python(input_val, document)
+            else:
+                obj = dict(document)
+            if not isinstance(obj, dict):
+                return {}
+            result = dict(obj)
+            result.pop(field, None)
+            return result
+        elif operator == "$objectToArray":
+            # Convert object to array of {k, v} objects
+            obj = self._evaluate_operand_python(operands, document)
+            if not isinstance(obj, dict):
+                return []
+            return [{"k": k, "v": v} for k, v in obj.items()]
         else:
             raise NotImplementedError(
                 f"Object operator {operator} not supported in Python evaluation"
@@ -1866,6 +2478,10 @@ class ExprEvaluator:
         self, operator: str, operands: List[Any], document: Dict[str, Any]
     ) -> Any:
         """Evaluate type conversion operators in Python."""
+        # Handle both list and single operand formats (but not for $convert which needs dict)
+        if operator != "$convert" and not isinstance(operands, list):
+            operands = [operands]
+
         if operator == "$type":
             if len(operands) != 1:
                 raise ValueError("$type requires exactly 1 operand")
@@ -1905,10 +2521,205 @@ class ExprEvaluator:
             if isinstance(value, str):
                 return len(value) > 0
             return bool(value)
+        elif operator == "$toLong":
+            if len(operands) != 1:
+                raise ValueError("$toLong requires exactly 1 operand")
+            value = self._evaluate_operand_python(operands[0], document)
+            try:
+                # Python ints are already 64-bit
+                return int(value) if value is not None else None
+            except (ValueError, TypeError):
+                return None
+        elif operator == "$toDecimal":
+            if len(operands) != 1:
+                raise ValueError("$toDecimal requires exactly 1 operand")
+            value = self._evaluate_operand_python(operands[0], document)
+            try:
+                from decimal import Decimal
+
+                return Decimal(str(value)) if value is not None else None
+            except (ValueError, TypeError, ImportError):
+                return None
+        elif operator == "$toObjectId":
+            if len(operands) != 1:
+                raise ValueError("$toObjectId requires exactly 1 operand")
+            value = self._evaluate_operand_python(operands[0], document)
+            if value is None:
+                return None
+            # Convert hex string to ObjectId
+            from neosqlite.objectid import ObjectId
+
+            try:
+                if isinstance(value, str) and len(value) == 24:
+                    return ObjectId(value)
+                # For other types, try to create from string representation
+                return ObjectId(str(value))
+            except Exception:
+                return None
+        elif operator == "$convert":
+            # $convert is complex - requires 'to' field
+            if not isinstance(operands, dict):
+                raise ValueError("$convert requires a dictionary")
+            input_val = self._evaluate_operand_python(
+                operands.get("input"), document
+            )
+            to_type = operands.get("to")
+            on_error = operands.get("onError")
+            on_null = operands.get("onNull")
+
+            if input_val is None:
+                return on_null
+
+            # Import required types upfront
+            from neosqlite.objectid import ObjectId
+            from neosqlite.binary import Binary
+            import re
+
+            # Map conversion types to named converter methods
+            conversion_map = {
+                "int": self._convert_to_int,
+                "long": self._convert_to_long,
+                "double": self._convert_to_double,
+                "decimal": self._convert_to_decimal,
+                "string": self._convert_to_string,
+                "bool": self._convert_to_bool,
+                "objectId": self._convert_to_objectid,
+                "binData": self._convert_to_bindata,
+                "bsonBinData": self._convert_to_bsonbindata,
+                "regex": self._convert_to_regex,
+                "bsonRegex": self._convert_to_bsonregex,
+                "date": self._convert_to_date,
+                "null": self._convert_to_null,
+            }
+
+            try:
+                converter = conversion_map.get(to_type)
+                if converter:
+                    return converter(input_val)
+                return input_val
+            except Exception:
+                return on_error
+        elif operator == "$toBinData":
+            # Handle both list and single operand formats
+            if not isinstance(operands, list):
+                operands = [operands]
+            if len(operands) != 1:
+                raise ValueError("$toBinData requires exactly 1 operand")
+            value = self._evaluate_operand_python(operands[0], document)
+            if value is None:
+                return None
+            # Convert to Binary
+            from neosqlite.binary import Binary
+
+            try:
+                if isinstance(value, str):
+                    return Binary(value.encode("utf-8"))
+                elif isinstance(value, bytes):
+                    return Binary(value)
+                return Binary(str(value).encode("utf-8"))
+            except Exception:
+                return None
+        elif operator == "$toRegex":
+            if len(operands) != 1:
+                raise ValueError("$toRegex requires exactly 1 operand")
+            value = self._evaluate_operand_python(operands[0], document)
+            if value is None:
+                return None
+            # Convert to regex pattern
+            try:
+                import re
+
+                return re.compile(str(value))
+            except Exception:
+                return None
         else:
             raise NotImplementedError(
                 f"Type operator {operator} not supported in Python evaluation"
             )
+
+    # Type converter helper methods for $convert operator
+    @staticmethod
+    def _convert_to_int(value: Any) -> Any:
+        """Convert value to int."""
+        return int(value)
+
+    @staticmethod
+    def _convert_to_long(value: Any) -> Any:
+        """Convert value to long (64-bit int)."""
+        return int(value)
+
+    @staticmethod
+    def _convert_to_double(value: Any) -> Any:
+        """Convert value to double (float)."""
+        return float(value)
+
+    @staticmethod
+    def _convert_to_decimal(value: Any) -> Any:
+        """Convert value to decimal (float, as SQLite lacks Decimal128)."""
+        return float(value)
+
+    @staticmethod
+    def _convert_to_string(value: Any) -> Any:
+        """Convert value to string."""
+        return str(value)
+
+    @staticmethod
+    def _convert_to_bool(value: Any) -> Any:
+        """Convert value to bool."""
+        return bool(value)
+
+    @staticmethod
+    def _convert_to_objectid(value: Any) -> Any:
+        """Convert value to ObjectId."""
+        from neosqlite.objectid import ObjectId
+
+        return ObjectId(str(value)) if value else None
+
+    @staticmethod
+    def _convert_to_bindata(value: Any) -> Any:
+        """Convert value to Binary (binData)."""
+        from neosqlite.binary import Binary
+
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return Binary(value.encode("utf-8"))
+        return Binary(value)
+
+    @staticmethod
+    def _convert_to_bsonbindata(value: Any) -> Any:
+        """Convert value to Binary (bsonBinData)."""
+        from neosqlite.binary import Binary
+
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return Binary(value.encode("utf-8"))
+        return Binary(value)
+
+    @staticmethod
+    def _convert_to_regex(value: Any) -> Any:
+        """Convert value to regex pattern."""
+        import re
+
+        return re.compile(str(value)) if value else None
+
+    @staticmethod
+    def _convert_to_bsonregex(value: Any) -> Any:
+        """Convert value to regex pattern (bsonRegex)."""
+        import re
+
+        return re.compile(str(value)) if value else None
+
+    @staticmethod
+    def _convert_to_date(value: Any) -> Any:
+        """Convert value to date (returns as-is; proper conversion requires parsing)."""
+        return value
+
+    @staticmethod
+    def _convert_to_null(value: Any) -> None:
+        """Convert any value to None."""
+        return None
 
     def _get_bson_type(self, value: Any) -> str:
         """Get BSON type name for a value."""

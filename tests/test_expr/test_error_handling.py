@@ -4,6 +4,7 @@ Tests for $expr error handling.
 Verifies that invalid expressions are handled gracefully with proper fallback to Python.
 """
 
+import pytest
 from neosqlite.collection.expr_evaluator import ExprEvaluator
 
 
@@ -107,3 +108,201 @@ class TestOperatorErrorHandling:
         expr = {"$eq": ["$a", "$b"]}
         result = evaluator.evaluate_python(expr, {"a": None, "b": None})
         assert result is True  # None == None
+
+
+class TestTier2Evaluation:
+    """Test Tier 2 evaluation path."""
+
+    def test_tier2_placeholder(self):
+        """Test that Tier 2 returns None (placeholder implementation)."""
+        evaluator = ExprEvaluator()
+        expr = {"$gt": ["$field", 10]}
+        result, params = evaluator._evaluate_sql_tier2(expr)
+        assert result is None
+        assert params == []
+
+
+class TestSqlConversionErrors:
+    """Test error handling paths in SQL conversion."""
+
+    def test_invalid_expr_structure(self):
+        """Test invalid expression structure raises ValueError."""
+        evaluator = ExprEvaluator()
+        with pytest.raises(ValueError, match="Invalid.*structure"):
+            evaluator._convert_expr_to_sql({"key1": 1, "key2": 2})
+
+    def test_non_dict_expr(self):
+        """Test non-dict expression raises ValueError."""
+        evaluator = ExprEvaluator()
+        with pytest.raises(ValueError, match="Invalid.*structure"):
+            evaluator._convert_expr_to_sql("not a dict")
+
+    def test_nor_operator_fewer_than_2_operands(self):
+        """Test $nor with fewer than 2 operands raises ValueError."""
+        evaluator = ExprEvaluator()
+        with pytest.raises(ValueError, match="requires at least 2 operands"):
+            evaluator._convert_logical_operator("$nor", [{"$gt": ["$a", 1]}])
+
+    def test_unknown_logical_operator(self):
+        """Test unknown logical operator raises ValueError."""
+        evaluator = ExprEvaluator()
+        with pytest.raises(ValueError, match="Unknown logical operator"):
+            evaluator._convert_logical_operator(
+                "$unknown", [{"$gt": ["$a", 1]}, {"$lt": ["$b", 2]}]
+            )
+
+    def test_comparison_wrong_operand_count(self):
+        """Test comparison operator with wrong operand count raises ValueError."""
+        evaluator = ExprEvaluator()
+        with pytest.raises(ValueError, match="requires exactly 2 operands"):
+            evaluator._convert_comparison_operator("$gt", [1])
+
+    def test_cmp_wrong_operand_count(self):
+        """Test $cmp with wrong operand count raises ValueError."""
+        evaluator = ExprEvaluator()
+        with pytest.raises(ValueError, match="requires exactly 2 operands"):
+            evaluator._convert_cmp_operator([1])
+
+    def test_arithmetic_fewer_than_2_operands(self):
+        """Test arithmetic operator with fewer than 2 operands raises ValueError."""
+        evaluator = ExprEvaluator()
+        with pytest.raises(ValueError, match="requires at least 2 operands"):
+            evaluator._convert_arithmetic_operator("$add", [1])
+
+    def test_cond_invalid_structure(self):
+        """Test $cond with invalid structure raises ValueError."""
+        evaluator = ExprEvaluator()
+        with pytest.raises(ValueError, match="requires a dictionary"):
+            evaluator._convert_cond_operator("not a dict")
+
+    def test_cond_missing_if_field(self):
+        """Test $cond missing 'if' field raises ValueError."""
+        evaluator = ExprEvaluator()
+        with pytest.raises(ValueError, match="requires 'if' and 'then' fields"):
+            evaluator._convert_cond_operator({"then": 1})
+
+    def test_cond_missing_then_field(self):
+        """Test $cond missing 'then' field raises ValueError."""
+        evaluator = ExprEvaluator()
+        with pytest.raises(ValueError, match="requires 'if' and 'then' fields"):
+            evaluator._convert_cond_operator({"if": {"$gt": ["$a", 1]}})
+
+    def test_ifNull_wrong_operand_count(self):
+        """Test $ifNull with wrong operand count raises ValueError."""
+        evaluator = ExprEvaluator()
+        with pytest.raises(ValueError, match="requires exactly 2 operands"):
+            evaluator._convert_ifNull_operator([1])
+
+    def test_ifNull_non_list_operands(self):
+        """Test $ifNull with non-list operands raises ValueError."""
+        evaluator = ExprEvaluator()
+        with pytest.raises(ValueError, match="requires exactly 2 operands"):
+            evaluator._convert_ifNull_operator("not a list")
+
+
+class TestPythonEvaluationErrors:
+    """Test Python evaluation error handling."""
+
+    def test_invalid_expr_structure_python(self):
+        """Test invalid expression structure in Python raises ValueError."""
+        evaluator = ExprEvaluator()
+        with pytest.raises(ValueError, match="Invalid.*structure"):
+            evaluator._evaluate_expr_python({"key1": 1, "key2": 2}, {})
+
+    def test_non_dict_expr_python(self):
+        """Test non-dict expression in Python raises ValueError."""
+        evaluator = ExprEvaluator()
+        with pytest.raises(ValueError, match="Invalid.*structure"):
+            evaluator._evaluate_expr_python("not a dict", {})
+
+    def test_unknown_operator_python(self):
+        """Test unknown operator in Python raises NotImplementedError."""
+        evaluator = ExprEvaluator()
+        with pytest.raises(NotImplementedError, match="not supported"):
+            evaluator._evaluate_expr_python({"$unknown": [1]}, {})
+
+
+class TestOperandEvaluation:
+    """Test operand evaluation edge cases."""
+
+    def test_evaluate_operand_literal_value(self):
+        """Test evaluating literal value."""
+        evaluator = ExprEvaluator()
+        result = evaluator._evaluate_operand_python(42, {})
+        assert result == 42
+
+    def test_evaluate_operand_dict(self):
+        """Test evaluating dict operand."""
+        evaluator = ExprEvaluator()
+        result = evaluator._evaluate_operand_python({"key": "value"}, {})
+        assert result == {"key": "value"}
+
+    def test_evaluate_operand_dict_with_expression(self):
+        """Test evaluating dict with nested expression."""
+        evaluator = ExprEvaluator()
+        result = evaluator._evaluate_operand_python({"$gt": [1, 2]}, {})
+        assert result is False
+
+    def test_evaluate_operand_missing_nested_field(self):
+        """Test evaluating missing nested field."""
+        evaluator = ExprEvaluator()
+        result = evaluator._evaluate_operand_python("$a.b.c", {"a": {"x": 1}})
+        assert result is None
+
+    def test_evaluate_operand_non_dict_intermediate(self):
+        """Test evaluating with non-dict intermediate value."""
+        evaluator = ExprEvaluator()
+        result = evaluator._evaluate_operand_python("$a.b", {"a": "string"})
+        assert result is None
+
+
+class TestBsonType:
+    """Test _get_bson_type method."""
+
+    def test_bson_type_null(self):
+        """Test _get_bson_type with None."""
+        evaluator = ExprEvaluator()
+        result = evaluator._get_bson_type(None)
+        assert result == "null"
+
+    def test_bson_type_bool(self):
+        """Test _get_bson_type with bool."""
+        evaluator = ExprEvaluator()
+        result = evaluator._get_bson_type(True)
+        assert result == "bool"
+
+    def test_bson_type_int(self):
+        """Test _get_bson_type with int."""
+        evaluator = ExprEvaluator()
+        result = evaluator._get_bson_type(42)
+        assert result == "int"
+
+    def test_bson_type_float(self):
+        """Test _get_bson_type with float."""
+        evaluator = ExprEvaluator()
+        result = evaluator._get_bson_type(3.14)
+        assert result == "double"
+
+    def test_bson_type_string(self):
+        """Test _get_bson_type with string."""
+        evaluator = ExprEvaluator()
+        result = evaluator._get_bson_type("hello")
+        assert result == "string"
+
+    def test_bson_type_list(self):
+        """Test _get_bson_type with list."""
+        evaluator = ExprEvaluator()
+        result = evaluator._get_bson_type([1, 2, 3])
+        assert result == "array"
+
+    def test_bson_type_dict(self):
+        """Test _get_bson_type with dict."""
+        evaluator = ExprEvaluator()
+        result = evaluator._get_bson_type({"key": "value"})
+        assert result == "object"
+
+    def test_bson_type_unknown(self):
+        """Test _get_bson_type with unknown type."""
+        evaluator = ExprEvaluator()
+        result = evaluator._get_bson_type(object())
+        assert result == "unknown"

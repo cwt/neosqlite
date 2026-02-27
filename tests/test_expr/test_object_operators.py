@@ -1,11 +1,12 @@
 """
 Tests for $expr object operators.
 
-Covers: $mergeObjects, $getField, $setField
+Covers: $mergeObjects, $getField, $setField, $unsetField, $objectToArray
 """
 
 import neosqlite
 from neosqlite.collection.expr_evaluator import ExprEvaluator
+from neosqlite.collection.query_helper import set_force_fallback
 
 
 class TestObjectOperatorsPython:
@@ -80,6 +81,51 @@ class TestObjectOperatorsPython:
         result = evaluator._evaluate_expr_python(expr, {"name": "John"})
         assert result == {"name": "Jane"}
 
+    def test_unsetField_operator(self):
+        """Test $unsetField operator."""
+        evaluator = ExprEvaluator()
+        expr = {"$unsetField": {"field": "name"}}
+        result = evaluator._evaluate_expr_python(
+            expr, {"name": "John", "age": 30}
+        )
+        assert result == {"age": 30}
+        assert "name" not in result
+
+    def test_unsetField_missing_field(self):
+        """Test $unsetField with missing field."""
+        evaluator = ExprEvaluator()
+        expr = {"$unsetField": {"field": "missing"}}
+        result = evaluator._evaluate_expr_python(expr, {"name": "John"})
+        assert result == {"name": "John"}  # No change
+
+    def test_unsetField_with_input(self):
+        """Test $unsetField with input."""
+        evaluator = ExprEvaluator()
+        expr = {"$unsetField": {"field": "name", "input": "$obj"}}
+        result = evaluator._evaluate_expr_python(
+            expr, {"obj": {"name": "John", "age": 30}}
+        )
+        assert result == {"age": 30}
+
+    def test_objectToArray_operator(self):
+        """Test $objectToArray operator."""
+        evaluator = ExprEvaluator()
+        expr = {"$objectToArray": "$obj"}
+        result = evaluator._evaluate_expr_python(
+            expr, {"obj": {"a": 1, "b": 2}}
+        )
+        assert isinstance(result, list)
+        assert len(result) == 2
+        keys = {item["k"] for item in result}
+        assert keys == {"a", "b"}
+
+    def test_objectToArray_empty(self):
+        """Test $objectToArray with empty object."""
+        evaluator = ExprEvaluator()
+        expr = {"$objectToArray": "$obj"}
+        result = evaluator._evaluate_expr_python(expr, {"obj": {}})
+        assert result == []
+
 
 class TestObjectOperatorsSQL:
     """Test object operators SQL conversion."""
@@ -145,3 +191,63 @@ class TestObjectIntegration:
             results = list(collection.find(expr))
             assert len(results) == 1
             assert results[0]["name"] == "John"
+
+    def test_unsetField_integration(self):
+        """Test $unsetField with database."""
+        with neosqlite.Connection(":memory:") as conn:
+            collection = conn["test"]
+            collection.insert_one({"obj": {"a": 1, "b": 2, "c": 3}})
+
+            set_force_fallback(True)
+            try:
+                expr = {
+                    "$expr": {
+                        "$and": [
+                            {
+                                "$ne": [
+                                    {
+                                        "$getField": {
+                                            "field": "a",
+                                            "input": "$obj",
+                                        }
+                                    },
+                                    None,
+                                ]
+                            },
+                            {
+                                "$eq": [
+                                    {
+                                        "$getField": {
+                                            "field": "a",
+                                            "input": {
+                                                "$unsetField": {
+                                                    "field": "a",
+                                                    "input": "$obj",
+                                                }
+                                            },
+                                        }
+                                    },
+                                    None,
+                                ]
+                            },
+                        ]
+                    }
+                }
+                results = list(collection.find(expr))
+                assert len(results) == 1
+            finally:
+                set_force_fallback(False)
+
+    def test_objectToArray_integration(self):
+        """Test $objectToArray with database."""
+        with neosqlite.Connection(":memory:") as conn:
+            collection = conn["test"]
+            collection.insert_one({"obj": {"a": 1, "b": 2}})
+
+            set_force_fallback(True)
+            try:
+                expr = {"$expr": {"$isArray": [{"$objectToArray": "$obj"}]}}
+                results = list(collection.find(expr))
+                assert len(results) == 1
+            finally:
+                set_force_fallback(False)
