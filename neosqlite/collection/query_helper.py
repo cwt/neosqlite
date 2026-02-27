@@ -1354,42 +1354,31 @@ class QueryHelper:
                 score += self._analyze_expr_complexity(operands)
 
             # Add operator-specific complexity
-            if operator in (
-                "$add",
-                "$subtract",
-                "$multiply",
-                "$divide",
-                "$mod",
-            ):
-                score += 1
-            elif operator in ("$cond", "$switch"):
-                score += 2
-            elif operator in (
-                "$size",
-                "$in",
-                "$arrayElemAt",
-                "$first",
-                "$last",
-            ):
-                score += 2
-            elif operator in ("$filter", "$map", "$reduce"):
-                # Array transformation operators are complex
-                score += 3
-            elif operator in ("$concat", "$toLower", "$toUpper", "$substr"):
-                score += 1
-            elif operator in ("$abs", "$ceil", "$floor", "$round", "$trunc"):
-                score += 1
-            elif operator in ("$dateAdd", "$dateSubtract", "$dateDiff"):
-                score += 1
-            elif operator in ("$regexFind", "$regexFindAll"):
-                # Regex operations require Python evaluation
-                score += 2
-            elif operator == "$cmp":
-                score += 1
-            elif operator in ("$ifNull", "$type", "$toString", "$toInt"):
-                score += 1
-            # Comparison and logical operators don't add extra complexity
-            # (their complexity comes from their operands which are already counted)
+            match operator:
+                case "$add" | "$subtract" | "$multiply" | "$divide" | "$mod":
+                    score += 1
+                case "$cond" | "$switch":
+                    score += 2
+                case "$size" | "$in" | "$arrayElemAt" | "$first" | "$last":
+                    score += 2
+                case "$filter" | "$map" | "$reduce":
+                    # Array transformation operators are complex
+                    score += 3
+                case "$concat" | "$toLower" | "$toUpper" | "$substr":
+                    score += 1
+                case "$abs" | "$ceil" | "$floor" | "$round" | "$trunc":
+                    score += 1
+                case "$dateAdd" | "$dateSubtract" | "$dateDiff":
+                    score += 1
+                case "$regexFind" | "$regexFindAll":
+                    # Regex operations require Python evaluation
+                    score += 2
+                case "$cmp":
+                    score += 1
+                case "$ifNull" | "$type" | "$toString" | "$toInt":
+                    score += 1
+                # Comparison and logical operators don't add extra complexity
+                # (their complexity comes from their operands which are already counted)
 
         return score
 
@@ -2621,26 +2610,30 @@ class QueryHelper:
                                         iter(next_stage.keys())
                                     )
 
-                                    if next_stage_name == "$sort":
-                                        sort_spec = next_stage["$sort"]
-                                        sort_clauses = []
-                                        for key, direction in sort_spec.items():
-                                            sort_clauses.append(
-                                                f"{key} {'DESC' if direction == DESCENDING else 'ASC'}"
+                                    match next_stage_name:
+                                        case "$sort":
+                                            sort_spec = next_stage["$sort"]
+                                            sort_clauses = []
+                                            for (
+                                                key,
+                                                direction,
+                                            ) in sort_spec.items():
+                                                sort_clauses.append(
+                                                    f"{key} {'DESC' if direction == DESCENDING else 'ASC'}"
+                                                )
+                                            order_by_clause = (
+                                                "ORDER BY "
+                                                + ", ".join(sort_clauses)
                                             )
-                                        order_by_clause = (
-                                            "ORDER BY "
-                                            + ", ".join(sort_clauses)
-                                        )
-                                    elif next_stage_name == "$skip":
-                                        count = next_stage["$skip"]
-                                        offset_clause = f"OFFSET {count}"
-                                    elif next_stage_name == "$limit":
-                                        count = next_stage["$limit"]
-                                        limit_clause = f"LIMIT {count}"
-                                    else:
-                                        # Stop at first unsupported stage
-                                        break
+                                        case "$skip":
+                                            count = next_stage["$skip"]
+                                            offset_clause = f"OFFSET {count}"
+                                        case "$limit":
+                                            count = next_stage["$limit"]
+                                            limit_clause = f"LIMIT {count}"
+                                        case _:
+                                            # Stop at first unsupported stage
+                                            break
 
                                 # Combine all clauses
                                 all_clauses = [
@@ -2682,26 +2675,30 @@ class QueryHelper:
                                         iter(next_stage.keys())
                                     )
 
-                                    if next_stage_name == "$sort":
-                                        sort_spec = next_stage["$sort"]
-                                        sort_clauses = []
-                                        for key, direction in sort_spec.items():
-                                            sort_clauses.append(
-                                                f"{key} {'DESC' if direction == DESCENDING else 'ASC'}"
+                                    match next_stage_name:
+                                        case "$sort":
+                                            sort_spec = next_stage["$sort"]
+                                            sort_clauses = []
+                                            for (
+                                                key,
+                                                direction,
+                                            ) in sort_spec.items():
+                                                sort_clauses.append(
+                                                    f"{key} {'DESC' if direction == DESCENDING else 'ASC'}"
+                                                )
+                                            order_by_clause = (
+                                                "ORDER BY "
+                                                + ", ".join(sort_clauses)
                                             )
-                                        order_by_clause = (
-                                            "ORDER BY "
-                                            + ", ".join(sort_clauses)
-                                        )
-                                    elif next_stage_name == "$skip":
-                                        count = next_stage["$skip"]
-                                        offset_clause = f"OFFSET {count}"
-                                    elif next_stage_name == "$limit":
-                                        count = next_stage["$limit"]
-                                        limit_clause = f"LIMIT {count}"
-                                    else:
-                                        # Stop at first unsupported stage
-                                        break
+                                        case "$skip":
+                                            count = next_stage["$skip"]
+                                            offset_clause = f"OFFSET {count}"
+                                        case "$limit":
+                                            count = next_stage["$limit"]
+                                            limit_clause = f"LIMIT {count}"
+                                        case _:
+                                            # Stop at first unsupported stage
+                                            break
 
                                 # Combine all clauses
                                 all_clauses = [
@@ -2894,26 +2891,30 @@ class QueryHelper:
                                         iter(next_stage.keys())
                                     )
 
-                                    if next_stage_name == "$sort":
-                                        sort_spec = next_stage["$sort"]
-                                        sort_clauses = []
-                                        for key, direction in sort_spec.items():
-                                            sort_clauses.append(
-                                                f"{key} {'DESC' if direction == DESCENDING else 'ASC'}"
+                                    match next_stage_name:
+                                        case "$sort":
+                                            sort_spec = next_stage["$sort"]
+                                            sort_clauses = []
+                                            for (
+                                                key,
+                                                direction,
+                                            ) in sort_spec.items():
+                                                sort_clauses.append(
+                                                    f"{key} {'DESC' if direction == DESCENDING else 'ASC'}"
+                                                )
+                                            order_by_clause = (
+                                                "ORDER BY "
+                                                + ", ".join(sort_clauses)
                                             )
-                                        order_by_clause = (
-                                            "ORDER BY "
-                                            + ", ".join(sort_clauses)
-                                        )
-                                    elif next_stage_name == "$skip":
-                                        count = next_stage["$skip"]
-                                        offset_clause = f"OFFSET {count}"
-                                    elif next_stage_name == "$limit":
-                                        count = next_stage["$limit"]
-                                        limit_clause = f"LIMIT {count}"
-                                    else:
-                                        # Stop at first unsupported stage
-                                        break
+                                        case "$skip":
+                                            count = next_stage["$skip"]
+                                            offset_clause = f"OFFSET {count}"
+                                        case "$limit":
+                                            count = next_stage["$limit"]
+                                            limit_clause = f"LIMIT {count}"
+                                        case _:
+                                            # Stop at first unsupported stage
+                                            break
 
                                 # Combine all clauses
                                 all_clauses = [

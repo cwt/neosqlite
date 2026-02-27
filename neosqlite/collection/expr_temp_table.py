@@ -107,39 +107,36 @@ class TempTableExprEvaluator:
         score = 1  # Base score
 
         for operator, operands in expr.items():
-            if operator in (
-                "$add",
-                "$subtract",
-                "$multiply",
-                "$divide",
-                "$mod",
-            ):
-                score += 1
-                if isinstance(operands, list):
-                    for op in operands:
-                        if isinstance(op, dict):
-                            score += self._analyze_complexity(op)
-            elif operator in ("$cond", "$switch"):
-                score += 2
-                if isinstance(operands, dict):
-                    if "if" in operands:
-                        score += self._analyze_complexity(operands["if"])
-                    if "then" in operands:
-                        if isinstance(operands["then"], dict):
-                            score += self._analyze_complexity(operands["then"])
-            elif operator in ("$and", "$or", "$nor"):
-                if isinstance(operands, list):
-                    for op in operands:
-                        if isinstance(op, dict):
-                            score += self._analyze_complexity(op)
-            elif operator == "$not":
-                if isinstance(operands, list) and len(operands) > 0:
-                    if isinstance(operands[0], dict):
-                        score += self._analyze_complexity(operands[0])
-            elif operator in ("$size", "$in", "$arrayElemAt"):
-                score += 2
-            elif operator in ("$concat", "$substr", "$trim"):
-                score += 1
+            match operator:
+                case "$add" | "$subtract" | "$multiply" | "$divide" | "$mod":
+                    score += 1
+                    if isinstance(operands, list):
+                        for op in operands:
+                            if isinstance(op, dict):
+                                score += self._analyze_complexity(op)
+                case "$cond" | "$switch":
+                    score += 2
+                    if isinstance(operands, dict):
+                        if "if" in operands:
+                            score += self._analyze_complexity(operands["if"])
+                        if "then" in operands:
+                            if isinstance(operands["then"], dict):
+                                score += self._analyze_complexity(
+                                    operands["then"]
+                                )
+                case "$and" | "$or" | "$nor":
+                    if isinstance(operands, list):
+                        for op in operands:
+                            if isinstance(op, dict):
+                                score += self._analyze_complexity(op)
+                case "$not":
+                    if isinstance(operands, list) and len(operands) > 0:
+                        if isinstance(operands[0], dict):
+                            score += self._analyze_complexity(operands[0])
+                case "$size" | "$in" | "$arrayElemAt":
+                    score += 2
+                case "$concat" | "$substr" | "$trim":
+                    score += 1
 
         return score
 
@@ -305,30 +302,31 @@ class TempTableExprEvaluator:
         operator, operands = next(iter(expr.items()))
 
         # Handle different operator types
-        if operator in ("$and", "$or", "$not", "$nor"):
-            return self._convert_logical_to_temp_sql(
-                operator, operands, temp_table
-            )
-        elif operator in ("$gt", "$gte", "$lt", "$lte", "$eq", "$ne"):
-            return self._convert_comparison_to_temp_sql(
-                operator, operands, temp_table
-            )
-        elif operator in ("$add", "$subtract", "$multiply", "$divide", "$mod"):
-            return self._convert_arithmetic_to_temp_sql(
-                operator, operands, temp_table
-            )
-        elif operator == "$cond":
-            return self._convert_cond_to_temp_sql(operands, temp_table)
-        elif operator == "$cmp":
-            return self._convert_cmp_to_temp_sql(operands, temp_table)
-        elif operator in ("$abs", "$ceil", "$floor", "$round"):
-            return self._convert_math_to_temp_sql(
-                operator, operands, temp_table
-            )
-        else:
-            raise NotImplementedError(
-                f"Operator {operator} not supported in Tier 2"
-            )
+        match operator:
+            case "$and" | "$or" | "$not" | "$nor":
+                return self._convert_logical_to_temp_sql(
+                    operator, operands, temp_table
+                )
+            case "$gt" | "$gte" | "$lt" | "$lte" | "$eq" | "$ne":
+                return self._convert_comparison_to_temp_sql(
+                    operator, operands, temp_table
+                )
+            case "$add" | "$subtract" | "$multiply" | "$divide" | "$mod":
+                return self._convert_arithmetic_to_temp_sql(
+                    operator, operands, temp_table
+                )
+            case "$cond":
+                return self._convert_cond_to_temp_sql(operands, temp_table)
+            case "$cmp":
+                return self._convert_cmp_to_temp_sql(operands, temp_table)
+            case "$abs" | "$ceil" | "$floor" | "$round":
+                return self._convert_math_to_temp_sql(
+                    operator, operands, temp_table
+                )
+            case _:
+                raise NotImplementedError(
+                    f"Operator {operator} not supported in Tier 2"
+                )
 
     def _convert_logical_to_temp_sql(
         self, operator: str, operands: List[Any], temp_table: str
@@ -358,14 +356,15 @@ class TempTableExprEvaluator:
             sql_parts.append(f"({operand_sql})")
             all_params.extend(operand_params)
 
-        if operator == "$and":
-            sql = " AND ".join(sql_parts)
-        elif operator == "$or":
-            sql = " OR ".join(sql_parts)
-        elif operator == "$nor":
-            sql = f"NOT ({' OR '.join(sql_parts)})"
-        else:
-            raise ValueError(f"Unknown logical operator: {operator}")
+        match operator:
+            case "$and":
+                sql = " AND ".join(sql_parts)
+            case "$or":
+                sql = " OR ".join(sql_parts)
+            case "$nor":
+                sql = f"NOT ({' OR '.join(sql_parts)})"
+            case _:
+                raise ValueError(f"Unknown logical operator: {operator}")
 
         return sql, all_params
 

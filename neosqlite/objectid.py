@@ -50,39 +50,40 @@ class ObjectId:
             TypeError: If the input type is not supported
             ValueError: If the input format is invalid
         """
-        if oid is None:
-            # Generate a new ObjectId
-            self._id = self._generate_new_id()
-        elif isinstance(oid, ObjectId):
-            self._id = oid.binary
-        elif isinstance(oid, str):
-            if len(oid) != 24:
-                raise ValueError(
-                    "ObjectId hex string must be exactly 24 characters"
+        match oid:
+            case None:
+                # Generate a new ObjectId
+                self._id = self._generate_new_id()
+            case ObjectId():
+                self._id = oid.binary
+            case str():
+                if len(oid) != 24:
+                    raise ValueError(
+                        "ObjectId hex string must be exactly 24 characters"
+                    )
+                try:
+                    self._id = bytes.fromhex(oid)
+                except ValueError:
+                    raise ValueError(
+                        "ObjectId hex string contains invalid characters"
+                    )
+            case bytes():
+                if len(oid) != 12:
+                    raise ValueError("ObjectId must be exactly 12 bytes")
+                self._id = oid
+            case int():
+                # If an integer is provided, it replaces the timestamp part
+                # according to MongoDB specification
+                if oid < 0 or oid > 0xFFFFFFFF:
+                    raise ValueError(
+                        "Integer timestamp must be between 0 and 0xFFFFFFFF"
+                    )
+                # Generate a new ObjectId but with the provided timestamp
+                self._id = self._generate_new_id_with_timestamp(oid)
+            case _:
+                raise TypeError(
+                    "ObjectId must be a string, bytes, ObjectId, int, or None"
                 )
-            try:
-                self._id = bytes.fromhex(oid)
-            except ValueError:
-                raise ValueError(
-                    "ObjectId hex string contains invalid characters"
-                )
-        elif isinstance(oid, bytes):
-            if len(oid) != 12:
-                raise ValueError("ObjectId must be exactly 12 bytes")
-            self._id = oid
-        elif isinstance(oid, int):
-            # If an integer is provided, it replaces the timestamp part
-            # according to MongoDB specification
-            if oid < 0 or oid > 0xFFFFFFFF:
-                raise ValueError(
-                    "Integer timestamp must be between 0 and 0xFFFFFFFF"
-                )
-            # Generate a new ObjectId but with the provided timestamp
-            self._id = self._generate_new_id_with_timestamp(oid)
-        else:
-            raise TypeError(
-                "ObjectId must be a string, bytes, ObjectId, int, or None"
-            )
 
     @classmethod
     def _generate_new_id(cls) -> bytes:
@@ -182,22 +183,23 @@ class ObjectId:
         Returns:
             True if the value is a valid ObjectId, False otherwise
         """
-        try:
-            if isinstance(oid, ObjectId):
+        match oid:
+            case ObjectId():
                 return True
-            elif isinstance(oid, str):
+            case str():
                 if len(oid) != 24:
                     return False
-                int(oid, 16)  # Try to parse as hex
-                return True
-            elif isinstance(oid, bytes):
+                try:
+                    int(oid, 16)  # Try to parse as hex
+                    return True
+                except (TypeError, ValueError):
+                    return False
+            case bytes():
                 return len(oid) == 12
-            elif isinstance(oid, int):
+            case int():
                 return 0 <= oid <= 0xFFFFFFFF
-            else:
+            case _:
                 return False
-        except (TypeError, ValueError):
-            return False
 
     @property
     def binary(self) -> bytes:
@@ -223,16 +225,18 @@ class ObjectId:
 
     def __eq__(self, other: Any) -> bool:
         """Check equality with another ObjectId."""
-        if isinstance(other, ObjectId):
-            return self._id == other._id
-        elif isinstance(other, bytes):
-            return self._id == other
-        elif isinstance(other, str):
-            try:
-                return self._id == bytes.fromhex(other)
-            except ValueError:
+        match other:
+            case ObjectId():
+                return self._id == other._id
+            case bytes():
+                return self._id == other
+            case str():
+                try:
+                    return self._id == bytes.fromhex(other)
+                except ValueError:
+                    return False
+            case _:
                 return False
-        return False
 
     def __ne__(self, other: Any) -> bool:
         """Check inequality with another ObjectId."""
