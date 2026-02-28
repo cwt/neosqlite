@@ -290,6 +290,22 @@ class AggregationCursor:
         # This is a placeholder for API compatibility
         return self
 
+    def allow_disk_use(self, allow: bool = True) -> AggregationCursor:
+        """
+        Enable or disable disk use for aggregation operations.
+
+        This is a placeholder method for API compatibility with PyMongo.
+        NeoSQLite handles memory management differently.
+
+        Args:
+            allow: Whether to allow disk use (ignored)
+
+        Returns:
+            The cursor itself for chaining
+        """
+        # Placeholder for API compatibility
+        return self
+
     def use_quez(self, use_quez: bool = True) -> AggregationCursor:
         """
         Enable or disable quez memory-constrained processing.

@@ -200,6 +200,44 @@ class BulkOperationExecutor:
         self._ordered = ordered
         self._operations: List[BulkOperation] = []
 
+    def add(self, operation):
+        """
+        Add an operation to the bulk operations list.
+
+        For PyMongo API compatibility, accepts InsertOne, UpdateOne, DeleteOne operations.
+
+        Args:
+            operation: The operation to add (InsertOne, UpdateOne, DeleteOne, etc.)
+
+        Returns:
+            BulkOperationExecutor: The current executor for chaining
+        """
+        # Handle PyMongo-style operation objects
+        if hasattr(operation, "document"):
+            # InsertOne
+            self._operations.append(
+                InsertOperation(document=operation.document)
+            )
+        elif hasattr(operation, "filter") and hasattr(operation, "update"):
+            # UpdateOne or ReplaceOne
+            multi = getattr(operation, "multi", False)
+            upsert = getattr(operation, "upsert", False)
+            self._operations.append(
+                UpdateOperation(
+                    filter=operation.filter,
+                    update=operation.update,
+                    upsert=upsert,
+                    multi=multi,
+                )
+            )
+        elif hasattr(operation, "filter") and not hasattr(operation, "update"):
+            # DeleteOne or DeleteMany
+            multi = getattr(operation, "multi", False)
+            self._operations.append(
+                DeleteOperation(filter=operation.filter, multi=multi)
+            )
+        return self
+
     def insert(self, document: Dict[str, Any]):
         """
         Add an insert operation to the bulk operations list.

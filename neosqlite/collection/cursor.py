@@ -98,6 +98,35 @@ class Cursor:
             self._sort = dict(key_or_list)
         return self
 
+    def batch_size(self, size: int) -> Cursor:
+        """
+        Set the batch size for the cursor.
+
+        This is a placeholder method for PyMongo API compatibility.
+        NeoSQLite doesn't use batch sizes in the same way as MongoDB.
+
+        Args:
+            size (int): The batch size (ignored)
+
+        Returns:
+            Cursor: The cursor object for chaining
+        """
+        # Placeholder for API compatibility
+        return self
+
+    def hint(self, index: str) -> Cursor:
+        """
+        Set the index hint for the cursor.
+
+        Args:
+            index (str): The index name to hint
+
+        Returns:
+            Cursor: The cursor object with the hint applied
+        """
+        self._hint = index
+        return self
+
     def _execute_query(self) -> Iterator[Dict[str, Any]]:
         """
         Execute the query and yield the results after applying filters, sorting,

@@ -156,6 +156,49 @@ class Connection:
         self._collections[name] = collection
         return collection
 
+    def get_collection(self, name: str, **kwargs) -> Collection:
+        """
+        Get a collection by name.
+
+        Args:
+            name (str): The name of the collection to get.
+            **kwargs: Additional options for collection access.
+
+        Returns:
+            Collection: The collection instance.
+        """
+        if name not in self._collections:
+            self._collections[name] = Collection(
+                self.db, name, create=False, database=self, **kwargs
+            )
+        return self._collections[name]
+
+    def rename_collection(self, old_name: str, new_name: str) -> None:
+        """
+        Rename a collection.
+
+        Args:
+            old_name (str): The current name of the collection.
+            new_name (str): The new name for the collection.
+
+        Raises:
+            CollectionInvalid: If the old collection doesn't exist or new name already exists.
+        """
+        if old_name not in self._collections:
+            raise CollectionInvalid(f"Collection {old_name} does not exist")
+
+        # Check if new name already exists
+        cursor = self.db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (new_name,),
+        )
+        if cursor.fetchone():
+            raise CollectionInvalid(f"Collection {new_name} already exists")
+
+        # Rename the collection
+        self._collections[old_name].rename(new_name)
+        self._collections[new_name] = self._collections.pop(old_name)
+
     def list_collection_names(self) -> List[str]:
         """
         List all collection names in the database.
