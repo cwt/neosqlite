@@ -25,6 +25,27 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 
 See [CHANGELOG.md](CHANGELOG.md) for the latest features and improvements.
 
+## Tested APIs Compared to PyMongo
+
+NeoSQLite maintains comprehensive API compatibility tests against PyMongo to ensure MongoDB-compatible behavior. Our automated test suite compares **222 API operations** across all major categories:
+
+### Test Results
+| Metric | Count |
+|--------|-------|
+| **Total Tests** | 222 |
+| **Passed** | 215 |
+| **Skipped** | 7 (by design) |
+| **Failed** | 0 |
+
+### Running the Tests
+To run the API comparison tests, install PyMongo first and ensure that either Podman or Docker is installed on your system.
+
+```bash
+./scripts/run-api-comparison.sh
+```
+
+For more details, see [`examples/api_comparison_comprehensive.py`](examples/api_comparison_comprehensive.py).
+
 ## Performance Benchmarks
 
 NeoSQLite includes comprehensive benchmarks demonstrating the performance benefits of its SQL optimizations:
@@ -225,7 +246,7 @@ with Connection(":memory:") as conn:
     # Query using hex string (interchangeable with PyMongo)
     hex_result = collection.find_one({"_id": str(manual_oid)})
     print(f"Found document using hex string: {hex_result}")
-    
+
     # Automatic ID type correction makes querying more robust
     # These all work automatically without requiring exact type matching:
     found1 = collection.find_one({"id": manual_oid})  # Corrected to query _id field
