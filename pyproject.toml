@@ -37,6 +37,7 @@ pytest = "^9.0"
 pytest-cov = "^7.0"
 mypy = "^1.17"
 pytest-xdist = "^3.8.0"
+pymongo = "^4.16.0"
 
 [tool.pyright]
 stubPath = "typings"
