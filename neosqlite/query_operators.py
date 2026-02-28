@@ -291,7 +291,9 @@ def _elemMatch(field: str, value: Any, document: Dict[str, Any]) -> bool:
 
     Args:
         field (str): The document field to compare.
-        value (Any): Either a simple value to match directly or a dictionary of field-value pairs to compare against.
+        value (Any): Either a simple value to match directly, a dictionary of query
+                     operators (e.g., {"$gte": 90}), or a dictionary of field-value
+                     pairs for arrays of objects.
         document (Dict[str, Any]): The document to compare the field value from.
 
     Returns:
@@ -301,14 +303,27 @@ def _elemMatch(field: str, value: Any, document: Dict[str, Any]) -> bool:
     if not isinstance(field_val, list):
         return False
 
-    # If value is a dictionary, use the original complex matching logic
+    # If value is a dictionary, check if it contains query operators or field-value pairs
     if isinstance(value, dict):
-        for elem in field_val:
-            if isinstance(elem, dict) and all(
-                _eq(k, v, elem) for k, v in value.items()
-            ):
-                return True
-        return False
+        # Check if the dict contains query operators (keys starting with $)
+        has_query_operators = any(k.startswith("$") for k in value.keys())
+
+        if has_query_operators:
+            # Handle query operators like {"$gte": 90}
+            # Apply the operators to each array element
+            for elem in field_val:
+                if _apply_query_operators(value, elem):
+                    return True
+            return False
+        else:
+            # Handle field-value pairs for arrays of objects
+            # e.g., {"scores": {"$elemMatch": {"subject": "math", "score": {"$gt": 80}}}}
+            for elem in field_val:
+                if isinstance(elem, dict) and all(
+                    _eq(k, v, elem) for k, v in value.items()
+                ):
+                    return True
+            return False
     else:
         # If value is not a dictionary, check for simple equality match
         # This handles cases like {"tags": {"$elemMatch": "c"}} where array contains simple values
@@ -316,6 +331,43 @@ def _elemMatch(field: str, value: Any, document: Dict[str, Any]) -> bool:
             if elem == value:
                 return True
         return False
+
+
+def _apply_query_operators(operators: Dict[str, Any], value: Any) -> bool:
+    """
+    Apply query operators to a single value.
+
+    Args:
+        operators: Dictionary of query operators (e.g., {"$gte": 90})
+        value: The value to test against
+
+    Returns:
+        bool: True if all operators match, False otherwise
+    """
+    for op, operand in operators.items():
+        # Create a temporary document with the value
+        temp_doc = {"_temp": value}
+
+        # Get the operator function
+        try:
+            op_func = globals().get(f"_{op.replace('$', '')}")
+            if op_func is None:
+                # Try to import from the module
+                import neosqlite.query_operators as qo
+
+                op_func = getattr(qo, f"_{op.replace('$', '')}", None)
+
+            if op_func is None:
+                # Operator not found, return False
+                return False
+
+            # Call the operator function
+            if not op_func("_temp", operand, temp_doc):
+                return False
+        except Exception:
+            return False
+
+    return True
 
 
 def _size(field: str, value: int, document: Dict[str, Any]) -> bool:

@@ -2104,14 +2104,49 @@ def compare_known_limitations():
 
     # Test $expr $exp
     print("\n--- $expr $exp ---")
+
+    # Use tolerance-based comparison for floating point
+    def check_exp_result(collection, expected_approx):
+        """Check if exp(1) result is approximately correct."""
+        results = list(collection.find({"$expr": {"$eq": [{"$exp": 1}, 1]}}))
+        if not results:
+            return False
+        # The query above just checks if any doc matches, we need to verify
+        # the actual value. For $expr, we use a range comparison.
+        return True
+
     with neosqlite.Connection(":memory:") as neo_conn:
         neo_collection = neo_conn.test_collection
+        # Insert documents with different values to test exp function
+        neo_collection.insert_many(
+            [
+                {"x": 0},  # exp(0) = 1
+                {"x": 1},  # exp(1) ≈ 2.718
+                {"x": 2},  # exp(2) ≈ 7.389
+            ]
+        )
         try:
-            neo_result = list(
-                neo_collection.find({"$expr": {"$eq": [{"$exp": 1}, 2.718]}})
+            # Test exp(0) = 1 (exact)
+            neo_result_exact = list(
+                neo_collection.find({"$expr": {"$eq": [{"$exp": 0}, 1]}})
             )
-            neo_exp = len(neo_result)
-            print(f"Neo $expr $exp: {neo_exp} matches")
+            # Test exp(1) is in reasonable range (2.718 ± 0.001)
+            neo_result_range = list(
+                neo_collection.find(
+                    {
+                        "$expr": {
+                            "$and": [
+                                {"$gte": [{"$exp": 1}, 2.717]},
+                                {"$lte": [{"$exp": 1}, 2.719]},
+                            ]
+                        }
+                    }
+                )
+            )
+            neo_exp = len(neo_result_exact) + len(neo_result_range)
+            print(
+                f"Neo $expr $exp: exp(0)=1 ({len(neo_result_exact)}), exp(1)≈2.718 ({len(neo_result_range)})"
+            )
         except Exception as e:
             neo_exp = f"Error: {e}"
             print(f"Neo $expr $exp: Error - {e}")
@@ -2121,12 +2156,33 @@ def compare_known_limitations():
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
+        mongo_collection.insert_many(
+            [
+                {"x": 0},
+                {"x": 1},
+                {"x": 2},
+            ]
+        )
         try:
-            mongo_result = list(
-                mongo_collection.find({"$expr": {"$eq": [{"$exp": 1}, 2.718]}})
+            mongo_result_exact = list(
+                mongo_collection.find({"$expr": {"$eq": [{"$exp": 0}, 1]}})
             )
-            mongo_exp = len(mongo_result)
-            print(f"Mongo $expr $exp: {mongo_exp} matches")
+            mongo_result_range = list(
+                mongo_collection.find(
+                    {
+                        "$expr": {
+                            "$and": [
+                                {"$gte": [{"$exp": 1}, 2.717]},
+                                {"$lte": [{"$exp": 1}, 2.719]},
+                            ]
+                        }
+                    }
+                )
+            )
+            mongo_exp = len(mongo_result_exact) + len(mongo_result_range)
+            print(
+                f"Mongo $expr $exp: exp(0)=1 ({len(mongo_result_exact)}), exp(1)≈2.718 ({len(mongo_result_range)})"
+            )
         except Exception as e:
             mongo_exp = f"Error: {e}"
             print(f"Mongo $expr $exp: Error - {e}")
@@ -2148,14 +2204,44 @@ def compare_known_limitations():
     print("\n--- $expr $degreesToRadians ---")
     with neosqlite.Connection(":memory:") as neo_conn:
         neo_collection = neo_conn.test_collection
+        neo_collection.insert_many(
+            [
+                {"angle": 0},
+                {"angle": 180},  # radians(180°) = π ≈ 3.14159
+                {"angle": 90},  # radians(90°) = π/2 ≈ 1.5708
+            ]
+        )
         try:
-            neo_result = list(
+            # Test radians(180) ≈ 3.14159 (π)
+            neo_result_180 = list(
                 neo_collection.find(
-                    {"$expr": {"$eq": [{"$degreesToRadians": 180}, 3.14159]}}
+                    {
+                        "$expr": {
+                            "$and": [
+                                {"$gte": [{"$degreesToRadians": 180}, 3.1415]},
+                                {"$lte": [{"$degreesToRadians": 180}, 3.1417]},
+                            ]
+                        }
+                    }
                 )
             )
-            neo_deg2rad = len(neo_result)
-            print(f"Neo $expr $degreesToRadians: {neo_deg2rad} matches")
+            # Test radians(90) ≈ 1.5708 (π/2)
+            neo_result_90 = list(
+                neo_collection.find(
+                    {
+                        "$expr": {
+                            "$and": [
+                                {"$gte": [{"$degreesToRadians": 90}, 1.570]},
+                                {"$lte": [{"$degreesToRadians": 90}, 1.571]},
+                            ]
+                        }
+                    }
+                )
+            )
+            neo_deg2rad = len(neo_result_180) + len(neo_result_90)
+            print(
+                f"Neo $expr $degreesToRadians: 180°≈π ({len(neo_result_180)}), 90°≈π/2 ({len(neo_result_90)})"
+            )
         except Exception as e:
             neo_deg2rad = f"Error: {e}"
             print(f"Neo $expr $degreesToRadians: Error - {e}")
@@ -2165,14 +2251,42 @@ def compare_known_limitations():
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
+        mongo_collection.insert_many(
+            [
+                {"angle": 0},
+                {"angle": 180},
+                {"angle": 90},
+            ]
+        )
         try:
-            mongo_result = list(
+            mongo_result_180 = list(
                 mongo_collection.find(
-                    {"$expr": {"$eq": [{"$degreesToRadians": 180}, 3.14159]}}
+                    {
+                        "$expr": {
+                            "$and": [
+                                {"$gte": [{"$degreesToRadians": 180}, 3.1415]},
+                                {"$lte": [{"$degreesToRadians": 180}, 3.1417]},
+                            ]
+                        }
+                    }
                 )
             )
-            mongo_deg2rad = len(mongo_result)
-            print(f"Mongo $expr $degreesToRadians: {mongo_deg2rad} matches")
+            mongo_result_90 = list(
+                mongo_collection.find(
+                    {
+                        "$expr": {
+                            "$and": [
+                                {"$gte": [{"$degreesToRadians": 90}, 1.570]},
+                                {"$lte": [{"$degreesToRadians": 90}, 1.571]},
+                            ]
+                        }
+                    }
+                )
+            )
+            mongo_deg2rad = len(mongo_result_180) + len(mongo_result_90)
+            print(
+                f"Mongo $expr $degreesToRadians: 180°≈π ({len(mongo_result_180)}), 90°≈π/2 ({len(mongo_result_90)})"
+            )
         except Exception as e:
             mongo_deg2rad = f"Error: {e}"
             print(f"Mongo $expr $degreesToRadians: Error - {e}")
@@ -2195,14 +2309,54 @@ def compare_known_limitations():
     print("\n--- $expr $radiansToDegrees ---")
     with neosqlite.Connection(":memory:") as neo_conn:
         neo_collection = neo_conn.test_collection
+        neo_collection.insert_many(
+            [
+                {"angle": 0},
+                {"angle": 3.14159},  # degrees(π) = 180°
+                {"angle": 1.5708},  # degrees(π/2) = 90°
+            ]
+        )
         try:
-            neo_result = list(
+            # Test degrees(π) ≈ 180
+            neo_result_pi = list(
                 neo_collection.find(
-                    {"$expr": {"$eq": [{"$radiansToDegrees": 3.14159}, 180]}}
+                    {
+                        "$expr": {
+                            "$and": [
+                                {
+                                    "$gte": [
+                                        {"$radiansToDegrees": 3.14159},
+                                        179.9,
+                                    ]
+                                },
+                                {
+                                    "$lte": [
+                                        {"$radiansToDegrees": 3.14159},
+                                        180.1,
+                                    ]
+                                },
+                            ]
+                        }
+                    }
                 )
             )
-            neo_rad2deg = len(neo_result)
-            print(f"Neo $expr $radiansToDegrees: {neo_rad2deg} matches")
+            # Test degrees(π/2) ≈ 90
+            neo_result_pi2 = list(
+                neo_collection.find(
+                    {
+                        "$expr": {
+                            "$and": [
+                                {"$gte": [{"$radiansToDegrees": 1.5708}, 89.9]},
+                                {"$lte": [{"$radiansToDegrees": 1.5708}, 90.1]},
+                            ]
+                        }
+                    }
+                )
+            )
+            neo_rad2deg = len(neo_result_pi) + len(neo_result_pi2)
+            print(
+                f"Neo $expr $radiansToDegrees: π≈180° ({len(neo_result_pi)}), π/2≈90° ({len(neo_result_pi2)})"
+            )
         except Exception as e:
             neo_rad2deg = f"Error: {e}"
             print(f"Neo $expr $radiansToDegrees: Error - {e}")
@@ -2212,14 +2366,52 @@ def compare_known_limitations():
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
+        mongo_collection.insert_many(
+            [
+                {"angle": 0},
+                {"angle": 3.14159},
+                {"angle": 1.5708},
+            ]
+        )
         try:
-            mongo_result = list(
+            mongo_result_pi = list(
                 mongo_collection.find(
-                    {"$expr": {"$eq": [{"$radiansToDegrees": 3.14159}, 180]}}
+                    {
+                        "$expr": {
+                            "$and": [
+                                {
+                                    "$gte": [
+                                        {"$radiansToDegrees": 3.14159},
+                                        179.9,
+                                    ]
+                                },
+                                {
+                                    "$lte": [
+                                        {"$radiansToDegrees": 3.14159},
+                                        180.1,
+                                    ]
+                                },
+                            ]
+                        }
+                    }
                 )
             )
-            mongo_rad2deg = len(mongo_result)
-            print(f"Mongo $expr $radiansToDegrees: {mongo_rad2deg} matches")
+            mongo_result_pi2 = list(
+                mongo_collection.find(
+                    {
+                        "$expr": {
+                            "$and": [
+                                {"$gte": [{"$radiansToDegrees": 1.5708}, 89.9]},
+                                {"$lte": [{"$radiansToDegrees": 1.5708}, 90.1]},
+                            ]
+                        }
+                    }
+                )
+            )
+            mongo_rad2deg = len(mongo_result_pi) + len(mongo_result_pi2)
+            print(
+                f"Mongo $expr $radiansToDegrees: π≈180° ({len(mongo_result_pi)}), π/2≈90° ({len(mongo_result_pi2)})"
+            )
         except Exception as e:
             mongo_rad2deg = f"Error: {e}"
             print(f"Mongo $expr $radiansToDegrees: Error - {e}")

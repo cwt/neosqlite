@@ -126,6 +126,16 @@ class TestArrayOperatorsSQL:
         assert "json_type" in sql
         assert "'array'" in sql
 
+    def test_isArray_single_operand_sql(self):
+        """Test $isArray SQL conversion with single operand (MongoDB format)."""
+        evaluator = ExprEvaluator()
+        # MongoDB format: {$isArray: "$field"} without list wrapper
+        expr = {"$isArray": "$items"}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "json_type" in sql
+        assert "'array'" in sql
+
     def test_indexOfArray_sql(self):
         """Test $indexOfArray SQL conversion."""
         evaluator = ExprEvaluator()
@@ -170,3 +180,28 @@ class TestArrayIntegration:
             results = list(collection.find(expr))
             assert len(results) == 1
             assert results[0]["value"] == 2
+
+    def test_isArray_integration(self):
+        """Test $isArray with database."""
+        with neosqlite.Connection(":memory:") as conn:
+            collection = conn["test"]
+            collection.insert_many(
+                [
+                    {"data": [1, 2, 3]},
+                    {"data": "hello"},
+                    {"data": 42},
+                    {"data": {"nested": "object"}},
+                ]
+            )
+
+            # Test with list format
+            expr = {"$expr": {"$isArray": ["$data"]}}
+            results = list(collection.find(expr))
+            assert len(results) == 1
+            assert results[0]["data"] == [1, 2, 3]
+
+            # Test with single operand format (MongoDB format)
+            expr = {"$expr": {"$isArray": "$data"}}
+            results = list(collection.find(expr))
+            assert len(results) == 1
+            assert results[0]["data"] == [1, 2, 3]

@@ -806,9 +806,14 @@ class ExprEvaluator:
                 )
 
     def _convert_logical_operator(
-        self, operator: str, operands: List[Any]
+        self, operator: str, operands: Any
     ) -> Tuple[str, List[Any]]:
         """Convert logical operators ($and, $or, $not, $nor) to SQL."""
+        # Normalize operands for $not to handle both formats:
+        # {$not: {expression}} and {$not: [expression]}
+        if operator == "$not" and not isinstance(operands, list):
+            operands = [operands]
+
         if not isinstance(operands, list):
             raise ValueError(f"{operator} requires a list of expressions")
 
@@ -934,7 +939,7 @@ class ExprEvaluator:
         return sql, expr_params + replacement_params
 
     def _convert_array_operator(
-        self, operator: str, operands: List[Any]
+        self, operator: str, operands: Any
     ) -> Tuple[str, List[Any]]:
         """Convert array operators to SQL.
 
@@ -945,6 +950,18 @@ class ExprEvaluator:
         # Get the appropriate function names based on SQLite version
         json_each = self.json_each_function
         json_group_array = self.json_group_array_function
+
+        # Normalize operands for operators that accept single values
+        # MongoDB allows both: {$isArray: "$field"} and {$isArray: ["$field"]}
+        if operator in (
+            "$size",
+            "$isArray",
+            "$sum",
+            "$avg",
+            "$min",
+            "$max",
+        ) and not isinstance(operands, list):
+            operands = [operands]
 
         match operator:
             case "$size":
@@ -971,12 +988,22 @@ class ExprEvaluator:
             case "$isArray":
                 if len(operands) != 1:
                     raise ValueError("$isArray requires exactly 1 operand")
-                value_sql, value_params = self._convert_operand_to_sql(
-                    operands[0]
-                )
-                # Check if value is a JSON array
-                sql = f"json_type({value_sql}) = 'array'"
-                return sql, value_params
+
+                operand = operands[0]
+                # Special handling for field references to use json_type(data, path)
+                # instead of json_type(json_extract(data, path)) which fails for scalars
+                if isinstance(operand, str) and operand.startswith("$"):
+                    field_path = operand[1:]  # Remove $
+                    # Use json_type with path directly
+                    sql = f"json_type({self.data_column}, '$.{field_path}') = 'array'"
+                    return sql, []
+                else:
+                    value_sql, value_params = self._convert_operand_to_sql(
+                        operand
+                    )
+                    # Check if value is a JSON array
+                    sql = f"json_type({value_sql}) = 'array'"
+                    return sql, value_params
             case "$sum" | "$avg" | "$min" | "$max":
                 if len(operands) != 1:
                     raise ValueError(f"{operator} requires exactly 1 operand")
@@ -1245,9 +1272,20 @@ class ExprEvaluator:
                 )
 
     def _convert_math_operator(
-        self, operator: str, operands: List[Any]
+        self, operator: str, operands: Any
     ) -> Tuple[str, List[Any]]:
         """Convert math operators to SQL."""
+        # Normalize operands to handle both single values and lists
+        # MongoDB allows both: {$exp: 1} and {$exp: [1]}
+        # Note: $pow, $log, $sigmoid, and $round can have multiple operands
+        if operator not in (
+            "$pow",
+            "$log",
+            "$sigmoid",
+            "$round",
+        ) and not isinstance(operands, list):
+            operands = [operands]
+
         match operator:
             case "$pow":
                 # Handle $pow separately (requires 2 operands)
@@ -1274,6 +1312,22 @@ class ExprEvaluator:
                 # SQLite: log(base, number)
                 sql = f"log({base_sql}, {number_sql})"
                 return sql, number_params + base_params
+            case "$round":
+                # $round can have 1 or 2 operands: [number] or [number, precision]
+                if len(operands) < 1 or len(operands) > 2:
+                    raise ValueError("$round requires 1 or 2 operands")
+                number_sql, number_params = self._convert_operand_to_sql(
+                    operands[0]
+                )
+                if len(operands) == 2:
+                    precision_sql, precision_params = (
+                        self._convert_operand_to_sql(operands[1])
+                    )
+                    sql = f"round({number_sql}, {precision_sql})"
+                    return sql, number_params + precision_params
+                else:
+                    sql = f"round({number_sql})"
+                    return sql, number_params
             case _:
                 # All other math operators require 1 operand
                 if len(operands) != 1:
@@ -1412,9 +1466,14 @@ class ExprEvaluator:
                 return sql, value_params
 
     def _convert_angle_operator(
-        self, operator: str, operands: List[Any]
+        self, operator: str, operands: Any
     ) -> Tuple[str, List[Any]]:
         """Convert angle conversion operators to SQL."""
+        # Normalize operands to handle both single values and lists
+        # MongoDB allows both: {$degreesToRadians: 180} and {$degreesToRadians: [180]}
+        if not isinstance(operands, list):
+            operands = [operands]
+
         if len(operands) != 1:
             raise ValueError(f"{operator} requires exactly 1 operand")
 
@@ -2127,11 +2186,21 @@ class ExprEvaluator:
         if operator != "$sigmoid" and not isinstance(operands, list):
             operands = [operands]
 
-        if len(operands) != 1 and operator != "$sigmoid":
+        if operator not in ("$sigmoid", "$round") and len(operands) != 1:
             raise ValueError(f"{operator} requires exactly 1 operand")
 
-        if operator != "$sigmoid":
+        if operator == "$round" and (len(operands) < 1 or len(operands) > 2):
+            raise ValueError(f"{operator} requires 1 or 2 operands")
+
+        if operator not in ("$sigmoid", "$round"):
             value = self._evaluate_operand_python(operands[0], document)
+        elif operator == "$round":
+            value = self._evaluate_operand_python(operands[0], document)
+            precision = (
+                self._evaluate_operand_python(operands[1], document)
+                if len(operands) > 1
+                else 0
+            )
         else:
             value = (
                 self._evaluate_operand_python(operands[0], document)
@@ -2147,7 +2216,11 @@ class ExprEvaluator:
             case "$floor":
                 return math.floor(value) if value is not None else None
             case "$round":
-                return round(value) if value is not None else None
+                if value is None:
+                    return None
+                if precision is None:
+                    precision = 0
+                return round(value, int(precision))
             case "$trunc":
                 return int(value) if value is not None else None
             case "$ln":

@@ -77,6 +77,16 @@ class TestLogicalOperatorsSQL:
         assert "NOT" in sql
         assert params == [10]
 
+    def test_not_single_operand_sql(self):
+        """Test $not SQL conversion with single operand (MongoDB format)."""
+        evaluator = ExprEvaluator()
+        # MongoDB format: {$not: {expression}} without list wrapper
+        expr = {"$not": {"$gt": ["$a", 10]}}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "NOT" in sql
+        assert params == [10]
+
     def test_nor_sql(self):
         """Test $nor SQL conversion."""
         evaluator = ExprEvaluator()
@@ -125,3 +135,36 @@ class TestLogicalIntegration:
             expr = {"$expr": {"$or": [{"$lt": ["$a", 5]}, {"$gt": ["$a", 10]}]}}
             results = list(collection.find(expr))
             assert len(results) == 2
+
+    def test_not_integration(self):
+        """Test $not with database (list format)."""
+        with neosqlite.Connection(":memory:") as conn:
+            collection = conn["test"]
+            collection.insert_many(
+                [
+                    {"a": 5},
+                    {"a": 10},
+                    {"a": 15},
+                ]
+            )
+
+            expr = {"$expr": {"$not": [{"$gt": ["$a", 10]}]}}
+            results = list(collection.find(expr))
+            assert len(results) == 2  # a=5 and a=10
+
+    def test_not_single_operand_integration(self):
+        """Test $not with database (single operand MongoDB format)."""
+        with neosqlite.Connection(":memory:") as conn:
+            collection = conn["test"]
+            collection.insert_many(
+                [
+                    {"a": 5},
+                    {"a": 10},
+                    {"a": 15},
+                ]
+            )
+
+            # MongoDB format: {$not: {expression}}
+            expr = {"$expr": {"$not": {"$gt": ["$a", 10]}}}
+            results = list(collection.find(expr))
+            assert len(results) == 2  # a=5 and a=10

@@ -278,3 +278,154 @@ class TestArithmeticIntegration:
             results = list(collection.find(expr))
             assert len(results) == 1
             assert results[0]["value"] == -10
+
+    def test_exp_integration(self):
+        """Test $exp with database."""
+        with neosqlite.Connection(":memory:") as conn:
+            collection = conn["test"]
+            collection.insert_many(
+                [
+                    {"x": 0},
+                    {"x": 1},
+                    {"x": 2},
+                ]
+            )
+
+            # exp(0) = 1 (exact)
+            expr = {"$expr": {"$eq": [{"$exp": 0}, 1]}}
+            results = list(collection.find(expr))
+            assert len(results) == 3  # All documents match
+
+            # exp(1) ≈ 2.718 (use range comparison for floating point)
+            expr = {
+                "$expr": {
+                    "$and": [
+                        {"$gte": [{"$exp": 1}, 2.717]},
+                        {"$lte": [{"$exp": 1}, 2.719]},
+                    ]
+                }
+            }
+            results = list(collection.find(expr))
+            assert len(results) == 3  # All documents match
+
+            # Test with field reference: exp(x) > 1 for x > 0
+            expr = {"$expr": {"$gt": [{"$exp": "$x"}, 1]}}
+            results = list(collection.find(expr))
+            assert len(results) == 2  # x=1 and x=2
+
+    def test_degreesToRadians_integration(self):
+        """Test $degreesToRadians with database."""
+        with neosqlite.Connection(":memory:") as conn:
+            collection = conn["test"]
+            collection.insert_many(
+                [
+                    {"angle": 0},
+                    {"angle": 180},
+                    {"angle": 90},
+                ]
+            )
+
+            # radians(180°) ≈ π (use range comparison)
+            expr = {
+                "$expr": {
+                    "$and": [
+                        {"$gte": [{"$degreesToRadians": 180}, 3.1415]},
+                        {"$lte": [{"$degreesToRadians": 180}, 3.1417]},
+                    ]
+                }
+            }
+            results = list(collection.find(expr))
+            assert len(results) == 3  # All documents match
+
+            # radians(90°) ≈ π/2
+            expr = {
+                "$expr": {
+                    "$and": [
+                        {"$gte": [{"$degreesToRadians": 90}, 1.570]},
+                        {"$lte": [{"$degreesToRadians": 90}, 1.571]},
+                    ]
+                }
+            }
+            results = list(collection.find(expr))
+            assert len(results) == 3  # All documents match
+
+            # Test with field reference
+            expr = {"$expr": {"$gt": [{"$degreesToRadians": "$angle"}, 0]}}
+            results = list(collection.find(expr))
+            assert len(results) == 2  # angle=180 and angle=90
+
+    def test_radiansToDegrees_integration(self):
+        """Test $radiansToDegrees with database."""
+        with neosqlite.Connection(":memory:") as conn:
+            collection = conn["test"]
+            collection.insert_many(
+                [
+                    {"angle": 0},
+                    {"angle": 3.14159},  # ≈ π
+                    {"angle": 1.5708},  # ≈ π/2
+                ]
+            )
+
+            # degrees(π) ≈ 180 (use range comparison)
+            expr = {
+                "$expr": {
+                    "$and": [
+                        {"$gte": [{"$radiansToDegrees": 3.14159}, 179.9]},
+                        {"$lte": [{"$radiansToDegrees": 3.14159}, 180.1]},
+                    ]
+                }
+            }
+            results = list(collection.find(expr))
+            assert len(results) == 3  # All documents match
+
+            # degrees(π/2) ≈ 90
+            expr = {
+                "$expr": {
+                    "$and": [
+                        {"$gte": [{"$radiansToDegrees": 1.5708}, 89.9]},
+                        {"$lte": [{"$radiansToDegrees": 1.5708}, 90.1]},
+                    ]
+                }
+            }
+            results = list(collection.find(expr))
+            assert len(results) == 3  # All documents match
+
+            # Test with field reference
+            expr = {"$expr": {"$gt": [{"$radiansToDegrees": "$angle"}, 0]}}
+            results = list(collection.find(expr))
+            assert len(results) == 2  # angle=π and angle=π/2
+
+    def test_round_two_operands(self):
+        """Test $round with two operands (number and precision)."""
+        evaluator = ExprEvaluator()
+
+        # Python evaluation
+        expr = {"$round": [3.14159, 2]}
+        assert evaluator._evaluate_expr_python(expr, {}) == 3.14
+
+        expr = {"$round": [3.14159, 0]}
+        assert evaluator._evaluate_expr_python(expr, {}) == 3
+
+        # SQL conversion
+        expr = {"$round": [3.14159, 2]}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "round(" in sql
+
+    def test_round_integration(self):
+        """Test $round with database."""
+        with neosqlite.Connection(":memory:") as conn:
+            collection = conn["test"]
+            collection.insert_many(
+                [
+                    {"value": 3.14159},
+                    {"value": 2.71828},
+                    {"value": 1.41421},
+                ]
+            )
+
+            # Test with precision
+            expr = {"$expr": {"$eq": [{"$round": ["$value", 2]}, 3.14]}}
+            results = list(collection.find(expr))
+            assert len(results) == 1
+            assert results[0]["value"] == 3.14159

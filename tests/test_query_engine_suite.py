@@ -271,7 +271,7 @@ def test_logical_operators(collection):
 
 
 @pytest.mark.xfail(reason="The $all operator is not working correctly.")
-def test_array_operators(collection):
+def test_array_operators(collection, connection):
     """Test array operators $all and $elemMatch."""
     collection.insert_many(
         [
@@ -299,7 +299,7 @@ def test_array_operators(collection):
     assert len(results) == 1
     assert results[0]["name"] == "Alice"
 
-    # Test $elemMatch
+    # Test $elemMatch with field-value pairs
     results = list(
         collection.find(
             {
@@ -311,6 +311,22 @@ def test_array_operators(collection):
     )
     assert len(results) == 1
     assert results[0]["name"] == "Charlie"
+
+    # Test $elemMatch with query operators on simple arrays
+    collection2 = connection["test_elemmatch"]
+    collection2.insert_many(
+        [
+            {"scores": [80, 90, 100]},
+            {"scores": [70, 80]},
+            {"scores": [90, 95]},
+        ]
+    )
+    results = list(collection2.find({"scores": {"$elemMatch": {"$gte": 90}}}))
+    assert len(results) == 2
+
+    results = list(collection2.find({"scores": {"$elemMatch": {"$lt": 75}}}))
+    assert len(results) == 1
+    assert results[0]["scores"] == [70, 80]
 
 
 @pytest.mark.xfail(
