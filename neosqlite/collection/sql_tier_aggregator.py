@@ -293,6 +293,7 @@ class SQLTierAggregator:
         - Pipeline contains unsupported stages
         - Pipeline contains unsupported expressions
         - Pipeline is too complex (configurable threshold)
+        - Global fallback flag is set (_FORCE_FALLBACK)
 
         Args:
             pipeline: List of pipeline stages
@@ -308,6 +309,12 @@ class SQLTierAggregator:
             >>> aggregator.can_optimize_pipeline(pipeline)
             True
         """
+        # Check global fallback flag first (Bug 010 fix)
+        from .query_helper import get_force_fallback
+
+        if get_force_fallback():
+            return False
+
         if not pipeline:
             return True
 
@@ -597,19 +604,17 @@ class SQLTierAggregator:
             if _is_aggregation_variable(expr):
                 if expr == "$$CURRENT":
                     # $$CURRENT means the entire current document
-                    # Use json() to ensure proper JSON value (not text)
-                    if self._jsonb_supported:
-                        expr_sql = "json(data)"
-                    else:
-                        expr_sql = "data"
+                    # Bug fix: NeoSQLite stores _id separately, so we need to add it back
+                    # Use json_set to merge _id from id column into data
+                    json_set_func = f"{self._json_function_prefix}_set"
+                    expr_sql = f"json({json_set_func}(data, '$._id', id))"
                 elif expr == "$$ROOT":
                     # $$ROOT means the original document
                     # This requires root_data column to be preserved
+                    # Bug fix: NeoSQLite stores _id separately, so we need to add it back
                     context.preserve_root()
-                    if self._jsonb_supported:
-                        expr_sql = "json(root_data)"
-                    else:
-                        expr_sql = "root_data"
+                    json_set_func = f"{self._json_function_prefix}_set"
+                    expr_sql = f"json({json_set_func}(root_data, '$._id', id))"
                 else:
                     # Unknown variable
                     return None, []
@@ -642,13 +647,19 @@ class SQLTierAggregator:
             select_parts.append("root_data")
 
         # Build data field with json_set
-        if json_set_args:
-            args_str = ", ".join(json_set_args)
-            # For JSONB, wrap with json() to convert back to text
-            if self._jsonb_supported:
-                data_expr = f"json({self._get_json_set()}(data, {args_str}))"
-            else:
-                data_expr = f"{self._get_json_set()}(data, {args_str})"
+        # Bug 002 fix: NeoSQLite stores _id separately from JSON data column,
+        # so we need to explicitly include it in the JSON document
+        json_set_args_with_id = (
+            ["'$._id'", "id"] + json_set_args
+            if json_set_args
+            else ["'$._id'", "id"]
+        )
+
+        if json_set_args_with_id:
+            args_str = ", ".join(json_set_args_with_id)
+            json_set_func = f"{self._json_function_prefix}_set"
+            # Always wrap with json() to ensure text output for Python consumption
+            data_expr = f"json({json_set_func}(data, {args_str}))"
         else:
             data_expr = "data"
 
@@ -738,13 +749,23 @@ class SQLTierAggregator:
                         continue
                     elif value == "$$ROOT":
                         # Return entire root document
+                        # Bug fix: NeoSQLite stores _id separately, so we need to add it back
+                        json_set_func = f"{self._json_function_prefix}_set"
                         if context.has_root:
-                            select_parts.append(f"root_data AS {field}")
+                            select_parts.append(
+                                f"json({json_set_func}(root_data, '$._id', id)) AS {field}"
+                            )
                         else:
-                            select_parts.append(f"data AS {field}")
+                            select_parts.append(
+                                f"json({json_set_func}(data, '$._id', id)) AS {field}"
+                            )
                         continue
                     elif value == "$$CURRENT":
-                        select_parts.append(f"data AS {field}")
+                        # Bug fix: NeoSQLite stores _id separately, so we need to add it back
+                        json_set_func = f"{self._json_function_prefix}_set"
+                        select_parts.append(
+                            f"json({json_set_func}(data, '$._id', id)) AS {field}"
+                        )
                         continue
 
                 # Build SQL expression
@@ -835,11 +856,21 @@ class SQLTierAggregator:
             elif isinstance(group_id, str) and group_id.startswith("$"):
                 if group_id == "$$ROOT":
                     # Group by entire document (unusual but valid)
-                    select_parts.append("root_data AS _id")
-                    group_by_parts.append("root_data")
+                    # Bug fix: NeoSQLite stores _id separately, so we need to add it back
+                    json_set_func = f"{self._json_function_prefix}_set"
+                    json_expr = f"json({json_set_func}(data, '$._id', id))"
+                    if context.has_root:
+                        json_expr = (
+                            f"json({json_set_func}(root_data, '$._id', id))"
+                        )
+                    select_parts.append(f"{json_expr} AS _id")
+                    group_by_parts.append(json_expr)
                 elif group_id == "$$CURRENT":
-                    select_parts.append("data AS _id")
-                    group_by_parts.append("data")
+                    # Bug fix: NeoSQLite stores _id separately, so we need to add it back
+                    json_set_func = f"{self._json_function_prefix}_set"
+                    json_expr = f"json({json_set_func}(data, '$._id', id))"
+                    select_parts.append(f"{json_expr} AS _id")
+                    group_by_parts.append(json_expr)
                 else:
                     field = group_id[1:]
                     key_sql = f"{self._get_json_extract()}(data, '$.{field}')"
@@ -882,10 +913,14 @@ class SQLTierAggregator:
             elif isinstance(expr, str) and expr.startswith("$"):
                 if expr.startswith("$$"):
                     # Aggregation variable
+                    # Bug fix: NeoSQLite stores _id separately, so we need to add it back
+                    json_set_func = f"{self._json_function_prefix}_set"
                     if expr == "$$ROOT":
-                        expr_sql = "root_data"
+                        expr_sql = (
+                            f"json({json_set_func}(root_data, '$._id', id))"
+                        )
                     elif expr == "$$CURRENT":
-                        expr_sql = "data"
+                        expr_sql = f"json({json_set_func}(data, '$._id', id))"
                     else:
                         return None, []
                 else:
@@ -1045,10 +1080,12 @@ class SQLTierAggregator:
             if field in context.computed_fields:
                 field_sql = context.computed_fields[field]
             elif field.startswith("$$"):
+                # Bug fix: NeoSQLite stores _id separately, so we need to add it back
+                json_set_func = f"{self._json_function_prefix}_set"
                 if field == "$$ROOT":
-                    field_sql = "root_data"
+                    field_sql = f"json({json_set_func}(root_data, '$._id', id))"
                 elif field == "$$CURRENT":
-                    field_sql = "data"
+                    field_sql = f"json({json_set_func}(data, '$._id', id))"
                 else:
                     return None, []
             else:
@@ -1075,10 +1112,12 @@ class SQLTierAggregator:
         if field in context.computed_fields:
             field_sql = context.computed_fields[field]
         elif field.startswith("$$"):
+            # Bug fix: NeoSQLite stores _id separately, so we need to add it back
+            json_set_func = f"{self._json_function_prefix}_set"
             if field == "$$ROOT":
-                field_sql = "root_data"
+                field_sql = f"json({json_set_func}(root_data, '$._id', id))"
             elif field == "$$CURRENT":
-                field_sql = "data"
+                field_sql = f"json({json_set_func}(data, '$._id', id))"
             else:
                 return None, []
         else:
@@ -1147,10 +1186,12 @@ class SQLTierAggregator:
             if field in context.computed_fields:
                 field_sql = context.computed_fields[field]
             elif field.startswith("$$"):
+                # Bug fix: NeoSQLite stores _id separately, so we need to add it back
+                json_set_func = f"{self._json_function_prefix}_set"
                 if field == "$$ROOT":
-                    field_sql = "root_data"
+                    field_sql = f"json({json_set_func}(root_data, '$._id', id))"
                 elif field == "$$CURRENT":
-                    field_sql = "data"
+                    field_sql = f"json({json_set_func}(data, '$._id', id))"
                 else:
                     return None, []
             else:

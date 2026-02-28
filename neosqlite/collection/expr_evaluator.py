@@ -2016,16 +2016,24 @@ class ExprEvaluator:
         match operator:
             case "$eq":
                 return left == right
-            case "$gt":
-                return left > right
-            case "$gte":
-                return left >= right
-            case "$lt":
-                return left < right
-            case "$lte":
-                return left <= right
             case "$ne":
                 return left != right
+            case "$gt" | "$gte" | "$lt" | "$lte":
+                # For ordering comparisons, if any operand is None, return False
+                # (MongoDB behavior - null values don't participate in ordering)
+                if left is None or right is None:
+                    return False
+                return (
+                    left > right
+                    if operator == "$gt"
+                    else (
+                        left >= right
+                        if operator == "$gte"
+                        else (
+                            left < right if operator == "$lt" else left <= right
+                        )
+                    )
+                )
             case _:
                 raise ValueError(f"Unknown comparison operator: {operator}")
 

@@ -2206,6 +2206,23 @@ class QueryHelper:
                     )
                     result = evaluator._evaluate_expr_python(value, document)
                     matches.append(bool(result))
+                case "$gt" | "$lt" | "$gte" | "$lte" | "$eq" | "$ne" | "$cmp":
+                    # Handle direct comparison expressions (without $expr wrapper)
+                    # These are expressions like {"$gt": [{"$sin": "$angle"}, 0.5]}
+                    # Check if value is an array (expression form) vs dict (field operator form)
+                    if isinstance(value, list) and len(value) == 2:
+                        # This is a direct expression, not a field operator
+                        from .expr_evaluator import ExprEvaluator
+
+                        evaluator = ExprEvaluator(
+                            data_column="data", db_connection=self.collection.db
+                        )
+                        result = evaluator._evaluate_expr_python(
+                            query, document
+                        )
+                        matches.append(bool(result))
+                        break  # Direct expression is the entire query
+                    # Otherwise, fall through to normal field operator handling
                 case "$text":
                     # Handle $text operator in Python fallback
                     # This is a simplified implementation that just does basic string matching
@@ -3989,14 +4006,10 @@ class QueryHelper:
         projected_doc: Dict[str, Any] = {}
         include_id = projection.get("_id", 1) == 1
 
-        # Check if this is an inclusion projection with expressions
+        # Check if this is an inclusion projection with expressions or aggregation variables
         has_expressions = any(
             _is_expression(value)
-            or (
-                isinstance(value, str)
-                and value.startswith("$")
-                and not value.startswith("$$")
-            )
+            or (isinstance(value, str) and value.startswith("$"))
             for value in projection.values()
         )
 
@@ -4025,7 +4038,7 @@ class QueryHelper:
                         continue
                     projected_doc[key] = projected_value
                 elif isinstance(value, str) and value.startswith("$"):
-                    # Field reference
+                    # Field reference or aggregation variable
                     if value.startswith("$$"):
                         # Aggregation variable
                         if value == "$$ROOT":
