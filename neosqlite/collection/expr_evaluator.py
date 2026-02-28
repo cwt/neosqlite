@@ -1211,18 +1211,29 @@ class ExprEvaluator:
                 # Fall back to Python for now
                 raise NotImplementedError("$split requires Python evaluation")
             case "$replaceAll":
-                if len(operands) != 3:
-                    raise ValueError(
-                        "$replaceAll requires string, find, and replacement"
-                    )
+                # Handle MongoDB dict format: {input, find, replacement}
+                if isinstance(operands, dict):
+                    string_operand = operands.get("input")
+                    find_operand = operands.get("find")
+                    replace_operand = operands.get("replacement")
+                else:
+                    # Handle list format
+                    if len(operands) != 3:
+                        raise ValueError(
+                            "$replaceAll requires string, find, and replacement"
+                        )
+                    string_operand = operands[0]
+                    find_operand = operands[1]
+                    replace_operand = operands[2]
+
                 string_sql, string_params = self._convert_operand_to_sql(
-                    operands[0]
+                    string_operand
                 )
                 find_sql, find_params = self._convert_operand_to_sql(
-                    operands[1]
+                    find_operand
                 )
                 replace_sql, replace_params = self._convert_operand_to_sql(
-                    operands[2]
+                    replace_operand
                 )
                 sql = f"replace({string_sql}, {find_sql}, {replace_sql})"
                 return sql, string_params + find_params + replace_params
@@ -2287,6 +2298,9 @@ class ExprEvaluator:
         self, operands: List[Any], document: Dict[str, Any]
     ) -> Optional[float]:
         """Evaluate $sqrt operator in Python."""
+        # Handle both list and single operand formats
+        if not isinstance(operands, list):
+            operands = [operands]
         if len(operands) != 1:
             raise ValueError("$sqrt requires exactly 1 operand")
         value = self._evaluate_operand_python(operands[0], document)
@@ -2500,6 +2514,9 @@ class ExprEvaluator:
                         return None
                 return None
             case "$first":
+                # Handle both list and single operand formats
+                if not isinstance(operands, list):
+                    operands = [operands]
                 if len(operands) != 1:
                     raise ValueError("$first requires exactly 1 operand")
                 array = self._evaluate_operand_python(operands[0], document)
@@ -2507,6 +2524,9 @@ class ExprEvaluator:
                     return array[0]
                 return None
             case "$last":
+                # Handle both list and single operand formats
+                if not isinstance(operands, list):
+                    operands = [operands]
                 if len(operands) != 1:
                     raise ValueError("$last requires exactly 1 operand")
                 array = self._evaluate_operand_python(operands[0], document)
@@ -2727,7 +2747,7 @@ class ExprEvaluator:
         """
         # Normalize operands to handle both single values and lists
         # MongoDB allows both: {$toUpper: "$field"} and {$toUpper: ["$field"]}
-        # But some operators like $trim, $regexMatch use dict format
+        # But some operators like $trim, $regexMatch, $replaceAll use dict format
         if operator in (
             "$trim",
             "$ltrim",
@@ -2735,6 +2755,8 @@ class ExprEvaluator:
             "$regexMatch",
             "$regexFind",
             "$regexFindAll",
+            "$replaceAll",
+            "$replaceOne",
         ):
             # These operators use dict format, don't normalize
             pass
@@ -2854,15 +2876,30 @@ class ExprEvaluator:
                     return []
                 return str(string).split(str(delimiter))
             case "$replaceAll":
-                if len(operands) != 3:
-                    raise ValueError(
-                        "$replaceAll requires string, find, and replacement"
+                # Handle MongoDB dict format: {input, find, replacement}
+                if isinstance(operands, dict):
+                    string = self._evaluate_operand_python(
+                        operands.get("input"), document
                     )
-                string = self._evaluate_operand_python(operands[0], document)
-                find = self._evaluate_operand_python(operands[1], document)
-                replacement = self._evaluate_operand_python(
-                    operands[2], document
-                )
+                    find = self._evaluate_operand_python(
+                        operands.get("find"), document
+                    )
+                    replacement = self._evaluate_operand_python(
+                        operands.get("replacement"), document
+                    )
+                else:
+                    # Handle list format
+                    if len(operands) != 3:
+                        raise ValueError(
+                            "$replaceAll requires string, find, and replacement"
+                        )
+                    string = self._evaluate_operand_python(
+                        operands[0], document
+                    )
+                    find = self._evaluate_operand_python(operands[1], document)
+                    replacement = self._evaluate_operand_python(
+                        operands[2], document
+                    )
                 if string is None:
                     return None
                 return str(string).replace(str(find), str(replacement))
@@ -2993,7 +3030,17 @@ class ExprEvaluator:
     def _evaluate_date_python(
         self, operator: str, operands: List[Any], document: Dict[str, Any]
     ) -> Optional[int]:
-        """Evaluate date operators in Python."""
+        """Evaluate date operators in Python.
+
+        MongoDB compatibility: Date operators require the field to be stored as
+        BSON Date/datetime type. String dates are NOT automatically converted,
+        matching MongoDB's behavior.
+        """
+        from datetime import datetime
+
+        # Handle both list and single operand formats
+        if not isinstance(operands, list):
+            operands = [operands]
         if len(operands) != 1:
             raise ValueError(f"{operator} requires exactly 1 operand")
 
@@ -3001,17 +3048,16 @@ class ExprEvaluator:
         if value is None:
             return None
 
-        # Parse date value (handle string or datetime)
-        from datetime import datetime
-
-        if isinstance(value, str):
-            # Try to parse ISO format
-            try:
-                dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-            except ValueError:
-                return None
-        elif isinstance(value, datetime):
+        # MongoDB compatibility: Only accept datetime objects, not strings
+        # MongoDB's $year, $month, etc. fail with "can't convert from BSON type string to Date"
+        if isinstance(value, datetime):
             dt = value
+        elif isinstance(value, str):
+            # Reject string dates to match MongoDB behavior
+            raise ValueError(
+                f"${operator} requires a date type field, got string. "
+                "Store dates as datetime objects, not ISO strings."
+            )
         else:
             return None
 
@@ -3121,8 +3167,8 @@ class ExprEvaluator:
                     delta = timedelta(**delta_kwargs)
                     dt = dt + delta
 
-                # Return ISO format string
-                return dt.isoformat()
+                # Return datetime object (MongoDB compatibility)
+                return dt
 
             case "$dateDiff":
                 if len(operands) < 2 or len(operands) > 3:

@@ -1,16 +1,17 @@
 from neosqlite.binary import Binary
 from typing import Any, Dict
 import json
+from datetime import datetime
 
 
 class NeoSQLiteJSONEncoder(json.JSONEncoder):
     """
-    Custom JSON encoder for NeoSQLite that handles Binary objects.
+    Custom JSON encoder for NeoSQLite that handles Binary, ObjectId, and datetime objects.
     """
 
     def default(self, obj):
         """
-        Encodes Binary and ObjectId objects for JSON serialization.
+        Encodes Binary, ObjectId, and datetime objects for JSON serialization.
 
         Args:
             obj: The object to encode.
@@ -28,6 +29,11 @@ class NeoSQLiteJSONEncoder(json.JSONEncoder):
                 return obj.encode_for_storage()
         except ImportError:
             pass  # ObjectId module not available
+
+        # Handle datetime objects - convert to ISO format string
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+
         return super().default(obj)
 
 
@@ -64,7 +70,11 @@ def neosqlite_json_dumps_for_sql(obj: Any, **kwargs) -> str:
 
 def neosqlite_json_loads(s: str, **kwargs) -> Any:
     """
-    Custom JSON loads function that handles Binary objects.
+    Custom JSON loads function that handles Binary objects and ISO date strings.
+
+    For MongoDB compatibility, ISO 8601 date strings are automatically converted
+    back to datetime objects, matching MongoDB's behavior where dates are stored
+    as BSON Date type and returned as datetime objects.
 
     Args:
         s: JSON string to deserialize
@@ -73,10 +83,16 @@ def neosqlite_json_loads(s: str, **kwargs) -> Any:
     Returns:
         Deserialized object
     """
+    import re
+
+    # ISO 8601 date pattern
+    ISO_DATE_PATTERN = re.compile(
+        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$"
+    )
 
     def object_hook(dct: Dict[str, Any]) -> Any:
         """
-        Decodes Binary objects from JSON deserialization.
+        Decodes Binary objects and ISO date strings from JSON deserialization.
 
         Args:
             dct: The dictionary to decode.
@@ -86,6 +102,16 @@ def neosqlite_json_loads(s: str, **kwargs) -> Any:
         """
         if isinstance(dct, dict) and "__neosqlite_binary__" in dct:
             return Binary.decode_from_storage(dct)
+
+        # Convert ISO date strings back to datetime for MongoDB compatibility
+        for key, value in dct.items():
+            if isinstance(value, str) and ISO_DATE_PATTERN.match(value):
+                try:
+                    dct[key] = datetime.fromisoformat(
+                        value.replace("Z", "+00:00")
+                    )
+                except ValueError:
+                    pass  # Not a valid date string, keep as string
         return dct
 
     kwargs["object_hook"] = object_hook

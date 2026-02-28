@@ -2505,6 +2505,8 @@ def compare_additional_update_operators():
     """Compare additional update operators"""
     print("\n=== Additional Update Operators Comparison ===")
 
+    from datetime import datetime
+
     with neosqlite.Connection(":memory:") as neo_conn:
         neo_collection = neo_conn.test_collection
         neo_collection.insert_one(
@@ -2591,10 +2593,13 @@ def compare_additional_update_operators():
             )
             doc = neo_collection.find_one({"name": "Alice"})
             updated_at = doc.get("updated_at")
+            # MongoDB returns datetime object, NeoSQLite should too for compatibility
             neo_currentdate = updated_at is not None and isinstance(
-                updated_at, str
+                updated_at, datetime
             )
-            print(f"Neo $currentDate: {'OK' if neo_currentdate else 'FAIL'}")
+            print(
+                f"Neo $currentDate: {'OK' if neo_currentdate else 'FAIL'} (returns {type(updated_at).__name__})"
+            )
         except Exception as e:
             neo_currentdate = False
             print(f"Neo $currentDate: Error - {e}")
@@ -3323,6 +3328,818 @@ def compare_collection_methods():
 
 
 # ============================================================================
+# Date Expression Operators
+# ============================================================================
+def compare_date_expr_operators():
+    """Compare date expression operators in aggregation"""
+    print("\n=== Date Expression Operators Comparison ===")
+
+    from datetime import datetime, timezone
+
+    with neosqlite.Connection(":memory:") as neo_conn:
+        neo_collection = neo_conn.test_collection
+        # Use datetime objects (MongoDB-compatible format)
+        neo_collection.insert_many(
+            [
+                {
+                    "event": "A",
+                    "date": datetime(
+                        2024, 6, 15, 14, 30, 0, tzinfo=timezone.utc
+                    ),
+                },
+                {
+                    "event": "B",
+                    "date": datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+                },
+            ]
+        )
+
+        date_operators = [
+            ("$year", {"$year": "$date"}),
+            ("$month", {"$month": "$date"}),
+            ("$dayOfMonth", {"$dayOfMonth": "$date"}),
+            ("$hour", {"$hour": "$date"}),
+            ("$minute", {"$minute": "$date"}),
+            ("$second", {"$second": "$date"}),
+            ("$dayOfWeek", {"$dayOfWeek": "$date"}),
+            ("$dayOfYear", {"$dayOfYear": "$date"}),
+        ]
+
+        neo_results = {}
+        for op_name, op_expr in date_operators:
+            try:
+                result = list(
+                    neo_collection.aggregate([{"$project": {"val": op_expr}}])
+                )
+                neo_results[op_name] = len(result) == 2
+                print(
+                    f"Neo {op_name}: {'OK' if neo_results[op_name] else 'FAIL'}"
+                )
+            except Exception as e:
+                neo_results[op_name] = False
+                print(f"Neo {op_name}: Error - {e}")
+
+    client = test_pymongo_connection()
+    if client:
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_collection
+        mongo_collection.delete_many({})
+        # MongoDB requires actual datetime objects
+        mongo_collection.insert_many(
+            [
+                {
+                    "event": "A",
+                    "date": datetime(
+                        2024, 6, 15, 14, 30, 0, tzinfo=timezone.utc
+                    ),
+                },
+                {
+                    "event": "B",
+                    "date": datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+                },
+            ]
+        )
+
+        mongo_results = {}
+        for op_name, op_expr in date_operators:
+            try:
+                result = list(
+                    mongo_collection.aggregate([{"$project": {"val": op_expr}}])
+                )
+                mongo_results[op_name] = len(result) == 2
+                print(
+                    f"Mongo {op_name}: {'OK' if mongo_results[op_name] else 'FAIL'}"
+                )
+            except Exception as e:
+                mongo_results[op_name] = False
+                print(f"Mongo {op_name}: Error - {e}")
+
+        client.close()
+
+        for op_name in neo_results:
+            reporter.record_result(
+                "Date Expression Operators",
+                op_name,
+                neo_results[op_name],
+                neo_results[op_name],
+                mongo_results.get(op_name, False),
+            )
+
+
+# ============================================================================
+# Additional Math Operators ($pow, $sqrt, $trig)
+# ============================================================================
+def compare_math_operators():
+    """Compare additional math operators"""
+    print("\n=== Additional Math Operators Comparison ===")
+
+    with neosqlite.Connection(":memory:") as neo_conn:
+        neo_collection = neo_conn.test_collection
+        neo_collection.insert_many(
+            [
+                {"name": "A", "value": 16, "angle": 1.5708},  # angle ≈ π/2
+                {"name": "B", "value": 25, "angle": 0},
+            ]
+        )
+
+        # Test $pow
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [{"$project": {"squared": {"$pow": ["$value", 2]}}}]
+                )
+            )
+            neo_pow = len(result) == 2
+            print(f"Neo $pow: {'OK' if neo_pow else 'FAIL'}")
+        except Exception as e:
+            neo_pow = False
+            print(f"Neo $pow: Error - {e}")
+
+        # Test $sqrt
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [{"$project": {"root": {"$sqrt": "$value"}}}]
+                )
+            )
+            neo_sqrt = len(result) == 2
+            print(f"Neo $sqrt: {'OK' if neo_sqrt else 'FAIL'}")
+        except Exception as e:
+            neo_sqrt = False
+            print(f"Neo $sqrt: Error - {e}")
+
+        # Test $asin
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [{"$project": {"asin_val": {"$asin": 0.5}}}]
+                )
+            )
+            neo_asin = len(result) == 2
+            print(f"Neo $asin: {'OK' if neo_asin else 'FAIL'}")
+        except Exception as e:
+            neo_asin = False
+            print(f"Neo $asin: Error - {e}")
+
+        # Test $acos
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [{"$project": {"acos_val": {"$acos": 0.5}}}]
+                )
+            )
+            neo_acos = len(result) == 2
+            print(f"Neo $acos: {'OK' if neo_acos else 'FAIL'}")
+        except Exception as e:
+            neo_acos = False
+            print(f"Neo $acos: Error - {e}")
+
+        # Test $atan
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [{"$project": {"atan_val": {"$atan": 1}}}]
+                )
+            )
+            neo_atan = len(result) == 2
+            print(f"Neo $atan: {'OK' if neo_atan else 'FAIL'}")
+        except Exception as e:
+            neo_atan = False
+            print(f"Neo $atan: Error - {e}")
+
+    client = test_pymongo_connection()
+    if client:
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_collection
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many(
+            [
+                {"name": "A", "value": 16, "angle": 1.5708},
+                {"name": "B", "value": 25, "angle": 0},
+            ]
+        )
+
+        # Test $pow
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"squared": {"$pow": ["$value", 2]}}}]
+                )
+            )
+            mongo_pow = len(result) == 2
+            print(f"Mongo $pow: {'OK' if mongo_pow else 'FAIL'}")
+        except Exception as e:
+            mongo_pow = False
+            print(f"Mongo $pow: Error - {e}")
+
+        # Test $sqrt
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"root": {"$sqrt": "$value"}}}]
+                )
+            )
+            mongo_sqrt = len(result) == 2
+            print(f"Mongo $sqrt: {'OK' if mongo_sqrt else 'FAIL'}")
+        except Exception as e:
+            mongo_sqrt = False
+            print(f"Mongo $sqrt: Error - {e}")
+
+        # Test $asin
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"asin_val": {"$asin": 0.5}}}]
+                )
+            )
+            mongo_asin = len(result) == 2
+            print(f"Mongo $asin: {'OK' if mongo_asin else 'FAIL'}")
+        except Exception as e:
+            mongo_asin = False
+            print(f"Mongo $asin: Error - {e}")
+
+        # Test $acos
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"acos_val": {"$acos": 0.5}}}]
+                )
+            )
+            mongo_acos = len(result) == 2
+            print(f"Mongo $acos: {'OK' if mongo_acos else 'FAIL'}")
+        except Exception as e:
+            mongo_acos = False
+            print(f"Mongo $acos: Error - {e}")
+
+        # Test $atan
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"atan_val": {"$atan": 1}}}]
+                )
+            )
+            mongo_atan = len(result) == 2
+            print(f"Mongo $atan: {'OK' if mongo_atan else 'FAIL'}")
+        except Exception as e:
+            mongo_atan = False
+            print(f"Mongo $atan: Error - {e}")
+
+        client.close()
+
+        reporter.record_result(
+            "Math Operators", "$pow", neo_pow, neo_pow, mongo_pow
+        )
+        reporter.record_result(
+            "Math Operators", "$sqrt", neo_sqrt, neo_sqrt, mongo_sqrt
+        )
+        reporter.record_result(
+            "Math Operators", "$asin", neo_asin, neo_asin, mongo_asin
+        )
+        reporter.record_result(
+            "Math Operators", "$acos", neo_acos, neo_acos, mongo_acos
+        )
+        reporter.record_result(
+            "Math Operators", "$atan", neo_atan, neo_atan, mongo_atan
+        )
+
+
+# ============================================================================
+# String Operators ($substr, $trim, $split, $replaceAll)
+# ============================================================================
+def compare_string_operators():
+    """Compare string operators in aggregation"""
+    print("\n=== String Operators Comparison ===")
+
+    with neosqlite.Connection(":memory:") as neo_conn:
+        neo_collection = neo_conn.test_collection
+        neo_collection.insert_many(
+            [
+                {"name": "  Alice  ", "city": "New York"},
+                {"name": "  Bob  ", "city": "Los Angeles"},
+            ]
+        )
+
+        # Test $substr
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [{"$project": {"short": {"$substr": ["$name", 2, 3]}}}]
+                )
+            )
+            neo_substr = len(result) == 2
+            print(f"Neo $substr: {'OK' if neo_substr else 'FAIL'}")
+        except Exception as e:
+            neo_substr = False
+            print(f"Neo $substr: Error - {e}")
+
+        # Test $trim
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [{"$project": {"trimmed": {"$trim": {"input": "$name"}}}}]
+                )
+            )
+            neo_trim = len(result) == 2
+            print(f"Neo $trim: {'OK' if neo_trim else 'FAIL'}")
+        except Exception as e:
+            neo_trim = False
+            print(f"Neo $trim: Error - {e}")
+
+        # Test $split
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [{"$project": {"parts": {"$split": ["$city", " "]}}}]
+                )
+            )
+            neo_split = len(result) == 2
+            print(f"Neo $split: {'OK' if neo_split else 'FAIL'}")
+        except Exception as e:
+            neo_split = False
+            print(f"Neo $split: Error - {e}")
+
+        # Test $replaceAll
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "replaced": {
+                                    "$replaceAll": {
+                                        "input": "$city",
+                                        "find": " ",
+                                        "replacement": "-",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            neo_replaceall = len(result) == 2
+            print(f"Neo $replaceAll: {'OK' if neo_replaceall else 'FAIL'}")
+        except Exception as e:
+            neo_replaceall = False
+            print(f"Neo $replaceAll: Error - {e}")
+
+    client = test_pymongo_connection()
+    if client:
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_collection
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many(
+            [
+                {"name": "  Alice  ", "city": "New York"},
+                {"name": "  Bob  ", "city": "Los Angeles"},
+            ]
+        )
+
+        # Test $substr
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"short": {"$substr": ["$name", 2, 3]}}}]
+                )
+            )
+            mongo_substr = len(result) == 2
+            print(f"Mongo $substr: {'OK' if mongo_substr else 'FAIL'}")
+        except Exception as e:
+            mongo_substr = False
+            print(f"Mongo $substr: Error - {e}")
+
+        # Test $trim
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"trimmed": {"$trim": {"input": "$name"}}}}]
+                )
+            )
+            mongo_trim = len(result) == 2
+            print(f"Mongo $trim: {'OK' if mongo_trim else 'FAIL'}")
+        except Exception as e:
+            mongo_trim = False
+            print(f"Mongo $trim: Error - {e}")
+
+        # Test $split
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"parts": {"$split": ["$city", " "]}}}]
+                )
+            )
+            mongo_split = len(result) == 2
+            print(f"Mongo $split: {'OK' if mongo_split else 'FAIL'}")
+        except Exception as e:
+            mongo_split = False
+            print(f"Mongo $split: Error - {e}")
+
+        # Test $replaceAll
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "replaced": {
+                                    "$replaceAll": {
+                                        "input": "$city",
+                                        "find": " ",
+                                        "replacement": "-",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_replaceall = len(result) == 2
+            print(f"Mongo $replaceAll: {'OK' if mongo_replaceall else 'FAIL'}")
+        except Exception as e:
+            mongo_replaceall = False
+            print(f"Mongo $replaceAll: Error - {e}")
+
+        client.close()
+
+        reporter.record_result(
+            "String Operators", "$substr", neo_substr, neo_substr, mongo_substr
+        )
+        reporter.record_result(
+            "String Operators", "$trim", neo_trim, neo_trim, mongo_trim
+        )
+        reporter.record_result(
+            "String Operators", "$split", neo_split, neo_split, mongo_split
+        )
+        reporter.record_result(
+            "String Operators",
+            "$replaceAll",
+            neo_replaceall,
+            neo_replaceall,
+            mongo_replaceall,
+        )
+
+
+# ============================================================================
+# Array Operators ($first, $last, $filter, $map)
+# ============================================================================
+def compare_array_operators():
+    """Compare array operators in aggregation"""
+    print("\n=== Array Operators Comparison ===")
+
+    with neosqlite.Connection(":memory:") as neo_conn:
+        neo_collection = neo_conn.test_collection
+        neo_collection.insert_many(
+            [
+                {"name": "A", "scores": [10, 20, 30]},
+                {"name": "B", "scores": [40, 50]},
+            ]
+        )
+
+        # Test $first
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [{"$project": {"first": {"$first": "$scores"}}}]
+                )
+            )
+            neo_first = len(result) == 2
+            print(f"Neo $first: {'OK' if neo_first else 'FAIL'}")
+        except Exception as e:
+            neo_first = False
+            print(f"Neo $first: Error - {e}")
+
+        # Test $last
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [{"$project": {"last": {"$last": "$scores"}}}]
+                )
+            )
+            neo_last = len(result) == 2
+            print(f"Neo $last: {'OK' if neo_last else 'FAIL'}")
+        except Exception as e:
+            neo_last = False
+            print(f"Neo $last: Error - {e}")
+
+        # Test $filter (basic)
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "high_scores": {
+                                    "$filter": {
+                                        "input": "$scores",
+                                        "as": "score",
+                                        "cond": {"$gte": ["$$score", 25]},
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            neo_filter = len(result) == 2
+            print(f"Neo $filter: {'OK' if neo_filter else 'FAIL'}")
+        except Exception as e:
+            neo_filter = False
+            print(f"Neo $filter: Error - {e}")
+
+    client = test_pymongo_connection()
+    if client:
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_collection
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many(
+            [
+                {"name": "A", "scores": [10, 20, 30]},
+                {"name": "B", "scores": [40, 50]},
+            ]
+        )
+
+        # Test $first
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"first": {"$first": "$scores"}}}]
+                )
+            )
+            mongo_first = len(result) == 2
+            print(f"Mongo $first: {'OK' if mongo_first else 'FAIL'}")
+        except Exception as e:
+            mongo_first = False
+            print(f"Mongo $first: Error - {e}")
+
+        # Test $last
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"last": {"$last": "$scores"}}}]
+                )
+            )
+            mongo_last = len(result) == 2
+            print(f"Mongo $last: {'OK' if mongo_last else 'FAIL'}")
+        except Exception as e:
+            mongo_last = False
+            print(f"Mongo $last: Error - {e}")
+
+        # Test $filter
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "high_scores": {
+                                    "$filter": {
+                                        "input": "$scores",
+                                        "as": "score",
+                                        "cond": {"$gte": ["$$score", 25]},
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_filter = len(result) == 2
+            print(f"Mongo $filter: {'OK' if mongo_filter else 'FAIL'}")
+        except Exception as e:
+            mongo_filter = False
+            print(f"Mongo $filter: Error - {e}")
+
+        client.close()
+
+        reporter.record_result(
+            "Array Operators", "$first", neo_first, neo_first, mongo_first
+        )
+        reporter.record_result(
+            "Array Operators", "$last", neo_last, neo_last, mongo_last
+        )
+        reporter.record_result(
+            "Array Operators", "$filter", neo_filter, neo_filter, mongo_filter
+        )
+
+
+# ============================================================================
+# Object Operators ($mergeObjects, $getField, $setField)
+# ============================================================================
+def compare_object_operators():
+    """Compare object operators in aggregation"""
+    print("\n=== Object Operators Comparison ===")
+
+    with neosqlite.Connection(":memory:") as neo_conn:
+        neo_collection = neo_conn.test_collection
+        neo_collection.insert_many(
+            [
+                {
+                    "name": "A",
+                    "meta": {"city": "NYC", "zip": 10001},
+                    "extra": {"country": "USA"},
+                },
+                {
+                    "name": "B",
+                    "meta": {"city": "LA", "zip": 90001},
+                    "extra": {"country": "USA"},
+                },
+            ]
+        )
+
+        # Test $mergeObjects
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "merged": {"$mergeObjects": ["$meta", "$extra"]}
+                            }
+                        }
+                    ]
+                )
+            )
+            neo_mergeobjects = len(result) == 2
+            print(f"Neo $mergeObjects: {'OK' if neo_mergeobjects else 'FAIL'}")
+        except Exception as e:
+            neo_mergeobjects = False
+            print(f"Neo $mergeObjects: Error - {e}")
+
+        # Test $getField
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "city": {
+                                    "$getField": {
+                                        "field": "city",
+                                        "input": "$meta",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            neo_getfield = len(result) == 2
+            print(f"Neo $getField: {'OK' if neo_getfield else 'FAIL'}")
+        except Exception as e:
+            neo_getfield = False
+            print(f"Neo $getField: Error - {e}")
+
+    client = test_pymongo_connection()
+    if client:
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_collection
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many(
+            [
+                {
+                    "name": "A",
+                    "meta": {"city": "NYC", "zip": 10001},
+                    "extra": {"country": "USA"},
+                },
+                {
+                    "name": "B",
+                    "meta": {"city": "LA", "zip": 90001},
+                    "extra": {"country": "USA"},
+                },
+            ]
+        )
+
+        # Test $mergeObjects
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "merged": {"$mergeObjects": ["$meta", "$extra"]}
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_mergeobjects = len(result) == 2
+            print(
+                f"Mongo $mergeObjects: {'OK' if mongo_mergeobjects else 'FAIL'}"
+            )
+        except Exception as e:
+            mongo_mergeobjects = False
+            print(f"Mongo $mergeObjects: Error - {e}")
+
+        # Test $getField
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "city": {
+                                    "$getField": {
+                                        "field": "city",
+                                        "input": "$meta",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_getfield = len(result) == 2
+            print(f"Mongo $getField: {'OK' if mongo_getfield else 'FAIL'}")
+        except Exception as e:
+            mongo_getfield = False
+            print(f"Mongo $getField: Error - {e}")
+
+        client.close()
+
+        reporter.record_result(
+            "Object Operators",
+            "$mergeObjects",
+            neo_mergeobjects,
+            neo_mergeobjects,
+            mongo_mergeobjects,
+        )
+        reporter.record_result(
+            "Object Operators",
+            "$getField",
+            neo_getfield,
+            neo_getfield,
+            mongo_getfield,
+        )
+
+
+# ============================================================================
+# Collection Methods (drop, database property)
+# ============================================================================
+def compare_additional_collection_methods():
+    """Compare additional collection methods"""
+    print("\n=== Additional Collection Methods Comparison ===")
+
+    with neosqlite.Connection(":memory:") as neo_conn:
+        # Test drop()
+        neo_collection = neo_conn.test_drop
+        neo_collection.insert_one({"name": "test"})
+        try:
+            neo_collection.drop()
+            neo_drop = "test_drop" not in neo_conn.list_collection_names()
+            print(f"Neo drop(): {'OK' if neo_drop else 'FAIL'}")
+        except Exception as e:
+            neo_drop = False
+            print(f"Neo drop(): Error - {e}")
+
+        # Test database property
+        neo_collection2 = neo_conn.test
+        try:
+            neo_db = neo_collection2.database
+            neo_db_ok = neo_db is not None
+            print(f"Neo database property: {'OK' if neo_db_ok else 'FAIL'}")
+        except Exception as e:
+            neo_db_ok = False
+            print(f"Neo database property: Error - {e}")
+
+    client = test_pymongo_connection()
+    if client:
+        mongo_db = client.test_database
+        # Test drop()
+        mongo_collection = mongo_db.test_drop
+        mongo_collection.insert_one({"name": "test"})
+        try:
+            mongo_collection.drop()
+            mongo_drop = "test_drop" not in mongo_db.list_collection_names()
+            print(f"Mongo drop(): {'OK' if mongo_drop else 'FAIL'}")
+        except Exception as e:
+            mongo_drop = False
+            print(f"Mongo drop(): Error - {e}")
+
+        # Test database property
+        mongo_collection2 = mongo_db.test
+        try:
+            mongo_db_prop = mongo_collection2.database
+            mongo_db_ok = mongo_db_prop is not None
+            print(f"Mongo database property: {'OK' if mongo_db_ok else 'FAIL'}")
+        except Exception as e:
+            mongo_db_ok = False
+            print(f"Mongo database property: Error - {e}")
+
+        client.close()
+
+    reporter.record_result(
+        "Collection Methods", "drop", neo_drop, neo_drop, mongo_drop
+    )
+    reporter.record_result(
+        "Collection Methods",
+        "database_property",
+        neo_db_ok,
+        neo_db_ok,
+        mongo_db_ok,
+    )
+
+
+# ============================================================================
 # Main
 # ============================================================================
 def main():
@@ -3355,6 +4172,13 @@ def main():
     compare_additional_aggregation_stages()
     compare_additional_expr_operators()
     compare_collection_methods()
+    # Additional operators implemented in NeoSQLite
+    compare_date_expr_operators()
+    compare_math_operators()
+    compare_string_operators()
+    compare_array_operators()
+    compare_object_operators()
+    compare_additional_collection_methods()
     compare_known_limitations()
 
     reporter.print_report()

@@ -5,6 +5,7 @@ Covers: $dateAdd, $dateSubtract, $dateDiff
 """
 
 import pytest
+from datetime import datetime, timezone
 import neosqlite
 from neosqlite.collection.expr_evaluator import ExprEvaluator
 
@@ -47,45 +48,50 @@ class TestDateArithmeticPython:
         evaluator = ExprEvaluator()
         expr = {"$dateAdd": ["$date", 5, "day"]}
         result = evaluator._evaluate_expr_python(
-            expr, {"date": "2024-01-15T10:30:00"}
+            expr,
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
         )
-        assert result == "2024-01-20T10:30:00"
+        assert result == datetime(2024, 1, 20, 10, 30, 0, tzinfo=timezone.utc)
 
     def test_date_add_hours_python(self):
         """Test $dateAdd with hours."""
         evaluator = ExprEvaluator()
         expr = {"$dateAdd": ["$date", 3, "hour"]}
         result = evaluator._evaluate_expr_python(
-            expr, {"date": "2024-01-15T10:30:00"}
+            expr,
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
         )
-        assert result == "2024-01-15T13:30:00"
+        assert result == datetime(2024, 1, 15, 13, 30, 0, tzinfo=timezone.utc)
 
     def test_date_subtract_days_python(self):
         """Test $dateSubtract with days."""
         evaluator = ExprEvaluator()
         expr = {"$dateSubtract": ["$date", 5, "day"]}
         result = evaluator._evaluate_expr_python(
-            expr, {"date": "2024-01-15T10:30:00"}
+            expr,
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
         )
-        assert result == "2024-01-10T10:30:00"
+        assert result == datetime(2024, 1, 10, 10, 30, 0, tzinfo=timezone.utc)
 
     def test_date_add_months_python(self):
         """Test $dateAdd with months."""
         evaluator = ExprEvaluator()
         expr = {"$dateAdd": ["$date", 2, "month"]}
         result = evaluator._evaluate_expr_python(
-            expr, {"date": "2024-01-15T10:30:00"}
+            expr,
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
         )
-        assert result == "2024-03-15T10:30:00"
+        assert result == datetime(2024, 3, 15, 10, 30, 0, tzinfo=timezone.utc)
 
     def test_date_add_years_python(self):
         """Test $dateAdd with years."""
         evaluator = ExprEvaluator()
         expr = {"$dateAdd": ["$date", 1, "year"]}
         result = evaluator._evaluate_expr_python(
-            expr, {"date": "2024-01-15T10:30:00"}
+            expr,
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
         )
-        assert result == "2025-01-15T10:30:00"
+        assert result == datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
 
     def test_date_diff_days_python(self):
         """Test $dateDiff with days."""
@@ -94,8 +100,8 @@ class TestDateArithmeticPython:
         result = evaluator._evaluate_expr_python(
             expr,
             {
-                "date1": "2024-01-01T00:00:00",
-                "date2": "2024-01-15T00:00:00",
+                "date1": datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+                "date2": datetime(2024, 1, 15, 0, 0, 0, tzinfo=timezone.utc),
             },
         )
         assert result == 14
@@ -107,8 +113,8 @@ class TestDateArithmeticPython:
         result = evaluator._evaluate_expr_python(
             expr,
             {
-                "date1": "2024-01-01T00:00:00",
-                "date2": "2024-01-01T05:00:00",
+                "date1": datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+                "date2": datetime(2024, 1, 1, 5, 0, 0, tzinfo=timezone.utc),
             },
         )
         assert result == 5
@@ -120,8 +126,8 @@ class TestDateArithmeticPython:
         result = evaluator._evaluate_expr_python(
             expr,
             {
-                "date1": "2024-01-01T00:00:00",
-                "date2": "2024-01-22T00:00:00",
+                "date1": datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+                "date2": datetime(2024, 1, 22, 0, 0, 0, tzinfo=timezone.utc),
             },
         )
         assert result == 3
@@ -138,9 +144,10 @@ class TestDateArithmeticPython:
         evaluator = ExprEvaluator()
         expr = {"$dateAdd": ["$date", 2, "week"]}
         result = evaluator._evaluate_expr_python(
-            expr, {"date": "2024-01-15T10:30:00"}
+            expr,
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
         )
-        assert result == "2024-01-29T10:30:00"
+        assert result == datetime(2024, 1, 29, 10, 30, 0, tzinfo=timezone.utc)
 
 
 class TestDateArithmeticIntegration:
@@ -152,11 +159,27 @@ class TestDateArithmeticIntegration:
         conn = neosqlite.Connection(":memory:")
         collection = conn["test_collection"]
 
+        # Use datetime objects for MongoDB compatibility
         collection.insert_many(
             [
-                {"name": "doc1", "date": "2024-01-15T10:30:00"},
-                {"name": "doc2", "date": "2024-02-20T15:45:00"},
-                {"name": "doc3", "date": "2024-03-25T20:00:00"},
+                {
+                    "name": "doc1",
+                    "date": datetime(
+                        2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc
+                    ),
+                },
+                {
+                    "name": "doc2",
+                    "date": datetime(
+                        2024, 2, 20, 15, 45, 0, tzinfo=timezone.utc
+                    ),
+                },
+                {
+                    "name": "doc3",
+                    "date": datetime(
+                        2024, 3, 25, 20, 0, 0, tzinfo=timezone.utc
+                    ),
+                },
             ]
         )
 
@@ -190,7 +213,15 @@ class TestDateArithmeticIntegration:
                             {
                                 "$dateDiff": [
                                     "$date",
-                                    "2024-12-31T00:00:00",
+                                    datetime(
+                                        2024,
+                                        12,
+                                        31,
+                                        0,
+                                        0,
+                                        0,
+                                        tzinfo=timezone.utc,
+                                    ),
                                     "day",
                                 ]
                             },

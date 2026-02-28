@@ -24,7 +24,7 @@ NC='\033[0m' # No Color
 MONGODB_PORT=27017
 MONGODB_IMAGE="mongo:latest"
 CONTAINER_NAME="neosqlite_mongodb_test"
-COMPARISON_SCRIPT="$(dirname "$0")/api_comparison_comprehensive.py"
+COMPARISON_SCRIPT="$(dirname "$0")/../examples/api_comparison_comprehensive.py"
 
 # Container runtime (podman preferred over docker)
 CONTAINER_RUNTIME=""
@@ -85,10 +85,10 @@ error() {
 #######################################
 cleanup() {
     local exit_code=$?
-    
+
     if [ "$CONTAINER_STARTED" = true ]; then
         info "Cleaning up..."
-        
+
         # Stop the container
         info "Stopping container '$CONTAINER_NAME'..."
         if $CONTAINER_RUNTIME stop "$CONTAINER_NAME" >/dev/null 2>&1; then
@@ -96,7 +96,7 @@ cleanup() {
         else
             warn "Failed to stop container (may already be stopped)"
         fi
-        
+
         # Remove the container
         info "Removing container '$CONTAINER_NAME'..."
         if $CONTAINER_RUNTIME rm "$CONTAINER_NAME" >/dev/null 2>&1; then
@@ -105,11 +105,11 @@ cleanup() {
             warn "Failed to remove container (may already be removed)"
         fi
     fi
-    
+
     if [ $exit_code -ne 0 ]; then
         error "Script exited with code $exit_code"
     fi
-    
+
     exit $exit_code
 }
 
@@ -122,21 +122,21 @@ trap cleanup EXIT INT TERM
 #######################################
 check_container_runtime() {
     info "Checking for container runtime..."
-    
+
     # Check for podman first (higher priority)
     if command -v podman &> /dev/null; then
         CONTAINER_RUNTIME="podman"
         success "Found podman"
         return 0
     fi
-    
+
     # Check for docker
     if command -v docker &> /dev/null; then
         CONTAINER_RUNTIME="docker"
         success "Found docker"
         return 0
     fi
-    
+
     error "Neither podman nor docker found. Please install one of them."
     return 1
 }
@@ -146,7 +146,7 @@ check_container_runtime() {
 #######################################
 pull_mongodb_image() {
     info "Pulling MongoDB image: $MONGODB_IMAGE..."
-    
+
     if $CONTAINER_RUNTIME pull "$MONGODB_IMAGE"; then
         success "MongoDB image pulled successfully"
         return 0
@@ -161,7 +161,7 @@ pull_mongodb_image() {
 #######################################
 check_port_available() {
     local port=$1
-    
+
     # Check if port is in use
     if command -v ss &> /dev/null; then
         if ss -tuln | grep -q ":$port "; then
@@ -172,7 +172,7 @@ check_port_available() {
             return 1  # Port is in use
         fi
     fi
-    
+
     return 0  # Port is available
 }
 
@@ -181,15 +181,15 @@ check_port_available() {
 #######################################
 cleanup_existing_container() {
     info "Checking for existing container '$CONTAINER_NAME'..."
-    
+
     if $CONTAINER_RUNTIME ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
         warn "Found existing container '$CONTAINER_NAME', removing..."
-        
+
         # Stop if running
         if $CONTAINER_RUNTIME ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             $CONTAINER_RUNTIME stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
         fi
-        
+
         # Remove
         $CONTAINER_RUNTIME rm "$CONTAINER_NAME" >/dev/null 2>&1 || true
         success "Existing container removed"
@@ -201,7 +201,7 @@ cleanup_existing_container() {
 #######################################
 run_mongodb_container() {
     info "Starting MongoDB container '$CONTAINER_NAME'..."
-    
+
     # Run container with exposed port
     # Using --rm alternative: we'll manually clean up to have more control
     if $CONTAINER_RUNTIME run -d \
@@ -209,15 +209,15 @@ run_mongodb_container() {
         -p "$MONGODB_PORT:27017" \
         "$MONGODB_IMAGE" \
         --bind_ip_all; then
-        
+
         CONTAINER_STARTED=true
         success "MongoDB container started"
-        
+
         # Wait for MongoDB to be ready
         info "Waiting for MongoDB to be ready..."
         local max_attempts=30
         local attempt=0
-        
+
         while [ $attempt -lt $max_attempts ]; do
             # Check if MongoDB is accepting connections
             if command -v mongosh &> /dev/null; then
@@ -236,11 +236,11 @@ run_mongodb_container() {
                 success "Assuming MongoDB is ready (no client available to verify)"
                 return 0
             fi
-            
+
             attempt=$((attempt + 1))
             sleep 1
         done
-        
+
         error "MongoDB failed to become ready within ${max_attempts} seconds"
         return 1
     else
@@ -254,15 +254,15 @@ run_mongodb_container() {
 #######################################
 run_comparison() {
     info "Running API comparison script..."
-    
+
     if [ ! -f "$COMPARISON_SCRIPT" ]; then
         error "Comparison script not found: $COMPARISON_SCRIPT"
         return 1
     fi
-    
+
     # Make sure the script is executable
     chmod +x "$COMPARISON_SCRIPT"
-    
+
     # Run the comparison script
     # The script will exit with non-zero if there are incompatibilities
     if python3 "$COMPARISON_SCRIPT"; then
@@ -282,33 +282,33 @@ main() {
     echo "NeoSQLite vs MongoDB API Compatibility"
     echo "========================================"
     echo ""
-    
+
     # Step 1: Check container runtime
     if ! check_container_runtime; then
         exit 1
     fi
-    
+
     # Step 2: Pull MongoDB image
     if ! pull_mongodb_image; then
         exit 1
     fi
-    
+
     # Step 3: Cleanup existing container
     cleanup_existing_container
-    
+
     # Step 4: Run MongoDB container
     if ! run_mongodb_container; then
         exit 1
     fi
-    
+
     # Step 5: Run comparison script
     if ! run_comparison; then
         exit 1
     fi
-    
+
     echo ""
     success "All tests completed!"
-    
+
     # Cleanup is handled by the trap
 }
 

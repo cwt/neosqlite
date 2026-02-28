@@ -5,6 +5,7 @@ Covers: $year, $month, $dayOfMonth, $hour, $minute, $second,
         $dayOfWeek, $dayOfYear, $week, $isoDayOfWeek, $isoWeek, $millisecond
 """
 
+from datetime import datetime, timezone
 from neosqlite.collection.expr_evaluator import ExprEvaluator
 
 
@@ -101,7 +102,8 @@ class TestDateOperatorsPython:
         evaluator = ExprEvaluator()
         expr = {"$year": ["$date"]}
         result = evaluator._evaluate_expr_python(
-            expr, {"date": "2024-01-15T10:30:00"}
+            expr,
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
         )
         assert result == 2024
 
@@ -110,7 +112,8 @@ class TestDateOperatorsPython:
         evaluator = ExprEvaluator()
         expr = {"$month": ["$date"]}
         result = evaluator._evaluate_expr_python(
-            expr, {"date": "2024-01-15T10:30:00"}
+            expr,
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
         )
         assert result == 1
 
@@ -119,7 +122,8 @@ class TestDateOperatorsPython:
         evaluator = ExprEvaluator()
         expr = {"$dayOfMonth": ["$date"]}
         result = evaluator._evaluate_expr_python(
-            expr, {"date": "2024-01-15T10:30:00"}
+            expr,
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
         )
         assert result == 15
 
@@ -128,7 +132,8 @@ class TestDateOperatorsPython:
         evaluator = ExprEvaluator()
         expr = {"$hour": ["$date"]}
         result = evaluator._evaluate_expr_python(
-            expr, {"date": "2024-01-15T10:30:00"}
+            expr,
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
         )
         assert result == 10
 
@@ -137,7 +142,8 @@ class TestDateOperatorsPython:
         evaluator = ExprEvaluator()
         expr = {"$minute": ["$date"]}
         result = evaluator._evaluate_expr_python(
-            expr, {"date": "2024-01-15T10:30:00"}
+            expr,
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
         )
         assert result == 30
 
@@ -146,7 +152,8 @@ class TestDateOperatorsPython:
         evaluator = ExprEvaluator()
         expr = {"$second": ["$date"]}
         result = evaluator._evaluate_expr_python(
-            expr, {"date": "2024-01-15T10:30:45"}
+            expr,
+            {"date": datetime(2024, 1, 15, 10, 30, 45, tzinfo=timezone.utc)},
         )
         assert result == 45
 
@@ -155,7 +162,12 @@ class TestDateOperatorsPython:
         evaluator = ExprEvaluator()
         expr = {"$millisecond": ["$date"]}
         result = evaluator._evaluate_expr_python(
-            expr, {"date": "2024-01-15T10:30:45.123"}
+            expr,
+            {
+                "date": datetime(
+                    2024, 1, 15, 10, 30, 45, 123000, tzinfo=timezone.utc
+                )
+            },
         )
         assert result == 123
 
@@ -165,7 +177,8 @@ class TestDateOperatorsPython:
         expr = {"$dayOfWeek": ["$date"]}
         # 2024-01-15 is Monday (weekday() returns 0)
         result = evaluator._evaluate_expr_python(
-            expr, {"date": "2024-01-15T10:30:00"}
+            expr,
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
         )
         assert result == 0
 
@@ -174,7 +187,8 @@ class TestDateOperatorsPython:
         evaluator = ExprEvaluator()
         expr = {"$dayOfYear": ["$date"]}
         result = evaluator._evaluate_expr_python(
-            expr, {"date": "2024-01-15T10:30:00"}
+            expr,
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
         )
         assert result == 15
 
@@ -183,7 +197,8 @@ class TestDateOperatorsPython:
         evaluator = ExprEvaluator()
         expr = {"$week": ["$date"]}
         result = evaluator._evaluate_expr_python(
-            expr, {"date": "2024-01-15T10:30:00"}
+            expr,
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
         )
         assert result == 3  # Week 3 of 2024
 
@@ -193,7 +208,8 @@ class TestDateOperatorsPython:
         expr = {"$isoDayOfWeek": ["$date"]}
         # 2024-01-15 is Monday (isocalendar returns 1 for Monday)
         result = evaluator._evaluate_expr_python(
-            expr, {"date": "2024-01-15T10:30:00"}
+            expr,
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
         )
         assert result == 1
 
@@ -202,7 +218,8 @@ class TestDateOperatorsPython:
         evaluator = ExprEvaluator()
         expr = {"$isoWeek": ["$date"]}
         result = evaluator._evaluate_expr_python(
-            expr, {"date": "2024-01-15T10:30:00"}
+            expr,
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
         )
         assert result == 3
 
@@ -215,7 +232,10 @@ class TestDateOperatorsPython:
 
     def test_date_invalid_python(self):
         """Test date operators with invalid date."""
+        import pytest
+
         evaluator = ExprEvaluator()
         expr = {"$year": ["$date"]}
-        result = evaluator._evaluate_expr_python(expr, {"date": "not-a-date"})
-        assert result is None
+        # For MongoDB compatibility, string dates raise ValueError
+        with pytest.raises(ValueError):
+            evaluator._evaluate_expr_python(expr, {"date": "not-a-date"})

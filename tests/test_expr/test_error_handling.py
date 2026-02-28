@@ -92,8 +92,12 @@ class TestOperatorErrorHandling:
         """Test invalid date handled gracefully in Python."""
         evaluator = ExprEvaluator()
         expr = {"$year": ["$date"]}
-        result = evaluator._evaluate_expr_python(expr, {"date": "not-a-date"})
-        assert result is None
+        # For MongoDB compatibility, string dates raise ValueError
+        # This matches MongoDB behavior where date operators require Date type
+        import pytest
+
+        with pytest.raises(ValueError):
+            evaluator._evaluate_expr_python(expr, {"date": "not-a-date"})
 
     def test_missing_field_python(self):
         """Test missing field handled gracefully in Python."""
