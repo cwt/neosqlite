@@ -1045,6 +1045,11 @@ class QueryHelper:
                 case "$push":
                     for k, v in value.items():
                         doc_to_update.setdefault(k, []).append(v)
+                case "$addToSet":
+                    for k, v in value.items():
+                        current_list = doc_to_update.setdefault(k, [])
+                        if v not in current_list:
+                            current_list.append(v)
                 case "$pull":
                     for k, v in value.items():
                         if k in doc_to_update:

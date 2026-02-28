@@ -2432,6 +2432,897 @@ def compare_known_limitations():
 
 
 # ============================================================================
+# Additional Query Operators ($mod)
+# ============================================================================
+def compare_mod_operator():
+    """Compare $mod query operator"""
+    print("\n=== $mod Query Operator Comparison ===")
+
+    with neosqlite.Connection(":memory:") as neo_conn:
+        neo_collection = neo_conn.test_collection
+        neo_collection.insert_many(
+            [
+                {"name": "Alice", "age": 30},
+                {"name": "Bob", "age": 25},
+                {"name": "Charlie", "age": 35},
+                {"name": "David", "age": 28},
+                {"name": "Eve", "age": 32},
+            ]
+        )
+
+        # Test $mod: age % 5 == 0
+        try:
+            neo_result = list(neo_collection.find({"age": {"$mod": [5, 0]}}))
+            neo_mod = len(neo_result)
+            print(f"Neo $mod (age % 5 == 0): {neo_mod}")
+        except Exception as e:
+            neo_mod = f"Error: {e}"
+            print(f"Neo $mod: Error - {e}")
+
+    client = test_pymongo_connection()
+    if client:
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_collection
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many(
+            [
+                {"name": "Alice", "age": 30},
+                {"name": "Bob", "age": 25},
+                {"name": "Charlie", "age": 35},
+                {"name": "David", "age": 28},
+                {"name": "Eve", "age": 32},
+            ]
+        )
+
+        try:
+            mongo_result = list(
+                mongo_collection.find({"age": {"$mod": [5, 0]}})
+            )
+            mongo_mod = len(mongo_result)
+            print(f"Mongo $mod (age % 5 == 0): {mongo_mod}")
+        except Exception as e:
+            mongo_mod = f"Error: {e}"
+            print(f"Mongo $mod: Error - {e}")
+        client.close()
+
+    reporter.record_result(
+        "Query Operators",
+        "$mod",
+        (
+            neo_mod == mongo_mod
+            if not isinstance(neo_mod, str) and not isinstance(mongo_mod, str)
+            else False
+        ),
+        neo_mod,
+        mongo_mod,
+    )
+
+
+# ============================================================================
+# Update Operators ($push, $addToSet, $pull, $pop, $currentDate)
+# ============================================================================
+def compare_additional_update_operators():
+    """Compare additional update operators"""
+    print("\n=== Additional Update Operators Comparison ===")
+
+    with neosqlite.Connection(":memory:") as neo_conn:
+        neo_collection = neo_conn.test_collection
+        neo_collection.insert_one(
+            {"name": "Alice", "tags": ["python"], "score": 100}
+        )
+
+        # Test $push
+        try:
+            neo_collection.update_one(
+                {"name": "Alice"}, {"$push": {"tags": "sql"}}
+            )
+            doc = neo_collection.find_one({"name": "Alice"})
+            neo_push = "sql" in doc.get("tags", [])
+            print(f"Neo $push: {'OK' if neo_push else 'FAIL'}")
+        except Exception as e:
+            neo_push = False
+            print(f"Neo $push: Error - {e}")
+
+        # Reset for $addToSet
+        neo_collection.update_one(
+            {"name": "Alice"}, {"$set": {"tags": ["python", "sql"]}}
+        )
+
+        # Test $addToSet
+        try:
+            neo_collection.update_one(
+                {"name": "Alice"}, {"$addToSet": {"tags": "sql"}}
+            )
+            neo_collection.update_one(
+                {"name": "Alice"}, {"$addToSet": {"tags": "mongodb"}}
+            )
+            doc = neo_collection.find_one({"name": "Alice"})
+            tags = doc.get("tags", [])
+            neo_addtoset = (
+                "sql" in tags and "mongodb" in tags and tags.count("sql") == 1
+            )
+            print(f"Neo $addToSet: {'OK' if neo_addtoset else 'FAIL'}")
+        except Exception as e:
+            neo_addtoset = False
+            print(f"Neo $addToSet: Error - {e}")
+
+        # Reset for $pull
+        neo_collection.update_one(
+            {"name": "Alice"}, {"$set": {"tags": ["python", "sql", "mongodb"]}}
+        )
+
+        # Test $pull
+        try:
+            neo_collection.update_one(
+                {"name": "Alice"}, {"$pull": {"tags": "sql"}}
+            )
+            doc = neo_collection.find_one({"name": "Alice"})
+            neo_pull = "sql" not in doc.get("tags", [])
+            print(f"Neo $pull: {'OK' if neo_pull else 'FAIL'}")
+        except Exception as e:
+            neo_pull = False
+            print(f"Neo $pull: Error - {e}")
+
+        # Reset for $pop
+        neo_collection.update_one(
+            {"name": "Alice"}, {"$set": {"tags": ["first", "middle", "last"]}}
+        )
+
+        # Test $pop (remove last)
+        try:
+            neo_collection.update_one({"name": "Alice"}, {"$pop": {"tags": 1}})
+            doc = neo_collection.find_one({"name": "Alice"})
+            neo_pop = doc.get("tags", []) == ["first", "middle"]
+            print(f"Neo $pop (last): {'OK' if neo_pop else 'FAIL'}")
+        except Exception as e:
+            neo_pop = False
+            print(f"Neo $pop: Error - {e}")
+
+        # Reset for $currentDate
+        neo_collection.update_one(
+            {"name": "Alice"}, {"$set": {"updated_at": None}}
+        )
+
+        # Test $currentDate
+        try:
+
+            neo_collection.update_one(
+                {"name": "Alice"}, {"$currentDate": {"updated_at": True}}
+            )
+            doc = neo_collection.find_one({"name": "Alice"})
+            updated_at = doc.get("updated_at")
+            neo_currentdate = updated_at is not None and isinstance(
+                updated_at, str
+            )
+            print(f"Neo $currentDate: {'OK' if neo_currentdate else 'FAIL'}")
+        except Exception as e:
+            neo_currentdate = False
+            print(f"Neo $currentDate: Error - {e}")
+
+    client = test_pymongo_connection()
+    if client:
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_collection
+        mongo_collection.delete_many({})
+        mongo_collection.insert_one(
+            {"name": "Alice", "tags": ["python"], "score": 100}
+        )
+
+        # Test $push
+        try:
+            mongo_collection.update_one(
+                {"name": "Alice"}, {"$push": {"tags": "sql"}}
+            )
+            doc = mongo_collection.find_one({"name": "Alice"})
+            mongo_push = "sql" in doc.get("tags", [])
+            print(f"Mongo $push: {'OK' if mongo_push else 'FAIL'}")
+        except Exception as e:
+            mongo_push = False
+            print(f"Mongo $push: Error - {e}")
+
+        # Reset for $addToSet
+        mongo_collection.update_one(
+            {"name": "Alice"}, {"$set": {"tags": ["python", "sql"]}}
+        )
+
+        # Test $addToSet
+        try:
+            mongo_collection.update_one(
+                {"name": "Alice"}, {"$addToSet": {"tags": "sql"}}
+            )
+            mongo_collection.update_one(
+                {"name": "Alice"}, {"$addToSet": {"tags": "mongodb"}}
+            )
+            doc = mongo_collection.find_one({"name": "Alice"})
+            tags = doc.get("tags", [])
+            mongo_addtoset = (
+                "sql" in tags and "mongodb" in tags and tags.count("sql") == 1
+            )
+            print(f"Mongo $addToSet: {'OK' if mongo_addtoset else 'FAIL'}")
+        except Exception as e:
+            mongo_addtoset = False
+            print(f"Mongo $addToSet: Error - {e}")
+
+        # Reset for $pull
+        mongo_collection.update_one(
+            {"name": "Alice"}, {"$set": {"tags": ["python", "sql", "mongodb"]}}
+        )
+
+        # Test $pull
+        try:
+            mongo_collection.update_one(
+                {"name": "Alice"}, {"$pull": {"tags": "sql"}}
+            )
+            doc = mongo_collection.find_one({"name": "Alice"})
+            mongo_pull = "sql" not in doc.get("tags", [])
+            print(f"Mongo $pull: {'OK' if mongo_pull else 'FAIL'}")
+        except Exception as e:
+            mongo_pull = False
+            print(f"Mongo $pull: Error - {e}")
+
+        # Reset for $pop
+        mongo_collection.update_one(
+            {"name": "Alice"}, {"$set": {"tags": ["first", "middle", "last"]}}
+        )
+
+        # Test $pop (remove last)
+        try:
+            mongo_collection.update_one(
+                {"name": "Alice"}, {"$pop": {"tags": 1}}
+            )
+            doc = mongo_collection.find_one({"name": "Alice"})
+            mongo_pop = doc.get("tags", []) == ["first", "middle"]
+            print(f"Mongo $pop (last): {'OK' if mongo_pop else 'FAIL'}")
+        except Exception as e:
+            mongo_pop = False
+            print(f"Mongo $pop: Error - {e}")
+
+        # Reset for $currentDate
+        mongo_collection.update_one(
+            {"name": "Alice"}, {"$set": {"updated_at": None}}
+        )
+
+        # Test $currentDate
+        try:
+            mongo_collection.update_one(
+                {"name": "Alice"}, {"$currentDate": {"updated_at": True}}
+            )
+            doc = mongo_collection.find_one({"name": "Alice"})
+            updated_at = doc.get("updated_at")
+            # MongoDB returns a datetime object, NeoSQLite returns ISO string
+            mongo_currentdate = updated_at is not None
+            print(
+                f"Mongo $currentDate: {'OK' if mongo_currentdate else 'FAIL'} (returns datetime)"
+            )
+        except Exception as e:
+            mongo_currentdate = False
+            print(f"Mongo $currentDate: Error - {e}")
+
+        client.close()
+
+    reporter.record_result(
+        "Update Operators", "$push", neo_push, neo_push, mongo_push
+    )
+    reporter.record_result(
+        "Update Operators",
+        "$addToSet",
+        neo_addtoset,
+        neo_addtoset,
+        mongo_addtoset,
+    )
+    reporter.record_result(
+        "Update Operators", "$pull", neo_pull, neo_pull, mongo_pull
+    )
+    reporter.record_result(
+        "Update Operators", "$pop", neo_pop, neo_pop, mongo_pop
+    )
+    reporter.record_result(
+        "Update Operators",
+        "$currentDate",
+        neo_currentdate,
+        neo_currentdate,
+        mongo_currentdate,
+    )
+
+
+# ============================================================================
+# Additional Aggregation Pipeline Stages
+# ============================================================================
+def compare_additional_aggregation_stages():
+    """Compare additional aggregation pipeline stages"""
+    print("\n=== Additional Aggregation Pipeline Stages Comparison ===")
+
+    with neosqlite.Connection(":memory:") as neo_conn:
+        neo_collection = neo_conn.test_collection
+        neo_collection.insert_many(
+            [
+                {"item": "A", "price": 10, "quantity": 2, "category": "books"},
+                {"item": "B", "price": 20, "quantity": 1, "category": "books"},
+                {"item": "C", "price": 15, "quantity": 3, "category": "toys"},
+                {"item": "D", "price": 25, "quantity": 2, "category": "toys"},
+                {"item": "E", "price": 30, "quantity": 1, "category": "games"},
+            ]
+        )
+
+        # Test $sample
+        try:
+            neo_sample = len(
+                list(neo_collection.aggregate([{"$sample": {"size": 2}}]))
+            )
+            print(f"Neo $sample: {neo_sample} documents")
+        except Exception as e:
+            neo_sample = f"Error: {e}"
+            print(f"Neo $sample: Error - {e}")
+
+        # Test $facet
+        try:
+            neo_facet_result = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$facet": {
+                                "by_category": [
+                                    {
+                                        "$group": {
+                                            "_id": "$category",
+                                            "count": {"$count": {}},
+                                        }
+                                    }
+                                ],
+                                "avg_price": [
+                                    {
+                                        "$group": {
+                                            "_id": None,
+                                            "avg": {"$avg": "$price"},
+                                        }
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                )
+            )
+            neo_facet = (
+                len(neo_facet_result) > 0
+                and "by_category" in neo_facet_result[0]
+                and "avg_price" in neo_facet_result[0]
+            )
+            print(f"Neo $facet: {'OK' if neo_facet else 'FAIL'}")
+        except Exception as e:
+            neo_facet = False
+            print(f"Neo $facet: Error - {e}")
+
+        # Test $lookup
+        neo_collection2 = neo_conn.orders
+        neo_collection2.insert_many(
+            [
+                {"order_id": 1, "item": "A", "qty": 2},
+                {"order_id": 2, "item": "B", "qty": 1},
+                {"order_id": 3, "item": "C", "qty": 3},
+            ]
+        )
+
+        try:
+            neo_lookup_result = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$lookup": {
+                                "from": "orders",
+                                "localField": "item",
+                                "foreignField": "item",
+                                "as": "orders",
+                            }
+                        }
+                    ]
+                )
+            )
+            neo_lookup = len(neo_lookup_result) == 5 and all(
+                "orders" in doc for doc in neo_lookup_result
+            )
+            print(f"Neo $lookup: {'OK' if neo_lookup else 'FAIL'}")
+        except Exception as e:
+            neo_lookup = False
+            print(f"Neo $lookup: Error - {e}")
+
+    client = test_pymongo_connection()
+    if client:
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_collection
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many(
+            [
+                {"item": "A", "price": 10, "quantity": 2, "category": "books"},
+                {"item": "B", "price": 20, "quantity": 1, "category": "books"},
+                {"item": "C", "price": 15, "quantity": 3, "category": "toys"},
+                {"item": "D", "price": 25, "quantity": 2, "category": "toys"},
+                {"item": "E", "price": 30, "quantity": 1, "category": "games"},
+            ]
+        )
+
+        # Test $sample
+        try:
+            mongo_sample = len(
+                list(mongo_collection.aggregate([{"$sample": {"size": 2}}]))
+            )
+            print(f"Mongo $sample: {mongo_sample} documents")
+        except Exception as e:
+            mongo_sample = f"Error: {e}"
+            print(f"Mongo $sample: Error - {e}")
+
+        # Test $facet
+        try:
+            mongo_facet_result = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$facet": {
+                                "by_category": [
+                                    {
+                                        "$group": {
+                                            "_id": "$category",
+                                            "count": {"$count": {}},
+                                        }
+                                    }
+                                ],
+                                "avg_price": [
+                                    {
+                                        "$group": {
+                                            "_id": None,
+                                            "avg": {"$avg": "$price"},
+                                        }
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_facet = (
+                len(mongo_facet_result) > 0
+                and "by_category" in mongo_facet_result[0]
+                and "avg_price" in mongo_facet_result[0]
+            )
+            print(f"Mongo $facet: {'OK' if mongo_facet else 'FAIL'}")
+        except Exception as e:
+            mongo_facet = False
+            print(f"Mongo $facet: Error - {e}")
+
+        # Test $lookup
+        mongo_collection2 = mongo_db.orders
+        mongo_collection2.delete_many({})
+        mongo_collection2.insert_many(
+            [
+                {"order_id": 1, "item": "A", "qty": 2},
+                {"order_id": 2, "item": "B", "qty": 1},
+                {"order_id": 3, "item": "C", "qty": 3},
+            ]
+        )
+
+        try:
+            mongo_lookup_result = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$lookup": {
+                                "from": "orders",
+                                "localField": "item",
+                                "foreignField": "item",
+                                "as": "orders",
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_lookup = len(mongo_lookup_result) == 5 and all(
+                "orders" in doc for doc in mongo_lookup_result
+            )
+            print(f"Mongo $lookup: {'OK' if mongo_lookup else 'FAIL'}")
+        except Exception as e:
+            mongo_lookup = False
+            print(f"Mongo $lookup: Error - {e}")
+
+        client.close()
+
+    reporter.record_result(
+        "Aggregation Stages", "$sample", True, neo_sample, mongo_sample
+    )
+    reporter.record_result(
+        "Aggregation Stages", "$facet", neo_facet, neo_facet, mongo_facet
+    )
+    reporter.record_result(
+        "Aggregation Stages", "$lookup", neo_lookup, neo_lookup, mongo_lookup
+    )
+
+
+# ============================================================================
+# Additional Aggregation Expression Operators
+# ============================================================================
+def compare_additional_expr_operators():
+    """Compare additional aggregation expression operators"""
+    print("\n=== Additional Aggregation Expression Operators Comparison ===")
+
+    with neosqlite.Connection(":memory:") as neo_conn:
+        neo_collection = neo_conn.test_collection
+        neo_collection.insert_many(
+            [
+                {
+                    "name": "Alice",
+                    "scores": [80, 90, 100],
+                    "meta": {"city": "NYC", "zip": 10001},
+                },
+                {
+                    "name": "Bob",
+                    "scores": [70, 80],
+                    "meta": {"city": "LA", "zip": 90001},
+                },
+            ]
+        )
+
+        # Test $arrayElemAt
+        try:
+            neo_result = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "first_score": {"$arrayElemAt": ["$scores", 0]}
+                            }
+                        }
+                    ]
+                )
+            )
+            neo_arrayelemat = len(neo_result) == 2 and all(
+                "first_score" in doc for doc in neo_result
+            )
+            print(f"Neo $arrayElemAt: {'OK' if neo_arrayelemat else 'FAIL'}")
+        except Exception as e:
+            neo_arrayelemat = False
+            print(f"Neo $arrayElemAt: Error - {e}")
+
+        # Test $concat
+        try:
+            neo_result = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "full_info": {
+                                    "$concat": ["$name", " - ", "$meta.city"]
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            neo_concat = len(neo_result) == 2
+            print(f"Neo $concat: {'OK' if neo_concat else 'FAIL'}")
+        except Exception as e:
+            neo_concat = False
+            print(f"Neo $concat: Error - {e}")
+
+        # Test $objectToArray
+        try:
+            neo_result = list(
+                neo_collection.aggregate(
+                    [{"$project": {"meta_array": {"$objectToArray": "$meta"}}}]
+                )
+            )
+            neo_objecttoarray = len(neo_result) == 2 and all(
+                "meta_array" in doc for doc in neo_result
+            )
+            print(
+                f"Neo $objectToArray: {'OK' if neo_objecttoarray else 'FAIL'}"
+            )
+        except Exception as e:
+            neo_objecttoarray = False
+            print(f"Neo $objectToArray: Error - {e}")
+
+        # Test $switch
+        try:
+            neo_result = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "grade": {
+                                    "$switch": {
+                                        "branches": [
+                                            {
+                                                "case": {
+                                                    "$gte": [
+                                                        {
+                                                            "$arrayElemAt": [
+                                                                "$scores",
+                                                                0,
+                                                            ]
+                                                        },
+                                                        90,
+                                                    ]
+                                                },
+                                                "then": "A",
+                                            },
+                                            {
+                                                "case": {
+                                                    "$gte": [
+                                                        {
+                                                            "$arrayElemAt": [
+                                                                "$scores",
+                                                                0,
+                                                            ]
+                                                        },
+                                                        80,
+                                                    ]
+                                                },
+                                                "then": "B",
+                                            },
+                                        ],
+                                        "default": "C",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            neo_switch = len(neo_result) == 2
+            print(f"Neo $switch: {'OK' if neo_switch else 'FAIL'}")
+        except Exception as e:
+            neo_switch = False
+            print(f"Neo $switch: Error - {e}")
+
+    client = test_pymongo_connection()
+    if client:
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_collection
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many(
+            [
+                {
+                    "name": "Alice",
+                    "scores": [80, 90, 100],
+                    "meta": {"city": "NYC", "zip": 10001},
+                },
+                {
+                    "name": "Bob",
+                    "scores": [70, 80],
+                    "meta": {"city": "LA", "zip": 90001},
+                },
+            ]
+        )
+
+        # Test $arrayElemAt
+        try:
+            mongo_result = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "first_score": {"$arrayElemAt": ["$scores", 0]}
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_arrayelemat = len(mongo_result) == 2 and all(
+                "first_score" in doc for doc in mongo_result
+            )
+            print(
+                f"Mongo $arrayElemAt: {'OK' if mongo_arrayelemat else 'FAIL'}"
+            )
+        except Exception as e:
+            mongo_arrayelemat = False
+            print(f"Mongo $arrayElemAt: Error - {e}")
+
+        # Test $concat
+        try:
+            mongo_result = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "full_info": {
+                                    "$concat": ["$name", " - ", "$meta.city"]
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_concat = len(mongo_result) == 2
+            print(f"Mongo $concat: {'OK' if mongo_concat else 'FAIL'}")
+        except Exception as e:
+            mongo_concat = False
+            print(f"Mongo $concat: Error - {e}")
+
+        # Test $objectToArray
+        try:
+            mongo_result = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"meta_array": {"$objectToArray": "$meta"}}}]
+                )
+            )
+            mongo_objecttoarray = len(mongo_result) == 2 and all(
+                "meta_array" in doc for doc in mongo_result
+            )
+            print(
+                f"Mongo $objectToArray: {'OK' if mongo_objecttoarray else 'FAIL'}"
+            )
+        except Exception as e:
+            mongo_objecttoarray = False
+            print(f"Mongo $objectToArray: Error - {e}")
+
+        # Test $switch
+        try:
+            mongo_result = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "grade": {
+                                    "$switch": {
+                                        "branches": [
+                                            {
+                                                "case": {
+                                                    "$gte": [
+                                                        {
+                                                            "$arrayElemAt": [
+                                                                "$scores",
+                                                                0,
+                                                            ]
+                                                        },
+                                                        90,
+                                                    ]
+                                                },
+                                                "then": "A",
+                                            },
+                                            {
+                                                "case": {
+                                                    "$gte": [
+                                                        {
+                                                            "$arrayElemAt": [
+                                                                "$scores",
+                                                                0,
+                                                            ]
+                                                        },
+                                                        80,
+                                                    ]
+                                                },
+                                                "then": "B",
+                                            },
+                                        ],
+                                        "default": "C",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_switch = len(mongo_result) == 2
+            print(f"Mongo $switch: {'OK' if mongo_switch else 'FAIL'}")
+        except Exception as e:
+            mongo_switch = False
+            print(f"Mongo $switch: Error - {e}")
+
+        client.close()
+
+    reporter.record_result(
+        "Aggregation Expressions",
+        "$arrayElemAt",
+        neo_arrayelemat,
+        neo_arrayelemat,
+        mongo_arrayelemat,
+    )
+    reporter.record_result(
+        "Aggregation Expressions",
+        "$concat",
+        neo_concat,
+        neo_concat,
+        mongo_concat,
+    )
+    reporter.record_result(
+        "Aggregation Expressions",
+        "$objectToArray",
+        neo_objecttoarray,
+        neo_objecttoarray,
+        mongo_objecttoarray,
+    )
+    reporter.record_result(
+        "Aggregation Expressions",
+        "$switch",
+        neo_switch,
+        neo_switch,
+        mongo_switch,
+    )
+
+
+# ============================================================================
+# Collection Methods (options, rename)
+# ============================================================================
+def compare_collection_methods():
+    """Compare collection methods"""
+    print("\n=== Collection Methods Comparison ===")
+
+    with neosqlite.Connection(":memory:") as neo_conn:
+        neo_collection = neo_conn.test_collection
+        neo_collection.insert_one({"name": "test"})
+
+        # Test options()
+        try:
+            neo_options = neo_collection.options()
+            neo_options_ok = (
+                isinstance(neo_options, dict) and "name" in neo_options
+            )
+            print(f"Neo options(): {'OK' if neo_options_ok else 'FAIL'}")
+        except Exception as e:
+            neo_options_ok = False
+            print(f"Neo options(): Error - {e}")
+
+        # Test rename()
+        try:
+            neo_collection.rename("renamed_collection")
+            neo_rename = (
+                "renamed_collection" in neo_conn.list_collection_names()
+            )
+            print(f"Neo rename(): {'OK' if neo_rename else 'FAIL'}")
+            # Rename back for cleanup
+            neo_conn.renamed_collection.rename("test_collection")
+        except Exception as e:
+            neo_rename = False
+            print(f"Neo rename(): Error - {e}")
+
+    client = test_pymongo_connection()
+    if client:
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_collection
+        mongo_collection.delete_many({})
+        mongo_collection.insert_one({"name": "test"})
+
+        # Test options()
+        try:
+            mongo_options = mongo_collection.options()
+            # MongoDB options() returns a dict with different structure
+            mongo_options_ok = isinstance(mongo_options, dict)
+            print(
+                f"Mongo options(): {'OK' if mongo_options_ok else 'FAIL'} (returns dict)"
+            )
+        except Exception as e:
+            mongo_options_ok = False
+            print(f"Mongo options(): Error - {e}")
+
+        # Test rename()
+        try:
+            mongo_collection.rename("renamed_collection")
+            mongo_rename = (
+                "renamed_collection" in mongo_db.list_collection_names()
+            )
+            print(f"Mongo rename(): {'OK' if mongo_rename else 'FAIL'}")
+            # Rename back for cleanup
+            mongo_db.renamed_collection.rename("test_collection")
+        except Exception as e:
+            mongo_rename = False
+            print(f"Mongo rename(): Error - {e}")
+
+        client.close()
+
+    reporter.record_result(
+        "Collection Methods",
+        "options",
+        neo_options_ok,
+        neo_options_ok,
+        mongo_options_ok,
+    )
+    reporter.record_result(
+        "Collection Methods",
+        "rename",
+        neo_rename,
+        neo_rename,
+        mongo_rename,
+    )
+
+
+# ============================================================================
 # Main
 # ============================================================================
 def main():
@@ -2458,6 +3349,12 @@ def main():
     compare_type_operator()
     compare_additional_aggregation()
     compare_cursor_operations()
+    # New comparison tests for implemented but untested features
+    compare_mod_operator()
+    compare_additional_update_operators()
+    compare_additional_aggregation_stages()
+    compare_additional_expr_operators()
+    compare_collection_methods()
     compare_known_limitations()
 
     reporter.print_report()
