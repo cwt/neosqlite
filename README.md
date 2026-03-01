@@ -44,7 +44,7 @@ To run the API comparison tests, install PyMongo first and ensure that either Po
 ./scripts/run-api-comparison.sh
 ```
 
-For more details, see [`examples/api_comparison_comprehensive.py`](examples/api_comparison_comprehensive.py).
+For more details, see the [`examples/api_comparison/`](examples/api_comparison/) package and [`examples/api_comparison/README.md`](examples/api_comparison/README.md).
 
 ## Performance Benchmarks
 

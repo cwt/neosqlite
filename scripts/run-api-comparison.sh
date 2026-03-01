@@ -24,7 +24,7 @@ NC='\033[0m' # No Color
 MONGODB_PORT=27017
 MONGODB_IMAGE="mongo:latest"
 CONTAINER_NAME="neosqlite_mongodb_test"
-COMPARISON_SCRIPT="$(dirname "$0")/../examples/api_comparison_comprehensive.py"
+COMPARISON_SCRIPT="$(dirname "$0")/../examples/api_comparison_main.py"
 
 # Container runtime (podman preferred over docker)
 CONTAINER_RUNTIME=""
@@ -263,9 +263,10 @@ run_comparison() {
     # Make sure the script is executable
     chmod +x "$COMPARISON_SCRIPT"
 
-    # Run the comparison script
+    # Run the comparison script from the examples directory
     # The script will exit with non-zero if there are incompatibilities
-    if python3 "$COMPARISON_SCRIPT"; then
+    SCRIPT_DIR="$(dirname "$COMPARISON_SCRIPT")"
+    if (cd "$SCRIPT_DIR" && python3 api_comparison_main.py); then
         success "API comparison completed - 100% compatible!"
         return 0
     else
