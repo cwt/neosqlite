@@ -11,6 +11,8 @@ Submodules
    neosqlite.collection.cursor
    neosqlite.collection.datetime_query_processor
    neosqlite.collection.datetime_utils
+   neosqlite.collection.expr_evaluator
+   neosqlite.collection.expr_temp_table
    neosqlite.collection.index_manager
    neosqlite.collection.json_helpers
    neosqlite.collection.json_path_utils
@@ -18,6 +20,7 @@ Submodules
    neosqlite.collection.query_engine
    neosqlite.collection.query_helper
    neosqlite.collection.raw_batch_cursor
+   neosqlite.collection.sql_tier_aggregator
    neosqlite.collection.sql_translator_unified
    neosqlite.collection.temporary_table_aggregation
    neosqlite.collection.text_search
