@@ -756,12 +756,29 @@ class Collection:
         """
         return self.query_engine.find_one_and_update(filter, update)
 
-    def aggregate(self, pipeline: List[Dict[str, Any]]) -> AggregationCursor:
+    def aggregate(
+        self,
+        pipeline: List[Dict[str, Any]],
+        allowDiskUse: bool | None = None,
+        batchSize: int | None = None,
+        **kwargs: Any,
+    ) -> AggregationCursor:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.aggregate`.
+
+        Args:
+            pipeline: The aggregation pipeline to execute
+            allowDiskUse: Ignored in NeoSQLite (kept for PyMongo compatibility)
+            batchSize: Batch size for results (kept for PyMongo compatibility)
+            **kwargs: Additional keyword arguments for PyMongo compatibility
+
+        Returns:
+            An AggregationCursor instance
         """
-        return AggregationCursor(self, pipeline)
+        return AggregationCursor(
+            self, pipeline, allowDiskUse, batchSize, **kwargs
+        )
 
     def aggregate_raw_batches(
         self,

@@ -3350,3 +3350,47 @@ def test_facet_with_expressions_in_subpipeline():
                 assert doc["revenue"] >= 500
         finally:
             set_force_fallback(False)
+
+
+def test_aggregate_pymongo_compatibility_params(collection):
+    """Test that aggregate() accepts PyMongo-compatible parameters.
+
+    These parameters are accepted for API compatibility but don't affect
+    NeoSQLite's behavior.
+    """
+    collection.insert_many([{"value": i} for i in range(10)])
+
+    # Test allowDiskUse parameter (accepted but ignored)
+    cursor = collection.aggregate(
+        [{"$match": {"value": {"$gte": 5}}}], allowDiskUse=True
+    )
+    results = list(cursor)
+    assert len(results) == 5
+
+    # Test allowDiskUse=False (also accepted)
+    cursor = collection.aggregate(
+        [{"$match": {"value": {"$gte": 5}}}], allowDiskUse=False
+    )
+    results = list(cursor)
+    assert len(results) == 5
+
+    # Test batchSize parameter (accepted but ignored)
+    cursor = collection.aggregate(
+        [{"$match": {"value": {"$gte": 5}}}], batchSize=3
+    )
+    results = list(cursor)
+    assert len(results) == 5
+
+    # Test both parameters together
+    cursor = collection.aggregate(
+        [{"$match": {"value": {"$gte": 5}}}], allowDiskUse=True, batchSize=5
+    )
+    results = list(cursor)
+    assert len(results) == 5
+
+    # Test that method chaining still works
+    cursor = collection.aggregate(
+        [{"$match": {"value": {"$gte": 5}}}]
+    ).allow_disk_use(True)
+    results = list(cursor)
+    assert len(results) == 5

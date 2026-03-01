@@ -22,13 +22,23 @@ class AggregationCursor:
     allowing iteration over aggregation results.
     """
 
-    def __init__(self, collection: Collection, pipeline: List[Dict[str, Any]]):
+    def __init__(
+        self,
+        collection: Collection,
+        pipeline: List[Dict[str, Any]],
+        allowDiskUse: bool | None = None,
+        batchSize: int | None = None,
+        **kwargs: Any,
+    ):
         """
         Initialize the AggregationCursor.
 
         Args:
             collection: The collection to run the aggregation on
             pipeline: The aggregation pipeline to execute
+            allowDiskUse: Ignored in NeoSQLite (kept for PyMongo compatibility)
+            batchSize: Batch size for results (kept for PyMongo compatibility)
+            **kwargs: Additional keyword arguments for PyMongo compatibility
         """
         self.collection = collection
         self.pipeline = pipeline
@@ -36,10 +46,12 @@ class AggregationCursor:
         self._position = 0
         self._executed = False
         # Memory constraint settings
-        self._batch_size = 1000
+        self._batch_size = batchSize if batchSize is not None else 1000
         self._memory_threshold = 100 * 1024 * 1024  # 100MB default threshold
         # Quez settings
         self._use_quez = False
+        # Store allowDiskUse for API compatibility (ignored in NeoSQLite)
+        self._allow_disk_use = allowDiskUse
 
     def __iter__(self) -> Iterator[Dict[str, Any]]:
         """
@@ -294,16 +306,16 @@ class AggregationCursor:
         """
         Enable or disable disk use for aggregation operations.
 
-        This is a placeholder method for API compatibility with PyMongo.
-        NeoSQLite handles memory management differently.
+        This method supports both method chaining (PyMongo fluent style)
+        and is also settable via the allowDiskUse parameter to aggregate().
 
         Args:
-            allow: Whether to allow disk use (ignored)
+            allow: Whether to allow disk use
 
         Returns:
             The cursor itself for chaining
         """
-        # Placeholder for API compatibility
+        self._allow_disk_use = allow
         return self
 
     def use_quez(self, use_quez: bool = True) -> AggregationCursor:

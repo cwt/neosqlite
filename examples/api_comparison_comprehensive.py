@@ -4619,8 +4619,16 @@ def compare_additional_aggregation_stages_extended():
         neo_collection = neo_conn.test_agg_stages
         neo_collection.insert_many(
             [
-                {"name": {"first": "John", "last": "Doe"}, "age": 30},
-                {"name": {"first": "Jane", "last": "Smith"}, "age": 25},
+                {
+                    "name": {"first": "John", "last": "Doe"},
+                    "age": 30,
+                    "extra": "remove_me",
+                },
+                {
+                    "name": {"first": "Jane", "last": "Smith"},
+                    "age": 25,
+                    "extra": "remove_me",
+                },
             ]
         )
 
@@ -4636,6 +4644,45 @@ def compare_additional_aggregation_stages_extended():
         except Exception as e:
             neo_replaceroot = False
             print(f"Neo $replaceRoot: Error - {e}")
+
+        # Test $replaceWith (alias for $replaceRoot in MongoDB 5.0+)
+        neo_collection.insert_one(
+            {
+                "name": {"first": "Bob", "last": "Jones"},
+                "age": 35,
+                "extra": "remove_me",
+            }
+        )
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [
+                        {"$match": {"name.last": "Jones"}},
+                        {"$replaceWith": "$name"},
+                    ]
+                )
+            )
+            neo_replacewith = len(result) == 1 and "first" in result[0]
+            print(f"Neo $replaceWith: {'OK' if neo_replacewith else 'FAIL'}")
+        except Exception as e:
+            neo_replacewith = False
+            print(f"Neo $replaceWith: Error - {e}")
+
+        # Test $unset (aggregation stage)
+        neo_collection.delete_many({})
+        neo_collection.insert_many(
+            [
+                {"name": "John", "age": 30, "secret": "hidden1"},
+                {"name": "Jane", "age": 25, "secret": "hidden2"},
+            ]
+        )
+        try:
+            result = list(neo_collection.aggregate([{"$unset": ["secret"]}]))
+            neo_unset = len(result) == 2 and "secret" not in result[0]
+            print(f"Neo $unset: {'OK' if neo_unset else 'FAIL'}")
+        except Exception as e:
+            neo_unset = False
+            print(f"Neo $unset: Error - {e}")
 
         # Test $count
         try:
@@ -4653,8 +4700,16 @@ def compare_additional_aggregation_stages_extended():
         mongo_collection.delete_many({})
         mongo_collection.insert_many(
             [
-                {"name": {"first": "John", "last": "Doe"}, "age": 30},
-                {"name": {"first": "Jane", "last": "Smith"}, "age": 25},
+                {
+                    "name": {"first": "John", "last": "Doe"},
+                    "age": 30,
+                    "extra": "remove_me",
+                },
+                {
+                    "name": {"first": "Jane", "last": "Smith"},
+                    "age": 25,
+                    "extra": "remove_me",
+                },
             ]
         )
 
@@ -4673,6 +4728,47 @@ def compare_additional_aggregation_stages_extended():
             mongo_replaceroot = False
             print(f"Mongo $replaceRoot: Error - {e}")
 
+        # Test $replaceWith (MongoDB 5.0+)
+        mongo_collection.insert_one(
+            {
+                "name": {"first": "Bob", "last": "Jones"},
+                "age": 35,
+                "extra": "remove_me",
+            }
+        )
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [
+                        {"$match": {"name.last": "Jones"}},
+                        {"$replaceWith": "$name"},
+                    ]
+                )
+            )
+            mongo_replacewith = len(result) == 1 and "first" in result[0]
+            print(
+                f"Mongo $replaceWith: {'OK' if mongo_replacewith else 'FAIL'}"
+            )
+        except Exception as e:
+            mongo_replacewith = False
+            print(f"Mongo $replaceWith: Error - {e}")
+
+        # Test $unset (aggregation stage)
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many(
+            [
+                {"name": "John", "age": 30, "secret": "hidden1"},
+                {"name": "Jane", "age": 25, "secret": "hidden2"},
+            ]
+        )
+        try:
+            result = list(mongo_collection.aggregate([{"$unset": ["secret"]}]))
+            mongo_unset = len(result) == 2 and "secret" not in result[0]
+            print(f"Mongo $unset: {'OK' if mongo_unset else 'FAIL'}")
+        except Exception as e:
+            mongo_unset = False
+            print(f"Mongo $unset: Error - {e}")
+
         # Test $count
         try:
             result = list(mongo_collection.aggregate([{"$count": "total"}]))
@@ -4690,6 +4786,20 @@ def compare_additional_aggregation_stages_extended():
             neo_replaceroot,
             neo_replaceroot,
             mongo_replaceroot,
+        )
+        reporter.record_result(
+            "Aggregation Stages Extended",
+            "$replaceWith",
+            neo_replacewith,
+            neo_replacewith,
+            mongo_replacewith,
+        )
+        reporter.record_result(
+            "Aggregation Stages Extended",
+            "$unset",
+            neo_unset,
+            neo_unset,
+            mongo_unset,
         )
         reporter.record_result(
             "Aggregation Stages Extended",
@@ -5216,11 +5326,11 @@ def compare_aggregation_cursor_methods():
             neo_agg_batch_size = False
             print(f"Neo aggregate batch_size: Error - {e}")
 
-        # Test allow_disk_use
+        # Test allow_disk_use (PyMongo style: parameter to aggregate())
         try:
             cursor = neo_collection.aggregate(
-                [{"$match": {"value": {"$gte": 3}}}]
-            ).allow_disk_use(True)
+                [{"$match": {"value": {"$gte": 3}}}], allowDiskUse=True
+            )
             results = list(cursor)
             neo_allow_disk_use = len(results) >= 0
             print(
@@ -5251,11 +5361,11 @@ def compare_aggregation_cursor_methods():
             mongo_agg_batch_size = False
             print(f"Mongo aggregate batch_size: Error - {e}")
 
-        # Test allow_disk_use
+        # Test allow_disk_use (PyMongo style: parameter to aggregate())
         try:
             cursor = mongo_collection.aggregate(
-                [{"$match": {"value": {"$gte": 3}}}]
-            ).allow_disk_use(True)
+                [{"$match": {"value": {"$gte": 3}}}], allowDiskUse=True
+            )
             results = list(cursor)
             mongo_allow_disk_use = len(results) >= 0
             print(
