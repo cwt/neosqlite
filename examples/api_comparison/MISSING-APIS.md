@@ -66,8 +66,8 @@ examples/api_comparison/
 ## Latest Update: March 2, 2026
 
 **Test Results Summary:**
-- **Total Tests Run**: 254
-- **Passed**: 247
+- **Total Tests Run**: 262
+- **Passed**: 255
 - **Skipped**: 7 (known limitations)
 - **Failed**: 0
 - **Compatibility**: **100.0%**
@@ -78,18 +78,18 @@ examples/api_comparison/
 
 | Category | Missing Count | Priority | Status |
 |----------|--------------|----------|--------|
-| Aggregation Operators | 9 | Medium | Mostly Complete |
+| Aggregation Operators | 0 | - | ✅ Complete |
 | Aggregation Stages | 0 | - | ✅ Complete |
 | Update Operators | 4 | Medium | Mostly Complete |
 | Query Operators | 0 | - | ✅ Complete |
 | Collection Methods | 2 | Low | Mostly Complete |
 | Database Methods | 0 | - | ✅ Complete |
-| Special Features | 7+ | Low | Not Started |
-| **Total** | **~22** | - | **~91% Coverage** |
+| Special Features | 8+ | Low | Not Started |
+| **Total** | **~14** | - | **~95% Coverage** |
 
 ---
 
-## 1. Aggregation Operators (~9 missing)
+## 1. Aggregation Operators (✅ Complete)
 
 ### 1.1 Array Transformation Operators ⭐ HIGH PRIORITY
 - [x] `$filter` - Filters array based on condition (tested in array_operators.py)
@@ -112,9 +112,9 @@ examples/api_comparison/
 - [x] `$ltrim` - Trims whitespace from left (tested in string_operators.py)
 - [x] `$rtrim` - Trims whitespace from right (tested in string_operators.py)
 - [x] `$indexOfBytes` - Returns byte position of substring (tested in expr_complete.py)
-- [ ] `$indexOfCP` - Returns code point position of substring
+- [x] `$indexOfCP` - Returns code point position of substring (tested in string_operators.py)
 - [x] `$regexFind` - Finds first regex match (tested in string_operators.py)
-- [ ] `$regexFindAll` - Finds all regex matches
+- [x] `$regexFindAll` - Finds all regex matches (tested in string_operators.py)
 - [x] `$regexMatch` - Tests regex match (tested in expr_complete.py)
 - [x] `$split` - Splits string by delimiter (tested in string_operators.py)
 - [x] `$replaceAll` - Replaces all occurrences of substring (tested in string_operators.py)
@@ -145,12 +145,12 @@ examples/api_comparison/
 - [x] `$toBool` - Converts to boolean (tested in expr.py)
 - [x] `$toUpper` - Converts to uppercase (tested in expr.py)
 - [x] `$toLower` - Converts to lowercase (tested in expr.py)
-- [ ] `$toLong` - Converts to 64-bit integer
-- [ ] `$toDecimal` - Converts to decimal
-- [ ] `$toObjectId` - Converts to ObjectId
-- [ ] `$toBinData` - Converts to Binary
-- [ ] `$toRegex` - Converts to regex pattern
-- [ ] `$convert` - General type conversion
+- [x] `$toLong` - Converts to 64-bit integer (tested in expr_complete.py)
+- [x] `$toDecimal` - Converts to decimal (tested in expr_complete.py)
+- [x] `$toObjectId` - Converts to ObjectId (tested in expr_complete.py)
+- [x] `$toBinData` - Converts to Binary (tested in expr_complete.py)
+- [x] `$toRegex` - Converts to regex pattern (tested in expr_complete.py)
+- [x] `$convert` - General type conversion (tested in expr_complete.py)
 
 ### 1.7 Math Operators ⭐ MEDIUM PRIORITY
 - [x] `$pow` - Raises a number to an exponent (tested in math_operators.py)
@@ -451,18 +451,19 @@ The following features are skipped during comparison testing due to architectura
 
 ### Phase 2: Medium Priority (Advanced Features) (COMPLETED ✅)
 - [x] Object operators: `$mergeObjects`, `$getField`, `$setField`, `$unsetField`, `$objectToArray`
-- [x] Type conversion: `$toString`, `$toInt`, `$toDouble`, `$toBool`, `$toUpper`, `$toLower`
+- [x] Type conversion: `$toString`, `$toInt`, `$toDouble`, `$toBool`, `$toUpper`, `$toLower`, `$toLong`, `$toDecimal`, `$toObjectId`, `$toBinData`, `$toRegex`, `$convert`
 - [x] Math operators: `$pow`, `$sqrt`, `$exp`, `$abs`, `$ceil`, `$floor`, `$trunc`, `$ln`, `$log`, `$log10`, `$round`
 - [x] Conditional: `$switch`, `$cond`, `$ifNull`
 - [x] Query operators: `$nor`, `$text`, `$mod`, `$elemMatch`
 - [x] Collection/Database methods
+- [x] String operators: `$indexOfCP`, `$regexFindAll`
 
 ### Phase 3: Low Priority (Specialized/Extensions) (COMPLETED ✅)
 - [x] Advanced trigonometric functions ($sin, $cos, $tan, $asin, $acos, $atan, $atan2, $sinh, $cosh, $tanh)
 - [x] Inverse hyperbolic functions ($asinh, $acosh, $atanh)
 - [x] Angle conversion operators ($degreesToRadians, $radiansToDegrees)
 - [x] NeoSQLite extensions (`$log2`, `$sigmoid`)
-- [ ] GridFS enhanced features
+- [ ] GridFS enhanced features (partially complete)
 - [ ] Binary data UUID methods
 - [ ] Custom tokenizers
 
@@ -474,8 +475,8 @@ The following features are skipped during comparison testing due to architectura
 
 | Metric | Value |
 |--------|-------|
-| **Total Tests** | 254 |
-| **Passed** | 247 |
+| **Total Tests** | 262 |
+| **Passed** | 255 |
 | **Skipped** | 7 |
 | **Failed** | 0 |
 | **Compatibility** | **100.0%** |
@@ -484,20 +485,17 @@ The following features are skipped during comparison testing due to architectura
 
 | Category | Missing Items | Priority |
 |----------|---------------|----------|
-| Type Conversion | `$toLong`, `$toDecimal`, `$toObjectId`, `$toBinData`, `$toRegex`, `$convert` | Medium |
-| String | `$indexOfCP`, `$regexFindAll` | Low |
 | Collection Methods | `Collection.watch()`, `AggregationCursor.use_quez()` | Low |
 | GridFS | `get_last_version()`, `list()`, `find_one()`, `get()`, content_type, aliases | Low |
 | Binary | `from_uuid()`, `as_uuid()`, subtypes | Low |
 | Advanced | Custom FTS5 Tokenizers, `use_quez()` | Low |
 | Update Modifiers | `$each`, `$position`, `$slice`, `$bit` | Medium |
 
-**Total Remaining**: ~22 features
+**Total Remaining**: ~14 features
 
 ### Next Steps
 
 1. **Update Modifiers** (Medium Priority): Implement `$push $each`, `$push $position`, `$push $slice`, `$bit`
-2. **Type Conversion** (Medium Priority): Add tests for `$toLong`, `$toDecimal`, `$toObjectId`, `$toBinData`, `$toRegex`, `$convert`
-3. **GridFS Enhancement** (Low Priority): Add tests for `get_last_version()`, `list()`, `find_one()`
-4. **Binary UUID Support** (Low Priority): Add tests for `from_uuid()`, `as_uuid()`
-5. **String Operators** (Low Priority): Add tests for `$indexOfCP`, `$regexFindAll`
+2. **GridFS Enhancement** (Low Priority): Add tests for `get_last_version()`, `list()`, `find_one()`
+3. **Binary UUID Support** (Low Priority): Add tests for `from_uuid()`, `as_uuid()`
+4. **Custom Tokenizers** (Low Priority): Add support for language-specific FTS5 tokenizers
