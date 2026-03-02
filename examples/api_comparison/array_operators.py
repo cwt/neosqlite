@@ -76,18 +76,92 @@ def compare_array_operators():
             neo_filter = False
             print(f"Neo $filter: Error - {e}")
 
+        # Test $map
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "doubled": {
+                                    "$map": {
+                                        "input": "$scores",
+                                        "as": "score",
+                                        "in": {"$multiply": ["$$score", 2]},
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            neo_map = len(result) == 2
+            print(f"Neo $map: {'OK' if neo_map else 'FAIL'}")
+        except Exception as e:
+            neo_map = False
+            print(f"Neo $map: Error - {e}")
+
+        # Test $reduce
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "total": {
+                                    "$reduce": {
+                                        "input": "$scores",
+                                        "initialValue": 0,
+                                        "in": {"$add": ["$$value", "$$this"]},
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            neo_reduce = len(result) == 2
+            print(f"Neo $reduce: {'OK' if neo_reduce else 'FAIL'}")
+        except Exception as e:
+            neo_reduce = False
+            print(f"Neo $reduce: Error - {e}")
+
+        # Test $slice
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [{"$project": {"first_two": {"$slice": ["$scores", 2]}}}]
+                )
+            )
+            neo_slice = len(result) == 2
+            print(f"Neo $slice: {'OK' if neo_slice else 'FAIL'}")
+        except Exception as e:
+            neo_slice = False
+            print(f"Neo $slice: Error - {e}")
+
+        # Test $indexOfArray
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [{"$project": {"pos": {"$indexOfArray": ["$scores", 20]}}}]
+                )
+            )
+            neo_indexofarray = len(result) == 2
+            print(f"Neo $indexOfArray: {'OK' if neo_indexofarray else 'FAIL'}")
+        except Exception as e:
+            neo_indexofarray = False
+            print(f"Neo $indexOfArray: Error - {e}")
+
     client = test_pymongo_connection()
-    # Initialize MongoDB result variables
-
     mongo_collection = None
-
     mongo_db = None
-
     mongo_filter = None
-
     mongo_first = None
-
     mongo_last = None
+    mongo_map = None
+    mongo_reduce = None
+    mongo_slice = None
+    mongo_indexofarray = None
 
     if client:
         mongo_db = client.test_database
@@ -151,6 +225,84 @@ def compare_array_operators():
             mongo_filter = False
             print(f"Mongo $filter: Error - {e}")
 
+        # Test $map
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "doubled": {
+                                    "$map": {
+                                        "input": "$scores",
+                                        "as": "score",
+                                        "in": {"$multiply": ["$$score", 2]},
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_map = len(result) == 2
+            print(f"Mongo $map: {'OK' if mongo_map else 'FAIL'}")
+        except Exception as e:
+            mongo_map = False
+            print(f"Mongo $map: Error - {e}")
+
+        # Test $reduce
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "total": {
+                                    "$reduce": {
+                                        "input": "$scores",
+                                        "initialValue": 0,
+                                        "in": {"$add": ["$$value", "$$this"]},
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_reduce = len(result) == 2
+            print(f"Mongo $reduce: {'OK' if mongo_reduce else 'FAIL'}")
+        except Exception as e:
+            mongo_reduce = False
+            print(f"Mongo $reduce: Error - {e}")
+
+        # Test $slice
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"first_two": {"$slice": ["$scores", 2]}}}]
+                )
+            )
+            mongo_slice = len(result) == 2
+            print(f"Mongo $slice: {'OK' if mongo_slice else 'FAIL'}")
+        except Exception as e:
+            mongo_slice = False
+            print(f"Mongo $slice: Error - {e}")
+
+        # Test $indexOfArray
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"pos": {"$indexOfArray": ["$scores", 20]}}}]
+                )
+            )
+            mongo_indexofarray = len(result) == 2
+            print(
+                f"Mongo $indexOfArray: {'OK' if mongo_indexofarray else 'FAIL'}"
+            )
+        except Exception as e:
+            mongo_indexofarray = False
+            print(f"Mongo $indexOfArray: Error - {e}")
+
         client.close()
 
         reporter.record_result(
@@ -161,4 +313,20 @@ def compare_array_operators():
         )
         reporter.record_result(
             "Array Operators", "$filter", neo_filter, neo_filter, mongo_filter
+        )
+        reporter.record_result(
+            "Array Operators", "$map", neo_map, neo_map, mongo_map
+        )
+        reporter.record_result(
+            "Array Operators", "$reduce", neo_reduce, neo_reduce, mongo_reduce
+        )
+        reporter.record_result(
+            "Array Operators", "$slice", neo_slice, neo_slice, mongo_slice
+        )
+        reporter.record_result(
+            "Array Operators",
+            "$indexOfArray",
+            neo_indexofarray,
+            neo_indexofarray,
+            mongo_indexofarray,
         )

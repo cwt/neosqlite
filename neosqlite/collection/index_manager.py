@@ -67,6 +67,30 @@ class IndexManager:
                 self._create_datetime_index(key, unique=unique)
             else:
                 raise ValueError("Compound datetime indexes are not supported")
+        elif (
+            isinstance(key, list)
+            and len(key) == 1
+            and isinstance(key[0], tuple)
+        ):
+            # Handle MongoDB tuple format: [("field", "type")]
+            field, index_type = key[0]
+            if index_type == "text":
+                self._create_fts_index(field, tokenizer)
+            else:
+                # Create index name (replace dots with underscores for valid identifiers)
+                index_name = field.replace(".", "_")
+
+                # Determine which function to use based on JSONB support
+                func_prefix = _get_json_function_prefix(self._jsonb_supported)
+
+                # Create the index using appropriate JSON/JSONB function
+                self.collection.db.execute(
+                    (
+                        f"CREATE {'UNIQUE ' if unique else ''}INDEX "
+                        f"IF NOT EXISTS [idx_{self.collection.name}_{index_name}] "
+                        f"ON {self.collection.name}({func_prefix}_extract(data, '$.{field}'))"
+                    )
+                )
         elif isinstance(key, str):
             if fts:
                 # Create FTS index with optional tokenizer

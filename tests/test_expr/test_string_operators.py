@@ -342,3 +342,105 @@ class TestStringOperatorsSQL:
         sql, params = evaluator._evaluate_sql_tier1(expr)
         assert sql is not None
         assert "replace" in sql
+
+
+class TestReplaceOneOperator:
+    """Test $replaceOne operator with dict format."""
+
+    def test_replaceone_dict_format_sql(self):
+        """Test $replaceOne with dict format SQL conversion."""
+        evaluator = ExprEvaluator()
+        expr = {
+            "$replaceOne": {
+                "input": "$text",
+                "find": "old",
+                "replacement": "new",
+            }
+        }
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "instr" in sql
+        assert "substr" in sql
+
+    def test_replaceone_dict_format_python(self):
+        """Test $replaceOne with dict format in Python."""
+        evaluator = ExprEvaluator()
+        expr = {
+            "$replaceOne": {
+                "input": "$text",
+                "find": "l",
+                "replacement": "L",
+            }
+        }
+        result = evaluator._evaluate_expr_python(expr, {"text": "hello world"})
+        assert result == "heLlo world"  # Only first 'l' replaced
+
+    def test_replaceone_list_format_python(self):
+        """Test $replaceOne with list format in Python."""
+        evaluator = ExprEvaluator()
+        expr = {"$replaceOne": ["$text", "l", "L"]}
+        result = evaluator._evaluate_expr_python(expr, {"text": "hello world"})
+        assert result == "heLlo world"  # Only first 'l' replaced
+
+    def test_replaceone_multiple_matches_python(self):
+        """Test $replaceOne only replaces first occurrence."""
+        evaluator = ExprEvaluator()
+        expr = {
+            "$replaceOne": {
+                "input": "$text",
+                "find": "test",
+                "replacement": "TEST",
+            }
+        }
+        result = evaluator._evaluate_expr_python(
+            expr, {"text": "test this test"}
+        )
+        assert result == "TEST this test"  # Only first 'test' replaced
+
+    def test_replaceone_no_match_python(self):
+        """Test $replaceOne when no match found."""
+        evaluator = ExprEvaluator()
+        expr = {
+            "$replaceOne": {
+                "input": "$text",
+                "find": "xyz",
+                "replacement": "XYZ",
+            }
+        }
+        result = evaluator._evaluate_expr_python(expr, {"text": "hello world"})
+        assert result == "hello world"  # No change
+
+    def test_replaceone_integration(self, collection):
+        """Test $replaceOne in actual aggregation pipeline."""
+        collection.insert_many(
+            [
+                {"text": "hello world"},
+                {"text": "foo bar"},
+                {"text": "test test test"},
+            ]
+        )
+
+        # Check that replaceOne works in aggregation projection
+        result = list(
+            collection.aggregate(
+                [
+                    {
+                        "$project": {
+                            "text": 1,
+                            "replaced": {
+                                "$replaceOne": {
+                                    "input": "$text",
+                                    "find": " ",
+                                    "replacement": "-",
+                                }
+                            },
+                        }
+                    }
+                ]
+            )
+        )
+        assert len(result) == 3
+        assert any(doc["replaced"] == "hello-world" for doc in result)
+        assert any(doc["replaced"] == "foo-bar" for doc in result)
+        # "test test test" should become "test-test test" (only first space replaced)
+        assert any(doc["replaced"] == "test-test test" for doc in result)

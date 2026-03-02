@@ -71,6 +71,8 @@ def compare_query_operators():
             ({"scores": {"$size": 3}}, "$size"),
             ({"name": {"$regex": "A.*"}}, "$regex"),
             ({"name": {"$contains": "li"}}, "$contains"),
+            # Additional missing operators
+            ({"$nor": [{"age": 30}, {"name": "Alice"}]}, "$nor"),
         ]
 
         neo_results = {}
@@ -80,6 +82,16 @@ def compare_query_operators():
                 neo_results[op_name] = len(result)
             except Exception as e:
                 neo_results[op_name] = f"Error: {e}"
+
+        # Test $text separately as it requires index creation
+        try:
+            neo_collection.create_index([("name", "text")])
+            result = list(neo_collection.find({"$text": {"$search": "Alice"}}))
+            neo_results["$text"] = len(result)
+            print(f"Neo $text: {len(result)} documents")
+        except Exception as e:
+            neo_results["$text"] = f"Error: {e}"
+            print(f"Neo $text: Error - {e}")
 
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
@@ -145,6 +157,18 @@ def compare_query_operators():
                 mongo_results[op_name] = len(result)
             except Exception as e:
                 mongo_results[op_name] = f"Error: {e}"
+
+        # Test $text separately for MongoDB
+        try:
+            mongo_collection.create_index([("name", "text")])
+            result = list(
+                mongo_collection.find({"$text": {"$search": "Alice"}})
+            )
+            mongo_results["$text"] = len(result)
+            print(f"Mongo $text: {len(result)} documents")
+        except Exception as e:
+            mongo_results["$text"] = f"Error: {e}"
+            print(f"Mongo $text: Error - {e}")
 
         for op_name in neo_results:
             neo_count = neo_results[op_name]

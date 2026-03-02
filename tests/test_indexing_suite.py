@@ -173,6 +173,65 @@ def test_create_indexes_on_nested_keys(collection):
     assert "idx_foo_foo_bar" in collection.list_indexes()
 
 
+def test_create_index_with_tuple_format(collection):
+    """Test create_index with MongoDB tuple format [("field", "type")]."""
+    collection.insert_many(
+        [
+            {"name": "Alice", "city": "New York"},
+            {"name": "Bob", "city": "Los Angeles"},
+            {"name": "Charlie", "city": "New York"},
+        ]
+    )
+
+    # Create text index using tuple format
+    collection.create_index([("name", "text")])
+
+    # Verify FTS table was created (FTS indexes use virtual tables)
+    cursor = collection.db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE ?",
+        (f"{collection.name}_%_fts",),
+    )
+    fts_tables = [row[0] for row in cursor.fetchall()]
+    assert any("name" in tbl for tbl in fts_tables)
+
+
+def test_create_index_with_tuple_format_fts_search(collection):
+    """Test text search with tuple format index."""
+    collection.insert_many(
+        [
+            {"name": "Alice Johnson", "city": "New York"},
+            {"name": "Bob Smith", "city": "Los Angeles"},
+            {"name": "Charlie Brown", "city": "New York"},
+        ]
+    )
+
+    # Create text index using tuple format
+    collection.create_index([("name", "text")])
+
+    # Search using regex (FTS $text search has limitations)
+    results = list(collection.find({"name": {"$regex": "Alice"}}))
+    assert len(results) == 1
+    assert results[0]["name"] == "Alice Johnson"
+
+
+def test_create_index_with_tuple_format_non_text(collection):
+    """Test create_index with tuple format for non-text index."""
+    collection.insert_many(
+        [
+            {"name": "Alice", "score": 100},
+            {"name": "Bob", "score": 85},
+            {"name": "Charlie", "score": 95},
+        ]
+    )
+
+    # Create regular index using tuple format
+    collection.create_index([("score", "asc")])
+
+    # Verify index was created
+    indexes = collection.list_indexes()
+    assert any("score" in idx for idx in indexes)
+
+
 # ================================
 # Index Information Tests
 # ================================

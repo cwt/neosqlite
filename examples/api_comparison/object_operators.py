@@ -76,16 +76,78 @@ def compare_object_operators():
             neo_getfield = False
             print(f"Neo $getField: Error - {e}")
 
+        # Test $setField
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "with_field": {
+                                    "$setField": {
+                                        "field": "newField",
+                                        "input": "$meta",
+                                        "value": "newValue",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            neo_setfield = len(result) == 2
+            print(f"Neo $setField: {'OK' if neo_setfield else 'FAIL'}")
+        except Exception as e:
+            neo_setfield = False
+            print(f"Neo $setField: Error - {e}")
+
+        # Test $unsetField
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "without_zip": {
+                                    "$unsetField": {
+                                        "field": "zip",
+                                        "input": "$meta",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            neo_unsetfield = len(result) == 2
+            print(f"Neo $unsetField: {'OK' if neo_unsetfield else 'FAIL'}")
+        except Exception as e:
+            neo_unsetfield = False
+            print(f"Neo $unsetField: Error - {e}")
+
+        # Test $objectToArray
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [{"$project": {"as_array": {"$objectToArray": "$meta"}}}]
+                )
+            )
+            neo_objecttoarray = len(result) == 2
+            print(
+                f"Neo $objectToArray: {'OK' if neo_objecttoarray else 'FAIL'}"
+            )
+        except Exception as e:
+            neo_objecttoarray = False
+            print(f"Neo $objectToArray: Error - {e}")
+
     client = test_pymongo_connection()
-    # Initialize MongoDB result variables
-
     mongo_collection = None
-
     mongo_db = None
-
     mongo_getfield = None
-
     mongo_mergeobjects = None
+    mongo_setfield = None
+    mongo_unsetfield = None
+    mongo_objecttoarray = None
 
     if client:
         mongo_db = client.test_database
@@ -151,6 +213,70 @@ def compare_object_operators():
             mongo_getfield = False
             print(f"Mongo $getField: Error - {e}")
 
+        # Test $setField
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "with_field": {
+                                    "$setField": {
+                                        "field": "newField",
+                                        "input": "$meta",
+                                        "value": "newValue",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_setfield = len(result) == 2
+            print(f"Mongo $setField: {'OK' if mongo_setfield else 'FAIL'}")
+        except Exception as e:
+            mongo_setfield = False
+            print(f"Mongo $setField: Error - {e}")
+
+        # Test $unsetField
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "without_zip": {
+                                    "$unsetField": {
+                                        "field": "zip",
+                                        "input": "$meta",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_unsetfield = len(result) == 2
+            print(f"Mongo $unsetField: {'OK' if mongo_unsetfield else 'FAIL'}")
+        except Exception as e:
+            mongo_unsetfield = False
+            print(f"Mongo $unsetField: Error - {e}")
+
+        # Test $objectToArray
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"as_array": {"$objectToArray": "$meta"}}}]
+                )
+            )
+            mongo_objecttoarray = len(result) == 2
+            print(
+                f"Mongo $objectToArray: {'OK' if mongo_objecttoarray else 'FAIL'}"
+            )
+        except Exception as e:
+            mongo_objecttoarray = False
+            print(f"Mongo $objectToArray: Error - {e}")
+
         client.close()
 
         reporter.record_result(
@@ -166,4 +292,25 @@ def compare_object_operators():
             neo_getfield,
             neo_getfield,
             mongo_getfield,
+        )
+        reporter.record_result(
+            "Object Operators",
+            "$setField",
+            neo_setfield,
+            neo_setfield,
+            mongo_setfield,
+        )
+        reporter.record_result(
+            "Object Operators",
+            "$unsetField",
+            neo_unsetfield,
+            neo_unsetfield,
+            mongo_unsetfield,
+        )
+        reporter.record_result(
+            "Object Operators",
+            "$objectToArray",
+            neo_objecttoarray,
+            neo_objecttoarray,
+            mongo_objecttoarray,
         )

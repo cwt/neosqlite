@@ -89,20 +89,118 @@ def compare_string_operators():
             neo_replaceall = False
             print(f"Neo $replaceAll: Error - {e}")
 
+        # Test $ltrim
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "left_trimmed": {"$ltrim": {"input": "$name"}}
+                            }
+                        }
+                    ]
+                )
+            )
+            neo_ltrim = len(result) == 2
+            print(f"Neo $ltrim: {'OK' if neo_ltrim else 'FAIL'}")
+        except Exception as e:
+            neo_ltrim = False
+            print(f"Neo $ltrim: Error - {e}")
+
+        # Test $rtrim
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "right_trimmed": {"$rtrim": {"input": "$name"}}
+                            }
+                        }
+                    ]
+                )
+            )
+            neo_rtrim = len(result) == 2
+            print(f"Neo $rtrim: {'OK' if neo_rtrim else 'FAIL'}")
+        except Exception as e:
+            neo_rtrim = False
+            print(f"Neo $rtrim: Error - {e}")
+
+        # Test $strLenCP
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [{"$project": {"name_len": {"$strLenCP": "$name"}}}]
+                )
+            )
+            neo_strlencp = len(result) == 2
+            print(f"Neo $strLenCP: {'OK' if neo_strlencp else 'FAIL'}")
+        except Exception as e:
+            neo_strlencp = False
+            print(f"Neo $strLenCP: Error - {e}")
+
+        # Test $regexFind
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "match": {
+                                    "$regexFind": {
+                                        "input": "$name",
+                                        "regex": "A",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            neo_regexfind = len(result) == 2
+            print(f"Neo $regexFind: {'OK' if neo_regexfind else 'FAIL'}")
+        except Exception as e:
+            neo_regexfind = False
+            print(f"Neo $regexFind: Error - {e}")
+
+        # Test $replaceOne
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "replaced": {
+                                    "$replaceOne": {
+                                        "input": "$city",
+                                        "find": " ",
+                                        "replacement": "-",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            neo_replaceone = len(result) == 2
+            print(f"Neo $replaceOne: {'OK' if neo_replaceone else 'FAIL'}")
+        except Exception as e:
+            neo_replaceone = False
+            print(f"Neo $replaceOne: Error - {e}")
+
     client = test_pymongo_connection()
-    # Initialize MongoDB result variables
-
     mongo_collection = None
-
     mongo_db = None
-
     mongo_replaceall = None
-
     mongo_split = None
-
     mongo_substr = None
-
     mongo_trim = None
+    mongo_ltrim = None
+    mongo_rtrim = None
+    mongo_strlencp = None
+    mongo_regexfind = None
+    mongo_replaceone = None
 
     if client:
         mongo_db = client.test_database
@@ -179,6 +277,106 @@ def compare_string_operators():
             mongo_replaceall = False
             print(f"Mongo $replaceAll: Error - {e}")
 
+        # Test $ltrim
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "left_trimmed": {"$ltrim": {"input": "$name"}}
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_ltrim = len(result) == 2
+            print(f"Mongo $ltrim: {'OK' if mongo_ltrim else 'FAIL'}")
+        except Exception as e:
+            mongo_ltrim = False
+            print(f"Mongo $ltrim: Error - {e}")
+
+        # Test $rtrim
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "right_trimmed": {"$rtrim": {"input": "$name"}}
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_rtrim = len(result) == 2
+            print(f"Mongo $rtrim: {'OK' if mongo_rtrim else 'FAIL'}")
+        except Exception as e:
+            mongo_rtrim = False
+            print(f"Mongo $rtrim: Error - {e}")
+
+        # Test $strLenCP
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"name_len": {"$strLenCP": "$name"}}}]
+                )
+            )
+            mongo_strlencp = len(result) == 2
+            print(f"Mongo $strLenCP: {'OK' if mongo_strlencp else 'FAIL'}")
+        except Exception as e:
+            mongo_strlencp = False
+            print(f"Mongo $strLenCP: Error - {e}")
+
+        # Test $regexFind
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "match": {
+                                    "$regexFind": {
+                                        "input": "$name",
+                                        "regex": "A",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_regexfind = len(result) == 2
+            print(f"Mongo $regexFind: {'OK' if mongo_regexfind else 'FAIL'}")
+        except Exception as e:
+            mongo_regexfind = False
+            print(f"Mongo $regexFind: Error - {e}")
+
+        # Test $replaceOne
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "replaced": {
+                                    "$replaceOne": {
+                                        "input": "$city",
+                                        "find": " ",
+                                        "replacement": "-",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_replaceone = len(result) == 2
+            print(f"Mongo $replaceOne: {'OK' if mongo_replaceone else 'FAIL'}")
+        except Exception as e:
+            mongo_replaceone = False
+            print(f"Mongo $replaceOne: Error - {e}")
+
         client.close()
 
         reporter.record_result(
@@ -196,4 +394,31 @@ def compare_string_operators():
             neo_replaceall,
             neo_replaceall,
             mongo_replaceall,
+        )
+        reporter.record_result(
+            "String Operators", "$ltrim", neo_ltrim, neo_ltrim, mongo_ltrim
+        )
+        reporter.record_result(
+            "String Operators", "$rtrim", neo_rtrim, neo_rtrim, mongo_rtrim
+        )
+        reporter.record_result(
+            "String Operators",
+            "$strLenCP",
+            neo_strlencp,
+            neo_strlencp,
+            mongo_strlencp,
+        )
+        reporter.record_result(
+            "String Operators",
+            "$regexFind",
+            neo_regexfind,
+            neo_regexfind,
+            mongo_regexfind,
+        )
+        reporter.record_result(
+            "String Operators",
+            "$replaceOne",
+            neo_replaceone,
+            neo_replaceone,
+            mongo_replaceone,
         )

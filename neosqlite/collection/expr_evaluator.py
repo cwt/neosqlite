@@ -1238,24 +1238,56 @@ class ExprEvaluator:
                 sql = f"replace({string_sql}, {find_sql}, {replace_sql})"
                 return sql, string_params + find_params + replace_params
             case "$replaceOne":
-                if len(operands) != 3:
-                    raise ValueError(
-                        "$replaceOne requires string, find, and replacement"
-                    )
+                # Handle MongoDB dict format: {input, find, replacement}
+                if isinstance(operands, dict):
+                    string_operand = operands.get("input")
+                    find_operand = operands.get("find")
+                    replace_operand = operands.get("replacement")
+                else:
+                    if len(operands) != 3:
+                        raise ValueError(
+                            "$replaceOne requires string, find, and replacement"
+                        )
+                    string_operand = operands[0]
+                    find_operand = operands[1]
+                    replace_operand = operands[2]
+
                 string_sql, string_params = self._convert_operand_to_sql(
-                    operands[0]
+                    string_operand
                 )
                 find_sql, find_params = self._convert_operand_to_sql(
-                    operands[1]
+                    find_operand
                 )
                 replace_sql, replace_params = self._convert_operand_to_sql(
-                    operands[2]
+                    replace_operand
                 )
-                # SQLite replace replaces all occurrences, same as replaceAll
-                # For replaceOne, we need a more complex approach - fall back to Python
-                raise NotImplementedError(
-                    "$replaceOne not supported in SQL tier (use Python fallback)"
+                # Use instr() and substr() to replace only first occurrence
+                # Note: string_sql and find_sql are used multiple times, so we
+                # need to duplicate params for each occurrence
+                sql = (
+                    f"CASE WHEN instr({string_sql}, {find_sql}) > 0 THEN "
+                    f"substr({string_sql}, 1, instr({string_sql}, {find_sql}) - 1) || "
+                    f"{replace_sql} || "
+                    f"substr({string_sql}, instr({string_sql}, {find_sql}) + length({find_sql})) "
+                    f"ELSE {string_sql} END"
                 )
+                # Duplicate params to match SQL order:
+                # 1. instr(string, find) - string_params + find_params
+                # 2. instr(string, find) - string_params + find_params
+                # 3. replace - replace_params
+                # 4. instr(string, find) - string_params + find_params
+                # 5. length(find) - find_params
+                all_params = (
+                    string_params
+                    + find_params  # 1st instr
+                    + string_params
+                    + find_params  # 2nd instr
+                    + replace_params  # replacement
+                    + string_params
+                    + find_params  # 3rd instr
+                    + find_params  # length
+                )
+                return sql, all_params
             case "$strLenCP":
                 if len(operands) != 1:
                     raise ValueError("$strLenCP requires exactly 1 operand")
@@ -1559,9 +1591,18 @@ class ExprEvaluator:
     ) -> Tuple[str, List[Any]]:
         """Convert $dateAdd/$dateSubtract operators to SQL.
 
-        MongoDB syntax: {$dateAdd: [date, amount, unit]}
+        MongoDB syntax: {$dateAdd: [date, amount, unit]} or
+                        {$dateAdd: {startDate: date, amount: N, unit: "day"}}
         SQLite: datetime(date, '+N unit' or '-N unit')
         """
+        # Handle MongoDB dict format: {startDate, amount, unit}
+        if isinstance(operands, dict):
+            operands = [
+                operands.get("startDate"),
+                operands.get("amount"),
+                operands.get("unit", "day"),
+            ]
+
         if len(operands) < 2 or len(operands) > 3:
             raise ValueError(
                 f"{operator} requires 2-3 operands: [date, amount, unit]"
@@ -1620,9 +1661,18 @@ class ExprEvaluator:
     ) -> Tuple[str, List[Any]]:
         """Convert $dateDiff operator to SQL.
 
-        MongoDB syntax: {$dateDiff: [date1, date2, unit]}
+        MongoDB syntax: {$dateDiff: [date1, date2, unit]} or
+                        {$dateDiff: {startDate: date1, endDate: date2, unit: "day"}}
         SQLite: julianday(date2) - julianday(date1) for days
         """
+        # Handle MongoDB dict format: {startDate, endDate, unit}
+        if isinstance(operands, dict):
+            operands = [
+                operands.get("startDate"),
+                operands.get("endDate"),
+                operands.get("unit", "day"),
+            ]
+
         if len(operands) < 2 or len(operands) > 3:
             raise ValueError(
                 "$dateDiff requires 2-3 operands: [date1, date2, unit]"
@@ -2904,15 +2954,29 @@ class ExprEvaluator:
                     return None
                 return str(string).replace(str(find), str(replacement))
             case "$replaceOne":
-                if len(operands) != 3:
-                    raise ValueError(
-                        "$replaceOne requires string, find, and replacement"
+                # Handle MongoDB dict format: {input, find, replacement}
+                if isinstance(operands, dict):
+                    string = self._evaluate_operand_python(
+                        operands.get("input"), document
                     )
-                string = self._evaluate_operand_python(operands[0], document)
-                find = self._evaluate_operand_python(operands[1], document)
-                replacement = self._evaluate_operand_python(
-                    operands[2], document
-                )
+                    find = self._evaluate_operand_python(
+                        operands.get("find"), document
+                    )
+                    replacement = self._evaluate_operand_python(
+                        operands.get("replacement"), document
+                    )
+                else:
+                    if len(operands) != 3:
+                        raise ValueError(
+                            "$replaceOne requires string, find, and replacement"
+                        )
+                    string = self._evaluate_operand_python(
+                        operands[0], document
+                    )
+                    find = self._evaluate_operand_python(operands[1], document)
+                    replacement = self._evaluate_operand_python(
+                        operands[2], document
+                    )
                 if string is None:
                     return None
                 # Replace only first occurrence
@@ -3100,6 +3164,14 @@ class ExprEvaluator:
 
         match operator:
             case "$dateAdd" | "$dateSubtract":
+                # Handle MongoDB dict format: {startDate, amount, unit}
+                if isinstance(operands, dict):
+                    operands = [
+                        operands.get("startDate"),
+                        operands.get("amount"),
+                        operands.get("unit", "day"),
+                    ]
+
                 if len(operands) < 2 or len(operands) > 3:
                     raise ValueError(
                         f"{operator} requires 2-3 operands: [date, amount, unit]"
@@ -3171,6 +3243,14 @@ class ExprEvaluator:
                 return dt
 
             case "$dateDiff":
+                # Handle MongoDB dict format: {startDate, endDate, unit}
+                if isinstance(operands, dict):
+                    operands = [
+                        operands.get("startDate"),
+                        operands.get("endDate"),
+                        operands.get("unit", "day"),
+                    ]
+
                 if len(operands) < 2 or len(operands) > 3:
                     raise ValueError(
                         "$dateDiff requires 2-3 operands: [date1, date2, unit]"

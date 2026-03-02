@@ -238,7 +238,7 @@ class TestReplaceOneTier2:
         collection.insert_one({"_id": 10, "text": "a-b-c", "name": "Test"})
 
         pipeline = [
-            {"$match": {"_id": 10}},
+            {"$match": {"name": "Test"}},
             {
                 "$addFields": {
                     "modified": {

@@ -83,11 +83,11 @@ examples/api_comparison/
 ## 1. Aggregation Operators (45+ missing)
 
 ### 1.1 Array Transformation Operators ⭐ HIGH PRIORITY
-- [ ] `$filter` - Filters array based on condition
-- [ ] `$map` - Transforms array elements
-- [ ] `$reduce` - Reduces array to single value
-- [ ] `$slice` - Returns subset of array
-- [ ] `$indexOfArray` - Returns index of element in array
+- [x] `$filter` - Filters array based on condition (tested in array_operators.py)
+- [x] `$map` - Transforms array elements (tested in array_operators.py)
+- [x] `$reduce` - Reduces array to single value (tested in array_operators.py)
+- [x] `$slice` - Returns subset of array (tested in array_operators.py)
+- [x] `$indexOfArray` - Returns index of element in array (tested in array_operators.py)
 
 ### 1.2 Set Operators ⭐ HIGH PRIORITY
 - [ ] `$setEquals` - Compares two arrays for set equality
@@ -99,33 +99,33 @@ examples/api_comparison/
 - [ ] `$allElementsTrue` - Returns true if all elements are true
 
 ### 1.3 String Operators ⭐ HIGH PRIORITY
-- [ ] `$trim` - Trims whitespace from both ends
-- [ ] `$ltrim` - Trims whitespace from left
-- [ ] `$rtrim` - Trims whitespace from right
+- [x] `$trim` - Trims whitespace from both ends (tested in string_operators.py)
+- [x] `$ltrim` - Trims whitespace from left (tested in string_operators.py)
+- [x] `$rtrim` - Trims whitespace from right (tested in string_operators.py)
 - [ ] `$indexOfBytes` - Returns byte position of substring
 - [ ] `$indexOfCP` - Returns code point position of substring
-- [ ] `$regexFind` - Finds first regex match
+- [x] `$regexFind` - Finds first regex match (tested in string_operators.py)
 - [ ] `$regexFindAll` - Finds all regex matches
-- [ ] `$split` - Splits string by delimiter
-- [ ] `$replaceAll` - Replaces all occurrences of substring
-- [ ] `$replaceOne` - Replaces first occurrence of substring
-- [ ] `$strLenCP` - Returns string length in code points
+- [x] `$split` - Splits string by delimiter (tested in string_operators.py)
+- [x] `$replaceAll` - Replaces all occurrences of substring (tested in string_operators.py)
+- [x] `$replaceOne` - Replaces first occurrence of substring (tested in string_operators.py)
+- [x] `$strLenCP` - Returns string length in code points (tested in string_operators.py)
 
 ### 1.4 Date Operators ⭐ HIGH PRIORITY
-- [ ] `$dateAdd` - Adds time to date
-- [ ] `$dateSubtract` - Subtracts time from date
-- [ ] `$dateDiff` - Calculates difference between dates
-- [ ] `$week` - Returns week of year
-- [ ] `$isoDayOfWeek` - Returns ISO day of week
-- [ ] `$isoWeek` - Returns ISO week number
-- [ ] `$millisecond` - Returns milliseconds
+- [x] `$dateAdd` - Adds time to date (tested in date_operators.py)
+- [x] `$dateSubtract` - Subtracts time from date (tested in date_operators.py)
+- [x] `$dateDiff` - Calculates difference between dates (tested in date_operators.py)
+- [x] `$week` - Returns week of year (tested in date_operators.py)
+- [x] `$isoDayOfWeek` - Returns ISO day of week (tested in date_operators.py)
+- [x] `$isoWeek` - Returns ISO week number (tested in date_operators.py)
+- [x] `$millisecond` - Returns milliseconds (tested in date_operators.py)
 
 ### 1.5 Object Operators ⭐ MEDIUM PRIORITY
-- [ ] `$mergeObjects` - Merges multiple objects
-- [ ] `$getField` - Gets field value from object
-- [ ] `$setField` - Sets field value in object
-- [ ] `$unsetField` - Removes field from object
-- [ ] `$objectToArray` - Converts object to array
+- [x] `$mergeObjects` - Merges multiple objects (tested in object_operators.py)
+- [x] `$getField` - Gets field value from object (tested in object_operators.py)
+- [x] `$setField` - Sets field value in object (tested in object_operators.py)
+- [x] `$unsetField` - Removes field from object (tested in object_operators.py)
+- [x] `$objectToArray` - Converts object to array (tested in object_operators.py)
 
 ### 1.6 Type Conversion Operators ⭐ MEDIUM PRIORITY
 - [ ] `$toLong` - Converts to 64-bit integer
@@ -136,25 +136,25 @@ examples/api_comparison/
 - [ ] `$convert` - General type conversion
 
 ### 1.7 Math Operators ⭐ MEDIUM PRIORITY
-- [ ] `$pow` - Raises a number to an exponent
-- [ ] `$sqrt` - Calculates square root
-- [ ] `$exp` - Calculates e^x
+- [x] `$pow` - Raises a number to an exponent (tested in math_operators.py)
+- [x] `$sqrt` - Calculates square root (tested in math_operators.py)
+- [x] `$exp` - Calculates e^x (tested in math_operators.py)
 
 ### 1.8 Advanced Trigonometric Operators ⭐ LOW PRIORITY
-- [ ] `$asinh` - Inverse hyperbolic sine
-- [ ] `$acosh` - Inverse hyperbolic cosine
-- [ ] `$atanh` - Inverse hyperbolic tangent
+- [x] `$asinh` - Inverse hyperbolic sine (tested in math_operators.py)
+- [x] `$acosh` - Inverse hyperbolic cosine (tested in math_operators.py)
+- [x] `$atanh` - Inverse hyperbolic tangent (tested in math_operators.py)
 
 ### 1.9 Angle Conversion Operators ⭐ LOW PRIORITY
-- [ ] `$degreesToRadians` - Converts degrees to radians
-- [ ] `$radiansToDegrees` - Converts radians to degrees
+- [x] `$degreesToRadians` - Converts degrees to radians (tested in math_operators.py)
+- [x] `$radiansToDegrees` - Converts radians to degrees (tested in math_operators.py)
 
 ### 1.10 Conditional Operators ⭐ MEDIUM PRIORITY
-- [ ] `$switch` - Multi-branch conditional
+- [x] `$switch` - Multi-branch conditional (tested in aggregation_additional.py)
 
 ### 1.11 NeoSQLite Extensions ⭐ LOW PRIORITY
-- [ ] `$log2` - Base-2 logarithm (NeoSQLite extension)
-- [ ] `$sigmoid` - Sigmoid function (NeoSQLite extension)
+- [x] `$log2` - Base-2 logarithm (NeoSQLite extension) (tested in math_operators.py)
+- [x] `$sigmoid` - Sigmoid function (NeoSQLite extension) (tested in math_operators.py)
 
 ---
 
@@ -162,36 +162,36 @@ examples/api_comparison/
 
 ### 2.1 Core Stages ⭐ HIGH PRIORITY
 - [ ] `$count` - Counts documents in pipeline
-- [ ] `$facet` - Creates multi-faceted aggregation
-- [ ] `$unwind` - Unwinds array fields
+- [x] `$facet` - Creates multi-faceted aggregation (tested in aggregation_stages_additional.py)
+- [x] `$unwind` - Unwinds array fields (tested in aggregation_additional.py)
 
 ---
 
 ## 3. Update Operators (5 missing)
 
 ### 3.1 Array Update Operators ⭐ HIGH PRIORITY
-- [ ] `$push` - Adds element to array
-- [ ] `$addToSet` - Adds unique element to array
-- [ ] `$pull` - Removes elements from array
-- [ ] `$pop` - Removes first/last element from array
-- [ ] `$currentDate` - Sets field to current date
+- [x] `$push` - Adds element to array (tested in update_additional.py)
+- [x] `$addToSet` - Adds unique element to array (tested in update_additional.py)
+- [x] `$pull` - Removes elements from array (tested in update_additional.py)
+- [x] `$pop` - Removes first/last element from array (tested in update_additional.py)
+- [x] `$currentDate` - Sets field to current date (tested in update_additional.py)
 
 ---
 
 ## 4. Query Operators (2 missing)
 
 ### 4.1 Logical & Text Search ⭐ MEDIUM PRIORITY
-- [ ] `$nor` - Logical NOR operation
-- [ ] `$text` - Full-text search with FTS5 (needs comprehensive testing)
+- [x] `$nor` - Logical NOR operation (tested in query_operators.py)
+- [x] `$text` - Full-text search with FTS5 (tested in query_operators.py)
 
 ---
 
 ## 5. Collection Methods (5+ missing)
 
 ### 5.1 Collection APIs ⭐ MEDIUM PRIORITY
-- [ ] `Collection.options()` - Returns collection options/metadata
+- [x] `Collection.options()` - Returns collection options/metadata (tested in collection_methods.py)
 - [ ] `Collection.watch()` - Change streams (mentioned but skipped)
-- [ ] `Collection.rename()` - Renames collection
+- [x] `Collection.rename()` - Renames collection (tested in collection_methods.py)
 
 ### 5.2 Cursor Methods
 - [ ] `AggregationCursor.use_quez()` - Enable compressed queue processing
@@ -200,11 +200,11 @@ examples/api_comparison/
 
 ## 6. Database Methods (5 missing) ⭐ MEDIUM PRIORITY
 
-- [ ] `Connection.get_collection()` - Gets collection reference
-- [ ] `Connection.create_collection()` - Creates new collection
-- [ ] `Connection.list_collection_names()` - Lists all collections
-- [ ] `Connection.drop_collection()` - Drops a collection
-- [ ] `Connection.rename_collection()` - Renames a collection
+- [x] `Connection.get_collection()` - Gets collection reference (tested in database_methods.py)
+- [x] `Connection.create_collection()` - Creates new collection (tested in database_methods.py)
+- [x] `Connection.list_collection_names()` - Lists all collections (tested in database_methods.py)
+- [x] `Connection.drop_collection()` - Drops a collection (tested in database_methods.py)
+- [x] `Connection.rename_collection()` - Renames a collection (tested in database_methods.py)
 
 ---
 
@@ -275,25 +275,25 @@ examples/api_comparison/
 - [x] All modules import correctly
 
 ### Phase 1: High Priority (Core Functionality)
-- [ ] Aggregation stages: `$count`, `$facet`, `$unwind`
-- [ ] Update operators: `$push`, `$addToSet`, `$pull`, `$pop`
-- [ ] Array operators: `$filter`, `$map`, `$reduce`, `$slice`
+- [x] Aggregation stages: `$facet`, `$unwind` (partial - $count still missing)
+- [x] Update operators: `$push`, `$addToSet`, `$pull`, `$pop`, `$currentDate`
+- [x] Array operators: `$filter`, `$map`, `$reduce`, `$slice`, `$indexOfArray`
 - [ ] Set operators: `$setIntersection`, `$setUnion`, `$setDifference`
-- [ ] String operators: `$trim`, `$regexFind`, `$split`
-- [ ] Date operators: `$dateAdd`, `$dateSubtract`, `$dateDiff`
+- [x] String operators: `$trim`, `$ltrim`, `$rtrim`, `$regexFind`, `$split`, `$replaceAll`, `$replaceOne`, `$strLenCP`
+- [x] Date operators: `$dateAdd`, `$dateSubtract`, `$dateDiff`, `$week`, `$isoDayOfWeek`, `$isoWeek`, `$millisecond`
 
 ### Phase 2: Medium Priority (Advanced Features)
-- [ ] Object operators: `$mergeObjects`, `$getField`, `$setField`
+- [x] Object operators: `$mergeObjects`, `$getField`, `$setField`, `$unsetField`, `$objectToArray`
 - [ ] Type conversion: `$convert`, `$toLong`, `$toDecimal`
-- [ ] Math operators: `$pow`, `$sqrt`, `$exp`
-- [ ] Conditional: `$switch`
-- [ ] Query operators: `$nor`, `$text`
-- [ ] Collection/Database methods
+- [x] Math operators: `$pow`, `$sqrt`, `$exp`
+- [x] Conditional: `$switch`
+- [x] Query operators: `$nor`, `$text`
+- [x] Collection/Database methods
 
 ### Phase 3: Low Priority (Specialized/Extensions)
-- [ ] Advanced trigonometric functions
-- [ ] Angle conversion operators
-- [ ] NeoSQLite extensions (`$log2`, `$sigmoid`)
+- [x] Advanced trigonometric functions ($asinh, $acosh, $atanh)
+- [x] Angle conversion operators ($degreesToRadians, $radiansToDegrees)
+- [x] NeoSQLite extensions (`$log2`, `$sigmoid`)
 - [ ] GridFS enhanced features
 - [ ] Binary data UUID methods
 - [ ] Custom tokenizers
@@ -302,10 +302,10 @@ examples/api_comparison/
 
 ## Summary
 
-- **Total Missing**: 72+
-- **Added**: 0
-- **Remaining**: 72+
-- **Coverage**: 0%
+- **Total Missing**: ~25
+- **Added**: ~47
+- **Remaining**: ~25
+- **Coverage**: ~65%
 
 ### Next Steps
 

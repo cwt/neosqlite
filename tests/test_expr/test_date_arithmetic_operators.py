@@ -232,3 +232,207 @@ class TestDateArithmeticIntegration:
             )
         )
         assert len(result) >= 1
+
+
+class TestDateArithmeticDictFormat:
+    """Test date arithmetic operators with MongoDB dict format."""
+
+    @pytest.fixture
+    def collection(self):
+        """Create a test collection."""
+        conn = neosqlite.Connection(":memory:")
+        collection = conn["test_collection"]
+
+        # Use datetime objects for MongoDB compatibility
+        collection.insert_many(
+            [
+                {
+                    "name": "doc1",
+                    "date": datetime(
+                        2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc
+                    ),
+                },
+                {
+                    "name": "doc2",
+                    "date": datetime(
+                        2024, 2, 20, 15, 45, 0, tzinfo=timezone.utc
+                    ),
+                },
+                {
+                    "name": "doc3",
+                    "date": datetime(
+                        2024, 3, 25, 20, 0, 0, tzinfo=timezone.utc
+                    ),
+                },
+            ]
+        )
+
+        yield collection
+        conn.close()
+
+    def test_date_add_dict_format_sql(self):
+        """Test $dateAdd with dict format."""
+        evaluator = ExprEvaluator()
+        expr = {
+            "$dateAdd": {
+                "startDate": "$date",
+                "amount": 5,
+                "unit": "day",
+            }
+        }
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "datetime" in sql
+        assert "+5 days" in sql
+
+    def test_date_subtract_dict_format_sql(self):
+        """Test $dateSubtract with dict format."""
+        evaluator = ExprEvaluator()
+        expr = {
+            "$dateSubtract": {
+                "startDate": "$date",
+                "amount": 3,
+                "unit": "hour",
+            }
+        }
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "datetime" in sql
+        assert "-3 hours" in sql
+
+    def test_date_diff_dict_format_sql(self):
+        """Test $dateDiff with dict format."""
+        evaluator = ExprEvaluator()
+        expr = {
+            "$dateDiff": {
+                "startDate": "$date1",
+                "endDate": "$date2",
+                "unit": "day",
+            }
+        }
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "julianday" in sql
+
+    def test_date_add_dict_format_python(self):
+        """Test $dateAdd with dict format in Python."""
+        evaluator = ExprEvaluator()
+        expr = {
+            "$dateAdd": {
+                "startDate": "$date",
+                "amount": 5,
+                "unit": "day",
+            }
+        }
+        result = evaluator._evaluate_expr_python(
+            expr,
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
+        )
+        assert result == datetime(2024, 1, 20, 10, 30, 0, tzinfo=timezone.utc)
+
+    def test_date_subtract_dict_format_python(self):
+        """Test $dateSubtract with dict format in Python."""
+        evaluator = ExprEvaluator()
+        expr = {
+            "$dateSubtract": {
+                "startDate": "$date",
+                "amount": 5,
+                "unit": "day",
+            }
+        }
+        result = evaluator._evaluate_expr_python(
+            expr,
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
+        )
+        assert result == datetime(2024, 1, 10, 10, 30, 0, tzinfo=timezone.utc)
+
+    def test_date_diff_dict_format_python(self):
+        """Test $dateDiff with dict format in Python."""
+        evaluator = ExprEvaluator()
+        expr = {
+            "$dateDiff": {
+                "startDate": "$date1",
+                "endDate": "$date2",
+                "unit": "day",
+            }
+        }
+        result = evaluator._evaluate_expr_python(
+            expr,
+            {
+                "date1": datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+                "date2": datetime(2024, 1, 15, 0, 0, 0, tzinfo=timezone.utc),
+            },
+        )
+        assert result == 14
+
+    def test_date_add_dict_default_unit_python(self):
+        """Test $dateAdd with dict format using default unit."""
+        evaluator = ExprEvaluator()
+        expr = {
+            "$dateAdd": {
+                "startDate": "$date",
+                "amount": 5,
+            }
+        }
+        result = evaluator._evaluate_expr_python(
+            expr,
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
+        )
+        assert result == datetime(2024, 1, 20, 10, 30, 0, tzinfo=timezone.utc)
+
+    def test_date_add_dict_format_in_query(self, collection):
+        """Test $dateAdd with dict format in actual query."""
+        result = list(
+            collection.find(
+                {
+                    "$expr": {
+                        "$eq": [
+                            {
+                                "$year": [
+                                    {
+                                        "$dateAdd": {
+                                            "startDate": "$date",
+                                            "amount": 1,
+                                            "unit": "year",
+                                        }
+                                    }
+                                ]
+                            },
+                            2025,
+                        ]
+                    }
+                }
+            )
+        )
+        assert len(result) == 3
+        assert any(doc["name"] == "doc1" for doc in result)
+
+    def test_date_diff_dict_format_in_query(self, collection):
+        """Test $dateDiff with dict format in actual query."""
+        result = list(
+            collection.find(
+                {
+                    "$expr": {
+                        "$gt": [
+                            {
+                                "$dateDiff": {
+                                    "startDate": "$date",
+                                    "endDate": datetime(
+                                        2024,
+                                        12,
+                                        31,
+                                        0,
+                                        0,
+                                        0,
+                                        tzinfo=timezone.utc,
+                                    ),
+                                    "unit": "day",
+                                }
+                            },
+                            200,
+                        ]
+                    }
+                }
+            )
+        )
+        assert len(result) >= 1

@@ -16,6 +16,7 @@ def compare_additional_aggregation():
     """Compare additional aggregation features"""
     print("\n=== Additional Aggregation Features Comparison ===")
 
+    neo_switch = None
     with neosqlite.Connection(":memory:") as neo_conn:
         neo_collection = neo_conn.test_collection
         neo_collection.insert_many(
@@ -48,18 +49,50 @@ def compare_additional_aggregation():
             neo_push = f"Error: {e}"
             print(f"Neo $group $push: Error - {e}")
 
+        # Test $switch
+        try:
+            neo_switch_result = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "category": {
+                                    "$switch": {
+                                        "branches": [
+                                            {
+                                                "case": {
+                                                    "$gte": ["$price", 20]
+                                                },
+                                                "then": "expensive",
+                                            },
+                                            {
+                                                "case": {
+                                                    "$gte": ["$price", 10]
+                                                },
+                                                "then": "moderate",
+                                            },
+                                        ],
+                                        "default": "cheap",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            neo_switch = len(neo_switch_result) > 0
+            print(f"Neo $switch: {'OK' if neo_switch else 'FAIL'}")
+        except Exception as e:
+            neo_switch = False
+            print(f"Neo $switch: Error - {e}")
+
     client = test_pymongo_connection()
-    # Initialize MongoDB result variables
-
     mongo_collection = None
-
     mongo_db = None
-
     mongo_push = None
-
     mongo_push_result = None
-
     mongo_unwind = None
+    mongo_switch = None
 
     if client:
         mongo_db = client.test_database
@@ -92,6 +125,43 @@ def compare_additional_aggregation():
             mongo_push = f"Error: {e}"
             print(f"Mongo $group $push: Error - {e}")
 
+        # Test $switch
+        try:
+            mongo_switch_result = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "category": {
+                                    "$switch": {
+                                        "branches": [
+                                            {
+                                                "case": {
+                                                    "$gte": ["$price", 20]
+                                                },
+                                                "then": "expensive",
+                                            },
+                                            {
+                                                "case": {
+                                                    "$gte": ["$price", 10]
+                                                },
+                                                "then": "moderate",
+                                            },
+                                        ],
+                                        "default": "cheap",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_switch = len(mongo_switch_result) > 0
+            print(f"Mongo $switch: {'OK' if mongo_switch else 'FAIL'}")
+        except Exception as e:
+            mongo_switch = False
+            print(f"Mongo $switch: Error - {e}")
+
         client.close()
 
     if not isinstance(neo_unwind, str) and not isinstance(mongo_unwind, str):
@@ -119,3 +189,11 @@ def compare_additional_aggregation():
             neo_push,
             mongo_push,
         )
+
+    reporter.record_result(
+        "Additional Aggregation",
+        "$switch",
+        neo_switch if neo_switch is not None else False,
+        neo_switch,
+        mongo_switch,
+    )
