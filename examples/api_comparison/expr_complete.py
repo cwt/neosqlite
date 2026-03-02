@@ -483,6 +483,103 @@ def compare_additional_expr_operators_complete():
             neo_indexofbytes = False
             print(f"Neo $indexOfBytes: Error - {e}")
 
+        # Test $toLong
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [{"$project": {"long": {"$toLong": "$num"}}}]
+                )
+            )
+            neo_tolong = len(result) == 2
+            print(f"Neo $toLong: {'OK' if neo_tolong else 'FAIL'}")
+        except Exception as e:
+            neo_tolong = False
+            print(f"Neo $toLong: Error - {e}")
+
+        # Test $toDecimal
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [{"$project": {"decimal": {"$toDecimal": "$num"}}}]
+                )
+            )
+            neo_todecimal = len(result) == 2
+            print(f"Neo $toDecimal: {'OK' if neo_todecimal else 'FAIL'}")
+        except Exception as e:
+            neo_todecimal = False
+            print(f"Neo $toDecimal: Error - {e}")
+
+        # Test $toObjectId
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "oid": {
+                                    "$toObjectId": "507f1f77bcf86cd799439011"
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            neo_toobjectid = len(result) == 2
+            print(f"Neo $toObjectId: {'OK' if neo_toobjectid else 'FAIL'}")
+        except Exception as e:
+            neo_toobjectid = False
+            print(f"Neo $toObjectId: Error - {e}")
+
+        # Test $toBinData
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [{"$project": {"bin": {"$toBinData": "hello"}}}]
+                )
+            )
+            neo_tobindata = len(result) == 2
+            print(f"Neo $toBinData: {'OK' if neo_tobindata else 'FAIL'}")
+        except Exception as e:
+            neo_tobindata = False
+            print(f"Neo $toBinData: Error - {e}")
+
+        # Test $toRegex
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [{"$project": {"regex": {"$toRegex": r"\d+"}}}]
+                )
+            )
+            neo_toregex = len(result) == 2
+            print(f"Neo $toRegex: {'OK' if neo_toregex else 'FAIL'}")
+        except Exception as e:
+            neo_toregex = False
+            print(f"Neo $toRegex: Error - {e}")
+
+        # Test $convert
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "converted": {
+                                    "$convert": {
+                                        "input": "$str",
+                                        "to": "int",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            neo_convert = len(result) == 2
+            print(f"Neo $convert: {'OK' if neo_convert else 'FAIL'}")
+        except Exception as e:
+            neo_convert = False
+            print(f"Neo $convert: Error - {e}")
+
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
 
@@ -497,6 +594,8 @@ def compare_additional_expr_operators_complete():
     mongo_atanh = None
 
     mongo_collection = None
+
+    mongo_convert = None
 
     mongo_db = None
 
@@ -535,6 +634,16 @@ def compare_additional_expr_operators_complete():
     mongo_setunion = None
 
     mongo_sigmoid = None
+
+    mongo_tobindata = None
+
+    mongo_todecimal = None
+
+    mongo_tolong = None
+
+    mongo_toobjectid = None
+
+    mongo_toregex = None
 
     mongo_unsetfield = None
 
@@ -1025,6 +1134,103 @@ def compare_additional_expr_operators_complete():
             mongo_indexofbytes = False
             print(f"Mongo $indexOfBytes: Error - {e}")
 
+        # Test $toLong
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"long": {"$toLong": "$num"}}}]
+                )
+            )
+            mongo_tolong = len(result) == 2
+            print(f"Mongo $toLong: {'OK' if mongo_tolong else 'FAIL'}")
+        except Exception as e:
+            mongo_tolong = False
+            print(f"Mongo $toLong: Error - {e}")
+
+        # Test $toDecimal
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"decimal": {"$toDecimal": "$num"}}}]
+                )
+            )
+            mongo_todecimal = len(result) == 2
+            print(f"Mongo $toDecimal: {'OK' if mongo_todecimal else 'FAIL'}")
+        except Exception as e:
+            mongo_todecimal = False
+            print(f"Mongo $toDecimal: Error - {e}")
+
+        # Test $toObjectId
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "oid": {
+                                    "$toObjectId": "507f1f77bcf86cd799439011"
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_toobjectid = len(result) == 2
+            print(f"Mongo $toObjectId: {'OK' if mongo_toobjectid else 'FAIL'}")
+        except Exception as e:
+            mongo_toobjectid = False
+            print(f"Mongo $toObjectId: Error - {e}")
+
+        # Test $toBinData
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"bin": {"$toBinData": "hello"}}}]
+                )
+            )
+            mongo_tobindata = len(result) == 2
+            print(f"Mongo $toBinData: {'OK' if mongo_tobindata else 'FAIL'}")
+        except Exception as e:
+            mongo_tobindata = False
+            print(f"Mongo $toBinData: Error - {e}")
+
+        # Test $toRegex
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"regex": {"$toRegex": r"\d+"}}}]
+                )
+            )
+            mongo_toregex = len(result) == 2
+            print(f"Mongo $toRegex: {'OK' if mongo_toregex else 'FAIL'}")
+        except Exception as e:
+            mongo_toregex = False
+            print(f"Mongo $toRegex: Error - {e}")
+
+        # Test $convert
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "converted": {
+                                    "$convert": {
+                                        "input": "$str",
+                                        "to": "int",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_convert = len(result) == 2
+            print(f"Mongo $convert: {'OK' if mongo_convert else 'FAIL'}")
+        except Exception as e:
+            mongo_convert = False
+            print(f"Mongo $convert: Error - {e}")
+
         client.close()
 
         # Record results
@@ -1189,4 +1395,46 @@ def compare_additional_expr_operators_complete():
             neo_indexofbytes,
             neo_indexofbytes,
             mongo_indexofbytes,
+        )
+        reporter.record_result(
+            "Additional $expr Operators",
+            "$toLong",
+            neo_tolong,
+            neo_tolong,
+            mongo_tolong,
+        )
+        reporter.record_result(
+            "Additional $expr Operators",
+            "$toDecimal",
+            neo_todecimal,
+            neo_todecimal,
+            mongo_todecimal,
+        )
+        reporter.record_result(
+            "Additional $expr Operators",
+            "$toObjectId",
+            neo_toobjectid,
+            neo_toobjectid,
+            mongo_toobjectid,
+        )
+        reporter.record_result(
+            "Additional $expr Operators",
+            "$toBinData",
+            neo_tobindata,
+            neo_tobindata,
+            mongo_tobindata,
+        )
+        reporter.record_result(
+            "Additional $expr Operators",
+            "$toRegex",
+            neo_toregex,
+            neo_toregex,
+            mongo_toregex,
+        )
+        reporter.record_result(
+            "Additional $expr Operators",
+            "$convert",
+            neo_convert,
+            neo_convert,
+            mongo_convert,
         )

@@ -189,6 +189,43 @@ def compare_string_operators():
             neo_replaceone = False
             print(f"Neo $replaceOne: Error - {e}")
 
+        # Test $indexOfCP
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [{"$project": {"index": {"$indexOfCP": ["$name", "ice"]}}}]
+                )
+            )
+            neo_indexofcp = len(result) == 2
+            print(f"Neo $indexOfCP: {'OK' if neo_indexofcp else 'FAIL'}")
+        except Exception as e:
+            neo_indexofcp = False
+            print(f"Neo $indexOfCP: Error - {e}")
+
+        # Test $regexFindAll
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "matches": {
+                                    "$regexFindAll": {
+                                        "input": "$name",
+                                        "regex": "o",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            neo_regexfindall = len(result) == 2
+            print(f"Neo $regexFindAll: {'OK' if neo_regexfindall else 'FAIL'}")
+        except Exception as e:
+            neo_regexfindall = False
+            print(f"Neo $regexFindAll: Error - {e}")
+
     client = test_pymongo_connection()
     mongo_collection = None
     mongo_db = None
@@ -201,6 +238,8 @@ def compare_string_operators():
     mongo_strlencp = None
     mongo_regexfind = None
     mongo_replaceone = None
+    mongo_indexofcp = None
+    mongo_regexfindall = None
 
     if client:
         mongo_db = client.test_database
@@ -377,6 +416,45 @@ def compare_string_operators():
             mongo_replaceone = False
             print(f"Mongo $replaceOne: Error - {e}")
 
+        # Test $indexOfCP
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"index": {"$indexOfCP": ["$name", "ice"]}}}]
+                )
+            )
+            mongo_indexofcp = len(result) == 2
+            print(f"Mongo $indexOfCP: {'OK' if mongo_indexofcp else 'FAIL'}")
+        except Exception as e:
+            mongo_indexofcp = False
+            print(f"Mongo $indexOfCP: Error - {e}")
+
+        # Test $regexFindAll
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "matches": {
+                                    "$regexFindAll": {
+                                        "input": "$name",
+                                        "regex": "o",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_regexfindall = len(result) == 2
+            print(
+                f"Mongo $regexFindAll: {'OK' if mongo_regexfindall else 'FAIL'}"
+            )
+        except Exception as e:
+            mongo_regexfindall = False
+            print(f"Mongo $regexFindAll: Error - {e}")
+
         client.close()
 
         reporter.record_result(
@@ -421,4 +499,18 @@ def compare_string_operators():
             neo_replaceone,
             neo_replaceone,
             mongo_replaceone,
+        )
+        reporter.record_result(
+            "String Operators",
+            "$indexOfCP",
+            neo_indexofcp,
+            neo_indexofcp,
+            mongo_indexofcp,
+        )
+        reporter.record_result(
+            "String Operators",
+            "$regexFindAll",
+            neo_regexfindall,
+            neo_regexfindall,
+            mongo_regexfindall,
         )

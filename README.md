@@ -32,8 +32,8 @@ NeoSQLite maintains comprehensive API compatibility tests against PyMongo to ens
 ### Test Results
 | Metric | Count |
 |--------|-------|
-| **Total Tests** | 254 |
-| **Passed** | 247 |
+| **Total Tests** | 262 |
+| **Passed** | 255 |
 | **Skipped** | 7 (by design) |
 | **Failed** | 0 |
 | **Compatibility** | **100%** |
