@@ -66,8 +66,8 @@ examples/api_comparison/
 ## Latest Update: March 2, 2026
 
 **Test Results Summary:**
-- **Total Tests Run**: 272
-- **Passed**: 268
+- **Total Tests Run**: 266
+- **Passed**: 262
 - **Skipped**: 4 (known limitations/not implemented)
 - **Failed**: 0
 - **Compatibility**: **100.0%**
@@ -470,8 +470,8 @@ The following features are skipped during comparison testing due to architectura
 
 | Metric | Value |
 |--------|-------|
-| **Total Tests** | 272 |
-| **Passed** | 268 |
+| **Total Tests** | 266 |
+| **Passed** | 262 |
 | **Skipped** | 4 |
 | **Failed** | 0 |
 | **Compatibility** | **100.0%** |

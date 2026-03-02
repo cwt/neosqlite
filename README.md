@@ -21,19 +21,19 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 - **Modern API**: Aligned with modern `pymongo` practices (using methods like `insert_one`, `update_one`, `delete_many`, etc.).
 - **MongoDB-compatible ObjectId**: Full 12-byte ObjectId implementation following MongoDB specification with automatic generation and hex interchangeability
 - **Automatic JSON/JSONB Support**: Automatically detects and uses JSONB column type when available for better performance.
-- **Full GridFS Support**: Complete PyMongo-compatible GridFS implementation with modern GridFSBucket API, legacy GridFS API, content type support, aliases, and automatic schema migration.
+- **Full GridFS Support**: Complete PyMongo-compatible GridFS implementation with modern GridFSBucket API, legacy GridFS API, and automatic schema migration.
 
 See [CHANGELOG.md](CHANGELOG.md) for the latest features and improvements.
 
 ## Tested APIs Compared to PyMongo
 
-NeoSQLite maintains comprehensive API compatibility tests against PyMongo to ensure MongoDB-compatible behavior. Our automated test suite compares **272 API operations** across all major categories:
+NeoSQLite maintains comprehensive API compatibility tests against PyMongo to ensure MongoDB-compatible behavior. Our automated test suite compares **266 API operations** across all major categories:
 
 ### Test Results
 | Metric | Count |
 |--------|-------|
-| **Total Tests** | 272 |
-| **Passed** | 268 |
+| **Total Tests** | 266 |
+| **Passed** | 262 |
 | **Skipped** | 4 (by design) |
 | **Failed** | 0 |
 | **Compatibility** | **100%** |
@@ -272,7 +272,7 @@ The ObjectId implementation:
 
 ### Enhanced GridFSBucket API
 
-NeoSQLite provides a complete PyMongo-compatible GridFSBucket interface with enhanced features:
+NeoSQLite provides a complete PyMongo-compatible GridFSBucket interface:
 
 ```python
 import io
@@ -283,37 +283,30 @@ from neosqlite.gridfs import GridFSBucket
 with Connection(":memory:") as conn:
     bucket = GridFSBucket(conn.db)
 
-    # Upload files with enhanced metadata
+    # Upload files
     text_file_id = bucket.upload_from_stream(
         "document.txt",
-        b"Hello, GridFS!",
-        content_type="text/plain",
-        aliases=["welcome", "greeting"]
+        b"Hello, GridFS!"
     )
 
     image_file_id = bucket.upload_from_stream(
         "photo.jpg",
-        b"fake_jpeg_data",
-        content_type="image/jpeg",
-        aliases=["vacation", "beach"]
+        b"fake_jpeg_data"
     )
 
-    # Use new convenience methods
-    latest_doc = bucket.get_last_version("document.txt")
-    all_files = bucket.list()  # ['document.txt', 'photo.jpg']
-    single_file = bucket.find_one({"aliases": "beach"})
-    file_stream = bucket.get(text_file_id)  # Alias for open_download_stream()
-
-    # Advanced querying with new fields
-    text_files = list(bucket.find({"content_type": "text/plain"}))
-    beach_files = list(bucket.find({"aliases": "beach"}))
-
-    # Access enhanced metadata
+    # Download files
     file = bucket.open_download_stream(text_file_id)
-    print(f"Content Type: {file.content_type}")  # "text/plain"
-    print(f"Aliases: {file.aliases}")           # ["welcome", "greeting"]
+    print(f"Filename: {file.filename}")  # "document.txt"
     print(f"Data: {file.read().decode('utf-8')}")  # "Hello, GridFS!"
+
+    # Find files
+    files = list(bucket.find({"filename": "document.txt"}))
+
+    # Delete files
+    bucket.delete(text_file_id)
 ```
+
+For more comprehensive examples including streaming operations and advanced querying, see the examples directory and [GridFS Documentation](documents/GRIDFS.md).
 
 ### Legacy GridFS API
 
@@ -335,10 +328,6 @@ with Connection(":memory:") as conn:
     # Get the file
     grid_out = fs.get(file_id)
     print(grid_out.read().decode('utf-8'))
-
-    # Use legacy convenience methods
-    latest = fs.get_last_version("example.txt")
-    all_files = fs.list()  # ['example.txt']
 ```
 
 ### Collection Access with Auto-Delegation
@@ -348,7 +337,6 @@ NeoSQLite supports PyMongo-style collection access with automatic GridFS delegat
 ```python
 # All operations delegate to GridFSBucket methods
 files = conn.fs.files.find({"filename": "document.txt"})
-file = conn.fs.files.find_one({"aliases": "beach"})
 conn.fs.files.delete_one({"_id": file_id})
 conn.fs.files.update_one({"_id": file_id}, {"$set": {"metadata": {"archived": True}}})
 ```

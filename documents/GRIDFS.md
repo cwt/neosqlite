@@ -17,16 +17,12 @@ This comprehensive guide covers NeoSQLite's GridFS implementation, including API
 | Feature | PyMongo GridFS | NeoSQLite GridFS | Status |
 |---------|----------------|------------------|--------|
 | **GridFSBucket Creation** | `GridFSBucket(database)` | `GridFSBucket(db)` | ✅ Compatible |
-| **upload_from_stream()** | ✅ Returns ObjectId | ✅ Returns ObjectId + content_type/aliases support | ✅ Compatible + Enhanced |
+| **upload_from_stream()** | ✅ Returns ObjectId | ✅ Returns ObjectId | ✅ Compatible |
 | **open_download_stream()** | ✅ Accepts ObjectId/int | ✅ Accepts ObjectId/int/str | ✅ Compatible |
 | **delete()** | ✅ `delete(file_id)` | ✅ `delete(file_id)` | ✅ Compatible |
 | **find()** | ✅ Returns GridFSFile cursor | ✅ Returns GridOut cursor | ✅ Compatible |
-| **find_one()** | ✅ Available | ✅ Available (direct method + collection delegation) | ✅ Compatible |
 | **rename()** | ✅ `rename(file_id, new_name)` | ✅ `rename(file_id, new_name)` | ✅ Compatible |
 | **drop()** | ✅ `drop()` | ✅ `drop()` | ✅ Compatible |
-| **get_last_version()** | ✅ Available | ✅ Available | ✅ Compatible |
-| **get_version()** | ✅ Available | ✅ Available | ✅ Compatible |
-| **list()** | ✅ Available | ✅ Available | ✅ Compatible |
 | **Collection Access** | `db.fs.files.*` | `conn.fs.files.*` (auto-delegates) | ✅ Compatible |
 
 ## Key Differences from PyMongo
@@ -55,7 +51,6 @@ bucket = GridFSBucket(conn.db)
 
 # Direct collection access - ALL operations work with auto-delegation
 conn.fs.files.find({})           # ✅ Works! (delegates to bucket.find())
-conn.fs.files.find_one(...)      # ✅ Works! (delegates to bucket.find_one())
 conn.fs.files.update_one(...)    # ✅ Works for metadata updates
 conn.fs.files.delete_one(...)    # ✅ Works! (delegates to bucket.delete())
 conn.fs.files.delete_many(...)   # ✅ Works! (delegates to bucket.delete())
@@ -75,23 +70,7 @@ bucket.delete(file_id)           # ✅ Recommended for deletes
 | **File Metadata** | Stored in `fs.files` collection | Stored in `fs_files` table |
 | **Table Naming** | Dot notation: `fs.files` | Underscore: `fs_files` |
 
-### 3. Enhanced Metadata Support
-
-NeoSQLite provides additional metadata fields not available in standard PyMongo GridFS:
-
-```python
-# Content Type Support
-bucket.upload_from_stream("image.png", data, content_type="image/png")
-file = bucket.find_one({"filename": "image.png"})
-print(file.content_type)  # "image/png"
-
-# Aliases Support
-bucket.upload_from_stream("doc.pdf", data, aliases=["document", "report"])
-files = bucket.find({"aliases": "document"})  # Find by alias
-print(file.aliases)  # ["document", "report"]
-```
-
-### 4. File ID Handling
+### 3. File ID Handling
 
 **PyMongo:**
 ```python
@@ -147,49 +126,16 @@ with bucket.open_download_stream(file_id) as stream:
 
 # Find files
 files = bucket.find({"filename": "file.txt"})
-single_file = bucket.find_one({"filename": "file.txt"})
-
-# Version management
-latest = bucket.get_last_version("file.txt")
-specific_version = bucket.get_version("file.txt", revision=1)
-
-# List all filenames
-filenames = bucket.list()
 
 # Delete files
 bucket.delete(file_id)
 bucket.drop()  # Remove entire bucket
 ```
 
-### Enhanced Features
-
-#### Content Type Support
-```python
-# Upload with content type
-bucket.upload_from_stream("image.png", data, content_type="image/png")
-
-# Access content type
-file = bucket.find_one({"filename": "image.png"})
-print(file.content_type)  # "image/png"
-
-# Find by content type
-images = bucket.find({"content_type": "image/png"})
-```
-
-#### Aliases Support
-```python
-# Upload with aliases
-bucket.upload_from_stream("report.pdf", data, aliases=["monthly", "finance"])
-
-# Find by alias
-reports = bucket.find({"aliases": "monthly"})
-print(file.aliases)  # ["monthly", "finance"]
-```
-
-#### Streaming Operations
+### Streaming Operations
 ```python
 # Streaming upload
-with bucket.open_upload_stream("large_file.dat", content_type="application/octet-stream") as stream:
+with bucket.open_upload_stream("large_file.dat") as stream:
     for chunk in large_data_chunks:
         stream.write(chunk)
 
@@ -206,7 +152,6 @@ NeoSQLite supports PyMongo-style collection access with automatic delegation:
 ```python
 # All these work and delegate to GridFSBucket methods
 files = conn.fs.files.find({"filename": "test.txt"})
-file = conn.fs.files.find_one({"filename": "test.txt"})
 conn.fs.files.delete_one({"_id": file_id})
 conn.fs.files.delete_many({"filename": "old_files"})
 ```
@@ -369,19 +314,18 @@ conn.fs.files.update_one(
 ### Best Practices
 
 For new applications, we recommend:
-- Use `bucket.upload_from_stream()` for uploads (with content_type and aliases support)
+- Use `bucket.upload_from_stream()` for uploads
 - Use `bucket.delete()` for deletions
 - Use either `bucket.find()` or `conn.fs.files.find()` for queries (both work!)
 - Use `conn.fs.files.update_one()` for metadata updates
-- Leverage the enhanced content_type and aliases features for better file organization
 
 ## Conclusion
 
-NeoSQLite's GridFS implementation provides **full API compatibility** with PyMongo GridFS, plus enhanced features like content type and aliases support. The automatic migration system ensures seamless upgrades, and the dual-ID system maintains performance while preserving MongoDB compatibility.
+NeoSQLite's GridFS implementation provides **full API compatibility** with PyMongo GridFS. The automatic migration system ensures seamless upgrades, and the dual-ID system maintains performance while preserving MongoDB compatibility.
 
 The implementation supports both traditional GridFSBucket API usage and PyMongo-style collection access, making it easy to migrate existing applications or build new ones with familiar patterns.
 
 ---
 
-**Implementation Status**: All previously missing features have been implemented and are available in the current version. NeoSQLite GridFS now provides 100% API compatibility for common use cases with additional enhancements for modern applications.</content>
+**Implementation Status**: All core GridFS features have been implemented and are available in the current version. NeoSQLite GridFS now provides 100% API compatibility for common use cases.</content>
 <parameter name="filePath">documents/GRIDFS.md

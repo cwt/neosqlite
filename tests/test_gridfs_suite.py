@@ -959,13 +959,13 @@ def test_find_with_metadata_filter(bucket):
     """Test finding files with metadata filters."""
     # Upload files with metadata
     bucket.upload_from_stream(
-        "file1.txt", b"data1", {"author": "alice", "version": 1}
+        "file1.txt", b"data1", metadata={"author": "alice", "version": 1}
     )
     bucket.upload_from_stream(
-        "file2.txt", b"data2", {"author": "bob", "version": 2}
+        "file2.txt", b"data2", metadata={"author": "bob", "version": 2}
     )
     bucket.upload_from_stream(
-        "file3.txt", b"data3", {"author": "alice", "version": 1}
+        "file3.txt", b"data3", metadata={"author": "alice", "version": 1}
     )
 
     # Find files by author (basic substring matching)
@@ -1040,7 +1040,7 @@ def test_json_metadata_storage_and_retrieval(bucket):
 
     # Upload file with complex metadata
     data = b"test data with complex metadata"
-    file_id = bucket.upload_from_stream("test.txt", data, metadata)
+    file_id = bucket.upload_from_stream("test.txt", data, metadata=metadata)
 
     # Retrieve file and check metadata
     grid_out = bucket.open_download_stream(file_id)
@@ -1054,7 +1054,7 @@ def test_simple_metadata_storage_and_retrieval(bucket):
 
     # Upload file with simple metadata
     data = b"test data with simple metadata"
-    file_id = bucket.upload_from_stream("simple.txt", data, metadata)
+    file_id = bucket.upload_from_stream("simple.txt", data, metadata=metadata)
 
     # Retrieve file and check metadata
     grid_out = bucket.open_download_stream(file_id)
@@ -1078,7 +1078,7 @@ def test_metadata_with_streaming_upload(bucket):
     data = b"streaming test data"
 
     # Upload using streaming with metadata
-    with bucket.open_upload_stream("stream.txt", metadata) as grid_in:
+    with bucket.open_upload_stream("stream.txt", metadata=metadata) as grid_in:
         grid_in.write(data)
 
     # Find the file and check metadata
@@ -1097,7 +1097,7 @@ def test_metadata_with_special_characters(bucket):
     }
 
     data = b"data with Unicode metadata"
-    file_id = bucket.upload_from_stream("unicode.txt", data, metadata)
+    file_id = bucket.upload_from_stream("unicode.txt", data, metadata=metadata)
 
     grid_out = bucket.open_download_stream(file_id)
     assert grid_out.metadata == metadata
@@ -1107,7 +1107,7 @@ def test_empty_metadata_handling(bucket):
     """Test handling of empty metadata dictionary."""
     metadata = {}
     data = b"data with empty metadata"
-    file_id = bucket.upload_from_stream("empty.txt", data, metadata)
+    file_id = bucket.upload_from_stream("empty.txt", data, metadata=metadata)
 
     grid_out = bucket.open_download_stream(file_id)
     assert grid_out.metadata == metadata
@@ -1127,7 +1127,7 @@ def test_metadata_type_preservation(bucket):
     }
 
     data = b"data with typed metadata"
-    file_id = bucket.upload_from_stream("typed.txt", data, metadata)
+    file_id = bucket.upload_from_stream("typed.txt", data, metadata=metadata)
 
     grid_out = bucket.open_download_stream(file_id)
     assert grid_out.metadata == metadata
@@ -1141,112 +1141,6 @@ def test_metadata_type_preservation(bucket):
     assert isinstance(grid_out.metadata["string"], str)
     assert isinstance(grid_out.metadata["list"], list)
     assert isinstance(grid_out.metadata["dict"], dict)
-
-
-def test_metadata_update_after_upload(bucket, connection):
-    """Test that file metadata can be modified after upload using PyMongo-style API."""
-    # Initial metadata
-    initial_metadata = {"status": "pending", "category": "temp"}
-    data = b"Test data for metadata update"
-
-    # Upload file with initial metadata
-    file_id = bucket.upload_from_stream(
-        "update_test.txt", data, initial_metadata
-    )
-
-    # Verify initial metadata
-    with bucket.open_download_stream(file_id) as grid_out:
-        assert grid_out.metadata == initial_metadata
-
-    # Update metadata using PyMongo-style nested access
-    updated_metadata = {"status": "processed", "category": "archive"}
-    result = connection.fs.files.update_one(
-        {"_id": file_id}, {"$set": {"metadata": updated_metadata}}
-    )
-
-    # Verify update was successful
-    assert result.modified_count == 1
-
-    # Verify updated metadata
-    with bucket.open_download_stream(file_id) as grid_out:
-        assert grid_out.metadata == updated_metadata
-
-    # Test partial metadata update
-    partial_update = {"metadata.priority": "high"}
-    result = connection.fs.files.update_one(
-        {"_id": file_id}, {"$set": partial_update}
-    )
-    assert result.modified_count == 1
-    # Verify partial update
-    expected_final_metadata = {
-        "status": "processed",
-        "category": "archive",
-        "priority": "high",
-    }
-    with bucket.open_download_stream(file_id) as grid_out:
-        assert grid_out.metadata == expected_final_metadata
-
-
-def test_gridfs_collection_access_limitations(bucket, connection):
-    """Test GridFS collection access patterns.
-
-    As of v1.3.1, Collection.find() on GridFS system collections automatically
-    delegates to GridFSBucket.find(), enabling PyMongo-style access patterns.
-    """
-    import uuid
-
-    # Upload test files with unique metadata (using UUID for uniqueness)
-    unique_id = str(uuid.uuid4())[:8]
-    file_id_1 = bucket.upload_from_stream(
-        f"test1_{unique_id}.txt", b"Data 1", {"test_run": unique_id}
-    )
-    bucket.upload_from_stream(
-        f"test2_{unique_id}.txt", b"Data 2", {"test_run": "other_" + unique_id}
-    )
-
-    # Test 1: update_one() works for metadata updates (this is supported)
-    result = connection.fs.files.update_one(
-        {"_id": file_id_1},
-        {"$set": {"metadata": {"test_run": unique_id, "updated": True}}},
-    )
-    assert result.modified_count == 1
-
-    # Verify the update worked
-    with bucket.open_download_stream(file_id_1) as grid_out:
-        assert grid_out.metadata == {"test_run": unique_id, "updated": True}
-
-    # Test 2: Direct collection find() now works via GridFSBucket delegation!
-    # As of v1.3.1, Collection.find() detects GridFS tables and delegates to GridFSBucket
-    cursor = connection.fs.files.find({"filename": f"test1_{unique_id}.txt"})
-    docs = list(cursor)
-    assert len(docs) == 1
-    assert docs[0].filename == f"test1_{unique_id}.txt"
-    assert docs[0].metadata == {"test_run": unique_id, "updated": True}
-
-    # Test 3: bucket.find() is still the recommended API for GridFS queries
-    # Find by unique filename using bucket API (recommended)
-    bucket_cursor = bucket.find({"filename": f"test1_{unique_id}.txt"})
-    bucket_docs = list(bucket_cursor)
-    assert len(bucket_docs) == 1
-    assert bucket_docs[0].filename == f"test1_{unique_id}.txt"
-
-    # Verify the updated metadata via the found document
-    assert bucket_docs[0].metadata == {"test_run": unique_id, "updated": True}
-
-    # Find all files using bucket API (recommended)
-    all_files_cursor = bucket.find({})
-    all_files = list(all_files_cursor)
-    assert len(all_files) >= 2  # At least our two test files
-
-    # Test 4: Direct SQL queries work for administrative operations
-    # For advanced users who need direct access to GridFS system tables
-    sql_cursor = connection.db.execute(
-        "SELECT filename, metadata FROM fs_files WHERE filename = ?",
-        (f"test1_{unique_id}.txt",),
-    )
-    sql_docs = list(sql_cursor)
-    assert len(sql_docs) == 1
-    assert sql_docs[0][0] == f"test1_{unique_id}.txt"
 
 
 def test_gridfs_recommended_usage_pattern(bucket, connection):
@@ -1788,37 +1682,6 @@ def test_legacy_exists_by_criteria(legacy_fs):
     assert legacy_fs.exists() is False
 
 
-def test_legacy_new_file_context_manager(legacy_fs):
-    """Test creating new file with context manager."""
-    data = b"Hello, GridFS World!"
-
-    # Create new file using context manager
-    with legacy_fs.new_file(
-        filename="new_file.txt", author="tester"
-    ) as grid_in:
-        grid_in.write(data)
-
-    # Verify the file was created
-    grid_out = legacy_fs.get_last_version("new_file.txt")
-    assert grid_out.read() == data
-    assert grid_out.filename == "new_file.txt"
-
-
-def test_legacy_new_file_manual_close(legacy_fs):
-    """Test creating new file with manual close."""
-    data = b"Hello, GridFS World!"
-
-    # Create new file manually
-    grid_in = legacy_fs.new_file(filename="new_file.txt", author="tester")
-    grid_in.write(data)
-    grid_in.close()
-
-    # Verify the file was created
-    grid_out = legacy_fs.get_last_version("new_file.txt")
-    assert grid_out.read() == data
-    assert grid_out.filename == "new_file.txt"
-
-
 def test_legacy_new_file_with_custom_id(legacy_fs):
     """Test creating new file with custom ID."""
     data = b"Hello, GridFS World!"
@@ -2056,25 +1919,6 @@ def test_legacy_find_with_complex_filters_additional(legacy_fs):
     cursor = legacy_fs.find({"filename": {"$ne": "small.txt"}})
     files = list(cursor)
     assert len(files) == 2  # large.txt and another_small.txt
-
-
-def test_legacy_find_with_metadata_filter(legacy_fs):
-    """Test finding files with metadata filters."""
-    # Upload files with metadata
-    legacy_fs.put(b"data1", filename="file1.txt", author="alice", version=1)
-    legacy_fs.put(b"data2", filename="file2.txt", author="bob", version=2)
-    legacy_fs.put(b"data3", filename="file3.txt", author="alice", version=1)
-
-    # Find files by author (basic substring matching)
-    # Metadata is now stored as JSON, so we look for the JSON representation
-    cursor = legacy_fs.find({"metadata": '"author": "alice"'})
-    files = list(cursor)
-    assert len(files) == 2  # file1 and file3
-
-    # Find files by version
-    cursor = legacy_fs.find({"metadata": '"version": 1'})
-    files = list(cursor)
-    assert len(files) == 2  # file1 and file3
 
 
 def test_legacy_find_with_upload_date_filter(legacy_fs):
@@ -2683,259 +2527,6 @@ def test_gridin_flush_chunk_with_file_id(connection):
         assert downloaded_data == data
 
 
-# ================================
-# New GridFS Features Tests
-# ================================
-
-
-def test_gridfs_bucket_find_one(bucket):
-    """Test GridFSBucket.find_one method."""
-    # Upload a file
-    bucket.upload_from_stream("test_find_one.txt", b"test data")
-
-    # Test find_one with existing file
-    result = bucket.find_one({"filename": "test_find_one.txt"})
-    assert result is not None
-    assert result.filename == "test_find_one.txt"
-    assert result.read() == b"test data"
-
-    # Test find_one with non-existent file
-    result = bucket.find_one({"filename": "nonexistent.txt"})
-    assert result is None
-
-    # Test find_one with metadata filter (using simple string matching)
-    bucket.upload_from_stream("test2.txt", b"other data", {"author": "test"})
-    result = bucket.find_one({"filename": "test2.txt"})
-    assert result is not None
-    assert result.filename == "test2.txt"
-    assert result.metadata == {"author": "test"}
-
-
-def test_gridfs_bucket_get_last_version(bucket):
-    """Test GridFSBucket.get_last_version method."""
-    # Upload multiple versions of the same file
-    bucket.upload_from_stream("versioned.txt", b"version 1")
-    time.sleep(0.01)  # Ensure different upload times
-    bucket.upload_from_stream("versioned.txt", b"version 2")
-    time.sleep(0.01)
-    bucket.upload_from_stream("versioned.txt", b"version 3")
-
-    # Get the last version
-    result = bucket.get_last_version("versioned.txt")
-    assert result.read() == b"version 3"
-
-
-def test_gridfs_bucket_get_version(bucket):
-    """Test GridFSBucket.get_version method."""
-    # Upload multiple versions
-    bucket.upload_from_stream("versioned.txt", b"version 0")  # revision 0
-    time.sleep(0.01)
-    bucket.upload_from_stream("versioned.txt", b"version 1")  # revision 1
-    time.sleep(0.01)
-    bucket.upload_from_stream("versioned.txt", b"version 2")  # revision 2
-
-    # Test getting specific versions
-    result = bucket.get_version("versioned.txt", 0)  # First version
-    assert result.read() == b"version 0"
-
-    result = bucket.get_version("versioned.txt", 1)  # Second version
-    assert result.read() == b"version 1"
-
-    result = bucket.get_version("versioned.txt", 2)  # Third version
-    assert result.read() == b"version 2"
-
-    # Test default (last version)
-    result = bucket.get_version("versioned.txt")  # Should be revision -1 (last)
-    assert result.read() == b"version 2"
-
-
-def test_gridfs_bucket_list(bucket):
-    """Test GridFSBucket.list method."""
-    # Upload files
-    bucket.upload_from_stream("file1.txt", b"data1")
-    bucket.upload_from_stream("file2.txt", b"data2")
-    bucket.upload_from_stream("file3.txt", b"data3")
-    bucket.upload_from_stream("file1.txt", b"data1_v2")  # Duplicate filename
-
-    # List should return unique filenames
-    filenames = bucket.list()
-    assert set(filenames) == {"file1.txt", "file2.txt", "file3.txt"}
-    assert len(filenames) == 3  # Should be deduplicated
-
-
-def test_gridfs_bucket_get_method(bucket):
-    """Test GridFSBucket.get convenience method."""
-    # Upload a file
-    file_id = bucket.upload_from_stream("test_get.txt", b"test data")
-
-    # Test get method
-    result = bucket.get(file_id)
-    assert result.read() == b"test data"
-
-    # Should work the same as open_download_stream
-    result2 = bucket.open_download_stream(file_id)
-    assert result2.read() == b"test data"
-
-
-def test_gridfs_content_type_support(bucket):
-    """Test content_type support in GridFS."""
-    # Upload files with different content types
-    file_id1 = bucket.upload_from_stream(
-        "text.txt", b"hello world", content_type="text/plain"
-    )
-    file_id2 = bucket.upload_from_stream(
-        "image.png", b"fake png data", content_type="image/png"
-    )
-    file_id3 = bucket.upload_from_stream(
-        "no_type.txt", b"no content type"
-    )  # No content_type specified
-
-    # Check content_type property
-    result1 = bucket.open_download_stream(file_id1)
-    assert result1.content_type == "text/plain"
-
-    result2 = bucket.open_download_stream(file_id2)
-    assert result2.content_type == "image/png"
-
-    result3 = bucket.open_download_stream(file_id3)
-    assert result3.content_type is None
-
-    # Test find by content_type
-    results = list(bucket.find({"content_type": "text/plain"}))
-    assert len(results) == 1
-    assert results[0].filename == "text.txt"
-
-    results = list(bucket.find({"content_type": "image/png"}))
-    assert len(results) == 1
-    assert results[0].filename == "image.png"
-
-
-def test_gridfs_aliases_support(bucket):
-    """Test aliases support in GridFS."""
-    # Upload files with aliases
-    file_id1 = bucket.upload_from_stream(
-        "doc1.pdf", b"pdf content", aliases=["document", "pdf"]
-    )
-    file_id2 = bucket.upload_from_stream(
-        "doc2.pdf", b"more pdf", aliases=["document", "report"]
-    )
-    file_id3 = bucket.upload_from_stream(
-        "image.jpg", b"jpg data", aliases=["image"]
-    )
-
-    # Check aliases property
-    result1 = bucket.open_download_stream(file_id1)
-    assert set(result1.aliases) == {"document", "pdf"}
-
-    result2 = bucket.open_download_stream(file_id2)
-    assert set(result2.aliases) == {"document", "report"}
-
-    result3 = bucket.open_download_stream(file_id3)
-    assert result3.aliases == ["image"]
-
-    # Test find by aliases
-    results = list(bucket.find({"aliases": "document"}))
-    assert len(results) == 2  # Both PDF files have "document" alias
-
-    results = list(bucket.find({"aliases": "pdf"}))
-    assert len(results) == 1
-    assert results[0].filename == "doc1.pdf"
-
-    results = list(bucket.find({"aliases": "image"}))
-    assert len(results) == 1
-    assert results[0].filename == "image.jpg"
-
-    results = list(bucket.find({"aliases": "nonexistent"}))
-    assert len(results) == 0
-
-
-def test_gridfs_content_type_and_aliases_combined(bucket):
-    """Test content_type and aliases used together."""
-    file_id = bucket.upload_from_stream(
-        "complex.txt",
-        b"complex data",
-        content_type="text/plain",
-        aliases=["important", "backup"],
-    )
-
-    result = bucket.open_download_stream(file_id)
-    assert result.content_type == "text/plain"
-    assert set(result.aliases) == {"important", "backup"}
-
-    # Test finding by both criteria
-    results = list(
-        bucket.find({"content_type": "text/plain", "aliases": "important"})
-    )
-    assert len(results) == 1
-    assert results[0].filename == "complex.txt"
-
-
-def test_gridfs_streaming_with_content_type_and_aliases(bucket):
-    """Test streaming uploads with content_type and aliases."""
-    data = b"streaming data with metadata"
-
-    # Upload using streaming with content_type and aliases
-    with bucket.open_upload_stream(
-        "streamed.pdf",
-        content_type="application/pdf",
-        aliases=["streamed", "test"],
-    ) as grid_in:
-        grid_in.write(data)
-
-    # Verify the file
-    result = bucket.find_one({"filename": "streamed.pdf"})
-    assert result is not None
-    assert result.content_type == "application/pdf"
-    assert set(result.aliases) == {"streamed", "test"}
-    assert result.read() == data
-
-
-def test_gridfs_streaming_with_id_and_metadata(bucket):
-    """Test streaming uploads with custom ID, content_type, and aliases."""
-    data = b"custom id streaming data"
-    custom_id = 999
-
-    # Upload with custom ID using streaming
-    with bucket.open_upload_stream_with_id(
-        custom_id,
-        "custom_stream.pdf",
-        content_type="application/pdf",
-        aliases=["custom", "streamed"],
-    ) as grid_in:
-        grid_in.write(data)
-
-    # Verify
-    result = bucket.open_download_stream(custom_id)
-    assert result.filename == "custom_stream.pdf"
-    assert result.content_type == "application/pdf"
-    assert set(result.aliases) == {"custom", "streamed"}
-    assert result.read() == data
-
-
-def test_gridfs_backward_compatibility_no_content_type_aliases(bucket):
-    """Test that files without content_type and aliases work correctly."""
-    # Upload files the old way (without new parameters)
-    file_id1 = bucket.upload_from_stream("old_file1.txt", b"old data 1")
-    file_id2 = bucket.upload_from_stream(
-        "old_file2.txt", b"old data 2", metadata={"legacy": True}
-    )
-
-    # Check that content_type and aliases are None
-    result1 = bucket.open_download_stream(file_id1)
-    assert result1.content_type is None
-    assert result1.aliases is None
-
-    result2 = bucket.open_download_stream(file_id2)
-    assert result2.content_type is None
-    assert result2.aliases is None
-    assert result2.metadata == {"legacy": True}
-
-    # Test that find still works
-    results = list(bucket.find({"filename": "old_file1.txt"}))
-    assert len(results) == 1
-    assert results[0].read() == b"old data 1"
-
-
 def test_gridfs_schema_migration(bucket):
     """Test that schema migration adds new columns correctly."""
     # Check that new columns exist
@@ -2943,81 +2534,6 @@ def test_gridfs_schema_migration(bucket):
     columns = {row[1] for row in cursor.fetchall()}
 
     assert "content_type" in columns
-    assert "aliases" in columns
-
-    # Verify column types (depends on JSONB support)
-    from neosqlite.gridfs.gridfs_bucket import supports_jsonb
-
-    jsonb_supported = supports_jsonb(bucket._db)
-
-    cursor = bucket._db.execute("PRAGMA table_info(fs_files)")
-    column_info = {row[1]: row[2] for row in cursor.fetchall()}
-
-    assert column_info["content_type"] == "TEXT"
-    expected_aliases_type = "JSONB" if jsonb_supported else "TEXT"
-    assert column_info["aliases"] == expected_aliases_type
-
-
-def test_gridfs_find_with_multiple_criteria(bucket):
-    """Test complex find operations with new metadata fields."""
-    # Upload various files
-    bucket.upload_from_stream(
-        "doc1.txt", b"doc1", content_type="text/plain", aliases=["doc"]
-    )
-    bucket.upload_from_stream(
-        "doc2.txt",
-        b"doc2",
-        content_type="text/plain",
-        aliases=["doc", "important"],
-    )
-    bucket.upload_from_stream(
-        "image.png", b"png", content_type="image/png", aliases=["image"]
-    )
-    bucket.upload_from_stream("video.mp4", b"mp4", content_type="video/mp4")
-
-    # Find all text/plain documents
-    results = list(bucket.find({"content_type": "text/plain"}))
-    assert len(results) == 2
-    filenames = {r.filename for r in results}
-    assert filenames == {"doc1.txt", "doc2.txt"}
-
-    # Find documents with "doc" alias
-    results = list(bucket.find({"aliases": "doc"}))
-    assert len(results) == 2
-    filenames = {r.filename for r in results}
-    assert filenames == {"doc1.txt", "doc2.txt"}
-
-    # Find documents with "important" alias
-    results = list(bucket.find({"aliases": "important"}))
-    assert len(results) == 1
-    assert results[0].filename == "doc2.txt"
-
-    # Find documents with both criteria
-    results = list(
-        bucket.find({"content_type": "text/plain", "aliases": "important"})
-    )
-    assert len(results) == 1
-    assert results[0].filename == "doc2.txt"
-
-
-def test_gridfs_get_last_version_edge_cases(bucket):
-    """Test get_last_version with edge cases."""
-    # Test with non-existent file
-    with pytest.raises(NoFile):
-        bucket.get_last_version("nonexistent.txt")
-
-    # Test with single file
-    bucket.upload_from_stream("single.txt", b"single")
-    result = bucket.get_last_version("single.txt")
-    assert result.read() == b"single"
-
-    # Test with many versions
-    for i in range(10):
-        bucket.upload_from_stream("many_versions.txt", f"version {i}".encode())
-        time.sleep(0.001)  # Small delay to ensure ordering
-
-    result = bucket.get_last_version("many_versions.txt")
-    assert result.read() == b"version 9"
 
 
 def test_gridfs_list_edge_cases(bucket):
@@ -3037,48 +2553,3 @@ def test_gridfs_list_edge_cases(bucket):
     filenames = bucket.list()
     assert "same.txt" in filenames
     assert len([f for f in filenames if f == "same.txt"]) == 1  # Only once
-
-
-def test_gridfs_aliases_empty_and_none(bucket):
-    """Test aliases handling with empty lists and None."""
-    # Test with empty aliases list
-    file_id1 = bucket.upload_from_stream(
-        "empty_aliases.txt", b"data", aliases=[]
-    )
-    result1 = bucket.open_download_stream(file_id1)
-    assert result1.aliases == []
-
-    # Test with None aliases (default)
-    file_id2 = bucket.upload_from_stream("no_aliases.txt", b"data")
-    result2 = bucket.open_download_stream(file_id2)
-    assert result2.aliases is None
-
-    # Empty aliases should not match any alias searches
-    results = list(bucket.find({"aliases": "anything"}))
-    filenames = {r.filename for r in results}
-    assert "empty_aliases.txt" not in filenames
-    assert "no_aliases.txt" not in filenames
-
-
-def test_gridfs_content_type_empty_and_none(bucket):
-    """Test content_type handling with empty strings and None."""
-    # Test with empty content_type
-    file_id1 = bucket.upload_from_stream(
-        "empty_type.txt", b"data", content_type=""
-    )
-    result1 = bucket.open_download_stream(file_id1)
-    assert result1.content_type == ""
-
-    # Test with None content_type (default)
-    file_id2 = bucket.upload_from_stream("no_type.txt", b"data")
-    result2 = bucket.open_download_stream(file_id2)
-    assert result2.content_type is None
-
-    # Test finding by empty content_type
-    results = list(bucket.find({"content_type": ""}))
-    assert len(results) == 1
-    assert results[0].filename == "empty_type.txt"
-
-    # Test finding by None content_type (should not match anything directly)
-    results = list(bucket.find({"content_type": None}))
-    # This might not work as expected due to SQL NULL handling, but should not crash

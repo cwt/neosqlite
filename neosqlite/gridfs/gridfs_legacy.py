@@ -69,7 +69,9 @@ class GridFS:
             filename = "file"
 
         # Upload the data - this will return an ObjectId
-        return self._bucket.upload_from_stream(filename, data, metadata or None)
+        return self._bucket.upload_from_stream(
+            filename, data, metadata=metadata or None
+        )
 
     def get(self, file_id: ObjectId | str | int) -> GridOut:
         """
@@ -213,10 +215,10 @@ class GridFS:
 
         if file_id is not None:
             return self._bucket.open_upload_stream_with_id(
-                file_id, filename, metadata
+                file_id, filename, metadata=metadata
             )
         else:
-            return self._bucket.open_upload_stream(filename, metadata)
+            return self._bucket.open_upload_stream(filename, metadata=metadata)
 
 
 # Backward compatibility alias
