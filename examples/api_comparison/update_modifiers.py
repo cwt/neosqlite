@@ -16,26 +16,61 @@ def compare_update_modifiers():
     """Compare update modifiers"""
     print("\n=== Update Modifiers Comparison ===")
 
-    # Note: These update modifiers are not yet implemented in NeoSQLite
-    # This test documents the gap for future implementation
-
     with neosqlite.Connection(":memory:") as neo_conn:
         neo_collection = neo_conn.test_modifiers
         neo_collection.insert_one(
             {"name": "A", "tags": ["a", "b"], "counter": 0, "flags": 0b0101}
         )
 
-        # Test $each with $push - NOT YET IMPLEMENTED
-        print("Neo $push $each: NOT YET IMPLEMENTED")
+        # Test $each with $push
+        neo_each = False
+        try:
+            neo_collection.update_one(
+                {"name": "A"}, {"$push": {"tags": {"$each": ["c", "d"]}}}
+            )
+            doc = neo_collection.find_one({"name": "A"})
+            neo_each = doc and len(doc.get("tags", [])) == 4
+            print(f"Neo $push $each: {'OK' if neo_each else 'FAIL'}")
+        except Exception as e:
+            print(f"Neo $push $each: Error - {e}")
 
-        # Test $position with $push - NOT YET IMPLEMENTED
-        print("Neo $push $position: NOT YET IMPLEMENTED")
+        # Test $position with $push
+        neo_position = False
+        try:
+            neo_collection.update_one(
+                {"name": "A"},
+                {"$push": {"tags": {"$each": ["x"], "$position": 0}}},
+            )
+            doc = neo_collection.find_one({"name": "A"})
+            neo_position = doc and doc.get("tags", [])[0] == "x"
+            print(f"Neo $push $position: {'OK' if neo_position else 'FAIL'}")
+        except Exception as e:
+            print(f"Neo $push $position: Error - {e}")
 
-        # Test $slice with $push - NOT YET IMPLEMENTED
-        print("Neo $push $slice: NOT YET IMPLEMENTED")
+        # Test $slice with $push
+        neo_slice = False
+        try:
+            neo_collection.update_one(
+                {"name": "A"},
+                {"$push": {"tags": {"$each": ["y", "z"], "$slice": -3}}},
+            )
+            doc = neo_collection.find_one({"name": "A"})
+            neo_slice = doc and len(doc.get("tags", [])) == 3
+            print(f"Neo $push $slice: {'OK' if neo_slice else 'FAIL'}")
+        except Exception as e:
+            print(f"Neo $push $slice: Error - {e}")
 
-        # Test $bit - NOT YET IMPLEMENTED
-        print("Neo $bit: NOT YET IMPLEMENTED")
+        # Test $bit (AND operation)
+        neo_bit_and = False
+        try:
+            neo_collection.update_one(
+                {"name": "A"}, {"$bit": {"flags": {"and": 0b0011}}}
+            )
+            doc = neo_collection.find_one({"name": "A"})
+            neo_bit_and = doc and doc.get("flags") == (0b0101 & 0b0011)
+            print(f"Neo $bit and: {'OK' if neo_bit_and else 'FAIL'}")
+        except Exception as e:
+            print(f"Neo $bit and: Error - {e}")
 
     client = test_pymongo_connection()
     mongo_bit_and = None
@@ -107,36 +142,32 @@ def compare_update_modifiers():
 
         client.close()
 
-        # Record as skipped/known limitation using proper record_result method
-        reporter.record_result(
-            "Update Modifiers",
-            "$each",
-            False,  # Not implemented
-            "NOT IMPLEMENTED",
-            mongo_each,
-            skip_reason="Not yet implemented in NeoSQLite",
-        )
-        reporter.record_result(
-            "Update Modifiers",
-            "$position",
-            False,  # Not implemented
-            "NOT IMPLEMENTED",
-            mongo_position,
-            skip_reason="Not yet implemented in NeoSQLite",
-        )
-        reporter.record_result(
-            "Update Modifiers",
-            "$slice",
-            False,  # Not implemented
-            "NOT IMPLEMENTED",
-            mongo_slice,
-            skip_reason="Not yet implemented in NeoSQLite",
-        )
-        reporter.record_result(
-            "Update Modifiers",
-            "$bit",
-            False,  # Not implemented
-            "NOT IMPLEMENTED",
-            mongo_bit_and,
-            skip_reason="Not yet implemented in NeoSQLite",
-        )
+    # Record results
+    reporter.record_result(
+        "Update Modifiers",
+        "$each",
+        neo_each and mongo_each,
+        neo_each,
+        mongo_each,
+    )
+    reporter.record_result(
+        "Update Modifiers",
+        "$position",
+        neo_position and mongo_position,
+        neo_position,
+        mongo_position,
+    )
+    reporter.record_result(
+        "Update Modifiers",
+        "$slice",
+        neo_slice and mongo_slice,
+        neo_slice,
+        mongo_slice,
+    )
+    reporter.record_result(
+        "Update Modifiers",
+        "$bit",
+        neo_bit_and and mongo_bit_and,
+        neo_bit_and,
+        mongo_bit_and,
+    )

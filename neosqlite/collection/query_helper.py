@@ -452,6 +452,12 @@ class QueryHelper:
                         )
                     # If field doesn't exist, it will be treated as 0, which is valid
 
+        # Respect the kill switch - force Python fallback if enabled
+        if _FORCE_FALLBACK:
+            return self._perform_python_update(
+                doc_id, update_spec, original_doc
+            )
+
         # Try to use SQL-based updates for simple operations
         if self._can_use_sql_updates(update_spec, doc_id):
             # Use enhanced SQL update with json_insert/json_replace when possible
@@ -486,8 +492,15 @@ class QueryHelper:
         Returns:
             bool: True if all operations can be handled with SQL, False otherwise.
         """
+        # Respect the kill switch - force fallback if enabled
+        if _FORCE_FALLBACK:
+            return False
+
         # Only handle operations that can be done purely with SQL
+        # Tier 1: Simple operations that can use json_set/json_remove
+        # Tier 2: More complex operations that can use SQL with some limitations
         supported_ops = {"$set", "$unset", "$inc", "$mul", "$min", "$max"}
+
         # Also check that doc_id is not 0 (which indicates an upsert)
         # Disable SQL updates for documents containing Binary objects
         has_binary_values = any(
@@ -497,10 +510,46 @@ class QueryHelper:
             for val in op.values()
         )
 
+        # Check for complex $push modifiers that require Python
+        has_complex_push = False
+        has_simple_push = False
+        if "$push" in update_spec:
+            push_spec = update_spec["$push"]
+            if isinstance(push_spec, dict):
+                for value in push_spec.values():
+                    if isinstance(value, dict) and (
+                        "$each" in value
+                        or "$position" in value
+                        or "$slice" in value
+                    ):
+                        has_complex_push = True
+                        break
+                    else:
+                        has_simple_push = True
+
+        # Check for $bit operator (now supported in SQL - Tier 2)
+        has_bit = "$bit" in update_spec
+
+        # Complex $push with modifiers requires Python fallback
+        if has_complex_push:
+            return False
+
+        # Simple $push and $bit are now supported (Tier 2)
+        # Add them to supported ops for this check
+        if has_simple_push or has_bit:
+            # Allow these operations but still check for other constraints
+            all_ops = set(update_spec.keys())
+            other_ops = all_ops - {"$push", "$bit"}
+            if other_ops and not other_ops.issubset(supported_ops):
+                return False
+
         return (
             doc_id != 0
             and not has_binary_values
-            and all(op in supported_ops for op in update_spec.keys())
+            and all(
+                op in supported_ops or op in {"$push", "$bit"}
+                for op in update_spec.keys()
+            )
         )
 
     def _perform_sql_update(
@@ -684,6 +733,62 @@ class QueryHelper:
                 for field in value:
                     json_path = f"'{parse_json_path(field)}'"
                     unset_clauses.append(json_path)
+            elif op == "$push":
+                # Tier 2: Simple $push (without modifiers) can use SQL json_set with [#]
+                # Complex $push with $each/$position/$slice requires Python fallback
+                for field, push_value in value.items():
+                    # Check if this is a simple push or has modifiers
+                    if isinstance(push_value, dict) and (
+                        "$each" in push_value
+                        or "$position" in push_value
+                        or "$slice" in push_value
+                    ):
+                        # Complex push - fall back to Python
+                        raise NotImplementedError(
+                            "Complex $push with modifiers requires Python fallback"
+                        )
+
+                    # Simple push - use SQL json_set with [#] to append to array
+                    json_path = f"'{parse_json_path(field)}[#]'"
+                    # Convert bytes to Binary for proper JSON serialization
+                    converted_val = _convert_bytes_to_binary(push_value)
+                    if isinstance(converted_val, Binary):
+                        param_value = neosqlite_json_dumps(converted_val)
+                        set_clauses.append(f"{json_path}, json(?)")
+                    elif isinstance(converted_val, (dict, list)):
+                        param_value = neosqlite_json_dumps(converted_val)
+                        set_clauses.append(f"{json_path}, json(?)")
+                    else:
+                        param_value = converted_val
+                        set_clauses.append(f"{json_path}, ?")
+                    set_params.append(param_value)
+            elif op == "$bit":
+                # Tier 2: $bit can use SQL bitwise operators
+                # SQLite supports &, |, ~ for bitwise operations
+                for field, bit_spec in value.items():
+                    if not isinstance(bit_spec, dict):
+                        raise MalformedQueryException(
+                            "$bit operator requires a dict with 'and', 'or', or 'xor'"
+                        )
+
+                    # Get the current value expression with COALESCE for default 0
+                    json_path = f"'{parse_json_path(field)}'"
+                    current_expr = f"COALESCE({_get_json_function('extract', self._jsonb_supported)}(data, {json_path}), 0)"
+
+                    # Build bitwise expression
+                    bit_expr = current_expr
+                    if "and" in bit_spec:
+                        bit_expr = f"({bit_expr} & {int(bit_spec['and'])})"
+                    if "or" in bit_spec:
+                        bit_expr = f"({bit_expr} | {int(bit_spec['or'])})"
+                    if "xor" in bit_spec:
+                        # SQLite doesn't have XOR, use (a | b) & ~(a & b)
+                        xor_val = int(bit_spec["xor"])
+                        bit_expr = f"(({bit_expr} | {xor_val}) & ~(({bit_expr}) & {xor_val}))"
+
+                    # Use json_set to update the field
+                    set_clauses.append(f"{json_path}, {bit_expr}")
+                    # No params needed for bitwise expressions
             else:
                 # For other operations, use the standard approach with json_set
                 clauses, params = self._build_sql_update_clause(op, value)
@@ -1044,7 +1149,40 @@ class QueryHelper:
                         doc_to_update[k] = doc_to_update.get(k, 0) + v
                 case "$push":
                     for k, v in value.items():
-                        doc_to_update.setdefault(k, []).append(v)
+                        # Check if v is a dict with modifiers ($each, $position, $slice)
+                        if isinstance(v, dict) and "$each" in v:
+                            # Get the array to push to
+                            current_list = doc_to_update.setdefault(k, [])
+
+                            # Get values to add
+                            values_to_add = v["$each"]
+                            if not isinstance(values_to_add, list):
+                                values_to_add = [values_to_add]
+
+                            # Handle $position modifier
+                            position = v.get("$position")
+                            if position is not None:
+                                # Insert at specific position
+                                for i, val in enumerate(values_to_add):
+                                    current_list.insert(position + i, val)
+                            else:
+                                # Append to end
+                                current_list.extend(values_to_add)
+
+                            # Handle $slice modifier (after adding values)
+                            slice_val = v.get("$slice")
+                            if slice_val is not None:
+                                if slice_val == 0:
+                                    doc_to_update[k] = []
+                                elif slice_val > 0:
+                                    # Keep first N elements
+                                    doc_to_update[k] = current_list[:slice_val]
+                                else:
+                                    # Keep last N elements (negative slice)
+                                    doc_to_update[k] = current_list[slice_val:]
+                        else:
+                            # Simple push (no modifiers)
+                            doc_to_update.setdefault(k, []).append(v)
                 case "$addToSet":
                     for k, v in value.items():
                         current_list = doc_to_update.setdefault(k, [])
@@ -1062,6 +1200,25 @@ class QueryHelper:
                             doc_to_update.get(k, []).pop()
                         elif v == -1:
                             doc_to_update.get(k, []).pop(0)
+                case "$bit":
+                    for k, bit_op in value.items():
+                        if not isinstance(bit_op, dict):
+                            raise MalformedQueryException(
+                                "$bit operator requires a dict with 'and', 'or', or 'xor'"
+                            )
+
+                        # Get current value (default to 0)
+                        current_val = doc_to_update.get(k, 0)
+
+                        # Apply bitwise operations
+                        if "and" in bit_op:
+                            current_val &= bit_op["and"]
+                        if "or" in bit_op:
+                            current_val |= bit_op["or"]
+                        if "xor" in bit_op:
+                            current_val ^= bit_op["xor"]
+
+                        doc_to_update[k] = current_val
                 case "$rename":
                     for k, v in value.items():
                         if k in doc_to_update:

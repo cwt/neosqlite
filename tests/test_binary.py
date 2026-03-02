@@ -500,3 +500,42 @@ def test_binary_in_nested_structures():
         assert binary_list[1] == Binary(b"list item 2", Binary.FUNCTION_SUBTYPE)
         assert isinstance(binary_list[2], Binary)
         assert binary_list[2].subtype == Binary.BINARY_SUBTYPE
+
+
+def test_binary_uuid_roundtrip():
+    """Test UUID -> Binary -> UUID roundtrip."""
+    original_uuid = uuid.uuid4()
+
+    # Convert to Binary
+    binary = Binary.from_uuid(original_uuid)
+
+    # Convert back to UUID
+    recovered_uuid = binary.as_uuid()
+
+    assert recovered_uuid == original_uuid
+    assert recovered_uuid.bytes == original_uuid.bytes
+    assert str(recovered_uuid) == str(original_uuid)
+
+
+def test_binary_uuid_in_documents():
+    """Test storing and retrieving UUIDs in documents."""
+    conn = Connection(":memory:")
+    try:
+        collection = conn.test_uuid_docs
+
+        # Create document with UUID
+        test_uuid = uuid.uuid4()
+        binary_uuid = Binary.from_uuid(test_uuid)
+
+        collection.insert_one({"user_id": binary_uuid, "name": "Test User"})
+
+        # Retrieve and verify
+        doc = collection.find_one({"name": "Test User"})
+        assert isinstance(doc["user_id"], Binary)
+        assert doc["user_id"].subtype == Binary.UUID_SUBTYPE
+
+        # Convert back to UUID
+        retrieved_uuid = doc["user_id"].as_uuid()
+        assert retrieved_uuid == test_uuid
+    finally:
+        conn.close()

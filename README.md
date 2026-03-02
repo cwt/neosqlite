@@ -27,14 +27,14 @@ See [CHANGELOG.md](CHANGELOG.md) for the latest features and improvements.
 
 ## Tested APIs Compared to PyMongo
 
-NeoSQLite maintains comprehensive API compatibility tests against PyMongo to ensure MongoDB-compatible behavior. Our automated test suite compares **254 API operations** across all major categories:
+NeoSQLite maintains comprehensive API compatibility tests against PyMongo to ensure MongoDB-compatible behavior. Our automated test suite compares **272 API operations** across all major categories:
 
 ### Test Results
 | Metric | Count |
 |--------|-------|
 | **Total Tests** | 272 |
-| **Passed** | 263 |
-| **Skipped** | 9 (by design) |
+| **Passed** | 268 |
+| **Skipped** | 4 (by design) |
 | **Failed** | 0 |
 | **Compatibility** | **100%** |
 

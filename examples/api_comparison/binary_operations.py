@@ -26,11 +26,11 @@ def compare_binary_support():
         neo_has_binary = isinstance(doc.get("data"), (Binary, bytes))
         print(f"Neo Binary support: {neo_has_binary}")
 
-        # Test from_uuid() - NOT YET IMPLEMENTED
+        # Test from_uuid()
         neo_from_uuid = False
         try:
-            test_uuid = uuid.uuid4()
             if hasattr(Binary, "from_uuid"):
+                test_uuid = uuid.uuid4()
                 binary_from_uuid = Binary.from_uuid(test_uuid)
                 neo_from_uuid = binary_from_uuid is not None
                 print(
@@ -41,13 +41,13 @@ def compare_binary_support():
         except Exception as e:
             print(f"Neo Binary.from_uuid(): Error - {e}")
 
-        # Test as_uuid() - NOT YET IMPLEMENTED
+        # Test as_uuid() - requires UUID subtype
         neo_as_uuid = False
         try:
             if hasattr(Binary, "as_uuid"):
-                # Create a binary from UUID first
+                # Create a binary from UUID first (sets UUID_SUBTYPE)
                 test_uuid = uuid.uuid4()
-                binary_from_uuid = Binary(test_uuid.bytes)
+                binary_from_uuid = Binary.from_uuid(test_uuid)
                 result_uuid = binary_from_uuid.as_uuid()
                 neo_as_uuid = result_uuid == test_uuid
                 print(
@@ -58,7 +58,7 @@ def compare_binary_support():
         except Exception as e:
             print(f"Neo Binary.as_uuid(): Error - {e}")
 
-        # Test Binary subtypes - NOT YET IMPLEMENTED
+        # Test Binary subtypes
         neo_subtypes = False
         try:
             # Check if Binary supports subtype parameter
