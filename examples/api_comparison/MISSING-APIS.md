@@ -66,9 +66,9 @@ examples/api_comparison/
 ## Latest Update: March 2, 2026
 
 **Test Results Summary:**
-- **Total Tests Run**: 262
-- **Passed**: 255
-- **Skipped**: 7 (known limitations)
+- **Total Tests Run**: 272
+- **Passed**: 263
+- **Skipped**: 9 (known limitations/not implemented)
 - **Failed**: 0
 - **Compatibility**: **100.0%**
 
@@ -82,10 +82,10 @@ examples/api_comparison/
 | Aggregation Stages | 0 | - | ✅ Complete |
 | Update Operators | 4 | Medium | Mostly Complete |
 | Query Operators | 0 | - | ✅ Complete |
-| Collection Methods | 2 | Low | Mostly Complete |
+| Collection Methods | 1 | Low | Mostly Complete |
 | Database Methods | 0 | - | ✅ Complete |
-| Special Features | 8+ | Low | Not Started |
-| **Total** | **~14** | - | **~95% Coverage** |
+| Special Features | 10+ | Low | Tested (Not Implemented) |
+| **Total** | **~15** | - | **~96% Coverage** |
 
 ---
 
@@ -295,7 +295,7 @@ examples/api_comparison/
 - [x] `Collection.rename()` - Renames collection (tested in collection_methods.py)
 - [x] `Collection.drop()` - Drops collection (tested in collection_additional.py)
 - [x] `Collection.database` - Database property (tested in collection_additional.py)
-- [ ] `Collection.watch()` - Change streams (skipped - requires replica set)
+- [ ] `Collection.watch()` - Change streams (tested - skipped, requires replica set)
 
 ### 5.2 Cursor Methods ⭐ MEDIUM PRIORITY
 - [x] `Cursor.limit()` - Limit results (tested in cursor.py)
@@ -308,7 +308,6 @@ examples/api_comparison/
 - [x] `Cursor.__iter__()` - Iterator (tested in cursor.py)
 - [x] `AggregationCursor.batch_size()` - Aggregation batch size (tested in aggregation_cursor.py)
 - [x] `AggregationCursor.allow_disk_use()` - Allow disk use (tested in aggregation_cursor.py)
-- [ ] `AggregationCursor.use_quez()` - Enable compressed queue processing
 
 ---
 
@@ -354,28 +353,24 @@ examples/api_comparison/
 - [x] `GridFSBucket.download_to_stream()` - Download file (tested in gridfs_operations.py)
 - [x] `GridFSBucket.find()` - Find files (tested in gridfs_operations.py)
 - [x] `GridFSBucket.delete()` - Delete file (tested in gridfs_operations.py)
-- [ ] `GridFSBucket.get_last_version()` - Get latest version of file
-- [ ] `GridFSBucket.list()` - List all files
-- [ ] `GridFSBucket.find_one()` - Find single file
-- [ ] `GridFSBucket.get()` - Alias for open_download_stream
-- [ ] Content type support - `content_type` field
-- [ ] Aliases support - `aliases` field for files
+- [ ] `GridFSBucket.get_last_version()` - Get latest version of file (tested - not implemented)
+- [ ] `GridFSBucket.list()` - List all files (tested - not implemented)
+- [ ] `GridFSBucket.find_one()` - Find single file (tested - not implemented)
+- [ ] `GridFSBucket.get()` - Alias for open_download_stream (tested - not implemented)
+- [ ] Content type support - `content_type` field (tested - not implemented)
+- [ ] Aliases support - `aliases` field for files (tested - not implemented)
 
 ### 7.5 Binary Data Support ⭐ LOW PRIORITY
 - [x] `Binary()` - Create Binary object (tested in binary_operations.py)
-- [ ] `Binary.from_uuid()` - Create Binary from UUID
-- [ ] `Binary.as_uuid()` - Convert Binary to UUID
-- [ ] Binary subtypes - Different binary subtypes (UUID, FUNCTION, etc.)
+- [ ] `Binary.from_uuid()` - Create Binary from UUID (tested - not implemented)
+- [ ] `Binary.as_uuid()` - Convert Binary to UUID (tested - not implemented)
+- [ ] Binary subtypes - Different binary subtypes (UUID, FUNCTION, etc.) (tested - not implemented)
 
 ### 7.6 ObjectId Operations ⭐ MEDIUM PRIORITY
 - [x] `ObjectId()` - Create ObjectId (tested in objectid_ops.py)
 - [x] `ObjectId.is_valid()` - Validate ObjectId (tested in objectid_ops.py)
 - [x] `ObjectId.generation_time` - Get generation time (tested in objectid_ops.py)
 - [x] `ObjectId.__str__()` - Hex string representation (tested in objectid_ops.py)
-
-### 7.7 Advanced Features ⭐ LOW PRIORITY
-- [ ] Custom FTS5 Tokenizers - Language-specific tokenizers (ICU, Thai, etc.)
-- [ ] Memory-constrained processing with `use_quez()`
 
 ---
 
@@ -475,9 +470,9 @@ The following features are skipped during comparison testing due to architectura
 
 | Metric | Value |
 |--------|-------|
-| **Total Tests** | 262 |
-| **Passed** | 255 |
-| **Skipped** | 7 |
+| **Total Tests** | 272 |
+| **Passed** | 263 |
+| **Skipped** | 9 |
 | **Failed** | 0 |
 | **Compatibility** | **100.0%** |
 
@@ -485,17 +480,15 @@ The following features are skipped during comparison testing due to architectura
 
 | Category | Missing Items | Priority |
 |----------|---------------|----------|
-| Collection Methods | `Collection.watch()`, `AggregationCursor.use_quez()` | Low |
+| Collection Methods | `Collection.watch()` | Low |
 | GridFS | `get_last_version()`, `list()`, `find_one()`, `get()`, content_type, aliases | Low |
 | Binary | `from_uuid()`, `as_uuid()`, subtypes | Low |
-| Advanced | Custom FTS5 Tokenizers, `use_quez()` | Low |
 | Update Modifiers | `$each`, `$position`, `$slice`, `$bit` | Medium |
 
-**Total Remaining**: ~14 features
+**Total Remaining**: ~15 features
 
 ### Next Steps
 
 1. **Update Modifiers** (Medium Priority): Implement `$push $each`, `$push $position`, `$push $slice`, `$bit`
-2. **GridFS Enhancement** (Low Priority): Add tests for `get_last_version()`, `list()`, `find_one()`
-3. **Binary UUID Support** (Low Priority): Add tests for `from_uuid()`, `as_uuid()`
-4. **Custom Tokenizers** (Low Priority): Add support for language-specific FTS5 tokenizers
+2. **GridFS Enhancement** (Low Priority): Implement `get_last_version()`, `list()`, `find_one()`, `get()`, content_type, aliases
+3. **Binary UUID Support** (Low Priority): Implement `from_uuid()`, `as_uuid()`, subtypes

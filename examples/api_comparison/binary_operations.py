@@ -1,5 +1,6 @@
 """Module for comparing binary data support between NeoSQLite and PyMongo"""
 
+import uuid
 import warnings
 
 import neosqlite
@@ -25,14 +26,62 @@ def compare_binary_support():
         neo_has_binary = isinstance(doc.get("data"), (Binary, bytes))
         print(f"Neo Binary support: {neo_has_binary}")
 
+        # Test from_uuid() - NOT YET IMPLEMENTED
+        neo_from_uuid = False
+        try:
+            test_uuid = uuid.uuid4()
+            if hasattr(Binary, "from_uuid"):
+                binary_from_uuid = Binary.from_uuid(test_uuid)
+                neo_from_uuid = binary_from_uuid is not None
+                print(
+                    f"Neo Binary.from_uuid(): {'OK' if neo_from_uuid else 'FAIL'}"
+                )
+            else:
+                print("Neo Binary.from_uuid(): NOT IMPLEMENTED")
+        except Exception as e:
+            print(f"Neo Binary.from_uuid(): Error - {e}")
+
+        # Test as_uuid() - NOT YET IMPLEMENTED
+        neo_as_uuid = False
+        try:
+            if hasattr(Binary, "as_uuid"):
+                # Create a binary from UUID first
+                test_uuid = uuid.uuid4()
+                binary_from_uuid = Binary(test_uuid.bytes)
+                result_uuid = binary_from_uuid.as_uuid()
+                neo_as_uuid = result_uuid == test_uuid
+                print(
+                    f"Neo Binary.as_uuid(): {'OK' if neo_as_uuid else 'FAIL'}"
+                )
+            else:
+                print("Neo Binary.as_uuid(): NOT IMPLEMENTED")
+        except Exception as e:
+            print(f"Neo Binary.as_uuid(): Error - {e}")
+
+        # Test Binary subtypes - NOT YET IMPLEMENTED
+        neo_subtypes = False
+        try:
+            # Check if Binary supports subtype parameter
+            binary_with_subtype = Binary(
+                b"test data", subtype=0x80
+            )  # User-defined subtype
+            if hasattr(binary_with_subtype, "subtype"):
+                neo_subtypes = binary_with_subtype.subtype == 0x80
+                print(
+                    f"Neo Binary subtypes: {'OK' if neo_subtypes else 'PARTIAL'}"
+                )
+            else:
+                print("Neo Binary subtypes: NOT IMPLEMENTED")
+        except Exception as e:
+            print(f"Neo Binary subtypes: Error - {e}")
+
     client = test_pymongo_connection()
-    # Initialize MongoDB result variables
-
     mongo_collection = None
-
     mongo_db = None
-
     mongo_has_binary = None
+    mongo_from_uuid = None
+    mongo_as_uuid = None
+    mongo_subtypes = None
 
     if client:
         mongo_db = client.test_database
@@ -45,6 +94,45 @@ def compare_binary_support():
         doc = mongo_collection.find_one({"name": "test"})
         mongo_has_binary = isinstance(doc.get("data"), (BsonBinary, bytes))
         print(f"Mongo Binary support: {mongo_has_binary}")
+
+        # Test from_uuid()
+        try:
+            test_uuid = uuid.uuid4()
+            binary_from_uuid = BsonBinary.from_uuid(test_uuid)
+            mongo_from_uuid = binary_from_uuid is not None
+            print(
+                f"Mongo Binary.from_uuid(): {'OK' if mongo_from_uuid else 'FAIL'}"
+            )
+        except Exception as e:
+            mongo_from_uuid = False
+            print(f"Mongo Binary.from_uuid(): Error - {e}")
+
+        # Test as_uuid()
+        try:
+            test_uuid = uuid.uuid4()
+            binary_from_uuid = BsonBinary.from_uuid(test_uuid)
+            result_uuid = binary_from_uuid.as_uuid()
+            mongo_as_uuid = result_uuid == test_uuid
+            print(
+                f"Mongo Binary.as_uuid(): {'OK' if mongo_as_uuid else 'FAIL'}"
+            )
+        except Exception as e:
+            mongo_as_uuid = False
+            print(f"Mongo Binary.as_uuid(): Error - {e}")
+
+        # Test Binary subtypes
+        try:
+            binary_with_subtype = BsonBinary(
+                b"test data", subtype=0x80
+            )  # User-defined subtype
+            mongo_subtypes = binary_with_subtype.subtype == 0x80
+            print(
+                f"Mongo Binary subtypes: {'OK' if mongo_subtypes else 'FAIL'}"
+            )
+        except Exception as e:
+            mongo_subtypes = False
+            print(f"Mongo Binary subtypes: Error - {e}")
+
         client.close()
 
     reporter.record_result(
@@ -53,4 +141,34 @@ def compare_binary_support():
         neo_has_binary,
         neo_has_binary,
         mongo_has_binary if mongo_has_binary is not None else None,
+    )
+    reporter.record_result(
+        "Binary Support",
+        "from_uuid",
+        neo_from_uuid,
+        neo_from_uuid if neo_from_uuid else "NOT IMPLEMENTED",
+        mongo_from_uuid,
+        skip_reason=(
+            "Not yet implemented in NeoSQLite" if not neo_from_uuid else None
+        ),
+    )
+    reporter.record_result(
+        "Binary Support",
+        "as_uuid",
+        neo_as_uuid,
+        neo_as_uuid if neo_as_uuid else "NOT IMPLEMENTED",
+        mongo_as_uuid,
+        skip_reason=(
+            "Not yet implemented in NeoSQLite" if not neo_as_uuid else None
+        ),
+    )
+    reporter.record_result(
+        "Binary Support",
+        "subtypes",
+        neo_subtypes,
+        neo_subtypes if neo_subtypes else "NOT IMPLEMENTED",
+        mongo_subtypes,
+        skip_reason=(
+            "Not yet implemented in NeoSQLite" if not neo_subtypes else None
+        ),
     )

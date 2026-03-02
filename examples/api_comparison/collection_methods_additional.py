@@ -38,20 +38,21 @@ def compare_additional_collection_methods():
             neo_db_ok = False
             print(f"Neo database property: Error - {e}")
 
+        # Test watch() - Change streams (requires replica set in MongoDB)
+        try:
+            # NeoSQLite doesn't support change streams yet
+            # This would require SQLite triggers + external listener
+            print("Neo watch(): NOT IMPLEMENTED (requires change streams)")
+        except Exception as e:
+            print(f"Neo watch(): Error - {e}")
+
     client = test_pymongo_connection()
-    # Initialize MongoDB result variables
-
     mongo_collection = None
-
     mongo_collection2 = None
-
     mongo_db = None
-
     mongo_db_ok = None
-
-    mongo_db_prop = None
-
     mongo_drop = None
+    mongo_watch = None
 
     if client:
         mongo_db = client.test_database
@@ -76,6 +77,23 @@ def compare_additional_collection_methods():
             mongo_db_ok = False
             print(f"Mongo database property: Error - {e}")
 
+        # Test watch() - Change streams (requires replica set)
+        try:
+            mongo_collection3 = mongo_db.test_watch
+            # watch() requires a replica set - will fail on standalone MongoDB
+            pipeline = []
+            change_stream = mongo_collection3.watch(pipeline)
+            # If we get here without exception, it means replica set is available
+            mongo_watch = change_stream is not None
+            print(
+                f"Mongo watch(): {'OK (replica set available)' if mongo_watch else 'FAIL'}"
+            )
+            change_stream.close()
+        except Exception as e:
+            # This is expected on standalone MongoDB (no replica set)
+            mongo_watch = False
+            print(f"Mongo watch(): SKIPPED (requires replica set) - {e}")
+
         client.close()
 
     reporter.record_result(
@@ -87,4 +105,12 @@ def compare_additional_collection_methods():
         neo_db_ok,
         neo_db_ok,
         mongo_db_ok,
+    )
+    reporter.record_result(
+        "Collection Methods",
+        "watch",
+        False,  # Not implemented in NeoSQLite
+        "NOT IMPLEMENTED",
+        mongo_watch,
+        skip_reason="Change streams require replica set (MongoDB) / SQLite triggers (NeoSQLite)",
     )

@@ -38,18 +38,11 @@ def compare_update_modifiers():
         print("Neo $bit: NOT YET IMPLEMENTED")
 
     client = test_pymongo_connection()
-    # Initialize MongoDB result variables
-
     mongo_bit_and = None
-
     mongo_collection = None
-
     mongo_db = None
-
     mongo_each = None
-
     mongo_position = None
-
     mongo_slice = None
 
     if client:
