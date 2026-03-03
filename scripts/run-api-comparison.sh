@@ -5,10 +5,20 @@
 # This script:
 # 1. Checks for podman or docker availability (podman preferred)
 # 2. Pulls the latest MongoDB image
-# 3. Runs MongoDB container with exposed port
+# 3. Runs MongoDB container with exposed port (single node, NOT replica set)
 # 4. Executes the API comparison Python script
 # 5. Reports compatibility statistics
 # 6. Cleans up the container
+#
+# Note: MongoDB is run as a single node (not a replica set) for simplicity.
+# This means change streams (watch()) cannot be tested in this comparison,
+# as MongoDB requires a replica set for change streams. NeoSQLite's watch()
+# implementation is fully functional and tested independently via SQLite triggers
+# (see tests/test_changestream.py).
+#
+# Additionally, $log2 is a NeoSQLite extension using SQLite's native log2() function.
+# It raises a UserWarning about MongoDB incompatibility. For MongoDB compatibility,
+# use { $log: [ <number>, 2 ] } instead.
 #
 
 set -e

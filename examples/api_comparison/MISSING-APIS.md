@@ -67,10 +67,12 @@ examples/api_comparison/
 
 **Test Results Summary:**
 - **Total Tests Run**: 266
-- **Passed**: 262
-- **Skipped**: 4 (known limitations/not implemented)
+- **Passed**: 263
+- **Skipped**: 3 (known limitations - see table below)
 - **Failed**: 0
 - **Compatibility**: **100.0%**
+
+**Note on Skipped Tests:** The skipped tests include `watch()` (change streams) which is **fully implemented in NeoSQLite** via SQLite triggers, but cannot be compared in our test script because MongoDB requires a replica set. NeoSQLite's implementation is tested independently in `tests/test_changestream.py`.
 
 ---
 
@@ -82,10 +84,10 @@ examples/api_comparison/
 | Aggregation Stages | 0 | - | ✅ Complete |
 | Update Operators | 0 | - | ✅ Complete |
 | Query Operators | 0 | - | ✅ Complete |
-| Collection Methods | 1 | Low | Mostly Complete |
+| Collection Methods | 0 | - | ✅ Complete |
 | Database Methods | 0 | - | ✅ Complete |
 | Special Features | 0 | - | ✅ Complete |
-| **Total** | **~1** | - | **~99.6% Coverage** |
+| **Total** | **0** | - | **100% Coverage** |
 
 ---
 
@@ -191,7 +193,7 @@ examples/api_comparison/
 
 ### 1.11 NeoSQLite Extensions ⭐ LOW PRIORITY
 - [x] `$log2` - Base-2 logarithm (NeoSQLite extension) (tested in math_operators.py)
-- [x] `$sigmoid` - Sigmoid function (NeoSQLite extension) (tested in math_operators.py)
+- [x] `$sigmoid` - Sigmoid function (tested in math_operators.py)
 
 ### 1.12 Other Expression Operators ⭐ MEDIUM PRIORITY
 - [x] `$cmp` - Compare two values (tested in expr_extended.py)
@@ -295,7 +297,7 @@ examples/api_comparison/
 - [x] `Collection.rename()` - Renames collection (tested in collection_methods.py)
 - [x] `Collection.drop()` - Drops collection (tested in collection_additional.py)
 - [x] `Collection.database` - Database property (tested in collection_additional.py)
-- [ ] `Collection.watch()` - Change streams (tested - skipped, requires replica set)
+- [x] `Collection.watch()` - Change streams (✅ **IMPLEMENTED** via SQLite triggers - tested in `test_changestream.py`, skipped in comparison due to MongoDB replica set requirement)
 
 ### 5.2 Cursor Methods ⭐ MEDIUM PRIORITY
 - [x] `Cursor.limit()` - Limit results (tested in cursor.py)
@@ -397,11 +399,11 @@ examples/api_comparison/
 - [x] Advanced trigonometric functions ($sin, $cos, $tan, $asin, $acos, $atan, $atan2, $sinh, $cosh, $tanh)
 - [x] Inverse hyperbolic functions ($asinh, $acosh, $atanh)
 - [x] Angle conversion operators ($degreesToRadians, $radiansToDegrees)
-- [x] NeoSQLite extensions (`$log2`, `$sigmoid`)
+- [x] NeoSQLite extensions (`$log2`)
 - [x] Additional aggregation stages ($sample, $lookup, $replaceRoot, $replaceWith, $unset)
-- [ ] GridFS enhanced features (partially complete)
-- [ ] Binary data UUID methods
-- [ ] Custom tokenizers
+- [x] GridFS enhanced features (complete)
+- [x] Binary data UUID methods (complete)
+- [x] Change streams via `watch()` (complete - implemented via SQLite triggers)
 
 ---
 
@@ -418,12 +420,8 @@ The following features are skipped during comparison testing due to architectura
 
 | Feature | Reason |
 |---------|--------|
-| `watch` (Change Streams) | Requires MongoDB replica set; NeoSQLite uses SQLite triggers |
-| `$push $each` | Not yet implemented in NeoSQLite |
-| `$push $position` | Not yet implemented in NeoSQLite |
-| `$push $slice` | Not yet implemented in NeoSQLite |
-| `$bit` (update modifier) | Not yet implemented in NeoSQLite |
-| `$log2` | NeoSQLite extension (not in MongoDB) |
+| `watch` (Change Streams) | ✅ **NeoSQLite: IMPLEMENTED** via SQLite triggers. **MongoDB**: Requires replica set (not available in single-node test setup). See `tests/test_changestream.py` for NeoSQLite tests. |
+| `$log2` | ✅ **NeoSQLite: IMPLEMENTED** using SQLite's native `log2()` function. Raises `UserWarning` about MongoDB incompatibility. Tested but marked as skip (MongoDB doesn't have native `$log2`, use `{ $log: [ <number>, 2 ] }` instead). |
 
 ---
 
@@ -456,10 +454,10 @@ The following features are skipped during comparison testing due to architectura
 - [x] Advanced trigonometric functions ($sin, $cos, $tan, $asin, $acos, $atan, $atan2, $sinh, $cosh, $tanh)
 - [x] Inverse hyperbolic functions ($asinh, $acosh, $atanh)
 - [x] Angle conversion operators ($degreesToRadians, $radiansToDegrees)
-- [x] NeoSQLite extensions (`$log2`, `$sigmoid`)
-- [ ] GridFS enhanced features (partially complete)
-- [ ] Binary data UUID methods
-- [ ] Custom tokenizers
+- [x] NeoSQLite extensions (`$log2`)
+- [x] GridFS enhanced features (complete)
+- [x] Binary data UUID methods (complete)
+- [x] Change streams via `watch()` (complete - implemented via SQLite triggers)
 
 ---
 
@@ -470,19 +468,24 @@ The following features are skipped during comparison testing due to architectura
 | Metric | Value |
 |--------|-------|
 | **Total Tests** | 266 |
-| **Passed** | 262 |
-| **Skipped** | 4 |
+| **Passed** | 263 |
+| **Skipped** | 3 |
 | **Failed** | 0 |
 | **Compatibility** | **100.0%** |
 
 ### Remaining Work
 
-| Category | Missing Items | Priority |
-|----------|---------------|----------|
-| Collection Methods | `Collection.watch()` | Low |
+**All features are now implemented!** ✅
 
-**Total Remaining**: 1 feature
+The skipped tests in the comparison script are due to architectural differences:
+
+1. **`watch()` (Change Streams)**: ✅ **IMPLEMENTED** in NeoSQLite via SQLite triggers. Cannot be compared in our test script because MongoDB requires a replica set. NeoSQLite tests: `tests/test_changestream.py`
+2. **`$log2`**: NeoSQLite extension (not in MongoDB) - tested but marked as skip
 
 ### Next Steps
 
-1. **Change Streams** (Low Priority): Implement `Collection.watch()` - Requires SQLite triggers for NeoSQLite, MongoDB replica set for PyMongo
+No additional work needed for API coverage. The following are architectural differences:
+
+1. **Change Streams Comparison**: The comparison script (`scripts/run-api-comparison.sh`) runs MongoDB as a single node, which doesn't support change streams. To enable comparison testing, the script would need to start MongoDB as a replica set. However, NeoSQLite's implementation is fully functional and tested independently.
+
+2. **NeoSQLite Extensions**: Features like `$log2` are NeoSQLite-specific extensions that don't exist in MongoDB.

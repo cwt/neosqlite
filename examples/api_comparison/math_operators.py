@@ -181,7 +181,7 @@ def compare_math_operators():
             neo_log2 = False
             print(f"Neo $log2: Error - {e}")
 
-        # Test $sigmoid (NeoSQLite extension)
+        # Test $sigmoid
         try:
             result = list(
                 neo_collection.aggregate(
@@ -208,6 +208,7 @@ def compare_math_operators():
     mongo_atanh = None
     mongo_degstorad = None
     mongo_radtodeg = None
+    mongo_sigmoid = None
 
     if client:
         mongo_db = client.test_database
@@ -367,6 +368,19 @@ def compare_math_operators():
             mongo_radtodeg = False
             print(f"Mongo $radiansToDegrees: Error - {e}")
 
+        # Test $sigmoid (MongoDB 8.0+)
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"sigmoid_val": {"$sigmoid": "$value"}}}]
+                )
+            )
+            mongo_sigmoid = len(result) == 2
+            print(f"Mongo $sigmoid: {'OK' if mongo_sigmoid else 'FAIL'}")
+        except Exception as e:
+            mongo_sigmoid = False
+            print(f"Mongo $sigmoid: Error - {e}")
+
         # NeoSQLite extensions - these don't exist in MongoDB
         # Set to False as they are NeoSQLite-specific
 
@@ -393,10 +407,10 @@ def compare_math_operators():
         )
         reporter.record_result(
             "Math Operators",
-            "$sigmoid (NeoSQLite extension)",
+            "$sigmoid",
             neo_sigmoid,
             neo_sigmoid,
-            False,
+            mongo_sigmoid,
         )
         reporter.record_result(
             "Math Operators", "$atan", neo_atan, neo_atan, mongo_atan

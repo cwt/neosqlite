@@ -38,6 +38,10 @@ NeoSQLite maintains comprehensive API compatibility tests against PyMongo to ens
 | **Failed** | 0 |
 | **Compatibility** | **100%** |
 
+**Skipped Tests Note**: The skipped tests include:
+1. `watch()` (change streams) - **fully implemented in NeoSQLite** via SQLite triggers but cannot be compared because MongoDB requires a replica set. NeoSQLite's implementation is tested independently in `tests/test_changestream.py`.
+2. `$log2` - **NeoSQLite extension** using SQLite's native `log2()` function. Raises `UserWarning` about MongoDB incompatibility. For MongoDB compatibility, use `{ $log: [ <number>, 2 ] }` instead.
+
 ### Running the Tests
 To run the API comparison tests, install PyMongo first and ensure that either Podman or Docker is installed on your system.
 

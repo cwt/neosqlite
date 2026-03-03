@@ -191,6 +191,17 @@ COMPARISON_FUNCTIONS = [
 - PyMongo installed
 - MongoDB server running on localhost:27017 (optional, tests will skip MongoDB if unavailable)
 
+## Known Limitations
+
+The following tests are skipped during comparison due to architectural differences:
+
+| Feature | NeoSQLite Status | MongoDB Requirement | Reason |
+|---------|-----------------|---------------------|--------|
+| `watch()` (Change Streams) | ✅ **Implemented** via SQLite triggers | Replica set required | NeoSQLite uses SQLite triggers; MongoDB requires replica set (not available in single-node test setup). See `tests/test_changestream.py` for NeoSQLite tests. |
+| `$log2` | ✅ **Implemented** using SQLite's native `log2()` function | N/A | NeoSQLite extension. Raises `UserWarning` about MongoDB incompatibility. For MongoDB compatibility, use `{ $log: [ <number>, 2 ] }` instead. |
+
+**Note**: The `watch()` method is fully functional in NeoSQLite and tested independently. It's only skipped in the comparison script because the test setup runs MongoDB as a single node (no replica set).
+
 ## Output
 
 The comparison script produces:
