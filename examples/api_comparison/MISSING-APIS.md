@@ -424,7 +424,6 @@ The following features are skipped during comparison testing due to architectura
 | `$push $slice` | Not yet implemented in NeoSQLite |
 | `$bit` (update modifier) | Not yet implemented in NeoSQLite |
 | `$log2` | NeoSQLite extension (not in MongoDB) |
-| `$replaceOne` (in $expr context) | SQL tier limitation - Python fallback needed |
 
 ---
 

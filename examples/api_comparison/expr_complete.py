@@ -422,9 +422,30 @@ def compare_additional_expr_operators_complete():
             neo_regexmatch = False
             print(f"Neo $regexMatch: Error - {e}")
 
-        # Test $replaceOne - Known issue with SQL tier
-        neo_replaceone = True  # Mark as skipped - implementation issue
-        print("Neo $replaceOne: SKIPPED (SQL tier limitation)")
+        # Test $replaceOne
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "replaced": {
+                                    "$replaceOne": {
+                                        "input": "$str",
+                                        "find": "o",
+                                        "replacement": "0",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            neo_replaceone = len(result) == 2
+            print(f"Neo $replaceOne: {'OK' if neo_replaceone else 'FAIL'}")
+        except Exception as e:
+            neo_replaceone = False
+            print(f"Neo $replaceOne: Error - {e}")
 
         # Test $ltrim
         try:
@@ -1373,7 +1394,6 @@ def compare_additional_expr_operators_complete():
             neo_replaceone,
             neo_replaceone,
             mongo_replaceone,
-            skip_reason="SQL tier limitation - Python fallback needed",
         )
         reporter.record_result(
             "Additional $expr Operators",
