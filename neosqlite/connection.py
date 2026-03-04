@@ -26,10 +26,17 @@ class Connection:
                      Special kwargs:
                      - tokenizers: List of tuples (name, path) for FTS5 tokenizers to load
                      - debug: Boolean flag to enable debug printing
+                     - name: Optional name for the database (for PyMongo API compatibility)
         """
         self._collections: Dict[str, Collection] = {}
         self._tokenizers: List[Tuple[str, str]] = kwargs.pop("tokenizers", [])
         self.debug: bool = kwargs.pop("debug", False)
+        # Extract database name from args or kwargs for PyMongo API compatibility
+        self.name: str = kwargs.pop("name", None)
+        if self.name is None and args:
+            # Use the database file path as the name
+            db_path = args[0] if args else ":memory:"
+            self.name = db_path if db_path != ":memory:" else "memory"
         self.connect(*args, **kwargs)
 
     def connect(self, *args: Any, **kwargs: Any) -> None:
@@ -225,6 +232,195 @@ class Connection:
         return [
             {"name": row[0], "options": row[1]} for row in cursor.fetchall()
         ]
+
+    def command(
+        self, command: str | Dict[str, Any], **kwargs: Any
+    ) -> Dict[str, Any]:
+        """
+        Issue a database command and return the response.
+
+        This method provides PyMongo-compatible command execution for SQLite.
+        It supports various commands including PRAGMA commands, introspection,
+        and utility commands.
+
+        Args:
+            command: The command to execute. Can be:
+                    - A string (e.g., "table_info", "integrity_check")
+                    - A dict with command name as key (e.g., {"ping": 1})
+            **kwargs: Additional command arguments
+
+        Returns:
+            Dict[str, Any]: Command response
+
+        Supported Commands:
+            - "ping" or {"ping": 1} - Returns {"ok": 1.0}
+            - "serverStatus" - Returns SQLite version info
+            - "listCollections" - Returns collection list
+            - "table_info" - Returns table schema (PRAGMA table_info)
+            - "integrity_check" - Returns integrity check results
+            - "foreign_key_check" - Returns foreign key check results
+            - "index_list" - Returns index list for a table
+            - "vacuum" - Runs VACUUM command
+            - "analyze" - Runs ANALYZE command
+
+        Example:
+            >>> db = Connection("test.db")
+            >>> result = db.command("ping")
+            >>> print(result)
+            {'ok': 1.0}
+        """
+        # Handle string commands
+        if isinstance(command, str):
+            cmd_name = command.lower()
+        elif isinstance(command, dict):
+            # Handle dict commands (PyMongo style)
+            cmd_name = next(iter(command.keys())).lower()
+        else:
+            raise TypeError("command must be a string or dict")
+
+        try:
+            # Handle specific commands
+            if cmd_name == "ping":
+                return {"ok": 1.0}
+
+            elif cmd_name == "serverstatus":
+                import sqlite3
+
+                return {
+                    "ok": 1.0,
+                    "version": sqlite3.sqlite_version,
+                    "python_sqlite_version": getattr(
+                        sqlite3, "version", "unknown"
+                    ),
+                    "process": "neosqlite",
+                    "pid": 1,  # SQLite is embedded, no separate process
+                }
+
+            elif cmd_name == "listcollections":
+                collections = self.list_collection_names()
+                return {
+                    "ok": 1.0,
+                    "collections": [{"name": name} for name in collections],
+                }
+
+            elif cmd_name == "table_info":
+                table_name = kwargs.get("table")
+                if not table_name and isinstance(command, dict):
+                    table_name = command.get("table_info")
+                if not table_name:
+                    raise ValueError("table_info requires 'table' parameter")
+                cursor = self.db.execute(f"PRAGMA table_info({table_name})")
+                columns = []
+                for row in cursor.fetchall():
+                    columns.append(
+                        {
+                            "cid": row[0],
+                            "name": row[1],
+                            "type": row[2],
+                            "notnull": bool(row[3]),
+                            "default": row[4],
+                            "pk": bool(row[5]),
+                        }
+                    )
+                return {"ok": 1.0, "columns": columns}
+
+            elif cmd_name == "integrity_check":
+                cursor = self.db.execute("PRAGMA integrity_check")
+                result = cursor.fetchall()
+                return {"ok": 1.0, "result": [row[0] for row in result]}
+
+            elif cmd_name == "foreign_key_check":
+                table_name = kwargs.get("table")
+                if table_name:
+                    cursor = self.db.execute(
+                        f"PRAGMA foreign_key_check({table_name})"
+                    )
+                else:
+                    cursor = self.db.execute("PRAGMA foreign_key_check")
+                result = cursor.fetchall()
+                return {
+                    "ok": 1.0,
+                    "violations": [
+                        {
+                            "table": row[0],
+                            "rowid": row[1],
+                            "parent": row[2],
+                            "fkid": row[3],
+                        }
+                        for row in result
+                    ],
+                }
+
+            elif cmd_name == "index_list":
+                table_name = kwargs.get("table")
+                if not table_name and isinstance(command, dict):
+                    table_name = command.get("index_list")
+                if not table_name:
+                    raise ValueError("index_list requires 'table' parameter")
+                cursor = self.db.execute(f"PRAGMA index_list({table_name})")
+                indexes = []
+                for row in cursor.fetchall():
+                    indexes.append(
+                        {
+                            "seq": row[0],
+                            "name": row[1],
+                            "unique": bool(row[2]),
+                            "origin": row[3] if len(row) > 3 else "c",
+                            "partial": bool(row[4]) if len(row) > 4 else False,
+                        }
+                    )
+                return {"ok": 1.0, "indexes": indexes}
+
+            elif cmd_name == "vacuum":
+                self.db.execute("VACUUM")
+                return {"ok": 1.0, "message": "VACUUM completed"}
+
+            elif cmd_name == "analyze":
+                self.db.execute("ANALYZE")
+                return {"ok": 1.0, "message": "ANALYZE completed"}
+
+            elif cmd_name == "collstats":
+                # Collection statistics
+                collection_name = kwargs.get("collection")
+                if not collection_name and isinstance(command, dict):
+                    collection_name = command.get("collstats")
+                if not collection_name:
+                    raise ValueError(
+                        "collstats requires 'collection' parameter"
+                    )
+                cursor = self.db.execute(
+                    f"SELECT COUNT(*) FROM {collection_name}"
+                )
+                count = cursor.fetchone()[0]
+                return {
+                    "ok": 1.0,
+                    "ns": collection_name,
+                    "count": count,
+                    "size": 0,  # SQLite doesn't track this easily
+                    "storageSize": 0,
+                }
+
+            else:
+                # Try to execute as a PRAGMA command
+                try:
+                    cursor = self.db.execute(f"PRAGMA {cmd_name}")
+                    result = cursor.fetchall()
+                    return {
+                        "ok": 1.0,
+                        "result": [
+                            dict(zip([d[0] for d in cursor.description], row))
+                            for row in result
+                        ],
+                    }
+                except Exception as e:
+                    return {
+                        "ok": 0,
+                        "errmsg": f"Unknown command: {cmd_name}",
+                        "error": str(e),
+                    }
+
+        except Exception as e:
+            return {"ok": 0, "errmsg": str(e), "code": 1}
 
     @contextmanager
     def transaction(self) -> Iterator[None]:

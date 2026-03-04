@@ -53,6 +53,33 @@ def compare_additional_collection_methods():
             neo_watch = False
             print(f"Neo watch(): Error - {e}")
 
+        # Test full_name property
+        neo_collection_fullname = neo_conn.test_fullname
+        try:
+            neo_full_name = neo_collection_fullname.full_name
+            neo_full_name_ok = (
+                isinstance(neo_full_name, str) and len(neo_full_name) > 0
+            )
+            print(f"Neo full_name: '{neo_full_name}'")
+        except Exception as e:
+            neo_full_name_ok = False
+            print(f"Neo full_name: Error - {e}")
+
+        # Test with_options()
+        neo_collection_opts = neo_conn.test_with_opts
+        try:
+            neo_coll_opts = neo_collection_opts.with_options(
+                write_concern={"w": "majority"}, read_preference=None
+            )
+            neo_with_options = (
+                neo_coll_opts is not None
+                and neo_coll_opts.name == neo_collection_opts.name
+            )
+            print(f"Neo with_options(): {'OK' if neo_with_options else 'FAIL'}")
+        except Exception as e:
+            neo_with_options = False
+            print(f"Neo with_options(): Error - {e}")
+
     client = test_pymongo_connection()
     mongo_collection = None
     mongo_collection2 = None
@@ -60,6 +87,8 @@ def compare_additional_collection_methods():
     mongo_db_ok = None
     mongo_drop = None
     mongo_watch = None
+    mongo_full_name_ok = None
+    mongo_with_options = None
 
     if client:
         mongo_db = client.test_database
@@ -101,6 +130,37 @@ def compare_additional_collection_methods():
             mongo_watch = False
             print(f"Mongo watch(): SKIPPED (requires replica set) - {e}")
 
+        # Test full_name property
+        mongo_collection_fullname = mongo_db.test_fullname
+        try:
+            mongo_full_name = mongo_collection_fullname.full_name
+            mongo_full_name_ok = (
+                isinstance(mongo_full_name, str) and len(mongo_full_name) > 0
+            )
+            print(f"Mongo full_name: '{mongo_full_name}'")
+        except Exception as e:
+            mongo_full_name_ok = False
+            print(f"Mongo full_name: Error - {e}")
+
+        # Test with_options()
+        mongo_collection_opts = mongo_db.test_with_opts
+        try:
+            from pymongo.write_concern import WriteConcern
+
+            mongo_coll_opts = mongo_collection_opts.with_options(
+                write_concern=WriteConcern(w="majority"), read_preference=None
+            )
+            mongo_with_options = (
+                mongo_coll_opts is not None
+                and mongo_coll_opts.name == mongo_collection_opts.name
+            )
+            print(
+                f"Mongo with_options(): {'OK' if mongo_with_options else 'FAIL'}"
+            )
+        except Exception as e:
+            mongo_with_options = False
+            print(f"Mongo with_options(): Error - {e}")
+
         client.close()
 
     reporter.record_result(
@@ -122,4 +182,18 @@ def compare_additional_collection_methods():
         "IMPLEMENTED (SQLite triggers)",
         mongo_watch,
         skip_reason="NeoSQLite: Implemented via SQLite triggers; MongoDB: Requires replica set (not available in standalone test)",
+    )
+    reporter.record_result(
+        "Collection Methods",
+        "full_name",
+        neo_full_name_ok,
+        neo_full_name_ok,
+        mongo_full_name_ok,
+    )
+    reporter.record_result(
+        "Collection Methods",
+        "with_options",
+        neo_with_options,
+        neo_with_options,
+        mongo_with_options,
     )

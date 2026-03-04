@@ -5,6 +5,10 @@ Tests for neosqlite connection functionality and context manager error handling.
 import pytest
 from unittest.mock import patch
 import neosqlite
+from neosqlite.collection.query_helper import (
+    set_force_fallback,
+    get_force_fallback,
+)
 
 
 def test_connect():
@@ -366,3 +370,127 @@ def test_list_collections_structure(connection):
     assert isinstance(collection_info["name"], str)
     # options should contain SQL definition or be None/empty
     assert isinstance(collection_info["options"], (str, type(None)))
+
+
+class TestDatabaseCommand:
+    """Tests for Database.command() method."""
+
+    def test_command_ping(self, connection):
+        """Test command('ping')."""
+        result = connection.command("ping")
+
+        assert isinstance(result, dict)
+        assert result["ok"] == 1.0
+
+    def test_command_ping_dict(self, connection):
+        """Test command({'ping': 1})."""
+        result = connection.command({"ping": 1})
+
+        assert result["ok"] == 1.0
+
+    def test_command_server_status(self, connection):
+        """Test command('serverStatus')."""
+        result = connection.command("serverStatus")
+
+        assert result["ok"] == 1.0
+        assert "version" in result
+        assert "process" in result
+        assert result["process"] == "neosqlite"
+
+    def test_command_list_collections(self, connection):
+        """Test command('listCollections')."""
+        conn = connection
+        coll = conn.test_list_colls
+        coll.insert_one({"test": "doc"})
+
+        result = conn.command("listCollections")
+
+        assert result["ok"] == 1.0
+        assert isinstance(result["collections"], list)
+        collection_names = [c["name"] for c in result["collections"]]
+        assert "test_list_colls" in collection_names
+
+    def test_command_table_info(self, connection):
+        """Test command('table_info')."""
+        conn = connection
+        coll = conn.test_table_info
+        coll.insert_one({"name": "test", "value": 42})
+
+        result = conn.command("table_info", table="test_table_info")
+
+        assert result["ok"] == 1.0
+        assert isinstance(result["columns"], list)
+        assert len(result["columns"]) > 0
+
+    def test_command_integrity_check(self, connection):
+        """Test command('integrity_check')."""
+        result = connection.command("integrity_check")
+
+        assert result["ok"] == 1.0
+        assert "result" in result
+        # Should return ['ok'] for a healthy database
+        assert (
+            "ok" in str(result["result"]).lower() or len(result["result"]) > 0
+        )
+
+    def test_command_vacuum(self, connection):
+        """Test command('vacuum')."""
+        result = connection.command("vacuum")
+
+        assert result["ok"] == 1.0
+        assert "message" in result
+        assert "VACUUM" in result["message"]
+
+    def test_command_analyze(self, connection):
+        """Test command('analyze')."""
+        result = connection.command("analyze")
+
+        assert result["ok"] == 1.0
+        assert "message" in result
+
+    def test_command_unknown(self, connection):
+        """Test command with unknown command."""
+        result = connection.command("unknown_command_xyz")
+
+        # Unknown commands that aren't valid PRAGMAs return ok=0 with error
+        # Some unknown commands may be interpreted as PRAGMA and return ok=1 with empty result
+        # Both behaviors are acceptable
+        assert isinstance(result, dict)
+        assert "ok" in result
+        # Either ok=0 with error, or ok=1 with empty result for unknown PRAGMA
+        if result["ok"] == 0:
+            assert "errmsg" in result or "error" in result
+        else:
+            # Unknown PRAGMA returns empty result
+            assert "result" in result
+
+    def test_command_with_kill_switch(self, connection):
+        """Test command() works with kill switch."""
+        original_state = get_force_fallback()
+        try:
+            set_force_fallback(True)
+
+            result = connection.command("ping")
+            assert result["ok"] == 1.0
+
+            result = connection.command("serverStatus")
+            assert result["ok"] == 1.0
+        finally:
+            set_force_fallback(original_state)
+
+    def test_command_kill_switch_comparison(self, connection):
+        """Test command() returns same results with/without kill switch."""
+        # Without kill switch
+        result_normal = connection.command("ping")
+
+        # With kill switch
+        original_state = get_force_fallback()
+        try:
+            set_force_fallback(True)
+            result_fallback = connection.command("ping")
+        finally:
+            set_force_fallback(original_state)
+
+        # Results should be identical
+        assert result_normal["ok"] == result_fallback["ok"]
+        assert result_normal["ok"] == 1.0

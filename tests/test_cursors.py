@@ -4,6 +4,10 @@ Tests for find_one, find_raw_batches, and RawBatchCursor.
 
 import json
 import neosqlite
+from neosqlite.collection.query_helper import (
+    set_force_fallback,
+    get_force_fallback,
+)
 
 
 def test_returns_None_if_collection_is_empty(collection: neosqlite.Collection):
@@ -494,3 +498,493 @@ def test_aggregate_raw_batches_sort_skip_limit():
         assert len(all_docs) == 8
         nums = [doc["num"] for doc in all_docs]
         assert nums == list(range(5, 13))
+
+
+class TestCursorToList:
+    """Tests for Cursor.to_list() method."""
+
+    def test_to_list_returns_all_documents(self, collection):
+        """Test that to_list() returns all documents."""
+        docs = [{"name": f"Doc{i}", "value": i} for i in range(5)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({})
+        result = cursor.to_list()
+
+        assert len(result) == 5
+        assert all(isinstance(doc, dict) for doc in result)
+        assert all("name" in doc for doc in result)
+
+    def test_to_list_with_length_parameter(self, collection):
+        """Test to_list() with length parameter."""
+        docs = [{"name": f"Doc{i}", "value": i} for i in range(10)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({})
+        result = cursor.to_list(3)
+
+        assert len(result) == 3
+        assert result[0]["value"] == 0
+        assert result[1]["value"] == 1
+        assert result[2]["value"] == 2
+
+    def test_to_list_with_filter(self, collection):
+        """Test to_list() with filter."""
+        docs = [{"value": i} for i in range(10)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({"value": {"$gte": 5}})
+        result = cursor.to_list()
+
+        assert len(result) == 5
+        assert all(doc["value"] >= 5 for doc in result)
+
+    def test_to_list_with_sort_and_limit(self, collection):
+        """Test to_list() with sort and limit chained."""
+        docs = [{"value": i} for i in range(10)]
+        collection.insert_many(docs)
+
+        cursor = (
+            collection.find({}).sort("value", neosqlite.DESCENDING).limit(3)
+        )
+        result = cursor.to_list()
+
+        assert len(result) == 3
+        assert result[0]["value"] == 9
+        assert result[1]["value"] == 8
+        assert result[2]["value"] == 7
+
+    def test_to_list_empty_collection(self, collection):
+        """Test to_list() on empty collection."""
+        cursor = collection.find({})
+        result = cursor.to_list()
+
+        assert len(result) == 0
+        assert result == []
+
+    def test_to_list_with_kill_switch(self, collection):
+        """Test to_list() works with kill switch enabled (Tier-3 Python fallback)."""
+        docs = [{"value": i} for i in range(5)]
+        collection.insert_many(docs)
+
+        # Enable kill switch to force Python fallback
+        original_state = get_force_fallback()
+        try:
+            set_force_fallback(True)
+
+            cursor = collection.find({"value": {"$gte": 2}})
+            result = cursor.to_list()
+
+            # Should still work with Python fallback
+            assert len(result) == 3
+            assert all(doc["value"] >= 2 for doc in result)
+        finally:
+            # Restore original state
+            set_force_fallback(original_state)
+
+    def test_to_list_kill_switch_comparison(self, collection):
+        """Test that to_list() returns same results with/without kill switch."""
+        docs = [{"value": i, "name": f"Doc{i}"} for i in range(20)]
+        collection.insert_many(docs)
+
+        # Get results without kill switch
+        cursor_normal = (
+            collection.find({"value": {"$gte": 10}}).sort("value").limit(5)
+        )
+        results_normal = cursor_normal.to_list()
+
+        # Get results with kill switch
+        original_state = get_force_fallback()
+        try:
+            set_force_fallback(True)
+            cursor_fallback = (
+                collection.find({"value": {"$gte": 10}}).sort("value").limit(5)
+            )
+            results_fallback = cursor_fallback.to_list()
+        finally:
+            set_force_fallback(original_state)
+
+        # Results should be identical
+        assert len(results_normal) == len(results_fallback)
+        for i in range(len(results_normal)):
+            assert results_normal[i]["value"] == results_fallback[i]["value"]
+            assert results_normal[i]["name"] == results_fallback[i]["name"]
+
+
+class TestCursorClone:
+    """Tests for Cursor.clone() method."""
+
+    def test_clone_creates_independent_cursor(self, collection):
+        """Test that clone() creates an independent cursor."""
+        docs = [{"value": i} for i in range(5)]
+        collection.insert_many(docs)
+
+        original = collection.find({"value": {"$gte": 2}})
+        cloned = original.clone()
+
+        # Iterate original
+        original_results = list(original)
+        # Iterate clone
+        cloned_results = list(cloned)
+
+        # Both should have same results
+        assert len(original_results) == len(cloned_results)
+        assert original_results == cloned_results
+
+    def test_clone_preserves_filter(self, collection):
+        """Test that clone() preserves the filter."""
+        docs = [
+            {"value": i, "category": "A" if i % 2 == 0 else "B"}
+            for i in range(10)
+        ]
+        collection.insert_many(docs)
+
+        original = collection.find({"category": "A"})
+        cloned = original.clone()
+
+        original_results = list(original)
+        cloned_results = list(cloned)
+
+        assert len(original_results) == 5
+        assert len(cloned_results) == 5
+        assert all(doc["category"] == "A" for doc in original_results)
+        assert all(doc["category"] == "A" for doc in cloned_results)
+
+    def test_clone_preserves_sort_skip_limit(self, collection):
+        """Test that clone() preserves sort, skip, and limit."""
+        docs = [{"value": i} for i in range(10)]
+        collection.insert_many(docs)
+
+        original = (
+            collection.find({})
+            .sort("value", neosqlite.DESCENDING)
+            .skip(2)
+            .limit(3)
+        )
+        cloned = original.clone()
+
+        original_results = list(original)
+        cloned_results = list(cloned)
+
+        # With DESCENDING sort: [9,8,7,6,5,4,3,2,1,0], skip 2: [7,6,5,4,3,2,1,0], limit 3: [7,6,5]
+        assert len(original_results) == 3
+        assert len(cloned_results) == 3
+        assert original_results == cloned_results
+        assert original_results[0]["value"] == 7
+        assert original_results[1]["value"] == 6
+        assert original_results[2]["value"] == 5
+
+    def test_clone_preserves_projection(self, collection):
+        """Test that clone() preserves projection."""
+        docs = [{"name": f"Doc{i}", "value": i, "extra": "x"} for i in range(3)]
+        collection.insert_many(docs)
+
+        original = collection.find(
+            {}, projection={"name": 1, "value": 1, "_id": 0}
+        )
+        cloned = original.clone()
+
+        original_results = list(original)
+        cloned_results = list(cloned)
+
+        assert len(original_results) == len(cloned_results)
+        for doc in original_results + cloned_results:
+            assert "name" in doc
+            assert "value" in doc
+            assert "_id" not in doc
+
+    def test_clone_is_independent_iteration(self, collection):
+        """Test that cloned cursor can be iterated independently."""
+        docs = [{"value": i} for i in range(3)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({})
+        clone = cursor.clone()
+
+        # Iterate clone first
+        clone_results = list(clone)
+        assert len(clone_results) == 3
+
+        # Original should still work
+        original_results = list(cursor)
+        assert len(original_results) == 3
+
+    def test_clone_with_kill_switch(self, collection):
+        """Test clone() works with kill switch enabled."""
+        docs = [{"value": i} for i in range(5)]
+        collection.insert_many(docs)
+
+        original_state = get_force_fallback()
+        try:
+            set_force_fallback(True)
+
+            original = collection.find({"value": {"$gte": 2}}).limit(2)
+            cloned = original.clone()
+
+            original_results = list(original)
+            cloned_results = list(cloned)
+
+            assert len(original_results) == 2
+            assert len(cloned_results) == 2
+            assert original_results == cloned_results
+        finally:
+            set_force_fallback(original_state)
+
+    def test_clone_kill_switch_comparison(self, collection):
+        """Test that clone() returns same results with/without kill switch."""
+        docs = [{"value": i, "name": f"Doc{i}"} for i in range(15)]
+        collection.insert_many(docs)
+
+        # Without kill switch
+        cursor_normal = collection.find({"value": {"$gte": 5}}).sort("value")
+        clone_normal = cursor_normal.clone()
+        results_normal = list(clone_normal)
+
+        # With kill switch
+        original_state = get_force_fallback()
+        try:
+            set_force_fallback(True)
+            cursor_fallback = collection.find({"value": {"$gte": 5}}).sort(
+                "value"
+            )
+            clone_fallback = cursor_fallback.clone()
+            results_fallback = list(clone_fallback)
+        finally:
+            set_force_fallback(original_state)
+
+        # Results should be identical
+        assert len(results_normal) == len(results_fallback)
+        for i in range(len(results_normal)):
+            assert results_normal[i]["value"] == results_fallback[i]["value"]
+
+
+class TestCursorExplain:
+    """Tests for Cursor.explain() method."""
+
+    def test_explain_returns_query_plan(self, collection):
+        """Test that explain() returns a query plan."""
+        docs = [{"value": i} for i in range(10)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({"value": {"$gte": 5}})
+        plan = cursor.explain()
+
+        assert isinstance(plan, dict)
+        assert "queryPlanner" in plan
+        assert "winningPlan" in plan["queryPlanner"]
+        assert isinstance(plan["queryPlanner"]["winningPlan"], list)
+        assert len(plan["queryPlanner"]["winningPlan"]) > 0
+
+    def test_explain_with_execution_stats(self, collection):
+        """Test explain() with executionStats verbosity."""
+        docs = [{"value": i} for i in range(100)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({"value": {"$gte": 50}})
+        plan = cursor.explain(verbosity="executionStats")
+
+        assert "queryPlanner" in plan
+        assert "executionStats" in plan
+        assert "nReturned" in plan["executionStats"]
+        assert "executionTimeMillis" in plan["executionStats"]
+        assert plan["executionStats"]["nReturned"] == 50
+
+    def test_explain_with_index(self, collection):
+        """Test explain() shows index usage."""
+        docs = [{"value": i} for i in range(100)]
+        collection.insert_many(docs)
+        collection.create_index("value")
+
+        cursor = collection.find({"value": {"$gte": 80}})
+        plan = cursor.explain()
+
+        assert "queryPlanner" in plan
+        assert "indexUsage" in plan["queryPlanner"]
+        assert isinstance(plan["queryPlanner"]["indexUsage"], list)
+
+    def test_explain_simple_query(self, collection):
+        """Test explain() with simple query."""
+        docs = [{"name": f"Doc{i}"} for i in range(5)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({})
+        plan = cursor.explain()
+
+        assert isinstance(plan, dict)
+        assert "queryPlanner" in plan
+        assert len(plan["queryPlanner"]["winningPlan"]) > 0
+
+    def test_explain_with_sort(self, collection):
+        """Test explain() with sort."""
+        docs = [{"value": i} for i in range(10)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({}).sort("value", neosqlite.DESCENDING)
+        plan = cursor.explain()
+
+        assert "queryPlanner" in plan
+        assert len(plan["queryPlanner"]["winningPlan"]) > 0
+
+    def test_explain_with_kill_switch(self, collection):
+        """Test explain() works with kill switch enabled."""
+        docs = [{"value": i} for i in range(10)]
+        collection.insert_many(docs)
+
+        original_state = get_force_fallback()
+        try:
+            set_force_fallback(True)
+
+            cursor = collection.find({"value": {"$gte": 5}})
+            plan = cursor.explain()
+
+            # Should still return plan even with kill switch
+            assert isinstance(plan, dict)
+            assert "queryPlanner" in plan
+            assert len(plan["queryPlanner"]["winningPlan"]) > 0
+        finally:
+            set_force_fallback(original_state)
+
+    def test_explain_execution_stats_accuracy(self, collection):
+        """Test that explain() execution stats are accurate."""
+        docs = [{"value": i} for i in range(50)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({"value": {"$lt": 10}})
+        plan = cursor.explain(verbosity="executionStats")
+
+        assert plan["executionStats"]["nReturned"] == 10
+        assert plan["executionStats"]["executionTimeMillis"] >= 0
+
+    def test_explain_kill_switch_comparison(self, collection):
+        """Test that explain() returns valid plan with/without kill switch."""
+        docs = [{"value": i} for i in range(20)]
+        collection.insert_many(docs)
+
+        # Without kill switch
+        cursor_normal = collection.find({"value": {"$gte": 10}})
+        plan_normal = cursor_normal.explain()
+
+        # With kill switch
+        original_state = get_force_fallback()
+        try:
+            set_force_fallback(True)
+            cursor_fallback = collection.find({"value": {"$gte": 10}})
+            plan_fallback = cursor_fallback.explain()
+        finally:
+            set_force_fallback(original_state)
+
+        # Both should return valid plans
+        assert "queryPlanner" in plan_normal
+        assert "queryPlanner" in plan_fallback
+        assert len(plan_normal["queryPlanner"]["winningPlan"]) > 0
+        assert len(plan_fallback["queryPlanner"]["winningPlan"]) > 0
+
+
+class TestCollectionFullName:
+    """Tests for Collection.full_name property."""
+
+    def test_full_name_with_named_database(self):
+        """Test full_name with a named database."""
+        conn = neosqlite.Connection(":memory:", name="test_db")
+        collection = conn.my_collection
+
+        assert collection.full_name == "test_db.my_collection"
+        conn.close()
+
+    def test_full_name_with_memory_database(self):
+        """Test full_name with in-memory database."""
+        conn = neosqlite.Connection(":memory:")
+        collection = conn.test_collection
+
+        # Memory databases should have "memory" as database name
+        assert "test_collection" in collection.full_name
+        conn.close()
+
+    def test_full_name_with_file_database(self, tmp_path):
+        """Test full_name with file-based database."""
+        db_path = tmp_path / "test.db"
+        conn = neosqlite.Connection(str(db_path))
+        collection = conn.my_collection
+
+        assert "my_collection" in collection.full_name
+        conn.close()
+
+    def test_full_name_is_string(self, collection):
+        """Test that full_name returns a string."""
+        assert isinstance(collection.full_name, str)
+        assert len(collection.full_name) > 0
+
+
+class TestCollectionWithOptions:
+    """Tests for Collection.with_options() method."""
+
+    def test_with_options_returns_new_collection(self, collection):
+        """Test that with_options() returns a new collection."""
+        new_coll = collection.with_options()
+
+        assert new_coll is not collection
+        assert new_coll.name == collection.name
+        assert new_coll.db == collection.db
+
+    def test_with_options_preserves_name(self, collection):
+        """Test that with_options() preserves collection name."""
+        new_coll = collection.with_options(
+            write_concern={"w": "majority"}, read_preference=None
+        )
+
+        assert new_coll.name == collection.name
+
+    def test_with_options_stores_options(self, collection):
+        """Test that with_options() stores the provided options."""
+        new_coll = collection.with_options(
+            codec_options={"test": "value"}, write_concern={"w": "majority"}
+        )
+
+        assert hasattr(new_coll, "_codec_options")
+        assert hasattr(new_coll, "_write_concern")
+        assert new_coll._write_concern == {"w": "majority"}
+
+    def test_with_options_chaining(self, collection):
+        """Test that with_options() can be chained."""
+        coll1 = collection.with_options(write_concern={"w": 1})
+        coll2 = coll1.with_options(write_concern={"w": "majority"})
+
+        assert coll1 is not coll2
+        assert coll1.name == coll2.name
+        assert coll2._write_concern == {"w": "majority"}
+
+    def test_with_options_independent_operations(self, collection):
+        """Test that collection with options operates independently."""
+        docs = [{"value": i} for i in range(5)]
+        collection.insert_many(docs)
+
+        # Create collection with options
+        coll_opts = collection.with_options(write_concern={"w": "majority"})
+
+        # Should be able to query normally
+        results = list(coll_opts.find({"value": {"$gte": 3}}))
+        assert len(results) == 2
+
+    def test_with_options_kill_switch_comparison(self, collection):
+        """Test with_options() works with/without kill switch."""
+        docs = [{"value": i} for i in range(10)]
+        collection.insert_many(docs)
+
+        # Create collection with options
+        coll_opts = collection.with_options(write_concern={"w": "majority"})
+
+        # Query without kill switch
+        results_normal = list(coll_opts.find({"value": {"$gte": 5}}))
+
+        # Query with kill switch
+        original_state = get_force_fallback()
+        try:
+            set_force_fallback(True)
+            results_fallback = list(coll_opts.find({"value": {"$gte": 5}}))
+        finally:
+            set_force_fallback(original_state)
+
+        # Results should be identical
+        assert len(results_normal) == len(results_fallback)
+        for i in range(len(results_normal)):
+            assert results_normal[i]["value"] == results_fallback[i]["value"]

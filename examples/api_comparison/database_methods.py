@@ -83,6 +83,24 @@ def compare_database_methods():
             neo_rename_collection = False
             print(f"Neo rename_collection: Error - {e}")
 
+        # Test command()
+        try:
+            # Test ping command
+            neo_ping = neo_conn.command("ping")
+            neo_ping_ok = neo_ping.get("ok") == 1.0
+            print(f"Neo command('ping'): {'OK' if neo_ping_ok else 'FAIL'}")
+
+            # Test serverStatus command
+            neo_server_status = neo_conn.command("serverStatus")
+            neo_server_status_ok = neo_server_status.get("ok") == 1.0
+            print(
+                f"Neo command('serverStatus'): {'OK' if neo_server_status_ok else 'FAIL'}"
+            )
+        except Exception as e:
+            neo_ping_ok = False
+            neo_server_status_ok = False
+            print(f"Neo command(): Error - {e}")
+
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
 
@@ -98,7 +116,11 @@ def compare_database_methods():
 
     mongo_list_collections = None
 
+    mongo_ping_ok = None
+
     mongo_rename_collection = None
+
+    mongo_server_status_ok = None
 
     if client:
         mongo_db = client.test_database_methods
@@ -178,6 +200,24 @@ def compare_database_methods():
             mongo_rename_collection = False
             print(f"Mongo collection.rename(): Error - {e}")
 
+        # Test command()
+        try:
+            # Test ping command
+            mongo_ping = mongo_db.command("ping")
+            mongo_ping_ok = mongo_ping.get("ok") == 1.0
+            print(f"Mongo command('ping'): {'OK' if mongo_ping_ok else 'FAIL'}")
+
+            # Test serverStatus command
+            mongo_server_status = mongo_db.command("serverStatus")
+            mongo_server_status_ok = mongo_server_status.get("ok") == 1.0
+            print(
+                f"Mongo command('serverStatus'): {'OK' if mongo_server_status_ok else 'FAIL'}"
+            )
+        except Exception as e:
+            mongo_ping_ok = False
+            mongo_server_status_ok = False
+            print(f"Mongo command(): Error - {e}")
+
         # Clean up
         for coll_name in ["test_get_coll", "rename_new"]:
             try:
@@ -222,4 +262,18 @@ def compare_database_methods():
             neo_rename_collection,
             neo_rename_collection,
             mongo_rename_collection,
+        )
+        reporter.record_result(
+            "Database Methods",
+            "command_ping",
+            neo_ping_ok,
+            neo_ping_ok,
+            mongo_ping_ok,
+        )
+        reporter.record_result(
+            "Database Methods",
+            "command_server_status",
+            neo_server_status_ok,
+            neo_server_status_ok,
+            mongo_server_status_ok,
         )

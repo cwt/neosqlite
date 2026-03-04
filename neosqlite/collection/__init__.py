@@ -961,6 +961,67 @@ class Collection:
         """
         return self._database
 
+    @property
+    def full_name(self) -> str:
+        """
+        Get the full name of the collection (database.collection).
+
+        Returns:
+            str: The full name of the collection
+
+        Example:
+            >>> db = Connection("test.db")
+            >>> coll = db.my_collection
+            >>> print(coll.full_name)
+            'test.my_collection'
+        """
+        if self._database and hasattr(self._database, "name"):
+            return f"{self._database.name}.{self.name}"
+        return self.name
+
+    def with_options(
+        self,
+        codec_options=None,
+        read_preference=None,
+        write_concern=None,
+        read_concern=None,
+    ):
+        """
+        Get a clone of this collection with different options.
+
+        Note: NeoSQLite is a single-node database, so read_preference,
+        write_concern, and read_concern are stored for API compatibility
+        but don't affect query behavior.
+
+        Args:
+            codec_options: Codec options (stored for compatibility, not used)
+            read_preference: Read preference (stored for compatibility, not used)
+            write_concern: Write concern (stored for compatibility, not used)
+            read_concern: Read concern (stored for compatibility, not used)
+
+        Returns:
+            Collection: A new collection instance with the specified options
+
+        Example:
+            >>> coll = db.my_collection
+            >>> coll_with_options = coll.with_options(write_concern={"w": "majority"})
+        """
+        # Create a new collection instance (clone)
+        clone = Collection(
+            self.db,
+            self.name,
+            create=False,
+            database=self._database,
+        )
+
+        # Store options for API compatibility
+        clone._codec_options = codec_options
+        clone._read_preference = read_preference
+        clone._write_concern = write_concern
+        clone._read_concern = read_concern
+
+        return clone
+
     def _object_exists(self, type_: str, name: str) -> bool:
         """
         Check if an object (table or index) of a specific type and name exists within the database.

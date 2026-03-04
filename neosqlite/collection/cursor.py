@@ -127,6 +127,155 @@ class Cursor:
         self._hint = index
         return self
 
+    def to_list(self, length: int | None = None) -> List[Dict[str, Any]]:
+        """
+        Convert the cursor to a list of documents.
+
+        This method efficiently converts the cursor contents to a list.
+        If length is specified, returns at most that many documents.
+
+        Args:
+            length (int, optional): Maximum number of documents to return.
+                                   If None, returns all documents.
+
+        Returns:
+            List[Dict[str, Any]]: List of documents in the cursor
+
+        Example:
+            >>> cursor = collection.find({"age": {"$gte": 18}})
+            >>> adults = cursor.to_list()
+            >>> first_5 = cursor.to_list(5)
+        """
+        results = list(self)
+        if length is not None:
+            return results[:length]
+        return results
+
+    def clone(self) -> Cursor:
+        """
+        Create a clone of this cursor with the same options.
+
+        Returns a new cursor with the same filter, projection, hint,
+        sort, skip, and limit settings. The clone is unevaluated and
+        can be iterated independently.
+
+        Returns:
+            Cursor: A new cursor with the same settings
+
+        Example:
+            >>> cursor = collection.find({"age": {"$gte": 18}}).limit(10)
+            >>> clone = cursor.clone()
+            >>> results1 = list(cursor)
+            >>> results2 = list(clone)
+        """
+        from copy import deepcopy
+
+        cloned = Cursor(
+            self._collection,
+            filter=deepcopy(self._filter),
+            projection=self._projection,
+            hint=self._hint,
+        )
+        cloned._skip = self._skip
+        cloned._limit = self._limit
+        cloned._sort = deepcopy(self._sort) if self._sort else None
+        return cloned
+
+    def explain(self, verbosity: str = "executionStats") -> Dict[str, Any]:
+        """
+        Return the query execution plan.
+
+        Uses SQLite's EXPLAIN QUERY PLAN to provide information about
+        how the query will be executed, including index usage.
+
+        Args:
+            verbosity (str): Verbosity level - "executionStats" or "queryPlanner"
+                           (kept for PyMongo compatibility, SQLite always returns full plan)
+
+        Returns:
+            Dict[str, Any]: Query execution plan with the following structure:
+                - queryPlanner: Information about the query plan
+                    - winningPlan: List of plan stages
+                    - indexUsage: Information about index usage
+                - executionStats: Execution statistics (if verbosity="executionStats")
+                    - nReturned: Number of documents returned
+                    - executionTimeMillis: Execution time in milliseconds
+
+        Example:
+            >>> cursor = collection.find({"age": {"$gte": 18}})
+            >>> plan = cursor.explain()
+            >>> print(plan['queryPlanner']['winningPlan'])
+        """
+        # Build the SQL query that would be executed
+        where_result = self._query_helpers._build_simple_where_clause(
+            self._filter
+        )
+
+        if where_result is not None:
+            where_clause, params = where_result
+            if self._collection.query_engine._jsonb_supported:
+                sql = f"SELECT id, _id, json(data) as data FROM {self._collection.name} {where_clause}"
+            else:
+                sql = f"SELECT id, _id, data FROM {self._collection.name} {where_clause}"
+        else:
+            # No filter - simple select
+            if self._collection.query_engine._jsonb_supported:
+                sql = f"SELECT id, _id, json(data) as data FROM {self._collection.name}"
+            else:
+                sql = f"SELECT id, _id, data FROM {self._collection.name}"
+            params = ()
+
+        # Get the query plan from SQLite
+        try:
+            plan_rows = self._collection.db.execute(
+                f"EXPLAIN QUERY PLAN {sql}", params
+            ).fetchall()
+
+            # Parse the plan rows
+            # Row format: (id, parent, notused, detail)
+            winning_plan = []
+            index_usage = []
+
+            for row in plan_rows:
+                detail = row[3] if len(row) > 3 else str(row)
+                winning_plan.append({"detail": detail})
+
+                # Extract index usage information
+                if "USING INDEX" in detail or "USING COVERING INDEX" in detail:
+                    index_usage.append({"detail": detail})
+
+            result: Dict[str, Any] = {
+                "queryPlanner": {
+                    "winningPlan": winning_plan,
+                    "indexUsage": index_usage,
+                }
+            }
+
+            # Add execution stats if requested
+            if verbosity == "executionStats":
+                # Actually execute the query to get stats
+                import time
+
+                start_time = time.time()
+                results = list(self)
+                execution_time_ms: float = (time.time() - start_time) * 1000
+
+                result["executionStats"] = {
+                    "nReturned": len(results),
+                    "executionTimeMillis": round(execution_time_ms, 2),
+                }
+
+            return result
+
+        except Exception as e:
+            return {
+                "queryPlanner": {
+                    "winningPlan": [{"detail": f"Error getting plan: {e}"}],
+                    "indexUsage": [],
+                },
+                "error": str(e),
+            }
+
     def _execute_query(self) -> Iterator[Dict[str, Any]]:
         """
         Execute the query and yield the results after applying filters, sorting,
