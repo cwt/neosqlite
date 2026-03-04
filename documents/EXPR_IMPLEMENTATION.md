@@ -323,8 +323,6 @@ collection.find({
 | `$toDecimal` | Convert to decimal | ❌ | ✅ |
 | `$toObjectId` | Convert to ObjectId | ❌ | ✅ |
 | `$convert` | General conversion | ❌ | ✅ |
-| `$toBinData` | Convert to binary | ❌ | ✅ |
-| `$toRegex` | Convert to regex | ❌ | ✅ |
 
 **Example:**
 ```python
@@ -470,8 +468,6 @@ collection.find({
 - ✅ `$toDecimal` - Convert to Decimal128
 - ✅ `$toObjectId` - Convert to ObjectId
 - ✅ `$convert` - General type conversion
-- ✅ `$toBinData` - Convert to binary
-- ✅ `$toRegex` - Convert to regex
 
 **Variables (1):**
 - ❌ `$let` - Define variables for expression (NOT IMPLEMENTED)
@@ -569,8 +565,6 @@ collection.find({
 | `$toDecimal` | ❌ (fallback) | ✅ | Convert to Decimal128 |
 | `$toObjectId` | ❌ (fallback) | ✅ | Convert to ObjectId |
 | `$convert` | ❌ (fallback) | ✅ | General type conversion |
-| `$toBinData` | ❌ (fallback) | ✅ | Convert to binary |
-| `$toRegex` | ❌ (fallback) | ✅ | Convert to regex |
 
 ## Usage Examples
 
@@ -977,7 +971,7 @@ Use the kill switch to benchmark and compare performance between tiers.
 #### Low Priority (16 operators)
 - **Advanced Math** (4): `$log`, `$log10`, `$exp`
 - **Advanced String** (4): `$strLenCP`, `$substrCP`, `$indexOfCP`, `$replaceOne`
-- **Type Conversion** (6): `$toLong`, `$toDecimal`, `$toObjectId`, `$convert`, `$toBinData`, `$toRegex`
+- **Type Conversion** (6): `$toLong`, `$toDecimal`, `$toObjectId`, `$convert`
 
 See `documents/EXPR_IMPLEMENTATION_SUMMARY.md` for detailed implementation notes.
 

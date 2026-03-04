@@ -1845,16 +1845,6 @@ class ExprEvaluator:
                 raise NotImplementedError(
                     "$convert not supported in SQL tier (use Python fallback)"
                 )
-            case "$toBinData":
-                # Cannot convert to binary in SQL
-                raise NotImplementedError(
-                    "$toBinData not supported in SQL tier (use Python fallback)"
-                )
-            case "$toRegex":
-                # Cannot convert to regex in SQL
-                raise NotImplementedError(
-                    "$toRegex not supported in SQL tier (use Python fallback)"
-                )
             case _:
                 raise NotImplementedError(
                     f"Type operator {operator} not supported in SQL tier"
@@ -2093,8 +2083,6 @@ class ExprEvaluator:
                 | "$toLong"
                 | "$toDecimal"
                 | "$toObjectId"
-                | "$toBinData"
-                | "$toRegex"
                 | "$convert"
             ):
                 return self._evaluate_type_python(operator, operands, document)
@@ -3481,8 +3469,6 @@ class ExprEvaluator:
 
                 # Import required types upfront
                 from neosqlite.objectid import ObjectId
-                from neosqlite.binary import Binary
-                import re
 
                 # Map conversion types to named converter methods
                 conversion_map = {
@@ -3508,39 +3494,6 @@ class ExprEvaluator:
                     return input_val
                 except Exception:
                     return on_error
-            case "$toBinData":
-                # Handle both list and single operand formats
-                if not isinstance(operands, list):
-                    operands = [operands]
-                if len(operands) != 1:
-                    raise ValueError("$toBinData requires exactly 1 operand")
-                value = self._evaluate_operand_python(operands[0], document)
-                if value is None:
-                    return None
-                # Convert to Binary
-                from neosqlite.binary import Binary
-
-                try:
-                    if isinstance(value, str):
-                        return Binary(value.encode("utf-8"))
-                    elif isinstance(value, bytes):
-                        return Binary(value)
-                    return Binary(str(value).encode("utf-8"))
-                except Exception:
-                    return None
-            case "$toRegex":
-                if len(operands) != 1:
-                    raise ValueError("$toRegex requires exactly 1 operand")
-                value = self._evaluate_operand_python(operands[0], document)
-                if value is None:
-                    return None
-                # Convert to regex pattern
-                try:
-                    import re
-
-                    return re.compile(str(value))
-                except Exception:
-                    return None
             case _:
                 raise NotImplementedError(
                     f"Type operator {operator} not supported in Python evaluation"

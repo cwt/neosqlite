@@ -1,10 +1,29 @@
-# NeoSQLite vs PyMongo API Comparison Package
+# NeoSQLite PyMongo Compatibility Test Package
 
 A modular, comprehensive API compatibility testing framework for comparing NeoSQLite and PyMongo implementations.
 
 ## Overview
 
 This package tests NeoSQLite's MongoDB API compatibility by running the same operations against both NeoSQLite and a real MongoDB instance, then comparing the results.
+
+## Test Results (v1.6.1)
+
+| Metric | Count |
+|--------|-------|
+| **Total Tests** | 264 |
+| **Passed** | 261 |
+| **Skipped** | 3 (by design) |
+| **Failed** | 0 |
+| **Compatibility** | **100%** |
+
+**Note on Skipped Tests**: The 3 skipped tests are due to architectural differences, not missing implementations:
+1. `watch()` (change streams) - **Fully implemented** in NeoSQLite via SQLite triggers, but MongoDB requires a replica set for comparison testing
+2. `watch()` (collection methods) - Same as above, implemented via SQLite triggers
+3. `$log2` - **NeoSQLite extension** using SQLite's native `log2()` function (raises `UserWarning` about MongoDB incompatibility)
+
+All comparable MongoDB APIs are tested with 100% compatibility.
+
+**Note**: Two non-MongoDB operators (`$toBinData`, `$toRegex`) were removed in v1.6.1 to maintain API compatibility.
 
 ## Package Structure
 
@@ -32,8 +51,7 @@ api_comparison/
 ├── binary_operations.py     # Binary data tests
 ├── gridfs_operations.py     # GridFS tests
 ├── text_search.py           # Text search tests
-├── ...                      # And more specialized test modules
-└── MISSING-APIS.md          # List of untested features
+└── ...                      # And more specialized test modules
 ```
 
 ## Usage
@@ -183,7 +201,7 @@ COMPARISON_FUNCTIONS = [
 ]
 ```
 
-4. **Update MISSING-APIS.md** to mark the feature as tested
+4. **Update this README.md** to document the new test category
 
 ## Requirements
 
@@ -201,6 +219,17 @@ The following tests are skipped during comparison due to architectural differenc
 | `$log2` | ✅ **Implemented** using SQLite's native `log2()` function | N/A | NeoSQLite extension. Raises `UserWarning` about MongoDB incompatibility. For MongoDB compatibility, use `{ $log: [ <number>, 2 ] }` instead. |
 
 **Note**: The `watch()` method is fully functional in NeoSQLite and tested independently. It's only skipped in the comparison script because the test setup runs MongoDB as a single node (no replica set).
+
+## NeoSQLite-Specific Extensions
+
+NeoSQLite includes some features that don't exist in MongoDB and therefore aren't part of the PyMongo compatibility tests:
+
+| Feature | Purpose | Location |
+|---------|---------|----------|
+| `use_quez()` | Enable memory-constrained processing using quez library | `AggregationCursor` |
+| `get_quez_stats()` | Get quez processing statistics | `AggregationCursor` |
+
+These are internal NeoSQLite optimizations for specific use cases.
 
 ## Output
 

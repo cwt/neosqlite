@@ -1,7 +1,7 @@
 """
 Tests for $expr type conversion operators.
 
-Covers: $toLong, $toDecimal, $toObjectId, $toBinData, $toRegex, $convert
+Covers: $toLong, $toDecimal, $toObjectId, $convert
 """
 
 import pytest
@@ -79,26 +79,6 @@ class TestTypeConversionOperators:
             )
             assert len(result) == 1
             assert result[0]["_id"] == 1
-        finally:
-            set_force_fallback(False)
-
-    def test_toBinData(self, collection):
-        """Test $toBinData operator via $expr."""
-        set_force_fallback(True)
-        try:
-            result = list(
-                collection.find(
-                    {
-                        "$expr": {
-                            "$eq": [
-                                {"$type": {"$toBinData": "$data"}},
-                                "unknown",
-                            ]
-                        }
-                    }
-                )
-            )
-            assert len(result) >= 1
         finally:
             set_force_fallback(False)
 

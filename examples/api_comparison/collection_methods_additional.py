@@ -38,12 +38,19 @@ def compare_additional_collection_methods():
             neo_db_ok = False
             print(f"Neo database property: Error - {e}")
 
-        # Test watch() - Change streams (requires replica set in MongoDB)
+        # Test watch() - Change streams
+        # NeoSQLite: Implemented via SQLite triggers
+        # MongoDB: Requires replica set (not available in standalone test)
         try:
-            # NeoSQLite doesn't support change streams yet
-            # This would require SQLite triggers + external listener
-            print("Neo watch(): NOT IMPLEMENTED (requires change streams)")
+            neo_collection_watch = neo_conn.test_watch
+            neo_stream = neo_collection_watch.watch()
+            neo_watch = neo_stream is not None
+            neo_stream.close()
+            print(
+                f"Neo watch(): {'OK (SQLite triggers)' if neo_watch else 'FAIL'}"
+            )
         except Exception as e:
+            neo_watch = False
             print(f"Neo watch(): Error - {e}")
 
     client = test_pymongo_connection()
@@ -106,11 +113,13 @@ def compare_additional_collection_methods():
         neo_db_ok,
         mongo_db_ok,
     )
+    # watch() is implemented in NeoSQLite (SQLite triggers) but can't be compared
+    # with MongoDB in this test because MongoDB requires a replica set
     reporter.record_result(
         "Collection Methods",
         "watch",
-        False,  # Not implemented in NeoSQLite
-        "NOT IMPLEMENTED",
+        neo_watch,  # Implemented in NeoSQLite
+        "IMPLEMENTED (SQLite triggers)",
         mongo_watch,
-        skip_reason="Change streams require replica set (MongoDB) / SQLite triggers (NeoSQLite)",
+        skip_reason="NeoSQLite: Implemented via SQLite triggers; MongoDB: Requires replica set (not available in standalone test)",
     )

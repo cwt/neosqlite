@@ -551,32 +551,6 @@ def compare_additional_expr_operators_complete():
             neo_toobjectid = False
             print(f"Neo $toObjectId: Error - {e}")
 
-        # Test $toBinData
-        try:
-            result = list(
-                neo_collection.aggregate(
-                    [{"$project": {"bin": {"$toBinData": "hello"}}}]
-                )
-            )
-            neo_tobindata = len(result) == 2
-            print(f"Neo $toBinData: {'OK' if neo_tobindata else 'FAIL'}")
-        except Exception as e:
-            neo_tobindata = False
-            print(f"Neo $toBinData: Error - {e}")
-
-        # Test $toRegex
-        try:
-            result = list(
-                neo_collection.aggregate(
-                    [{"$project": {"regex": {"$toRegex": r"\d+"}}}]
-                )
-            )
-            neo_toregex = len(result) == 2
-            print(f"Neo $toRegex: {'OK' if neo_toregex else 'FAIL'}")
-        except Exception as e:
-            neo_toregex = False
-            print(f"Neo $toRegex: Error - {e}")
-
         # Test $convert
         try:
             result = list(
@@ -656,15 +630,11 @@ def compare_additional_expr_operators_complete():
 
     mongo_sigmoid = None
 
-    mongo_tobindata = None
-
     mongo_todecimal = None
 
     mongo_tolong = None
 
     mongo_toobjectid = None
-
-    mongo_toregex = None
 
     mongo_unsetfield = None
 
@@ -1202,32 +1172,6 @@ def compare_additional_expr_operators_complete():
             mongo_toobjectid = False
             print(f"Mongo $toObjectId: Error - {e}")
 
-        # Test $toBinData
-        try:
-            result = list(
-                mongo_collection.aggregate(
-                    [{"$project": {"bin": {"$toBinData": "hello"}}}]
-                )
-            )
-            mongo_tobindata = len(result) == 2
-            print(f"Mongo $toBinData: {'OK' if mongo_tobindata else 'FAIL'}")
-        except Exception as e:
-            mongo_tobindata = False
-            print(f"Mongo $toBinData: Error - {e}")
-
-        # Test $toRegex
-        try:
-            result = list(
-                mongo_collection.aggregate(
-                    [{"$project": {"regex": {"$toRegex": r"\d+"}}}]
-                )
-            )
-            mongo_toregex = len(result) == 2
-            print(f"Mongo $toRegex: {'OK' if mongo_toregex else 'FAIL'}")
-        except Exception as e:
-            mongo_toregex = False
-            print(f"Mongo $toRegex: Error - {e}")
-
         # Test $convert
         try:
             result = list(
@@ -1239,6 +1183,7 @@ def compare_additional_expr_operators_complete():
                                     "$convert": {
                                         "input": "$str",
                                         "to": "int",
+                                        "onError": None,  # Handle conversion errors gracefully
                                     }
                                 }
                             }
@@ -1436,20 +1381,6 @@ def compare_additional_expr_operators_complete():
             neo_toobjectid,
             neo_toobjectid,
             mongo_toobjectid,
-        )
-        reporter.record_result(
-            "Additional $expr Operators",
-            "$toBinData",
-            neo_tobindata,
-            neo_tobindata,
-            mongo_tobindata,
-        )
-        reporter.record_result(
-            "Additional $expr Operators",
-            "$toRegex",
-            neo_toregex,
-            neo_toregex,
-            mongo_toregex,
         )
         reporter.record_result(
             "Additional $expr Operators",

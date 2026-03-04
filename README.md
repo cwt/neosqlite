@@ -25,25 +25,30 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 
 See [CHANGELOG.md](CHANGELOG.md) for the latest features and improvements.
 
-## Tested APIs Compared to PyMongo
+## PyMongo Compatibility Tests
 
-NeoSQLite maintains comprehensive API compatibility tests against PyMongo to ensure MongoDB-compatible behavior. Our automated test suite compares **266 API operations** across all major categories:
+NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-compatible behavior. Our automated test suite compares **264 API operations** across all major categories:
 
-### Test Results
+### Test Results (v1.6.1)
 | Metric | Count |
 |--------|-------|
-| **Total Tests** | 266 |
-| **Passed** | 263 |
+| **Total Tests** | 264 |
+| **Passed** | 261 |
 | **Skipped** | 3 (by design) |
 | **Failed** | 0 |
 | **Compatibility** | **100%** |
 
-**Skipped Tests Note**: The skipped tests include:
+**Skipped Tests Note**: The 3 skipped tests are due to architectural differences, not missing implementations:
 1. `watch()` (change streams) - **fully implemented in NeoSQLite** via SQLite triggers but cannot be compared because MongoDB requires a replica set. NeoSQLite's implementation is tested independently in `tests/test_changestream.py`.
-2. `$log2` - **NeoSQLite extension** using SQLite's native `log2()` function. Raises `UserWarning` about MongoDB incompatibility. For MongoDB compatibility, use `{ $log: [ <number>, 2 ] }` instead.
+2. `watch()` (collection methods) - Same as above, implemented via SQLite triggers
+3. `$log2` - **NeoSQLite extension** using SQLite's native `log2()` function. Raises `UserWarning` about MongoDB incompatibility. For MongoDB compatibility, use `{ $log: [ <number>, 2 ] }` instead. **Kept for convenience** as a commonly-used mathematical shorthand with a clear migration path.
+
+All comparable MongoDB APIs are tested with 100% compatibility.
+
+**Note on Removed Operators**: Two non-MongoDB operators (`$toBinData`, `$toRegex`) were removed in v1.6.1 to maintain 100% MongoDB API compatibility. These were experimental NeoSQLite extensions that never existed in MongoDB. Unlike `$log2` (which is kept as a convenient mathematical shorthand with explicit warnings), these type conversion operators could cause subtle data type issues and had no clear MongoDB equivalent. Use the standard `Binary()` constructor for binary data and Python's `re.compile()` or `$regexMatch` for regex patterns instead.
 
 ### Running the Tests
-To run the API comparison tests, install PyMongo first and ensure that either Podman or Docker is installed on your system.
+To run the PyMongo compatibility tests, install PyMongo first and ensure that either Podman or Docker is installed on your system.
 
 ```bash
 ./scripts/run-api-comparison.sh

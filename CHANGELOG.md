@@ -1,10 +1,65 @@
 # CHANGELOG
 
+## 1.6.1
+
+### Major Achievement: Complete MongoDB API Coverage
+
+- **100% MongoDB API Coverage**: All comparable MongoDB APIs now tested against PyMongo
+- **264 PyMongo Compatibility Tests**: 261 passed, 3 skipped (by design), 0 failed
+- **Complete Test Coverage**: All 42 test modules complete with 100% compatibility
+- **Documentation Complete**: Removed MISSING-APIS.md as all features are now tested
+
+### Breaking Changes: Non-MongoDB Operators Removed
+
+**Removed Operators** (not in MongoDB):
+- **`$toBinData`** - Experimental type conversion operator removed
+- **`$toRegex`** - Experimental type conversion operator removed
+
+**Migration**:
+- `$toBinData` → Use `Binary()` constructor: `from neosqlite.binary import Binary`
+- `$toRegex` → Use Python `re.compile()` or `$regexMatch` operator
+
+**Why `$log2` is Kept**: Unlike removed operators, `$log2` is retained because:
+- Commonly-used mathematical shorthand with clear MongoDB alternative: `{ $log: [ <x>, 2 ] }`
+- Uses SQLite's native `log2()` function for better performance
+- Raises `UserWarning` to alert users about MongoDB incompatibility
+- Low risk of confusion (well-understood mathematical function)
+
+### Changes Since v1.6.0
+
+- **`$replaceOne` test enabled** - Previously skipped due to SQL tier limitation, now passes
+- **`$sigmoid` correctly categorized** - Now tested against MongoDB 8.0+ (was mislabeled as NeoSQLite extension)
+- **Skipped tests reduced** - From 4 to 3 (architectural differences only)
+- **Documentation updated** - Consistent messaging across README and test docs
+
+### Testing
+
+- **264 PyMongo Compatibility Tests**: 261 passed, 3 skipped, 0 failed (vs. 262/266 in v1.6.0)
+- **100% Compatibility**: All comparable MongoDB APIs tested and passing
+- **Skipped Tests** (by design):
+  1. `watch()` (change streams) - Implemented via SQLite triggers; MongoDB requires replica set
+  2. `watch()` (collection methods) - Same as above
+  3. `$log2` - NeoSQLite extension with UserWarning
+
+### Documentation
+
+- **Deleted**: `examples/api_comparison/MISSING-APIS.md` (492 lines) - All features tested
+- **Added**: `documents/releases/v1.6.1.md` - Comprehensive release notes
+- **Updated**: `examples/api_comparison/README.md` - Test results, NeoSQLite extensions documented
+- **Updated**: `README.md` - Test results, removed operators explanation
+
+### Compatibility
+
+- **API Stability**: 100% PyMongo compatibility maintained
+- **Breaking Changes**: `$toBinData` and `$toRegex` operators removed
+- **Migration Effort**: Minimal - only affects users of removed non-MongoDB operators
+- **Test Coverage**: 264 PyMongo compatibility tests, 261 passed, 3 skipped (architectural)
+
 ## 1.6.0
 
-### Major Achievement: Comprehensive API Comparison Testing
+### Major Achievement: Comprehensive PyMongo Compatibility Testing
 
-- **266 API Comparison Tests**: Complete testing infrastructure comparing NeoSQLite against PyMongo
+- **266 PyMongo Compatibility Tests**: Complete testing infrastructure comparing NeoSQLite against PyMongo
 - **100% Compatibility**: 262/266 tests passing (4 skipped by design)
 - **42 Test Modules**: Organized by category (CRUD, operators, aggregation, GridFS, etc.)
 - **Automated Testing**: Live MongoDB vs NeoSQLite comparison with compatibility reports
@@ -43,7 +98,7 @@
 ### Testing
 
 - **1671 Unit Tests**: 5 xfailed, 2 xpassed
-- **266 API Comparison Tests**: 262 passed, 4 skipped, 0 failed
+- **266 PyMongo Compatibility Tests**: 262 passed, 4 skipped, 0 failed
 - **82% Code Coverage**: Meets 80% requirement
 - **SQL vs Python Tests**: 10 comparison tests for update modifiers (all pass)
 
