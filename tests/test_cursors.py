@@ -988,3 +988,273 @@ class TestCollectionWithOptions:
         assert len(results_normal) == len(results_fallback)
         for i in range(len(results_normal)):
             assert results_normal[i]["value"] == results_fallback[i]["value"]
+
+
+class TestCursorComment:
+    """Tests for Cursor.comment() method."""
+
+    def test_comment_basic(self, collection):
+        """Test that comment() adds a comment to the query."""
+        docs = [{"value": i} for i in range(10)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({"value": {"$gte": 5}}).comment("test comment")
+        results = list(cursor)
+
+        assert len(results) == 5
+        assert cursor._comment == "test comment"
+
+    def test_comment_chaining(self, collection):
+        """Test that comment() returns cursor for chaining."""
+        docs = [{"value": i} for i in range(10)]
+        collection.insert_many(docs)
+
+        cursor = (
+            collection.find({"value": {"$gte": 5}}).comment("test").limit(2)
+        )
+        results = list(cursor)
+
+        assert len(results) == 2
+        assert cursor._comment == "test"
+
+    def test_comment_with_sort(self, collection):
+        """Test comment() works with sort."""
+        docs = [{"value": i} for i in range(10)]
+        collection.insert_many(docs)
+
+        cursor = (
+            collection.find({})
+            .sort("value", neosqlite.DESCENDING)
+            .comment("sorted query")
+        )
+        results = list(cursor)
+
+        assert len(results) == 10
+        assert results[0]["value"] == 9
+        assert cursor._comment == "sorted query"
+
+    def test_comment_empty_string(self, collection):
+        """Test comment() with empty string."""
+        docs = [{"value": i} for i in range(5)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({}).comment("")
+        results = list(cursor)
+
+        assert len(results) == 5
+        assert cursor._comment == ""
+
+    def test_comment_special_characters(self, collection):
+        """Test comment() sanitizes special SQL characters."""
+        docs = [{"value": i} for i in range(5)]
+        collection.insert_many(docs)
+
+        # Comment with SQL comment delimiters should be sanitized
+        cursor = collection.find({}).comment("test /* injection */ attack")
+        results = list(cursor)
+
+        assert len(results) == 5
+        # The comment should be stored but sanitized in SQL
+        assert cursor._comment == "test /* injection */ attack"
+
+    def test_comment_with_expr(self, collection):
+        """Test comment() works with $expr queries."""
+        docs = [{"value": i} for i in range(10)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({"$expr": {"$gt": ["$value", 5]}}).comment(
+            "expr query"
+        )
+        results = list(cursor)
+
+        assert len(results) == 4  # values 6, 7, 8, 9
+        assert cursor._comment == "expr query"
+
+    def test_comment_kill_switch(self, collection):
+        """Test comment() works with kill switch enabled."""
+        docs = [{"value": i} for i in range(10)]
+        collection.insert_many(docs)
+
+        original_state = get_force_fallback()
+        try:
+            set_force_fallback(True)
+            cursor = collection.find({"value": {"$gte": 5}}).comment(
+                "fallback query"
+            )
+            results = list(cursor)
+
+            assert len(results) == 5
+            assert cursor._comment == "fallback query"
+        finally:
+            set_force_fallback(original_state)
+
+    def test_comment_none_value(self, collection):
+        """Test that comment can be None (default)."""
+        docs = [{"value": i} for i in range(5)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({})
+        assert cursor._comment is None
+
+        results = list(cursor)
+        assert len(results) == 5
+
+
+class TestCursorRetrieved:
+    """Tests for Cursor.retrieved property."""
+
+    def test_retrieved_initial(self, collection):
+        """Test that retrieved is 0 initially."""
+        docs = [{"value": i} for i in range(10)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({})
+        assert cursor.retrieved == 0
+
+    def test_retrieved_after_full_iteration(self, collection):
+        """Test retrieved count after full iteration."""
+        docs = [{"value": i} for i in range(10)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({})
+        results = list(cursor)
+        assert cursor.retrieved == 10
+        assert len(results) == 10
+
+    def test_retrieved_with_limit(self, collection):
+        """Test retrieved count with limit."""
+        docs = [{"value": i} for i in range(20)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({}).limit(5)
+        results = list(cursor)
+        assert cursor.retrieved == 5
+        assert len(results) == 5
+
+    def test_retrieved_with_filter(self, collection):
+        """Test retrieved count with filter."""
+        docs = [{"value": i} for i in range(10)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({"value": {"$gte": 5}})
+        results = list(cursor)
+        assert cursor.retrieved == 5  # values 5, 6, 7, 8, 9
+        assert len(results) == 5
+
+    def test_retrieved_partial_iteration(self, collection):
+        """Test retrieved count after partial iteration."""
+        docs = [{"value": i} for i in range(10)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({})
+        count = 0
+        for doc in cursor:
+            count += 1
+            if count >= 3:
+                break
+        assert cursor.retrieved == 3
+
+    def test_retrieved_clone_starts_fresh(self, collection):
+        """Test that cloned cursor starts with retrieved=0."""
+        docs = [{"value": i} for i in range(10)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({}).limit(5)
+        results1 = list(cursor)
+        assert cursor.retrieved == 5
+
+        cloned = cursor.clone()
+        assert cloned.retrieved == 0
+
+        results2 = list(cloned)
+        assert cloned.retrieved == 5
+        assert len(results1) == len(results2)
+
+    def test_retrieved_multiple_iterations(self, collection):
+        """Test retrieved count with multiple iterations."""
+        docs = [{"value": i} for i in range(5)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({})
+        # First iteration
+        list(cursor)
+        assert cursor.retrieved == 5
+
+        # Second iteration (cursor can be re-iterated)
+        list(cursor)
+        # Note: retrieved continues counting from previous iteration
+        assert cursor.retrieved == 10
+
+    def test_retrieved_with_skip_and_limit(self, collection):
+        """Test retrieved with skip and limit."""
+        docs = [{"value": i} for i in range(20)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({}).skip(5).limit(3)
+        results = list(cursor)
+        assert cursor.retrieved == 3
+        assert len(results) == 3
+
+
+class TestCollectionValidateMethod:
+    """Tests for Collection.validate() method."""
+
+    def test_validate_valid_collection(self, collection):
+        """Test validate on a valid collection."""
+        docs = [{"value": i} for i in range(10)]
+        collection.insert_many(docs)
+
+        result = collection.validate()
+
+        assert result["valid"] is True
+        assert result["errors"] == []
+        assert "ok" in result["details"]
+
+    def test_validate_empty_collection(self, collection):
+        """Test validate on an empty collection."""
+        result = collection.validate()
+
+        assert result["valid"] is True
+        assert result["errors"] == []
+
+    def test_validate_with_index(self, collection):
+        """Test validate with indexes."""
+        docs = [{"value": i} for i in range(10)]
+        collection.insert_many(docs)
+        collection.create_index("value")
+
+        result = collection.validate()
+
+        assert result["valid"] is True
+        assert result["errors"] == []
+
+    def test_validate_multiple_collections(self):
+        """Test validate on multiple collections."""
+        conn = neosqlite.Connection(":memory:")
+        coll1 = conn["test1"]
+        coll2 = conn["test2"]
+
+        coll1.insert_many([{"x": i} for i in range(5)])
+        coll2.insert_many([{"y": i} for i in range(5)])
+
+        result1 = coll1.validate()
+        result2 = coll2.validate()
+
+        assert result1["valid"] is True
+        assert result2["valid"] is True
+
+        conn.close()
+
+    def test_validate_after_bulk_operations(self, collection):
+        """Test validate after bulk operations."""
+        docs = [{"value": i} for i in range(20)]
+        collection.insert_many(docs)
+        collection.update_many(
+            {"value": {"$lt": 10}}, {"$set": {"updated": True}}
+        )
+        collection.delete_many({"value": {"$gte": 15}})
+
+        result = collection.validate()
+
+        assert result["valid"] is True
+        assert result["errors"] == []

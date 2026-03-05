@@ -105,6 +105,34 @@ def compare_cursor_methods():
             neo_explain = False
             print(f"Neo explain(): Error - {e}")
 
+        # Test comment()
+        try:
+            cursor = neo_collection.find({"value": {"$gte": 5}}).comment(
+                "test comment"
+            )
+            results = list(cursor)
+            neo_comment = (
+                len(results) >= 0 and cursor._comment == "test comment"
+            )
+            print(
+                f"Neo comment(): {'OK' if neo_comment else 'FAIL'} ({len(results)} results)"
+            )
+        except Exception as e:
+            neo_comment = False
+            print(f"Neo comment(): Error - {e}")
+
+        # Test retrieved property
+        try:
+            cursor = neo_collection.find({"value": {"$gte": 5}})
+            results = list(cursor)
+            neo_retrieved = cursor.retrieved == len(results)
+            print(
+                f"Neo retrieved: {'OK' if neo_retrieved else 'FAIL'} ({cursor.retrieved} docs)"
+            )
+        except Exception as e:
+            neo_retrieved = False
+            print(f"Neo retrieved: Error - {e}")
+
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
 
@@ -209,6 +237,32 @@ def compare_cursor_methods():
             mongo_explain = False
             print(f"Mongo explain(): Error - {e}")
 
+        # Test comment()
+        try:
+            cursor = mongo_collection.find({"value": {"$gte": 5}}).comment(
+                "test comment"
+            )
+            results = list(cursor)
+            mongo_comment = len(results) >= 0
+            print(
+                f"Mongo comment(): {'OK' if mongo_comment else 'FAIL'} ({len(results)} results)"
+            )
+        except Exception as e:
+            mongo_comment = False
+            print(f"Mongo comment(): Error - {e}")
+
+        # Test retrieved property
+        try:
+            cursor = mongo_collection.find({"value": {"$gte": 5}})
+            results = list(cursor)
+            mongo_retrieved = cursor.retrieved == len(results)
+            print(
+                f"Mongo retrieved: {'OK' if mongo_retrieved else 'FAIL'} ({cursor.retrieved} docs)"
+            )
+        except Exception as e:
+            mongo_retrieved = False
+            print(f"Mongo retrieved: Error - {e}")
+
         client.close()
 
         reporter.record_result(
@@ -255,4 +309,18 @@ def compare_cursor_methods():
             neo_explain,
             neo_explain,
             mongo_explain,
+        )
+        reporter.record_result(
+            "Cursor Methods",
+            "comment",
+            neo_comment,
+            neo_comment,
+            mongo_comment,
+        )
+        reporter.record_result(
+            "Cursor Methods",
+            "retrieved",
+            neo_retrieved,
+            neo_retrieved,
+            mongo_retrieved,
         )

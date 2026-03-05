@@ -1061,6 +1061,57 @@ class Collection:
         """
         self.db.execute(f"DROP TABLE IF EXISTS {self.name}")
 
+    def validate(self) -> Dict[str, Any]:
+        """
+        Validate the collection integrity using SQLite's integrity check.
+
+        This method performs an integrity check on the collection's underlying table
+        to verify that the data structure is valid and not corrupted.
+
+        Returns:
+            Dict[str, Any]: Validation result with the following structure:
+                - valid (bool): True if the collection is valid, False otherwise
+                - errors (List[str]): List of error messages if any were found
+                - details (str): Detailed integrity check output
+
+        Example:
+            >>> result = collection.validate()
+            >>> if result['valid']:
+            ...     print("Collection is valid")
+            ... else:
+            ...     print(f"Errors found: {result['errors']}")
+        """
+        # Run SQLite integrity check on the specific table
+        try:
+            # Use PRAGMA integrity_check with table name
+            result = self.db.execute(
+                f"PRAGMA integrity_check({self.name})"
+            ).fetchall()
+
+            # Check if there are any errors
+            errors = []
+            for row in result:
+                msg = row[0] if isinstance(row, tuple) else str(row)
+                if msg != "ok":
+                    errors.append(msg)
+
+            return {
+                "valid": len(errors) == 0,
+                "errors": errors,
+                "details": ", ".join(
+                    [
+                        str(row[0]) if isinstance(row, tuple) else str(row)
+                        for row in result
+                    ]
+                ),
+            }
+        except Exception as e:
+            return {
+                "valid": False,
+                "errors": [str(e)],
+                "details": f"Validation failed: {e}",
+            }
+
     def watch(
         self,
         pipeline: List[Dict[str, Any]] | None = None,

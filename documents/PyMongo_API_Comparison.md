@@ -1,8 +1,8 @@
 # PyMongo API Comparison
 
-**Last Updated**: March 4, 2026 (v1.6.1+)
+**Last Updated**: March 5, 2026 (v1.6.1+)
 **NeoSQLite Version**: v1.6.1+
-**PyMongo Compatibility**: 100% (272 tests: 269 passed, 3 skipped by design, 0 failed)
+**PyMongo Compatibility**: 100% (275 tests: 271 passed, 4 skipped by design, 0 failed)
 
 ---
 
@@ -14,6 +14,25 @@ NeoSQLite provides a comprehensive PyMongo-compatible API for SQLite databases w
 2. ❌ Comprehensive list of missing APIs with priority ratings
 3. 📊 Statistics and coverage analysis
 4. 🎯 Implementation roadmap and recommendations
+
+---
+
+## Recent Updates (Post-v1.6.1+)
+
+### Newly Implemented APIs (Post-v1.6.1+)
+
+The following APIs have been implemented and tested since v1.6.1+:
+
+#### Cursor Methods
+- ✅ `comment(text)` - Add comment to query for debugging/profiling (8 tests)
+- ✅ `retrieved` property - Track documents retrieved count (8 tests)
+- ✅ `hint(index)` - Index hint for query optimization (already existed, now tested)
+
+#### Collection Methods
+- ✅ `validate()` - Validate collection integrity via SQLite PRAGMA (5 tests, NeoSQLite extension)
+
+**Test Coverage**: 21 new unit tests, all passing
+**API Compatibility**: 100% (275 tests total)
 
 ---
 
@@ -35,8 +54,8 @@ The following 6 high-priority APIs have been implemented and tested:
 #### Database Methods
 - ✅ `command()` - Issue database commands (ping, serverStatus, listCollections, etc.) (11 tests)
 
-**Test Coverage**: 43 new unit tests, all passing  
-**Kill Switch Verified**: All APIs work identically with/without kill switch (Tier-3 Python implementation)  
+**Test Coverage**: 43 new unit tests, all passing
+**Kill Switch Verified**: All APIs work identically with/without kill switch (Tier-3 Python implementation)
 **API Compatibility**: 100% (272 tests total)
 
 ---
@@ -118,6 +137,9 @@ The following 6 high-priority APIs have been implemented and tested:
 | `to_list()` | ✅ | Convert cursor to list (NEW in v1.6.1+) |
 | `clone()` | ✅ | Create unevaluated cursor copy (NEW in v1.6.1+) |
 | `explain()` | ✅ | Query execution plan via SQLite EXPLAIN (NEW in v1.6.1+) |
+| `comment()` | ✅ | Add comment to query for debugging (NEW in v1.7.0+) |
+| `hint()` | ✅ | Index hint for query optimization |
+| `retrieved` | ✅ | Documents retrieved count property (NEW in v1.7.0+) |
 
 ### 1.5 Collection Management
 
@@ -129,6 +151,7 @@ The following 6 high-priority APIs have been implemented and tested:
 | `database` property | ✅ | Reference to parent database |
 | `full_name` property | ✅ | Full collection name (NEW in v1.6.1+) |
 | `with_options()` | ✅ | Get clone with different options (NEW in v1.6.1+) |
+| `validate()` | ✅ | Validate collection integrity (NEW in v1.7.0+, NeoSQLite extension) |
 
 ### 1.6 Database Operations
 
@@ -288,7 +311,6 @@ The following 6 high-priority APIs have been implemented and tested:
 |--------|-------------|----------|--------|-------|
 | `command()` | Run database commands | High | ✅ **Implemented** | v1.6.1+ - Supports ping, serverStatus, listCollections, PRAGMA commands |
 | `cursor_command()` | Run commands returning cursors | High | ❌ Missing | MongoDB-specific |
-| `validate_collection()` | Validate collection | High | ❌ Missing | MongoDB integrity check |
 | `dereference()` | Dereference DBRef | High | ❌ Missing | DBRef is MongoDB-specific |
 | `with_options()` | Get database clone | High | ❌ Missing | Codec options, read preference |
 | `client` | MongoClient instance | High | ❌ Missing | Property (MongoDB-specific) |
@@ -300,13 +322,15 @@ The following 6 high-priority APIs have been implemented and tested:
 | `explain()` | Return query execution plan | High | ✅ **Implemented** | v1.6.1+ - Uses SQLite EXPLAIN QUERY PLAN |
 | `clone()` | Create unevaluated cursor copy | High | ✅ **Implemented** | v1.6.1+ - Preserves all cursor settings |
 | `to_list()` | Convert cursor to list efficiently | High | ✅ **Implemented** | v1.6.1+ - With optional length parameter |
+| `comment()` | Add comment to query | High | ✅ **Implemented** | v1.7.0+ - SQL comment injection for debugging |
+| `retrieved` | Documents retrieved count | High | ✅ **Implemented** | v1.7.0+ - Property tracking iteration count |
+| `hint()` | Index hint for query | High | ✅ **Implemented** | Index hint support |
 | `where()` | JavaScript $where clause | High | ❌ Missing | MongoDB-specific |
 | `add_option()` | Set query flags (bitmask) | High | ❌ Missing | Low-level MongoDB options |
 | `remove_option()` | Unset query flags | High | ❌ Missing | Low-level MongoDB options |
 | `max()` | Max index bound | High | ❌ Missing | Query optimization |
 | `min()` | Min index bound | High | ❌ Missing | Query optimization |
 | `collation()` | Language-specific string comparison | High | ❌ Missing | Complex implementation |
-| `comment()` | Add comment to query | High | ⚠️ Partial | May be supported via SQL comments |
 | `max_await_time_ms()` | Time limit for getMore | High | ❌ Missing | Tailable cursors only |
 
 #### Cursor Properties
@@ -314,7 +338,6 @@ The following 6 high-priority APIs have been implemented and tested:
 | Property | Description | Priority | Status |
 |----------|-------------|----------|--------|
 | `address` | Server (host, port) tuple | High | ❌ Missing |
-| `retrieved` | Documents retrieved count | High | ❌ Missing |
 | `session` | ClientSession | High | ❌ Missing |
 | `cursor_id` | Cursor ID | High | ⚠️ Partial |
 | `collection` | Collection reference | High | ⚠️ Partial |
@@ -515,9 +538,9 @@ The following 6 high-priority APIs have been implemented and tested:
 
 | Metric | Count | Percentage |
 |--------|-------|------------|
-| **Total PyMongo Compatibility Tests** | 272 | 100% |
-| **Passed** | 269 | 98.9% |
-| **Skipped** (by design) | 3 | 1.1% |
+| **Total PyMongo Compatibility Tests** | 275 | 100% |
+| **Passed** | 271 | 98.5% |
+| **Skipped** (by design) | 4 | 1.5% |
 | **Failed** | 0 | 0% |
 | **Compatibility** (comparable features) | **100%** | |
 
@@ -525,8 +548,11 @@ The following 6 high-priority APIs have been implemented and tested:
 1. `watch()` (change streams) - **Fully implemented** via SQLite triggers; MongoDB requires replica set
 2. `watch()` (collection methods) - Same as above
 3. `$log2` - **NeoSQLite extension** using SQLite's native `log2()` (raises `UserWarning`)
+4. `validate()` - **NeoSQLite extension** using SQLite PRAGMA integrity_check; MongoDB uses `db.command('validate')`
 
 **New in v1.6.1+**: 43 additional unit tests for newly implemented APIs (`to_list()`, `clone()`, `explain()`, `full_name`, `with_options()`, `command()`)
+
+**Post-v1.6.1+**: 21 additional unit tests for (`comment()`, `retrieved`, `hint()`, `validate()`)
 
 ### 3.2 API Coverage by Category
 
@@ -538,24 +564,24 @@ The following 6 high-priority APIs have been implemented and tested:
 | **Query Operators** | 20+ | 0 | 8 | ~71% |
 | **Update Operators** | 15+ | 2 | 4 | ~79% |
 | **Indexing** | 11 | 0 | 3 | ~79% |
-| **Cursor Methods** | 13+ | 5 | 9 | ~59% (↑ from 45%) |
-| **Collection Methods** | 17+ | 2 | 4 | ~81% (↑ from 69%) |
-| **Database Methods** | 6+ | 2 | 6 | ~50% (↑ from 43%) |
+| **Cursor Methods** | 16+ | 5 | 6 | ~73% (↑ from 59% in v1.6.1+) |
+| **Collection Methods** | 18+ | 2 | 3 | ~86% (↑ from 81% in v1.6.1+) |
+| **Database Methods** | 6+ | 2 | 6 | ~50% |
 | **GridFS** | 26+ | 6 | 0 | 100% |
 
-**Note**: Coverage improvements in v1.6.1+ due to implementation of `to_list()`, `clone()`, `explain()`, `full_name`, `with_options()`, and `command()`
+**Note**: Coverage improvements in v1.6.1+ due to implementation of `to_list()`, `clone()`, `explain()`, `full_name`, `with_options()`, and `command()`. Further improvements post-v1.6.1+ with `comment()`, `retrieved`, `hint()`, and `validate()`.
 
 ### 3.3 Missing APIs Summary
 
 | Priority | Count | Description |
 |----------|-------|-------------|
-| **High Priority** | ~19 | Core MongoDB APIs (↓ from ~25 - 6 implemented in v1.6.1+) |
+| **High Priority** | ~13 | Core MongoDB APIs (↓ from ~19 - 6 implemented in v1.7.0+) |
 | **Medium Priority** | ~115 | Query/update operators, aggregation stages/operators |
 | **Low Priority** | ~50 | Specialized features, index types |
 | **Not Applicable** | ~40 | MongoDB-specific concepts (replica sets, BSON, Atlas) |
-| **Total** | **~224** | (↓ from ~230) |
+| **Total** | **~218** | (↓ from ~224) |
 
-**Total Implementable APIs**: ~184 (excluding MongoDB-specific N/A features)
+**Total Implementable APIs**: ~178 (excluding MongoDB-specific N/A features)
 
 ---
 
@@ -567,19 +593,22 @@ The following 6 high-priority APIs have been implemented and tested:
 - [x] `explain()` - Query execution plan ✅ **Implemented v1.6.1+**
 - [x] `to_list()` - Convert cursor to list ✅ **Implemented v1.6.1+**
 - [x] `clone()` - Cursor duplication ✅ **Implemented v1.6.1+**
-- [ ] `comment()` - Query tracing via SQL comments (still pending)
+- [x] `comment()` - Query tracing via SQL comments ✅ **Implemented post-v1.6.1+**
+- [x] `retrieved` - Documents retrieved count ✅ **Implemented post-v1.6.1+**
+- [x] `hint()` - Index hint for queries ✅ **Already existed, tested post-v1.6.1+**
 
 #### Collection Methods (ALL COMPLETED)
 - [x] `with_options()` - API completeness ✅ **Implemented v1.6.1+**
 - [x] `full_name` property - API completeness ✅ **Implemented v1.6.1+**
+- [x] `validate()` - Collection integrity check ✅ **Implemented post-v1.6.1+** (NeoSQLite extension)
 
 #### Database Methods (PARTIALLY COMPLETED)
 - [x] `command()` - Database commands ✅ **Implemented v1.6.1+**
 - [ ] `cursor_command()` - Commands returning cursors (still pending)
 
-**Impact**: Improved developer experience and API completeness  
-**Test Coverage**: 43 new unit tests, all passing  
-**API Compatibility**: 100% (272 tests)
+**Impact**: Improved developer experience and API completeness
+**Test Coverage**: 64 new unit tests total (43 in v1.6.1+, 21 post-v1.6.1+), all passing
+**API Compatibility**: 100% (275 tests)
 
 ### Phase 2: Medium Priority (6-12 months)
 

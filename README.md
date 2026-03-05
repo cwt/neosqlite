@@ -32,16 +32,17 @@ NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-
 ### Test Results (v1.6.1+)
 | Metric | Count |
 |--------|-------|
-| **Total Tests** | 272 |
-| **Passed** | 269 |
-| **Skipped** | 3 (by design) |
+| **Total Tests** | 275 |
+| **Passed** | 271 |
+| **Skipped** | 4 (by design) |
 | **Failed** | 0 |
 | **Compatibility** | **100%** |
 
-**Skipped Tests Note**: The 3 skipped tests are due to architectural differences, not missing implementations:
+**Skipped Tests Note**: The 4 skipped tests are due to architectural differences, not missing implementations:
 1. `watch()` (change streams) - **fully implemented in NeoSQLite** via SQLite triggers but cannot be compared because MongoDB requires a replica set. NeoSQLite's implementation is tested independently in `tests/test_changestream.py`.
 2. `watch()` (collection methods) - Same as above, implemented via SQLite triggers
 3. `$log2` - **NeoSQLite extension** using SQLite's native `log2()` function. Raises `UserWarning` about MongoDB incompatibility. For MongoDB compatibility, use `{ $log: [ <number>, 2 ] }` instead. **Kept for convenience** as a commonly-used mathematical shorthand with a clear migration path.
+4. `validate()` - **NeoSQLite extension** using SQLite PRAGMA integrity_check. MongoDB uses `db.command('validate')` instead.
 
 All comparable MongoDB APIs are tested with 100% compatibility.
 

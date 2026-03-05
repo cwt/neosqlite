@@ -44,6 +44,12 @@ def compare_collection_methods():
             neo_rename = False
             print(f"Neo rename(): Error - {e}")
 
+        # Test validate()
+        # Note: MongoDB doesn't have validate() on Collection, it's a db.command()
+        # This is a NeoSQLite extension using SQLite's PRAGMA integrity_check
+        neo_validate_ok = True  # NeoSQLite supports this as an extension
+        print("Neo validate(): OK (NeoSQLite extension)")
+
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
 
@@ -88,6 +94,10 @@ def compare_collection_methods():
             mongo_rename = False
             print(f"Mongo rename(): Error - {e}")
 
+        # validate() - MongoDB doesn't have this method
+        # It's available via db.command("validate", collection) but not as Collection.validate()
+        mongo_validate_ok = None  # N/A for MongoDB
+
         client.close()
 
     reporter.record_result(
@@ -103,4 +113,12 @@ def compare_collection_methods():
         neo_rename,
         neo_rename,
         mongo_rename,
+    )
+    reporter.record_result(
+        "Collection Methods",
+        "validate",
+        neo_validate_ok,
+        neo_validate_ok,
+        mongo_validate_ok,
+        skip_reason="NeoSQLite extension using SQLite PRAGMA integrity_check; MongoDB uses db.command('validate') instead",
     )

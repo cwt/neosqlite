@@ -10,16 +10,17 @@ This package tests NeoSQLite's MongoDB API compatibility by running the same ope
 
 | Metric | Count |
 |--------|-------|
-| **Total Tests** | 272 |
-| **Passed** | 269 |
-| **Skipped** | 3 (by design) |
+| **Total Tests** | 275 |
+| **Passed** | 271 |
+| **Skipped** | 4 (by design) |
 | **Failed** | 0 |
 | **Compatibility** | **100%** |
 
-**Note on Skipped Tests**: The 3 skipped tests are due to architectural differences, not missing implementations:
+**Note on Skipped Tests**: The 4 skipped tests are due to architectural differences, not missing implementations:
 1. `watch()` (change streams) - **Fully implemented** in NeoSQLite via SQLite triggers, but MongoDB requires a replica set for comparison testing
 2. `watch()` (collection methods) - Same as above, implemented via SQLite triggers
 3. `$log2` - **NeoSQLite extension** using SQLite's native `log2()` function (raises `UserWarning` about MongoDB incompatibility)
+4. `validate()` - **NeoSQLite extension** using SQLite PRAGMA integrity_check; MongoDB uses `db.command('validate')` instead
 
 All comparable MongoDB APIs are tested with 100% compatibility.
 

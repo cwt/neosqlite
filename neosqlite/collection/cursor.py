@@ -36,9 +36,11 @@ class Cursor:
         self._filter = filter or {}
         self._projection = projection or {}
         self._hint = hint
+        self._comment: str | None = None
         self._skip = 0
         self._limit: int | None = None
         self._sort: Dict[str, int] | None = None
+        self._retrieved: int = 0
 
     def __iter__(self) -> Iterator[Dict[str, Any]]:
         """
@@ -127,6 +129,25 @@ class Cursor:
         self._hint = index
         return self
 
+    def comment(self, comment: str) -> Cursor:
+        """
+        Add a comment to the query for debugging and profiling.
+
+        The comment is injected as a SQL comment in the generated query,
+        which can be useful for query profiling and debugging.
+
+        Args:
+            comment (str): The comment text to add to the query
+
+        Returns:
+            Cursor: The cursor object with the comment applied
+
+        Example:
+            >>> cursor = collection.find({"age": {"$gte": 18}}).comment("find adults")
+        """
+        self._comment = comment
+        return self
+
     def to_list(self, length: int | None = None) -> List[Dict[str, Any]]:
         """
         Convert the cursor to a list of documents.
@@ -179,7 +200,28 @@ class Cursor:
         cloned._skip = self._skip
         cloned._limit = self._limit
         cloned._sort = deepcopy(self._sort) if self._sort else None
+        cloned._comment = self._comment
+        cloned._retrieved = 0  # Clone starts fresh
         return cloned
+
+    @property
+    def retrieved(self) -> int:
+        """
+        Return the number of documents retrieved from the cursor.
+
+        This property tracks how many documents have been iterated over
+        since the cursor was created or last reset.
+
+        Returns:
+            int: The number of documents retrieved so far
+
+        Example:
+            >>> cursor = collection.find({}).limit(10)
+            >>> docs = list(cursor)
+            >>> cursor.retrieved
+            10
+        """
+        return self._retrieved
 
     def explain(self, verbosity: str = "executionStats") -> Dict[str, Any]:
         """
@@ -296,8 +338,10 @@ class Cursor:
         # Apply projection
         docs = self._apply_projection(docs)
 
-        # Yield results
-        yield from docs
+        # Yield results and track count
+        for doc in docs:
+            self._retrieved += 1
+            yield doc
 
     def _get_filtered_documents(self) -> Iterable[Dict[str, Any]]:
         """
@@ -338,6 +382,15 @@ class Cursor:
                 cmd = f"SELECT id, _id, json(data) as data FROM {self._collection.name} {where_clause}"
             else:
                 cmd = f"SELECT id, _id, data FROM {self._collection.name} {where_clause}"
+            # Add comment if specified
+            if self._comment:
+                # Sanitize comment to prevent SQL injection (remove comment delimiters)
+                safe_comment = (
+                    self._comment.replace("/*", "")
+                    .replace("*/", "")
+                    .replace("--", "")
+                )
+                cmd = f"/* {safe_comment} */ {cmd}"
             db_cursor = self._collection.db.execute(cmd, params)
             return self._load_documents(db_cursor.fetchall())
         else:
@@ -348,6 +401,14 @@ class Cursor:
                 cmd = f"SELECT id, _id, json(data) as data FROM {self._collection.name}"
             else:
                 cmd = f"SELECT id, _id, data FROM {self._collection.name}"
+            # Add comment if specified
+            if self._comment:
+                safe_comment = (
+                    self._comment.replace("/*", "")
+                    .replace("*/", "")
+                    .replace("--", "")
+                )
+                cmd = f"/* {safe_comment} */ {cmd}"
             db_cursor = self._collection.db.execute(cmd)
             apply = partial(self._query_helpers._apply_query, self._filter)
             all_docs = self._load_documents(db_cursor.fetchall())
@@ -374,6 +435,14 @@ class Cursor:
                 cmd = f"SELECT id, _id, json(data) as data FROM {self._collection.name} {where_clause}"
             else:
                 cmd = f"SELECT id, _id, data FROM {self._collection.name} {where_clause}"
+            # Add comment if specified
+            if self._comment:
+                safe_comment = (
+                    self._comment.replace("/*", "")
+                    .replace("*/", "")
+                    .replace("--", "")
+                )
+                cmd = f"/* {safe_comment} */ {cmd}"
             db_cursor = self._collection.db.execute(cmd, params)
             return self._load_documents(db_cursor.fetchall())
         else:
@@ -387,6 +456,14 @@ class Cursor:
                 cmd = f"SELECT id, _id, json(data) as data FROM {self._collection.name}"
             else:
                 cmd = f"SELECT id, _id, data FROM {self._collection.name}"
+            # Add comment if specified
+            if self._comment:
+                safe_comment = (
+                    self._comment.replace("/*", "")
+                    .replace("*/", "")
+                    .replace("--", "")
+                )
+                cmd = f"/* {safe_comment} */ {cmd}"
 
             db_cursor = self._collection.db.execute(cmd)
             all_docs = self._load_documents(db_cursor.fetchall())
