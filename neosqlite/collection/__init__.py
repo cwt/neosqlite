@@ -717,11 +717,32 @@ class Collection:
         """
         return self.query_engine.count_documents(filter)
 
-    def estimated_document_count(self) -> int:
+    def estimated_document_count(
+        self, options: Dict[str, Any] | None = None
+    ) -> int:
         """
+        Get an estimated count of documents in the collection.
+
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.estimated_document_count`.
+
+        Args:
+            options (Dict[str, Any], optional): Options for the count operation.
+                Supported options (for PyMongo API compatibility):
+                - maxTimeMS: Maximum execution time in milliseconds (ignored in NeoSQLite)
+                - hint: Index to use for the count (ignored in NeoSQLite)
+
+        Returns:
+            int: Estimated number of documents in the collection
+
+        Note:
+            This method returns an estimate based on SQLite metadata, which is fast
+            but may not be exact. For an exact count, use count_documents({}).
+            The options parameter is accepted for PyMongo API compatibility but
+            most options are not applicable to SQLite.
         """
+        # Options are accepted for API compatibility but not used
+        # maxTimeMS, hint, etc. are MongoDB-specific
         return self.query_engine.estimated_document_count()
 
     def find_one_and_delete(
@@ -1060,57 +1081,6 @@ class Collection:
         this method, the collection will no longer exist in the database.
         """
         self.db.execute(f"DROP TABLE IF EXISTS {self.name}")
-
-    def validate(self) -> Dict[str, Any]:
-        """
-        Validate the collection integrity using SQLite's integrity check.
-
-        This method performs an integrity check on the collection's underlying table
-        to verify that the data structure is valid and not corrupted.
-
-        Returns:
-            Dict[str, Any]: Validation result with the following structure:
-                - valid (bool): True if the collection is valid, False otherwise
-                - errors (List[str]): List of error messages if any were found
-                - details (str): Detailed integrity check output
-
-        Example:
-            >>> result = collection.validate()
-            >>> if result['valid']:
-            ...     print("Collection is valid")
-            ... else:
-            ...     print(f"Errors found: {result['errors']}")
-        """
-        # Run SQLite integrity check on the specific table
-        try:
-            # Use PRAGMA integrity_check with table name
-            result = self.db.execute(
-                f"PRAGMA integrity_check({self.name})"
-            ).fetchall()
-
-            # Check if there are any errors
-            errors = []
-            for row in result:
-                msg = row[0] if isinstance(row, tuple) else str(row)
-                if msg != "ok":
-                    errors.append(msg)
-
-            return {
-                "valid": len(errors) == 0,
-                "errors": errors,
-                "details": ", ".join(
-                    [
-                        str(row[0]) if isinstance(row, tuple) else str(row)
-                        for row in result
-                    ]
-                ),
-            }
-        except Exception as e:
-            return {
-                "valid": False,
-                "errors": [str(e)],
-                "details": f"Validation failed: {e}",
-            }
 
     def watch(
         self,

@@ -329,6 +329,33 @@ class Connection:
                 result = cursor.fetchall()
                 return {"ok": 1.0, "result": [row[0] for row in result]}
 
+            elif cmd_name == "validate":
+                # MongoDB-compatible validate command
+                # In MongoDB: db.runCommand({validate: "collectionName"})
+                # For NeoSQLite: Use SQLite PRAGMA integrity_check
+                collection_name = kwargs.get("validate")
+                if not collection_name and isinstance(command, dict):
+                    collection_name = command.get("validate")
+
+                if collection_name:
+                    # Validate specific collection (table)
+                    cursor = self.db.execute(
+                        f"PRAGMA integrity_check({collection_name})"
+                    )
+                else:
+                    # Validate entire database
+                    cursor = self.db.execute("PRAGMA integrity_check")
+
+                result = cursor.fetchall()
+                errors = [row[0] for row in result if row[0] != "ok"]
+
+                return {
+                    "ok": 1.0 if not errors else 0.0,
+                    "result": [row[0] for row in result],
+                    "errors": errors,
+                    "valid": len(errors) == 0,
+                }
+
             elif cmd_name == "foreign_key_check":
                 table_name = kwargs.get("table")
                 if table_name:
@@ -421,6 +448,54 @@ class Connection:
 
         except Exception as e:
             return {"ok": 0, "errmsg": str(e), "code": 1}
+
+    def with_options(
+        self,
+        codec_options: Any | None = None,
+        read_preference: Any | None = None,
+        write_concern: Any | None = None,
+        read_concern: Any | None = None,
+    ) -> Connection:
+        """
+        Get a clone of this database with different options.
+
+        This method returns a new Connection instance with the specified options.
+        For PyMongo API compatibility, the options are stored but not actively
+        used since SQLite has different semantics.
+
+        Args:
+            codec_options (Any, optional): Codec options for encoding/decoding.
+                Ignored in NeoSQLite (stored for API compatibility).
+            read_preference (Any, optional): Read preference for replica sets.
+                Ignored in NeoSQLite (stored for API compatibility).
+            write_concern (Any, optional): Write concern for durability settings.
+                Stored for API compatibility.
+            read_concern (Any, optional): Read concern for consistency settings.
+                Ignored in NeoSQLite (stored for API compatibility).
+
+        Returns:
+            Connection: A new Connection instance with the same underlying database
+                       but with the specified options stored.
+
+        Note:
+            NeoSQLite stores these options for PyMongo API compatibility, but
+            they don't affect SQLite behavior since SQLite doesn't have replica
+            sets, codec options, or the same consistency/durability model.
+
+        Example:
+            >>> db = Connection("test.db")
+            >>> db_with_options = db.with_options(
+            ...     write_concern={"w": "majority"},
+            ...     read_preference={"mode": "primaryPreferred"}
+            ... )
+        """
+        # Return self for now - options are stored for API compatibility
+        # but don't affect SQLite behavior
+        self._codec_options = codec_options
+        self._read_preference = read_preference
+        self._write_concern = write_concern
+        self._read_concern = read_concern
+        return self
 
     @contextmanager
     def transaction(self) -> Iterator[None]:

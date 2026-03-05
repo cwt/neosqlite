@@ -101,6 +101,18 @@ def compare_database_methods():
             neo_server_status_ok = False
             print(f"Neo command(): Error - {e}")
 
+        # Test with_options()
+        try:
+            neo_db_opts = neo_conn.with_options(write_concern={"w": "majority"})
+            neo_with_options = (
+                neo_db_opts is not None
+                and neo_db_opts._write_concern == {"w": "majority"}
+            )
+            print(f"Neo with_options(): {'OK' if neo_with_options else 'FAIL'}")
+        except Exception as e:
+            neo_with_options = False
+            print(f"Neo with_options(): Error - {e}")
+
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
 
@@ -218,6 +230,22 @@ def compare_database_methods():
             mongo_server_status_ok = False
             print(f"Mongo command(): Error - {e}")
 
+        # Test with_options()
+        # Note: MongoDB with_options() returns a new Database instance
+        try:
+            from pymongo import WriteConcern
+
+            mongo_db_opts = mongo_db.with_options(
+                write_concern=WriteConcern(w="majority")
+            )
+            mongo_with_options = mongo_db_opts is not None
+            print(
+                f"Mongo with_options(): {'OK' if mongo_with_options else 'FAIL'}"
+            )
+        except Exception as e:
+            mongo_with_options = False
+            print(f"Mongo with_options(): Error - {e}")
+
         # Clean up
         for coll_name in ["test_get_coll", "rename_new"]:
             try:
@@ -276,4 +304,11 @@ def compare_database_methods():
             neo_server_status_ok,
             neo_server_status_ok,
             mongo_server_status_ok,
+        )
+        reporter.record_result(
+            "Database Methods",
+            "with_options",
+            neo_with_options,
+            neo_with_options,
+            mongo_with_options,
         )

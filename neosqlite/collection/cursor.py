@@ -1,6 +1,6 @@
 from __future__ import annotations
 from functools import partial
-from typing import Any, Dict, List, Iterator, Iterable, TYPE_CHECKING
+from typing import Any, Callable, Dict, List, Iterator, Iterable, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from . import Collection
@@ -39,6 +39,8 @@ class Cursor:
         self._comment: str | None = None
         self._min: Dict[str, Any] | None = None
         self._max: Dict[str, Any] | None = None
+        self._collation: Dict[str, Any] | None = None
+        self._where_predicate: Callable[[Dict[str, Any]], bool] | None = None
         self._skip = 0
         self._limit: int | None = None
         self._sort: Dict[str, int] | None = None
@@ -173,6 +175,68 @@ class Cursor:
         self._max = max_spec
         return self
 
+    def collation(self, collation: Dict[str, Any]) -> Cursor:
+        """
+        Set the collation for the cursor.
+
+        Collation allows users to specify language-specific rules for string
+        comparison, such as rules for lettercase and accent marks.
+
+        Args:
+            collation (Dict[str, Any]): A dictionary specifying collation options:
+                - locale (str): Language locale (e.g., "en_US", "fr_FR", "de_DE")
+                - caseLevel (bool): Whether to include case comparison
+                - caseFirst (str): "upper", "lower", or "off"
+                - strength (int): Comparison strength (1-5)
+                - numericOrdering (bool): Compare numbers numerically
+                - alternate (str): "shifted" or "non-ignorable"
+                - backwards (bool): Sort backwards (for French)
+
+        Returns:
+            Cursor: The cursor object with the collation applied
+
+        Example:
+            >>> cursor = collection.find({"name": {"$gte": "A"}}).collation(
+            ...     {"locale": "fr_FR", "strength": 2}
+            ... )
+
+        Note:
+            NeoSQLite maps common locales to SQLite collations:
+            - Default/unknown: BINARY (case-sensitive)
+            - Locales with case-insensitive: NOCASE
+            - Custom collations can be registered via Connection tokenizers
+        """
+        self._collation = collation
+        return self
+
+    def where(self, predicate: Callable[[Dict[str, Any]], bool]) -> Cursor:
+        """
+        Filter cursor results using a Python predicate function.
+
+        This is a Tier-3 (Python fallback) method that applies a Python
+        function to filter documents after they are retrieved from the database.
+
+        Args:
+            predicate (Callable[[Dict[str, Any]], bool]): A function that takes a document and returns
+                                 True if the document should be included.
+
+        Returns:
+            Cursor: The cursor object with the predicate applied
+
+        Example:
+            >>> cursor = collection.find({}).where(
+            ...     lambda doc: doc.get('value', 0) > 10
+            ... )
+
+        Note:
+            This method uses Python-based filtering (Tier-3), which means all
+            matching documents are retrieved from the database first, then
+            filtered in Python. For better performance, use MongoDB-style
+            query operators in the find() filter when possible.
+        """
+        self._where_predicate = predicate
+        return self
+
     def comment(self, comment: str) -> Cursor:
         """
         Add a comment to the query for debugging and profiling.
@@ -245,6 +309,14 @@ class Cursor:
         cloned._limit = self._limit
         cloned._sort = deepcopy(self._sort) if self._sort else None
         cloned._comment = self._comment
+        cloned._min = deepcopy(self._min) if self._min else None
+        cloned._max = deepcopy(self._max) if self._max else None
+        cloned._collation = (
+            deepcopy(self._collation) if self._collation else None
+        )
+        cloned._where_predicate = (
+            self._where_predicate
+        )  # Functions can't be deep copied
         cloned._retrieved = 0  # Clone starts fresh
         return cloned
 
@@ -536,7 +608,13 @@ class Cursor:
                 )
                 cmd = f"/* {safe_comment} */ {cmd}"
             db_cursor = self._collection.db.execute(cmd, params)
-            return self._load_documents(db_cursor.fetchall())
+            docs = self._load_documents(db_cursor.fetchall())
+
+            # Apply where predicate if specified (Tier-3 Python filtering)
+            if self._where_predicate:
+                return filter(self._where_predicate, docs)
+
+            return docs
         else:
             # Fallback to Python-based filtering for complex queries
             # Use the collection's JSONB support flag to determine how to select data
@@ -569,7 +647,13 @@ class Cursor:
             db_cursor = self._collection.db.execute(cmd, params)
             apply = partial(self._query_helpers._apply_query, self._filter)
             all_docs = self._load_documents(db_cursor.fetchall())
-            return filter(apply, all_docs)
+            filtered_docs = filter(apply, all_docs)
+
+            # Apply where predicate if specified (Tier-3 Python filtering)
+            if self._where_predicate:
+                return filter(self._where_predicate, filtered_docs)
+
+            return filtered_docs
 
     def _handle_expr_query(self) -> Iterable[Dict[str, Any]]:
         """
@@ -685,6 +769,39 @@ class Cursor:
             return new_clause, tuple(additional_params)
 
         return where_clause, params
+
+    def _get_collate_clause(self) -> str:
+        """
+        Get the SQL COLLATE clause based on collation settings.
+
+        Returns:
+            str: COLLATE clause or empty string if no collation is set
+
+        Note:
+            Maps MongoDB collation locales to SQLite collations:
+            - Case-insensitive locales → NOCASE
+            - Default/unknown → BINARY (case-sensitive)
+            Custom collations can be registered via Connection tokenizers.
+
+        Note: COLLATE is applied to ORDER BY clauses, not WHERE clauses.
+        For WHERE clause string comparisons, use _apply_collation_to_expr().
+        """
+        if not self._collation:
+            return ""
+
+        self._collation.get("locale", "")
+        strength = self._collation.get("strength", 3)
+        case_level = self._collation.get("caseLevel", False)
+
+        # Determine collation based on settings
+        # Strength 1-2: Ignore case/diacritics → NOCASE
+        # Strength 3+: Respect case → BINARY (default)
+        if strength <= 2 or case_level is False:
+            # Case-insensitive comparison
+            return " COLLATE NOCASE"
+        else:
+            # Case-sensitive comparison (default SQLite behavior)
+            return ""
 
     def _contains_datetime_operations(self, query: Dict[str, Any]) -> bool:
         """
@@ -831,10 +948,34 @@ class Cursor:
         sort_keys = list(self._sort.keys())
         sort_keys.reverse()
         sorted_docs = list(docs)
+
+        # Get collation settings for case-insensitive sorting
+        case_insensitive = False
+        if self._collation:
+            strength = self._collation.get("strength", 3)
+            case_level = self._collation.get("caseLevel", False)
+            # Strength 1-2 means case-insensitive
+            if strength <= 2 or case_level is False:
+                case_insensitive = True
+
         for key in sort_keys:
             get_val = partial(self._collection._get_val, key=key)
             reverse = self._sort[key] == DESCENDING
-            sorted_docs.sort(key=get_val, reverse=reverse)
+
+            if case_insensitive:
+                # Use case-insensitive sorting
+                def make_key(get_val=get_val):
+                    def key_func(doc):
+                        val = get_val(doc)
+                        if isinstance(val, str):
+                            return val.lower()
+                        return val
+
+                    return key_func
+
+                sorted_docs.sort(key=make_key(), reverse=reverse)
+            else:
+                sorted_docs.sort(key=get_val, reverse=reverse)
         return sorted_docs
 
     def _apply_pagination(

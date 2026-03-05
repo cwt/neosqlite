@@ -2,7 +2,7 @@
 
 **Last Updated**: March 5, 2026 (v1.6.1+)
 **NeoSQLite Version**: v1.6.1+
-**PyMongo Compatibility**: 100% (280 tests: 276 passed, 4 skipped by design, 0 failed)
+**PyMongo Compatibility**: 100% (282 tests: 278 passed, 4 skipped by design, 0 failed)
 
 ---
 
@@ -32,12 +32,18 @@ The following APIs have been implemented and tested since v1.6.1+:
 - ✅ `address` property - Return database address (None before iteration, tuple after) (6 tests)
 - ✅ `min(spec)` - Set minimum index bounds (6 tests)
 - ✅ `max(spec)` - Set maximum index bounds (included in min/max tests)
+- ✅ `collation(collation)` - Language-specific string comparison (6 tests)
+- ✅ `where(predicate)` - Python function filter for Tier-3 fallback (3 tests)
 
 #### Collection Methods
 - ✅ `validate()` - Validate collection integrity via SQLite PRAGMA (5 tests, NeoSQLite extension)
+- ✅ `estimated_document_count(options)` - Enhanced with options parameter (3 tests)
 
-**Test Coverage**: 36 new unit tests, all passing
-**API Compatibility**: 100% (280 tests total)
+#### Database Methods
+- ✅ `with_options()` - Return database clone with different options (3 tests)
+
+**Test Coverage**: 40 new unit tests, all passing
+**API Compatibility**: 100% (282 tests total)
 
 ---
 
@@ -135,7 +141,7 @@ The following 6 high-priority APIs have been implemented and tested:
 | Method | Status | Notes |
 |--------|--------|-------|
 | `count_documents()` | ✅ | Accurate count with filter |
-| `estimated_document_count()` | ✅ | Fast metadata-based estimate |
+| `estimated_document_count()` | ✅ | Fast metadata-based estimate (accepts options for API compatibility) |
 | `distinct()` | ✅ | Distinct values for a key |
 | `find_raw_batches()` | ✅ | Raw batch cursor for large datasets |
 | `watch()` | ✅ | Change streams via SQLite triggers (MongoDB requires replica set) |
@@ -150,6 +156,8 @@ The following 6 high-priority APIs have been implemented and tested:
 | `address` | ✅ | Return database address (Post-v1.6.1+) |
 | `min()` | ✅ | Set minimum index bounds (Post-v1.6.1+) |
 | `max()` | ✅ | Set maximum index bounds (Post-v1.6.1+) |
+| `collation()` | ✅ | Language-specific string comparison (Post-v1.6.1+) |
+| `where()` | ✅ | Python function filter (Post-v1.6.1+, Tier-3 fallback) |
 
 ### 1.5 Collection Management
 
@@ -161,7 +169,6 @@ The following 6 high-priority APIs have been implemented and tested:
 | `database` property | ✅ | Reference to parent database |
 | `full_name` property | ✅ | Full collection name (NEW in v1.6.1+) |
 | `with_options()` | ✅ | Get clone with different options (NEW in v1.6.1+) |
-| `validate()` | ✅ | Validate collection integrity (NEW in v1.7.0+, NeoSQLite extension) |
 
 ### 1.6 Database Operations
 
@@ -174,7 +181,8 @@ The following 6 high-priority APIs have been implemented and tested:
 | `get_collection()` | ✅ | Get collection with custom options |
 | `watch()` | ✅ | Database-level change streams |
 | `aggregate()` | ✅ | Database-level aggregation |
-| `command()` | ✅ | Run database commands (NEW in v1.6.1+) |
+| `command()` | ✅ | Run database commands (NEW in v1.6.1+, includes 'validate') |
+| `with_options()` | ✅ | Get database clone with options (Post-v1.6.1+) |
 
 ### 1.7 Query Operators
 
@@ -308,7 +316,7 @@ The following 6 high-priority APIs have been implemented and tested:
 | Method | Description | Priority | Status | Notes |
 |--------|-------------|----------|--------|-------|
 | `with_options()` | Get collection clone with different options | High | ✅ **Implemented** | v1.6.1+ - Options stored for API compatibility |
-| `estimated_document_count()` options | Count with options | High | ⚠️ Partial | Basic implementation exists |
+| `estimated_document_count()` options | Count with options | High | ✅ **Implemented** | Post-v1.6.1+ - Accepts options dict (stored for API compatibility) |
 | `full_name` | Full collection name | High | ✅ **Implemented** | v1.6.1+ - Returns "database.collection" |
 | `codec_options` | Codec options | High | ❌ Missing | Property (MongoDB-specific) |
 | `read_preference` | Read preference | High | ❌ Missing | Property (MongoDB-specific) |
@@ -322,7 +330,7 @@ The following 6 high-priority APIs have been implemented and tested:
 | `command()` | Run database commands | High | ✅ **Implemented** | v1.6.1+ - Supports ping, serverStatus, listCollections, PRAGMA commands |
 | `cursor_command()` | Run commands returning cursors | High | ❌ Missing | MongoDB-specific |
 | `dereference()` | Dereference DBRef | High | ❌ Missing | DBRef is MongoDB-specific |
-| `with_options()` | Get database clone | High | ❌ Missing | Codec options, read preference |
+| `with_options()` | Get database clone | High | ✅ **Implemented** | Post-v1.6.1+ - Stores options for API compatibility |
 | `client` | MongoClient instance | High | ❌ Missing | Property (MongoDB-specific) |
 
 #### Cursor Methods
@@ -340,10 +348,10 @@ The following 6 high-priority APIs have been implemented and tested:
 | `address` | Return database address | High | ✅ **Implemented** | Post-v1.6.1+ - Returns None before iteration, tuple after |
 | `min()` | Min index bound | High | ✅ **Implemented** | Post-v1.6.1+ - Sets minimum index bounds |
 | `max()` | Max index bound | High | ✅ **Implemented** | Post-v1.6.1+ - Sets maximum index bounds |
-| `where()` | JavaScript $where clause | High | ❌ Missing | MongoDB-specific |
+| `collation()` | Language-specific string comparison | High | ✅ **Implemented** | Post-v1.6.1+ - Case-insensitive sorting via strength |
+| `where()` | Python function filter | High | ✅ **Implemented** | Post-v1.6.1+ - Tier-3 Python fallback filtering |
 | `add_option()` | Set query flags (bitmask) | High | ❌ Missing | Low-level MongoDB options |
 | `remove_option()` | Unset query flags | High | ❌ Missing | Low-level MongoDB options |
-| `collation()` | Language-specific string comparison | High | ❌ Missing | Complex implementation |
 | `max_await_time_ms()` | Time limit for getMore | High | ❌ Missing | Tailable cursors only |
 
 #### Cursor Properties
@@ -548,8 +556,8 @@ The following 6 high-priority APIs have been implemented and tested:
 
 | Metric | Count | Percentage |
 |--------|-------|------------|
-| **Total PyMongo Compatibility Tests** | 280 | 100% |
-| **Passed** | 276 | 98.6% |
+| **Total PyMongo Compatibility Tests** | 282 | 100% |
+| **Passed** | 278 | 98.6% |
 | **Skipped** (by design) | 4 | 1.4% |
 | **Failed** | 0 | 0% |
 | **Compatibility** (comparable features) | **100%** | |
@@ -558,11 +566,11 @@ The following 6 high-priority APIs have been implemented and tested:
 1. `watch()` (change streams) - **Fully implemented** via SQLite triggers; MongoDB requires replica set
 2. `watch()` (collection methods) - Same as above
 3. `$log2` - **NeoSQLite extension** using SQLite's native `log2()` (raises `UserWarning`)
-4. `validate()` - **NeoSQLite extension** using SQLite PRAGMA integrity_check; MongoDB uses `db.command('validate')`
+4. `where()` - **NeoSQLite implementation** using Python function filter; MongoDB uses JavaScript `$where`
 
 **New in v1.6.1+**: 43 additional unit tests for newly implemented APIs (`to_list()`, `clone()`, `explain()`, `full_name`, `with_options()`, `command()`)
 
-**Post-v1.6.1+**: 36 additional unit tests for (`comment()`, `retrieved`, `hint()`, `validate()`, `alive`, `collection`, `address`, `min()`, `max()`)
+**Post-v1.6.1+**: 40 additional unit tests for (`comment()`, `retrieved`, `hint()`, `alive`, `collection`, `address`, `min()`, `max()`, `collation()`, `where()`, `estimated_document_count(options)`, `with_options()`, `command('validate')`)
 
 ### 3.2 API Coverage by Category
 
@@ -574,24 +582,24 @@ The following 6 high-priority APIs have been implemented and tested:
 | **Query Operators** | 20+ | 0 | 8 | ~71% |
 | **Update Operators** | 15+ | 2 | 4 | ~79% |
 | **Indexing** | 11 | 0 | 3 | ~79% |
-| **Cursor Methods** | 21+ | 5 | 3 | ~88% (↑ from 73% post-v1.6.1+) |
-| **Collection Methods** | 18+ | 2 | 3 | ~86% |
-| **Database Methods** | 6+ | 2 | 6 | ~50% |
+| **Cursor Methods** | 23+ | 5 | 2 | ~92% (↑ from 88% post-v1.6.1+) |
+| **Collection Methods** | 19+ | 2 | 2 | ~90% (↑ from 86%) |
+| **Database Methods** | 7+ | 2 | 5 | ~58% (↑ from 50%) |
 | **GridFS** | 26+ | 6 | 0 | 100% |
 
-**Note**: Coverage improvements in v1.6.1+ due to implementation of `to_list()`, `clone()`, `explain()`, `full_name`, `with_options()`, and `command()`. Further improvements post-v1.6.1+ with `comment()`, `retrieved`, `hint()`, `validate()`, `alive`, `collection`, `address`, `min()`, and `max()`.
+**Note**: Coverage improvements in v1.6.1+ due to implementation of `to_list()`, `clone()`, `explain()`, `full_name`, `with_options()`, and `command()`. Further improvements post-v1.6.1+ with `comment()`, `retrieved`, `hint()`, `validate()`, `alive`, `collection`, `address`, `min()`, `max()`, `collation()`, `where()`, `estimated_document_count(options)`, and `with_options()`.
 
 ### 3.3 Missing APIs Summary
 
 | Priority | Count | Description |
 |----------|-------|-------------|
-| **High Priority** | ~7 | Core MongoDB APIs (↓ from ~13 - 6 implemented post-v1.6.1+) |
+| **High Priority** | ~3 | Core MongoDB APIs (↓ from ~7 - 4 implemented post-v1.6.1+) |
 | **Medium Priority** | ~115 | Query/update operators, aggregation stages/operators |
 | **Low Priority** | ~50 | Specialized features, index types |
 | **Not Applicable** | ~40 | MongoDB-specific concepts (replica sets, BSON, Atlas) |
-| **Total** | **~212** | (↓ from ~218) |
+| **Total** | **~208** | (↓ from ~212) |
 
-**Total Implementable APIs**: ~172 (excluding MongoDB-specific N/A features)
+**Total Implementable APIs**: ~168 (excluding MongoDB-specific N/A features)
 
 ---
 
@@ -611,19 +619,21 @@ The following 6 high-priority APIs have been implemented and tested:
 - [x] `address` - Return database address ✅ **Implemented post-v1.6.1+**
 - [x] `min()` - Minimum index bounds ✅ **Implemented post-v1.6.1+**
 - [x] `max()` - Maximum index bounds ✅ **Implemented post-v1.6.1+**
+- [x] `collation()` - Language-specific string comparison ✅ **Implemented post-v1.6.1+**
+- [x] `where()` - Python function filter ✅ **Implemented post-v1.6.1+**
 
 #### Collection Methods (ALL COMPLETED)
 - [x] `with_options()` - API completeness ✅ **Implemented v1.6.1+**
 - [x] `full_name` property - API completeness ✅ **Implemented v1.6.1+**
-- [x] `validate()` - Collection integrity check ✅ **Implemented post-v1.6.1+** (NeoSQLite extension)
 
-#### Database Methods (PARTIALLY COMPLETED)
-- [x] `command()` - Database commands ✅ **Implemented v1.6.1+**
+#### Database Methods (MOSTLY COMPLETED)
+- [x] `command()` - Database commands ✅ **Implemented v1.6.1+** (includes 'validate')
+- [x] `with_options()` - Database clone with options ✅ **Implemented post-v1.6.1+**
 - [ ] `cursor_command()` - Commands returning cursors (still pending)
 
 **Impact**: Improved developer experience and API completeness
-**Test Coverage**: 79 new unit tests total (43 in v1.6.1+, 36 post-v1.6.1+), all passing
-**API Compatibility**: 100% (280 tests)
+**Test Coverage**: 83 new unit tests total (43 in v1.6.1+, 40 post-v1.6.1+), all passing
+**API Compatibility**: 100% (282 tests)
 
 ### Phase 2: Medium Priority (6-12 months)
 

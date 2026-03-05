@@ -1196,40 +1196,48 @@ class TestCursorRetrieved:
         assert len(results) == 3
 
 
-class TestCollectionValidateMethod:
-    """Tests for Collection.validate() method."""
+class TestDatabaseCommandValidate:
+    """Tests for Database.command('validate') method."""
 
     def test_validate_valid_collection(self, collection):
-        """Test validate on a valid collection."""
+        """Test validate command on a valid collection."""
         docs = [{"value": i} for i in range(10)]
         collection.insert_many(docs)
 
-        result = collection.validate()
+        result = collection.database.command(
+            "validate", collection=collection.name
+        )
 
+        assert result["ok"] == 1.0
         assert result["valid"] is True
         assert result["errors"] == []
-        assert "ok" in result["details"]
 
     def test_validate_empty_collection(self, collection):
-        """Test validate on an empty collection."""
-        result = collection.validate()
+        """Test validate command on an empty collection."""
+        result = collection.database.command(
+            "validate", collection=collection.name
+        )
 
+        assert result["ok"] == 1.0
         assert result["valid"] is True
         assert result["errors"] == []
 
     def test_validate_with_index(self, collection):
-        """Test validate with indexes."""
+        """Test validate command with indexes."""
         docs = [{"value": i} for i in range(10)]
         collection.insert_many(docs)
         collection.create_index("value")
 
-        result = collection.validate()
+        result = collection.database.command(
+            "validate", collection=collection.name
+        )
 
+        assert result["ok"] == 1.0
         assert result["valid"] is True
         assert result["errors"] == []
 
     def test_validate_multiple_collections(self):
-        """Test validate on multiple collections."""
+        """Test validate command on multiple collections."""
         conn = neosqlite.Connection(":memory:")
         coll1 = conn["test1"]
         coll2 = conn["test2"]
@@ -1237,8 +1245,8 @@ class TestCollectionValidateMethod:
         coll1.insert_many([{"x": i} for i in range(5)])
         coll2.insert_many([{"y": i} for i in range(5)])
 
-        result1 = coll1.validate()
-        result2 = coll2.validate()
+        result1 = conn.command("validate", collection=coll1.name)
+        result2 = conn.command("validate", collection=coll2.name)
 
         assert result1["valid"] is True
         assert result2["valid"] is True
@@ -1246,7 +1254,7 @@ class TestCollectionValidateMethod:
         conn.close()
 
     def test_validate_after_bulk_operations(self, collection):
-        """Test validate after bulk operations."""
+        """Test validate command after bulk operations."""
         docs = [{"value": i} for i in range(20)]
         collection.insert_many(docs)
         collection.update_many(
@@ -1254,10 +1262,24 @@ class TestCollectionValidateMethod:
         )
         collection.delete_many({"value": {"$gte": 15}})
 
-        result = collection.validate()
+        result = collection.database.command(
+            "validate", collection=collection.name
+        )
 
+        assert result["ok"] == 1.0
         assert result["valid"] is True
         assert result["errors"] == []
+
+    def test_validate_dict_command(self, collection):
+        """Test validate command using dict syntax."""
+        docs = [{"value": i} for i in range(10)]
+        collection.insert_many(docs)
+
+        # Test dict-style command (MongoDB style)
+        result = collection.database.command({"validate": collection.name})
+
+        assert result["ok"] == 1.0
+        assert result["valid"] is True
 
 
 class TestCursorAlive:
@@ -1504,3 +1526,227 @@ class TestCursorMinMax:
         assert cursor._min == {"value": 5}
         assert cursor._max == {"value": 15}
         assert cursor._filter == {"value": {"$gte": 0}}
+
+
+class TestCursorCollation:
+    """Tests for Cursor.collation() method."""
+
+    def test_collation_basic(self, collection):
+        """Test collation() sets collation settings."""
+        docs = [{"name": "Alice"}, {"name": "bob"}, {"name": "Charlie"}]
+        collection.insert_many(docs)
+
+        cursor = collection.find({"name": {"$gte": "B"}}).collation(
+            {"locale": "en_US", "strength": 2}
+        )
+        results = list(cursor)
+
+        assert cursor._collation == {"locale": "en_US", "strength": 2}
+        # With strength 2 (case-insensitive), should match more documents
+        assert len(results) >= 1
+
+    def test_collation_case_insensitive(self, collection):
+        """Test collation with case-insensitive strength."""
+        docs = [{"name": "Alice"}, {"name": "alice"}, {"name": "ALICE"}]
+        collection.insert_many(docs)
+
+        # Case-insensitive search (strength 2)
+        cursor = collection.find({"name": "alice"}).collation(
+            {"locale": "en_US", "strength": 2}
+        )
+        results = list(cursor)
+
+        # Should find all variations with case-insensitive collation
+        assert len(results) >= 1
+
+    def test_collation_returns_cursor(self, collection):
+        """Test that collation() returns cursor for chaining."""
+        docs = [{"name": f"Doc{i}"} for i in range(10)]
+        collection.insert_many(docs)
+
+        cursor = (
+            collection.find({"name": {"$gte": "Doc5"}})
+            .collation({"locale": "en_US"})
+            .limit(3)
+        )
+        results = list(cursor)
+
+        assert len(results) <= 3
+        assert cursor._collation == {"locale": "en_US"}
+
+    def test_collation_preserves_settings(self, collection):
+        """Test that collation preserves cursor settings."""
+        docs = [{"name": f"Doc{i}"} for i in range(10)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({"name": {"$gte": "Doc5"}}).collation(
+            {"locale": "fr_FR", "strength": 1, "backwards": True}
+        )
+
+        assert cursor._collation == {
+            "locale": "fr_FR",
+            "strength": 1,
+            "backwards": True,
+        }
+        assert cursor._filter == {"name": {"$gte": "Doc5"}}
+
+    def test_collation_clone_preserves(self, collection):
+        """Test that clone preserves collation settings."""
+        docs = [{"name": f"Doc{i}"} for i in range(10)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({}).collation(
+            {"locale": "de_DE", "strength": 2}
+        )
+        cloned = cursor.clone()
+
+        assert cloned._collation == {"locale": "de_DE", "strength": 2}
+        assert cloned._collation is not cursor._collation  # Deep copy
+
+    def test_collation_with_sort(self, collection):
+        """Test collation works with sorting."""
+        docs = [{"name": name} for name in ["zebra", "Apple", "banana"]]
+        collection.insert_many(docs)
+
+        cursor = (
+            collection.find({})
+            .sort("name", neosqlite.ASCENDING)
+            .collation({"locale": "en_US", "strength": 2})
+        )
+        results = list(cursor)
+
+        assert len(results) == 3
+        # With case-insensitive collation, sorting should be case-insensitive
+        names = [doc["name"] for doc in results]
+        # With case-insensitive: Apple, banana, zebra (A < b < z)
+        assert names[0] == "Apple"
+        assert names[1] == "banana"
+        assert names[2] == "zebra"
+
+
+class TestEstimatedDocumentCountWithOptions:
+    """Tests for Collection.estimated_document_count(options)."""
+
+    def test_estimated_document_count_with_options(self, collection):
+        """Test estimated_document_count accepts options parameter."""
+        docs = [{"value": i} for i in range(100)]
+        collection.insert_many(docs)
+
+        # Should accept options dict for API compatibility
+        count = collection.estimated_document_count(
+            {"maxTimeMS": 1000, "hint": "idx_test"}
+        )
+        assert count == 100
+
+    def test_estimated_document_count_without_options(self, collection):
+        """Test estimated_document_count works without options."""
+        docs = [{"value": i} for i in range(50)]
+        collection.insert_many(docs)
+
+        count = collection.estimated_document_count()
+        assert count == 50
+
+    def test_estimated_document_count_empty_collection(self, collection):
+        """Test estimated_document_count on empty collection."""
+        count = collection.estimated_document_count()
+        assert count == 0
+
+        # Also with options
+        count_with_opts = collection.estimated_document_count(
+            {"maxTimeMS": 1000}
+        )
+        assert count_with_opts == 0
+
+
+class TestDatabaseWithOptions:
+    """Tests for Connection.with_options() method."""
+
+    def test_with_options_returns_connection(self):
+        """Test with_options() returns a connection."""
+        conn = neosqlite.Connection(":memory:")
+
+        result = conn.with_options()
+
+        assert result is conn  # Returns self for API compatibility
+        conn.close()
+
+    def test_with_options_stores_options(self):
+        """Test with_options() stores the provided options."""
+        conn = neosqlite.Connection(":memory:")
+
+        result = conn.with_options(
+            write_concern={"w": "majority"},
+            read_preference={"mode": "primaryPreferred"},
+        )
+
+        assert result._write_concern == {"w": "majority"}
+        assert result._read_preference == {"mode": "primaryPreferred"}
+        conn.close()
+
+    def test_with_options_all_parameters(self):
+        """Test with_options() accepts all parameters."""
+        conn = neosqlite.Connection(":memory:")
+
+        result = conn.with_options(
+            codec_options={"document_class": dict},
+            read_preference={"mode": "secondary"},
+            write_concern={"w": 1},
+            read_concern={"level": "local"},
+        )
+
+        assert result._codec_options == {"document_class": dict}
+        assert result._read_preference == {"mode": "secondary"}
+        assert result._write_concern == {"w": 1}
+        assert result._read_concern == {"level": "local"}
+        conn.close()
+
+
+class TestCursorWhere:
+    """Tests for Cursor.where() method (Python function filter)."""
+
+    def test_where_with_python_function(self, collection):
+        """Test where() filters with a Python function."""
+        docs = [{"value": i} for i in range(20)]
+        collection.insert_many(docs)
+
+        # Filter using Python function (Tier-3 fallback)
+        cursor = collection.find({}).where(lambda doc: doc.get("value", 0) > 10)
+        results = list(cursor)
+
+        assert len(results) == 9  # values 11-19
+        assert all(doc["value"] > 10 for doc in results)
+
+    def test_where_returns_cursor(self, collection):
+        """Test where() returns cursor for chaining."""
+        docs = [
+            {"value": i, "category": "A" if i % 2 == 0 else "B"}
+            for i in range(20)
+        ]
+        collection.insert_many(docs)
+
+        cursor = (
+            collection.find({})
+            .where(lambda doc: doc.get("value", 0) > 5)
+            .limit(5)
+        )
+        results = list(cursor)
+
+        assert len(results) <= 5
+        assert all(doc["value"] > 5 for doc in results)
+
+    def test_where_with_complex_condition(self, collection):
+        """Test where() with complex filtering logic."""
+        docs = [{"value": i, "name": f"doc{i}"} for i in range(20)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({}).where(
+            lambda doc: doc.get("value", 0) % 2 == 0
+            and doc.get("value", 0) > 10
+        )
+        results = list(cursor)
+
+        # Even values > 10: 12, 14, 16, 18
+        assert len(results) == 4
+        assert all(
+            doc["value"] % 2 == 0 and doc["value"] > 10 for doc in results
+        )
