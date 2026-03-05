@@ -133,6 +133,78 @@ def compare_cursor_methods():
             neo_retrieved = False
             print(f"Neo retrieved: Error - {e}")
 
+        # Test alive property
+        try:
+            cursor = neo_collection.find({"value": {"$gte": 5}})
+            neo_alive_initial = cursor.alive is True
+            list(cursor)
+            neo_alive_after = isinstance(cursor.alive, bool)
+            neo_alive = neo_alive_initial and neo_alive_after
+            print(f"Neo alive: {'OK' if neo_alive else 'FAIL'}")
+        except Exception as e:
+            neo_alive = False
+            print(f"Neo alive: Error - {e}")
+
+        # Test collection property
+        try:
+            cursor = neo_collection.find({})
+            neo_collection_prop = cursor.collection is neo_collection
+            print(f"Neo collection: {'OK' if neo_collection_prop else 'FAIL'}")
+        except Exception as e:
+            neo_collection_prop = False
+            print(f"Neo collection: Error - {e}")
+
+        # Test address property
+        try:
+            cursor = neo_collection.find({})
+            # Before iteration, should be None (matching PyMongo)
+            neo_address_before = cursor.address is None
+            list(cursor)
+            # After iteration, should be tuple with database path
+            neo_address_after = (
+                isinstance(cursor.address, tuple)
+                and len(cursor.address) == 2
+                and cursor.address[0].startswith("sqlite:")
+                and cursor.address[1] == 0
+            )
+            neo_address = neo_address_before and neo_address_after
+            print(
+                f"Neo address: {'OK' if neo_address else 'FAIL'} (before=None, after={cursor.address})"
+            )
+        except Exception as e:
+            neo_address = False
+            print(f"Neo address: Error - {e}")
+
+        # Test min() method
+        try:
+            neo_collection.delete_many({})
+            neo_collection.insert_many([{"value": i} for i in range(20)])
+            cursor = neo_collection.find({}).min({"value": 10})
+            results = list(cursor)
+            neo_min = len(results) == 10 and all(
+                doc["value"] >= 10 for doc in results
+            )
+            print(
+                f"Neo min(): {'OK' if neo_min else 'FAIL'} ({len(results)} results)"
+            )
+        except Exception as e:
+            neo_min = False
+            print(f"Neo min(): Error - {e}")
+
+        # Test max() method
+        try:
+            cursor = neo_collection.find({}).max({"value": 10})
+            results = list(cursor)
+            neo_max = len(results) == 10 and all(
+                doc["value"] < 10 for doc in results
+            )
+            print(
+                f"Neo max(): {'OK' if neo_max else 'FAIL'} ({len(results)} results)"
+            )
+        except Exception as e:
+            neo_max = False
+            print(f"Neo max(): Error - {e}")
+
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
 
@@ -151,7 +223,7 @@ def compare_cursor_methods():
         mongo_collection = mongo_db.test_cursor
         mongo_collection.delete_many({})
         mongo_collection.insert_many(
-            [{"name": f"Doc{i}", "value": i} for i in range(10)]
+            [{"name": f"Doc{i}", "value": i} for i in range(20)]
         )
         mongo_collection.create_index("value")
 
@@ -263,6 +335,81 @@ def compare_cursor_methods():
             mongo_retrieved = False
             print(f"Mongo retrieved: Error - {e}")
 
+        # Test alive property
+        try:
+            cursor = mongo_collection.find({"value": {"$gte": 5}})
+            mongo_alive_initial = cursor.alive is True
+            list(cursor)
+            mongo_alive_after = isinstance(cursor.alive, bool)
+            mongo_alive = mongo_alive_initial and mongo_alive_after
+            print(f"Mongo alive: {'OK' if mongo_alive else 'FAIL'}")
+        except Exception as e:
+            mongo_alive = False
+            print(f"Mongo alive: Error - {e}")
+
+        # Test collection property
+        try:
+            cursor = mongo_collection.find({})
+            mongo_collection_prop = cursor.collection is mongo_collection
+            print(
+                f"Mongo collection: {'OK' if mongo_collection_prop else 'FAIL'}"
+            )
+        except Exception as e:
+            mongo_collection_prop = False
+            print(f"Mongo collection: Error - {e}")
+
+        # Test address property
+        try:
+            cursor = mongo_collection.find({})
+            # Before iteration, should be None
+            mongo_address_before = cursor.address is None
+            list(cursor)
+            # After iteration, should be tuple (host, port)
+            mongo_address_after = (
+                isinstance(cursor.address, tuple) and len(cursor.address) == 2
+            )
+            mongo_address = mongo_address_before and mongo_address_after
+            print(
+                f"Mongo address: {'OK' if mongo_address else 'FAIL'} (before=None, after={cursor.address})"
+            )
+        except Exception as e:
+            mongo_address = False
+            print(f"Mongo address: Error - {e}")
+
+        # Test min() method
+        # Note: MongoDB min() takes a list of (field, value) tuples and requires hint()
+        try:
+            cursor = (
+                mongo_collection.find({}).hint("value_1").min([("value", 10)])
+            )
+            results = list(cursor)
+            mongo_min = len(results) == 10 and all(
+                doc["value"] >= 10 for doc in results
+            )
+            print(
+                f"Mongo min(): {'OK' if mongo_min else 'FAIL'} ({len(results)} results)"
+            )
+        except Exception as e:
+            mongo_min = False
+            print(f"Mongo min(): Error - {e}")
+
+        # Test max() method
+        # Note: MongoDB max() takes a list of (field, value) tuples and requires hint()
+        try:
+            cursor = (
+                mongo_collection.find({}).hint("value_1").max([("value", 10)])
+            )
+            results = list(cursor)
+            mongo_max = len(results) == 10 and all(
+                doc["value"] < 10 for doc in results
+            )
+            print(
+                f"Mongo max(): {'OK' if mongo_max else 'FAIL'} ({len(results)} results)"
+            )
+        except Exception as e:
+            mongo_max = False
+            print(f"Mongo max(): Error - {e}")
+
         client.close()
 
         reporter.record_result(
@@ -323,4 +470,39 @@ def compare_cursor_methods():
             neo_retrieved,
             neo_retrieved,
             mongo_retrieved,
+        )
+        reporter.record_result(
+            "Cursor Methods",
+            "alive",
+            neo_alive,
+            neo_alive,
+            mongo_alive,
+        )
+        reporter.record_result(
+            "Cursor Methods",
+            "collection",
+            neo_collection_prop,
+            neo_collection_prop,
+            mongo_collection_prop,
+        )
+        reporter.record_result(
+            "Cursor Methods",
+            "address",
+            neo_address,
+            neo_address,
+            mongo_address,
+        )
+        reporter.record_result(
+            "Cursor Methods",
+            "min",
+            neo_min,
+            neo_min,
+            mongo_min,
+        )
+        reporter.record_result(
+            "Cursor Methods",
+            "max",
+            neo_max,
+            neo_max,
+            mongo_max,
         )

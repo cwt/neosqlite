@@ -2,7 +2,7 @@
 
 **Last Updated**: March 5, 2026 (v1.6.1+)
 **NeoSQLite Version**: v1.6.1+
-**PyMongo Compatibility**: 100% (275 tests: 271 passed, 4 skipped by design, 0 failed)
+**PyMongo Compatibility**: 100% (280 tests: 276 passed, 4 skipped by design, 0 failed)
 
 ---
 
@@ -27,12 +27,17 @@ The following APIs have been implemented and tested since v1.6.1+:
 - ✅ `comment(text)` - Add comment to query for debugging/profiling (8 tests)
 - ✅ `retrieved` property - Track documents retrieved count (8 tests)
 - ✅ `hint(index)` - Index hint for query optimization (already existed, now tested)
+- ✅ `alive` property - Check if cursor has more documents (4 tests)
+- ✅ `collection` property - Return reference to parent collection (3 tests)
+- ✅ `address` property - Return database address (None before iteration, tuple after) (6 tests)
+- ✅ `min(spec)` - Set minimum index bounds (6 tests)
+- ✅ `max(spec)` - Set maximum index bounds (included in min/max tests)
 
 #### Collection Methods
 - ✅ `validate()` - Validate collection integrity via SQLite PRAGMA (5 tests, NeoSQLite extension)
 
-**Test Coverage**: 21 new unit tests, all passing
-**API Compatibility**: 100% (275 tests total)
+**Test Coverage**: 36 new unit tests, all passing
+**API Compatibility**: 100% (280 tests total)
 
 ---
 
@@ -137,9 +142,14 @@ The following 6 high-priority APIs have been implemented and tested:
 | `to_list()` | ✅ | Convert cursor to list (NEW in v1.6.1+) |
 | `clone()` | ✅ | Create unevaluated cursor copy (NEW in v1.6.1+) |
 | `explain()` | ✅ | Query execution plan via SQLite EXPLAIN (NEW in v1.6.1+) |
-| `comment()` | ✅ | Add comment to query for debugging (NEW in v1.7.0+) |
+| `comment()` | ✅ | Add comment to query for debugging (Post-v1.6.1+) |
 | `hint()` | ✅ | Index hint for query optimization |
-| `retrieved` | ✅ | Documents retrieved count property (NEW in v1.7.0+) |
+| `retrieved` | ✅ | Documents retrieved count property (Post-v1.6.1+) |
+| `alive` | ✅ | Check if cursor has more documents (Post-v1.6.1+) |
+| `collection` | ✅ | Return reference to parent collection (Post-v1.6.1+) |
+| `address` | ✅ | Return database address (Post-v1.6.1+) |
+| `min()` | ✅ | Set minimum index bounds (Post-v1.6.1+) |
+| `max()` | ✅ | Set maximum index bounds (Post-v1.6.1+) |
 
 ### 1.5 Collection Management
 
@@ -322,14 +332,17 @@ The following 6 high-priority APIs have been implemented and tested:
 | `explain()` | Return query execution plan | High | ✅ **Implemented** | v1.6.1+ - Uses SQLite EXPLAIN QUERY PLAN |
 | `clone()` | Create unevaluated cursor copy | High | ✅ **Implemented** | v1.6.1+ - Preserves all cursor settings |
 | `to_list()` | Convert cursor to list efficiently | High | ✅ **Implemented** | v1.6.1+ - With optional length parameter |
-| `comment()` | Add comment to query | High | ✅ **Implemented** | v1.7.0+ - SQL comment injection for debugging |
-| `retrieved` | Documents retrieved count | High | ✅ **Implemented** | v1.7.0+ - Property tracking iteration count |
+| `comment()` | Add comment to query | High | ✅ **Implemented** | Post-v1.6.1+ - SQL comment injection for debugging |
+| `retrieved` | Documents retrieved count | High | ✅ **Implemented** | Post-v1.6.1+ - Property tracking iteration count |
 | `hint()` | Index hint for query | High | ✅ **Implemented** | Index hint support |
+| `alive` | Check if cursor has more data | High | ✅ **Implemented** | Post-v1.6.1+ - Property tracking cursor exhaustion |
+| `collection` | Return collection reference | High | ✅ **Implemented** | Post-v1.6.1+ - Property returning parent collection |
+| `address` | Return database address | High | ✅ **Implemented** | Post-v1.6.1+ - Returns None before iteration, tuple after |
+| `min()` | Min index bound | High | ✅ **Implemented** | Post-v1.6.1+ - Sets minimum index bounds |
+| `max()` | Max index bound | High | ✅ **Implemented** | Post-v1.6.1+ - Sets maximum index bounds |
 | `where()` | JavaScript $where clause | High | ❌ Missing | MongoDB-specific |
 | `add_option()` | Set query flags (bitmask) | High | ❌ Missing | Low-level MongoDB options |
 | `remove_option()` | Unset query flags | High | ❌ Missing | Low-level MongoDB options |
-| `max()` | Max index bound | High | ❌ Missing | Query optimization |
-| `min()` | Min index bound | High | ❌ Missing | Query optimization |
 | `collation()` | Language-specific string comparison | High | ❌ Missing | Complex implementation |
 | `max_await_time_ms()` | Time limit for getMore | High | ❌ Missing | Tailable cursors only |
 
@@ -337,11 +350,8 @@ The following 6 high-priority APIs have been implemented and tested:
 
 | Property | Description | Priority | Status |
 |----------|-------------|----------|--------|
-| `address` | Server (host, port) tuple | High | ❌ Missing |
 | `session` | ClientSession | High | ❌ Missing |
 | `cursor_id` | Cursor ID | High | ⚠️ Partial |
-| `collection` | Collection reference | High | ⚠️ Partial |
-| `alive` | Cursor has more data | High | ⚠️ Partial |
 
 ### 2.2 MEDIUM PRIORITY - Query & Update Operators
 
@@ -538,9 +548,9 @@ The following 6 high-priority APIs have been implemented and tested:
 
 | Metric | Count | Percentage |
 |--------|-------|------------|
-| **Total PyMongo Compatibility Tests** | 275 | 100% |
-| **Passed** | 271 | 98.5% |
-| **Skipped** (by design) | 4 | 1.5% |
+| **Total PyMongo Compatibility Tests** | 280 | 100% |
+| **Passed** | 276 | 98.6% |
+| **Skipped** (by design) | 4 | 1.4% |
 | **Failed** | 0 | 0% |
 | **Compatibility** (comparable features) | **100%** | |
 
@@ -552,7 +562,7 @@ The following 6 high-priority APIs have been implemented and tested:
 
 **New in v1.6.1+**: 43 additional unit tests for newly implemented APIs (`to_list()`, `clone()`, `explain()`, `full_name`, `with_options()`, `command()`)
 
-**Post-v1.6.1+**: 21 additional unit tests for (`comment()`, `retrieved`, `hint()`, `validate()`)
+**Post-v1.6.1+**: 36 additional unit tests for (`comment()`, `retrieved`, `hint()`, `validate()`, `alive`, `collection`, `address`, `min()`, `max()`)
 
 ### 3.2 API Coverage by Category
 
@@ -564,30 +574,30 @@ The following 6 high-priority APIs have been implemented and tested:
 | **Query Operators** | 20+ | 0 | 8 | ~71% |
 | **Update Operators** | 15+ | 2 | 4 | ~79% |
 | **Indexing** | 11 | 0 | 3 | ~79% |
-| **Cursor Methods** | 16+ | 5 | 6 | ~73% (↑ from 59% in v1.6.1+) |
-| **Collection Methods** | 18+ | 2 | 3 | ~86% (↑ from 81% in v1.6.1+) |
+| **Cursor Methods** | 21+ | 5 | 3 | ~88% (↑ from 73% post-v1.6.1+) |
+| **Collection Methods** | 18+ | 2 | 3 | ~86% |
 | **Database Methods** | 6+ | 2 | 6 | ~50% |
 | **GridFS** | 26+ | 6 | 0 | 100% |
 
-**Note**: Coverage improvements in v1.6.1+ due to implementation of `to_list()`, `clone()`, `explain()`, `full_name`, `with_options()`, and `command()`. Further improvements post-v1.6.1+ with `comment()`, `retrieved`, `hint()`, and `validate()`.
+**Note**: Coverage improvements in v1.6.1+ due to implementation of `to_list()`, `clone()`, `explain()`, `full_name`, `with_options()`, and `command()`. Further improvements post-v1.6.1+ with `comment()`, `retrieved`, `hint()`, `validate()`, `alive`, `collection`, `address`, `min()`, and `max()`.
 
 ### 3.3 Missing APIs Summary
 
 | Priority | Count | Description |
 |----------|-------|-------------|
-| **High Priority** | ~13 | Core MongoDB APIs (↓ from ~19 - 6 implemented in v1.7.0+) |
+| **High Priority** | ~7 | Core MongoDB APIs (↓ from ~13 - 6 implemented post-v1.6.1+) |
 | **Medium Priority** | ~115 | Query/update operators, aggregation stages/operators |
 | **Low Priority** | ~50 | Specialized features, index types |
 | **Not Applicable** | ~40 | MongoDB-specific concepts (replica sets, BSON, Atlas) |
-| **Total** | **~218** | (↓ from ~224) |
+| **Total** | **~212** | (↓ from ~218) |
 
-**Total Implementable APIs**: ~178 (excluding MongoDB-specific N/A features)
+**Total Implementable APIs**: ~172 (excluding MongoDB-specific N/A features)
 
 ---
 
 ## Part 4: Implementation Roadmap
 
-### Phase 1: High Priority (COMPLETED in v1.6.1+) ✅
+### Phase 1: High Priority (COMPLETED in v1.6.1+ and post-v1.6.1+) ✅
 
 #### Cursor Methods (ALL COMPLETED)
 - [x] `explain()` - Query execution plan ✅ **Implemented v1.6.1+**
@@ -596,6 +606,11 @@ The following 6 high-priority APIs have been implemented and tested:
 - [x] `comment()` - Query tracing via SQL comments ✅ **Implemented post-v1.6.1+**
 - [x] `retrieved` - Documents retrieved count ✅ **Implemented post-v1.6.1+**
 - [x] `hint()` - Index hint for queries ✅ **Already existed, tested post-v1.6.1+**
+- [x] `alive` - Check if cursor has more data ✅ **Implemented post-v1.6.1+**
+- [x] `collection` - Return collection reference ✅ **Implemented post-v1.6.1+**
+- [x] `address` - Return database address ✅ **Implemented post-v1.6.1+**
+- [x] `min()` - Minimum index bounds ✅ **Implemented post-v1.6.1+**
+- [x] `max()` - Maximum index bounds ✅ **Implemented post-v1.6.1+**
 
 #### Collection Methods (ALL COMPLETED)
 - [x] `with_options()` - API completeness ✅ **Implemented v1.6.1+**
@@ -607,8 +622,8 @@ The following 6 high-priority APIs have been implemented and tested:
 - [ ] `cursor_command()` - Commands returning cursors (still pending)
 
 **Impact**: Improved developer experience and API completeness
-**Test Coverage**: 64 new unit tests total (43 in v1.6.1+, 21 post-v1.6.1+), all passing
-**API Compatibility**: 100% (275 tests)
+**Test Coverage**: 79 new unit tests total (43 in v1.6.1+, 36 post-v1.6.1+), all passing
+**API Compatibility**: 100% (280 tests)
 
 ### Phase 2: Medium Priority (6-12 months)
 

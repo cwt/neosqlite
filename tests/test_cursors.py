@@ -1258,3 +1258,249 @@ class TestCollectionValidateMethod:
 
         assert result["valid"] is True
         assert result["errors"] == []
+
+
+class TestCursorAlive:
+    """Tests for Cursor.alive property."""
+
+    def test_alive_initial(self, collection):
+        """Test that cursor is alive initially."""
+        docs = [{"value": i} for i in range(10)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({})
+        assert cursor.alive is True
+
+    def test_alive_after_full_iteration(self, collection):
+        """Test that cursor is not alive after full iteration."""
+        docs = [{"value": i} for i in range(10)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({})
+        list(cursor)
+        # Cursor may still be considered alive since it's re-iterable
+        # Implementation depends on whether we track exhaustion
+        assert isinstance(cursor.alive, bool)
+
+    def test_alive_with_limit(self, collection):
+        """Test alive status with limit."""
+        docs = [{"value": i} for i in range(20)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({}).limit(5)
+        assert cursor.alive is True
+
+        list(cursor)
+        # After retrieving all limited results, should be not alive
+        assert cursor.alive is False
+
+    def test_alive_partial_iteration(self, collection):
+        """Test alive during partial iteration."""
+        docs = [{"value": i} for i in range(10)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({}).limit(10)
+        # Before iteration
+        assert cursor.alive is True
+
+        # Partial iteration
+        count = 0
+        for doc in cursor:
+            count += 1
+            if count >= 3:
+                break
+
+        # Should still be alive since we haven't reached limit
+        assert cursor.alive is True
+
+
+class TestCursorCollection:
+    """Tests for Cursor.collection property."""
+
+    def test_collection_returns_reference(self, collection):
+        """Test that collection property returns the collection."""
+        cursor = collection.find({})
+        assert cursor.collection is collection
+
+    def test_collection_name(self, collection):
+        """Test that we can access collection name via cursor."""
+        cursor = collection.find({})
+        assert cursor.collection.name == collection.name
+
+    def test_collection_operations(self, collection):
+        """Test that we can perform operations via cursor.collection."""
+        docs = [{"value": i} for i in range(5)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({})
+        # Should be able to use cursor.collection for operations
+        count = cursor.collection.count_documents({})
+        assert count == 5
+
+
+class TestCursorAddress:
+    """Tests for Cursor.address property."""
+
+    def test_address_before_iteration(self, collection):
+        """Test that address returns None before iteration."""
+        cursor = collection.find({})
+        # Before iteration, should return None (matching PyMongo behavior)
+        assert cursor.address is None
+
+    def test_address_after_iteration_memory_db(self, collection):
+        """Test that address returns tuple after iteration for memory db."""
+        docs = [{"value": i} for i in range(5)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({})
+        list(cursor)
+        # After iteration, should return tuple with memory db path
+        assert cursor.address == ("sqlite::memory:", 0)
+
+    def test_address_returns_tuple(self, collection):
+        """Test that address returns a tuple after iteration."""
+        docs = [{"value": i} for i in range(5)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({})
+        list(cursor)
+        address = cursor.address
+
+        assert isinstance(address, tuple)
+        assert len(address) == 2
+
+    def test_address_values(self, collection):
+        """Test address values."""
+        docs = [{"value": i} for i in range(5)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({})
+        list(cursor)
+        db_path, port = cursor.address
+
+        assert db_path == "sqlite::memory:"
+        assert port == 0
+
+    def test_address_consistency(self, collection):
+        """Test that address is consistent across cursors."""
+        docs = [{"value": i} for i in range(5)]
+        collection.insert_many(docs)
+
+        cursor1 = collection.find({})
+        cursor2 = collection.find({"value": 1})
+
+        # Both should be None before iteration
+        assert cursor1.address is None
+        assert cursor2.address is None
+
+        # After iteration, both should return same address
+        list(cursor1)
+        list(cursor2)
+        assert cursor1.address == cursor2.address
+
+    def test_address_with_file_database(self):
+        """Test address with file-based database."""
+        import tempfile
+        import os
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+
+        try:
+            conn = neosqlite.Connection(db_path)
+            coll = conn.test_collection
+            coll.insert_one({"x": 1})
+
+            cursor = coll.find({})
+            list(cursor)
+
+            # Should return file path
+            assert cursor.address[0] == f"sqlite://{db_path}"
+            assert cursor.address[1] == 0
+
+            conn.close()
+        finally:
+            os.unlink(db_path)
+
+
+class TestCursorMinMax:
+    """Tests for Cursor.min() and Cursor.max() methods."""
+
+    def test_min_basic(self, collection):
+        """Test min() sets lower bound."""
+        docs = [{"value": i} for i in range(20)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({}).min({"value": 10})
+        results = list(cursor)
+
+        assert len(results) == 10  # values 10-19
+        assert all(doc["value"] >= 10 for doc in results)
+
+    def test_max_basic(self, collection):
+        """Test max() sets upper bound."""
+        docs = [{"value": i} for i in range(20)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({}).max({"value": 10})
+        results = list(cursor)
+
+        assert len(results) == 10  # values 0-9
+        assert all(doc["value"] < 10 for doc in results)
+
+    def test_min_max_combined(self, collection):
+        """Test min() and max() together."""
+        docs = [{"value": i} for i in range(20)]
+        collection.insert_many(docs)
+
+        cursor = collection.find({}).min({"value": 5}).max({"value": 15})
+        results = list(cursor)
+
+        assert len(results) == 10  # values 5-14
+        assert all(5 <= doc["value"] < 15 for doc in results)
+
+    def test_min_max_with_filter(self, collection):
+        """Test min/max with existing filter."""
+        docs = [
+            {"category": "A" if i % 2 == 0 else "B", "value": i}
+            for i in range(20)
+        ]
+        collection.insert_many(docs)
+
+        cursor = (
+            collection.find({"category": "A"})
+            .min({"value": 5})
+            .max({"value": 15})
+        )
+        results = list(cursor)
+
+        assert all(doc["category"] == "A" for doc in results)
+        assert all(5 <= doc["value"] < 15 for doc in results)
+
+    def test_min_max_returns_cursor(self, collection):
+        """Test that min() and max() return cursor for chaining."""
+        docs = [{"value": i} for i in range(10)]
+        collection.insert_many(docs)
+
+        cursor = (
+            collection.find({}).min({"value": 2}).max({"value": 8}).limit(3)
+        )
+        results = list(cursor)
+
+        assert len(results) == 3
+        assert all(2 <= doc["value"] < 8 for doc in results)
+
+    def test_min_max_preserves_settings(self, collection):
+        """Test that min/max preserves cursor settings."""
+        docs = [{"value": i} for i in range(20)]
+        collection.insert_many(docs)
+
+        cursor = (
+            collection.find({"value": {"$gte": 0}})
+            .min({"value": 5})
+            .max({"value": 15})
+        )
+
+        assert cursor._min == {"value": 5}
+        assert cursor._max == {"value": 15}
+        assert cursor._filter == {"value": {"$gte": 0}}

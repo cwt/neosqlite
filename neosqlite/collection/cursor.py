@@ -37,6 +37,8 @@ class Cursor:
         self._projection = projection or {}
         self._hint = hint
         self._comment: str | None = None
+        self._min: Dict[str, Any] | None = None
+        self._max: Dict[str, Any] | None = None
         self._skip = 0
         self._limit: int | None = None
         self._sort: Dict[str, int] | None = None
@@ -127,6 +129,48 @@ class Cursor:
             Cursor: The cursor object with the hint applied
         """
         self._hint = index
+        return self
+
+    def min(self, min_spec: Dict[str, Any]) -> Cursor:
+        """
+        Set the minimum bound for index queries.
+
+        This method sets a lower bound on the index values to be scanned.
+        Only documents with index values greater than or equal to the
+        specified minimum will be returned.
+
+        Args:
+            min_spec (Dict[str, Any]): A dictionary specifying the minimum
+                                       index values, e.g., {"field": value}
+
+        Returns:
+            Cursor: The cursor object with the minimum bound applied
+
+        Example:
+            >>> cursor = collection.find({"age": {"$gte": 18}}).min({"age": 18})
+        """
+        self._min = min_spec
+        return self
+
+    def max(self, max_spec: Dict[str, Any]) -> Cursor:
+        """
+        Set the maximum bound for index queries.
+
+        This method sets an upper bound on the index values to be scanned.
+        Only documents with index values less than the specified maximum
+        will be returned.
+
+        Args:
+            max_spec (Dict[str, Any]): A dictionary specifying the maximum
+                                       index values, e.g., {"field": value}
+
+        Returns:
+            Cursor: The cursor object with the maximum bound applied
+
+        Example:
+            >>> cursor = collection.find({"age": {"$lte": 65}}).max({"age": 65})
+        """
+        self._max = max_spec
         return self
 
     def comment(self, comment: str) -> Cursor:
@@ -222,6 +266,94 @@ class Cursor:
             10
         """
         return self._retrieved
+
+    @property
+    def alive(self) -> bool:
+        """
+        Check if the cursor has more documents to iterate.
+
+        In NeoSQLite, a cursor is considered alive if it hasn't been fully exhausted.
+        This is a simplified implementation for PyMongo API compatibility.
+
+        Returns:
+            bool: True if the cursor may have more documents, False if exhausted
+
+        Note:
+            NeoSQLite cursors are re-iterable, so this property tracks whether
+            the current iteration has been completed.
+
+        Example:
+            >>> cursor = collection.find({}).limit(10)
+            >>> cursor.alive
+            True
+            >>> list(cursor)
+            >>> cursor.alive
+            False
+        """
+        # Cursor is alive if we haven't retrieved any documents yet
+        # or if we haven't reached the limit
+        if self._limit is not None:
+            return self._retrieved < self._limit
+        # Without limit, cursor is considered alive until iteration starts
+        # After iteration, check if we got any results
+        return self._retrieved == 0 or not hasattr(self, "_exhausted")
+
+    @property
+    def collection(self):
+        """
+        Return a reference to the collection this cursor is iterating over.
+
+        Returns:
+            Collection: The collection associated with this cursor
+
+        Example:
+            >>> cursor = collection.find({})
+            >>> cursor.collection
+            Collection(database, "collection_name")
+            >>> cursor.collection.name
+            'collection_name'
+        """
+        return self._collection
+
+    @property
+    def address(self) -> tuple | None:
+        """
+        Return the address of the database.
+
+        For NeoSQLite, this returns a tuple representing the database connection.
+        This is a simplified implementation for PyMongo API compatibility.
+
+        Returns:
+            tuple | None: A tuple of (database_path, 0) after iteration starts,
+                         None before the cursor has been executed.
+                         - For file databases: ('sqlite:///path/to/file.db', 0)
+                         - For memory databases: ('sqlite::memory:', 0)
+
+        Note:
+            SQLite is an embedded database without a server, so this returns
+            the database path instead of a network address. Returns None until
+            the cursor has been iterated, matching PyMongo behavior.
+
+        Example:
+            >>> cursor = collection.find({})
+            >>> cursor.address  # Before iteration
+            None
+            >>> list(cursor)
+            >>> cursor.address  # After iteration
+            ('sqlite::memory:', 0)  # or ('sqlite:///path/to/file.db', 0)
+        """
+        # Match PyMongo behavior: None before iteration, tuple after
+        if self._retrieved == 0 and not hasattr(self, "_iterated"):
+            return None
+
+        # Get database path from connection
+        db_name = self._collection.db.execute(
+            "PRAGMA database_list"
+        ).fetchone()[2]
+        if db_name == ":memory:" or db_name == "":
+            return ("sqlite::memory:", 0)
+        else:
+            return (f"sqlite://{db_name}", 0)
 
     def explain(self, verbosity: str = "executionStats") -> Dict[str, Any]:
         """
@@ -338,6 +470,9 @@ class Cursor:
         # Apply projection
         docs = self._apply_projection(docs)
 
+        # Mark cursor as having been iterated (for address property)
+        self._iterated = True
+
         # Yield results and track count
         for doc in docs:
             self._retrieved += 1
@@ -376,6 +511,15 @@ class Cursor:
         if where_result is not None:
             # Use SQL-based filtering
             where_clause, params = where_result
+
+            # Add min/max bounds if specified
+            if self._min or self._max:
+                minmax_clause, minmax_params = self._build_minmax_clause(
+                    where_clause, params, self._min, self._max
+                )
+                where_clause = minmax_clause
+                params = minmax_params
+
             # Use the collection's JSONB support flag to determine how to select data
             # Include _id column to support both integer id and ObjectId _id
             if self._collection.query_engine._jsonb_supported:
@@ -401,6 +545,19 @@ class Cursor:
                 cmd = f"SELECT id, _id, json(data) as data FROM {self._collection.name}"
             else:
                 cmd = f"SELECT id, _id, data FROM {self._collection.name}"
+
+            # Add min/max bounds if specified (no filter case)
+            if self._min or self._max:
+                minmax_clause, minmax_params = self._build_minmax_clause(
+                    "", (), self._min, self._max
+                )
+                # Remove leading " WHERE" if present and add our own
+                minmax_clause = minmax_clause.lstrip().lstrip("WHERE").lstrip()
+                cmd = f"{cmd} WHERE {minmax_clause}"
+                params = minmax_params
+            else:
+                params = ()
+
             # Add comment if specified
             if self._comment:
                 safe_comment = (
@@ -409,7 +566,7 @@ class Cursor:
                     .replace("--", "")
                 )
                 cmd = f"/* {safe_comment} */ {cmd}"
-            db_cursor = self._collection.db.execute(cmd)
+            db_cursor = self._collection.db.execute(cmd, params)
             apply = partial(self._query_helpers._apply_query, self._filter)
             all_docs = self._load_documents(db_cursor.fetchall())
             return filter(apply, all_docs)
@@ -477,6 +634,57 @@ class Cursor:
                     return False
 
             return filter(expr_filter, all_docs)
+
+    def _build_minmax_clause(
+        self,
+        where_clause: str,
+        params: tuple,
+        min_spec: Dict[str, Any] | None,
+        max_spec: Dict[str, Any] | None,
+    ) -> tuple:
+        """
+        Build SQL clause for min/max index bounds.
+
+        Args:
+            where_clause: Existing WHERE clause (may be empty)
+            params: Existing parameters
+            min_spec: Minimum bound specification
+            max_spec: Maximum bound specification
+
+        Returns:
+            Tuple of (new WHERE clause, new parameters)
+        """
+        additional_conditions = []
+        additional_params = list(params)
+
+        # Add minimum bounds
+        if min_spec:
+            for field, value in min_spec.items():
+                additional_conditions.append(
+                    f"jsonb_extract(data, '$.{field}') >= ?"
+                )
+                additional_params.append(value)
+
+        # Add maximum bounds (strict less than for max)
+        if max_spec:
+            for field, value in max_spec.items():
+                additional_conditions.append(
+                    f"jsonb_extract(data, '$.{field}') < ?"
+                )
+                additional_params.append(value)
+
+        if additional_conditions:
+            conditions_sql = " AND ".join(additional_conditions)
+            # If there's an existing WHERE clause, append to it
+            if where_clause and where_clause.strip():
+                base_clause = where_clause.rstrip()
+                new_clause = f"{base_clause} AND {conditions_sql}"
+            else:
+                # No existing WHERE, create new one
+                new_clause = f"WHERE {conditions_sql}"
+            return new_clause, tuple(additional_params)
+
+        return where_clause, params
 
     def _contains_datetime_operations(self, query: Dict[str, Any]) -> bool:
         """
