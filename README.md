@@ -19,6 +19,8 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 - **Advanced Indexing**: Supports single-key, compound-key, and nested-key indexes.
 - **Text Search**: Full-text search capabilities using SQLite's FTS5 extension with the `$text` operator.
 - **Modern API**: Aligned with modern `pymongo` practices (using methods like `insert_one`, `update_one`, `delete_many`, etc.)
+- **70+ New MongoDB-compatible APIs**: Massive expansion including Bitwise operators, positional array updates (`$`, `$[]`, `$[identifier]`), and complex aggregation stages (`$bucket`, `$unionWith`, `$merge`).
+- **Comprehensive Security Hardening**: Built-in SQL injection protection using centralized identifier and table name quoting across all engine layers.
 - **MongoDB-compatible ObjectId**: Full 12-byte ObjectId implementation with automatic generation and hex interchangeability
 - **Automatic JSON/JSONB Support**: Automatically detects and uses JSONB column type for better performance
 - **Full GridFS Support**: Complete PyMongo-compatible GridFS with modern GridFSBucket API, legacy API, and schema migration
@@ -29,7 +31,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the latest features and improvements.
 
 NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-compatible behavior. Our automated test suite covers all major API categories:
 
-### Test Results
+### Test Results (v1.7.0)
 
 | Metric | Count |
 |--------|-------|
@@ -394,13 +396,16 @@ Indexes are automatically used by `find()` operations where possible. You can al
 - `$lt` - Matches values that are less than a specified value
 - `$lte` - Matches values that are less than or equal to a specified value
 - `$ne` - Matches all values that are not equal to a specified value
-- `$in` - Matches any of the values specified in an array
+- `$all` - Matches any of the values specified in an array
 - `$nin` - Matches none of the values specified in an array
 - `$exists` - Matches documents that have the specified field
+- `$bitsAllSet` / `$bitsAllClear` - Matches documents where specified bits are all set or clear
+- `$bitsAnySet` / `$bitsAnyClear` - Matches documents where any of the specified bits are set or clear
 - `$mod` - Performs a modulo operation on the value of a field and selects documents with a specified result
 - `$size` - Matches the number of elements in an array
 - `$regex` - Selects documents where values match a specified regular expression
 - `$elemMatch` - Selects documents if array element matches specified conditions. **Enhanced**: Supports both simple value matching (`{"tags": {"$elemMatch": "c"}}`) and complex object matching (`{"tags": {"$elemMatch": {"name": "value"}}}`)
+- `$`, `$[]`, `$[<identifier>]` - Positional operators for array updates with `array_filters` support
 - `$contains` - **(Deprecated)** Performs case-insensitive substring search. **Will be removed in a future version**. Use `$text` with FTS5 indexing instead
 
 ## Text Search with $text Operator

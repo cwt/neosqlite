@@ -1,5 +1,61 @@
 # CHANGELOG
 
+## 1.7.0
+
+### Major Achievement: 70+ New PyMongo-Compatible APIs & Security Hardening
+
+- **Massive API Expansion**: Implemented over 70+ new MongoDB-compatible operators, aggregation stages, and cursor methods.
+- **100% MongoDB API Coverage**: 304 automated compatibility tests (up from 264), maintaining 100% compatibility for all comparable features.
+- **SQL Injection Hardening**: Comprehensive security protection across all layers using centralized SQL utility logic for identifier and table name quoting.
+- **Evidence of Compatibility**: Enhanced API Comparison Suite (`examples/api_comparison/`) providing empirical proof of drop-in replacement status.
+
+### New Features
+
+#### Query & Update Operators
+- **Bitwise Operators**: `$bitsAllSet`, `$bitsAnySet`, `$bitsAllClear`, `$bitsAnyClear`
+- **Positional Updates**: Full support for positional array updates using `$`, `$[]`, and `$[<identifier>]`
+- **Array Filters**: Support for `array_filters` in update operations for complex conditional array manipulation
+- **$pullAll**: Optimized array element removal
+
+#### Aggregation Framework
+- **New Stages**: `$bucket`, `$bucketAuto`, `$unionWith`, `$merge`, `$redact`, `$densify`
+- **String Operators**: `$strcasecmp`, `$substrBytes`
+- **Date Operators**: `$dateFromString`, `$dateToString`, `$dateDiff`, `$dateTrunc`, `$dateFromParts`, `$dateToParts`
+- **Array/Set Operators**: `$sortArray`, `$firstN`, `$lastN`, `$maxN`, `$minN`, `$setUnion`, `$setIntersection`, `$setDifference`, `$setEquals`, `$setIsSubset`, `$allElementsTrue`, `$anyElementTrue`
+- **Utility Operators**: `$mergeObjects`, `$getField`, `$let`, `$literal`, `$rand`, `$objectToArray`, `$isNumber`
+
+#### Cursor & Collection APIs
+- **`explain()`**: Detailed query execution plan using SQLite's EXPLAIN QUERY PLAN
+- **`collation()`**: Support for locale-specific and case-insensitive string comparison
+- **`min()` / `max()`**: Index boundary control for optimized range queries
+- **`to_list()` / `clone()`**: Improved cursor management and list conversion
+- **`comment()`**: SQL-level query tracing for debugging and profiling
+- **`retrieved`, `alive`, `address`, `collection`**: Full suite of PyMongo-compatible cursor properties
+
+### Security Hardening
+
+- **Centralized SQL Utilities**: Introduced `neosqlite/sql_utils.py` for robust identifier and table name quoting.
+- **System-wide Protection**: Applied hardening to Query Engine, SQL Translation (Tier-1), and Temporary Table Aggregation (Tier-2).
+- **Identifier Sanitization**: Strict validation and quoting of dynamic identifiers in aggregation variables and array filters.
+
+### Testing
+
+- **304 PyMongo Compatibility Tests**: 300 passed, 4 skipped (by design), 0 failed
+- **10+ New Test Modules**: Dedicated suites for bitwise, positional, string, and date operators.
+- **Comparison Suite Growth**: 15% increase in automated comparison test coverage.
+
+### Documentation
+
+- **Added**: `documents/releases/v1.7.0.md` - Comprehensive release notes
+- **Updated**: `documents/PyMongo_API_Comparison.md` - Reflecting new 100% compatibility milestones
+- **Updated**: `README.md` - Updated test counts and security feature highlights
+
+### Compatibility
+
+- **API Stability**: 100% backward compatibility with v1.6.x maintained.
+- **Drop-in Readiness**: Verified against PyMongo 4.x behavior across all new features.
+- **Migration Effort**: Zero - strictly additive update with no breaking changes.
+
 ## 1.6.1
 
 ### Major Achievement: Complete MongoDB API Coverage

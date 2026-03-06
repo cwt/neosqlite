@@ -50,6 +50,10 @@ api_comparison/
 ├── index_operations.py      # Index operation tests
 ├── bulk_*.py                # Bulk operation tests
 ├── binary_operations.py     # Binary data tests
+├── bitwise_operators.py     # Bitwise operator tests ($bitsAllSet, etc.)
+├── pullall_operator.py      # $pullAll operator tests
+├── positional_operators.py  # Positional update tests ($, $[], $[identifier])
+├── new_operators.py         # New aggregation operators
 ├── gridfs_operations.py     # GridFS tests
 ├── text_search.py           # Text search tests
 └── ...                      # And more specialized test modules
@@ -61,7 +65,7 @@ api_comparison/
 
 ```bash
 cd examples
-python api_comparison_main.py
+python api_comparison/runner.py
 ```
 
 ### Run Specific Category
@@ -99,6 +103,7 @@ reporter.print_report()
 |----------|--------|-------------|
 | `crud` | crud.py | Basic CRUD operations |
 | `query` | query_operators.py | Query operators ($eq, $gt, etc.) |
+| `bitwise` | bitwise_operators.py | Bitwise operators ($bitsAllSet, etc.) |
 | `expr` | expr_operators.py | Core $expr operators |
 | `expr_additional` | expr_additional.py | Additional $expr operators |
 | `expr_extended` | expr_extended.py | Extended $expr operators |
@@ -107,6 +112,8 @@ reporter.print_report()
 | `update` | update_operators.py | Update operators ($set, $inc, etc.) |
 | `update_additional` | update_additional.py | Additional update operators |
 | `update_modifiers` | update_modifiers.py | Update modifiers |
+| `positional` | positional_operators.py | Positional updates ($, $[], $[id]) |
+| `pullall` | pullall_operator.py | $pullAll operator |
 | `aggregation_stages` | aggregation_stages.py | Core aggregation stages |
 | `aggregation_additional` | aggregation_additional.py | Additional aggregation |
 | `aggregation_cursor` | aggregation_cursor.py | Aggregation cursor methods |
@@ -115,6 +122,7 @@ reporter.print_report()
 | `math` | math_operators.py | Math operators |
 | `date` | date_operators.py | Date operators |
 | `object` | object_operators.py | Object operators |
+| `new_ops` | new_operators.py | New aggregation operators |
 | `collection_methods` | collection_methods.py | Collection methods |
 | `database` | database_methods.py | Database methods |
 | `cursor` | cursor_operations.py | Cursor operations |
