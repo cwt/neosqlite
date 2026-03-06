@@ -7,6 +7,7 @@ Subpackages
 .. toctree::
    :maxdepth: 4
 
+   neosqlite.collection.expr_evaluator
    neosqlite.collection.query_helper
 
 Submodules
@@ -19,7 +20,6 @@ Submodules
    neosqlite.collection.cursor
    neosqlite.collection.datetime_query_processor
    neosqlite.collection.datetime_utils
-   neosqlite.collection.expr_evaluator
    neosqlite.collection.expr_temp_table
    neosqlite.collection.index_manager
    neosqlite.collection.json_helpers
