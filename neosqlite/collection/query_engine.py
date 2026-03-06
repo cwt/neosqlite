@@ -27,7 +27,7 @@ from neosqlite.collection.json_helpers import (
     neosqlite_json_loads,
 )
 from neosqlite.collection.jsonb_support import supports_jsonb
-from typing import Any, Dict, List, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 import importlib.util
 import json
 
@@ -100,6 +100,7 @@ class QueryEngine:
         filter: Dict[str, Any],
         update: Dict[str, Any],
         upsert: bool = False,
+        array_filters: Optional[List[Dict[str, Any]]] = None,
     ) -> UpdateResult:
         """
         Updates a single document in the collection based on the provided filter
@@ -109,6 +110,7 @@ class QueryEngine:
             filter (Dict[str, Any]): A dictionary specifying the query criteria for finding the document to update.
             update (Dict[str, Any]): A dictionary specifying the update operations to apply to the document.
             upsert (bool, optional): If True, inserts a new document if no document matches the filter. Defaults to False.
+            array_filters (List[Dict[str, Any]], optional): A list of filter documents for array positional operators.
 
         Returns:
             UpdateResult: An object containing information about the update operation,
@@ -141,18 +143,26 @@ class QueryEngine:
                     int_id, data, stored_id
                 )
                 # Use the integer id for internal operations
-                self.helpers._internal_update(int_id, update, doc)
+                _, was_modified = self.helpers._internal_update(
+                    int_id, update, doc, array_filters, filter
+                )
                 return UpdateResult(
-                    matched_count=1, modified_count=1, upserted_id=None
+                    matched_count=1,
+                    modified_count=1 if was_modified else 0,
+                    upserted_id=None,
                 )
         else:
             # Fallback to find_one if translation doesn't work
             if doc := self.find_one(filter):
                 # Get integer id by looking up the stored ObjectId
                 int_doc_id = self._get_integer_id_for_oid(doc["_id"])
-                self.helpers._internal_update(int_doc_id, update, doc)
+                _, was_modified = self.helpers._internal_update(
+                    int_doc_id, update, doc, array_filters, filter
+                )
                 return UpdateResult(
-                    matched_count=1, modified_count=1, upserted_id=None
+                    matched_count=1,
+                    modified_count=1 if was_modified else 0,
+                    upserted_id=None,
                 )
 
         if upsert:
@@ -160,10 +170,10 @@ class QueryEngine:
             # 1. The filter fields (as base document)
             # 2. Apply the update operations to that document
             new_doc: Dict[str, Any] = dict(filter)  # Start with filter fields
-            new_doc = self.helpers._internal_update(
-                0, update, new_doc
+            updated_doc, _ = self.helpers._internal_update(
+                0, update, new_doc, array_filters, filter
             )  # Apply updates
-            inserted_id = self.insert_one(new_doc).inserted_id
+            inserted_id = self.insert_one(updated_doc).inserted_id
             return UpdateResult(
                 matched_count=0, modified_count=0, upserted_id=inserted_id
             )
@@ -356,6 +366,7 @@ class QueryEngine:
         self,
         filter: Dict[str, Any],
         update: Dict[str, Any],
+        array_filters: Optional[List[Dict[str, Any]]] = None,
     ) -> UpdateResult:
         """
         Update multiple documents based on a filter.
@@ -366,6 +377,7 @@ class QueryEngine:
         Args:
             filter (Dict[str, Any]): A dictionary representing the filter to select documents to update.
             update (Dict[str, Any]): A dictionary representing the updates to apply.
+            array_filters (List[Dict[str, Any]], optional): A list of filter documents for array positional operators.
 
         Returns:
             UpdateResult: A result object containing information about the update operation.
@@ -1327,6 +1339,557 @@ class QueryEngine:
                             "__root__": {count_field: len(docs_with_context)},
                         }
                     ]
+                case "$bucket":
+                    bucket_spec = stage["$bucket"]
+                    group_by = bucket_spec.get("groupBy", "").lstrip("$")
+                    boundaries = bucket_spec.get("boundaries", [])
+                    default_label = bucket_spec.get("default", "Other")
+                    output_spec = bucket_spec.get(
+                        "output", {"count": {"$sum": 1}}
+                    )
+
+                    if not group_by or not boundaries:
+                        docs_with_context = []
+                        break
+
+                    sorted_boundaries = sorted(boundaries)
+
+                    # Group documents by bucket
+                    # MongoDB uses the lower boundary value as _id, not a string label
+                    buckets: Dict[Any, List[Dict[str, Any]]] = {}
+                    for dc in docs_with_context:
+                        doc = dc["__doc__"]
+                        val = self.collection._get_val(doc, group_by)
+
+                        # Skip documents with None values
+                        if val is None:
+                            continue
+
+                        # Determine bucket - use lower boundary as key (MongoDB behavior)
+                        bucket_key: Any = default_label
+                        try:
+                            for i in range(len(sorted_boundaries) - 1):
+                                if (
+                                    sorted_boundaries[i]
+                                    <= val
+                                    < sorted_boundaries[i + 1]
+                                ):
+                                    bucket_key = sorted_boundaries[
+                                        i
+                                    ]  # Use lower boundary as _id
+                                    break
+                            else:
+                                # Last bucket (inclusive) - use last boundary
+                                if val >= sorted_boundaries[-1]:
+                                    bucket_key = sorted_boundaries[-1]
+                        except TypeError:
+                            # Comparison failed (e.g., mixed types), use default
+                            bucket_key = default_label
+
+                        if bucket_key not in buckets:
+                            buckets[bucket_key] = []
+                        buckets[bucket_key].append(doc)
+
+                    # Build output documents
+                    new_docs = []
+                    for bucket_id, bucket_docs in sorted(buckets.items()):
+                        output_doc: Dict[str, Any] = {"_id": bucket_id}
+                        for field_name, accumulator in output_spec.items():
+                            if "$sum" in accumulator:
+                                sum_field = accumulator["$sum"]
+                                if sum_field == 1:
+                                    output_doc[field_name] = len(bucket_docs)
+                                else:
+                                    sum_field = sum_field.lstrip("$")
+                                    output_doc[field_name] = sum(
+                                        self.collection._get_val(d, sum_field)
+                                        or 0
+                                        for d in bucket_docs
+                                    )
+                            elif "$avg" in accumulator:
+                                avg_field = accumulator["$avg"].lstrip("$")
+                                values = [
+                                    self.collection._get_val(d, avg_field)
+                                    for d in bucket_docs
+                                ]
+                                output_doc[field_name] = (
+                                    sum(values) / len(values) if values else 0
+                                )
+                            elif "$count" in accumulator:
+                                output_doc[field_name] = len(bucket_docs)
+                            elif "$min" in accumulator:
+                                min_field = accumulator["$min"].lstrip("$")
+                                values = [
+                                    self.collection._get_val(d, min_field)
+                                    for d in bucket_docs
+                                ]
+                                output_doc[field_name] = (
+                                    min(values) if values else None
+                                )
+                            elif "$max" in accumulator:
+                                max_field = accumulator["$max"].lstrip("$")
+                                values = [
+                                    self.collection._get_val(d, max_field)
+                                    for d in bucket_docs
+                                ]
+                                output_doc[field_name] = (
+                                    max(values) if values else None
+                                )
+                            else:
+                                output_doc[field_name] = len(bucket_docs)
+                        new_docs.append(output_doc)
+
+                    docs_with_context = [
+                        {"__doc__": doc, "__root__": doc} for doc in new_docs
+                    ]
+                case "$bucketAuto":
+                    bucket_auto_spec = stage["$bucketAuto"]
+                    group_by = bucket_auto_spec.get("groupBy", "").lstrip("$")
+                    num_buckets = bucket_auto_spec.get("buckets", 10)
+                    output_spec = bucket_auto_spec.get(
+                        "output", {"count": {"$sum": 1}}
+                    )
+
+                    if not group_by or num_buckets <= 0:
+                        docs_with_context = []
+                        break
+
+                    # Sort documents by groupBy field
+                    sorted_docs = sorted(
+                        docs_with_context,
+                        key=lambda dc: self.collection._get_val(
+                            dc["__doc__"], group_by
+                        )
+                        or 0,
+                    )
+
+                    # Distribute into buckets
+                    bucket_size = max(1, len(sorted_docs) // num_buckets)
+                    bucket_list: List[List[Dict[str, Any]]] = []
+                    current_bucket = []
+                    for dc in sorted_docs:
+                        current_bucket.append(dc["__doc__"])
+                        if (
+                            len(current_bucket) >= bucket_size
+                            and len(bucket_list) < num_buckets - 1
+                        ):
+                            bucket_list.append(current_bucket)
+                            current_bucket = []
+                    if current_bucket:
+                        bucket_list.append(current_bucket)
+
+                    # Build output documents
+                    new_docs = []
+                    for i, bucket_docs in enumerate(bucket_list):
+                        output_doc2: Dict[str, Any] = {"_id": i + 1}
+                        for field_name, accumulator in output_spec.items():
+                            if "$sum" in accumulator:
+                                sum_field = accumulator["$sum"]
+                                if sum_field == 1:
+                                    output_doc2[field_name] = len(bucket_docs)
+                                else:
+                                    sum_field = sum_field.lstrip("$")
+                                    output_doc2[field_name] = sum(
+                                        self.collection._get_val(d, sum_field)
+                                        or 0
+                                        for d in bucket_docs
+                                    )
+                            elif "$avg" in accumulator:
+                                avg_field = accumulator["$avg"].lstrip("$")
+                                values = [
+                                    self.collection._get_val(d, avg_field)
+                                    for d in bucket_docs
+                                ]
+                                output_doc2[field_name] = (
+                                    sum(values) / len(values) if values else 0
+                                )
+                            elif "$count" in accumulator:
+                                output_doc2[field_name] = len(bucket_docs)
+                            else:
+                                output_doc2[field_name] = len(bucket_docs)
+                        new_docs.append(output_doc2)
+
+                    docs_with_context = [
+                        {"__doc__": doc, "__root__": doc} for doc in new_docs
+                    ]
+                case "$unionWith":
+                    union_spec = stage["$unionWith"]
+                    coll_name = union_spec.get("coll")
+                    pipeline = union_spec.get("pipeline", [])
+
+                    if not coll_name:
+                        break
+
+                    # Get documents from other collection
+                    other_coll = self.collection._database[coll_name]
+                    other_docs = list(other_coll.find())
+
+                    # Apply pipeline if specified
+                    if pipeline:
+                        other_docs = list(other_coll.aggregate(pipeline))
+
+                    # Combine documents
+                    current_docs = [dc["__doc__"] for dc in docs_with_context]
+                    combined_docs = current_docs + other_docs
+
+                    docs_with_context = [
+                        {"__doc__": doc, "__root__": doc}
+                        for doc in combined_docs
+                    ]
+                case "$merge":
+                    # $merge writes results to a collection
+                    merge_spec = stage["$merge"]
+
+                    # Handle different merge spec formats
+                    if isinstance(merge_spec, str):
+                        # Simple format: just collection name
+                        target_coll_name = merge_spec
+                        merge_options = {}
+                    elif isinstance(merge_spec, dict):
+                        # Full format with options
+                        into = merge_spec.get("into", "")
+                        if isinstance(into, dict):
+                            target_coll_name = (
+                                into.get("db", "") + "." + into.get("coll", "")
+                            )
+                        else:
+                            target_coll_name = into
+                        merge_options = {
+                            "on": merge_spec.get("on", "_id"),
+                            "whenMatched": merge_spec.get(
+                                "whenMatched", "replace"
+                            ),
+                            "whenNotMatched": merge_spec.get(
+                                "whenNotMatched", "insert"
+                            ),
+                        }
+                    else:
+                        target_coll_name = "merged"
+                        merge_options = {}
+
+                    # Get or create target collection
+                    if "." in target_coll_name:
+                        db_name, coll_name = target_coll_name.split(".", 1)
+                        target_coll = self.collection._database._client[
+                            db_name
+                        ][coll_name]
+                    else:
+                        target_coll = self.collection._database[
+                            target_coll_name
+                        ]
+
+                    # Process each document
+                    for dc in docs_with_context:
+                        doc = dc["__doc__"]
+
+                        # Get the "on" field value for matching
+                        on_field = merge_options.get("on", "_id")
+                        on_value = self.collection._get_val(doc, on_field)
+
+                        # Try to find existing document
+                        existing = None
+                        if on_value is not None:
+                            existing = target_coll.find_one(
+                                {on_field: on_value}
+                            )
+
+                        when_matched = merge_options.get(
+                            "whenMatched", "replace"
+                        )
+                        when_not_matched = merge_options.get(
+                            "whenNotMatched", "insert"
+                        )
+
+                        if existing:
+                            # Document exists - handle based on whenMatched
+                            if when_matched == "replace":
+                                # Replace entire document (keep existing _id)
+                                update_doc = {
+                                    k: v for k, v in doc.items() if k != "_id"
+                                }
+                                target_coll.update_one(
+                                    {on_field: on_value}, {"$set": update_doc}
+                                )
+                            elif when_matched == "merge":
+                                # Merge fields (update existing with new values, exclude _id)
+                                update_doc = {
+                                    k: v for k, v in doc.items() if k != "_id"
+                                }
+                                target_coll.update_one(
+                                    {on_field: on_value}, {"$set": update_doc}
+                                )
+                            elif when_matched == "keepExisting":
+                                # Keep existing, don't update
+                                pass
+                            elif when_matched == "fail":
+                                raise Exception(
+                                    f"$merge failed: document with {on_field}={on_value} already exists"
+                                )
+                            # Note: "pipeline" mode not implemented
+                        else:
+                            # Document doesn't exist - handle based on whenNotMatched
+                            if when_not_matched == "insert":
+                                target_coll.insert_one(doc)
+                            elif when_not_matched == "fail":
+                                raise Exception(
+                                    f"$merge failed: no document found with {on_field}={on_value}"
+                                )
+
+                    # After merge, return empty or pass through based on requirements
+                    # MongoDB returns the merged documents for further pipeline processing
+                    pass
+
+                case "$redact":
+                    # $redact filters document content based on conditions
+                    redact_spec = stage["$redact"]
+
+                    def apply_redact(doc, spec):
+                        """Recursively apply redaction to a document."""
+                        if not isinstance(doc, dict):
+                            return doc
+
+                        result = {}
+                        for key, value in doc.items():
+                            # Evaluate the redact condition for this field
+                            redact_action = evaluate_redact_condition(
+                                spec, doc, key, value
+                            )
+
+                            if redact_action == "$$KEEP":
+                                # Keep the field as-is
+                                result[key] = value
+                            elif redact_action == "$$DESCEND":
+                                # Keep and process sub-fields
+                                if isinstance(value, dict):
+                                    result[key] = apply_redact(value, spec)
+                                elif isinstance(value, list):
+                                    result[key] = [
+                                        (
+                                            apply_redact(item, spec)
+                                            if isinstance(item, dict)
+                                            else item
+                                        )
+                                        for item in value
+                                    ]
+                                else:
+                                    result[key] = value
+                            elif redact_action == "$$PRUNE":
+                                # Remove this field (don't add to result)
+                                pass
+
+                        return result
+
+                    def evaluate_redact_condition(spec, doc, key, value):
+                        """Evaluate the redact condition and return KEEP/DESCEND/PRUNE."""
+                        if "$cond" in spec:
+                            cond = spec["$cond"]
+                            if_expr = cond.get("if", {})
+                            then_expr = cond.get("then", "$$DESCEND")
+                            else_expr = cond.get("else", "$$DESCEND")
+
+                            # Evaluate the condition
+                            try:
+                                cond_result = evaluator._evaluate_expr_python(
+                                    if_expr, doc
+                                )
+                                if cond_result:
+                                    return then_expr
+                                else:
+                                    return else_expr
+                            except Exception:
+                                return "$$DESCEND"
+
+                        # If spec is a direct expression, evaluate it
+                        if (
+                            spec.startswith("$")
+                            if isinstance(spec, str)
+                            else False
+                        ):
+                            try:
+                                result = evaluator._evaluate_expr_python(
+                                    spec, doc
+                                )
+                                if result in ("$$KEEP", "$$DESCEND", "$$PRUNE"):
+                                    return result
+                            except Exception:
+                                pass
+
+                        return "$$DESCEND"
+
+                    # Create evaluator for condition evaluation
+                    evaluator = ExprEvaluator(
+                        data_column="data", db_connection=self.collection.db
+                    )
+
+                    # Apply redaction to each document
+                    new_docs_with_context = []
+                    for dc in docs_with_context:
+                        doc = dc["__doc__"]
+                        root = dc["__root__"]
+
+                        # Apply redaction
+                        redacted_doc = apply_redact(doc, redact_spec)
+
+                        # Check if document should be kept (not fully pruned)
+                        if redacted_doc:  # Non-empty document
+                            new_docs_with_context.append(
+                                {"__doc__": redacted_doc, "__root__": root}
+                            )
+
+                    docs_with_context = new_docs_with_context
+
+                case "$densify":
+                    # $densify fills gaps in sequential data
+                    densify_spec = stage["$densify"]
+
+                    field = densify_spec.get("field")
+                    range_spec = densify_spec.get("range", {})
+                    partition_by = densify_spec.get("partitionByFields", [])
+                    output_spec = densify_spec.get("output", {})
+
+                    if not field:
+                        # No field specified, pass through
+                        pass
+                    else:
+                        # Get bounds
+                        bounds = range_spec.get("bounds")
+                        step = range_spec.get("step", 1)
+                        unit = range_spec.get("unit", None)  # For dates
+
+                        # Determine if we're working with dates or numbers
+                        is_date = unit is not None
+
+                        # Group documents by partition fields
+                        partitions: Dict[tuple, List[Dict[str, Any]]] = {}
+                        for dc in docs_with_context:
+                            doc = dc["__doc__"]
+
+                            # Get partition key
+                            if partition_by:
+                                partition_key = tuple(
+                                    self.collection._get_val(doc, pf)
+                                    for pf in partition_by
+                                )
+                            else:
+                                partition_key = ()
+
+                            if partition_key not in partitions:
+                                partitions[partition_key] = []
+
+                            field_val = self.collection._get_val(doc, field)
+                            partitions[partition_key].append(
+                                {"doc": doc, "field_val": field_val, "dc": dc}
+                            )
+
+                        # Generate densified output for each partition
+                        new_docs_with_context = []
+                        for partition_key, items in partitions.items():
+                            # Get all field values in this partition
+                            field_values = [
+                                item["field_val"]
+                                for item in items
+                                if item["field_val"] is not None
+                            ]
+
+                            if not field_values:
+                                continue
+
+                            # Determine range
+                            if bounds == "full":
+                                min_val = min(field_values)
+                                max_val = max(field_values)
+                            elif isinstance(bounds, list) and len(bounds) >= 2:
+                                min_val, max_val = bounds[0], bounds[1]
+                            else:
+                                min_val = min(field_values)
+                                max_val = max(field_values)
+
+                            # Generate all values in range
+                            existing_values = set(field_values)
+                            all_values = []
+
+                            if is_date:
+                                # Handle date ranges
+                                from datetime import timedelta
+
+                                current = min_val
+                                while current <= max_val:
+                                    all_values.append(current)
+                                    if unit == "year":
+                                        current = current.replace(
+                                            year=current.year + step
+                                        )
+                                    elif unit == "month":
+                                        new_month = current.month + step
+                                        new_year = (
+                                            current.year + (new_month - 1) // 12
+                                        )
+                                        new_month = ((new_month - 1) % 12) + 1
+                                        try:
+                                            current = current.replace(
+                                                year=new_year, month=new_month
+                                            )
+                                        except ValueError:
+                                            # Handle month-end edge cases
+                                            break
+                                    elif unit == "day":
+                                        current = current + timedelta(days=step)
+                                    elif unit == "hour":
+                                        current = current + timedelta(
+                                            hours=step
+                                        )
+                                    elif unit == "minute":
+                                        current = current + timedelta(
+                                            minutes=step
+                                        )
+                                    elif unit == "second":
+                                        current = current + timedelta(
+                                            seconds=step
+                                        )
+                                    else:
+                                        break
+                            else:
+                                # Handle numeric ranges
+                                current = min_val
+                                while current <= max_val:
+                                    all_values.append(current)
+                                    current = current + step
+
+                            # Create documents for all values
+                            for val in all_values:
+                                if val in existing_values:
+                                    # Use existing document
+                                    for item in items:
+                                        if item["field_val"] == val:
+                                            new_docs_with_context.append(
+                                                item["dc"]
+                                            )
+                                            break
+                                else:
+                                    # Create new document with filled value
+                                    for item in items:
+                                        base_doc = deepcopy(item["doc"])
+                                        base_doc[field] = val
+
+                                        # Apply output spec for additional fields
+                                        for (
+                                            out_field,
+                                            out_expr,
+                                        ) in output_spec.items():
+                                            if out_field != field:
+                                                base_doc[out_field] = (
+                                                    out_expr  # Could evaluate expression
+                                                )
+
+                                        new_docs_with_context.append(
+                                            {
+                                                "__doc__": base_doc,
+                                                "__root__": base_doc,
+                                            }
+                                        )
+                                        break  # Use first item as template
+
+                        docs_with_context = new_docs_with_context
                 case _:
                     raise MalformedQueryException(
                         f"Aggregation stage '{stage_name}' not supported"

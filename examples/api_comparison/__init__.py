@@ -62,6 +62,9 @@ from . import object_operators
 from . import search_index
 from . import reindex
 from . import elemmatch
+from . import bitwise_operators
+from . import pullall_operator
+from . import new_operators
 
 __all__ = [
     "CompatibilityReporter",
@@ -112,4 +115,7 @@ __all__ = [
     "search_index",
     "reindex",
     "elemmatch",
+    "bitwise_operators",
+    "pullall_operator",
+    "new_operators",
 ]

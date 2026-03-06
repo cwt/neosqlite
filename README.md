@@ -18,22 +18,23 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 - **Raw Batch Support**: `find_raw_batches()` returns raw JSON data in batches for efficient processing.
 - **Advanced Indexing**: Supports single-key, compound-key, and nested-key indexes.
 - **Text Search**: Full-text search capabilities using SQLite's FTS5 extension with the `$text` operator.
-- **Modern API**: Aligned with modern `pymongo` practices (using methods like `insert_one`, `update_one`, `delete_many`, etc.).
-- **MongoDB-compatible ObjectId**: Full 12-byte ObjectId implementation following MongoDB specification with automatic generation and hex interchangeability
-- **Automatic JSON/JSONB Support**: Automatically detects and uses JSONB column type when available for better performance.
-- **Full GridFS Support**: Complete PyMongo-compatible GridFS implementation with modern GridFSBucket API, legacy GridFS API, and automatic schema migration.
+- **Modern API**: Aligned with modern `pymongo` practices (using methods like `insert_one`, `update_one`, `delete_many`, etc.)
+- **MongoDB-compatible ObjectId**: Full 12-byte ObjectId implementation with automatic generation and hex interchangeability
+- **Automatic JSON/JSONB Support**: Automatically detects and uses JSONB column type for better performance
+- **Full GridFS Support**: Complete PyMongo-compatible GridFS with modern GridFSBucket API, legacy API, and schema migration
 
 See [CHANGELOG.md](CHANGELOG.md) for the latest features and improvements.
 
 ## PyMongo Compatibility Tests
 
-NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-compatible behavior. Our automated test suite compares **264 API operations** across all major categories:
+NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-compatible behavior. Our automated test suite covers all major API categories:
 
-### Test Results (v1.6.1+)
+### Test Results
+
 | Metric | Count |
 |--------|-------|
-| **Total Tests** | 282 |
-| **Passed** | 278 |
+| **Total Tests** | 304 |
+| **Passed** | 300 |
 | **Skipped** | 4 (by design) |
 | **Failed** | 0 |
 | **Compatibility** | **100%** |
@@ -74,6 +75,7 @@ For many common use cases, `NeoSQLite` can serve as a drop-in replacement for `P
 Once you have a `collection` object, the method calls for all implemented APIs are identical.
 
 **PyMongo:**
+
 ```python
 from pymongo import MongoClient
 client = MongoClient('mongodb://localhost:27017/')
@@ -82,6 +84,7 @@ collection = db.mycollection
 ```
 
 **NeoSQLite (NoSQLite solution):**
+
 ```python
 import neosqlite
 # The Connection object is analogous to the database
@@ -90,6 +93,7 @@ collection = client.mycollection
 ```
 
 After the setup, your application logic for interacting with the collection remains the same:
+
 ```python
 # This code works for both pymongo and neosqlite
 collection.insert_one({"name": "test_user", "value": 123})
@@ -351,8 +355,6 @@ conn.fs.files.delete_one({"_id": file_id})
 conn.fs.files.update_one({"_id": file_id}, {"$set": {"metadata": {"archived": True}}})
 ```
 
-For more comprehensive examples including streaming operations and advanced querying, see the examples directory and [GridFS Documentation](documents/GRIDFS.md).
-
 ## Indexes
 
 Indexes can significantly speed up query performance. `NeoSQLite` supports single-key, compound-key, and nested-key indexes.
@@ -398,20 +400,8 @@ Indexes are automatically used by `find()` operations where possible. You can al
 - `$mod` - Performs a modulo operation on the value of a field and selects documents with a specified result
 - `$size` - Matches the number of elements in an array
 - `$regex` - Selects documents where values match a specified regular expression
-- `$elemMatch` - Selects documents if element in the array field matches all the specified conditions
-- `$contains` - **(NeoSQLite-specific and deprecated)** Performs a case-insensitive substring search on string values
-- `$elemMatch` - **Enhanced**: Now supports both simple value matching (`{"tags": {"$elemMatch": "c"}}` with `["a", "b", "c", "d"]`) and complex object matching (`{"tags": {"$elemMatch": {"name": "value"}}}` with `[{"name": "tag1"}, {"name": "tag2"}]`)
-
-Example usage of the `$contains` operator:
-> **DEPRECATED**: The `$contains` operator is deprecated and will be removed in a future version. Please use the `$text` operator with FTS5 indexing for better performance.
-
-```python
-# Find users whose name contains "ali" (case-insensitive)
-users.find({"name": {"$contains": "ali"}})
-
-# Find users whose bio contains "python" (case-insensitive)
-users.find({"bio": {"$contains": "python"}})
-```
+- `$elemMatch` - Selects documents if array element matches specified conditions. **Enhanced**: Supports both simple value matching (`{"tags": {"$elemMatch": "c"}}`) and complex object matching (`{"tags": {"$elemMatch": {"name": "value"}}}`)
+- `$contains` - **(Deprecated)** Performs case-insensitive substring search. **Will be removed in a future version**. Use `$text` with FTS5 indexing instead
 
 ## Text Search with $text Operator
 
@@ -468,16 +458,6 @@ For more information about building and using custom FTS5 tokenizers, see the [F
 
 For more details on text search capabilities, see the [Text Search Documentation](documents/TEXT_SEARCH.md).
 
-**Performance Notes:**
-- The `$contains` operator performs substring searches using SQL `LIKE` with wildcards (`%value%`) at the database level
-- This type of search does not efficiently use standard B-tree indexes and may result in full table scans
-- The `$text` operator with FTS indexes provides much better performance for text search operations
-- However, for simple substring matching, `$contains` is faster than `$regex` at the Python level because it uses optimized string operations instead of regular expression compilation and execution
-- The operator is intended as a lightweight convenience feature for basic substring matching, not as a replacement for proper full-text search solutions
-- For high-performance text search requirements, consider using SQLite's FTS (Full-Text Search) extensions or other specialized search solutions
-- The `$contains` operator is a NeoSQLite-specific extension that is not part of the standard MongoDB query operators
-- **Deprecation Notice**: The `$contains` operator is deprecated and will be removed in a future version. Please use the `$text` operator with FTS5 indexing for better performance.
-
 ## Memory-Constrained Processing
 
 For applications that process large aggregation result sets, NeoSQLite provides memory-constrained processing through integration with the `quez` library. This optional feature compresses intermediate results in-memory, significantly reducing memory footprint for large datasets.
@@ -518,7 +498,6 @@ This approach is particularly beneficial for:
 - Compression algorithm selection
 - More granular memory management controls
 - Exposed quez queue statistics during processing
-
 
 ## Sorting
 

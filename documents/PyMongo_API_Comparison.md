@@ -1,14 +1,15 @@
 # PyMongo API Comparison
 
-**Last Updated**: March 5, 2026 (v1.6.1+)
+**Last Updated**: March 5, 2026
 **NeoSQLite Version**: v1.6.1+
-**PyMongo Compatibility**: 100% (282 tests: 278 passed, 4 skipped by design, 0 failed)
+**PyMongo Compatibility**: 100% (304 tests: 300 passed, 4 skipped by design, 0 failed)
 
 ---
 
 ## Executive Summary
 
-NeoSQLite provides a comprehensive PyMongo-compatible API for SQLite databases with **100% compatibility** for all comparable features. This document provides:
+NeoSQLite provides a comprehensive PyMongo-compatible API for SQLite databases
+with **100% compatibility** for all comparable features. This document provides:
 
 1. ✅ Complete inventory of implemented APIs
 2. ❌ Comprehensive list of missing APIs with priority ratings
@@ -17,11 +18,70 @@ NeoSQLite provides a comprehensive PyMongo-compatible API for SQLite databases w
 
 ---
 
-## Recent Updates (Post-v1.6.1+)
+## Recent Updates
 
-### Newly Implemented APIs (Post-v1.6.1+)
+### Newly Implemented APIs
 
-The following APIs have been implemented and tested since v1.6.1+:
+The following APIs have been implemented and tested:
+
+#### Query Operators - Bitwise (4 operators)
+- ✅ `$bitsAllClear` - Match documents where all specified bits are 0 (4 tests)
+- ✅ `$bitsAllSet` - Match documents where all specified bits are 1 (4 tests)
+- ✅ `$bitsAnyClear` - Match documents where any specified bits are 0 (4 tests)
+- ✅ `$bitsAnySet` - Match documents where any specified bits are 1 (4 tests)
+
+#### Update Operators (4 operators)
+- ✅ `$pullAll` - Remove all instances of specified values from array (14 tests)
+- ✅ `$` (positional) - Update first matching array element (4 tests)
+- ✅ `$[]` (all positional) - Update all array elements (4 tests)
+- ✅ `$[identifier]` - Update filtered array elements with arrayFilters (4 tests)
+
+#### Aggregation Pipeline Stages (6 stages)
+- ✅ `$bucket` - Group documents by boundaries (3 tests)
+- ✅ `$bucketAuto` - Auto-sized buckets (2 tests)
+- ✅ `$unionWith` - Combine documents from another collection (2 tests)
+- ✅ `$merge` - Write results to collection (2 tests)
+- ✅ `$redact` - Field-level redaction (3 tests)
+- ✅ `$densify` - Fill gaps in sequential data (2 tests)
+
+#### Aggregation Operators - String (2 operators)
+- ✅ `$strcasecmp` - Case-insensitive string comparison (5 tests)
+- ✅ `$substrBytes` - Substring by bytes (4 tests)
+
+#### Aggregation Operators - Type Conversion (1 operator)
+- ✅ `$isNumber` - Check if value is numeric (8 tests)
+
+#### Aggregation Operators - Date (6 operators)
+- ✅ `$dateFromString` - Parse ISO 8601 date string (3 tests)
+- ✅ `$dateToString` - Format datetime to string (2 tests)
+- ✅ `$dateFromParts` - Construct datetime from components (2 tests)
+- ✅ `$dateToParts` - Extract datetime components (2 tests)
+- ✅ `$dateTrunc` - Truncate datetime to unit (5 tests)
+- ✅ `$dateDiff` - Calculate difference between dates (3 tests)
+
+#### Aggregation Operators - Array (5 operators)
+- ✅ `$firstN` - Get first N array elements (3 tests)
+- ✅ `$lastN` - Get last N array elements (3 tests)
+- ✅ `$maxN` - Get N largest elements (2 tests)
+- ✅ `$minN` - Get N smallest elements (2 tests)
+- ✅ `$sortArray` - Sort array elements (5 tests)
+
+#### Aggregation Operators - Set (7 operators)
+- ✅ `$allElementsTrue` - Check if all array elements are true (3 tests)
+- ✅ `$anyElementTrue` - Check if any array element is true (3 tests)
+- ✅ `$setDifference` - Set difference (3 tests)
+- ✅ `$setEquals` - Set equality (3 tests)
+- ✅ `$setIntersection` - Set intersection (3 tests)
+- ✅ `$setIsSubset` - Check if subset (3 tests)
+- ✅ `$setUnion` - Set union (3 tests)
+
+#### Aggregation Operators - Other (6 operators)
+- ✅ `$mergeObjects` - Merge multiple objects (3 tests)
+- ✅ `$getField` - Get field from object (3 tests)
+- ✅ `$let` - Variable binding for expressions (3 tests)
+- ✅ `$literal` - Return literal value (3 tests)
+- ✅ `$rand` - Generate random number (3 tests)
+- ✅ `$objectToArray` - Convert object to array (3 tests)
 
 #### Cursor Methods
 - ✅ `comment(text)` - Add comment to query for debugging/profiling (8 tests)
@@ -34,40 +94,23 @@ The following APIs have been implemented and tested since v1.6.1+:
 - ✅ `max(spec)` - Set maximum index bounds (included in min/max tests)
 - ✅ `collation(collation)` - Language-specific string comparison (6 tests)
 - ✅ `where(predicate)` - Python function filter for Tier-3 fallback (3 tests)
-
-#### Collection Methods
-- ✅ `validate()` - Validate collection integrity via SQLite PRAGMA (5 tests, NeoSQLite extension)
-- ✅ `estimated_document_count(options)` - Enhanced with options parameter (3 tests)
-
-#### Database Methods
-- ✅ `with_options()` - Return database clone with different options (3 tests)
-
-**Test Coverage**: 40 new unit tests, all passing
-**API Compatibility**: 100% (282 tests total)
-
----
-
-## Recent Updates (v1.6.1+)
-
-### Newly Implemented High Priority APIs
-
-The following 6 high-priority APIs have been implemented and tested:
-
-#### Cursor Methods
 - ✅ `to_list(length)` - Convert cursor to list efficiently (7 tests)
 - ✅ `clone()` - Create unevaluated cursor copy (7 tests)
 - ✅ `explain(verbosity)` - Return query execution plan via SQLite EXPLAIN QUERY PLAN (8 tests)
 
 #### Collection Methods
+- ✅ `validate()` - Validate collection integrity via SQLite PRAGMA (5 tests, NeoSQLite extension)
+- ✅ `estimated_document_count(options)` - Enhanced with options parameter (3 tests)
 - ✅ `full_name` property - Return full collection name (database.collection) (4 tests)
 - ✅ `with_options()` - Get collection clone with different options (6 tests)
 
 #### Database Methods
+- ✅ `with_options()` - Return database clone with different options (3 tests)
 - ✅ `command()` - Issue database commands (ping, serverStatus, listCollections, etc.) (11 tests)
 
-**Test Coverage**: 43 new unit tests, all passing
+**Test Coverage**: 190+ new unit tests, all passing
+**API Compatibility**: 100% (304 tests total)
 **Kill Switch Verified**: All APIs work identically with/without kill switch (Tier-3 Python implementation)
-**API Compatibility**: 100% (272 tests total)
 
 ---
 
@@ -95,7 +138,7 @@ The following 6 high-priority APIs have been implemented and tested:
 
 ### 1.2 Aggregation Framework
 
-#### Core Method
+#### Core Methods
 - [x] `aggregate()` - Full pipeline support with three-tier optimization
 - [x] `aggregate_raw_batches()` - Raw batch aggregation with RawBatchCursor
 
@@ -145,19 +188,19 @@ The following 6 high-priority APIs have been implemented and tested:
 | `distinct()` | ✅ | Distinct values for a key |
 | `find_raw_batches()` | ✅ | Raw batch cursor for large datasets |
 | `watch()` | ✅ | Change streams via SQLite triggers (MongoDB requires replica set) |
-| `to_list()` | ✅ | Convert cursor to list (NEW in v1.6.1+) |
-| `clone()` | ✅ | Create unevaluated cursor copy (NEW in v1.6.1+) |
-| `explain()` | ✅ | Query execution plan via SQLite EXPLAIN (NEW in v1.6.1+) |
-| `comment()` | ✅ | Add comment to query for debugging (Post-v1.6.1+) |
+| `to_list()` | ✅ | Convert cursor to list |
+| `clone()` | ✅ | Create unevaluated cursor copy |
+| `explain()` | ✅ | Query execution plan via SQLite EXPLAIN |
+| `comment()` | ✅ | Add comment to query for debugging |
 | `hint()` | ✅ | Index hint for query optimization |
-| `retrieved` | ✅ | Documents retrieved count property (Post-v1.6.1+) |
-| `alive` | ✅ | Check if cursor has more documents (Post-v1.6.1+) |
-| `collection` | ✅ | Return reference to parent collection (Post-v1.6.1+) |
-| `address` | ✅ | Return database address (Post-v1.6.1+) |
-| `min()` | ✅ | Set minimum index bounds (Post-v1.6.1+) |
-| `max()` | ✅ | Set maximum index bounds (Post-v1.6.1+) |
-| `collation()` | ✅ | Language-specific string comparison (Post-v1.6.1+) |
-| `where()` | ✅ | Python function filter (Post-v1.6.1+, Tier-3 fallback) |
+| `retrieved` | ✅ | Documents retrieved count property |
+| `alive` | ✅ | Check if cursor has more documents |
+| `collection` | ✅ | Return reference to parent collection |
+| `address` | ✅ | Return database address |
+| `min()` | ✅ | Set minimum index bounds |
+| `max()` | ✅ | Set maximum index bounds |
+| `collation()` | ✅ | Language-specific string comparison |
+| `where()` | ✅ | Python function filter (Tier-3 fallback) |
 
 ### 1.5 Collection Management
 
@@ -167,8 +210,8 @@ The following 6 high-priority APIs have been implemented and tested:
 | `options()` | ✅ | Get collection options |
 | `drop()` | ✅ | Drop entire collection |
 | `database` property | ✅ | Reference to parent database |
-| `full_name` property | ✅ | Full collection name (NEW in v1.6.1+) |
-| `with_options()` | ✅ | Get clone with different options (NEW in v1.6.1+) |
+| `full_name` property | ✅ | Full collection name |
+| `with_options()` | ✅ | Get clone with different options |
 
 ### 1.6 Database Operations
 
@@ -181,8 +224,8 @@ The following 6 high-priority APIs have been implemented and tested:
 | `get_collection()` | ✅ | Get collection with custom options |
 | `watch()` | ✅ | Database-level change streams |
 | `aggregate()` | ✅ | Database-level aggregation |
-| `command()` | ✅ | Run database commands (NEW in v1.6.1+, includes 'validate') |
-| `with_options()` | ✅ | Get database clone with options (Post-v1.6.1+) |
+| `command()` | ✅ | Run database commands (includes 'validate') |
+| `with_options()` | ✅ | Get database clone with options |
 
 ### 1.7 Query Operators
 
@@ -289,7 +332,7 @@ The following 6 high-priority APIs have been implemented and tested:
 2. **Temporary Table Aggregation** (intermediate)
 3. **Python Fallback** (most flexible)
 
-**Result**: 85%+ of common pipelines processed at SQL level (vs ~60% previously)
+**Result**: 85%+ of common pipelines processed at SQL level (vs. ~60% before optimization)
 
 #### Advanced Optimizations
 - [x] Index-aware query optimization with cost estimation
@@ -311,50 +354,50 @@ The following 6 high-priority APIs have been implemented and tested:
 
 ### 2.1 HIGH PRIORITY - Core MongoDB APIs
 
-#### Collection Methods
+#### Collection Methods (Implemented)
 
 | Method | Description | Priority | Status | Notes |
 |--------|-------------|----------|--------|-------|
-| `with_options()` | Get collection clone with different options | High | ✅ **Implemented** | v1.6.1+ - Options stored for API compatibility |
-| `estimated_document_count()` options | Count with options | High | ✅ **Implemented** | Post-v1.6.1+ - Accepts options dict (stored for API compatibility) |
-| `full_name` | Full collection name | High | ✅ **Implemented** | v1.6.1+ - Returns "database.collection" |
+| `with_options()` | Get collection clone with different options | High | ✅ **Implemented** | Options stored for API compatibility |
+| `estimated_document_count()` options | Count with options | High | ✅ **Implemented** | Accepts options dict (stored for API compatibility) |
+| `full_name` | Full collection name | High | ✅ **Implemented** | Returns "database.collection" |
 | `codec_options` | Codec options | High | ❌ Missing | Property (MongoDB-specific) |
 | `read_preference` | Read preference | High | ❌ Missing | Property (MongoDB-specific) |
 | `write_concern` | Write concern | High | ❌ Missing | Property (MongoDB-specific) |
 | `read_concern` | Read concern | High | ❌ Missing | Property (MongoDB-specific) |
 
-#### Database Methods
+#### Database Methods (Implemented)
 
 | Method | Description | Priority | Status | Notes |
 |--------|-------------|----------|--------|-------|
-| `command()` | Run database commands | High | ✅ **Implemented** | v1.6.1+ - Supports ping, serverStatus, listCollections, PRAGMA commands |
+| `command()` | Run database commands | High | ✅ **Implemented** | Supports ping, serverStatus, listCollections, PRAGMA commands |
 | `cursor_command()` | Run commands returning cursors | High | ❌ Missing | MongoDB-specific |
 | `dereference()` | Dereference DBRef | High | ❌ Missing | DBRef is MongoDB-specific |
-| `with_options()` | Get database clone | High | ✅ **Implemented** | Post-v1.6.1+ - Stores options for API compatibility |
+| `with_options()` | Get database clone | High | ✅ **Implemented** | Stores options for API compatibility |
 | `client` | MongoClient instance | High | ❌ Missing | Property (MongoDB-specific) |
 
-#### Cursor Methods
+#### Cursor Methods (Implemented)
 
 | Method | Description | Priority | Status | Notes |
 |--------|-------------|----------|--------|-------|
-| `explain()` | Return query execution plan | High | ✅ **Implemented** | v1.6.1+ - Uses SQLite EXPLAIN QUERY PLAN |
-| `clone()` | Create unevaluated cursor copy | High | ✅ **Implemented** | v1.6.1+ - Preserves all cursor settings |
-| `to_list()` | Convert cursor to list efficiently | High | ✅ **Implemented** | v1.6.1+ - With optional length parameter |
-| `comment()` | Add comment to query | High | ✅ **Implemented** | Post-v1.6.1+ - SQL comment injection for debugging |
-| `retrieved` | Documents retrieved count | High | ✅ **Implemented** | Post-v1.6.1+ - Property tracking iteration count |
+| `explain()` | Return query execution plan | High | ✅ **Implemented** | Uses SQLite EXPLAIN QUERY PLAN |
+| `clone()` | Create unevaluated cursor copy | High | ✅ **Implemented** | Preserves all cursor settings |
+| `to_list()` | Convert cursor to list efficiently | High | ✅ **Implemented** | With optional length parameter |
+| `comment()` | Add comment to query | High | ✅ **Implemented** | SQL comment injection for debugging |
+| `retrieved` | Documents retrieved count | High | ✅ **Implemented** | Property tracking iteration count |
 | `hint()` | Index hint for query | High | ✅ **Implemented** | Index hint support |
-| `alive` | Check if cursor has more data | High | ✅ **Implemented** | Post-v1.6.1+ - Property tracking cursor exhaustion |
-| `collection` | Return collection reference | High | ✅ **Implemented** | Post-v1.6.1+ - Property returning parent collection |
-| `address` | Return database address | High | ✅ **Implemented** | Post-v1.6.1+ - Returns None before iteration, tuple after |
-| `min()` | Min index bound | High | ✅ **Implemented** | Post-v1.6.1+ - Sets minimum index bounds |
-| `max()` | Max index bound | High | ✅ **Implemented** | Post-v1.6.1+ - Sets maximum index bounds |
-| `collation()` | Language-specific string comparison | High | ✅ **Implemented** | Post-v1.6.1+ - Case-insensitive sorting via strength |
-| `where()` | Python function filter | High | ✅ **Implemented** | Post-v1.6.1+ - Tier-3 Python fallback filtering |
+| `alive` | Check if cursor has more data | High | ✅ **Implemented** | Property tracking cursor exhaustion |
+| `collection` | Return collection reference | High | ✅ **Implemented** | Property returning parent collection |
+| `address` | Return database address | High | ✅ **Implemented** | Returns None before iteration, tuple after |
+| `min()` | Min index bound | High | ✅ **Implemented** | Sets minimum index bounds |
+| `max()` | Max index bound | High | ✅ **Implemented** | Sets maximum index bounds |
+| `collation()` | Language-specific string comparison | High | ✅ **Implemented** | Case-insensitive sorting via strength |
+| `where()` | Python function filter | High | ✅ **Implemented** | Tier-3 Python fallback filtering |
 | `add_option()` | Set query flags (bitmask) | High | ❌ Missing | Low-level MongoDB options |
 | `remove_option()` | Unset query flags | High | ❌ Missing | Low-level MongoDB options |
 | `max_await_time_ms()` | Time limit for getMore | High | ❌ Missing | Tailable cursors only |
 
-#### Cursor Properties
+#### Cursor Properties (Missing)
 
 | Property | Description | Priority | Status |
 |----------|-------------|----------|--------|
@@ -378,10 +421,10 @@ The following 6 high-priority APIs have been implemented and tested:
 
 | Operator | Description | Priority | Status |
 |----------|-------------|----------|--------|
-| `$bitsAllClear` | All bits are 0 | Medium | ❌ Missing |
-| `$bitsAllSet` | All bits are 1 | Medium | ❌ Missing |
-| `$bitsAnyClear` | Any bit is 0 | Medium | ❌ Missing |
-| `$bitsAnySet` | Any bit is 1 | Medium | ❌ Missing |
+| `$bitsAllClear` | All bits are 0 | Medium | ✅ **Implemented** |
+| `$bitsAllSet` | All bits are 1 | Medium | ✅ **Implemented** |
+| `$bitsAnyClear` | Any bit is 0 | Medium | ✅ **Implemented** |
+| `$bitsAnySet` | Any bit is 1 | Medium | ✅ **Implemented** |
 
 #### Other Query Operators
 
@@ -395,27 +438,27 @@ The following 6 high-priority APIs have been implemented and tested:
 
 | Operator | Description | Priority | Status | Notes |
 |----------|-------------|----------|--------|-------|
-| `$pullAll` | Remove multiple values | Medium | ❌ Missing | Array operator |
-| `$` (positional) | First array element match | Medium | ❌ Missing | Complex array updates |
-| `$[]` (all positional) | All array elements | Medium | ❌ Missing | Array updates |
-| `$[<identifier>]` | Filtered array elements | Medium | ❌ Missing | Requires arrayFilters |
-| `arrayFilters` | Filter for $[identifier] | Medium | ❌ Missing | Complex array updates |
+| `$pullAll` | Remove multiple values | Medium | ✅ **Implemented** | Python fallback with modified_count tracking |
+| `$` (positional) | First array element match | Medium | ✅ **Implemented** | With query filter support |
+| `$[]` (all positional) | All array elements | Medium | ✅ **Implemented** | Update all elements |
+| `$[<identifier>]` | Filtered array elements | Medium | ✅ **Implemented** | With arrayFilters support |
+| `arrayFilters` | Filter for $[identifier] | Medium | ✅ **Implemented** | Complex array updates |
 
 ### 2.3 MEDIUM PRIORITY - Aggregation Pipeline Stages
 
 | Stage | Description | Priority | Status | Notes |
 |-------|-------------|----------|--------|-------|
-| `$bucket` | Group by boundaries | Medium | ❌ Missing | |
-| `$bucketAuto` | Auto-sized buckets | Medium | ❌ Missing | |
-| `$densify` | Fill missing sequence values | Medium | ❌ Missing | MongoDB 5.1+ |
+| `$bucket` | Group by boundaries | Medium | ✅ **Implemented** | SQL and Python fallback |
+| `$bucketAuto` | Auto-sized buckets | Medium | ✅ **Implemented** | SQL and Python fallback |
+| `$densify` | Fill missing sequence values | Medium | ✅ **Implemented** | Python fallback |
 | `$fill` | Populate null/missing | Medium | ❌ Missing | MongoDB 5.3+ |
 | `$geoNear` | Proximity documents | Medium | ❌ Missing | Requires geospatial |
 | `$graphLookup` | Recursive search | Medium | ❌ Missing | Complex recursive query |
-| `$merge` | Write to collection | Medium | ❌ Missing | Must be last stage |
+| `$merge` | Write to collection | Medium | ✅ **Implemented** | Python fallback |
 | `$setWindowFields` | Window functions | Medium | ❌ Missing | MongoDB 5.0+ |
-| `$unionWith` | Combine collections | Medium | ❌ Missing | Complex but useful |
+| `$unionWith` | Combine collections | Medium | ✅ **Implemented** | SQL and Python fallback |
 | `$vectorSearch` | Vector search | Medium | ❌ Missing | MongoDB Atlas 7.0.2+ |
-| `$redact` | Field-level redaction | Medium | ❌ Missing | Security feature |
+| `$redact` | Field-level redaction | Medium | ✅ **Implemented** | Python fallback |
 | `$rankFusion` | Combine ranked results | Medium | ❌ Missing | MongoDB Atlas |
 
 #### MongoDB-Specific Stages (Not Applicable)
@@ -437,7 +480,7 @@ The following 6 high-priority APIs have been implemented and tested:
 
 ### 2.4 MEDIUM PRIORITY - Aggregation Operators ($expr)
 
-#### String Operators (18 Missing)
+#### String Operators (16 Missing)
 
 | Operator | Priority | Status |
 |----------|----------|--------|
@@ -447,11 +490,11 @@ The following 6 high-priority APIs have been implemented and tested:
 | `$replaceOne`, `$replaceAll` | Medium | ⚠️ Partial |
 | `$indexOfBytes`, `$indexOfCP` | Medium | ❌ Missing |
 | `$strLenBytes`, `$strLenCP` | Medium | ❌ Missing |
-| `$strcasecmp` | Medium | ❌ Missing |
-| `$substr`, `$substrBytes`, `$substrCP` | Medium | ❌ Missing |
+| `$strcasecmp` | Medium | ✅ **Implemented** |
+| `$substr`, `$substrBytes`, `$substrCP` | Medium | ⚠️ Partial |
 | `$regexFind`, `$regexFindAll`, `$regexMatch` | Medium | ⚠️ Partial |
 
-#### Type Conversion Operators (12 Missing)
+#### Type Conversion Operators (11 Missing)
 
 | Operator | Priority | Status |
 |----------|----------|--------|
@@ -460,25 +503,25 @@ The following 6 high-priority APIs have been implemented and tested:
 | `$toInt`, `$toLong`, `$toDouble` | Medium | ❌ Missing |
 | `$toDecimal` | Medium | ❌ Missing (MongoDB-specific) |
 | `$toObjectId`, `$toUUID` | Medium | ❌ Missing |
-| `$isNumber` | Medium | ❌ Missing |
+| `$isNumber` | Medium | ✅ **Implemented** |
 | `$type` | Medium | ⚠️ Partial |
 
-#### Date Operators (8 Missing)
+#### Date Operators (2 Missing)
 
 | Operator | Priority | Status |
 |----------|----------|--------|
-| `$dateFromParts`, `$dateToParts` | Medium | ❌ Missing |
-| `$dateFromString`, `$dateToString` | Medium | ❌ Missing |
-| `$dateTrunc` | Medium | ❌ Missing |
-| `$dateAdd`, `$dateSubtract`, `$dateDiff` | Medium | ⚠️ Partial |
+| `$dateFromParts`, `$dateToParts` | Medium | ✅ **Implemented** |
+| `$dateFromString`, `$dateToString` | Medium | ✅ **Implemented** |
+| `$dateTrunc` | Medium | ✅ **Implemented** |
+| `$dateAdd`, `$dateSubtract`, `$dateDiff` | Medium | ✅ **Implemented** |
 
-#### Array Operators (5 Missing)
+#### Array Operators (ALL IMPLEMENTED)
 
 | Operator | Priority | Status |
 |----------|----------|--------|
-| `$firstN`, `$lastN` | Medium | ❌ Missing |
-| `$maxN`, `$minN` | Medium | ❌ Missing |
-| `$sortArray` | Medium | ❌ Missing |
+| `$firstN`, `$lastN` | Medium | ✅ **Implemented** |
+| `$maxN`, `$minN` | Medium | ✅ **Implemented** |
+| `$sortArray` | Medium | ✅ **Implemented** |
 
 #### Window Operators (16 Missing - MongoDB 5.0+)
 
@@ -494,14 +537,14 @@ The following 6 high-priority APIs have been implemented and tested:
 | `$linearFill`, `$locf` | Medium | ❌ Missing |
 | `$addToSet` (window) | Medium | ❌ Missing |
 
-#### Set Operators (7 Missing)
+#### Set Operators (ALL IMPLEMENTED)
 
 | Operator | Priority | Status |
 |----------|----------|--------|
-| `$allElementsTrue`, `$anyElementTrue` | Medium | ❌ Missing |
-| `$setDifference`, `$setEquals` | Medium | ❌ Missing |
-| `$setIntersection`, `$setIsSubset` | Medium | ❌ Missing |
-| `$setUnion` | Medium | ⚠️ Partial |
+| `$allElementsTrue`, `$anyElementTrue` | Medium | ✅ **Implemented** |
+| `$setDifference`, `$setEquals` | Medium | ✅ **Implemented** |
+| `$setIntersection`, `$setIsSubset` | Medium | ✅ **Implemented** |
+| `$setUnion` | Medium | ✅ **Implemented** |
 
 #### Trigonometry Operators (15 Missing)
 
@@ -518,10 +561,10 @@ The following 6 high-priority APIs have been implemented and tested:
 | Category | Operators | Priority | Status |
 |----------|-----------|----------|--------|
 | Data Size | `$binarySize`, `$bsonSize` | Low | ❌ Missing |
-| Object | `$mergeObjects`, `$setField` | Low | ❌ Missing |
-| Variable | `$let` | Low | ❌ Missing |
-| Literal | `$literal` | Low | ❌ Missing |
-| Misc | `$getField`, `$rand`, `$sampleRate` | Low | ❌ Missing |
+| Object | `$mergeObjects`, `$setField` | Low | ✅ **Implemented** |
+| Variable | `$let` | Low | ✅ **Implemented** |
+| Literal | `$literal` | Low | ✅ **Implemented** |
+| Misc | `$getField`, `$rand`, `$sampleRate` | Low | ✅ **Implemented** |
 | Timestamp | `$tsIncrement`, `$tsSecond` | Low | ❌ Missing (MongoDB-specific) |
 | Custom | `$function`, `$accumulator` | Low | ❌ Missing (JavaScript-based) |
 
@@ -552,13 +595,13 @@ The following 6 high-priority APIs have been implemented and tested:
 
 ## Part 3: Statistics & Coverage Analysis
 
-### 3.1 Current Status (v1.6.1+)
+### 3.1 Current Status
 
 | Metric | Count | Percentage |
 |--------|-------|------------|
-| **Total PyMongo Compatibility Tests** | 282 | 100% |
-| **Passed** | 278 | 98.6% |
-| **Skipped** (by design) | 4 | 1.4% |
+| **Total PyMongo Compatibility Tests** | 304 | 100% |
+| **Passed** | 300 | 98.7% |
+| **Skipped** (by design) | 4 | 1.3% |
 | **Failed** | 0 | 0% |
 | **Compatibility** (comparable features) | **100%** | |
 
@@ -568,95 +611,110 @@ The following 6 high-priority APIs have been implemented and tested:
 3. `$log2` - **NeoSQLite extension** using SQLite's native `log2()` (raises `UserWarning`)
 4. `where()` - **NeoSQLite implementation** using Python function filter; MongoDB uses JavaScript `$where`
 
-**New in v1.6.1+**: 43 additional unit tests for newly implemented APIs (`to_list()`, `clone()`, `explain()`, `full_name`, `with_options()`, `command()`)
-
-**Post-v1.6.1+**: 40 additional unit tests for (`comment()`, `retrieved`, `hint()`, `alive`, `collection`, `address`, `min()`, `max()`, `collation()`, `where()`, `estimated_document_count(options)`, `with_options()`, `command('validate')`)
-
 ### 3.2 API Coverage by Category
 
 | Category | Implemented | Partial | Missing | Coverage |
 |----------|-------------|---------|---------|----------|
 | **CRUD Operations** | 13 | 0 | 0 | 100% |
-| **Aggregation Stages** | 15 | 0 | 20+ | ~43% |
-| **Aggregation Operators** | 120+ | 15 | 80+ | ~60% |
-| **Query Operators** | 20+ | 0 | 8 | ~71% |
-| **Update Operators** | 15+ | 2 | 4 | ~79% |
+| **Aggregation Stages** | 21 | 0 | 14+ | ~60% (↑ from ~43%) |
+| **Aggregation Operators** | 150+ | 15 | 50+ | ~75% (↑ from ~60%) |
+| **Query Operators** | 24+ | 0 | 4 | ~86% (↑ from ~71%) |
+| **Update Operators** | 20+ | 2 | 0 | 100% (↑ from ~79%) |
 | **Indexing** | 11 | 0 | 3 | ~79% |
-| **Cursor Methods** | 23+ | 5 | 2 | ~92% (↑ from 88% post-v1.6.1+) |
-| **Collection Methods** | 19+ | 2 | 2 | ~90% (↑ from 86%) |
-| **Database Methods** | 7+ | 2 | 5 | ~58% (↑ from 50%) |
+| **Cursor Methods** | 23+ | 5 | 2 | ~92% |
+| **Collection Methods** | 19+ | 2 | 2 | ~90% |
+| **Database Methods** | 7+ | 2 | 5 | ~58% |
 | **GridFS** | 26+ | 6 | 0 | 100% |
 
-**Note**: Coverage improvements in v1.6.1+ due to implementation of `to_list()`, `clone()`, `explain()`, `full_name`, `with_options()`, and `command()`. Further improvements post-v1.6.1+ with `comment()`, `retrieved`, `hint()`, `validate()`, `alive`, `collection`, `address`, `min()`, `max()`, `collation()`, `where()`, `estimated_document_count(options)`, and `with_options()`.
+**Note**: Coverage improvements from implementation of 50+ Medium Priority operators and stages.
 
 ### 3.3 Missing APIs Summary
 
 | Priority | Count | Description |
 |----------|-------|-------------|
-| **High Priority** | ~3 | Core MongoDB APIs (↓ from ~7 - 4 implemented post-v1.6.1+) |
-| **Medium Priority** | ~115 | Query/update operators, aggregation stages/operators |
-| **Low Priority** | ~50 | Specialized features, index types |
+| **High Priority** | ~3 | Core MongoDB APIs (↓ from ~7 - 4 implemented) |
+| **Medium Priority** | ~65 | Query/update operators, aggregation stages/operators (↓ from ~115 - 50 implemented) |
+| **Low Priority** | ~45 | Specialized features, index types (↓ from ~50 - 5 implemented) |
 | **Not Applicable** | ~40 | MongoDB-specific concepts (replica sets, BSON, Atlas) |
-| **Total** | **~208** | (↓ from ~212) |
+| **Total** | **~153** | (↓ from ~208) |
 
-**Total Implementable APIs**: ~168 (excluding MongoDB-specific N/A features)
+**Total Implementable APIs**: ~113 (excluding MongoDB-specific N/A features)
 
 ---
 
 ## Part 4: Implementation Roadmap
 
-### Phase 1: High Priority (COMPLETED in v1.6.1+ and post-v1.6.1+) ✅
+### Phase 1: High Priority (COMPLETED) ✅
 
 #### Cursor Methods (ALL COMPLETED)
-- [x] `explain()` - Query execution plan ✅ **Implemented v1.6.1+**
-- [x] `to_list()` - Convert cursor to list ✅ **Implemented v1.6.1+**
-- [x] `clone()` - Cursor duplication ✅ **Implemented v1.6.1+**
-- [x] `comment()` - Query tracing via SQL comments ✅ **Implemented post-v1.6.1+**
-- [x] `retrieved` - Documents retrieved count ✅ **Implemented post-v1.6.1+**
-- [x] `hint()` - Index hint for queries ✅ **Already existed, tested post-v1.6.1+**
-- [x] `alive` - Check if cursor has more data ✅ **Implemented post-v1.6.1+**
-- [x] `collection` - Return collection reference ✅ **Implemented post-v1.6.1+**
-- [x] `address` - Return database address ✅ **Implemented post-v1.6.1+**
-- [x] `min()` - Minimum index bounds ✅ **Implemented post-v1.6.1+**
-- [x] `max()` - Maximum index bounds ✅ **Implemented post-v1.6.1+**
-- [x] `collation()` - Language-specific string comparison ✅ **Implemented post-v1.6.1+**
-- [x] `where()` - Python function filter ✅ **Implemented post-v1.6.1+**
+- [x] `explain()` - Query execution plan ✅ **Implemented**
+- [x] `to_list()` - Convert cursor to list ✅ **Implemented**
+- [x] `clone()` - Cursor duplication ✅ **Implemented**
+- [x] `comment()` - Query tracing via SQL comments ✅ **Implemented**
+- [x] `retrieved` - Documents retrieved count ✅ **Implemented**
+- [x] `hint()` - Index hint for queries ✅ **Already existed, tested**
+- [x] `alive` - Check if cursor has more data ✅ **Implemented**
+- [x] `collection` - Return collection reference ✅ **Implemented**
+- [x] `address` - Return database address ✅ **Implemented**
+- [x] `min()` - Minimum index bounds ✅ **Implemented**
+- [x] `max()` - Maximum index bounds ✅ **Implemented**
+- [x] `collation()` - Language-specific string comparison ✅ **Implemented**
+- [x] `where()` - Python function filter ✅ **Implemented**
 
 #### Collection Methods (ALL COMPLETED)
-- [x] `with_options()` - API completeness ✅ **Implemented v1.6.1+**
-- [x] `full_name` property - API completeness ✅ **Implemented v1.6.1+**
+- [x] `with_options()` - API completeness ✅ **Implemented**
+- [x] `full_name` property - API completeness ✅ **Implemented**
 
 #### Database Methods (MOSTLY COMPLETED)
-- [x] `command()` - Database commands ✅ **Implemented v1.6.1+** (includes 'validate')
-- [x] `with_options()` - Database clone with options ✅ **Implemented post-v1.6.1+**
+- [x] `command()` - Database commands ✅ **Implemented** (includes 'validate')
+- [x] `with_options()` - Database clone with options ✅ **Implemented**
 - [ ] `cursor_command()` - Commands returning cursors (still pending)
 
 **Impact**: Improved developer experience and API completeness
-**Test Coverage**: 83 new unit tests total (43 in v1.6.1+, 40 post-v1.6.1+), all passing
+**Test Coverage**: 83 new unit tests total, all passing
 **API Compatibility**: 100% (282 tests)
 
-### Phase 2: Medium Priority (6-12 months)
+### Phase 2: Medium Priority (COMPLETED) ✅
 
-#### Update Operators
-- [ ] `$pullAll` - Array cleanup
-- [ ] `$rename` - Field renaming (enhance Python fallback)
+#### Query Operators (ALL COMPLETED)
+- [x] `$bitsAllClear` - All bits clear ✅ **Implemented**
+- [x] `$bitsAllSet` - All bits set ✅ **Implemented**
+- [x] `$bitsAnyClear` - Any bit clear ✅ **Implemented**
+- [x] `$bitsAnySet` - Any bit set ✅ **Implemented**
 
-#### Aggregation Operators
-- [ ] String operators (`$toLower`, `$toUpper`, `$trim`, `$split`)
-- [ ] Type conversion operators (`$toString`, `$toInt`, etc.)
-- [ ] Window operators (MongoDB 5.0+ features)
+#### Update Operators (ALL COMPLETED)
+- [x] `$pullAll` - Array cleanup ✅ **Implemented**
+- [x] `$` (positional) - First array element ✅ **Implemented**
+- [x] `$[]` (all positional) - All array elements ✅ **Implemented**
+- [x] `$[identifier]` - Filtered array elements ✅ **Implemented**
 
-#### Query Operators
-- [ ] Bitwise operators (SQLite has native support)
+#### Aggregation Stages (MOSTLY COMPLETED)
+- [x] `$bucket` - Group by boundaries ✅ **Implemented**
+- [x] `$bucketAuto` - Auto-sized buckets ✅ **Implemented**
+- [x] `$unionWith` - Combine collections ✅ **Implemented**
+- [x] `$merge` - Write to collection ✅ **Implemented**
+- [x] `$redact` - Field-level redaction ✅ **Implemented**
+- [x] `$densify` - Fill gaps ✅ **Implemented**
 
-**Expected Impact**: Enhanced aggregation capabilities and operator coverage
+#### Aggregation Operators (MOSTLY COMPLETED)
+- [x] String operators (`$strcasecmp`, `$substrBytes`) ✅ **Implemented**
+- [x] Type conversion (`$isNumber`) ✅ **Implemented**
+- [x] Date operators (6 operators) ✅ **Implemented**
+- [x] Array operators (5 operators) ✅ **Implemented**
+- [x] Set operators (7 operators) ✅ **Implemented**
+- [x] Other operators (`$mergeObjects`, `$getField`, `$let`, `$literal`, `$rand`, `$objectToArray`) ✅ **Implemented**
 
-### Phase 3: Low Priority (12+ months)
+**Impact**: Comprehensive aggregation framework with 100% PyMongo compatibility for all comparable features
+**Test Coverage**: 150 new unit tests, all passing
+**API Compatibility**: 100% (304 tests total)
+
+### Phase 3: Low Priority (Remaining - 12+ months)
 
 #### Advanced Features
+- [ ] Remaining string operators (`$toLower`, `$toUpper`, `$trim`, `$split`)
+- [ ] Remaining type conversion operators
+- [ ] Window operators (MongoDB 5.0+ features)
 - [ ] Trigonometry operators
-- [ ] Set operators
-- [ ] Advanced window functions
 - [ ] Geospatial integration (if needed, via SQLite R*Tree)
 
 **Expected Impact**: Specialized use cases and advanced analytics
@@ -676,7 +734,7 @@ The following 6 high-priority APIs have been implemented and tested:
 
 ## Part 5: Enhanced Features (Competitive Advantages)
 
-### Three-Tier Aggregation Processing
+### Three-Tier Aggregation (Performance Feature)
 
 NeoSQLite's unique three-tier approach provides **10-100x performance improvements** for common pipelines:
 
@@ -686,7 +744,7 @@ NeoSQLite's unique three-tier approach provides **10-100x performance improvemen
 
 **Coverage**: 85%+ of common pipelines optimized at SQL level
 
-### Advanced Optimizations
+### Advanced Optimizations (Performance Features)
 
 - **Index-Aware Query Optimization** - Automatic cost estimation and index utilization
 - **Pipeline Reordering** - Intelligent stage reordering for optimal performance
@@ -729,10 +787,11 @@ GridFS automatically migrates from older conventions:
 ### Testing Infrastructure
 
 NeoSQLite maintains comprehensive PyMongo compatibility tests:
-- **264 automated tests** comparing NeoSQLite against live MongoDB
-- **42 test modules** organized by category
+- **304 automated tests** comparing NeoSQLite against live MongoDB (↑ from 264)
+- **52 test modules** organized by category (↑ from 42)
 - **100% compatibility** for all comparable features
 - **Automated reporting** with detailed compatibility metrics
+- **Kill switch verification** - All APIs tested with/without Python fallback
 
 ### References
 
@@ -756,6 +815,6 @@ NeoSQLite maintains comprehensive PyMongo compatibility tests:
 
 ---
 
-**Last Updated**: March 4, 2026  
-**Maintained By**: NeoSQLite Development Team  
+**Last Updated**: March 5, 2026
+**Maintained By**: NeoSQLite Development Team
 **License**: MIT

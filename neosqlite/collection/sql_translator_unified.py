@@ -31,6 +31,41 @@ def _text_search_fallback() -> Tuple[None, List[Any]]:
     return None, []
 
 
+def _convert_to_bitmask(value: Any) -> int | None:
+    """
+    Convert a value to a bitmask for bitwise operators.
+
+    Args:
+        value: The value to convert (int, list of bit positions, or iterable)
+
+    Returns:
+        Integer bitmask or None if conversion fails
+    """
+    if isinstance(value, int):
+        return value
+    elif isinstance(value, (list, tuple)):
+        bitmask = 0
+        for bit_pos in value:
+            try:
+                bitmask |= 1 << int(bit_pos)
+            except (TypeError, ValueError):
+                return None
+        return bitmask
+    elif hasattr(value, "__iter__") and not isinstance(value, (str, bytes)):
+        bitmask = 0
+        try:
+            for bit_pos in value:
+                bitmask |= 1 << int(bit_pos)
+        except (TypeError, ValueError):
+            return None
+        return bitmask
+    else:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+
 class SQLFieldAccessor:
     """
     Handles field access patterns for different contexts.
@@ -346,6 +381,34 @@ class SQLOperatorTranslator:
                     str_value = str(value)
                     sql = f"lower({field_access}) LIKE ?"
                     params = [f"%{str_value.lower()}%"]
+                case "$bitsAllClear":
+                    # Handle bitwise all clear operator
+                    # Check if all specified bits are clear (0)
+                    bitmask = _convert_to_bitmask(value)
+                    if bitmask is not None:
+                        sql = f"({field_access} & ?) = 0"
+                        params = [bitmask]
+                case "$bitsAllSet":
+                    # Handle bitwise all set operator
+                    # Check if all specified bits are set (1)
+                    bitmask = _convert_to_bitmask(value)
+                    if bitmask is not None:
+                        sql = f"({field_access} & ?) = ?"
+                        params = [bitmask, bitmask]
+                case "$bitsAnyClear":
+                    # Handle bitwise any clear operator
+                    # Check if any of the specified bits are clear (0)
+                    bitmask = _convert_to_bitmask(value)
+                    if bitmask is not None:
+                        sql = f"((~{field_access}) & ?) != 0"
+                        params = [bitmask]
+                case "$bitsAnySet":
+                    # Handle bitwise any set operator
+                    # Check if any of the specified bits are set (1)
+                    bitmask = _convert_to_bitmask(value)
+                    if bitmask is not None:
+                        sql = f"({field_access} & ?) != 0"
+                        params = [bitmask]
                 case _:
                     # Unsupported operator
                     pass

@@ -447,3 +447,229 @@ def _type(field: str, value: Any, document: Dict[str, Any]) -> bool:
         expected_type = value
 
     return isinstance(doc_value, expected_type)
+
+
+def _bits_all_clear(field: str, value: Any, document: Dict[str, Any]) -> bool:
+    """
+    Check if all specified bits are clear (0) in a numeric field.
+    MongoDB $bitsAllClear operator.
+
+    Args:
+        field (str): The document field to check.
+        value (Any): Bitmask as integer, BinData, or array of bit positions.
+        document (Dict[str, Any]): The document to check.
+
+    Returns:
+        bool: True if all specified bits are clear, False otherwise.
+    """
+    doc_value = _get_nested_field(field, document)
+
+    if doc_value is None:
+        return False
+
+    # Convert doc_value to integer if needed
+    if isinstance(doc_value, bool):
+        return False  # Booleans are not valid for bitwise operations
+
+    try:
+        int_value = int(doc_value)
+    except (TypeError, ValueError):
+        return False
+
+    # Handle different value formats
+    if isinstance(value, int):
+        # Direct integer bitmask
+        bitmask = value
+    elif isinstance(value, (list, tuple)):
+        # Array of bit positions to check
+        bitmask = 0
+        for bit_pos in value:
+            try:
+                bitmask |= 1 << int(bit_pos)
+            except (TypeError, ValueError):
+                return False
+    elif hasattr(value, "__iter__") and not isinstance(value, (str, bytes)):
+        # Iterable of bit positions
+        bitmask = 0
+        try:
+            for bit_pos in value:
+                bitmask |= 1 << int(bit_pos)
+        except (TypeError, ValueError):
+            return False
+    else:
+        # Try to convert to int
+        try:
+            bitmask = int(value)
+        except (TypeError, ValueError):
+            return False
+
+    # Check if all specified bits are clear (result of AND should be 0)
+    return (int_value & bitmask) == 0
+
+
+def _bits_all_set(field: str, value: Any, document: Dict[str, Any]) -> bool:
+    """
+    Check if all specified bits are set (1) in a numeric field.
+    MongoDB $bitsAllSet operator.
+
+    Args:
+        field (str): The document field to check.
+        value (Any): Bitmask as integer, BinData, or array of bit positions.
+        document (Dict[str, Any]): The document to check.
+
+    Returns:
+        bool: True if all specified bits are set, False otherwise.
+    """
+    doc_value = _get_nested_field(field, document)
+
+    if doc_value is None:
+        return False
+
+    # Convert doc_value to integer if needed
+    if isinstance(doc_value, bool):
+        return False
+
+    try:
+        int_value = int(doc_value)
+    except (TypeError, ValueError):
+        return False
+
+    # Handle different value formats
+    if isinstance(value, int):
+        bitmask = value
+    elif isinstance(value, (list, tuple)):
+        bitmask = 0
+        for bit_pos in value:
+            try:
+                bitmask |= 1 << int(bit_pos)
+            except (TypeError, ValueError):
+                return False
+    elif hasattr(value, "__iter__") and not isinstance(value, (str, bytes)):
+        bitmask = 0
+        try:
+            for bit_pos in value:
+                bitmask |= 1 << int(bit_pos)
+        except (TypeError, ValueError):
+            return False
+    else:
+        try:
+            bitmask = int(value)
+        except (TypeError, ValueError):
+            return False
+
+    # Check if all specified bits are set
+    return (int_value & bitmask) == bitmask
+
+
+def _bits_any_clear(field: str, value: Any, document: Dict[str, Any]) -> bool:
+    """
+    Check if any of the specified bits are clear (0) in a numeric field.
+    MongoDB $bitsAnyClear operator.
+
+    Args:
+        field (str): The document field to check.
+        value (Any): Bitmask as integer, BinData, or array of bit positions.
+        document (Dict[str, Any]): The document to check.
+
+    Returns:
+        bool: True if any of the specified bits are clear, False otherwise.
+    """
+    doc_value = _get_nested_field(field, document)
+
+    if doc_value is None:
+        return False
+
+    if isinstance(doc_value, bool):
+        return False
+
+    try:
+        int_value = int(doc_value)
+    except (TypeError, ValueError):
+        return False
+
+    # Handle different value formats
+    if isinstance(value, int):
+        bitmask = value
+    elif isinstance(value, (list, tuple)):
+        bitmask = 0
+        for bit_pos in value:
+            try:
+                bitmask |= 1 << int(bit_pos)
+            except (TypeError, ValueError):
+                return False
+    elif hasattr(value, "__iter__") and not isinstance(value, (str, bytes)):
+        bitmask = 0
+        try:
+            for bit_pos in value:
+                bitmask |= 1 << int(bit_pos)
+        except (TypeError, ValueError):
+            return False
+    else:
+        try:
+            bitmask = int(value)
+        except (TypeError, ValueError):
+            return False
+
+    # Check if any of the specified bits are clear
+    # Invert the value and check if any of the specified bits are set
+    return ((~int_value) & bitmask) != 0
+
+
+def _bits_any_set(field: str, value: Any, document: Dict[str, Any]) -> bool:
+    """
+    Check if any of the specified bits are set (1) in a numeric field.
+    MongoDB $bitsAnySet operator.
+
+    Args:
+        field (str): The document field to check.
+        value (Any): Bitmask as integer, BinData, or array of bit positions.
+        document (Dict[str, Any]): The document to check.
+
+    Returns:
+        bool: True if any of the specified bits are set, False otherwise.
+    """
+    doc_value = _get_nested_field(field, document)
+
+    if doc_value is None:
+        return False
+
+    if isinstance(doc_value, bool):
+        return False
+
+    try:
+        int_value = int(doc_value)
+    except (TypeError, ValueError):
+        return False
+
+    # Handle different value formats
+    if isinstance(value, int):
+        bitmask = value
+    elif isinstance(value, (list, tuple)):
+        bitmask = 0
+        for bit_pos in value:
+            try:
+                bitmask |= 1 << int(bit_pos)
+            except (TypeError, ValueError):
+                return False
+    elif hasattr(value, "__iter__") and not isinstance(value, (str, bytes)):
+        bitmask = 0
+        try:
+            for bit_pos in value:
+                bitmask |= 1 << int(bit_pos)
+        except (TypeError, ValueError):
+            return False
+    else:
+        try:
+            bitmask = int(value)
+        except (TypeError, ValueError):
+            return False
+
+    # Check if any of the specified bits are set
+    return (int_value & bitmask) != 0
+
+
+# Aliases for operator lookup (to match MongoDB camelCase naming)
+_bitsAllClear = _bits_all_clear
+_bitsAllSet = _bits_all_set
+_bitsAnyClear = _bits_any_clear
+_bitsAnySet = _bits_any_set

@@ -19,7 +19,7 @@ from neosqlite.collection.json_path_utils import (
     build_json_extract_expression,
 )
 from neosqlite.collection.text_search import unified_text_search
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 try:
     from pysqlite3 import dbapi2 as sqlite3
@@ -28,6 +28,391 @@ except ImportError:
 
 # Global flag to force fallback - for benchmarking and debugging
 _FORCE_FALLBACK = False
+
+
+def _apply_positional_update(
+    doc: Dict[str, Any],
+    field_path: str,
+    value: Any,
+    array_filters: Optional[List[Dict[str, Any]]] = None,
+    filter_doc: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """
+    Apply an update to array elements using positional operators.
+
+    Supports:
+    - $: First matching array element
+    - $[]: All array elements
+    - $[identifier]: Filtered array elements (requires arrayFilters)
+
+    Args:
+        doc: The document to update
+        field_path: The field path containing positional operator(s)
+        value: The value to set
+        array_filters: Optional list of filter documents for $[identifier]
+        filter_doc: The query filter document (for $ operator)
+
+    Returns:
+        bool: True if update was applied, False otherwise
+    """
+    if not field_path:
+        return False
+
+    # Parse the field path into parts
+    parts = field_path.split(".")
+
+    # Check for positional operators
+    has_positional = any(
+        p == "$" or p == "$[]" or p.startswith("$[") for p in parts
+    )
+
+    if not has_positional:
+        # No positional operator, simple nested set
+        _set_nested_field(doc, field_path, value)
+        return True
+
+    # Find the array field and positional operator
+    return _apply_positional_recursive(
+        doc, parts, 0, value, array_filters, filter_doc
+    )
+
+
+def _apply_positional_recursive(
+    doc: Any,
+    parts: List[str],
+    index: int,
+    value: Any,
+    array_filters: Optional[List[Dict[str, Any]]] = None,
+    filter_doc: Optional[Dict[str, Any]] = None,
+    parent_array: Optional[
+        List[Any]
+    ] = None,  # Track parent array for $ operator
+) -> bool:
+    """
+    Recursively apply positional update through nested structures.
+
+    Args:
+        doc: Current document or sub-document
+        parts: Field path parts
+        index: Current part index
+        value: Value to set
+        array_filters: Filter documents for $[identifier]
+        filter_doc: Query filter for $ operator
+        parent_array: Parent array (for $ operator to know which array to update)
+
+    Returns:
+        bool: True if update was applied
+    """
+    if index >= len(parts):
+        return False
+
+    current_part = parts[index]
+    is_last = index == len(parts) - 1
+
+    # Handle $[] - all array elements (check BEFORE $[identifier] since $[] also starts with $[)
+    if current_part == "$[]":
+        # The array should be in doc (we're already at the array level)
+        arr = doc if parent_array is None else parent_array
+        if not isinstance(arr, list):
+            return False
+
+        # Update all elements
+        for i, elem in enumerate(arr):
+            if is_last:
+                arr[i] = value
+            else:
+                if isinstance(elem, dict):
+                    _apply_positional_recursive(
+                        elem,
+                        parts,
+                        index + 1,
+                        value,
+                        array_filters,
+                        filter_doc,
+                        None,
+                    )
+
+        return True
+
+    # Handle $[identifier] - filtered array element
+    elif current_part.startswith("$[") and current_part.endswith("]"):
+        identifier = current_part[2:-1]
+
+        # Find the matching filter
+        filter_spec = None
+        if array_filters:
+            for af in array_filters:
+                if identifier in af:
+                    filter_spec = af[identifier]
+                    break
+
+        # If no filter found for this identifier, don't update anything
+        if filter_spec is None:
+            return False
+
+        # The array should be in doc (we're already at the array level)
+        arr = doc if parent_array is None else parent_array
+        if not isinstance(arr, list):
+            return False
+
+        # Apply filter to find matching elements
+        for i, elem in enumerate(arr):
+            if _matches_filter(elem, filter_spec):
+                if is_last:
+                    arr[i] = value
+                else:
+                    if isinstance(elem, dict):
+                        _apply_positional_recursive(
+                            elem,
+                            parts,
+                            index + 1,
+                            value,
+                            array_filters,
+                            filter_doc,
+                            None,
+                        )
+
+        return True
+
+    # Handle $[] - all array elements
+    elif current_part == "$[]":
+        # The array should be in doc (we're already at the array level)
+        arr = doc if parent_array is None else parent_array
+        if not isinstance(arr, list):
+            return False
+
+        # Update all elements
+        for i, elem in enumerate(arr):
+            if is_last:
+                arr[i] = value
+            else:
+                if isinstance(elem, dict):
+                    _apply_positional_recursive(
+                        elem,
+                        parts,
+                        index + 1,
+                        value,
+                        array_filters,
+                        filter_doc,
+                        None,
+                    )
+
+        return True
+
+    # Handle $ - first matching array element
+    elif current_part == "$":
+        # Use parent_array if available, otherwise doc should be the array
+        arr = parent_array if parent_array is not None else doc
+        if not isinstance(arr, list):
+            return False
+
+        # Find first matching element using filter_doc
+        matched = False
+        for i, elem in enumerate(arr):
+            if not matched:
+                # Check if this element matches the filter
+                # Extract the filter for this array field from filter_doc
+                # For "scores.$", filter_doc would be {"scores": 90} or {"_id": 1}
+                if filter_doc:
+                    # Try to get the filter value for the array field
+                    # Look back in parts to find the field name
+                    if index > 0:
+                        field_name = parts[index - 1]
+                        field_filter = filter_doc.get(field_name)
+                        if field_filter is not None:
+                            # There's a filter for this field, check if element matches
+                            if (
+                                _matches_filter(elem, field_filter)
+                                if isinstance(field_filter, dict)
+                                else elem == field_filter
+                            ):
+                                if is_last:
+                                    arr[i] = value
+                                    matched = True
+                                else:
+                                    if isinstance(elem, dict):
+                                        _apply_positional_recursive(
+                                            elem,
+                                            parts,
+                                            index + 1,
+                                            value,
+                                            array_filters,
+                                            filter_doc,
+                                            None,
+                                        )
+                                        matched = True
+                        else:
+                            # No filter for this array field, update first element (MongoDB behavior)
+                            if is_last:
+                                arr[i] = value
+                                matched = True
+                            else:
+                                if isinstance(elem, dict):
+                                    _apply_positional_recursive(
+                                        elem,
+                                        parts,
+                                        index + 1,
+                                        value,
+                                        array_filters,
+                                        filter_doc,
+                                        None,
+                                    )
+                                    matched = True
+                else:
+                    # No filter, just update first element
+                    if is_last:
+                        arr[i] = value
+                        matched = True
+                    else:
+                        if isinstance(elem, dict):
+                            _apply_positional_recursive(
+                                elem,
+                                parts,
+                                index + 1,
+                                value,
+                                array_filters,
+                                filter_doc,
+                                None,
+                            )
+                            matched = True
+
+        return True
+
+    # Regular field access
+    else:
+        if not isinstance(doc, dict):
+            return False
+
+        if current_part not in doc:
+            # Create the nested structure if it doesn't exist and this is the last part
+            if is_last:
+                doc[current_part] = value
+                return True
+            return False
+
+        if is_last:
+            doc[current_part] = value
+            return True
+        else:
+            next_val = doc[current_part]
+            # If next part is positional, pass the array as parent_array
+            next_is_positional = (
+                index + 1 < len(parts) and parts[index + 1] in ("$", "$[]")
+            ) or (index + 1 < len(parts) and parts[index + 1].startswith("$["))
+            if next_is_positional:
+                return _apply_positional_recursive(
+                    next_val,
+                    parts,
+                    index + 1,
+                    value,
+                    array_filters,
+                    filter_doc,
+                    next_val,
+                )
+            else:
+                return _apply_positional_recursive(
+                    next_val,
+                    parts,
+                    index + 1,
+                    value,
+                    array_filters,
+                    filter_doc,
+                    None,
+                )
+
+
+def _matches_filter(elem: Any, filter_spec: Dict[str, Any]) -> bool:
+    """
+    Check if an array element matches a filter specification.
+
+    Args:
+        elem: The array element to check
+        filter_spec: The filter specification (can be a dict with operators or a scalar value)
+
+    Returns:
+        bool: True if element matches the filter
+    """
+    # Handle scalar filter (direct equality check)
+    if not isinstance(filter_spec, dict):
+        return elem == filter_spec
+
+    # Handle scalar element with dict filter (apply query operators)
+    if not isinstance(elem, dict):
+        # Apply query operators to scalar value
+        return _matches_query_operators(elem, filter_spec)
+
+    # Handle dict element with dict filter
+    for key, expected_value in filter_spec.items():
+        if key not in elem:
+            return False
+        if isinstance(expected_value, dict):
+            # Handle query operators in filter
+            if not _matches_query_operators(elem[key], expected_value):
+                return False
+        elif elem[key] != expected_value:
+            return False
+
+    return True
+
+
+def _matches_query_operators(value: Any, operators: Dict[str, Any]) -> bool:
+    """
+    Check if a value matches query operators.
+
+    Args:
+        value: The value to check
+        operators: Dictionary of query operators
+
+    Returns:
+        bool: True if value matches all operators
+    """
+    for op, expected in operators.items():
+        if op == "$eq":
+            if value != expected:
+                return False
+        elif op == "$gt":
+            if not (value > expected):
+                return False
+        elif op == "$gte":
+            if not (value >= expected):
+                return False
+        elif op == "$lt":
+            if not (value < expected):
+                return False
+        elif op == "$lte":
+            if not (value <= expected):
+                return False
+        elif op == "$ne":
+            if value == expected:
+                return False
+        elif op == "$in":
+            if value not in expected:
+                return False
+        elif op == "$nin":
+            if value in expected:
+                return False
+        # Add more operators as needed
+    return True
+
+
+def _set_nested_field(doc: Dict[str, Any], field_path: str, value: Any) -> None:
+    """
+    Set a nested field value using dot notation.
+
+    Args:
+        doc: The document to update
+        field_path: Dot-notation field path (e.g., "a.b.c")
+        value: The value to set
+    """
+    parts = field_path.split(".")
+    current = doc
+
+    for i, part in enumerate(parts[:-1]):
+        if part not in current:
+            current[part] = {}
+        current = current[part]
+
+    current[parts[-1]] = value
 
 
 def _get_json_function_prefix(jsonb_supported: bool) -> str:
@@ -423,7 +808,9 @@ class QueryHelper:
         doc_id: Any,
         update_spec: Dict[str, Any],
         original_doc: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        array_filters: Optional[List[Dict[str, Any]]] = None,
+        query_filter: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[Dict[str, Any], bool]:
         """
         Helper method for updating documents.
 
@@ -434,9 +821,11 @@ class QueryHelper:
             doc_id (Any): The ID of the document to update (can be ObjectId, int, etc.).
             update_spec (Dict[str, Any]): The update specification.
             original_doc (Dict[str, Any]): The original document before the update.
+            array_filters (List[Dict[str, Any]], optional): Filter documents for array positional operators.
+            query_filter (Dict[str, Any], optional): The query filter for $ operator.
 
         Returns:
-            Dict[str, Any]: The updated document.
+            Tuple[Dict[str, Any], bool]: The updated document and whether it was modified.
         """
         # Validate $inc and $mul operations before choosing implementation
         # This ensures consistent behavior between SQL and Python implementations
@@ -455,21 +844,32 @@ class QueryHelper:
         # Respect the kill switch - force Python fallback if enabled
         if _FORCE_FALLBACK:
             return self._perform_python_update(
-                doc_id, update_spec, original_doc
+                doc_id, update_spec, original_doc, array_filters, query_filter
             )
 
         # Try to use SQL-based updates for simple operations
+        # Note: SQL updates don't support array_filters or positional operators, so fall back to Python if provided
+        if array_filters:
+            return self._perform_python_update(
+                doc_id, update_spec, original_doc, array_filters, query_filter
+            )
+
         if self._can_use_sql_updates(update_spec, doc_id):
             # Use enhanced SQL update with json_insert/json_replace when possible
             try:
-                return self._perform_enhanced_sql_update(doc_id, update_spec)
+                updated_doc = self._perform_enhanced_sql_update(
+                    doc_id, update_spec
+                )
+                # For SQL updates, assume modified if we got a result
+                return updated_doc, updated_doc != original_doc
             except Exception:
                 # If enhanced update fails, fall back to standard SQL update
-                return self._perform_sql_update(doc_id, update_spec)
+                updated_doc = self._perform_sql_update(doc_id, update_spec)
+                return updated_doc, updated_doc != original_doc
         else:
             # Fall back to Python-based updates for complex operations
             return self._perform_python_update(
-                doc_id, update_spec, original_doc
+                doc_id, update_spec, original_doc, array_filters, query_filter
             )
 
     def _can_use_sql_updates(
@@ -509,6 +909,21 @@ class QueryHelper:
             if isinstance(op, dict)
             for val in op.values()
         )
+
+        # Check for positional operators in field paths (requires Python fallback)
+        has_positional_operators = False
+        for op, value in update_spec.items():
+            if isinstance(value, dict):
+                for field_path in value.keys():
+                    if "$" in field_path:
+                        has_positional_operators = True
+                        break
+            if has_positional_operators:
+                break
+
+        # Positional operators require Python fallback
+        if has_positional_operators:
+            return False
 
         # Check for complex $push modifiers that require Python
         has_complex_push = False
@@ -1118,7 +1533,9 @@ class QueryHelper:
         doc_id: Any,
         update_spec: Dict[str, Any],
         original_doc: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        array_filters: Optional[List[Dict[str, Any]]] = None,
+        query_filter: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[Dict[str, Any], bool]:
         """
         Perform update operations using Python-based logic.
 
@@ -1128,16 +1545,26 @@ class QueryHelper:
                                           operations to perform.
             original_doc (Dict[str, Any]): The original document before applying
                                            the updates.
+            array_filters (List[Dict[str, Any]], optional): Filter documents for array positional operators.
+            query_filter (Dict[str, Any], optional): The query filter for $ operator.
 
         Returns:
-            Dict[str, Any]: The updated document.
+            Tuple[Dict[str, Any], bool]: The updated document and whether it was modified.
         """
         doc_to_update = deepcopy(original_doc)
 
         for op, value in update_spec.items():
             match op:
                 case "$set":
-                    doc_to_update.update(value)
+                    # Handle positional operators in field paths
+                    for k, v in value.items():
+                        if "$" in k:
+                            # Use positional update
+                            _apply_positional_update(
+                                doc_to_update, k, v, array_filters, query_filter
+                            )
+                        else:
+                            _set_nested_field(doc_to_update, k, v)
                 case "$unset":
                     for k in value:
                         doc_to_update.pop(k, None)
@@ -1194,6 +1621,22 @@ class QueryHelper:
                             doc_to_update[k] = [
                                 item for item in doc_to_update[k] if item != v
                             ]
+                case "$pullAll":
+                    for k, v in value.items():
+                        if k in doc_to_update and isinstance(v, (list, tuple)):
+                            # Only process if the field is a list
+                            if isinstance(doc_to_update[k], list):
+                                # Remove all instances of values in the array
+                                # Use list instead of set to handle unhashable types
+                                values_to_remove = list(v)
+                                new_list = [
+                                    item
+                                    for item in doc_to_update[k]
+                                    if item not in values_to_remove
+                                ]
+                                # Only update if the list actually changed
+                                if new_list != doc_to_update[k]:
+                                    doc_to_update[k] = new_list
                 case "$pop":
                     for k, v in value.items():
                         if v == 1:
@@ -1263,7 +1706,10 @@ class QueryHelper:
                 (neosqlite_json_dumps(doc_to_update), int_doc_id),
             )
 
-        return doc_to_update
+        # Check if document was actually modified
+        was_modified = doc_to_update != original_doc
+
+        return doc_to_update, was_modified
 
     def _internal_replace(self, doc_id: Any, replacement: Dict[str, Any]):
         """

@@ -6,12 +6,12 @@ A modular, comprehensive API compatibility testing framework for comparing NeoSQ
 
 This package tests NeoSQLite's MongoDB API compatibility by running the same operations against both NeoSQLite and a real MongoDB instance, then comparing the results.
 
-## Test Results (v1.6.1+)
+## Test Results
 
 | Metric | Count |
 |--------|-------|
-| **Total Tests** | 282 |
-| **Passed** | 278 |
+| **Total Tests** | 304 |
+| **Passed** | 300 |
 | **Skipped** | 4 (by design) |
 | **Failed** | 0 |
 | **Compatibility** | **100%** |

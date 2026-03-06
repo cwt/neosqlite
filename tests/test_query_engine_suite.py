@@ -536,22 +536,25 @@ def test_query_helper_update_operations():
         doc_id = helper._internal_insert(doc)
 
         # Test _internal_update with SQL updates
-        updated_doc = helper._internal_update(
+        updated_doc, modified = helper._internal_update(
             doc_id, {"$set": {"value": 100}}, doc
         )
+        assert modified
         assert updated_doc["value"] == 100
 
         # Test _internal_update with Python updates (unsupported operation)
-        updated_doc = helper._internal_update(
+        updated_doc, modified = helper._internal_update(
             doc_id, {"$push": {"tags": "c"}}, updated_doc
         )
+        assert modified
         assert "c" in updated_doc["tags"]
 
         # Test _internal_update with upsert (doc_id = 0)
         new_doc = {"name": "new"}
-        updated_doc = helper._internal_update(
+        updated_doc, modified = helper._internal_update(
             0, {"$set": {"value": 50}}, new_doc
         )
+        assert modified
         assert updated_doc["value"] == 50
         assert "_id" not in updated_doc  # Should not have _id for upsert
 
@@ -1067,33 +1070,38 @@ def test_query_helper_complex_update_scenarios():
         doc_id = helper._internal_insert(doc)
 
         # Test _internal_update with $inc
-        updated_doc = helper._internal_update(
+        updated_doc, modified = helper._internal_update(
             doc_id, {"$inc": {"count": 3}}, doc
         )
+        assert modified
         assert updated_doc["count"] == 8
 
         # Test _internal_update with $mul
-        updated_doc = helper._internal_update(
+        updated_doc, modified = helper._internal_update(
             doc_id, {"$mul": {"value": 2}}, updated_doc
         )
+        assert modified
         assert updated_doc["value"] == 20
 
         # Test _internal_update with $min
-        updated_doc = helper._internal_update(
+        updated_doc, modified = helper._internal_update(
             doc_id, {"$min": {"value": 15}}, updated_doc
         )
+        assert modified
         assert updated_doc["value"] == 15  # min(20, 15) = 15
 
         # Test _internal_update with $max
-        updated_doc = helper._internal_update(
+        updated_doc, modified = helper._internal_update(
             doc_id, {"$max": {"value": 25}}, updated_doc
         )
+        assert modified
         assert updated_doc["value"] == 25  # max(15, 25) = 25
 
         # Test _internal_update with $unset
-        updated_doc = helper._internal_update(
+        updated_doc, modified = helper._internal_update(
             doc_id, {"$unset": {"name": ""}}, updated_doc
         )
+        assert modified
         assert "name" not in updated_doc
 
 

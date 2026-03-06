@@ -783,13 +783,14 @@ def test_internal_update_sql_path():
 
     # Update using SQL-based path (simple operations)
     original_doc = collection.find_one({"_id": doc_id})
-    result = collection.query_engine.helpers._internal_update(
+    result, modified = collection.query_engine.helpers._internal_update(
         doc_id,
         {"$set": {"name": "Bob"}, "$inc": {"age": 5}, "$mul": {"score": 1.1}},
         original_doc,
     )
 
     # Verify the update worked
+    assert modified
     assert result["name"] == "Bob"
     assert result["age"] == 35
     assert result["score"] == 110  # 100 * 1.1
@@ -807,11 +808,12 @@ def test_internal_update_python_path():
 
     # Update using Python-based path (complex operations)
     original_doc = collection.find_one({"_id": doc_id})
-    result = collection.query_engine.helpers._internal_update(
+    result, modified = collection.query_engine.helpers._internal_update(
         doc_id, {"$push": {"items": 4}, "$set": {"name": "Bob"}}, original_doc
     )
 
     # Verify the update worked
+    assert modified
     assert result["name"] == "Bob"
     assert result["items"] == [1, 2, 3, 4]
 
@@ -828,7 +830,7 @@ def test_internal_update_mixed_operations():
 
     # Update with mixed operations (should fall back to Python)
     original_doc = collection.find_one({"_id": doc_id})
-    result = collection.query_engine.helpers._internal_update(
+    result, modified = collection.query_engine.helpers._internal_update(
         doc_id,
         {
             "$set": {"name": "Bob"},
@@ -1103,64 +1105,100 @@ def test_perform_python_update_operations():
 
         # Test $set operation
         update_spec = {"$set": {"age": 30, "city": "New York"}}
-        result = helper._perform_python_update(doc_id, update_spec, doc)
+        result, modified = helper._perform_python_update(
+            doc_id, update_spec, doc
+        )
+        assert modified
         assert result["age"] == 30
         assert result["city"] == "New York"
 
         # Test $unset operation
         update_spec = {"$unset": {"city": ""}}
-        result = helper._perform_python_update(doc_id, update_spec, result)
+        result, modified = helper._perform_python_update(
+            doc_id, update_spec, result
+        )
+        assert modified
         assert "city" not in result
 
         # Test $inc operation
         update_spec = {"$inc": {"age": 5}}
-        result = helper._perform_python_update(doc_id, update_spec, result)
+        result, modified = helper._perform_python_update(
+            doc_id, update_spec, result
+        )
+        assert modified
         assert result["age"] == 35
 
         # Test $push operation
         update_spec = {"$push": {"scores": 90}}
-        result = helper._perform_python_update(doc_id, update_spec, result)
+        result, modified = helper._perform_python_update(
+            doc_id, update_spec, result
+        )
+        assert modified
         assert result["scores"] == [80, 85, 90]
 
         # Test $pull operation
         update_spec = {"$pull": {"scores": 85}}
-        result = helper._perform_python_update(doc_id, update_spec, result)
+        result, modified = helper._perform_python_update(
+            doc_id, update_spec, result
+        )
+        assert modified
         assert result["scores"] == [80, 90]
 
         # Test $pop operation (pop last element)
         update_spec = {"$pop": {"scores": 1}}
-        result = helper._perform_python_update(doc_id, update_spec, result)
+        result, modified = helper._perform_python_update(
+            doc_id, update_spec, result
+        )
+        assert modified
         assert result["scores"] == [80]
 
         # Test $pop operation (pop first element)
         update_spec = {"$pop": {"scores": -1}}
-        result = helper._perform_python_update(doc_id, update_spec, result)
+        result, modified = helper._perform_python_update(
+            doc_id, update_spec, result
+        )
+        assert modified
         assert result["scores"] == []
 
         # Test $rename operation
         update_spec = {"$rename": {"name": "full_name"}}
-        result = helper._perform_python_update(doc_id, update_spec, result)
+        result, modified = helper._perform_python_update(
+            doc_id, update_spec, result
+        )
+        assert modified
         assert "name" not in result
         assert result["full_name"] == "Test"
 
         # Test $mul operation
         update_spec = {"$mul": {"age": 2}}
-        result = helper._perform_python_update(doc_id, update_spec, result)
+        result, modified = helper._perform_python_update(
+            doc_id, update_spec, result
+        )
+        assert modified
         assert result["age"] == 70
 
         # Test $min operation
         update_spec = {"$min": {"age": 50}}
-        result = helper._perform_python_update(doc_id, update_spec, result)
+        result, modified = helper._perform_python_update(
+            doc_id, update_spec, result
+        )
+        assert modified
         assert result["age"] == 50
 
         # Test $max operation
         update_spec = {"$max": {"age": 60}}
-        result = helper._perform_python_update(doc_id, update_spec, result)
+        result, modified = helper._perform_python_update(
+            doc_id, update_spec, result
+        )
+        assert modified
         assert result["age"] == 60
 
         # Test $currentDate operation
         update_spec = {"$currentDate": {"lastModified": True}}
-        result = helper._perform_python_update(doc_id, update_spec, result)
+        result, modified = helper._perform_python_update(
+            doc_id, update_spec, result
+        )
+        assert modified
         assert "lastModified" in result
         # Check that it's an ISO datetime string
         from datetime import datetime
@@ -1170,11 +1208,17 @@ def test_perform_python_update_operations():
         # Test $setOnInsert operation (only applies on upsert, doc_id=0)
         update_spec = {"$setOnInsert": {"createdAt": "2023-01-01"}}
         # For existing doc (doc_id != 0), should not apply
-        result = helper._perform_python_update(doc_id, update_spec, result)
+        result, modified = helper._perform_python_update(
+            doc_id, update_spec, result
+        )
+        assert not modified  # No changes for non-upsert
         assert "createdAt" not in result
         # For upsert (doc_id == 0), should apply
         upsert_doc = {"name": "New"}
-        result = helper._perform_python_update(0, update_spec, upsert_doc)
+        result, modified = helper._perform_python_update(
+            0, update_spec, upsert_doc
+        )
+        assert modified
         assert result["createdAt"] == "2023-01-01"
 
         # Test unsupported operation (should raise MalformedQueryException)

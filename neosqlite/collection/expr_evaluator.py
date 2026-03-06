@@ -1189,6 +1189,39 @@ class ExprEvaluator:
                 )
                 sql = f"(instr({string_sql}, {substr_sql}) - 1)"
                 return sql, substr_params + string_params
+            case "$strcasecmp":
+                # Case-insensitive string comparison using SQLite's COLLATE NOCASE
+                if len(operands) != 2:
+                    raise ValueError("$strcasecmp requires exactly 2 operands")
+                str1_sql, str1_params = self._convert_operand_to_sql(
+                    operands[0]
+                )
+                str2_sql, str2_params = self._convert_operand_to_sql(
+                    operands[1]
+                )
+                # Use CASE expression to return -1, 0, or 1
+                sql = f"""
+                    CASE
+                        WHEN {str1_sql} COLLATE NOCASE < {str2_sql} COLLATE NOCASE THEN -1
+                        WHEN {str1_sql} COLLATE NOCASE > {str2_sql} COLLATE NOCASE THEN 1
+                        ELSE 0
+                    END
+                """
+                return sql, str1_params + str2_params
+            case "$substrBytes":
+                # Substring by bytes - SQLite's substr works on characters, not bytes
+                # For ASCII this is the same, for UTF-8 we need special handling
+                if len(operands) != 3:
+                    raise ValueError("$substrBytes requires exactly 3 operands")
+                str_sql, str_params = self._convert_operand_to_sql(operands[0])
+                start_sql, start_params = self._convert_operand_to_sql(
+                    operands[1]
+                )
+                len_sql, len_params = self._convert_operand_to_sql(operands[2])
+                # Use substr - note this works on characters in SQLite
+                # For true byte-level operations, would need hex/unescape
+                sql = f"substr({str_sql}, {start_sql} + 1, {len_sql})"
+                return sql, str_params + start_params + len_params
             case "$regexMatch":
                 if not isinstance(operands, dict) or "input" not in operands:
                     raise ValueError("$regexMatch requires 'input' and 'regex'")
@@ -1839,6 +1872,10 @@ class ExprEvaluator:
                 raise NotImplementedError(
                     "$toObjectId not supported in SQL tier (use Python fallback)"
                 )
+            case "$isNumber":
+                # Check if value is a number (not null, not string, not bool, not object/array)
+                # Use typeof to check - 'integer' or 'real' are numbers
+                sql = f"CASE WHEN typeof({value_sql}) IN ('integer', 'real') THEN 1 ELSE 0 END"
             case "$convert":
                 # $convert is complex - requires 'to' field specification
                 # Fall back to Python
@@ -2004,6 +2041,11 @@ class ExprEvaluator:
                 | "$arrayElemAt"
                 | "$first"
                 | "$last"
+                | "$firstN"
+                | "$lastN"
+                | "$maxN"
+                | "$minN"
+                | "$sortArray"
                 | "$slice"
                 | "$indexOfArray"
                 | "$sum"
@@ -2041,6 +2083,9 @@ class ExprEvaluator:
                 | "$replaceOne"
                 | "$strLenCP"
                 | "$indexOfCP"
+                | "$strcasecmp"
+                | "$substrBytes"
+                | "$substrCP"
             ):
                 return self._evaluate_string_python(
                     operator, operands, document
@@ -2065,11 +2110,24 @@ class ExprEvaluator:
                     operator, operands, document
                 )
             case (
+                "$dateFromString"
+                | "$dateToString"
+                | "$dateFromParts"
+                | "$dateToParts"
+                | "$dateTrunc"
+            ):
+                return self._evaluate_date_arithmetic_python(
+                    operator, operands, document
+                )
+            case (
                 "$mergeObjects"
                 | "$getField"
                 | "$setField"
                 | "$unsetField"
                 | "$objectToArray"
+                | "$let"
+                | "$literal"
+                | "$rand"
             ):
                 return self._evaluate_object_python(
                     operator, operands, document
@@ -2083,6 +2141,7 @@ class ExprEvaluator:
                 | "$toLong"
                 | "$toDecimal"
                 | "$toObjectId"
+                | "$isNumber"
                 | "$convert"
             ):
                 return self._evaluate_type_python(operator, operands, document)
@@ -2571,6 +2630,142 @@ class ExprEvaluator:
                 if isinstance(array, list) and len(array) > 0:
                     return array[-1]
                 return None
+            case "$firstN":
+                # Get first N elements from array
+                # MongoDB syntax: { $firstN: { input: <array>, n: <number> } }
+                if isinstance(operands, dict):
+                    array_operand = operands.get("input")
+                    n_operand = operands.get("n")
+                elif isinstance(operands, list) and len(operands) == 2:
+                    array_operand = operands[0]
+                    n_operand = operands[1]
+                else:
+                    raise ValueError("$firstN requires input array and n count")
+
+                array = self._evaluate_operand_python(array_operand, document)
+                n = self._evaluate_operand_python(n_operand, document)
+
+                if not isinstance(array, list) or n is None:
+                    return []
+
+                return array[: int(n)]
+            case "$lastN":
+                # Get last N elements from array
+                # MongoDB syntax: { $lastN: { input: <array>, n: <number> } }
+                if isinstance(operands, dict):
+                    array_operand = operands.get("input")
+                    n_operand = operands.get("n")
+                elif isinstance(operands, list) and len(operands) == 2:
+                    array_operand = operands[0]
+                    n_operand = operands[1]
+                else:
+                    raise ValueError("$lastN requires input array and n count")
+
+                array = self._evaluate_operand_python(array_operand, document)
+                n = self._evaluate_operand_python(n_operand, document)
+
+                if not isinstance(array, list) or n is None:
+                    return []
+
+                n_int = int(n)
+                if n_int <= 0:
+                    return []
+                return array[-n_int:] if n_int < len(array) else array
+            case "$maxN":
+                # Get maximum N elements from array (sorted descending, take first N)
+                # MongoDB syntax: { $maxN: { input: <array>, n: <number> } }
+                if isinstance(operands, dict):
+                    array_operand = operands.get("input")
+                    n_operand = operands.get("n")
+                elif isinstance(operands, list) and len(operands) == 2:
+                    array_operand = operands[0]
+                    n_operand = operands[1]
+                else:
+                    raise ValueError("$maxN requires input array and n count")
+
+                array = self._evaluate_operand_python(array_operand, document)
+                n = self._evaluate_operand_python(n_operand, document)
+
+                if not isinstance(array, list) or n is None:
+                    return []
+
+                # Sort descending and take first N
+                try:
+                    sorted_array = sorted(array, reverse=True)
+                    return sorted_array[: int(n)]
+                except TypeError:
+                    return []
+            case "$minN":
+                # Get minimum N elements from array (sorted ascending, take first N)
+                # MongoDB syntax: { $minN: { input: <array>, n: <number> } }
+                if isinstance(operands, dict):
+                    array_operand = operands.get("input")
+                    n_operand = operands.get("n")
+                elif isinstance(operands, list) and len(operands) == 2:
+                    array_operand = operands[0]
+                    n_operand = operands[1]
+                else:
+                    raise ValueError("$minN requires input array and n count")
+
+                array = self._evaluate_operand_python(array_operand, document)
+                n = self._evaluate_operand_python(n_operand, document)
+
+                if not isinstance(array, list) or n is None:
+                    return []
+
+                # Sort ascending and take first N
+                try:
+                    sorted_array = sorted(array)
+                    return sorted_array[: int(n)]
+                except TypeError:
+                    return []
+            case "$sortArray":
+                # Sort array elements
+                # MongoDB syntax: { $sortArray: { input: <array>, sortBy: { <field>: <direction> } } }
+                if isinstance(operands, dict):
+                    array_operand = operands.get("input")
+                    sort_by = operands.get("sortBy")
+                elif isinstance(operands, list) and len(operands) >= 1:
+                    array_operand = operands[0]
+                    sort_by = operands[1] if len(operands) > 1 else None
+                else:
+                    raise ValueError("$sortArray requires input array")
+
+                array = self._evaluate_operand_python(array_operand, document)
+
+                if not isinstance(array, list):
+                    return []
+
+                # If no sortBy specified, sort primitive values
+                if sort_by is None:
+                    try:
+                        return sorted(array)
+                    except TypeError:
+                        return array
+
+                # Sort by field (for array of objects)
+                if isinstance(sort_by, dict):
+                    # Get first field and direction
+                    sort_field = next(iter(sort_by.keys()))
+                    direction = sort_by[sort_field]
+                    reverse = direction == -1
+
+                    try:
+
+                        def sort_key(x: Any) -> Any:
+                            return (
+                                x.get(sort_field) if isinstance(x, dict) else x
+                            )
+
+                        return sorted(
+                            array,
+                            key=sort_key,  # type: ignore[arg-type]
+                            reverse=reverse,
+                        )
+                    except (TypeError, AttributeError):
+                        return array
+
+                return array
             case "$slice":
                 if not isinstance(operands, list) or len(operands) < 2:
                     raise ValueError("$slice requires array and count/position")
@@ -2643,6 +2838,9 @@ class ExprEvaluator:
                     return set(set1).issubset(set(set2))
                 return False
             case "$anyElementTrue":
+                # Handle both list and single operand formats
+                if not isinstance(operands, list):
+                    operands = [operands]
                 if len(operands) != 1:
                     raise ValueError(
                         "$anyElementTrue requires exactly 1 operand"
@@ -2652,6 +2850,9 @@ class ExprEvaluator:
                     return any(array)
                 return False
             case "$allElementsTrue":
+                # Handle both list and single operand formats
+                if not isinstance(operands, list):
+                    operands = [operands]
                 if len(operands) != 1:
                     raise ValueError(
                         "$allElementsTrue requires exactly 1 operand"
@@ -3009,6 +3210,40 @@ class ExprEvaluator:
                     return -1
                 idx = str(string).find(str(substr))
                 return idx
+            case "$strcasecmp":
+                # Case-insensitive string comparison
+                if len(operands) != 2:
+                    raise ValueError("$strcasecmp requires exactly 2 operands")
+                str1 = self._evaluate_operand_python(operands[0], document)
+                str2 = self._evaluate_operand_python(operands[1], document)
+                if str1 is None or str2 is None:
+                    return None
+                # Return -1, 0, or 1 like MongoDB
+                s1 = str(str1).lower()
+                s2 = str(str2).lower()
+                if s1 < s2:
+                    return -1
+                elif s1 > s2:
+                    return 1
+                else:
+                    return 0
+            case "$substrBytes":
+                # Substring by bytes (for UTF-8 encoded strings)
+                if len(operands) != 3:
+                    raise ValueError("$substrBytes requires exactly 3 operands")
+                string = self._evaluate_operand_python(operands[0], document)
+                start = self._evaluate_operand_python(operands[1], document)
+                length = self._evaluate_operand_python(operands[2], document)
+                if string is None or start is None or length is None:
+                    return None
+                # Encode to UTF-8, slice by bytes, decode back
+                encoded = str(string).encode("utf-8")
+                sliced = encoded[int(start) : int(start) + int(length)]
+                try:
+                    return sliced.decode("utf-8")
+                except UnicodeDecodeError:
+                    # If we cut in the middle of a multi-byte character, return what we can
+                    return sliced.decode("utf-8", errors="ignore")
             case "$regexFind":
                 if not isinstance(operands, dict) or "input" not in operands:
                     raise ValueError("$regexFind requires 'input' and 'regex'")
@@ -3229,72 +3464,425 @@ class ExprEvaluator:
 
                 # Return datetime object (MongoDB compatibility)
                 return dt
-
             case "$dateDiff":
                 # Handle MongoDB dict format: {startDate, endDate, unit}
                 if isinstance(operands, dict):
-                    operands = [
-                        operands.get("startDate"),
-                        operands.get("endDate"),
-                        operands.get("unit", "day"),
-                    ]
-
-                if len(operands) < 2 or len(operands) > 3:
-                    raise ValueError(
-                        "$dateDiff requires 2-3 operands: [date1, date2, unit]"
+                    start_operand = operands.get("startDate")
+                    end_operand = operands.get("endDate")
+                    unit = operands.get("unit", "day")
+                    # Evaluate operands
+                    start = self._evaluate_operand_python(
+                        start_operand, document
+                    )
+                    end = self._evaluate_operand_python(end_operand, document)
+                else:
+                    if len(operands) < 2:
+                        raise ValueError(
+                            "$dateDiff requires startDate and endDate"
+                        )
+                    start = self._evaluate_operand_python(operands[0], document)
+                    end = self._evaluate_operand_python(operands[1], document)
+                    unit = (
+                        self._evaluate_operand_python(operands[2], document)
+                        if len(operands) > 2
+                        else "day"
                     )
 
-                date1 = self._evaluate_operand_python(operands[0], document)
-                date2 = self._evaluate_operand_python(operands[1], document)
-                unit = operands[2] if len(operands) > 2 else "day"
-
-                if date1 is None or date2 is None:
+                if start is None or end is None:
                     return None
 
                 # Parse dates
-                def parse_date(val):
-                    if isinstance(val, str):
-                        try:
-                            return datetime.fromisoformat(
-                                val.replace("Z", "+00:00")
-                            )
-                        except ValueError:
-                            return None
-                    elif isinstance(val, datetime):
-                        return val
-                    return None
+                if isinstance(start, str):
+                    try:
+                        start = datetime.fromisoformat(
+                            start.replace("Z", "+00:00")
+                        )
+                    except ValueError:
+                        return None
+                if isinstance(end, str):
+                    try:
+                        end = datetime.fromisoformat(end.replace("Z", "+00:00"))
+                    except ValueError:
+                        return None
 
-                dt1 = parse_date(date1)
-                dt2 = parse_date(date2)
-
-                if dt1 is None or dt2 is None:
+                if not isinstance(start, datetime) or not isinstance(
+                    end, datetime
+                ):
                     return None
 
                 # Calculate difference
-                delta = dt2 - dt1
+                delta = end - start
 
-                # Convert to requested unit
-                match unit:
-                    case "day":
-                        return int(delta.days)
-                    case "week":
-                        return int(delta.days // 7)
-                    case "month":
-                        # Approximate months
-                        return int(
-                            (dt2.year - dt1.year) * 12 + (dt2.month - dt1.month)
+                if unit == "year":
+                    return end.year - start.year
+                elif unit == "month":
+                    return (end.year - start.year) * 12 + (
+                        end.month - start.month
+                    )
+                elif unit == "day":
+                    return delta.days
+                elif unit == "hour":
+                    return int(delta.total_seconds() / 3600)
+                elif unit == "minute":
+                    return int(delta.total_seconds() / 60)
+                elif unit == "second":
+                    return int(delta.total_seconds())
+                elif unit == "millisecond":
+                    return int(delta.total_seconds() * 1000)
+                elif unit == "week":
+                    return delta.days // 7
+                else:
+                    return delta.days
+            case "$dateFromString":
+                # Handle MongoDB dict format: {dateString, timezone, onError, onNull}
+                if isinstance(operands, dict):
+                    date_string_operand = operands.get("dateString")
+                    timezone = operands.get("timezone")
+                    on_error = operands.get("onError")
+                    on_null = operands.get("onNull")
+                    # Evaluate the dateString operand
+                    date_string = self._evaluate_operand_python(
+                        date_string_operand, document
+                    )
+                else:
+                    if len(operands) < 1:
+                        raise ValueError("$dateFromString requires dateString")
+                    date_string = self._evaluate_operand_python(
+                        operands[0], document
+                    )
+                    timezone = (
+                        self._evaluate_operand_python(operands[1], document)
+                        if len(operands) > 1
+                        else None
+                    )
+                    on_error = (
+                        self._evaluate_operand_python(operands[2], document)
+                        if len(operands) > 2
+                        else None
+                    )
+                    on_null = (
+                        self._evaluate_operand_python(operands[3], document)
+                        if len(operands) > 3
+                        else None
+                    )
+
+                if date_string is None:
+                    return on_null
+
+                try:
+                    # If already a datetime, return it
+                    if isinstance(date_string, datetime):
+                        return date_string
+
+                    # Parse ISO 8601 date string
+                    if isinstance(date_string, str):
+                        # Handle various ISO 8601 formats
+                        date_string = date_string.replace("Z", "+00:00")
+                        dt = datetime.fromisoformat(date_string)
+
+                        # Handle timezone if specified
+                        if timezone and dt.tzinfo is None:
+                            # Simple timezone handling (e.g., "+05:30")
+                            try:
+                                from datetime import timezone as tz
+
+                                if str(timezone).startswith("+") or str(
+                                    timezone
+                                ).startswith("-"):
+                                    tz_str = str(timezone)
+                                    hours = int(tz_str[1:3])
+                                    minutes = (
+                                        int(tz_str[4:6])
+                                        if len(tz_str) > 4
+                                        else 0
+                                    )
+                                    offset_seconds = hours * 3600 + minutes * 60
+                                    if tz_str[0] == "-":
+                                        offset_seconds = -offset_seconds
+                                    dt = dt.replace(tzinfo=tz.utc)  # Simplified
+                            except (ValueError, TypeError, AttributeError):
+                                pass
+
+                        return dt
+                    return None
+                except Exception:
+                    return on_error
+            case "$dateToString":
+                # Handle MongoDB dict format: {format, date, timezone}
+                if isinstance(operands, dict):
+                    fmt = operands.get("format", "%Y-%m-%d")
+                    date_operand = operands.get("date")
+                    timezone = operands.get("timezone")
+                    # Evaluate the date operand
+                    date_val = self._evaluate_operand_python(
+                        date_operand, document
+                    )
+                else:
+                    if len(operands) < 2:
+                        raise ValueError(
+                            "$dateToString requires format and date"
                         )
-                    case "year":
-                        return int(dt2.year - dt1.year)
-                    case "hour":
-                        return int(delta.total_seconds() // 3600)
-                    case "minute":
-                        return int(delta.total_seconds() // 60)
-                    case "second":
-                        return int(delta.total_seconds())
-                    case _:
-                        raise ValueError(f"Unknown unit: {unit}")
+                    fmt = self._evaluate_operand_python(operands[0], document)
+                    date_val = self._evaluate_operand_python(
+                        operands[1], document
+                    )
+                    timezone = operands[2] if len(operands) > 2 else None
 
+                if date_val is None:
+                    return None
+
+                # Parse date
+                if isinstance(date_val, str):
+                    try:
+                        date_val = datetime.fromisoformat(
+                            date_val.replace("Z", "+00:00")
+                        )
+                    except ValueError:
+                        return None
+
+                if not isinstance(date_val, datetime):
+                    return None
+
+                # Convert MongoDB format to Python strftime format
+                # MongoDB uses %Y, %m, %d, %H, %M, %S, %L (milliseconds), %Z (timezone)
+                python_fmt = fmt.replace("%L", "%f")[
+                    :19
+                ]  # %f gives microseconds, we'll truncate
+
+                result = date_val.strftime(python_fmt)
+
+                # Handle milliseconds (%L)
+                if "%L" in fmt:
+                    ms = date_val.microsecond // 1000
+                    result = result.replace(
+                        str(date_val.microsecond)[:3].zfill(3), str(ms).zfill(3)
+                    )
+
+                return result
+            case "$dateFromParts":
+                # Handle MongoDB dict format: {year, month, day, hour, minute, second, millisecond, timezone}
+                if not isinstance(operands, dict):
+                    raise ValueError("$dateFromParts requires a dictionary")
+
+                year = self._evaluate_operand_python(
+                    operands.get("year"), document
+                )
+                month = (
+                    self._evaluate_operand_python(
+                        operands.get("month"), document
+                    )
+                    or 1
+                )
+                day = (
+                    self._evaluate_operand_python(operands.get("day"), document)
+                    or 1
+                )
+                hour = (
+                    self._evaluate_operand_python(
+                        operands.get("hour"), document
+                    )
+                    or 0
+                )
+                minute = (
+                    self._evaluate_operand_python(
+                        operands.get("minute"), document
+                    )
+                    or 0
+                )
+                second = (
+                    self._evaluate_operand_python(
+                        operands.get("second"), document
+                    )
+                    or 0
+                )
+                millisecond = (
+                    self._evaluate_operand_python(
+                        operands.get("millisecond"), document
+                    )
+                    or 0
+                )
+                timezone = operands.get("timezone")
+
+                if year is None:
+                    return None
+
+                try:
+                    dt = datetime(
+                        year=int(year),
+                        month=int(month),
+                        day=int(day),
+                        hour=int(hour),
+                        minute=int(minute),
+                        second=int(second),
+                        microsecond=(
+                            int(millisecond) * 1000 if millisecond else 0
+                        ),
+                    )
+                    return dt
+                except (ValueError, TypeError):
+                    return None
+            case "$dateToParts":
+                # Handle MongoDB dict format: {date, timezone, unit}
+                if isinstance(operands, dict):
+                    date_operand = operands.get("date")
+                    timezone = operands.get("timezone")
+                    unit = operands.get("unit")
+                    # Evaluate the date operand
+                    date_val = self._evaluate_operand_python(
+                        date_operand, document
+                    )
+                else:
+                    if len(operands) < 1:
+                        raise ValueError("$dateToParts requires date")
+                    date_val = self._evaluate_operand_python(
+                        operands[0], document
+                    )
+                    timezone = (
+                        self._evaluate_operand_python(operands[1], document)
+                        if len(operands) > 1
+                        else None
+                    )
+                    unit = (
+                        self._evaluate_operand_python(operands[2], document)
+                        if len(operands) > 2
+                        else None
+                    )
+
+                if date_val is None:
+                    return None
+
+                # Parse date
+                if isinstance(date_val, str):
+                    try:
+                        date_val = datetime.fromisoformat(
+                            date_val.replace("Z", "+00:00")
+                        )
+                    except ValueError:
+                        return None
+
+                if not isinstance(date_val, datetime):
+                    return None
+
+                # Build parts dictionary
+                parts = {
+                    "year": date_val.year,
+                    "month": date_val.month,
+                    "day": date_val.day,
+                    "hour": date_val.hour,
+                    "minute": date_val.minute,
+                    "second": date_val.second,
+                    "millisecond": date_val.microsecond // 1000,
+                }
+
+                # If unit is specified, only return parts up to that unit
+                if unit == "year":
+                    return {"year": parts["year"]}
+                elif unit == "month":
+                    return {"year": parts["year"], "month": parts["month"]}
+                elif unit == "day":
+                    return {
+                        "year": parts["year"],
+                        "month": parts["month"],
+                        "day": parts["day"],
+                    }
+                elif unit == "hour":
+                    return {
+                        k: v
+                        for k, v in parts.items()
+                        if k in ["year", "month", "day", "hour"]
+                    }
+                elif unit == "minute":
+                    return {
+                        k: v
+                        for k, v in parts.items()
+                        if k in ["year", "month", "day", "hour", "minute"]
+                    }
+                elif unit == "second":
+                    return {
+                        k: v
+                        for k, v in parts.items()
+                        if k
+                        in ["year", "month", "day", "hour", "minute", "second"]
+                    }
+
+                return parts
+            case "$dateTrunc":
+                # Handle MongoDB dict format: {date, unit, startOfWeek}
+                if isinstance(operands, dict):
+                    date_operand = operands.get("date")
+                    unit = operands.get("unit", "day")
+                    # Evaluate the date operand
+                    date_val = self._evaluate_operand_python(
+                        date_operand, document
+                    )
+                else:
+                    if len(operands) < 2:
+                        raise ValueError("$dateTrunc requires date and unit")
+                    date_val = self._evaluate_operand_python(
+                        operands[0], document
+                    )
+                    unit = self._evaluate_operand_python(operands[1], document)
+
+                if date_val is None:
+                    return None
+
+                # Parse date
+                if isinstance(date_val, str):
+                    try:
+                        date_val = datetime.fromisoformat(
+                            date_val.replace("Z", "+00:00")
+                        )
+                    except ValueError:
+                        return None
+
+                if not isinstance(date_val, datetime):
+                    return None
+
+                # Truncate based on unit
+                if unit == "year":
+                    return date_val.replace(
+                        month=1,
+                        day=1,
+                        hour=0,
+                        minute=0,
+                        second=0,
+                        microsecond=0,
+                    )
+                elif unit == "quarter":
+                    # Round down to start of quarter
+                    quarter_month = ((date_val.month - 1) // 3) * 3 + 1
+                    return date_val.replace(
+                        month=quarter_month,
+                        day=1,
+                        hour=0,
+                        minute=0,
+                        second=0,
+                        microsecond=0,
+                    )
+                elif unit == "month":
+                    return date_val.replace(
+                        day=1, hour=0, minute=0, second=0, microsecond=0
+                    )
+                elif unit == "week":
+                    # Round down to start of week (Monday by default)
+                    days_since_monday = date_val.weekday()
+                    from datetime import timedelta
+
+                    return (
+                        date_val - timedelta(days=days_since_monday)
+                    ).replace(hour=0, minute=0, second=0, microsecond=0)
+                elif unit == "day":
+                    return date_val.replace(
+                        hour=0, minute=0, second=0, microsecond=0
+                    )
+                elif unit == "hour":
+                    return date_val.replace(minute=0, second=0, microsecond=0)
+                elif unit == "minute":
+                    return date_val.replace(second=0, microsecond=0)
+                elif unit == "second":
+                    return date_val.replace(microsecond=0)
+                else:
+                    return date_val
             case _:
                 raise NotImplementedError(
                     f"Date arithmetic operator {operator} not supported in Python evaluation"
@@ -3355,16 +3943,47 @@ class ExprEvaluator:
                 else:
                     obj = dict(document)
                 if not isinstance(obj, dict):
-                    return {}
+                    return None
                 result = dict(obj)
                 result.pop(field, None)
                 return result
             case "$objectToArray":
                 # Convert object to array of {k, v} objects
-                obj = self._evaluate_operand_python(operands, document)
+                if isinstance(operands, dict):
+                    obj = operands
+                else:
+                    obj = self._evaluate_operand_python(operands, document)
                 if not isinstance(obj, dict):
                     return []
                 return [{"k": k, "v": v} for k, v in obj.items()]
+            case "$let":
+                # MongoDB syntax: { $let: { vars: { <var1>: <expr1>, ... }, in: <expr> } }
+                if not isinstance(operands, dict):
+                    raise ValueError("$let requires a dictionary")
+                vars_spec = operands.get("vars", {})
+                in_expr = operands.get("in")
+
+                if in_expr is None:
+                    raise ValueError("$let requires 'in' expression")
+
+                # Create new document context with variables
+                new_context = dict(document)
+                for var_name, var_expr in vars_spec.items():
+                    var_value = self._evaluate_operand_python(
+                        var_expr, document
+                    )
+                    new_context["$$" + var_name] = var_value
+
+                # Evaluate the 'in' expression with new context
+                return self._evaluate_expr_python(in_expr, new_context)
+            case "$literal":
+                # Return the operand as-is without evaluation
+                return operands
+            case "$rand":
+                # Return random number between 0 and 1
+                import random
+
+                return random.random()
             case _:
                 raise NotImplementedError(
                     f"Object operator {operator} not supported in Python evaluation"
@@ -3453,6 +4072,15 @@ class ExprEvaluator:
                     return ObjectId(str(value))
                 except Exception:
                     return None
+            case "$isNumber":
+                # Check if value is a number (int or float, but not bool)
+                if len(operands) != 1:
+                    raise ValueError("$isNumber requires exactly 1 operand")
+                value = self._evaluate_operand_python(operands[0], document)
+                # In Python, bool is a subclass of int, so we need to check for bool first
+                if isinstance(value, bool):
+                    return False
+                return isinstance(value, (int, float))
             case "$convert":
                 # $convert is complex - requires 'to' field
                 if not isinstance(operands, dict):

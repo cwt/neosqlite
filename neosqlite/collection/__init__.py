@@ -15,7 +15,7 @@ from .index_manager import IndexManager
 from .query_engine import QueryEngine
 from .raw_batch_cursor import RawBatchCursor
 from neosqlite.collection.json_helpers import neosqlite_json_loads
-from typing import Any, Dict, List, Tuple, Union, overload
+from typing import Any, Dict, List, Optional, Tuple, Union, overload
 from typing_extensions import Literal
 
 try:
@@ -415,23 +415,27 @@ class Collection:
         filter: Dict[str, Any],
         update: Dict[str, Any],
         upsert: bool = False,
+        array_filters: Optional[List[Dict[str, Any]]] = None,
     ) -> UpdateResult:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.update_one`.
         """
-        return self.query_engine.update_one(filter, update, upsert)
+        return self.query_engine.update_one(
+            filter, update, upsert, array_filters
+        )
 
     def update_many(
         self,
         filter: Dict[str, Any],
         update: Dict[str, Any],
+        array_filters: Optional[List[Dict[str, Any]]] = None,
     ) -> UpdateResult:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.update_many`.
         """
-        return self.query_engine.update_many(filter, update)
+        return self.query_engine.update_many(filter, update, array_filters)
 
     def replace_one(
         self,

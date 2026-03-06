@@ -49,6 +49,9 @@ from .aggregation_cursor import compare_aggregation_cursor_methods
 from .database_methods import compare_database_methods
 from .expr_complete import compare_additional_expr_operators_complete
 from .expr_success import compare_additional_expr_success_stories
+from .bitwise_operators import compare_bitwise_operators
+from .pullall_operator import compare_pullall_operator
+from .new_operators import compare_new_operators
 
 
 # Ordered list of all comparison functions with their category names
@@ -95,6 +98,9 @@ COMPARISON_FUNCTIONS = [
     ("database", compare_database_methods),
     ("expr_complete", compare_additional_expr_operators_complete),
     ("expr_success", compare_additional_expr_success_stories),
+    ("bitwise", compare_bitwise_operators),
+    ("pullall", compare_pullall_operator),
+    ("new_operators", compare_new_operators),
 ]
 
 
