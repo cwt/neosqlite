@@ -196,32 +196,18 @@ class QueryBuilderMixin:
             # Handle regular fields with json_extract/jsonb_extract
             # Use the correct function based on JSONB support
             json_path = f"'{parse_json_path(field)}'"
-            extract_expr = (
-                f"{self._json_function_prefix}_extract(data, {json_path})"
-            )
 
             if isinstance(value, dict):
                 # Handle operators like $eq, $gt, etc.
-                if len(value) == 1:
-                    op, op_value = next(iter(value.items()))
-                    op_mapping = {
-                        "$eq": "=",
-                        "$gt": ">",
-                        "$gte": ">=",
-                        "$lt": "<",
-                        "$lte": "<=",
-                        "$ne": "!=",
-                    }
-                    if op in op_mapping:
-                        return f"{extract_expr} {op_mapping[op]} ?", [op_value]
-                    else:
-                        # Unsupported operator, fall back to Python
-                        return None
-                else:
-                    # Multiple operators, fall back to Python
+                clause, params = self._build_operator_clause(json_path, value)
+                if clause is None:
                     return None
+                return f"{clause}", params
             else:
                 # Simple equality
+                extract_expr = (
+                    f"{self._json_function_prefix}_extract(data, {json_path})"
+                )
                 return f"{extract_expr} = ?", [value]
 
     def _build_simple_where_clause(
