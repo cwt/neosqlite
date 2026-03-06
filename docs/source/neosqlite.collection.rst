@@ -1,6 +1,14 @@
 neosqlite.collection package
 ============================
 
+Subpackages
+-----------
+
+.. toctree::
+   :maxdepth: 4
+
+   neosqlite.collection.query_helper
+
 Submodules
 ----------
 
@@ -18,7 +26,6 @@ Submodules
    neosqlite.collection.json_path_utils
    neosqlite.collection.jsonb_support
    neosqlite.collection.query_engine
-   neosqlite.collection.query_helper
    neosqlite.collection.raw_batch_cursor
    neosqlite.collection.sql_tier_aggregator
    neosqlite.collection.sql_translator_unified
