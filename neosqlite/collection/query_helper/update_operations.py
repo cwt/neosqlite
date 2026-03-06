@@ -59,12 +59,7 @@ class UpdateOperationsMixin:
     collection: "Collection"
     _jsonb_supported: bool
     _json_function_prefix: str
-
-    def _get_integer_id_for_oid(self, oid: Any) -> int:
-        """Get integer ID for an ObjectId or other ID type."""
-        from .helpers import _get_integer_id_for_oid
-
-        return _get_integer_id_for_oid(self.collection, oid)
+    _get_integer_id_for_oid: Any
 
     def _internal_update(
         self,
