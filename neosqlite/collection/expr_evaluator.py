@@ -1807,9 +1807,7 @@ class ExprEvaluator:
                 else:
                     input_sql, input_params = self.data_column, []
                 value_sql, value_params = self._convert_operand_to_sql(value)
-                sql = (
-                    f"{json_prefix}_set({input_sql}, '{parse_json_path(field)}', {value_sql})"
-                )
+                sql = f"{json_prefix}_set({input_sql}, '{parse_json_path(field)}', {value_sql})"
                 return sql, input_params + value_params
             case "$unsetField":
                 if not isinstance(operands, dict) or "field" not in operands:

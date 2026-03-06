@@ -1737,7 +1737,8 @@ class QueryHelper:
         # Convert the doc_id to integer ID for internal operations
         int_doc_id = self._get_integer_id_for_oid(doc_id)
         self.collection.db.execute(
-            f"DELETE FROM {quote_table_name(self.collection.name)} WHERE id = ?", (int_doc_id,)
+            f"DELETE FROM {quote_table_name(self.collection.name)} WHERE id = ?",
+            (int_doc_id,),
         )
 
     def _is_text_search_query(self, query: Dict[str, Any]) -> bool:
@@ -2087,21 +2088,36 @@ class QueryHelper:
         if field == "_id":
             # Handle _id field specially
             if isinstance(value, ObjectId):
-                return f"{quote_table_name(self.collection.name)}._id = ?", [str(value)]
+                return f"{quote_table_name(self.collection.name)}._id = ?", [
+                    str(value)
+                ]
             elif isinstance(value, str) and len(value) == 24:
                 try:
                     obj_id = ObjectId(value)
-                    return f"{quote_table_name(self.collection.name)}._id = ?", [str(obj_id)]
+                    return (
+                        f"{quote_table_name(self.collection.name)}._id = ?",
+                        [str(obj_id)],
+                    )
                 except ValueError:
                     try:
                         int_id = int(value)
-                        return f"{quote_table_name(self.collection.name)}.id = ?", [int_id]
+                        return (
+                            f"{quote_table_name(self.collection.name)}.id = ?",
+                            [int_id],
+                        )
                     except ValueError:
-                        return f"{quote_table_name(self.collection.name)}._id = ?", [value]
+                        return (
+                            f"{quote_table_name(self.collection.name)}._id = ?",
+                            [value],
+                        )
             elif isinstance(value, int):
-                return f"{quote_table_name(self.collection.name)}.id = ?", [value]
+                return f"{quote_table_name(self.collection.name)}.id = ?", [
+                    value
+                ]
             else:
-                return f"{quote_table_name(self.collection.name)}._id = ?", [value]
+                return f"{quote_table_name(self.collection.name)}._id = ?", [
+                    value
+                ]
         else:
             # Handle regular fields with json_extract
             # Use "data" as the data column name (standard for NeoSQLite)
@@ -2150,7 +2166,9 @@ class QueryHelper:
         indexed_fields = []
         for idx in indexes:
             # Extract key name from index name (idx_collection_key -> key)
-            key_name = idx[0][len(f"idx_{quote_table_name(self.collection.name)}_") :]
+            key_name = idx[0][
+                len(f"idx_{quote_table_name(self.collection.name)}_") :
+            ]
             # Convert underscores back to dots for nested keys
             key_name = key_name.replace("_", ".")
             # Skip the automatically created _id index since it should be hidden
@@ -2409,9 +2427,7 @@ class QueryHelper:
         # Construct the expected index name for datetime indexes
         # Convert dots to underscores in field name
         field_name_for_index = field.replace(".", "_")
-        expected_datetime_index_name = (
-            f"idx_{quote_table_name(self.collection.name)}_{field_name_for_index}_utc"
-        )
+        expected_datetime_index_name = f"idx_{quote_table_name(self.collection.name)}_{field_name_for_index}_utc"
 
         # Query the SQLite master table to check if this specific index exists
         cursor = self.collection.db.execute(
@@ -2478,7 +2494,9 @@ class QueryHelper:
                 if isinstance(value, ObjectId):
                     param_value = str(value)
                     # Query the _id column
-                    clauses.append(f"{quote_table_name(self.collection.name)}._id = ?")
+                    clauses.append(
+                        f"{quote_table_name(self.collection.name)}._id = ?"
+                    )
                     params.append(param_value)
                 elif isinstance(value, str) and len(value) == 24:
                     try:
@@ -2486,7 +2504,9 @@ class QueryHelper:
                         obj_id = ObjectId(value)
                         param_value = str(obj_id)
                         # Query the _id column
-                        clauses.append(f"{quote_table_name(self.collection.name)}._id = ?")
+                        clauses.append(
+                            f"{quote_table_name(self.collection.name)}._id = ?"
+                        )
                         params.append(param_value)
                     except ValueError:
                         # If not a valid ObjectId string, it might be an integer id
@@ -2494,19 +2514,27 @@ class QueryHelper:
                             int_id = int(
                                 value
                             )  # Try to parse as integer for backward compatibility
-                            clauses.append(f"{quote_table_name(self.collection.name)}.id = ?")
+                            clauses.append(
+                                f"{quote_table_name(self.collection.name)}.id = ?"
+                            )
                             params.append(int_id)
                         except ValueError:
                             # Not an integer either, use as string in _id column
-                            clauses.append(f"{quote_table_name(self.collection.name)}._id = ?")
+                            clauses.append(
+                                f"{quote_table_name(self.collection.name)}._id = ?"
+                            )
                             params.append(value)
                 elif isinstance(value, int):
                     # Direct integer value, likely referring to the old auto-increment id
-                    clauses.append(f"{quote_table_name(self.collection.name)}.id = ?")
+                    clauses.append(
+                        f"{quote_table_name(self.collection.name)}.id = ?"
+                    )
                     params.append(value)
                 else:
                     # Other types, store as-is in _id column
-                    clauses.append(f"{quote_table_name(self.collection.name)}._id = ?")
+                    clauses.append(
+                        f"{quote_table_name(self.collection.name)}._id = ?"
+                    )
                     params.append(value)
                 continue
 
@@ -2841,7 +2869,9 @@ class QueryHelper:
                             # Find FTS tables for this collection to determine which fields are indexed
                             cursor = self.collection.db.execute(
                                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE ?",
-                                (f"{quote_table_name(self.collection.name)}_%_fts",),
+                                (
+                                    f"{quote_table_name(self.collection.name)}_%_fts",
+                                ),
                             )
                             fts_tables = cursor.fetchall()
 
@@ -2851,7 +2881,9 @@ class QueryHelper:
                                 # Extract field name from FTS table name
                                 # (collection_field_fts -> field)
                                 index_name = fts_table_name[
-                                    len(f"{quote_table_name(self.collection.name)}_") : -4
+                                    len(
+                                        f"{quote_table_name(self.collection.name)}_"
+                                    ) : -4
                                 ]  # Remove collection_ prefix and _fts suffix
                                 # Convert underscores back to dots for nested keys
                                 field_name = index_name.replace("_", ".")
@@ -3687,7 +3719,9 @@ class QueryHelper:
                         foreign_extract = f"{self._json_function_prefix}_extract(related.data, '{parse_json_path(foreign_field)}')"
 
                     if local_field == "_id":
-                        local_extract = f"{quote_table_name(self.collection.name)}.id"
+                        local_extract = (
+                            f"{quote_table_name(self.collection.name)}.id"
+                        )
                     else:
                         local_extract = f"{self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(local_field)}')"
 
@@ -3702,7 +3736,9 @@ class QueryHelper:
                         f"), '[]')) as data"
                     )
 
-                    from_clause = f"FROM {quote_table_name(self.collection.name)}"
+                    from_clause = (
+                        f"FROM {quote_table_name(self.collection.name)}"
+                    )
 
                     # If there's a $match stage before this, incorporate its WHERE clause
                     if i == 1 and "$match" in pipeline[0]:
@@ -3849,11 +3885,11 @@ class QueryHelper:
         select_parts = [f"{quote_table_name(self.collection.name)}.data"]
         for i, field_name in enumerate(field_names):
             select_parts.insert(0, "json_set(")
-            select_parts.append(f", '{parse_json_path(field_name)}', je{i + 1}.value)")
+            select_parts.append(
+                f", '{parse_json_path(field_name)}', je{i + 1}.value)"
+            )
         select_expr = "".join(select_parts)
-        select_clause = (
-            f"SELECT {quote_table_name(self.collection.name)}.id, {select_expr} as data"
-        )
+        select_clause = f"SELECT {quote_table_name(self.collection.name)}.id, {select_expr} as data"
 
         # Build FROM clause with multiple json_each calls
         from_clause, unwound_fields = self._build_unwind_from_clause(

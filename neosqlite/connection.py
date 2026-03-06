@@ -310,7 +310,9 @@ class Connection:
                     table_name = command.get("table_info")
                 if not table_name:
                     raise ValueError("table_info requires 'table' parameter")
-                cursor = self.db.execute(f"PRAGMA table_info({quote_table_name(table_name)})")
+                cursor = self.db.execute(
+                    f"PRAGMA table_info({quote_table_name(table_name)})"
+                )
                 columns = []
                 for row in cursor.fetchall():
                     columns.append(
@@ -385,7 +387,9 @@ class Connection:
                     table_name = command.get("index_list")
                 if not table_name:
                     raise ValueError("index_list requires 'table' parameter")
-                cursor = self.db.execute(f"PRAGMA index_list({quote_table_name(table_name)})")
+                cursor = self.db.execute(
+                    f"PRAGMA index_list({quote_table_name(table_name)})"
+                )
                 indexes = []
                 for row in cursor.fetchall():
                     indexes.append(

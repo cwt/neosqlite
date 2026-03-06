@@ -121,7 +121,8 @@ class IndexManager:
 
             # Create the compound index using multiple JSON/JSONB extract calls
             index_columns = ", ".join(
-                f"{func_prefix}_extract(data, '{parse_json_path(k)}')" for k in key
+                f"{func_prefix}_extract(data, '{parse_json_path(k)}')"
+                for k in key
             )
             self.collection.db.execute(
                 (
@@ -147,7 +148,9 @@ class IndexManager:
         """
         # Create index name (replace dots with underscores for valid identifiers)
         index_name = field.replace(".", "_")
-        fts_table_name = quote_identifier(f"{self.collection.name}_{index_name}_fts")
+        fts_table_name = quote_identifier(
+            f"{self.collection.name}_{index_name}_fts"
+        )
 
         # Create FTS table with optional tokenizer
         # Note: We don't use the 'content' option because we manage the FTS data manually
@@ -435,7 +438,9 @@ class IndexManager:
                 if idx[0] == f"idx_{quote_table_name(self.collection.name)}_id":
                     continue
                 # Extract key name from index name (idx_collection_key -> key)
-                key_name = idx[0][len(f"idx_{quote_table_name(self.collection.name)}_") :]
+                key_name = idx[0][
+                    len(f"idx_{quote_table_name(self.collection.name)}_") :
+                ]
                 # Convert underscores back to dots for nested keys
                 key_name = key_name.replace("_", ".")
                 result.append([key_name])
@@ -518,7 +523,10 @@ class IndexManager:
             for idx_name, idx_sql in indexes:
                 # Skip the automatically created _id index since it should be hidden
                 # like MongoDB's automatic _id index
-                if idx_name == f"idx_{quote_table_name(self.collection.name)}_id":
+                if (
+                    idx_name
+                    == f"idx_{quote_table_name(self.collection.name)}_id"
+                ):
                     continue
 
                 # Parse the index information
@@ -605,7 +613,9 @@ class IndexManager:
             self.create_index(key, fts=True)
             # Generate the index name the same way as in IndexManager
             index_name = key.replace(".", "_")
-            created_indexes.append(f"idx_{quote_table_name(self.collection.name)}_{index_name}")
+            created_indexes.append(
+                f"idx_{quote_table_name(self.collection.name)}_{index_name}"
+            )
         return created_indexes
 
     def list_search_indexes(self) -> List[str]:
@@ -667,7 +677,9 @@ class IndexManager:
         # For FTS indexes, we need to drop the FTS virtual table and its triggers
         # FTS tables have a specific naming pattern: {collection}_{field}_fts
         index_name = index.replace(".", "_")
-        fts_table_name = f"{quote_table_name(self.collection.name)}_{index_name}_fts"
+        fts_table_name = (
+            f"{quote_table_name(self.collection.name)}_{index_name}_fts"
+        )
 
         # Drop the FTS table
         self.collection.db.execute(f"DROP TABLE IF EXISTS {fts_table_name}")

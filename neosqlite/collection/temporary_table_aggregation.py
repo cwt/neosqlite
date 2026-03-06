@@ -315,7 +315,8 @@ class TemporaryTableAggregationProcessor:
             # Start with base data - include both id and _id for proper sorting support
             base_stage = {"_base": True}
             current_table = create_temp(
-                base_stage, f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)}"
+                base_stage,
+                f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)}",
             )
 
             # Process pipeline stages in groups that can be handled together
@@ -705,7 +706,9 @@ class TemporaryTableAggregationProcessor:
             f"), '[]')) as data"
         )
 
-        from_clause = f"FROM {current_table} as {quote_table_name(self.collection.name)}"
+        from_clause = (
+            f"FROM {current_table} as {quote_table_name(self.collection.name)}"
+        )
 
         lookup_stage = {"$lookup": lookup_spec}
         # Create lookup temporary table
@@ -853,9 +856,7 @@ class TemporaryTableAggregationProcessor:
                 json_set_func = f"{self._json_function_prefix}_set"
                 if source_field_name == "_id":
                     # Special handling for _id field
-                    data_expr = (
-                        f"{json_set_func}({data_expr}, '{parse_json_path(new_field)}', id)"
-                    )
+                    data_expr = f"{json_set_func}({data_expr}, '{parse_json_path(new_field)}', id)"
                 else:
                     # Use json_extract/jsonb_extract to get the source field value
                     json_extract = f"{self._json_function_prefix}_extract"
@@ -865,9 +866,7 @@ class TemporaryTableAggregationProcessor:
             elif not isinstance(source_field, dict):
                 # For literal values, use json_set with parameterized value
                 json_set_func = f"{self._json_function_prefix}_set"
-                data_expr = (
-                    f"{json_set_func}({data_expr}, '{parse_json_path(new_field)}', json(?))"
-                )
+                data_expr = f"{json_set_func}({data_expr}, '{parse_json_path(new_field)}', json(?))"
                 params.append(source_field)
             # For other complex expressions, fall back to Python
             # (This is handled by raising NotImplementedError)
@@ -989,7 +988,9 @@ class TemporaryTableAggregationProcessor:
                 select_parts.append(
                     f"{json_extract}(data, '{parse_json_path(field_name)}') AS _id"
                 )
-                group_by_parts.append(f"{json_extract}(data, '{parse_json_path(field_name)}')")
+                group_by_parts.append(
+                    f"{json_extract}(data, '{parse_json_path(field_name)}')"
+                )
         else:
             # For complex expressions, fall back to Python
             raise NotImplementedError(

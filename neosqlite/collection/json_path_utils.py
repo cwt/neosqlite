@@ -61,7 +61,7 @@ def parse_json_path(field: str) -> str:
     for part in parts:
         # Escape single quotes in the field name by doubling them for SQLite
         part = part.replace("'", "''")
-        
+
         # Check if part contains array indices
         if "[" in part:
             # Split field name from array indices

@@ -335,7 +335,8 @@ class DateTimeQueryProcessor:
                 # Create base temp table with all documents
                 base_stage = {"_base": True}
                 temp_table = create_temp(
-                    base_stage, f"SELECT id, data FROM {quote_table_name(self.collection.name)}"
+                    base_stage,
+                    f"SELECT id, data FROM {quote_table_name(self.collection.name)}",
                 )
 
                 # To ensure we use json_* functions for datetime queries,

@@ -130,13 +130,15 @@ class Collection:
         try:
             # Check if the _id column exists
             cursor = self.db.execute(
-                "SELECT name FROM pragma_table_info(?) WHERE name = '_id'", (self.name,)
+                "SELECT name FROM pragma_table_info(?) WHERE name = '_id'",
+                (self.name,),
             )
             column_exists = cursor.fetchone() is not None
 
             if column_exists:
                 cursor = self.db.execute(
-                    f"SELECT _id FROM {quote_table_name(self.name)} WHERE id = ?", (doc_id,)
+                    f"SELECT _id FROM {quote_table_name(self.name)} WHERE id = ?",
+                    (doc_id,),
                 )
                 row = cursor.fetchone()
                 if row and row[0] is not None:
@@ -260,7 +262,8 @@ class Collection:
         try:
             # Check if _id column exists
             cursor = self.db.execute(
-                "SELECT name FROM pragma_table_info(?) WHERE name = '_id'", (self.name,)
+                "SELECT name FROM pragma_table_info(?) WHERE name = '_id'",
+                (self.name,),
             )
             column_exists = cursor.fetchone() is not None
 
@@ -330,7 +333,9 @@ class Collection:
             raise sqlite3.Error(f"Collection '{new_name}' already exists")
 
         # Rename the table
-        self.db.execute(f"ALTER TABLE {quote_table_name(self.name)} RENAME TO {quote_table_name(new_name)}")
+        self.db.execute(
+            f"ALTER TABLE {quote_table_name(self.name)} RENAME TO {quote_table_name(new_name)}"
+        )
 
         # Update the collection name
         self.name = new_name
@@ -492,7 +497,9 @@ class Collection:
         elif self.name.endswith("_chunks"):
             bucket_name = self.name[:-7]
         else:
-            raise RuntimeError(f"Invalid GridFS collection name: {quote_table_name(self.name)}")
+            raise RuntimeError(
+                f"Invalid GridFS collection name: {quote_table_name(self.name)}"
+            )
 
         # Find the file(s) to delete
         bucket = GridFSBucket(self.db, bucket_name=bucket_name)
@@ -552,7 +559,9 @@ class Collection:
         elif self.name.endswith("_chunks"):
             bucket_name = self.name[:-7]
         else:
-            raise RuntimeError(f"Invalid GridFS collection name: {quote_table_name(self.name)}")
+            raise RuntimeError(
+                f"Invalid GridFS collection name: {quote_table_name(self.name)}"
+            )
 
         # Find the files to delete
         bucket = GridFSBucket(self.db, bucket_name=bucket_name)
@@ -617,7 +626,9 @@ class Collection:
         # GridFS files table has: filename, length, chunkSize, uploadDate, md5, metadata
         # GridFS chunks table has: files_id, n, data
         try:
-            cursor = self.db.execute(f"PRAGMA table_info({quote_table_name(self.name)})")
+            cursor = self.db.execute(
+                f"PRAGMA table_info({quote_table_name(self.name)})"
+            )
             columns = {row[1] for row in cursor}  # Column names are in index 1
 
             if self.name.endswith("_files"):
@@ -664,7 +675,9 @@ class Collection:
             bucket_name = self.name[:-7]  # Remove "_chunks"
         else:
             # Should not happen if _is_gridfs_collection() is correct
-            raise RuntimeError(f"Invalid GridFS collection name: {quote_table_name(self.name)}")
+            raise RuntimeError(
+                f"Invalid GridFS collection name: {quote_table_name(self.name)}"
+            )
 
         # Create GridFSBucket and delegate find operation
         bucket = GridFSBucket(self.db, bucket_name=bucket_name)

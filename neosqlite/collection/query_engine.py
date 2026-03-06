@@ -394,9 +394,7 @@ class QueryEngine:
 
         if where_clause is not None and update_result is not None:
             set_clause, set_params = update_result
-            cmd = (
-                f"UPDATE {quote_table_name(self.collection.name)} SET {set_clause} {where_clause}"
-            )
+            cmd = f"UPDATE {quote_table_name(self.collection.name)} SET {set_clause} {where_clause}"
             cursor = self.collection.db.execute(cmd, set_params + where_params)
             return UpdateResult(
                 matched_count=cursor.rowcount,
@@ -458,9 +456,7 @@ class QueryEngine:
         # Use direct query to get integer ID for the delete operation
         where_clause, params = self.sql_translator.translate_match(filter)
         if where_clause:
-            cmd = (
-                f"SELECT id FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
-            )
+            cmd = f"SELECT id FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
             cursor = self.collection.db.execute(cmd, params)
             row = cursor.fetchone()
             if row:
