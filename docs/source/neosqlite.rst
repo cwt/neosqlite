@@ -25,6 +25,7 @@ Submodules
    neosqlite.query_operators
    neosqlite.requests
    neosqlite.results
+   neosqlite.sql_utils
 
 Module contents
 ---------------
