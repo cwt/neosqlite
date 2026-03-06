@@ -15,6 +15,7 @@ from .index_manager import IndexManager
 from .query_engine import QueryEngine
 from .raw_batch_cursor import RawBatchCursor
 from neosqlite.collection.json_helpers import neosqlite_json_loads
+from ..sql_utils import quote_table_name, quote_identifier
 from typing import Any, Dict, List, Optional, Tuple, Union, overload
 from typing_extensions import Literal
 
@@ -129,13 +130,13 @@ class Collection:
         try:
             # Check if the _id column exists
             cursor = self.db.execute(
-                f"SELECT name FROM pragma_table_info('{self.name}') WHERE name = '_id'"
+                "SELECT name FROM pragma_table_info(?) WHERE name = '_id'", (self.name,)
             )
             column_exists = cursor.fetchone() is not None
 
             if column_exists:
                 cursor = self.db.execute(
-                    f"SELECT _id FROM {self.name} WHERE id = ?", (doc_id,)
+                    f"SELECT _id FROM {quote_table_name(self.name)} WHERE id = ?", (doc_id,)
                 )
                 row = cursor.fetchone()
                 if row and row[0] is not None:
@@ -220,7 +221,7 @@ class Collection:
         if self.query_engine._jsonb_supported:
             self.db.execute(
                 f"""
-                CREATE TABLE IF NOT EXISTS {self.name} (
+                CREATE TABLE IF NOT EXISTS {quote_table_name(self.name)} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     _id JSONB,
                     data JSONB NOT NULL
@@ -229,7 +230,7 @@ class Collection:
         else:
             self.db.execute(
                 f"""
-                CREATE TABLE IF NOT EXISTS {self.name} (
+                CREATE TABLE IF NOT EXISTS {quote_table_name(self.name)} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     _id TEXT,
                     data TEXT NOT NULL
@@ -240,7 +241,7 @@ class Collection:
         # Create unique index on _id column for faster lookups
         try:
             self.db.execute(
-                f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{self.name}_id ON {self.name}(_id)"
+                f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{quote_identifier(self.name)}_id ON {quote_table_name(self.name)}(_id)"
             )
         except Exception:
             # If we can't create the index (e.g., due to duplicate values), continue without it
@@ -259,7 +260,7 @@ class Collection:
         try:
             # Check if _id column exists
             cursor = self.db.execute(
-                f"SELECT name FROM pragma_table_info({self.name}) WHERE name = '_id'"
+                "SELECT name FROM pragma_table_info(?) WHERE name = '_id'", (self.name,)
             )
             column_exists = cursor.fetchone() is not None
 
@@ -267,11 +268,11 @@ class Collection:
                 # Add the _id column using the same type as the data column
                 if self.query_engine._jsonb_supported:
                     self.db.execute(
-                        f"ALTER TABLE {self.name} ADD COLUMN _id JSONB"
+                        f"ALTER TABLE {quote_table_name(self.name)} ADD COLUMN _id JSONB"
                     )
                 else:
                     self.db.execute(
-                        f"ALTER TABLE {self.name} ADD COLUMN _id TEXT"
+                        f"ALTER TABLE {quote_table_name(self.name)} ADD COLUMN _id TEXT"
                     )
                 # Create unique index on _id column for faster lookups
                 self._create_unique_index_for_id()
@@ -287,7 +288,7 @@ class Collection:
         under a bucket name (e.g., db.fs.files).
         """
         if name in ("files", "chunks"):
-            full_name = f"{self.name}_{name}"
+            full_name = f"{quote_table_name(self.name)}_{name}"
             return Collection(self.db, full_name, database=self._database)
         raise AttributeError(
             f"'{self.__class__.__name__}' object has no attribute '{name}'"
@@ -300,7 +301,7 @@ class Collection:
         try:
             # Create unique index on _id column for faster lookups
             self.db.execute(
-                f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{self.name}_id ON {self.name}(_id)"
+                f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{quote_identifier(self.name)}_id ON {quote_table_name(self.name)}(_id)"
             )
         except Exception:
             # If we can't create the index (e.g., due to duplicate values), continue without it
@@ -329,7 +330,7 @@ class Collection:
             raise sqlite3.Error(f"Collection '{new_name}' already exists")
 
         # Rename the table
-        self.db.execute(f"ALTER TABLE {self.name} RENAME TO [{new_name}]")
+        self.db.execute(f"ALTER TABLE {quote_table_name(self.name)} RENAME TO {quote_table_name(new_name)}")
 
         # Update the collection name
         self.name = new_name
@@ -351,14 +352,14 @@ class Collection:
         try:
             # Get table info
             table_info = self.db.execute(
-                f"PRAGMA table_info({self.name})"
+                f"PRAGMA table_info({quote_table_name(self.name)})"
             ).fetchall()
             options["columns"] = [
                 {
                     "name": str(col[1]),
                     "type": str(col[2]),
                     "notnull": bool(col[3]),
-                    "default": col[4],
+                    "default": col[4] if len(col) > 4 else None,
                     "pk": bool(col[5]),
                 }
                 for col in table_info
@@ -379,7 +380,7 @@ class Collection:
 
             # Get row count
             if count_row := self.db.execute(
-                f"SELECT COUNT(*) FROM {self.name}"
+                f"SELECT COUNT(*) FROM {quote_table_name(self.name)}"
             ).fetchone():
                 options["count"] = (
                     int(count_row[0]) if count_row[0] is not None else 0
@@ -491,7 +492,7 @@ class Collection:
         elif self.name.endswith("_chunks"):
             bucket_name = self.name[:-7]
         else:
-            raise RuntimeError(f"Invalid GridFS collection name: {self.name}")
+            raise RuntimeError(f"Invalid GridFS collection name: {quote_table_name(self.name)}")
 
         # Find the file(s) to delete
         bucket = GridFSBucket(self.db, bucket_name=bucket_name)
@@ -551,7 +552,7 @@ class Collection:
         elif self.name.endswith("_chunks"):
             bucket_name = self.name[:-7]
         else:
-            raise RuntimeError(f"Invalid GridFS collection name: {self.name}")
+            raise RuntimeError(f"Invalid GridFS collection name: {quote_table_name(self.name)}")
 
         # Find the files to delete
         bucket = GridFSBucket(self.db, bucket_name=bucket_name)
@@ -616,7 +617,7 @@ class Collection:
         # GridFS files table has: filename, length, chunkSize, uploadDate, md5, metadata
         # GridFS chunks table has: files_id, n, data
         try:
-            cursor = self.db.execute(f"PRAGMA table_info({self.name})")
+            cursor = self.db.execute(f"PRAGMA table_info({quote_table_name(self.name)})")
             columns = {row[1] for row in cursor}  # Column names are in index 1
 
             if self.name.endswith("_files"):
@@ -663,7 +664,7 @@ class Collection:
             bucket_name = self.name[:-7]  # Remove "_chunks"
         else:
             # Should not happen if _is_gridfs_collection() is correct
-            raise RuntimeError(f"Invalid GridFS collection name: {self.name}")
+            raise RuntimeError(f"Invalid GridFS collection name: {quote_table_name(self.name)}")
 
         # Create GridFSBucket and delegate find operation
         bucket = GridFSBucket(self.db, bucket_name=bucket_name)
@@ -1001,7 +1002,7 @@ class Collection:
             'test.my_collection'
         """
         if self._database and hasattr(self._database, "name"):
-            return f"{self._database.name}.{self.name}"
+            return f"{self._database.name}.{quote_table_name(self.name)}"
         return self.name
 
     def with_options(
@@ -1084,7 +1085,7 @@ class Collection:
         This method removes the collection (table) from the database. After calling
         this method, the collection will no longer exist in the database.
         """
-        self.db.execute(f"DROP TABLE IF EXISTS {self.name}")
+        self.db.execute(f"DROP TABLE IF EXISTS {quote_table_name(self.name)}")
 
     def watch(
         self,

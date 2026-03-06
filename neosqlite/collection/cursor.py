@@ -1,6 +1,7 @@
 from __future__ import annotations
 from functools import partial
 from typing import Any, Callable, Dict, List, Iterator, Iterable, TYPE_CHECKING
+from .json_path_utils import parse_json_path
 
 if TYPE_CHECKING:
     from . import Collection
@@ -744,16 +745,18 @@ class Cursor:
         # Add minimum bounds
         if min_spec:
             for field, value in min_spec.items():
+                json_path = parse_json_path(field)
                 additional_conditions.append(
-                    f"jsonb_extract(data, '$.{field}') >= ?"
+                    f"jsonb_extract(data, '{json_path}') >= ?"
                 )
                 additional_params.append(value)
 
         # Add maximum bounds (strict less than for max)
         if max_spec:
             for field, value in max_spec.items():
+                json_path = parse_json_path(field)
                 additional_conditions.append(
-                    f"jsonb_extract(data, '$.{field}') < ?"
+                    f"jsonb_extract(data, '{json_path}') < ?"
                 )
                 additional_params.append(value)
 

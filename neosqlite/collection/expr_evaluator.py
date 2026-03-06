@@ -33,6 +33,7 @@ Note: NeoSQLite extends MongoDB with $log2 (base-2 log) operator.
 """
 
 from __future__ import annotations
+from .json_path_utils import parse_json_path
 from typing import Any, Dict, List, Tuple, Optional, TYPE_CHECKING
 import math
 import warnings
@@ -995,7 +996,7 @@ class ExprEvaluator:
                 if isinstance(operand, str) and operand.startswith("$"):
                     field_path = operand[1:]  # Remove $
                     # Use json_type with path directly
-                    sql = f"json_type({self.data_column}, '$.{field_path}') = 'array'"
+                    sql = f"json_type({self.data_column}, '{parse_json_path(field_path)}') = 'array'"
                     return sql, []
                 else:
                     value_sql, value_params = self._convert_operand_to_sql(
@@ -1789,7 +1790,7 @@ class ExprEvaluator:
                     )
                 else:
                     input_sql, input_params = self.data_column, []
-                sql = f"{json_prefix}_extract({input_sql}, '$.{field}')"
+                sql = f"{json_prefix}_extract({input_sql}, '{parse_json_path(field)}')"
                 return sql, input_params
             case "$setField":
                 if not isinstance(operands, dict):
@@ -1807,7 +1808,7 @@ class ExprEvaluator:
                     input_sql, input_params = self.data_column, []
                 value_sql, value_params = self._convert_operand_to_sql(value)
                 sql = (
-                    f"{json_prefix}_set({input_sql}, '$.{field}', {value_sql})"
+                    f"{json_prefix}_set({input_sql}, '{parse_json_path(field)}', {value_sql})"
                 )
                 return sql, input_params + value_params
             case "$unsetField":
@@ -1824,7 +1825,7 @@ class ExprEvaluator:
                 else:
                     input_sql, input_params = self.data_column, []
                 # Use json_remove to remove field
-                sql = f"{json_prefix}_remove({input_sql}, '$.{field}')"
+                sql = f"{json_prefix}_remove({input_sql}, '{parse_json_path(field)}')"
                 return sql, input_params
             case "$objectToArray":
                 # Complex - convert object keys/values to array of {k, v} objects

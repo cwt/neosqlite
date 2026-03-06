@@ -4,6 +4,8 @@ This focuses on the core concept: using temporary tables to process complex pipe
 that the current implementation can't optimize with a single SQL query.
 """
 
+from __future__ import annotations
+from ..sql_utils import quote_table_name
 from .json_path_utils import parse_json_path
 from .jsonb_support import (
     supports_jsonb,
@@ -313,7 +315,7 @@ class TemporaryTableAggregationProcessor:
             # Start with base data - include both id and _id for proper sorting support
             base_stage = {"_base": True}
             current_table = create_temp(
-                base_stage, f"SELECT id, _id, data FROM {self.collection.name}"
+                base_stage, f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)}"
             )
 
             # Process pipeline stages in groups that can be handled together
@@ -609,15 +611,15 @@ class TemporaryTableAggregationProcessor:
                     current_temp_table = create_temp(
                         unwind_stage,
                         f"""
-                        SELECT {self.collection.name}.id,
-                               {self.collection.name}._id as _id,
-                               {self._json_function_prefix}_set({self.collection.name}.data,
-                                        '$."{field_name}"', je.value) as data
-                        FROM {current_table} as {self.collection.name},
-                             {self._json_each_function}({self._json_function_prefix}_extract({self.collection.name}.data,
-                                                   '$.{field_name}')) as je
-                        WHERE json_type({self._json_function_prefix}_extract({self.collection.name}.data,
-                                                     '$.{field_name}')) = 'array'
+                        SELECT {quote_table_name(self.collection.name)}.id,
+                               {quote_table_name(self.collection.name)}._id as _id,
+                               {self._json_function_prefix}_set({quote_table_name(self.collection.name)}.data,
+                                        '{parse_json_path(field_name)}', je.value) as data
+                        FROM {current_table} as {quote_table_name(self.collection.name)},
+                             {self._json_each_function}({self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data,
+                                                   '{parse_json_path(field_name)}')) as je
+                        WHERE json_type({self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data,
+                                                     '{parse_json_path(field_name)}')) = 'array'
                         """,
                     )
                 else:
@@ -625,15 +627,15 @@ class TemporaryTableAggregationProcessor:
                     current_temp_table = create_temp(
                         unwind_stage,
                         f"""
-                        SELECT {self.collection.name}.id,
-                               {self.collection.name}._id as _id,
-                               {self._json_function_prefix}_set({self.collection.name}.data,
-                                        '$."{field_name}"', je.value) as data
-                        FROM {current_table} as {self.collection.name},
-                             {self._json_each_function}({self._json_function_prefix}_extract({self.collection.name}.data,
-                                                   '$.{field_name}')) as je
-                        WHERE json_type({self._json_function_prefix}_extract({self.collection.name}.data,
-                                                     '$.{field_name}')) = 'array'
+                        SELECT {quote_table_name(self.collection.name)}.id,
+                               {quote_table_name(self.collection.name)}._id as _id,
+                               {self._json_function_prefix}_set({quote_table_name(self.collection.name)}.data,
+                                        '{parse_json_path(field_name)}', je.value) as data
+                        FROM {current_table} as {quote_table_name(self.collection.name)},
+                             {self._json_each_function}({self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data,
+                                                   '{parse_json_path(field_name)}')) as je
+                        WHERE json_type({self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data,
+                                                     '{parse_json_path(field_name)}')) = 'array'
                         """,
                     )
             else:
@@ -688,13 +690,13 @@ class TemporaryTableAggregationProcessor:
             foreign_extract = f"{self._json_function_prefix}_extract(related.data, '{parse_json_path(foreign_field)}')"
 
         if local_field == "_id":
-            local_extract = f"{self.collection.name}.id"
+            local_extract = f"{quote_table_name(self.collection.name)}.id"
         else:
-            local_extract = f"{self._json_function_prefix}_extract({self.collection.name}.data, '{parse_json_path(local_field)}')"
+            local_extract = f"{self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(local_field)}')"
 
         select_clause = (
-            f"SELECT {self.collection.name}.id, "
-            f"{self._json_function_prefix}_set({self.collection.name}.data, '$.\"{as_field}\"', "
+            f"SELECT {quote_table_name(self.collection.name)}.id, "
+            f"{self._json_function_prefix}_set({quote_table_name(self.collection.name)}.data, '{parse_json_path(as_field)}', "
             f"coalesce(( "
             f"  SELECT {self.json_group_array_function}(json(related.data)) "
             f"  FROM {from_collection} as related "
@@ -703,7 +705,7 @@ class TemporaryTableAggregationProcessor:
             f"), '[]')) as data"
         )
 
-        from_clause = f"FROM {current_table} as {self.collection.name}"
+        from_clause = f"FROM {current_table} as {quote_table_name(self.collection.name)}"
 
         lookup_stage = {"$lookup": lookup_spec}
         # Create lookup temporary table
@@ -829,15 +831,15 @@ class TemporaryTableAggregationProcessor:
                         input_field = input_expr[1:]
                         # SQL: substr(data, 1, instr-1) || replacement || substr(data, instr+len(find))
                         data_expr = (
-                            f"{json_set_func}({data_expr}, '$.{new_field}', "
+                            f"{json_set_func}({data_expr}, '{parse_json_path(new_field)}', "
                             f"CASE "
-                            f"WHEN instr({json_extract}(data, '$.{input_field}'), '{find_str_escaped}') > 0 THEN "
-                            f"substr({json_extract}(data, '$.{input_field}'), 1, "
-                            f"instr({json_extract}(data, '$.{input_field}'), '{find_str_escaped}') - 1) || "
+                            f"WHEN instr({json_extract}(data, '{parse_json_path(input_field)}'), '{find_str_escaped}') > 0 THEN "
+                            f"substr({json_extract}(data, '{parse_json_path(input_field)}'), 1, "
+                            f"instr({json_extract}(data, '{parse_json_path(input_field)}'), '{find_str_escaped}') - 1) || "
                             f"'{replacement_str_escaped}' || "
-                            f"substr({json_extract}(data, '$.{input_field}'), "
-                            f"instr({json_extract}(data, '$.{input_field}'), '{find_str_escaped}') + length('{find_str_escaped}')) "
-                            f"ELSE {json_extract}(data, '$.{input_field}') END)"
+                            f"substr({json_extract}(data, '{parse_json_path(input_field)}'), "
+                            f"instr({json_extract}(data, '{parse_json_path(input_field)}'), '{find_str_escaped}') + length('{find_str_escaped}')) "
+                            f"ELSE {json_extract}(data, '{parse_json_path(input_field)}') END)"
                         )
                     else:
                         # For non-field input, fall back to Python
@@ -852,7 +854,7 @@ class TemporaryTableAggregationProcessor:
                 if source_field_name == "_id":
                     # Special handling for _id field
                     data_expr = (
-                        f"{json_set_func}({data_expr}, '$.{new_field}', id)"
+                        f"{json_set_func}({data_expr}, '{parse_json_path(new_field)}', id)"
                     )
                 else:
                     # Use json_extract/jsonb_extract to get the source field value
@@ -864,7 +866,7 @@ class TemporaryTableAggregationProcessor:
                 # For literal values, use json_set with parameterized value
                 json_set_func = f"{self._json_function_prefix}_set"
                 data_expr = (
-                    f"{json_set_func}({data_expr}, '$.{new_field}', json(?))"
+                    f"{json_set_func}({data_expr}, '{parse_json_path(new_field)}', json(?))"
                 )
                 params.append(source_field)
             # For other complex expressions, fall back to Python
@@ -929,7 +931,7 @@ class TemporaryTableAggregationProcessor:
             # Extract the field and use it as the new root document
             new_table = create_temp(
                 replace_stage,
-                f"SELECT id, {json_extract}(data, '$.{field_name}') as data FROM {current_table}",
+                f"SELECT id, {json_extract}(data, '{parse_json_path(field_name)}') as data FROM {current_table}",
             )
             return new_table
         else:
@@ -985,9 +987,9 @@ class TemporaryTableAggregationProcessor:
                 # Group by extracted field
                 json_extract = f"{self._json_function_prefix}_extract"
                 select_parts.append(
-                    f"{json_extract}(data, '$.{field_name}') AS _id"
+                    f"{json_extract}(data, '{parse_json_path(field_name)}') AS _id"
                 )
-                group_by_parts.append(f"{json_extract}(data, '$.{field_name}')")
+                group_by_parts.append(f"{json_extract}(data, '{parse_json_path(field_name)}')")
         else:
             # For complex expressions, fall back to Python
             raise NotImplementedError(
@@ -1031,7 +1033,7 @@ class TemporaryTableAggregationProcessor:
                             select_parts.append(f"SUM(_id) AS {field}")
                         else:
                             select_parts.append(
-                                f"SUM({json_extract}(data, '$.{expr_field}')) AS {field}"
+                                f"SUM({json_extract}(data, '{parse_json_path(expr_field)}')) AS {field}"
                             )
                     else:
                         select_parts.append(f"SUM({expr}) AS {field}")
@@ -1042,7 +1044,7 @@ class TemporaryTableAggregationProcessor:
                             select_parts.append(f"AVG(_id) AS {field}")
                         else:
                             select_parts.append(
-                                f"AVG({json_extract}(data, '$.{expr_field}')) AS {field}"
+                                f"AVG({json_extract}(data, '{parse_json_path(expr_field)}')) AS {field}"
                             )
                     else:
                         select_parts.append(f"AVG({expr}) AS {field}")
@@ -1053,7 +1055,7 @@ class TemporaryTableAggregationProcessor:
                             select_parts.append(f"MIN(_id) AS {field}")
                         else:
                             select_parts.append(
-                                f"MIN({json_extract}(data, '$.{expr_field}')) AS {field}"
+                                f"MIN({json_extract}(data, '{parse_json_path(expr_field)}')) AS {field}"
                             )
                     else:
                         select_parts.append(f"MIN({expr}) AS {field}")
@@ -1064,7 +1066,7 @@ class TemporaryTableAggregationProcessor:
                             select_parts.append(f"MAX(_id) AS {field}")
                         else:
                             select_parts.append(
-                                f"MAX({json_extract}(data, '$.{expr_field}')) AS {field}"
+                                f"MAX({json_extract}(data, '{parse_json_path(expr_field)}')) AS {field}"
                             )
                     else:
                         select_parts.append(f"MAX({expr}) AS {field}")
@@ -1086,7 +1088,7 @@ class TemporaryTableAggregationProcessor:
                             )
                         else:
                             select_parts.append(
-                                f"(SELECT {json_extract}(t2.data, '$.{expr_field}') "
+                                f"(SELECT {json_extract}(t2.data, '{parse_json_path(expr_field)}') "
                                 f"FROM {current_table} t2 "
                                 f"WHERE t2._id = _id LIMIT 1) AS {field}"
                             )
@@ -1104,7 +1106,7 @@ class TemporaryTableAggregationProcessor:
                             )
                         else:
                             select_parts.append(
-                                f"(SELECT {json_extract}(t2.data, '$.{expr_field}') "
+                                f"(SELECT {json_extract}(t2.data, '{parse_json_path(expr_field)}') "
                                 f"FROM {current_table} t2 "
                                 f"WHERE t2._id = _id "
                                 f"ORDER BY t2.id DESC LIMIT 1) AS {field}"
@@ -1121,7 +1123,7 @@ class TemporaryTableAggregationProcessor:
                             )
                         else:
                             select_parts.append(
-                                f"{json_group_array}(DISTINCT {json_extract}(data, '$.{expr_field}')) AS {field}"
+                                f"{json_group_array}(DISTINCT {json_extract}(data, '{parse_json_path(expr_field)}')) AS {field}"
                             )
 
                 case "$push":
@@ -1135,7 +1137,7 @@ class TemporaryTableAggregationProcessor:
                             )
                         else:
                             select_parts.append(
-                                f"{json_group_array}({json_extract}(data, '$.{expr_field}')) AS {field}"
+                                f"{json_group_array}({json_extract}(data, '{parse_json_path(expr_field)}')) AS {field}"
                             )
 
                 case _:
@@ -1461,7 +1463,7 @@ class TemporaryTableAggregationProcessor:
             str: The tokenizer clause for FTS5 (e.g., ", tokenize=porter" or "")
         """
         # Query sqlite_master to find FTS tables for this collection
-        fts_table_pattern = f"{self.collection.name}_%_fts"
+        fts_table_pattern = f"{quote_table_name(self.collection.name)}_%_fts"
         cursor = self.db.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name LIKE ?",
             (fts_table_pattern,),

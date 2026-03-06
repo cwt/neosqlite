@@ -11,6 +11,8 @@ we need to compare the datetime string, querying with jsonb_* will get byte inst
 This extends the existing text search functionality to also use only json_* functions.
 """
 
+from __future__ import annotations
+from ..sql_utils import quote_table_name
 from .jsonb_support import supports_jsonb
 from .query_helper import QueryHelper
 from .sql_translator_unified import SQLTranslator, SQLFieldAccessor
@@ -289,7 +291,7 @@ class DateTimeQueryProcessor:
             return None
 
         # Build the SQL query using json_* functions for datetime comparison
-        cmd = f"SELECT id, data FROM {self.collection.name} {where_clause}"
+        cmd = f"SELECT id, data FROM {quote_table_name(self.collection.name)} {where_clause}"
 
         try:
             cursor = self.db.execute(cmd, params)
@@ -333,7 +335,7 @@ class DateTimeQueryProcessor:
                 # Create base temp table with all documents
                 base_stage = {"_base": True}
                 temp_table = create_temp(
-                    base_stage, f"SELECT id, data FROM {self.collection.name}"
+                    base_stage, f"SELECT id, data FROM {quote_table_name(self.collection.name)}"
                 )
 
                 # To ensure we use json_* functions for datetime queries,

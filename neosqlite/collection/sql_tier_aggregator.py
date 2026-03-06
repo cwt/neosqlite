@@ -61,6 +61,7 @@ Usage:
 """
 
 from __future__ import annotations
+from .json_path_utils import parse_json_path
 from typing import Any, Dict, List, Tuple, Optional, Set
 from .expr_evaluator import (
     ExprEvaluator,
@@ -629,7 +630,7 @@ class SQLTierAggregator:
                 all_params.extend(expr_params)
 
             # Add to json_set arguments (path must be quoted as string with $ prefix)
-            json_set_args.append(f"'$.{field}'")
+            json_set_args.append(f"'{parse_json_path(field)}'")
             json_set_args.append(expr_sql)
 
             # Track computed field
@@ -793,7 +794,7 @@ class SQLTierAggregator:
                     )
                 else:
                     select_parts.append(
-                        f"json_extract(data, '$.{field}') AS {field}"
+                        f"json_extract(data, '{parse_json_path(field)}') AS {field}"
                     )
 
             elif value == 0:
@@ -873,7 +874,7 @@ class SQLTierAggregator:
                     group_by_parts.append(json_expr)
                 else:
                     field = group_id[1:]
-                    key_sql = f"{self._get_json_extract()}(data, '$.{field}')"
+                    key_sql = f"{self._get_json_extract()}(data, '{parse_json_path(field)}')"
                     select_parts.append(f"{key_sql} AS _id")
                     group_by_parts.append(key_sql)
             else:
@@ -928,7 +929,7 @@ class SQLTierAggregator:
                     if field_name in context.computed_fields:
                         expr_sql = context.computed_fields[field_name]
                     else:
-                        expr_sql = f"{self._get_json_extract()}(data, '$.{field_name}')"
+                        expr_sql = f"{self._get_json_extract()}(data, '{parse_json_path(field_name)}')"
             else:
                 # Literal value
                 expr_sql = "?"
@@ -1089,7 +1090,7 @@ class SQLTierAggregator:
                 else:
                     return None, []
             else:
-                field_sql = f"{self._get_json_extract()}(data, '$.{field}')"
+                field_sql = f"{self._get_json_extract()}(data, '{parse_json_path(field)}')"
 
             return f"{field_sql} = ?", all_params + [value]
 

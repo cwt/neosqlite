@@ -13,6 +13,7 @@ Tier 2 is used when:
 """
 
 from __future__ import annotations
+from .json_path_utils import parse_json_path
 import sqlite3
 import uuid
 from typing import Any, Dict, List, Tuple, Optional
@@ -207,9 +208,9 @@ class TempTableExprEvaluator:
 
             # Build JSON extract expression
             if self._jsonb_supported:
-                extract_expr = f"jsonb_extract({self.data_column}, '$.{field}') as {col_name}"
+                extract_expr = f"jsonb_extract({self.data_column}, '{parse_json_path(field)}') as {col_name}"
             else:
-                extract_expr = f"json_extract({self.data_column}, '$.{field}') as {col_name}"
+                extract_expr = f"json_extract({self.data_column}, '{parse_json_path(field)}') as {col_name}"
 
             select_exprs.append(extract_expr)
 

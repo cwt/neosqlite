@@ -27,6 +27,8 @@ from neosqlite.collection.json_helpers import (
     neosqlite_json_loads,
 )
 from neosqlite.collection.jsonb_support import supports_jsonb
+from .json_path_utils import parse_json_path
+from ..sql_utils import quote_table_name
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 import importlib.util
 import json
@@ -131,9 +133,9 @@ class QueryEngine:
             # Get the integer id as well for internal operations
             # Use the same approach as the original code considering JSONB support
             if self.collection.query_engine._jsonb_supported:
-                cmd = f"SELECT id, _id, json(data) as data FROM {self.collection.name} {where_clause} LIMIT 1"
+                cmd = f"SELECT id, _id, json(data) as data FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
             else:
-                cmd = f"SELECT id, _id, data FROM {self.collection.name} {where_clause} LIMIT 1"
+                cmd = f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
             cursor = self.collection.db.execute(cmd, params)
             row = cursor.fetchone()
             if row:
@@ -195,7 +197,7 @@ class QueryEngine:
         if not where_clause:
             where_clause = ""
 
-        cmd = f"SELECT id FROM {self.collection.name} {where_clause} LIMIT 1"
+        cmd = f"SELECT id FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
         cursor = self.collection.db.execute(cmd, params)
         row = cursor.fetchone()
         if not row:
@@ -278,7 +280,7 @@ class QueryEngine:
             # Execute the update if we have any clauses
             if set_clauses:
                 cmd = (
-                    f"UPDATE {self.collection.name} "
+                    f"UPDATE {quote_table_name(self.collection.name)} "
                     f"SET {', '.join(set_clauses)} "
                     f"WHERE id = ?"
                 )
@@ -294,9 +296,9 @@ class QueryEngine:
             # Get the integer id as well for internal operations
             # Use the same approach as the original code considering JSONB support
             if self.collection.query_engine._jsonb_supported:
-                cmd = f"SELECT id, _id, json(data) as data FROM {self.collection.name} {where_clause} LIMIT 1"
+                cmd = f"SELECT id, _id, json(data) as data FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
             else:
-                cmd = f"SELECT id, _id, data FROM {self.collection.name} {where_clause} LIMIT 1"
+                cmd = f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
             cursor = self.collection.db.execute(cmd, params)
             row = cursor.fetchone()
             if row:
@@ -350,7 +352,7 @@ class QueryEngine:
         """
         # This method should find the integer id in the database that corresponds to the ObjectId
         cursor = self.collection.db.execute(
-            f"SELECT id FROM {self.collection.name} WHERE _id = ?",
+            f"SELECT id FROM {quote_table_name(self.collection.name)} WHERE _id = ?",
             (str(oid) if hasattr(oid, "__str__") else oid,),
         )
         row = cursor.fetchone()
@@ -393,7 +395,7 @@ class QueryEngine:
         if where_clause is not None and update_result is not None:
             set_clause, set_params = update_result
             cmd = (
-                f"UPDATE {self.collection.name} SET {set_clause} {where_clause}"
+                f"UPDATE {quote_table_name(self.collection.name)} SET {set_clause} {where_clause}"
             )
             cursor = self.collection.db.execute(cmd, set_params + where_params)
             return UpdateResult(
@@ -406,7 +408,7 @@ class QueryEngine:
         # Get the integer IDs for the documents to update
         where_clause, where_params = self.sql_translator.translate_match(filter)
         if where_clause is not None:
-            cmd = f"SELECT id FROM {self.collection.name} {where_clause}"
+            cmd = f"SELECT id FROM {quote_table_name(self.collection.name)} {where_clause}"
             cursor = self.collection.db.execute(cmd, where_params)
             ids = [row[0] for row in cursor.fetchall()]
         else:
@@ -421,9 +423,9 @@ class QueryEngine:
         for int_doc_id in ids:
             # Get the document using the integer ID for the update
             if self.collection.query_engine._jsonb_supported:
-                cmd = f"SELECT id, _id, json(data) as data FROM {self.collection.name} WHERE id = ?"
+                cmd = f"SELECT id, _id, json(data) as data FROM {quote_table_name(self.collection.name)} WHERE id = ?"
             else:
-                cmd = f"SELECT id, _id, data FROM {self.collection.name} WHERE id = ?"
+                cmd = f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)} WHERE id = ?"
             cursor = self.collection.db.execute(cmd, (int_doc_id,))
             row = cursor.fetchone()
             if row:
@@ -457,7 +459,7 @@ class QueryEngine:
         where_clause, params = self.sql_translator.translate_match(filter)
         if where_clause:
             cmd = (
-                f"SELECT id FROM {self.collection.name} {where_clause} LIMIT 1"
+                f"SELECT id FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
             )
             cursor = self.collection.db.execute(cmd, params)
             row = cursor.fetchone()
@@ -489,7 +491,7 @@ class QueryEngine:
         # Try to use SQLTranslator for the WHERE clause
         where_clause, params = self.sql_translator.translate_match(filter)
         if where_clause is not None:
-            cmd = f"DELETE FROM {self.collection.name} {where_clause}"
+            cmd = f"DELETE FROM {quote_table_name(self.collection.name)} {where_clause}"
             cursor = self.collection.db.execute(cmd, params)
             return DeleteResult(deleted_count=cursor.rowcount)
 
@@ -498,7 +500,7 @@ class QueryEngine:
         where_clause, params = self.sql_translator.translate_match(filter)
         if where_clause is not None:
             # Use direct SQL if possible
-            cmd = f"SELECT id FROM {self.collection.name} {where_clause}"
+            cmd = f"SELECT id FROM {quote_table_name(self.collection.name)} {where_clause}"
             cursor = self.collection.db.execute(cmd, params)
             ids = [row[0] for row in cursor.fetchall()]
         else:
@@ -516,7 +518,7 @@ class QueryEngine:
 
         placeholders = ",".join("?" for _ in ids)
         self.collection.db.execute(
-            f"DELETE FROM {self.collection.name} WHERE id IN ({placeholders})",
+            f"DELETE FROM {quote_table_name(self.collection.name)} WHERE id IN ({placeholders})",
             ids,
         )
         return DeleteResult(deleted_count=len(ids))
@@ -547,9 +549,9 @@ class QueryEngine:
         where_clause, params = self.sql_translator.translate_match(filter)
         if where_clause:
             if self.collection.query_engine._jsonb_supported:
-                cmd = f"SELECT id, _id, json(data) as data FROM {self.collection.name} {where_clause} LIMIT 1"
+                cmd = f"SELECT id, _id, json(data) as data FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
             else:
-                cmd = f"SELECT id, _id, data FROM {self.collection.name} {where_clause} LIMIT 1"
+                cmd = f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
             cursor = self.collection.db.execute(cmd, params)
             row = cursor.fetchone()
             if row:
@@ -682,9 +684,9 @@ class QueryEngine:
         where_clause, params = self.sql_translator.translate_match(filter)
         if where_clause:
             if self.collection.query_engine._jsonb_supported:
-                cmd = f"SELECT id, _id, json(data) as data FROM {self.collection.name} {where_clause} LIMIT 1"
+                cmd = f"SELECT id, _id, json(data) as data FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
             else:
-                cmd = f"SELECT id, _id, data FROM {self.collection.name} {where_clause} LIMIT 1"
+                cmd = f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
             cursor = self.collection.db.execute(cmd, params)
             row = cursor.fetchone()
             if row:
@@ -728,9 +730,9 @@ class QueryEngine:
         where_clause, params = self.sql_translator.translate_match(filter)
         if where_clause:
             if self.collection.query_engine._jsonb_supported:
-                cmd = f"SELECT id, _id, json(data) as data FROM {self.collection.name} {where_clause} LIMIT 1"
+                cmd = f"SELECT id, _id, json(data) as data FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
             else:
-                cmd = f"SELECT id, _id, data FROM {self.collection.name} {where_clause} LIMIT 1"
+                cmd = f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
             cursor = self.collection.db.execute(cmd, params)
             row = cursor.fetchone()
             if row:
@@ -776,9 +778,9 @@ class QueryEngine:
             where_clause = "WHERE id = ?"
             params = [int_doc_id]
             if self.collection.query_engine._jsonb_supported:
-                cmd = f"SELECT id, _id, json(data) as data FROM {self.collection.name} {where_clause} LIMIT 1"
+                cmd = f"SELECT id, _id, json(data) as data FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
             else:
-                cmd = f"SELECT id, _id, data FROM {self.collection.name} {where_clause} LIMIT 1"
+                cmd = f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
             cursor = self.collection.db.execute(cmd, params)
             row = cursor.fetchone()
             if row:
@@ -804,7 +806,7 @@ class QueryEngine:
         # Try to use SQLTranslator for the WHERE clause
         where_clause, params = self.sql_translator.translate_match(filter)
         if where_clause is not None:
-            cmd = f"SELECT COUNT(id) FROM {self.collection.name} {where_clause}"
+            cmd = f"SELECT COUNT(id) FROM {quote_table_name(self.collection.name)} {where_clause}"
             row = self.collection.db.execute(cmd, params).fetchone()
             return row[0] if row else 0
         return len(list(self.find(filter)))
@@ -817,7 +819,7 @@ class QueryEngine:
             int: The estimated number of documents.
         """
         row = self.collection.db.execute(
-            f"SELECT COUNT(1) FROM {self.collection.name}"
+            f"SELECT COUNT(1) FROM {quote_table_name(self.collection.name)}"
         ).fetchone()
         return row[0] if row else 0
 
@@ -850,8 +852,8 @@ class QueryEngine:
         func_prefix = "json"
 
         cmd = (
-            f"SELECT DISTINCT {func_prefix}_extract(data, '$.{key}') "
-            f"FROM {self.collection.name} {where_clause}"
+            f"SELECT DISTINCT {func_prefix}_extract(data, '{parse_json_path(key)}') "
+            f"FROM {quote_table_name(self.collection.name)} {where_clause}"
         )
         cursor = self.collection.db.execute(cmd, params)
         results: set[Any] = set()

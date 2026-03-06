@@ -1,3 +1,4 @@
+from ..sql_utils import quote_table_name, quote_identifier
 from .json_path_utils import parse_json_path
 from .jsonb_support import (
     supports_jsonb,
@@ -87,8 +88,8 @@ class IndexManager:
                 self.collection.db.execute(
                     (
                         f"CREATE {'UNIQUE ' if unique else ''}INDEX "
-                        f"IF NOT EXISTS [idx_{self.collection.name}_{index_name}] "
-                        f"ON {self.collection.name}({func_prefix}_extract(data, '$.{field}'))"
+                        f"IF NOT EXISTS {quote_identifier(f"idx_{self.collection.name}_{index_name}")} "
+                        f"ON {quote_table_name(self.collection.name)}({func_prefix}_extract(data, '{parse_json_path(field)}'))"
                     )
                 )
         elif isinstance(key, str):
@@ -106,8 +107,8 @@ class IndexManager:
                 self.collection.db.execute(
                     (
                         f"CREATE {'UNIQUE ' if unique else ''}INDEX "
-                        f"IF NOT EXISTS [idx_{self.collection.name}_{index_name}] "
-                        f"ON {self.collection.name}({func_prefix}_extract(data, '$.{key}'))"
+                        f"IF NOT EXISTS {quote_identifier(f"idx_{self.collection.name}_{index_name}")} "
+                        f"ON {quote_table_name(self.collection.name)}({func_prefix}_extract(data, '{parse_json_path(key)}'))"
                     )
                 )
         else:
@@ -120,13 +121,13 @@ class IndexManager:
 
             # Create the compound index using multiple JSON/JSONB extract calls
             index_columns = ", ".join(
-                f"{func_prefix}_extract(data, '$.{k}')" for k in key
+                f"{func_prefix}_extract(data, '{parse_json_path(k)}')" for k in key
             )
             self.collection.db.execute(
                 (
                     f"CREATE {'UNIQUE ' if unique else ''}INDEX "
-                    f"IF NOT EXISTS [idx_{self.collection.name}_{index_name}] "
-                    f"ON {self.collection.name}({index_columns})"
+                    f"IF NOT EXISTS {quote_identifier(f"idx_{self.collection.name}_{index_name}")} "
+                    f"ON {quote_table_name(self.collection.name)}({index_columns})"
                 )
             )
 
@@ -146,7 +147,7 @@ class IndexManager:
         """
         # Create index name (replace dots with underscores for valid identifiers)
         index_name = field.replace(".", "_")
-        fts_table_name = f"{self.collection.name}_{index_name}_fts"
+        fts_table_name = quote_identifier(f"{self.collection.name}_{index_name}_fts")
 
         # Create FTS table with optional tokenizer
         # Note: We don't use the 'content' option because we manage the FTS data manually
@@ -169,7 +170,7 @@ class IndexManager:
                 f"""
                 INSERT INTO {fts_table_name}(rowid, {index_name})
                 SELECT id, lower(json_extract(data, '{json_path}'))
-                FROM {self.collection.name}
+                FROM {quote_table_name(self.collection.name)}
                 WHERE json_extract(data, '{json_path}') IS NOT NULL
                 """
             )
@@ -187,7 +188,7 @@ class IndexManager:
                 SELECT
                     r.id,
                     group_concat(lower(t.value), ' ')
-                FROM {self.collection.name} r
+                FROM {quote_table_name(self.collection.name)} r
                 JOIN {json_tree_func}(r.data) t
                 WHERE t.key = ? AND t.type = 'text'
                 GROUP BY r.id
@@ -205,8 +206,8 @@ class IndexManager:
             json_path = parse_json_path(field)
             self.collection.db.execute(
                 f"""
-                CREATE TRIGGER IF NOT EXISTS {self.collection.name}_{index_name}_fts_insert
-                AFTER INSERT ON {self.collection.name}
+                CREATE TRIGGER IF NOT EXISTS {quote_table_name(self.collection.name)}_{index_name}_fts_insert
+                AFTER INSERT ON {quote_table_name(self.collection.name)}
                 BEGIN
                     DELETE FROM {fts_table_name} WHERE rowid = new.id;
                     INSERT INTO {fts_table_name}(rowid, {index_name})
@@ -222,8 +223,8 @@ class IndexManager:
             )
             self.collection.db.execute(
                 f"""
-                CREATE TRIGGER IF NOT EXISTS {self.collection.name}_{index_name}_fts_insert
-                AFTER INSERT ON {self.collection.name}
+                CREATE TRIGGER IF NOT EXISTS {quote_table_name(self.collection.name)}_{index_name}_fts_insert
+                AFTER INSERT ON {quote_table_name(self.collection.name)}
                 BEGIN
                     DELETE FROM {fts_table_name} WHERE rowid = new.id;
                     INSERT INTO {fts_table_name}(rowid, {index_name})
@@ -243,8 +244,8 @@ class IndexManager:
             json_path = parse_json_path(field)
             self.collection.db.execute(
                 f"""
-                CREATE TRIGGER IF NOT EXISTS {self.collection.name}_{index_name}_fts_update
-                AFTER UPDATE ON {self.collection.name}
+                CREATE TRIGGER IF NOT EXISTS {quote_table_name(self.collection.name)}_{index_name}_fts_update
+                AFTER UPDATE ON {quote_table_name(self.collection.name)}
                 BEGIN
                     DELETE FROM {fts_table_name} WHERE rowid = old.id;
                     INSERT INTO {fts_table_name}(rowid, {index_name})
@@ -260,8 +261,8 @@ class IndexManager:
             )
             self.collection.db.execute(
                 f"""
-                CREATE TRIGGER IF NOT EXISTS {self.collection.name}_{index_name}_fts_update
-                AFTER UPDATE ON {self.collection.name}
+                CREATE TRIGGER IF NOT EXISTS {quote_table_name(self.collection.name)}_{index_name}_fts_update
+                AFTER UPDATE ON {quote_table_name(self.collection.name)}
                 BEGIN
                     DELETE FROM {fts_table_name} WHERE rowid = old.id;
                     INSERT INTO {fts_table_name}(rowid, {index_name})
@@ -278,8 +279,8 @@ class IndexManager:
         # Delete trigger - remove all entries for the deleted row
         self.collection.db.execute(
             f"""
-            CREATE TRIGGER IF NOT EXISTS {self.collection.name}_{index_name}_fts_delete
-            AFTER DELETE ON {self.collection.name}
+            CREATE TRIGGER IF NOT EXISTS {quote_table_name(self.collection.name)}_{index_name}_fts_delete
+            AFTER DELETE ON {quote_table_name(self.collection.name)}
             BEGIN
                 DELETE FROM {fts_table_name} WHERE rowid = old.id;
             END
@@ -334,7 +335,7 @@ class IndexManager:
                                 ".", "_"
                             )
                         created_indexes.append(
-                            f"idx_{self.collection.name}_{index_name}"
+                            f"idx_{quote_table_name(self.collection.name)}_{index_name}"
                         )
 
                 # Handle string format
@@ -343,7 +344,7 @@ class IndexManager:
                     self.create_index(index_spec)
                     index_name = index_spec.replace(".", "_")
                     created_indexes.append(
-                        f"idx_{self.collection.name}_{index_name}"
+                        f"idx_{quote_table_name(self.collection.name)}_{index_name}"
                     )
                 case list():
                     # List of keys for compound index
@@ -372,7 +373,7 @@ class IndexManager:
                             str_keys2.append(str(k))
                         index_name = "_".join(str_keys2).replace(".", "_")
                     created_indexes.append(
-                        f"idx_{self.collection.name}_{index_name}"
+                        f"idx_{quote_table_name(self.collection.name)}_{index_name}"
                     )
 
         return created_indexes
@@ -421,7 +422,7 @@ class IndexManager:
         cmd = (
             "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE ?"
         )
-        like_pattern = f"idx_{self.collection.name}_%"
+        like_pattern = f"idx_{quote_table_name(self.collection.name)}_%"
         if as_keys:
             # Extract key names from index names
             indexes = self.collection.db.execute(
@@ -431,10 +432,10 @@ class IndexManager:
             for idx in indexes:
                 # Skip the automatically created _id index since it should be hidden
                 # like MongoDB's automatic _id index
-                if idx[0] == f"idx_{self.collection.name}_id":
+                if idx[0] == f"idx_{quote_table_name(self.collection.name)}_id":
                     continue
                 # Extract key name from index name (idx_collection_key -> key)
-                key_name = idx[0][len(f"idx_{self.collection.name}_") :]
+                key_name = idx[0][len(f"idx_{quote_table_name(self.collection.name)}_") :]
                 # Convert underscores back to dots for nested keys
                 key_name = key_name.replace("_", ".")
                 result.append([key_name])
@@ -451,7 +452,7 @@ class IndexManager:
         filtered_indexes = [
             idx_name
             for idx_name in all_indexes
-            if idx_name != f"idx_{self.collection.name}_id"
+            if idx_name != f"idx_{quote_table_name(self.collection.name)}_id"
         ]
         return filtered_indexes
 
@@ -472,13 +473,13 @@ class IndexManager:
             # For single indexes
             index_name = index.replace(".", "_")
             self.collection.db.execute(
-                f"DROP INDEX IF EXISTS idx_{self.collection.name}_{index_name}"
+                f"DROP INDEX IF EXISTS idx_{quote_table_name(self.collection.name)}_{index_name}"
             )
         else:
             # For compound indexes
             index_name = "_".join(index).replace(".", "_")
             self.collection.db.execute(
-                f"DROP INDEX IF EXISTS idx_{self.collection.name}_{index_name}"
+                f"DROP INDEX IF EXISTS idx_{quote_table_name(self.collection.name)}_{index_name}"
             )
 
     def drop_indexes(self):
@@ -517,7 +518,7 @@ class IndexManager:
             for idx_name, idx_sql in indexes:
                 # Skip the automatically created _id index since it should be hidden
                 # like MongoDB's automatic _id index
-                if idx_name == f"idx_{self.collection.name}_id":
+                if idx_name == f"idx_{quote_table_name(self.collection.name)}_id":
                     continue
 
                 # Parse the index information
@@ -604,7 +605,7 @@ class IndexManager:
             self.create_index(key, fts=True)
             # Generate the index name the same way as in IndexManager
             index_name = key.replace(".", "_")
-            created_indexes.append(f"idx_{self.collection.name}_{index_name}")
+            created_indexes.append(f"idx_{quote_table_name(self.collection.name)}_{index_name}")
         return created_indexes
 
     def list_search_indexes(self) -> List[str]:
@@ -621,12 +622,12 @@ class IndexManager:
         # FTS tables have a specific naming pattern: {collection}_{field}_fts
         fts_tables = self.collection.db.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE ?",
-            (f"{self.collection.name}_%_fts",),
+            (f"{quote_table_name(self.collection.name)}_%_fts",),
         ).fetchall()
 
         # Extract the field names from the FTS table names
         search_indexes = []
-        prefix_len = len(f"{self.collection.name}_")
+        prefix_len = len(f"{quote_table_name(self.collection.name)}_")
         suffix_len = len("_fts")
 
         for (table_name,) in fts_tables:
@@ -666,20 +667,20 @@ class IndexManager:
         # For FTS indexes, we need to drop the FTS virtual table and its triggers
         # FTS tables have a specific naming pattern: {collection}_{field}_fts
         index_name = index.replace(".", "_")
-        fts_table_name = f"{self.collection.name}_{index_name}_fts"
+        fts_table_name = f"{quote_table_name(self.collection.name)}_{index_name}_fts"
 
         # Drop the FTS table
         self.collection.db.execute(f"DROP TABLE IF EXISTS {fts_table_name}")
 
         # Drop the triggers associated with the FTS table
         self.collection.db.execute(
-            f"DROP TRIGGER IF EXISTS {self.collection.name}_{index_name}_fts_insert"
+            f"DROP TRIGGER IF EXISTS {quote_table_name(self.collection.name)}_{index_name}_fts_insert"
         )
         self.collection.db.execute(
-            f"DROP TRIGGER IF EXISTS {self.collection.name}_{index_name}_fts_update"
+            f"DROP TRIGGER IF EXISTS {quote_table_name(self.collection.name)}_{index_name}_fts_update"
         )
         self.collection.db.execute(
-            f"DROP TRIGGER IF EXISTS {self.collection.name}_{index_name}_fts_delete"
+            f"DROP TRIGGER IF EXISTS {quote_table_name(self.collection.name)}_{index_name}_fts_delete"
         )
 
     def _create_datetime_index(self, key: str, unique: bool = False):
@@ -698,7 +699,7 @@ class IndexManager:
 
         index_sql = f"""
         CREATE {'UNIQUE ' if unique else ''}INDEX IF NOT EXISTS
-        idx_{self.collection.name}_{column_name}
-        ON {self.collection.name}(datetime(json_extract(data, '{parse_json_path(key)}')))
+        idx_{quote_table_name(self.collection.name)}_{column_name}
+        ON {quote_table_name(self.collection.name)}(datetime(json_extract(data, '{parse_json_path(key)}')))
         """
         self.collection.db.execute(index_sql)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 from .collection import Collection
 from .exceptions import CollectionInvalid
+from .sql_utils import quote_table_name
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Tuple
 from typing_extensions import Literal
@@ -139,7 +140,7 @@ class Connection:
                         does not exist, the operation is silently ignored due to
                         the use of `IF EXISTS` in the SQL command.
         """
-        self.db.execute(f"DROP TABLE IF EXISTS {name}")
+        self.db.execute(f"DROP TABLE IF EXISTS {quote_table_name(name)}")
 
     def create_collection(self, name: str, **kwargs) -> Collection:
         """
@@ -309,7 +310,7 @@ class Connection:
                     table_name = command.get("table_info")
                 if not table_name:
                     raise ValueError("table_info requires 'table' parameter")
-                cursor = self.db.execute(f"PRAGMA table_info({table_name})")
+                cursor = self.db.execute(f"PRAGMA table_info({quote_table_name(table_name)})")
                 columns = []
                 for row in cursor.fetchall():
                     columns.append(
@@ -340,7 +341,7 @@ class Connection:
                 if collection_name:
                     # Validate specific collection (table)
                     cursor = self.db.execute(
-                        f"PRAGMA integrity_check({collection_name})"
+                        f"PRAGMA integrity_check({quote_table_name(collection_name)})"
                     )
                 else:
                     # Validate entire database
@@ -360,7 +361,7 @@ class Connection:
                 table_name = kwargs.get("table")
                 if table_name:
                     cursor = self.db.execute(
-                        f"PRAGMA foreign_key_check({table_name})"
+                        f"PRAGMA foreign_key_check({quote_table_name(table_name)})"
                     )
                 else:
                     cursor = self.db.execute("PRAGMA foreign_key_check")
@@ -384,7 +385,7 @@ class Connection:
                     table_name = command.get("index_list")
                 if not table_name:
                     raise ValueError("index_list requires 'table' parameter")
-                cursor = self.db.execute(f"PRAGMA index_list({table_name})")
+                cursor = self.db.execute(f"PRAGMA index_list({quote_table_name(table_name)})")
                 indexes = []
                 for row in cursor.fetchall():
                     indexes.append(
@@ -416,7 +417,7 @@ class Connection:
                         "collstats requires 'collection' parameter"
                     )
                 cursor = self.db.execute(
-                    f"SELECT COUNT(*) FROM {collection_name}"
+                    f"SELECT COUNT(*) FROM {quote_table_name(collection_name)}"
                 )
                 count = cursor.fetchone()[0]
                 return {

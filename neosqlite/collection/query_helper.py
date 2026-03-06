@@ -1,3 +1,4 @@
+from ..sql_utils import quote_table_name
 from .. import query_operators
 from ..binary import Binary
 from ..exceptions import MalformedDocument, MalformedQueryException
@@ -627,7 +628,7 @@ class QueryHelper:
 
         # For other types (ObjectId, str), we need to query the _id column to get the integer id
         cursor = self.collection.db.execute(
-            f"SELECT id FROM {self.collection.name} WHERE _id = ?",
+            f"SELECT id FROM {quote_table_name(self.collection.name)} WHERE _id = ?",
             (
                 (str(oid) if hasattr(oid, "__str__") else oid,)
                 if oid is not None
@@ -721,7 +722,7 @@ class QueryHelper:
 
         # Insert with the _id value in the dedicated column
         cursor = self.collection.db.execute(
-            f"INSERT INTO {self.collection.name}(data, _id) VALUES (?, ?)",
+            f"INSERT INTO {quote_table_name(self.collection.name)}(data, _id) VALUES (?, ?)",
             (
                 json_str,
                 (
@@ -1018,7 +1019,7 @@ class QueryHelper:
             # Handle $unset operations with json_remove
             func_name = _get_json_function("remove", self._jsonb_supported)
             cmd = (
-                f"UPDATE {self.collection.name} "
+                f"UPDATE {quote_table_name(self.collection.name)} "
                 f"SET data = {func_name}(data, {', '.join(unset_clauses)}) "
                 "WHERE id = ?"
             )
@@ -1029,7 +1030,7 @@ class QueryHelper:
             # Handle other operations with json_set
             func_name = _get_json_function("set", self._jsonb_supported)
             cmd = (
-                f"UPDATE {self.collection.name} "
+                f"UPDATE {quote_table_name(self.collection.name)} "
                 f"SET data = {func_name}(data, {', '.join(set_clauses)}) "
                 "WHERE id = ?"
             )
@@ -1046,9 +1047,9 @@ class QueryHelper:
         # Fetch and return the updated document
         # Use the instance's JSONB support flag to determine how to select data
         if self._jsonb_supported:
-            cmd = f"SELECT id, json(data) as data FROM {self.collection.name} WHERE id = ?"
+            cmd = f"SELECT id, json(data) as data FROM {quote_table_name(self.collection.name)} WHERE id = ?"
         else:
-            cmd = f"SELECT id, data FROM {self.collection.name} WHERE id = ?"
+            cmd = f"SELECT id, data FROM {quote_table_name(self.collection.name)} WHERE id = ?"
 
         if row := self.collection.db.execute(cmd, (int_doc_id,)).fetchone():
             return self.collection._load(row[0], row[1])
@@ -1221,7 +1222,7 @@ class QueryHelper:
         if unset_clauses:
             func_name = _get_json_function("remove", self._jsonb_supported)
             cmd = (
-                f"UPDATE {self.collection.name} "
+                f"UPDATE {quote_table_name(self.collection.name)} "
                 f"SET data = {func_name}(data, {', '.join(unset_clauses)}) "
                 "WHERE id = ?"
             )
@@ -1232,7 +1233,7 @@ class QueryHelper:
         if insert_clauses:
             func_name = _get_json_function("insert", self._jsonb_supported)
             cmd = (
-                f"UPDATE {self.collection.name} "
+                f"UPDATE {quote_table_name(self.collection.name)} "
                 f"SET data = {func_name}(data, {', '.join(insert_clauses)}) "
                 "WHERE id = ?"
             )
@@ -1243,7 +1244,7 @@ class QueryHelper:
         if replace_clauses:
             func_name = _get_json_function("replace", self._jsonb_supported)
             cmd = (
-                f"UPDATE {self.collection.name} "
+                f"UPDATE {quote_table_name(self.collection.name)} "
                 f"SET data = {func_name}(data, {', '.join(replace_clauses)}) "
                 "WHERE id = ?"
             )
@@ -1254,7 +1255,7 @@ class QueryHelper:
         if set_clauses:
             func_name = _get_json_function("set", self._jsonb_supported)
             cmd = (
-                f"UPDATE {self.collection.name} "
+                f"UPDATE {quote_table_name(self.collection.name)} "
                 f"SET data = {func_name}(data, {', '.join(set_clauses)}) "
                 "WHERE id = ?"
             )
@@ -1274,9 +1275,9 @@ class QueryHelper:
         # Fetch and return the updated document
         # Use the instance's JSONB support flag to determine how to select data
         if self._jsonb_supported:
-            cmd = f"SELECT id, json(data) as data FROM {self.collection.name} WHERE id = ?"
+            cmd = f"SELECT id, json(data) as data FROM {quote_table_name(self.collection.name)} WHERE id = ?"
         else:
-            cmd = f"SELECT id, data FROM {self.collection.name} WHERE id = ?"
+            cmd = f"SELECT id, data FROM {quote_table_name(self.collection.name)} WHERE id = ?"
 
         if row := self.collection.db.execute(cmd, (int_doc_id,)).fetchone():
             return self.collection._load(row[0], row[1])
@@ -1303,9 +1304,9 @@ class QueryHelper:
 
         # Fetch the document data
         if self._jsonb_supported:
-            cmd = f"SELECT json(data) as data FROM {self.collection.name} WHERE id = ?"
+            cmd = f"SELECT json(data) as data FROM {quote_table_name(self.collection.name)} WHERE id = ?"
         else:
-            cmd = f"SELECT data FROM {self.collection.name} WHERE id = ?"
+            cmd = f"SELECT data FROM {quote_table_name(self.collection.name)} WHERE id = ?"
 
         row = self.collection.db.execute(cmd, (int_doc_id,)).fetchone()
         if not row:
@@ -1702,7 +1703,7 @@ class QueryHelper:
             # Convert the doc_id to integer ID for internal operations
             int_doc_id = self._get_integer_id_for_oid(doc_id)
             self.collection.db.execute(
-                f"UPDATE {self.collection.name} SET data = ? WHERE id = ?",
+                f"UPDATE {quote_table_name(self.collection.name)} SET data = ? WHERE id = ?",
                 (neosqlite_json_dumps(doc_to_update), int_doc_id),
             )
 
@@ -1722,7 +1723,7 @@ class QueryHelper:
         # Convert the doc_id to integer ID for internal operations
         int_doc_id = self._get_integer_id_for_oid(doc_id)
         self.collection.db.execute(
-            f"UPDATE {self.collection.name} SET data = ? WHERE id = ?",
+            f"UPDATE {quote_table_name(self.collection.name)} SET data = ? WHERE id = ?",
             (neosqlite_json_dumps(replacement), int_doc_id),
         )
 
@@ -1736,7 +1737,7 @@ class QueryHelper:
         # Convert the doc_id to integer ID for internal operations
         int_doc_id = self._get_integer_id_for_oid(doc_id)
         self.collection.db.execute(
-            f"DELETE FROM {self.collection.name} WHERE id = ?", (int_doc_id,)
+            f"DELETE FROM {quote_table_name(self.collection.name)} WHERE id = ?", (int_doc_id,)
         )
 
     def _is_text_search_query(self, query: Dict[str, Any]) -> bool:
@@ -1779,7 +1780,7 @@ class QueryHelper:
         # Find FTS tables for this collection
         cursor = self.collection.db.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE ?",
-            (f"{self.collection.name}_%_fts",),
+            (f"{quote_table_name(self.collection.name)}_%_fts",),
         )
         fts_tables = cursor.fetchall()
 
@@ -1793,7 +1794,7 @@ class QueryHelper:
         for (fts_table_name,) in fts_tables:
             # Extract field name from FTS table name (collection_field_fts -> field)
             index_name = fts_table_name[
-                len(f"{self.collection.name}_") : -4
+                len(f"{quote_table_name(self.collection.name)}_") : -4
             ]  # Remove collection_ prefix and _fts suffix
 
             # Add subquery for this FTS table
@@ -2086,21 +2087,21 @@ class QueryHelper:
         if field == "_id":
             # Handle _id field specially
             if isinstance(value, ObjectId):
-                return f"{self.collection.name}._id = ?", [str(value)]
+                return f"{quote_table_name(self.collection.name)}._id = ?", [str(value)]
             elif isinstance(value, str) and len(value) == 24:
                 try:
                     obj_id = ObjectId(value)
-                    return f"{self.collection.name}._id = ?", [str(obj_id)]
+                    return f"{quote_table_name(self.collection.name)}._id = ?", [str(obj_id)]
                 except ValueError:
                     try:
                         int_id = int(value)
-                        return f"{self.collection.name}.id = ?", [int_id]
+                        return f"{quote_table_name(self.collection.name)}.id = ?", [int_id]
                     except ValueError:
-                        return f"{self.collection.name}._id = ?", [value]
+                        return f"{quote_table_name(self.collection.name)}._id = ?", [value]
             elif isinstance(value, int):
-                return f"{self.collection.name}.id = ?", [value]
+                return f"{quote_table_name(self.collection.name)}.id = ?", [value]
             else:
-                return f"{self.collection.name}._id = ?", [value]
+                return f"{quote_table_name(self.collection.name)}._id = ?", [value]
         else:
             # Handle regular fields with json_extract
             # Use "data" as the data column name (standard for NeoSQLite)
@@ -2143,13 +2144,13 @@ class QueryHelper:
         cmd = (
             "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE ?"
         )
-        like_pattern = f"idx_{self.collection.name}_%"
+        like_pattern = f"idx_{quote_table_name(self.collection.name)}_%"
         indexes = self.collection.db.execute(cmd, (like_pattern,)).fetchall()
 
         indexed_fields = []
         for idx in indexes:
             # Extract key name from index name (idx_collection_key -> key)
-            key_name = idx[0][len(f"idx_{self.collection.name}_") :]
+            key_name = idx[0][len(f"idx_{quote_table_name(self.collection.name)}_") :]
             # Convert underscores back to dots for nested keys
             key_name = key_name.replace("_", ".")
             # Skip the automatically created _id index since it should be hidden
@@ -2409,7 +2410,7 @@ class QueryHelper:
         # Convert dots to underscores in field name
         field_name_for_index = field.replace(".", "_")
         expected_datetime_index_name = (
-            f"idx_{self.collection.name}_{field_name_for_index}_utc"
+            f"idx_{quote_table_name(self.collection.name)}_{field_name_for_index}_utc"
         )
 
         # Query the SQLite master table to check if this specific index exists
@@ -2477,7 +2478,7 @@ class QueryHelper:
                 if isinstance(value, ObjectId):
                     param_value = str(value)
                     # Query the _id column
-                    clauses.append(f"{self.collection.name}._id = ?")
+                    clauses.append(f"{quote_table_name(self.collection.name)}._id = ?")
                     params.append(param_value)
                 elif isinstance(value, str) and len(value) == 24:
                     try:
@@ -2485,7 +2486,7 @@ class QueryHelper:
                         obj_id = ObjectId(value)
                         param_value = str(obj_id)
                         # Query the _id column
-                        clauses.append(f"{self.collection.name}._id = ?")
+                        clauses.append(f"{quote_table_name(self.collection.name)}._id = ?")
                         params.append(param_value)
                     except ValueError:
                         # If not a valid ObjectId string, it might be an integer id
@@ -2493,19 +2494,19 @@ class QueryHelper:
                             int_id = int(
                                 value
                             )  # Try to parse as integer for backward compatibility
-                            clauses.append(f"{self.collection.name}.id = ?")
+                            clauses.append(f"{quote_table_name(self.collection.name)}.id = ?")
                             params.append(int_id)
                         except ValueError:
                             # Not an integer either, use as string in _id column
-                            clauses.append(f"{self.collection.name}._id = ?")
+                            clauses.append(f"{quote_table_name(self.collection.name)}._id = ?")
                             params.append(value)
                 elif isinstance(value, int):
                     # Direct integer value, likely referring to the old auto-increment id
-                    clauses.append(f"{self.collection.name}.id = ?")
+                    clauses.append(f"{quote_table_name(self.collection.name)}.id = ?")
                     params.append(value)
                 else:
                     # Other types, store as-is in _id column
-                    clauses.append(f"{self.collection.name}._id = ?")
+                    clauses.append(f"{quote_table_name(self.collection.name)}._id = ?")
                     params.append(value)
                 continue
 
@@ -2840,7 +2841,7 @@ class QueryHelper:
                             # Find FTS tables for this collection to determine which fields are indexed
                             cursor = self.collection.db.execute(
                                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE ?",
-                                (f"{self.collection.name}_%_fts",),
+                                (f"{quote_table_name(self.collection.name)}_%_fts",),
                             )
                             fts_tables = cursor.fetchall()
 
@@ -2850,7 +2851,7 @@ class QueryHelper:
                                 # Extract field name from FTS table name
                                 # (collection_field_fts -> field)
                                 index_name = fts_table_name[
-                                    len(f"{self.collection.name}_") : -4
+                                    len(f"{quote_table_name(self.collection.name)}_") : -4
                                 ]  # Remove collection_ prefix and _fts suffix
                                 # Convert underscores back to dots for nested keys
                                 field_name = index_name.replace("_", ".")
@@ -3097,7 +3098,7 @@ class QueryHelper:
                             )
                         else:
                             sort_clauses.append(
-                                f"{self._json_function_prefix}_extract(data, '$.{key}') "
+                                f"{self._json_function_prefix}_extract(data, '{parse_json_path(key)}') "
                                 f"{'DESC' if direction == DESCENDING else 'ASC'}"
                             )
                     order_by = "ORDER BY " + ", ".join(sort_clauses)
@@ -3182,9 +3183,9 @@ class QueryHelper:
                             else:
                                 # Grouping by another field
                                 select_expressions.append(
-                                    f"{self._json_function_prefix}_extract({self.collection.name}.data, '$.{group_id_field}') AS _id"
+                                    f"{self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(group_id_field)}') AS _id"
                                 )
-                                group_by_clause = f"GROUP BY {self._json_function_prefix}_extract({self.collection.name}.data, '$.{group_id_field}')"
+                                group_by_clause = f"GROUP BY {self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(group_id_field)}')"
 
                             # Try to build the group query using the general method
                             # This supports all accumulator operations including $avg, $min, $max
@@ -3206,7 +3207,7 @@ class QueryHelper:
                                 if group_id_field == unwind_field_name:
                                     # Replace the _id extraction with je.value
                                     modified_select = select_clause.replace(
-                                        f"{self._json_function_prefix}_extract(data, '$.{unwind_field_name}') AS _id",
+                                        f"{self._json_function_prefix}_extract(data, '{parse_json_path(unwind_field_name)}') AS _id",
                                         "je.value AS _id",
                                     )
                                 else:
@@ -3216,7 +3217,7 @@ class QueryHelper:
                                 # replace json_extract(data, '$.unwind_field_name') with je.value
                                 # This handles cases like $push: "$tags" or $addToSet: "$tags" where tags is the unwound field
                                 modified_select = modified_select.replace(
-                                    f"{self._json_function_prefix}_extract(data, '$.{unwind_field_name}')",
+                                    f"{self._json_function_prefix}_extract(data, '{parse_json_path(unwind_field_name)}')",
                                     "je.value",
                                 )
 
@@ -3227,11 +3228,11 @@ class QueryHelper:
                                     # Keep the original GROUP BY but ensure it references the correct table
                                     modified_group_by = group_by_clause.replace(
                                         f"{self._json_function_prefix}_extract(data,",
-                                        f"{self._json_function_prefix}_extract({self.collection.name}.data,",
+                                        f"{self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data,",
                                     )
 
                                 # Build the FROM clause with json_each for unwinding
-                                from_clause = f"FROM {self.collection.name}, {self._json_each_function}({self._json_function_prefix}_extract({self.collection.name}.data, '$.{unwind_field_name}')) as je"
+                                from_clause = f"FROM {quote_table_name(self.collection.name)}, {self._json_each_function}({self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(unwind_field_name)}')) as je"
 
                                 # Process subsequent stages (sort, skip, limit)
                                 limit_clause = ""
@@ -3293,7 +3294,7 @@ class QueryHelper:
                                 select_clause = "SELECT " + ", ".join(
                                     select_expressions
                                 )
-                                from_clause = f"FROM {self.collection.name}, {self._json_each_function}({self._json_function_prefix}_extract({self.collection.name}.data, '$.{unwind_field_name}')) as je"
+                                from_clause = f"FROM {quote_table_name(self.collection.name)}, {self._json_each_function}({self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(unwind_field_name)}')) as je"
 
                                 # Add ordering by _id for consistent results
                                 order_by_clause = "ORDER BY _id"
@@ -3399,9 +3400,9 @@ class QueryHelper:
                             else:
                                 # Grouping by another field
                                 select_expressions.append(
-                                    f"{self._json_function_prefix}_extract({self.collection.name}.data, '$.{group_id_field}') AS _id"
+                                    f"{self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(group_id_field)}') AS _id"
                                 )
-                                group_by_clause = f"GROUP BY {self._json_function_prefix}_extract({self.collection.name}.data, '$.{group_id_field}')"
+                                group_by_clause = f"GROUP BY {self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(group_id_field)}')"
 
                             # Handle accumulator operations
                             for field, accumulator in group_stage.items():
@@ -3452,7 +3453,7 @@ class QueryHelper:
                                                     self._json_function_prefix
                                                 )
                                                 select_expressions.append(
-                                                    f"json_group_array({func_prefix}_extract({self.collection.name}.data, '$.{push_field}')) AS \"{field}\""
+                                                    f"json_group_array({func_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(push_field)}')) AS \"{field}\""
                                                 )
                                             output_fields.append(field)
                                         else:
@@ -3481,7 +3482,7 @@ class QueryHelper:
                                                     self._json_function_prefix
                                                 )
                                                 select_expressions.append(
-                                                    f"json_group_array(DISTINCT {func_prefix}_extract({self.collection.name}.data, '$.{add_to_set_field}')) AS \"{field}\""
+                                                    f"json_group_array(DISTINCT {func_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(add_to_set_field)}')) AS \"{field}\""
                                                 )
                                             output_fields.append(field)
                                         else:
@@ -3498,7 +3499,7 @@ class QueryHelper:
                                 select_clause = "SELECT " + ", ".join(
                                     select_expressions
                                 )
-                                from_clause = f"FROM {self.collection.name}, {self._json_each_function}({self._json_function_prefix}_extract({self.collection.name}.data, '$.{unwind_field_name}')) as je"
+                                from_clause = f"FROM {quote_table_name(self.collection.name)}, {self._json_each_function}({self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(unwind_field_name)}')) as je"
 
                                 # Add WHERE clause from $match
                                 where_result = self._build_simple_where_clause(
@@ -3683,16 +3684,16 @@ class QueryHelper:
                     if foreign_field == "_id":
                         foreign_extract = "related.id"
                     else:
-                        foreign_extract = f"{self._json_function_prefix}_extract(related.data, '$.{foreign_field}')"
+                        foreign_extract = f"{self._json_function_prefix}_extract(related.data, '{parse_json_path(foreign_field)}')"
 
                     if local_field == "_id":
-                        local_extract = f"{self.collection.name}.id"
+                        local_extract = f"{quote_table_name(self.collection.name)}.id"
                     else:
-                        local_extract = f"{self._json_function_prefix}_extract({self.collection.name}.data, '$.{local_field}')"
+                        local_extract = f"{self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(local_field)}')"
 
                     select_clause = (
-                        f"SELECT {self.collection.name}.id, "
-                        f"{self._json_function_prefix}_set({self.collection.name}.data, '$.\"{as_field}\"', "
+                        f"SELECT {quote_table_name(self.collection.name)}.id, "
+                        f"{self._json_function_prefix}_set({quote_table_name(self.collection.name)}.data, '{parse_json_path(as_field)}', "
                         f"coalesce(( "
                         f"  SELECT json_group_array(json(related.data)) "
                         f"  FROM {from_collection} as related "
@@ -3701,7 +3702,7 @@ class QueryHelper:
                         f"), '[]')) as data"
                     )
 
-                    from_clause = f"FROM {self.collection.name}"
+                    from_clause = f"FROM {quote_table_name(self.collection.name)}"
 
                     # If there's a $match stage before this, incorporate its WHERE clause
                     if i == 1 and "$match" in pipeline[0]:
@@ -3724,7 +3725,7 @@ class QueryHelper:
                 case _:
                     return None  # Fallback for unsupported stages
 
-        cmd = f"{select_clause} FROM {self.collection.name} {where_clause} {group_by} {order_by} {limit} {offset}"
+        cmd = f"{select_clause} FROM {quote_table_name(self.collection.name)} {where_clause} {group_by} {order_by} {limit} {offset}"
         return cmd, params, output_fields
 
     def _optimize_unwind_group_pattern(
@@ -3774,7 +3775,7 @@ class QueryHelper:
                     if group_id_field == unwind_field:
                         # Replace the _id extraction with je.value
                         modified_select = select_clause.replace(
-                            f"{self._json_function_prefix}_extract(data, '$.{unwind_field}') AS _id",
+                            f"{self._json_function_prefix}_extract(data, '{parse_json_path(unwind_field)}') AS _id",
                             "je.value AS _id",
                         )
                     else:
@@ -3787,11 +3788,11 @@ class QueryHelper:
                         # Keep the original GROUP BY but ensure it references the correct table
                         modified_group_by = group_by_clause.replace(
                             f"{self._json_function_prefix}_extract(data,",
-                            f"{self._json_function_prefix}_extract({self.collection.name}.data,",
+                            f"{self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data,",
                         )
 
                     # Build the FROM clause with json_each for unwinding
-                    from_clause = f"FROM {self.collection.name}, {self._json_each_function}({self._json_function_prefix}_extract({self.collection.name}.data, '$.{unwind_field}')) as je"
+                    from_clause = f"FROM {quote_table_name(self.collection.name)}, {self._json_each_function}({self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(unwind_field)}')) as je"
 
                     # Add ordering by _id for consistent results
                     order_by_clause = "ORDER BY _id"
@@ -3845,13 +3846,13 @@ class QueryHelper:
             field_names.append(field[1:])
 
         # Build SELECT clause with nested json_set calls
-        select_parts = [f"{self.collection.name}.data"]
+        select_parts = [f"{quote_table_name(self.collection.name)}.data"]
         for i, field_name in enumerate(field_names):
             select_parts.insert(0, "json_set(")
-            select_parts.append(f", '$.\"{field_name}\"', je{i + 1}.value)")
+            select_parts.append(f", '{parse_json_path(field_name)}', je{i + 1}.value)")
         select_expr = "".join(select_parts)
         select_clause = (
-            f"SELECT {self.collection.name}.id, {select_expr} as data"
+            f"SELECT {quote_table_name(self.collection.name)}.id, {select_expr} as data"
         )
 
         # Build FROM clause with multiple json_each calls
@@ -3878,11 +3879,11 @@ class QueryHelper:
             if parent_field and parent_alias:
                 nested_path = field_name[len(parent_field) + 1 :]
                 all_where_clauses.append(
-                    f"json_type({self._json_function_prefix}_extract({parent_alias}.value, '$.{nested_path}')) = 'array'"
+                    f"json_type({self._json_function_prefix}_extract({parent_alias}.value, '{parse_json_path(nested_path)}')) = 'array'"
                 )
             else:
                 all_where_clauses.append(
-                    f"json_type({self._json_function_prefix}_extract({self.collection.name}.data, '$.{field_name}')) = 'array'"
+                    f"json_type({self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}')) = 'array'"
                 )
 
         where_clause = ""
@@ -3921,7 +3922,7 @@ class QueryHelper:
                 - A dictionary mapping each unwound field path to its corresponding
                   alias (e.g., 'je1', 'je2').
         """
-        from_parts = [f"FROM {self.collection.name}"]
+        from_parts = [f"FROM {quote_table_name(self.collection.name)}"]
         unwound_fields: Dict[str, str] = {}
 
         for i, field_name in enumerate(field_names):
@@ -3933,11 +3934,11 @@ class QueryHelper:
             if parent_field and parent_alias:
                 nested_path = field_name[len(parent_field) + 1 :]
                 from_parts.append(
-                    f", {self._json_each_function}({self._json_function_prefix}_extract({parent_alias}.value, '$.{nested_path}')) as {je_alias}"
+                    f", {self._json_each_function}({self._json_function_prefix}_extract({parent_alias}.value, '{parse_json_path(nested_path)}')) as {je_alias}"
                 )
             else:
                 from_parts.append(
-                    f", {self._json_each_function}({self._json_function_prefix}_extract({self.collection.name}.data, '$.{field_name}')) as {je_alias}"
+                    f", {self._json_each_function}({self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}')) as {je_alias}"
                 )
             unwound_fields[field_name] = je_alias
 
@@ -4031,7 +4032,7 @@ class QueryHelper:
                     if parent_field and parent_alias:
                         nested_path = key[len(parent_field) + 1 :]
                         sort_clauses.append(
-                            f"{self._json_function_prefix}_extract({parent_alias}.value, '$.{nested_path}') "
+                            f"{self._json_function_prefix}_extract({parent_alias}.value, '{parse_json_path(nested_path)}') "
                             f"{'DESC' if direction == DESCENDING else 'ASC'}"
                         )
                     elif key in unwound_fields:
@@ -4041,7 +4042,7 @@ class QueryHelper:
                         )
                     else:
                         sort_clauses.append(
-                            f"{self._json_function_prefix}_extract({self.collection.name}.data, '$.{key}') "
+                            f"{self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(key)}') "
                             f"{'DESC' if direction == DESCENDING else 'ASC'}"
                         )
             if sort_clauses:
@@ -4090,9 +4091,9 @@ class QueryHelper:
             output_fields = ["_id"]
         elif isinstance(group_id_expr, str) and group_id_expr.startswith("$"):
             group_by_field = group_id_expr[1:]
-            group_by_clause = f"GROUP BY {self._json_function_prefix}_extract(data, '$.{group_by_field}')"
+            group_by_clause = f"GROUP BY {self._json_function_prefix}_extract(data, '{parse_json_path(group_by_field)}')"
             select_expressions = [
-                f"{self._json_function_prefix}_extract(data, '$.{group_by_field}') AS _id"
+                f"{self._json_function_prefix}_extract(data, '{parse_json_path(group_by_field)}') AS _id"
             ]
             output_fields = ["_id"]
         else:
@@ -4118,7 +4119,7 @@ class QueryHelper:
                     return None  # Fallback for complex accumulator expressions
                 field_name = expr[1:]
                 select_expressions.append(
-                    f"json_group_array({self._json_function_prefix}_extract(data, '$.{field_name}')) AS \"{field}\""
+                    f"json_group_array({self._json_function_prefix}_extract(data, '{parse_json_path(field_name)}')) AS \"{field}\""
                 )
                 output_fields.append(field)
                 continue
@@ -4129,7 +4130,7 @@ class QueryHelper:
                     return None  # Fallback for complex accumulator expressions
                 field_name = expr[1:]
                 select_expressions.append(
-                    f"json_group_array(DISTINCT {self._json_function_prefix}_extract(data, '$.{field_name}')) AS \"{field}\""
+                    f"json_group_array(DISTINCT {self._json_function_prefix}_extract(data, '{parse_json_path(field_name)}')) AS \"{field}\""
                 )
                 output_fields.append(field)
                 continue
@@ -4156,7 +4157,7 @@ class QueryHelper:
                 return None  # Unsupported accumulator
 
             select_expressions.append(
-                f"{sql_func}({self._json_function_prefix}_extract(data, '$.{field_name}')) AS {field}"
+                f"{sql_func}({self._json_function_prefix}_extract(data, '{parse_json_path(field_name)}')) AS {field}"
             )
             output_fields.append(field)
 
