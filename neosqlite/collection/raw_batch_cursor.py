@@ -1,7 +1,7 @@
 from __future__ import annotations
 from .json_helpers import neosqlite_json_dumps
 from .json_path_utils import parse_json_path
-from typing import Any, Dict, Iterator, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, Iterator, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from . import Collection
@@ -13,11 +13,11 @@ class RawBatchCursor:
     def __init__(
         self,
         collection: Collection,
-        filter: Optional[Dict[str, Any]] = None,
-        projection: Optional[Dict[str, Any]] = None,
-        hint: Optional[str] = None,
+        filter: Dict[str, Any] | None = None,
+        projection: Dict[str, Any] | None = None,
+        hint: str | None = None,
         batch_size: int = 100,
-        pipeline: Optional[List[Dict[str, Any]]] = None,
+        pipeline: List[Dict[str, Any]] | None = None,
     ):
         """
         Initialize a RawBatchCursor object.
@@ -37,8 +37,8 @@ class RawBatchCursor:
         self._hint = hint
         self._batch_size = batch_size
         self._skip = 0
-        self._limit: Optional[int] = None
-        self._sort: Optional[Dict[str, int]] = None
+        self._limit: int | None = None
+        self._sort: Dict[str, int] | None = None
         self._pipeline = pipeline
 
     def batch_size(self, batch_size: int) -> RawBatchCursor:

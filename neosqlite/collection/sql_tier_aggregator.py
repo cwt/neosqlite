@@ -62,7 +62,7 @@ Usage:
 
 from __future__ import annotations
 from .json_path_utils import parse_json_path
-from typing import Any, Dict, List, Tuple, Optional, Set
+from typing import Any, Dict, List, Tuple, Set
 from .expr_evaluator import (
     ExprEvaluator,
     _is_expression,
@@ -117,7 +117,7 @@ class PipelineContext:
         """
         self.removed_fields.add(field)
 
-    def get_field_sql(self, field: str) -> Optional[str]:
+    def get_field_sql(self, field: str) -> str | None:
         """
         Get SQL expression for a field.
 
@@ -256,9 +256,7 @@ class SQLTierAggregator:
         "$script",  # JavaScript execution
     }
 
-    def __init__(
-        self, collection, expr_evaluator: Optional[ExprEvaluator] = None
-    ):
+    def __init__(self, collection, expr_evaluator: ExprEvaluator | None = None):
         """
         Initialize the SQL tier aggregator.
 
@@ -275,7 +273,7 @@ class SQLTierAggregator:
             "jsonb" if self._jsonb_supported else "json"
         )
 
-    def _get_json_extract(self, path: Optional[str] = None) -> str:
+    def _get_json_extract(self, path: str | None = None) -> str:
         """Get JSON extract function with correct prefix."""
         if path:
             return f"{self._json_function_prefix}_extract(data, '${path}')"
@@ -389,7 +387,7 @@ class SQLTierAggregator:
 
     def build_pipeline_sql(
         self, pipeline: List[Dict[str, Any]]
-    ) -> Tuple[Optional[str], List[Any]]:
+    ) -> Tuple[str | None, List[Any]]:
         """
         Build optimized SQL query for entire pipeline using CTEs.
 
@@ -523,7 +521,7 @@ class SQLTierAggregator:
         prev_stage: str,
         context: PipelineContext,
         preserve_root: bool = False,
-    ) -> Tuple[Optional[str], List[Any]]:
+    ) -> Tuple[str | None, List[Any]]:
         """
         Build SQL for a single pipeline stage.
 
@@ -571,7 +569,7 @@ class SQLTierAggregator:
         prev_stage: str,
         context: PipelineContext,
         preserve_root: bool = False,
-    ) -> Tuple[Optional[str], List[Any]]:
+    ) -> Tuple[str | None, List[Any]]:
         """
         Build SQL for $addFields stage.
 
@@ -678,7 +676,7 @@ class SQLTierAggregator:
         prev_stage: str,
         context: PipelineContext,
         preserve_root: bool = False,
-    ) -> Tuple[Optional[str], List[Any]]:
+    ) -> Tuple[str | None, List[Any]]:
         """
         Build SQL for $project stage.
 
@@ -815,7 +813,7 @@ class SQLTierAggregator:
 
     def _build_group_sql(
         self, spec: Dict[str, Any], prev_stage: str, context: PipelineContext
-    ) -> Tuple[Optional[str], List[Any]]:
+    ) -> Tuple[str | None, List[Any]]:
         """
         Build SQL for $group stage.
 
@@ -948,7 +946,7 @@ class SQLTierAggregator:
         sql = f"{select_clause} {from_clause} {group_by_clause}"
         return sql, all_params
 
-    def _map_accumulator_to_sql(self, op: str) -> Optional[str]:
+    def _map_accumulator_to_sql(self, op: str) -> str | None:
         """
         Map MongoDB accumulator operator to SQL aggregate function.
 
@@ -973,7 +971,7 @@ class SQLTierAggregator:
 
     def _build_match_sql(
         self, spec: Dict[str, Any], prev_stage: str, context: PipelineContext
-    ) -> Tuple[Optional[str], List[Any]]:
+    ) -> Tuple[str | None, List[Any]]:
         """
         Build SQL for $match stage.
 
@@ -1050,7 +1048,7 @@ class SQLTierAggregator:
 
     def _build_standard_match_condition(
         self, field: str, value: Any, context: PipelineContext
-    ) -> Tuple[Optional[str], List[Any]]:
+    ) -> Tuple[str | None, List[Any]]:
         """
         Build WHERE clause for standard query operators.
 
@@ -1096,7 +1094,7 @@ class SQLTierAggregator:
 
     def _build_query_operator(
         self, field: str, op: str, arg: Any, context: PipelineContext
-    ) -> Tuple[Optional[str], List[Any]]:
+    ) -> Tuple[str | None, List[Any]]:
         """
         Build WHERE condition for a query operator.
 
@@ -1162,7 +1160,7 @@ class SQLTierAggregator:
 
     def _build_sort_sql(
         self, spec: Dict[str, Any], prev_stage: str, context: PipelineContext
-    ) -> Tuple[Optional[str], List[Any]]:
+    ) -> Tuple[str | None, List[Any]]:
         """
         Build SQL for $sort stage.
 
@@ -1217,7 +1215,7 @@ class SQLTierAggregator:
 
     def _build_skip_sql(
         self, spec: int, prev_stage: str, context: PipelineContext
-    ) -> Tuple[Optional[str], List[Any]]:
+    ) -> Tuple[str | None, List[Any]]:
         """
         Build SQL for $skip stage.
 
@@ -1249,7 +1247,7 @@ class SQLTierAggregator:
 
     def _build_limit_sql(
         self, spec: int, prev_stage: str, context: PipelineContext
-    ) -> Tuple[Optional[str], List[Any]]:
+    ) -> Tuple[str | None, List[Any]]:
         """
         Build SQL for $limit stage.
 
@@ -1281,7 +1279,7 @@ class SQLTierAggregator:
 
     def _build_facet_sql(
         self, spec: Dict[str, Any], prev_stage: str, context: PipelineContext
-    ) -> Tuple[Optional[str], List[Any]]:
+    ) -> Tuple[str | None, List[Any]]:
         """
         Build SQL for $facet stage.
 
@@ -1305,7 +1303,7 @@ class SQLTierAggregator:
 
     def _build_unwind_sql(
         self, spec: Any, prev_stage: str, context: PipelineContext
-    ) -> Tuple[Optional[str], List[Any]]:
+    ) -> Tuple[str | None, List[Any]]:
         """
         Build SQL for $unwind stage.
 
@@ -1341,7 +1339,7 @@ class SQLTierAggregator:
 
     def _build_count_sql(
         self, spec: str, prev_stage: str, context: PipelineContext
-    ) -> Tuple[Optional[str], List[Any]]:
+    ) -> Tuple[str | None, List[Any]]:
         """
         Build SQL for $count stage.
 

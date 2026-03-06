@@ -16,7 +16,7 @@ from .query_engine import QueryEngine
 from .raw_batch_cursor import RawBatchCursor
 from neosqlite.collection.json_helpers import neosqlite_json_loads
 from ..sql_utils import quote_table_name, quote_identifier
-from typing import Any, Dict, List, Optional, Tuple, Union, overload
+from typing import Any, Dict, List, Tuple, overload
 from typing_extensions import Literal
 
 try:
@@ -100,7 +100,7 @@ class Collection:
         document: Dict[str, Any] = neosqlite_json_loads(data)
 
         # Use the stored _id value if available, otherwise fall back to the auto-increment id
-        _id: Union[ObjectId, Any]
+        _id: ObjectId | Any
         if stored_id_val is not None:
             # Try to decode as ObjectId if it looks like one
             if isinstance(stored_id_val, str) and len(stored_id_val) == 24:
@@ -421,7 +421,7 @@ class Collection:
         filter: Dict[str, Any],
         update: Dict[str, Any],
         upsert: bool = False,
-        array_filters: Optional[List[Dict[str, Any]]] = None,
+        array_filters: List[Dict[str, Any]] | None = None,
     ) -> UpdateResult:
         """
         This is a delegating method. For implementation details, see the
@@ -435,7 +435,7 @@ class Collection:
         self,
         filter: Dict[str, Any],
         update: Dict[str, Any],
-        array_filters: Optional[List[Dict[str, Any]]] = None,
+        array_filters: List[Dict[str, Any]] | None = None,
     ) -> UpdateResult:
         """
         This is a delegating method. For implementation details, see the

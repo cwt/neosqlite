@@ -225,9 +225,9 @@ class Cursor:
             Cursor: The cursor object with the predicate applied
 
         Example:
-            >>> cursor = collection.find({}).where(
-            ...     lambda doc: doc.get('value', 0) > 10
-            ... )
+            >>> def is_high_value(doc):
+            ...     return doc.get('value', 0) > 10
+            >>> cursor = collection.find({}).where(is_high_value)
 
         Note:
             This method uses Python-based filtering (Tier-3), which means all
@@ -712,6 +712,15 @@ class Cursor:
 
             # Filter documents using $expr Python evaluation
             def expr_filter(doc: Dict[str, Any]) -> bool:
+                """
+                Evaluate the expression for a given document.
+
+                Args:
+                    doc: The document to evaluate.
+
+                Returns:
+                    True if the expression evaluates to True, False otherwise.
+                """
                 try:
                     return evaluator.evaluate_python(expr, doc)
                 except Exception:
@@ -968,7 +977,14 @@ class Cursor:
             if case_insensitive:
                 # Use case-insensitive sorting
                 def make_key(get_val=get_val):
+                    """
+                    Create a case-insensitive key function.
+                    """
+
                     def key_func(doc):
+                        """
+                        Extract value and convert to lowercase if it's a string.
+                        """
                         val = get_val(doc)
                         if isinstance(val, str):
                             return val.lower()

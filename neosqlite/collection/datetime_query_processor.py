@@ -19,7 +19,7 @@ from .sql_translator_unified import SQLTranslator, SQLFieldAccessor
 from .temporary_table_aggregation import (
     aggregation_pipeline_context,
 )
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 
 class DateTimeQueryProcessor:
@@ -97,7 +97,7 @@ class DateTimeQueryProcessor:
             return self._local_kill_switch
 
     def process_datetime_query(
-        self, query: Dict[str, Any], use_kill_switch: Optional[bool] = None
+        self, query: Dict[str, Any], use_kill_switch: bool | None = None
     ) -> List[Dict[str, Any]]:
         """
         Process a datetime query using the three-tier fallback mechanism.
@@ -250,7 +250,7 @@ class DateTimeQueryProcessor:
 
     def _process_with_sql_tier(
         self, query: Dict[str, Any]
-    ) -> Optional[List[Dict[str, Any]]]:
+    ) -> List[Dict[str, Any]] | None:
         """
         Process datetime query using SQL tier with json_* functions.
 
@@ -306,7 +306,7 @@ class DateTimeQueryProcessor:
 
     def _process_with_temp_table_tier(
         self, query: Dict[str, Any]
-    ) -> Optional[List[Dict[str, Any]]]:
+    ) -> List[Dict[str, Any]] | None:
         """
         Process datetime query using temporary table approach.
 
@@ -442,7 +442,7 @@ class EnhancedDateTimeQueryProcessor(DateTimeQueryProcessor):
         return self.helpers._apply_query(query, document)
 
     def process_complex_datetime_query(
-        self, query: Dict[str, Any], use_kill_switch: Optional[bool] = None
+        self, query: Dict[str, Any], use_kill_switch: bool | None = None
     ) -> List[Dict[str, Any]]:
         """
         Process complex datetime queries with additional datetime-specific logic.

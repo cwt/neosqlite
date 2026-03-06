@@ -34,7 +34,7 @@ Note: NeoSQLite extends MongoDB with $log2 (base-2 log) operator.
 
 from __future__ import annotations
 from .json_path_utils import parse_json_path
-from typing import Any, Dict, List, Tuple, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Tuple, TYPE_CHECKING
 import math
 import warnings
 from .json_path_utils import build_json_extract_expression
@@ -108,8 +108,8 @@ class AggregationContext:
             "$$REMOVE": None,  # Sentinel for field removal
         }
         self.stage_index: int = 0
-        self.current_field: Optional[str] = None
-        self.pipeline_id: Optional[str] = None
+        self.current_field: str | None = None
+        self.pipeline_id: str | None = None
 
     def bind_document(self, doc: Dict[str, Any]) -> None:
         """
@@ -328,7 +328,7 @@ class ExprEvaluator:
 
     def evaluate(
         self, expr: Dict[str, Any], tier: int = 1, force_python: bool = False
-    ) -> Tuple[Optional[str], List[Any]]:
+    ) -> Tuple[str | None, List[Any]]:
         """
         Evaluate a $expr expression.
 
@@ -353,7 +353,7 @@ class ExprEvaluator:
 
     def _evaluate_sql_tier1(
         self, expr: Dict[str, Any]
-    ) -> Tuple[Optional[str], List[Any]]:
+    ) -> Tuple[str | None, List[Any]]:
         """
         Tier 1: Convert simple expressions to SQL WHERE clauses using JSON functions.
 
@@ -367,7 +367,7 @@ class ExprEvaluator:
 
     def _evaluate_sql_tier2(
         self, expr: Dict[str, Any]
-    ) -> Tuple[Optional[str], List[Any]]:
+    ) -> Tuple[str | None, List[Any]]:
         """
         Tier 2: Use temporary tables for complex expressions.
 
@@ -390,8 +390,8 @@ class ExprEvaluator:
     def evaluate_for_aggregation(
         self,
         expr: Any,
-        context: Optional[AggregationContext] = None,
-        as_alias: Optional[str] = None,
+        context: AggregationContext | None = None,
+        as_alias: str | None = None,
     ) -> Tuple[str, List[Any]]:
         """
         Evaluate expression for aggregation pipeline.
@@ -514,8 +514,8 @@ class ExprEvaluator:
     def build_select_expression(
         self,
         expr: Any,
-        alias: Optional[str] = None,
-        context: Optional[AggregationContext] = None,
+        alias: str | None = None,
+        context: AggregationContext | None = None,
     ) -> Tuple[str, List[Any]]:
         """
         Build SELECT clause expression for aggregation (SQL Tier 1 optimized).
@@ -569,7 +569,7 @@ class ExprEvaluator:
     def build_group_by_expression(
         self,
         expr: Any,
-        context: Optional[AggregationContext] = None,
+        context: AggregationContext | None = None,
     ) -> Tuple[str, List[Any]]:
         """
         Build GROUP BY clause expression for aggregation (SQL Tier 1 optimized).
@@ -601,7 +601,7 @@ class ExprEvaluator:
     def build_having_expression(
         self,
         expr: Any,
-        context: Optional[AggregationContext] = None,
+        context: AggregationContext | None = None,
     ) -> Tuple[str, List[Any]]:
         """
         Build HAVING clause expression for post-aggregation filtering.
@@ -634,7 +634,7 @@ class ExprEvaluator:
         return self._convert_operand_to_sql_agg(expr, context)
 
     def _handle_aggregation_variable_sql_tier(
-        self, var_name: str, context: Optional[PipelineContext] = None
+        self, var_name: str, context: PipelineContext | None = None
     ) -> str:
         """
         Handle aggregation variable references for SQL tier.
@@ -2222,7 +2222,7 @@ class ExprEvaluator:
 
     def _evaluate_arithmetic_python(
         self, operator: str, operands: List[Any], document: Dict[str, Any]
-    ) -> Optional[float]:
+    ) -> float | None:
         """Evaluate arithmetic operators in Python.
 
         Note: In MongoDB, arithmetic operations with null return null.
@@ -2261,7 +2261,7 @@ class ExprEvaluator:
 
     def _evaluate_math_python(
         self, operator: str, operands: List[Any], document: Dict[str, Any]
-    ) -> Optional[float]:
+    ) -> float | None:
         """Evaluate math operators in Python."""
         # Handle $log with custom base separately (requires 2 operands)
         if operator == "$log":
@@ -2380,7 +2380,7 @@ class ExprEvaluator:
 
     def _evaluate_pow_python(
         self, operands: List[Any], document: Dict[str, Any]
-    ) -> Optional[float]:
+    ) -> float | None:
         """Evaluate $pow operator in Python."""
         if len(operands) != 2:
             raise ValueError("$pow requires exactly 2 operands")
@@ -2392,7 +2392,7 @@ class ExprEvaluator:
 
     def _evaluate_sqrt_python(
         self, operands: List[Any], document: Dict[str, Any]
-    ) -> Optional[float]:
+    ) -> float | None:
         """Evaluate $sqrt operator in Python."""
         # Handle both list and single operand formats
         if not isinstance(operands, list):
@@ -2405,7 +2405,7 @@ class ExprEvaluator:
 
     def _evaluate_trig_python(
         self, operator: str, operands: List[Any], document: Dict[str, Any]
-    ) -> Optional[float]:
+    ) -> float | None:
         """Evaluate trigonometric operators in Python."""
 
         # Handle both list and single operand formats
@@ -2462,7 +2462,7 @@ class ExprEvaluator:
 
     def _evaluate_angle_python(
         self, operator: str, operands: List[Any], document: Dict[str, Any]
-    ) -> Optional[float]:
+    ) -> float | None:
         """Evaluate angle conversion operators in Python."""
 
         # Handle both list and single operand formats
@@ -2752,6 +2752,9 @@ class ExprEvaluator:
                     try:
 
                         def sort_key(x: Any) -> Any:
+                            """
+                            Extract the sort field from a dictionary or return the value.
+                            """
                             return (
                                 x.get(sort_field) if isinstance(x, dict) else x
                             )
@@ -3315,7 +3318,7 @@ class ExprEvaluator:
 
     def _evaluate_date_python(
         self, operator: str, operands: List[Any], document: Dict[str, Any]
-    ) -> Optional[int]:
+    ) -> int | None:
         """Evaluate date operators in Python.
 
         MongoDB compatibility: Date operators require the field to be stored as
@@ -4257,7 +4260,7 @@ class ExprEvaluator:
                     return document.get(var_name)
 
                 keys = field_path.split(".")
-                value: Optional[Any] = document
+                value: Any | None = document
                 for key in keys:
                     if isinstance(value, dict):
                         value = value.get(key)

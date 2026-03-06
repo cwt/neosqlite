@@ -88,7 +88,7 @@ class IndexManager:
                 self.collection.db.execute(
                     (
                         f"CREATE {'UNIQUE ' if unique else ''}INDEX "
-                        f"IF NOT EXISTS {quote_identifier(f"idx_{self.collection.name}_{index_name}")} "
+                        f"IF NOT EXISTS {quote_identifier(f'idx_{self.collection.name}_{index_name}')} "
                         f"ON {quote_table_name(self.collection.name)}({func_prefix}_extract(data, '{parse_json_path(field)}'))"
                     )
                 )
@@ -107,7 +107,7 @@ class IndexManager:
                 self.collection.db.execute(
                     (
                         f"CREATE {'UNIQUE ' if unique else ''}INDEX "
-                        f"IF NOT EXISTS {quote_identifier(f"idx_{self.collection.name}_{index_name}")} "
+                        f"IF NOT EXISTS {quote_identifier(f'idx_{self.collection.name}_{index_name}')} "
                         f"ON {quote_table_name(self.collection.name)}({func_prefix}_extract(data, '{parse_json_path(key)}'))"
                     )
                 )
@@ -127,7 +127,7 @@ class IndexManager:
             self.collection.db.execute(
                 (
                     f"CREATE {'UNIQUE ' if unique else ''}INDEX "
-                    f"IF NOT EXISTS {quote_identifier(f"idx_{self.collection.name}_{index_name}")} "
+                    f"IF NOT EXISTS {quote_identifier(f'idx_{self.collection.name}_{index_name}')} "
                     f"ON {quote_table_name(self.collection.name)}({index_columns})"
                 )
             )
@@ -710,7 +710,7 @@ class IndexManager:
         column_name = f"{key.replace('.', '_')}_utc"
 
         index_sql = f"""
-        CREATE {'UNIQUE ' if unique else ''}INDEX IF NOT EXISTS
+        CREATE {"UNIQUE " if unique else ""}INDEX IF NOT EXISTS
         idx_{quote_table_name(self.collection.name)}_{column_name}
         ON {quote_table_name(self.collection.name)}(datetime(json_extract(data, '{parse_json_path(key)}')))
         """

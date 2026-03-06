@@ -29,7 +29,7 @@ from neosqlite.collection.json_helpers import (
 from neosqlite.collection.jsonb_support import supports_jsonb
 from .json_path_utils import parse_json_path
 from ..sql_utils import quote_table_name
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, TYPE_CHECKING
 import importlib.util
 import json
 
@@ -102,7 +102,7 @@ class QueryEngine:
         filter: Dict[str, Any],
         update: Dict[str, Any],
         upsert: bool = False,
-        array_filters: Optional[List[Dict[str, Any]]] = None,
+        array_filters: List[Dict[str, Any]] | None = None,
     ) -> UpdateResult:
         """
         Updates a single document in the collection based on the provided filter
@@ -368,7 +368,7 @@ class QueryEngine:
         self,
         filter: Dict[str, Any],
         update: Dict[str, Any],
-        array_filters: Optional[List[Dict[str, Any]]] = None,
+        array_filters: List[Dict[str, Any]] | None = None,
     ) -> UpdateResult:
         """
         Update multiple documents based on a filter.
@@ -905,7 +905,6 @@ class QueryEngine:
         """
         # If memory_constrained is True and quez is available, use quez for processing
         if memory_constrained and _HAS_QUEZ:
-
             # Use quez for memory-constrained processing
             return self._aggregate_with_quez(pipeline, batch_size)
 
@@ -1041,7 +1040,14 @@ class QueryEngine:
                     for key, direction in reversed(list(sort_spec.items())):
 
                         def make_sort_key(key, dir):
+                            """
+                            Create a sort key function for the given key and direction.
+                            """
+
                             def sort_key(dc):
+                                """
+                                Extract sort key from document context.
+                                """
                                 val = self.collection._get_val(
                                     dc["__doc__"], key
                                 )
@@ -1453,12 +1459,24 @@ class QueryEngine:
                         break
 
                     # Sort documents by groupBy field
+                    def get_group_val(dc):
+                        """
+                        Extract the value to group by for a given document.
+
+                        Args:
+                            dc: Document with context from the aggregation stage.
+
+                        Returns:
+                            The value to group by or 0 if not found.
+                        """
+                        return (
+                            self.collection._get_val(dc["__doc__"], group_by)
+                            or 0
+                        )
+
                     sorted_docs = sorted(
                         docs_with_context,
-                        key=lambda dc: self.collection._get_val(
-                            dc["__doc__"], group_by
-                        )
-                        or 0,
+                        key=get_group_val,
                     )
 
                     # Distribute into buckets

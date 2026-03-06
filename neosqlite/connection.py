@@ -13,13 +13,16 @@ except ImportError:
 
 
 class Connection:
+    """
+    Represents a connection to an NeoSQLite database.
+
+    Provides methods for managing collections, executing SQL queries,
+    and handling database lifecycle events. Supports PyMongo-like API.
+    """
+
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         """
         Initialize a new database connection.
-
-        Sets up the connection to an SQLite database, initializes the collections
-        dictionary, and establishes the underlying database connection using the
-        provided arguments. This constructor does not return a value.
 
         Args:
             *args: Positional arguments passed to sqlite3.connect().

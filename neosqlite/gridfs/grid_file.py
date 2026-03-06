@@ -461,7 +461,7 @@ class GridOut:
             select_columns.append("json(aliases)")
 
         query = f"""
-            SELECT {', '.join(select_columns)}
+            SELECT {", ".join(select_columns)}
             FROM {self._files_collection}
             WHERE id = ?
         """

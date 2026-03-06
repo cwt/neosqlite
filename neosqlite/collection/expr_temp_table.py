@@ -16,7 +16,7 @@ from __future__ import annotations
 from .json_path_utils import parse_json_path
 import sqlite3
 import uuid
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Tuple
 from .jsonb_support import supports_jsonb
 
 
@@ -52,8 +52,8 @@ class TempTableExprEvaluator:
         self,
         expr: Dict[str, Any],
         collection_name: str,
-        filter_expr: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[Optional[str], List[Any]]:
+        filter_expr: Dict[str, Any] | None = None,
+    ) -> Tuple[str | None, List[Any]]:
         """
         Evaluate a $expr expression using temporary tables.
 
@@ -145,7 +145,7 @@ class TempTableExprEvaluator:
         self,
         expr: Dict[str, Any],
         collection_name: str,
-        filter_expr: Optional[Dict[str, Any]] = None,
+        filter_expr: Dict[str, Any] | None = None,
     ) -> Tuple[str, List[Any]]:
         """
         Build a Tier 2 query using temporary tables.
@@ -232,7 +232,7 @@ class TempTableExprEvaluator:
         expr: Dict[str, Any],
         collection_name: str,
         temp_table: str,
-        filter_expr: Optional[Dict[str, Any]] = None,
+        filter_expr: Dict[str, Any] | None = None,
     ) -> Tuple[str, List[Any]]:
         """
         Build the main query that uses the temporary table.

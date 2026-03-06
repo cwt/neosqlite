@@ -20,7 +20,7 @@ from neosqlite.collection.json_path_utils import (
     build_json_extract_expression,
 )
 from neosqlite.collection.text_search import unified_text_search
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Tuple
 
 try:
     from pysqlite3 import dbapi2 as sqlite3
@@ -35,8 +35,8 @@ def _apply_positional_update(
     doc: Dict[str, Any],
     field_path: str,
     value: Any,
-    array_filters: Optional[List[Dict[str, Any]]] = None,
-    filter_doc: Optional[Dict[str, Any]] = None,
+    array_filters: List[Dict[str, Any]] | None = None,
+    filter_doc: Dict[str, Any] | None = None,
 ) -> bool:
     """
     Apply an update to array elements using positional operators.
@@ -83,11 +83,9 @@ def _apply_positional_recursive(
     parts: List[str],
     index: int,
     value: Any,
-    array_filters: Optional[List[Dict[str, Any]]] = None,
-    filter_doc: Optional[Dict[str, Any]] = None,
-    parent_array: Optional[
-        List[Any]
-    ] = None,  # Track parent array for $ operator
+    array_filters: List[Dict[str, Any]] | None = None,
+    filter_doc: Dict[str, Any] | None = None,
+    parent_array: List[Any] | None = None,  # Track parent array for $ operator
 ) -> bool:
     """
     Recursively apply positional update through nested structures.
@@ -699,7 +697,7 @@ class QueryHelper:
             # Generate a new ObjectId for the _id field
             from ..objectid import ObjectId
 
-            generated_id: Union[ObjectId, Any] = ObjectId()
+            generated_id: ObjectId | Any = ObjectId()
         else:
             # If _id was provided in the original document, use that value in the _id column
             provided_id = document["_id"]
@@ -809,8 +807,8 @@ class QueryHelper:
         doc_id: Any,
         update_spec: Dict[str, Any],
         original_doc: Dict[str, Any],
-        array_filters: Optional[List[Dict[str, Any]]] = None,
-        query_filter: Optional[Dict[str, Any]] = None,
+        array_filters: List[Dict[str, Any]] | None = None,
+        query_filter: Dict[str, Any] | None = None,
     ) -> Tuple[Dict[str, Any], bool]:
         """
         Helper method for updating documents.
@@ -1534,8 +1532,8 @@ class QueryHelper:
         doc_id: Any,
         update_spec: Dict[str, Any],
         original_doc: Dict[str, Any],
-        array_filters: Optional[List[Dict[str, Any]]] = None,
-        query_filter: Optional[Dict[str, Any]] = None,
+        array_filters: List[Dict[str, Any]] | None = None,
+        query_filter: Dict[str, Any] | None = None,
     ) -> Tuple[Dict[str, Any], bool]:
         """
         Perform update operations using Python-based logic.
@@ -1885,7 +1883,9 @@ class QueryHelper:
 
             # Get the main query from Tier 2 evaluator
             tier2_result = tier2_evaluator.evaluate(
-                expr, self.collection.name, None  # Filter expr not used yet
+                expr,
+                self.collection.name,
+                None,  # Filter expr not used yet
             )
             if tier2_result[0] is None:
                 # Tier 2 failed, fall back to Tier 1
@@ -3194,7 +3194,6 @@ class QueryHelper:
                             and isinstance(group_stage.get("_id"), str)
                             and group_stage.get("_id").startswith("$")
                         ):
-
                             unwind_field_name = unwind_field[
                                 1:
                             ]  # Remove leading $
@@ -3411,7 +3410,6 @@ class QueryHelper:
                             and isinstance(group_stage.get("_id"), str)
                             and group_stage.get("_id").startswith("$")
                         ):
-
                             unwind_field_name = unwind_field[
                                 1:
                             ]  # Remove leading $
@@ -3795,7 +3793,6 @@ class QueryHelper:
                 and isinstance(group_spec.get("_id"), str)
                 and group_spec.get("_id").startswith("$")
             ):
-
                 unwind_field = unwind_stage[1:]  # Remove leading $
 
                 # Try to build the group query using the general method
@@ -4569,7 +4566,14 @@ class QueryHelper:
                     for key, direction in reversed(list(sort_spec.items())):
 
                         def make_sort_key(key, dir):
+                            """
+                            Create a sort key function for the given key and direction.
+                            """
+
                             def sort_key(doc):
+                                """
+                                Extract sort key from document.
+                                """
                                 val = self.collection._get_val(doc, key)
                                 if val is None:
                                     return (0 if dir == DESCENDING else 1, None)
