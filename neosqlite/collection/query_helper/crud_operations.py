@@ -7,6 +7,9 @@ from ...sql_utils import quote_table_name
 from ...objectid import ObjectId
 from ..json_helpers import neosqlite_json_dumps
 
+if TYPE_CHECKING:
+    from .. import Collection
+
 
 class CRUDOperationsMixin:
     """Mixin providing CRUD operations for QueryHelper."""

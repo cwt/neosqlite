@@ -5,7 +5,8 @@ from ..jsonb_support import (
 )
 from typing import Any, Dict, List
 
-from ..._sqlite import sqlite3
+# Import sqlite3 for type hints and potential direct usage
+from ..._sqlite import sqlite3 as sqlite3  # noqa: F401
 
 # Import helper functions
 from .helpers import (

@@ -7,7 +7,6 @@ SQL-based and Python-based update operations for NeoSQLite collections.
 
 from typing import TYPE_CHECKING, Any, Dict, List, Set, Tuple
 
-from ..._sqlite import sqlite3
 from ...sql_utils import quote_table_name
 from ...binary import Binary
 from ...exceptions import MalformedQueryException
