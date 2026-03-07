@@ -5,6 +5,8 @@ from ..jsonb_support import (
 )
 from typing import Any, Dict, List
 
+from ..._sqlite import sqlite3
+
 # Import helper functions
 from .helpers import (
     _get_integer_id_for_oid,
@@ -32,11 +34,6 @@ from .update_operations import UpdateOperationsMixin
 from .query_builder import QueryBuilderMixin
 from .aggregation import AggregationMixin
 from .query_optimizer import QueryOptimizerMixin
-
-try:
-    from pysqlite3 import dbapi2 as sqlite3  # noqa: F401
-except ImportError:
-    import sqlite3  # type: ignore  # noqa: F401
 
 
 class QueryHelper(

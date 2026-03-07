@@ -5,12 +5,8 @@ Provides efficient detection of JSONB capabilities with automatic caching
 to avoid redundant database queries.
 """
 
+from .._sqlite import sqlite3
 from typing import Dict
-
-try:
-    from pysqlite3 import dbapi2 as sqlite3
-except ImportError:
-    import sqlite3  # type: ignore
 
 
 # Module-level cache for JSONB support detection results

@@ -5,15 +5,11 @@ from .utils import (
     serialize_metadata,
     deserialize_metadata,
 )
+from .._sqlite import sqlite3
 from typing import Any, Dict
 import datetime
 import hashlib
 import io
-
-try:
-    from pysqlite3 import dbapi2 as sqlite3
-except ImportError:
-    import sqlite3  # type: ignore
 
 # Import ObjectId for MongoDB-compatible ID support
 from ..objectid import ObjectId

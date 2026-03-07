@@ -1,3 +1,4 @@
+from .._sqlite import sqlite3
 from ..sql_utils import quote_table_name, quote_identifier
 from .json_path_utils import parse_json_path
 from .jsonb_support import (
@@ -8,11 +9,6 @@ from .jsonb_support import (
 )
 from typing import Any, Dict, List, Tuple, overload
 from typing_extensions import Literal
-
-try:
-    from pysqlite3 import dbapi2 as sqlite3
-except ImportError:
-    import sqlite3  # type: ignore
 
 
 class IndexManager:

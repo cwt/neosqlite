@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+from .._sqlite import sqlite3
 from ..bulk_operations import BulkOperationExecutor
 from ..changestream import ChangeStream
 from ..objectid import ObjectId
@@ -18,11 +20,6 @@ from neosqlite.collection.json_helpers import neosqlite_json_loads
 from ..sql_utils import quote_table_name, quote_identifier
 from typing import Any, Dict, List, Tuple, overload
 from typing_extensions import Literal
-
-try:
-    from pysqlite3 import dbapi2 as sqlite3
-except ImportError:
-    import sqlite3  # type: ignore
 
 
 class Collection:

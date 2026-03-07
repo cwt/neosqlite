@@ -1,15 +1,12 @@
 from __future__ import annotations
+
+from ._sqlite import sqlite3
 from .collection import Collection
 from .exceptions import CollectionInvalid
 from .sql_utils import quote_table_name
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Tuple
 from typing_extensions import Literal
-
-try:
-    from pysqlite3 import dbapi2 as sqlite3
-except ImportError:
-    import sqlite3  # type: ignore
 
 
 class Connection:

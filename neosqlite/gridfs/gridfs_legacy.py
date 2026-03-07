@@ -1,13 +1,9 @@
 from .errors import NoFile
 from .grid_file import GridIn, GridOut, GridOutCursor
 from .gridfs_bucket import GridFSBucket
+from .._sqlite import sqlite3
 from typing import Any, Dict
 import io
-
-try:
-    from pysqlite3 import dbapi2 as sqlite3
-except ImportError:
-    import sqlite3  # type: ignore
 
 # Import ObjectId for GridFS
 from ..objectid import ObjectId

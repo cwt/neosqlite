@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from .._sqlite import sqlite3
 from .errors import NoFile
 from .utils import (
     deserialize_aliases,
@@ -11,11 +12,6 @@ from .utils import (
 from typing import Any, Dict
 import datetime
 import hashlib
-
-try:
-    from pysqlite3 import dbapi2 as sqlite3
-except ImportError:
-    import sqlite3  # type: ignore
 
 # Import ObjectId for GridIn and GridOut
 from ..objectid import ObjectId

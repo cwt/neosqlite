@@ -2,17 +2,10 @@
 
 from typing import TYPE_CHECKING, Any, Dict
 
+from ..._sqlite import sqlite3
 from ...sql_utils import quote_table_name
 from ...objectid import ObjectId
 from ..json_helpers import neosqlite_json_dumps
-
-if TYPE_CHECKING:
-    from .. import Collection
-
-try:
-    from pysqlite3 import dbapi2 as sqlite3  # noqa: F401
-except ImportError:
-    import sqlite3  # type: ignore  # noqa: F401
 
 
 class CRUDOperationsMixin:

@@ -1,12 +1,8 @@
 """Helper functions for QueryHelper operations."""
 
+from ..._sqlite import sqlite3
 from ..type_correction import get_integer_id_for_oid
 from typing import Any
-
-try:
-    from pysqlite3 import dbapi2 as sqlite3  # noqa: F401
-except ImportError:
-    pass  # type: ignore
 
 
 def _get_integer_id_for_oid(collection: Any, oid: Any) -> int:
