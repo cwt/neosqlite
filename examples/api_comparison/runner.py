@@ -274,7 +274,7 @@ def run_all_comparisons():
     # Print final report
     from . import reporter as global_reporter
 
-    global_reporter.print_report()
+    global_reporter.print_report(show_passed_results=True)
 
     if len(global_reporter.failed_tests) > 0:
         return 1
