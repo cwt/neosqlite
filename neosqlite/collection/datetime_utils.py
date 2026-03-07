@@ -80,11 +80,36 @@ def is_datetime_regex(pattern: str) -> bool:
     Returns:
         True if pattern is likely datetime-related, False otherwise
     """
+    import re
+
     if not isinstance(pattern, str):
         return False
 
-    for indicator in COMPILED_DATETIME_INDICATORS:
-        if indicator.search(pattern):
+    # Check if the pattern itself looks like a datetime value
+    if is_datetime_value(pattern):
+        return True
+
+    # Check if the pattern contains common datetime-related regex patterns
+    datetime_indicators = [
+        r"\\d\{4\}-\\d\{2\}-\\d\{2\}",  # Date format: \d{4}-\d{2}-\d{2}
+        r"\\d\{2\}/\\d\{2\}/\\d\{4\}",  # US date format: \d{2}/\d{2}/\d{4}
+        r"\\d\{4\}/\\d\{2\}/\\d\{2\}",  # Alternative date format: \d{4}/\d{2}/\d{2}
+        r"\\d\{2\}-\\d\{2\}-\\d\{4\}",  # Common date format: \d{2}-\d{2}-\d{4}
+        r"\\d\{4\}-\\d\{2\}-\\d\{2\}T\\d\{2\}:\\d\{2\}:\\d\{2\}",  # Datetime format
+    ]
+
+    for indicator in datetime_indicators:
+        if re.search(indicator, pattern):
             return True
 
     return False
+
+
+__all__ = [
+    "is_datetime_value",
+    "is_datetime_regex",
+    "DATETIME_PATTERNS",
+    "COMPILED_DATETIME_PATTERNS",
+    "DATETIME_INDICATORS",
+    "COMPILED_DATETIME_INDICATORS",
+]

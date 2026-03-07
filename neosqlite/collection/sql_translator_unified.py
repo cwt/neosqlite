@@ -759,10 +759,8 @@ class SQLTranslator:
         """
         Check if a query contains any $text operators, including nested in logical operators.
 
-        This method recursively traverses a MongoDB query specification to detect the presence
-        of $text operators, which require special handling and fallback to Python implementation.
-        It checks both top-level $text operators and those nested within logical operators
-        ($and, $or, $nor, $not).
+        This method delegates to the centralized _contains_text_operator function
+        to ensure consistent text search detection across all NeoSQLite components.
 
         Args:
             query: The query to check
@@ -770,25 +768,9 @@ class SQLTranslator:
         Returns:
             True if the query contains $text operators, False otherwise
         """
-        for field, value in query.items():
-            if field in ("$and", "$or", "$nor"):
-                # Check each condition in logical operators
-                if isinstance(value, list):
-                    for condition in value:
-                        if isinstance(
-                            condition, dict
-                        ) and self._contains_text_operator(condition):
-                            return True
-            elif field == "$not":
-                # Check the condition in $not operator
-                if isinstance(value, dict) and self._contains_text_operator(
-                    value
-                ):
-                    return True
-            elif field == "$text":
-                # Found a $text operator
-                return True
-        return False
+        from .jsonb_support import _contains_text_operator
+
+        return _contains_text_operator(query)
 
     def translate_sort(
         self, sort_spec: Dict[str, Any], context: str = "direct"

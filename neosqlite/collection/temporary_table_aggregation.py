@@ -1851,9 +1851,8 @@ def _contains_text_search(match_spec: Dict[str, Any]) -> bool:
     """
     Check if a match specification contains text search operations.
 
-    This function recursively examines a match specification to determine if it
-    contains any $text search operators. It checks both top-level operators and
-        nested operators within logical operators ($and, $or, $nor, $not).
+    This function delegates to the centralized _contains_text_operator function
+    to ensure consistent text search detection across all NeoSQLite components.
 
     Args:
         match_spec (Dict[str, Any]): The match specification to check for text search operations
@@ -1861,22 +1860,9 @@ def _contains_text_search(match_spec: Dict[str, Any]) -> bool:
     Returns:
         bool: True if the match specification contains text search operations, False otherwise
     """
-    if "$text" in match_spec:
-        return True
+    from .jsonb_support import _contains_text_operator
 
-    # Check for text search in logical operators
-    for field, value in match_spec.items():
-        if field in ("$and", "$or", "$nor"):
-            if isinstance(value, list):
-                for condition in value:
-                    if isinstance(condition, dict) and _contains_text_search(
-                        condition
-                    ):
-                        return True
-        elif field == "$not":
-            if isinstance(value, dict) and _contains_text_search(value):
-                return True
-    return False
+    return _contains_text_operator(match_spec)
 
 
 def execute_2nd_tier_aggregation(
