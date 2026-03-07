@@ -894,10 +894,38 @@ class SQLTierAggregator:
 
             op, expr = next(iter(accumulator.items()))
 
-            # Map MongoDB accumulator to SQL
-            sql_agg = self._map_accumulator_to_sql(op)
-            if sql_agg is None:
+            # Handle standard deviation operators with custom SQL formulas
+            if op == "$stdDevPop":
+                # Population standard deviation: SQRT(AVG(x^2) - AVG(x)^2)
+                expr_sql, expr_params = self._build_accumulator_expr_sql(
+                    expr, context, all_params
+                )
+                if expr_sql is None:
+                    return None, []
+                sql = f"SQRT(AVG({expr_sql} * {expr_sql}) - AVG({expr_sql}) * AVG({expr_sql}))"
+                select_parts.append(f"{sql} AS {field}")
+                continue
+
+            if op == "$stdDevSamp":
+                # Sample standard deviation: SQRT((n * SUM(x^2) - SUM(x)^2) / (n * (n - 1)))
+                expr_sql, expr_params = self._build_accumulator_expr_sql(
+                    expr, context, all_params
+                )
+                if expr_sql is None:
+                    return None, []
+                sql = f"""SQRT(
+                    (COUNT({expr_sql}) * SUM({expr_sql} * {expr_sql}) - SUM({expr_sql}) * SUM({expr_sql}))
+                    / (COUNT({expr_sql}) * (COUNT({expr_sql}) - 1))
+                )"""
+                select_parts.append(f"{sql} AS {field}")
+                continue
+
+            # Map other MongoDB accumulator to SQL
+            agg_result = self._map_accumulator_to_sql(op)
+            if agg_result is None:
                 return None, []
+
+            sql_agg, use_distinct = agg_result
 
             # Build expression for accumulator
             if _is_expression(expr):
@@ -933,7 +961,13 @@ class SQLTierAggregator:
                 expr_sql = "?"
                 all_params.append(expr)
 
-            select_parts.append(f"{sql_agg}({expr_sql}) AS {field}")
+            # Build SQL with DISTINCT if needed (for $addToSet)
+            if use_distinct:
+                select_parts.append(
+                    f"{sql_agg}(DISTINCT {expr_sql}) AS {field}"
+                )
+            else:
+                select_parts.append(f"{sql_agg}({expr_sql}) AS {field}")
 
         # Build GROUP BY clause
         group_by_clause = ""
@@ -946,7 +980,7 @@ class SQLTierAggregator:
         sql = f"{select_clause} {from_clause} {group_by_clause}"
         return sql, all_params
 
-    def _map_accumulator_to_sql(self, op: str) -> str | None:
+    def _map_accumulator_to_sql(self, op: str) -> Tuple[str, bool] | None:
         """
         Map MongoDB accumulator operator to SQL aggregate function.
 
@@ -954,20 +988,72 @@ class SQLTierAggregator:
             op: MongoDB accumulator operator
 
         Returns:
-            SQL aggregate function name or None if not supported
+            Tuple of (SQL aggregate function name, use_distinct) or None if not supported.
+            use_distinct indicates whether DISTINCT should be added to the aggregate function.
         """
         mapping = {
-            "$sum": "SUM",
-            "$avg": "AVG",
-            "$min": "MIN",
-            "$max": "MAX",
-            "$count": "COUNT",
+            "$sum": ("SUM", False),
+            "$avg": ("AVG", False),
+            "$min": ("MIN", False),
+            "$max": ("MAX", False),
+            "$count": ("COUNT", False),
             "$first": None,  # Requires ordering - complex
             "$last": None,  # Requires ordering - complex
-            "$push": "json_group_array",
-            "$addToSet": None,  # DISTINCT not always supported
+            "$push": ("json_group_array", False),
+            "$addToSet": (
+                "json_group_array",
+                True,
+            ),  # Use DISTINCT for unique values
         }
         return mapping.get(op)
+
+    def _build_accumulator_expr_sql(
+        self,
+        expr: Any,
+        context: PipelineContext,
+        all_params: List[Any],
+    ) -> Tuple[str | None, List[Any]]:
+        """
+        Build SQL expression for an accumulator operand.
+
+        Helper method used by $stdDevPop, $stdDevSamp, and other accumulators
+        that need custom SQL formulas.
+
+        Args:
+            expr: The accumulator expression
+            context: Pipeline context for computed fields
+            all_params: List to append parameters to
+
+        Returns:
+            Tuple of (SQL expression, parameters) or (None, []) if not supported
+        """
+        if _is_expression(expr):
+            if not self._check_expression_support(expr):
+                return None, []
+            expr_sql, expr_params = self.evaluator.build_select_expression(expr)
+            all_params.extend(expr_params)
+            return expr_sql, expr_params
+        elif isinstance(expr, str) and expr.startswith("$"):
+            if expr.startswith("$$"):
+                # Aggregation variable
+                json_set_func = f"{self._json_function_prefix}_set"
+                if expr == "$$ROOT":
+                    expr_sql = f"json({json_set_func}(root_data, '$._id', id))"
+                elif expr == "$$CURRENT":
+                    expr_sql = f"json({json_set_func}(data, '$._id', id))"
+                else:
+                    return None, []
+            else:
+                field_name = expr[1:]
+                if field_name in context.computed_fields:
+                    expr_sql = context.computed_fields[field_name]
+                else:
+                    expr_sql = f"{self._get_json_extract()}(data, '{parse_json_path(field_name)}')"
+            return expr_sql, []
+        else:
+            # Literal value
+            all_params.append(expr)
+            return "?", [expr]
 
     def _build_match_sql(
         self, spec: Dict[str, Any], prev_stage: str, context: PipelineContext
