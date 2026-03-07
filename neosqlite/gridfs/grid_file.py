@@ -414,8 +414,12 @@ class GridOut:
         has_content_type = False
         has_aliases = False
         try:
-            has_content_type = column_exists(self._db, self._files_collection, "content_type")
-            has_aliases = column_exists(self._db, self._files_collection, "aliases")
+            has_content_type = column_exists(
+                self._db, self._files_collection, "content_type"
+            )
+            has_aliases = column_exists(
+                self._db, self._files_collection, "aliases"
+            )
         except (AttributeError, TypeError):
             # Handle mocked databases in tests - assume old schema
             pass

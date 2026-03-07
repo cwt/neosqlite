@@ -240,7 +240,9 @@ class GridFSBucket:
         """Migrate existing tables to add new columns for content_type and aliases."""
         # Check if content_type column exists, add it if not
         try:
-            if not column_exists(self._db, self._files_collection, "content_type"):
+            if not column_exists(
+                self._db, self._files_collection, "content_type"
+            ):
                 self._db.execute(
                     f"ALTER TABLE {self._files_collection} ADD COLUMN content_type TEXT"
                 )
