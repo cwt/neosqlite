@@ -591,6 +591,11 @@ class TemporaryTableAggregationProcessor:
         with array fields are processed. It also supports the special _id field
         handling if it were to be unwound (though this would be unusual).
 
+        Supports these $unwind options:
+        - path: The array field to unwind (required)
+        - preserveNullAndEmptyArrays: If true, includes documents where the array is missing/null/empty
+        - includeArrayIndex: If specified, includes the array index in the output
+
         Args:
             create_temp (Callable): Function to create temporary tables
             current_table (str): Name of the current temporary table containing
@@ -604,52 +609,169 @@ class TemporaryTableAggregationProcessor:
         Raises:
             ValueError: If an invalid unwind specification is encountered
         """
+
         # Process unwind stages one at a time to handle nested dependencies correctly
         current_temp_table = current_table
 
         for unwind_spec in unwind_specs:
-            field = unwind_spec
-            if isinstance(field, str) and field.startswith("$"):
-                field_name = field[1:]  # Remove leading $
+            # Handle both simple string format and dict format
+            field_path: str
+            preserve_null: bool
+            include_index: str | None
 
-                unwind_stage = {"$unwind": field}
-
-                # Use appropriate JSON functions based on support
-                # jsonb_each is only available in SQLite 3.51.0+
-                # Also extract _id from JSON data for proper sorting support
-                if self._jsonb_supported and self._jsonb_each_supported:
-                    current_temp_table = create_temp(
-                        unwind_stage,
-                        f"""
-                        SELECT {quote_table_name(self.collection.name)}.id,
-                               {quote_table_name(self.collection.name)}._id as _id,
-                               {self._json_function_prefix}_set({quote_table_name(self.collection.name)}.data,
-                                        '{parse_json_path(field_name)}', je.value) as data
-                        FROM {current_table} as {quote_table_name(self.collection.name)},
-                             {self._json_each_function}({self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data,
-                                                   '{parse_json_path(field_name)}')) as je
-                        WHERE json_type({self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data,
-                                                     '{parse_json_path(field_name)}')) = 'array'
-                        """,
-                    )
-                else:
-                    # Fall back to json_* functions when jsonb_each is not supported
-                    current_temp_table = create_temp(
-                        unwind_stage,
-                        f"""
-                        SELECT {quote_table_name(self.collection.name)}.id,
-                               {quote_table_name(self.collection.name)}._id as _id,
-                               {self._json_function_prefix}_set({quote_table_name(self.collection.name)}.data,
-                                        '{parse_json_path(field_name)}', je.value) as data
-                        FROM {current_table} as {quote_table_name(self.collection.name)},
-                             {self._json_each_function}({self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data,
-                                                   '{parse_json_path(field_name)}')) as je
-                        WHERE json_type({self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data,
-                                                     '{parse_json_path(field_name)}')) = 'array'
-                        """,
-                    )
+            if isinstance(unwind_spec, str):
+                field_path = unwind_spec
+                preserve_null = False
+                include_index = None
+            elif isinstance(unwind_spec, dict):
+                field_path = str(unwind_spec.get("path", ""))
+                preserve_null = bool(
+                    unwind_spec.get("preserveNullAndEmptyArrays", False)
+                )
+                include_index = unwind_spec.get("includeArrayIndex")
             else:
-                raise ValueError(f"Invalid unwind specification: {field}")
+                raise ValueError(f"Invalid unwind specification: {unwind_spec}")
+
+            if not isinstance(field_path, str) or not field_path.startswith(
+                "$"
+            ):
+                raise ValueError(f"Invalid unwind path: {field_path}")
+
+            field_name = field_path[1:]  # Remove leading $
+
+            # Build SQL based on options
+            # Use appropriate JSON functions based on support
+            json_extract_func = f"{self._json_function_prefix}_extract"
+
+            # Build the SELECT clause
+            select_parts = [
+                f"{quote_table_name(self.collection.name)}.id",
+                f"{quote_table_name(self.collection.name)}._id as _id",
+            ]
+
+            # Handle includeArrayIndex option
+            if include_index:
+                # Add array index as a new field in the data
+                index_field = parse_json_path(include_index.lstrip("$"))
+                # Use CAST to ensure key is treated as integer for proper indexing
+                select_parts.append(
+                    f"{self._json_function_prefix}_set("
+                    f"  {self._json_function_prefix}_set("
+                    f"    {quote_table_name(self.collection.name)}.data,"
+                    f"    '{parse_json_path(field_name)}',"
+                    f"    je.value"
+                    f"  ),"
+                    f"  '{index_field}',"
+                    f"  CAST(je.key AS INTEGER)"
+                    f") as data"
+                )
+            else:
+                # Standard unwind - just set the unwound value
+                select_parts.append(
+                    f"{self._json_function_prefix}_set("
+                    f"  {quote_table_name(self.collection.name)}.data,"
+                    f"  '{parse_json_path(field_name)}',"
+                    f"  je.value"
+                    f") as data"
+                )
+
+            select_clause = ", ".join(select_parts)
+
+            # Build FROM clause with json_each
+            from_clause = (
+                f"FROM {current_table} as {quote_table_name(self.collection.name)}, "
+                f"{self._json_each_function}({json_extract_func}("
+                f"  {quote_table_name(self.collection.name)}.data,"
+                f"  '{parse_json_path(field_name)}'"
+                f")) as je"
+            )
+
+            # Build WHERE clause based on preserveNullAndEmptyArrays
+            if preserve_null:
+                # Include documents where array is missing/null/empty
+                # Use LEFT JOIN approach with UNION for null/empty cases
+                where_clause = ""
+
+                # Create temp table with two parts:
+                # 1. Documents with arrays (unwound)
+                # 2. Documents without arrays (preserved as-is)
+
+                # For JSONB, we need to use json() to convert binary JSON to text for comparisons
+                json_wrapper = "json(" if self._jsonb_supported else ""
+                json_wrapper_close = ")" if self._jsonb_supported else ""
+
+                # For preserved documents, MongoDB sets the unwound field to null (not empty array)
+                # We need to handle three cases:
+                # 1. Missing field (json_type IS NULL) - keep as-is
+                # 2. Null value (json_type IS NULL but field exists) - keep as-is
+                # 3. Empty array (json_type = 'array' AND value = '[]') - set field to null
+
+                # Build the data expression for preserved documents
+                if include_index:
+                    index_field = parse_json_path(include_index.lstrip("$"))
+                    # For empty arrays, set both the field and index to null
+                    preserved_data_expr = f"""
+                        CASE
+                            WHEN json_type({json_extract_func}({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}')) = 'array'
+                                 AND {json_wrapper}{json_extract_func}({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}'){json_wrapper_close} = '[]'
+                            THEN {self._json_function_prefix}_set(
+                                   {self._json_function_prefix}_set({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}', NULL),
+                                   '{index_field}',
+                                   NULL
+                                 )
+                            ELSE {self._json_function_prefix}_set(
+                                   {quote_table_name(self.collection.name)}.data,
+                                   '{index_field}',
+                                   NULL
+                                 )
+                        END
+                    """
+                else:
+                    # For empty arrays, set the field to null (MongoDB behavior)
+                    preserved_data_expr = f"""
+                        CASE
+                            WHEN json_type({json_extract_func}({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}')) = 'array'
+                                 AND {json_wrapper}{json_extract_func}({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}'){json_wrapper_close} = '[]'
+                            THEN {self._json_function_prefix}_set({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}', NULL)
+                            ELSE {quote_table_name(self.collection.name)}.data
+                        END
+                    """
+
+                unwind_query = f"""
+                    SELECT {select_clause}
+                    {from_clause}
+                    WHERE json_type({json_extract_func}({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}')) = 'array'
+
+                    UNION ALL
+
+                    SELECT {quote_table_name(self.collection.name)}.id,
+                           {quote_table_name(self.collection.name)}._id as _id,
+                           {preserved_data_expr} as data
+                    FROM {current_table} as {quote_table_name(self.collection.name)}
+                    WHERE json_type({json_extract_func}({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}')) IS NULL
+                       OR json_type({json_extract_func}({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}')) != 'array'
+                       OR {json_wrapper}{json_extract_func}({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}'){json_wrapper_close} = '[]'
+                """
+            else:
+                # Only include documents where the field is a non-empty array
+                where_clause = (
+                    f"WHERE json_type({json_extract_func}("
+                    f"  {quote_table_name(self.collection.name)}.data,"
+                    f"  '{parse_json_path(field_name)}'"
+                    f")) = 'array'"
+                )
+                unwind_query = (
+                    f"SELECT {select_clause} {from_clause} {where_clause}"
+                )
+
+            # Create the unwind stage spec for naming
+            unwind_stage: Dict[str, Any] = {"$unwind": field_path}
+            if preserve_null:
+                unwind_stage["preserveNullAndEmptyArrays"] = True
+            if include_index:
+                unwind_stage["includeArrayIndex"] = include_index
+
+            current_temp_table = create_temp(unwind_stage, unwind_query)
 
         return current_temp_table
 
@@ -706,6 +828,7 @@ class TemporaryTableAggregationProcessor:
 
         select_clause = (
             f"SELECT {quote_table_name(self.collection.name)}.id, "
+            f"{quote_table_name(self.collection.name)}._id, "
             f"{self._json_function_prefix}_set({quote_table_name(self.collection.name)}.data, '{parse_json_path(as_field)}', "
             f"coalesce(( "
             f"  SELECT {self.json_group_array_function}(json(related.data)) "
@@ -1262,36 +1385,48 @@ class TemporaryTableAggregationProcessor:
             return [{count_field: count}]
 
         # When data is stored as JSONB (binary), we need to convert it to text JSON for Python
-        # Check the column type of the table to determine if we need json() wrapper
-        from .schema_utils import get_table_columns
+        # Since temp tables created with CREATE TABLE ... AS SELECT don't preserve column types,
+        # we check if the source collection has JSONB support instead
+        use_json_wrapper = self._jsonb_supported
 
-        columns = get_table_columns(self.db, table_name)
-        data_column_type = None
-        if "data" in columns:
-            # Need to get the full column info to check the type
-            cursor = self.db.execute(
-                f"PRAGMA table_info({quote_table_name(table_name)})"
-            )
-            for col in cursor.fetchall():
-                if col[1] == "data":
-                    data_column_type = col[2].upper()
-                    break
-
-        use_json_wrapper = data_column_type == "JSONB"
+        # Check if the table has an _id column (some stages preserve it separately)
+        columns = self.db.execute(
+            f"PRAGMA table_info({quote_table_name(table_name)})"
+        ).fetchall()
+        has_id_column = any(col[1] == "_id" for col in columns)
 
         if use_json_wrapper:
-            cursor = self.db.execute(
-                f"SELECT id, json(data) as data FROM {table_name}"
-            )
+            if has_id_column:
+                cursor = self.db.execute(
+                    f"SELECT id, _id, json(data) as data FROM {table_name}"
+                )
+            else:
+                cursor = self.db.execute(
+                    f"SELECT id, json(data) as data FROM {table_name}"
+                )
         else:
-            cursor = self.db.execute(f"SELECT id, data FROM {table_name}")
+            if has_id_column:
+                cursor = self.db.execute(
+                    f"SELECT id, _id, data FROM {table_name}"
+                )
+            else:
+                cursor = self.db.execute(f"SELECT id, data FROM {table_name}")
         results = []
         for row in cursor.fetchall():
             # For grouped results, we need to preserve the _id from the JSON data
             # instead of using the row id. Parse the JSON directly.
             from neosqlite.collection.json_helpers import neosqlite_json_loads
 
-            doc = neosqlite_json_loads(row[1])
+            # Handle both 2-column (id, data) and 3-column (id, _id, data) results
+            if has_id_column and len(row) == 3:
+                # _id is provided as a separate column, use it directly
+                doc = neosqlite_json_loads(row[2])
+                # Only set _id from column if it's not already in the JSON
+                if "_id" not in doc:
+                    doc["_id"] = row[1]
+            else:
+                # Parse _id from JSON data
+                doc = neosqlite_json_loads(row[1])
 
             # Parse array fields that were created with json_group_array
             # These are stored as JSON strings and need to be parsed

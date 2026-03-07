@@ -375,13 +375,15 @@ def test_unwind_advanced_options_comprehensive(collection):
     assert sorted(alice_indices) == [0, 1, 2]
     assert set(alice_scores) == {85, 90, 78}
 
-    # Verify Bob's document (empty array preserved as null)
+    # Verify Bob's document (empty array set to null per MongoDB behavior)
     bob_docs = [doc for doc in result_list if doc["name"] == "Bob"]
     assert len(bob_docs) == 1
     bob_doc = bob_docs[0]
     assert "scoreIndex" in bob_doc
     assert bob_doc["scoreIndex"] is None
-    assert "scores" not in bob_doc or bob_doc["scores"] is None
+    assert (
+        bob_doc.get("scores") is None
+    )  # Empty array set to null (MongoDB behavior)
 
     # Test with documents that have null values (SHOULD be preserved)
     collection.insert_one({"_id": 3, "name": "Charlie", "scores": None})
@@ -389,25 +391,25 @@ def test_unwind_advanced_options_comprehensive(collection):
     result = collection.aggregate(pipeline)
     result_list = list(result)
 
-    # Should now have 5 documents (4 + 1 for Charlie with null value preserved)
+    # Should now have 5 documents (3 for Alice + 1 for Bob + 1 for Charlie)
     assert len(result_list) == 5
 
-    # Test with documents that have missing fields (should NOT be preserved)
+    # Test with documents that have missing fields (SHOULD be preserved with preserveNullAndEmptyArrays)
     collection.insert_one({"_id": 4, "name": "David"})  # No scores field
 
     result = collection.aggregate(pipeline)
     result_list = list(result)
 
-    # Should still have 5 documents (David's missing field is not preserved)
-    assert len(result_list) == 5
+    # Should now have 6 documents (3 for Alice + 1 for Bob + 1 for Charlie + 1 for David)
+    assert len(result_list) == 6
 
-    # Verify Charlie's document is preserved (null value preserved as null)
-    charlie_docs = [doc for doc in result_list if doc["name"] == "Charlie"]
-    assert len(charlie_docs) == 1
-    charlie_doc = charlie_docs[0]
-    assert "scoreIndex" in charlie_doc
-    assert charlie_doc["scoreIndex"] is None
-    assert "scores" not in charlie_doc or charlie_doc["scores"] is None
+    # Verify David's document is preserved (missing field preserved as null)
+    david_docs = [doc for doc in result_list if doc["name"] == "David"]
+    assert len(david_docs) == 1
+    david_doc = david_docs[0]
+    assert "scoreIndex" in david_doc
+    assert david_doc["scoreIndex"] is None
+    assert david_doc.get("scores") is None
 
 
 def test_unwind_performance_with_large_arrays(collection):

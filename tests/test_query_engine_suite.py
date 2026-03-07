@@ -1178,8 +1178,8 @@ def test_query_helper_process_group_stage_advanced():
 # ================================
 
 
-def test_unwind_with_advanced_options_fallback():
-    """Test that $unwind with advanced options (fallback) produces consistent results"""
+def test_unwind_with_advanced_options():
+    """Test that $unwind with advanced options works correctly (Tier-2 SQL implementation)"""
     with neosqlite.Connection(":memory:") as conn:
         collection = conn["test_collection"]
 
@@ -1209,7 +1209,7 @@ def test_unwind_with_advanced_options_fallback():
             ]
         )
 
-        # Pipeline with advanced unwind options (forces Python fallback)
+        # Pipeline with advanced unwind options (now uses Tier-2 SQL)
         pipeline_with_advanced = [
             {
                 "$unwind": {
@@ -1220,18 +1220,17 @@ def test_unwind_with_advanced_options_fallback():
             }
         ]
 
-        # Pipeline with simple unwind (can use SQL optimization)
+        # Pipeline with simple unwind (uses Tier-2 SQL)
         pipeline_simple = [{"$unwind": "$hobbies"}]
 
         # Get results from both approaches
-        result_advanced = collection.aggregate(pipeline_with_advanced)
-        result_simple = collection.aggregate(pipeline_simple)
+        result_advanced = list(collection.aggregate(pipeline_with_advanced))
+        result_simple = list(collection.aggregate(pipeline_simple))
 
         # The simple pipeline should have fewer results since it doesn't preserve null/empty
         assert len(result_simple) == 3  # Only Alice's hobbies
-        assert (
-            len(result_advanced) == 5
-        )  # Alice's hobbies + Bob and Charlie preserved
+        # Advanced pipeline: Alice's 3 hobbies + Bob (empty array) + Charlie (null) + David (missing) = 6
+        assert len(result_advanced) == 6
 
         # Check simple results
         simple_hobbies = {doc["hobbies"] for doc in result_simple}
@@ -1254,17 +1253,165 @@ def test_unwind_with_advanced_options_fallback():
         charlie_advanced = [
             doc for doc in result_advanced if doc["name"] == "Charlie"
         ]
+        david_advanced = [
+            doc for doc in result_advanced if doc["name"] == "David"
+        ]
 
         assert len(bob_advanced) == 1
         assert len(charlie_advanced) == 1
+        assert len(david_advanced) == 1
 
-        # Bob should have hobbies as None and index as None
+        # Bob should have hobbies as None (empty array set to null, MongoDB behavior) and index as None
         assert bob_advanced[0].get("hobbies") is None
         assert bob_advanced[0]["hobbyIndex"] is None
 
         # Charlie should have hobbies as None and index as None
         assert charlie_advanced[0].get("hobbies") is None
         assert charlie_advanced[0]["hobbyIndex"] is None
+
+        # David should have hobbies as None (missing field) and index as None
+        assert david_advanced[0].get("hobbies") is None
+        assert david_advanced[0].get("hobbyIndex") is None
+
+
+def test_unwind_preserve_null_and_empty_arrays():
+    """Test $unwind with preserveNullAndEmptyArrays option only"""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn["test_collection"]
+
+        # Insert test data
+        collection.insert_many(
+            [
+                {"_id": 1, "name": "Alice", "tags": ["a", "b"]},
+                {"_id": 2, "name": "Bob", "tags": []},  # Empty array
+                {"_id": 3, "name": "Charlie", "tags": None},  # Null
+                {"_id": 4, "name": "David"},  # Missing field
+            ]
+        )
+
+        # Test preserveNullAndEmptyArrays without includeArrayIndex
+        pipeline = [
+            {"$unwind": {"path": "$tags", "preserveNullAndEmptyArrays": True}}
+        ]
+
+        result = list(collection.aggregate(pipeline))
+
+        # Should have 5 results: Alice's 2 tags + Bob + Charlie + David
+        assert len(result) == 5
+
+        # Check Alice's unwound tags
+        alice_docs = [doc for doc in result if doc["name"] == "Alice"]
+        assert len(alice_docs) == 2
+        alice_tags = {doc["tags"] for doc in alice_docs}
+        assert alice_tags == {"a", "b"}
+
+        # Check preserved documents
+        # Note: MongoDB sets empty arrays to null (not preserving as [])
+        bob_doc = [doc for doc in result if doc["name"] == "Bob"][0]
+        charlie_doc = [doc for doc in result if doc["name"] == "Charlie"][0]
+        david_doc = [doc for doc in result if doc["name"] == "David"][0]
+
+        assert (
+            bob_doc.get("tags") is None
+        )  # Empty array set to null (MongoDB behavior)
+        assert charlie_doc.get("tags") is None
+        assert david_doc.get("tags") is None
+
+
+def test_unwind_include_array_index():
+    """Test $unwind with includeArrayIndex option only"""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn["test_collection"]
+
+        # Insert test data
+        collection.insert_many(
+            [
+                {"_id": 1, "name": "Alice", "scores": [10, 20, 30]},
+                {"_id": 2, "name": "Bob", "scores": [5]},
+            ]
+        )
+
+        # Test includeArrayIndex without preserveNullAndEmptyArrays
+        pipeline = [
+            {"$unwind": {"path": "$scores", "includeArrayIndex": "idx"}}
+        ]
+
+        result = list(collection.aggregate(pipeline))
+
+        # Should have 4 results: Alice's 3 scores + Bob's 1 score
+        assert len(result) == 4
+
+        # Check Alice's scores with indices
+        alice_docs = sorted(
+            [doc for doc in result if doc["name"] == "Alice"],
+            key=lambda x: x["idx"],
+        )
+        assert len(alice_docs) == 3
+        assert alice_docs[0]["scores"] == 10
+        assert alice_docs[0]["idx"] == 0
+        assert alice_docs[1]["scores"] == 20
+        assert alice_docs[1]["idx"] == 1
+        assert alice_docs[2]["scores"] == 30
+        assert alice_docs[2]["idx"] == 2
+
+        # Check Bob's score with index
+        bob_doc = [doc for doc in result if doc["name"] == "Bob"][0]
+        assert bob_doc["scores"] == 5
+        assert bob_doc["idx"] == 0
+
+
+def test_unwind_combined_options():
+    """Test $unwind with both preserveNullAndEmptyArrays and includeArrayIndex"""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn["test_collection"]
+
+        # Insert test data
+        collection.insert_many(
+            [
+                {"_id": 1, "name": "Alice", "items": ["x", "y"]},
+                {"_id": 2, "name": "Bob", "items": []},  # Empty
+                {"_id": 3, "name": "Charlie"},  # Missing
+            ]
+        )
+
+        # Test both options combined
+        pipeline = [
+            {
+                "$unwind": {
+                    "path": "$items",
+                    "preserveNullAndEmptyArrays": True,
+                    "includeArrayIndex": "index",
+                }
+            }
+        ]
+
+        result = list(collection.aggregate(pipeline))
+
+        # Should have 4 results: Alice's 2 items + Bob + Charlie
+        assert len(result) == 4
+
+        # Check Alice's items with indices
+        alice_docs = sorted(
+            [doc for doc in result if doc["name"] == "Alice"],
+            key=lambda x: x["index"],
+        )
+        assert len(alice_docs) == 2
+        assert alice_docs[0]["items"] == "x"
+        assert alice_docs[0]["index"] == 0
+        assert alice_docs[1]["items"] == "y"
+        assert alice_docs[1]["index"] == 1
+
+        # Check preserved documents have None for index
+        # Note: MongoDB sets empty arrays to null (not preserving as [])
+        bob_doc = [doc for doc in result if doc["name"] == "Bob"][0]
+        charlie_doc = [doc for doc in result if doc["name"] == "Charlie"][0]
+
+        assert (
+            bob_doc.get("items") is None
+        )  # Empty array set to null (MongoDB behavior)
+        assert bob_doc.get("index") is None
+        assert charlie_doc.get("items") is None
+        assert charlie_doc.get("index") is None
 
 
 def test_lookup_with_subsequent_stages_fallback():

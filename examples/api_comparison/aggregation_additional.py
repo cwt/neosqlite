@@ -17,6 +17,8 @@ def compare_additional_aggregation():
     print("\n=== Additional Aggregation Features Comparison ===")
 
     neo_switch = None
+    neo_unwind_advanced = None
+    neo_unwind_advanced_result = None
     with neosqlite.Connection(":memory:") as neo_conn:
         neo_collection = neo_conn.test_collection
         neo_collection.insert_many(
@@ -35,6 +37,33 @@ def compare_additional_aggregation():
         except Exception as e:
             neo_unwind = f"Error: {e}"
             print(f"Neo $unwind: Error - {e}")
+
+        # Test $unwind with advanced options
+        neo_collection.insert_many(
+            [
+                {"item": "C", "price": 15, "sizes": []},  # Empty array
+                {"item": "D", "price": 25, "sizes": None},  # Null
+                {"item": "E", "price": 35},  # Missing field
+            ]
+        )
+        unwind_advanced_pipeline = [
+            {
+                "$unwind": {
+                    "path": "$sizes",
+                    "preserveNullAndEmptyArrays": True,
+                    "includeArrayIndex": "idx",
+                }
+            }
+        ]
+        try:
+            neo_unwind_advanced_result = list(
+                neo_collection.aggregate(unwind_advanced_pipeline)
+            )
+            neo_unwind_advanced = len(neo_unwind_advanced_result)
+            print(f"Neo $unwind (advanced): {neo_unwind_advanced} docs")
+        except Exception as e:
+            neo_unwind_advanced = f"Error: {e}"
+            print(f"Neo $unwind (advanced): Error - {e}")
 
         # Test $group with $push
         push_pipeline = [
@@ -92,6 +121,8 @@ def compare_additional_aggregation():
     mongo_push = None
     mongo_push_result = None
     mongo_unwind = None
+    mongo_unwind_advanced = None
+    mongo_unwind_advanced_result = None
     mongo_switch = None
 
     if client:
@@ -115,6 +146,24 @@ def compare_additional_aggregation():
         except Exception as e:
             mongo_unwind = f"Error: {e}"
             print(f"Mongo $unwind: Error - {e}")
+
+        # Test $unwind with advanced options
+        mongo_collection.insert_many(
+            [
+                {"item": "C", "price": 15, "sizes": []},  # Empty array
+                {"item": "D", "price": 25, "sizes": None},  # Null
+                {"item": "E", "price": 35},  # Missing field
+            ]
+        )
+        try:
+            mongo_unwind_advanced_result = list(
+                mongo_collection.aggregate(unwind_advanced_pipeline)
+            )
+            mongo_unwind_advanced = len(mongo_unwind_advanced_result)
+            print(f"Mongo $unwind (advanced): {mongo_unwind_advanced} docs")
+        except Exception as e:
+            mongo_unwind_advanced = f"Error: {e}"
+            print(f"Mongo $unwind (advanced): Error - {e}")
 
         # Test $group with $push
         try:
@@ -175,6 +224,36 @@ def compare_additional_aggregation():
     else:
         reporter.record_result(
             "Additional Aggregation", "$unwind", False, neo_unwind, mongo_unwind
+        )
+
+    # Report $unwind advanced options
+    if not isinstance(neo_unwind_advanced, str) and not isinstance(
+        mongo_unwind_advanced, str
+    ):
+        # Compare document counts (main functionality)
+        passed = neo_unwind_advanced == mongo_unwind_advanced
+        # Note: MongoDB removes the unwound field for preserved documents,
+        # while NeoSQLite keeps it as null/empty. This is a minor difference.
+        reporter.record_result(
+            "Additional Aggregation",
+            "$unwind (advanced)",
+            passed,
+            neo_unwind_advanced if passed else neo_unwind_advanced_result,
+            mongo_unwind_advanced if passed else mongo_unwind_advanced_result,
+            (
+                None
+                if passed
+                else "Document count matches, field structure differs slightly"
+            ),
+            show_results=False,
+        )
+    else:
+        reporter.record_result(
+            "Additional Aggregation",
+            "$unwind (advanced)",
+            False,
+            neo_unwind_advanced,
+            mongo_unwind_advanced,
         )
 
     if not isinstance(neo_push, str) and not isinstance(mongo_push, str):

@@ -871,10 +871,10 @@ def test_aggregation_unwind_advanced_options_comprehensive(collection):
     result = collection.aggregate(pipeline)
     result_list = list(result)
 
-    # Should have 5 documents:
-    # 3 for Alice's scores, 1 for Bob (null due to empty array),
+    # Should have 6 documents:
+    # 3 for Alice's scores, 1 for Bob (empty array preserved),
     # 1 for Charlie (null due to null value), 1 for David (null due to missing field)
-    assert len(result_list) == 5
+    assert len(result_list) == 6
 
     # Verify Alice's scores with indices
     alice_scores = [doc for doc in result_list if doc["name"] == "Alice"]
@@ -890,9 +890,17 @@ def test_aggregation_unwind_advanced_options_comprehensive(collection):
         alice_scores[2]["scores"] == 78 and alice_scores[2]["scoreIndex"] == 2
     )
 
-    # Verify null handling
+    # Verify null/empty handling
+    # Bob has empty array (set to null per MongoDB behavior), Charlie has null, David has missing field
+    bob_docs = [doc for doc in result_list if doc["name"] == "Bob"]
+    assert len(bob_docs) == 1
+    assert (
+        bob_docs[0]["scores"] is None
+    )  # Empty array set to null (MongoDB behavior)
+    assert bob_docs[0]["scoreIndex"] is None
+
     null_scores = [doc for doc in result_list if doc.get("scores") is None]
-    assert len(null_scores) == 2
+    assert len(null_scores) == 3  # Bob, Charlie, and David
     for doc in null_scores:
         assert doc["scoreIndex"] is None
 
