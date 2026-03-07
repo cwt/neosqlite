@@ -3,13 +3,22 @@ Context management and helper functions for expression evaluation.
 
 This module provides the AggregationContext class for managing variable scoping
 and helper functions for identifying different types of expression values.
+
+Note: Type checking helpers (_is_expression, _is_field_reference, _is_literal)
+have been moved to collection.type_utils for shared use across subpackages.
+They are re-exported here for backward compatibility.
 """
 
 from __future__ import annotations
 from typing import Any, Dict
 
-# Import RESERVED_FIELDS from constants to avoid circular dependency
-from .constants import RESERVED_FIELDS
+# Import type checking helpers from shared module
+# These are re-exported for backward compatibility
+from ..type_utils import (
+    _is_expression as _is_expression,
+    _is_field_reference as _is_field_reference,
+    _is_literal as _is_literal,
+)
 
 
 class AggregationContext:
@@ -86,67 +95,6 @@ class AggregationContext:
         self.variables[name] = value
 
 
-def _is_expression(value: Any) -> bool:
-    """
-    Check if value is an aggregation expression.
-
-    An expression is a dict with exactly one key starting with '$'
-    that is not a reserved field name.
-
-    Args:
-        value: Value to check
-
-    Returns:
-        True if value is an expression, False otherwise
-
-    Examples:
-        >>> _is_expression({"$sin": "$angle"})
-        True
-        >>> _is_expression({"$field": "value"})  # Reserved
-        False
-        >>> _is_expression("$field")
-        False
-        >>> _is_expression(42)
-        False
-    """
-    if not isinstance(value, dict):
-        return False
-    if len(value) != 1:
-        return False  # Could be a literal dict
-    key = next(iter(value.keys()))
-    return key.startswith("$") and key not in RESERVED_FIELDS
-
-
-def _is_field_reference(value: Any) -> bool:
-    """
-    Check if value is a field reference.
-
-    Field references start with '$' but are not expressions
-    (i.e., they're simple strings like "$field" or "$nested.field").
-
-    Args:
-        value: Value to check
-
-    Returns:
-        True if value is a field reference, False otherwise
-
-    Examples:
-        >>> _is_field_reference("$field")
-        True
-        >>> _is_field_reference("$nested.field")
-        True
-        >>> _is_field_reference("$$ROOT")
-        False
-        >>> _is_field_reference({"$sin": "$angle"})
-        False
-    """
-    return (
-        isinstance(value, str)
-        and value.startswith("$")
-        and not value.startswith("$$")
-    )
-
-
 def _is_aggregation_variable(value: Any) -> bool:
     """
     Check for aggregation variables.
@@ -168,36 +116,3 @@ def _is_aggregation_variable(value: Any) -> bool:
         False
     """
     return isinstance(value, str) and value.startswith("$$")
-
-
-def _is_literal(value: Any) -> bool:
-    """
-    Check if value is a literal (not an expression or field reference).
-
-    Literals include: numbers, strings, booleans, None, arrays, and plain dicts.
-
-    Args:
-        value: Value to check
-
-    Returns:
-        True if value is a literal, False otherwise
-
-    Examples:
-        >>> _is_literal(42)
-        True
-        >>> _is_literal("string")
-        True
-        >>> _is_literal(True)
-        True
-        >>> _is_literal(None)
-        True
-        >>> _is_literal([1, 2, 3])
-        True
-        >>> _is_literal("$field")
-        False
-    """
-    if isinstance(value, str):
-        # Strings starting with $ are field refs or variables, not literals
-        return not value.startswith("$")
-    # All other types are literals
-    return True

@@ -4,21 +4,13 @@ from ...binary import Binary
 from ...exceptions import MalformedQueryException
 from typing import Any
 
-# Global flag to force fallback - for benchmarking and debugging
-_FORCE_FALLBACK = False
+# Import JSON function helpers from shared module to avoid duplication
+from ..jsonb_support import (
+    _get_json_function_prefix as _get_json_function_prefix,
+)
 
-
-def _get_json_function_prefix(jsonb_supported: bool) -> str:
-    """
-    Get the appropriate JSON function prefix based on JSONB support.
-
-    Args:
-        jsonb_supported: Whether JSONB functions are supported
-
-    Returns:
-        str: "jsonb" if JSONB is supported, "json" otherwise
-    """
-    return "jsonb" if jsonb_supported else "json"
+# Import type checking helpers from shared module to avoid duplication
+from ..type_utils import _is_numeric_value as _is_numeric_value
 
 
 def _get_json_function(name: str, jsonb_supported: bool) -> str:
@@ -34,6 +26,10 @@ def _get_json_function(name: str, jsonb_supported: bool) -> str:
     """
     prefix = _get_json_function_prefix(jsonb_supported)
     return f"{prefix}_{name}"
+
+
+# Global flag to force fallback - for benchmarking and debugging
+_FORCE_FALLBACK = False
 
 
 def _convert_bytes_to_binary(obj: Any) -> Any:
@@ -90,38 +86,8 @@ def get_force_fallback() -> bool:
     return _FORCE_FALLBACK
 
 
-def _is_numeric_value(value: Any) -> bool:
-    """
-    Check if a value is numeric (int or float) or can be converted to a numeric value.
-
-    This function determines if a value can be safely used in arithmetic operations
-    like $inc and $mul. It considers:
-    - int and float values as numeric (excluding bool, NaN, and infinity)
-    - None as non-numeric (would cause issues in arithmetic)
-    - String representations of numbers as non-numeric (to match MongoDB behavior)
-
-    Args:
-        value: The value to check
-
-    Returns:
-        bool: True if the value is numeric, False otherwise
-    """
-    # Explicitly exclude boolean values (even though bool is subclass of int in Python)
-    if isinstance(value, bool):
-        return False
-
-    # Check for actual numeric types
-    if isinstance(value, (int, float)):
-        # Special case: check for NaN and infinity
-        if isinstance(value, float):
-            import math
-
-            if math.isnan(value) or math.isinf(value):
-                return False
-        return True
-
-    # Everything else is considered non-numeric for MongoDB compatibility
-    return False
+# Note: _is_numeric_value is now imported from ..type_utils above to avoid
+# code duplication. It is re-exported from this module for backward compatibility.
 
 
 def _validate_inc_mul_field_value(
