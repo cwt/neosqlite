@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Dict, List
 from ...sql_utils import quote_table_name
 from ... import query_operators
 from ...exceptions import MalformedQueryException
+from ..type_correction import normalize_id_query_for_db
 from ..json_helpers import neosqlite_json_dumps_for_sql
 from ..json_path_utils import parse_json_path
 from ..text_search import unified_text_search
@@ -27,14 +28,12 @@ class QueryBuilderMixin:
     - self.collection (with db and name attributes)
     - self._jsonb_supported
     - self._json_function_prefix
-    - self._normalize_id_query method
     - self._build_expr_where_clause method (for handling $expr queries)
     """
 
     collection: "Collection"
     _jsonb_supported: bool
     _json_function_prefix: str
-    _normalize_id_query: Any
     _build_expr_where_clause: Any
 
     def _is_text_search_query(self, query: Dict[str, Any]) -> bool:
@@ -235,7 +234,7 @@ class QueryBuilderMixin:
         """
         # Apply type correction to handle cases where users query 'id' with ObjectId
         # or other common type mismatches
-        query = self._normalize_id_query(query)
+        query = normalize_id_query_for_db(query)
         # Check force fallback flag
         from .utils import get_force_fallback
 

@@ -19,6 +19,7 @@ from .raw_batch_cursor import RawBatchCursor
 from .sql_translator_unified import SQLTranslator
 from .expr_evaluator import ExprEvaluator, AggregationContext, _is_expression
 from .sql_tier_aggregator import SQLTierAggregator
+from .type_correction import get_integer_id_for_oid
 from copy import deepcopy
 from neosqlite.binary import Binary
 from neosqlite.collection.json_helpers import (
@@ -341,6 +342,9 @@ class QueryEngine:
         """
         Get the integer ID for a given ObjectId.
 
+        This method delegates to the centralized get_integer_id_for_oid function
+        to ensure consistent ID handling across all NeoSQLite components.
+
         Args:
             oid: The ObjectId to look up.
 
@@ -350,19 +354,9 @@ class QueryEngine:
         Raises:
             ValueError: If the integer ID for the ObjectId cannot be found.
         """
-        # This method should find the integer id in the database that corresponds to the ObjectId
-        cursor = self.collection.db.execute(
-            f"SELECT id FROM {quote_table_name(self.collection.name)} WHERE _id = ?",
-            (str(oid) if hasattr(oid, "__str__") else oid,),
+        return get_integer_id_for_oid(
+            self.collection.db, self.collection.name, oid
         )
-        row = cursor.fetchone()
-        if row:
-            return row[0]
-        # If not found, it might be that the _id is not stored in the _id column
-        # This could happen for older records
-        if isinstance(oid, int):
-            return oid
-        raise ValueError(f"Could not find integer ID for ObjectId: {oid}")
 
     def update_many(
         self,

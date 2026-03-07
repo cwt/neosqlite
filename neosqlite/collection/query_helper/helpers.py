@@ -1,8 +1,7 @@
 """Helper functions for QueryHelper operations."""
 
-from ...sql_utils import quote_table_name
-from ..type_correction import normalize_id_query_for_db
-from typing import Any, Dict
+from ..type_correction import get_integer_id_for_oid
+from typing import Any
 
 try:
     from pysqlite3 import dbapi2 as sqlite3  # noqa: F401
@@ -10,25 +9,12 @@ except ImportError:
     pass  # type: ignore
 
 
-def _normalize_id_query(query: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Normalize ID types in a query dictionary to correct common mismatches.
-
-    This method delegates to the centralized normalize_id_query_for_db function
-    to ensure consistent ID handling across all NeoSQLite components.
-
-    Args:
-        query: The query dictionary to process
-
-    Returns:
-        A new query dictionary with corrected ID types
-    """
-    return normalize_id_query_for_db(query)
-
-
 def _get_integer_id_for_oid(collection: Any, oid: Any) -> int:
     """
     Get the integer ID for a given ObjectId or other ID type.
+
+    This function delegates to the centralized get_integer_id_for_oid function
+    to ensure consistent ID handling across all NeoSQLite components.
 
     Args:
         collection: The collection instance
@@ -37,27 +23,7 @@ def _get_integer_id_for_oid(collection: Any, oid: Any) -> int:
     Returns:
         int: The integer ID from the database
     """
-    # If it's already an integer, return it directly
-    if isinstance(oid, int):
-        return oid
-
-    # For other types (ObjectId, str), we need to query the _id column to get the integer id
-    cursor = collection.db.execute(
-        f"SELECT id FROM {quote_table_name(collection.name)} WHERE _id = ?",
-        (
-            (str(oid) if hasattr(oid, "__str__") else oid,)
-            if oid is not None
-            else (None,)
-        ),
-    )
-    row = cursor.fetchone()
-    if row:
-        return row[0]
-    else:
-        # If not found and it's an int, return as is for backward compatibility
-        if isinstance(oid, int):
-            return oid
-        raise ValueError(f"Could not find integer ID for ObjectId: {oid}")
+    return get_integer_id_for_oid(collection.db, collection.name, oid)
 
 
 def _validate_json_document(db: Any, json_str: str) -> bool:

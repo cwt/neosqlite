@@ -1,9 +1,16 @@
 from __future__ import annotations
+
 from .errors import NoFile
+from .utils import (
+    deserialize_aliases,
+    deserialize_metadata,
+    force_sync_if_needed,
+    serialize_aliases,
+    serialize_metadata,
+)
 from typing import Any, Dict
 import datetime
 import hashlib
-import json
 
 try:
     from pysqlite3 import dbapi2 as sqlite3
@@ -73,18 +80,10 @@ class GridIn:
         """
         Serialize aliases to JSON string.
 
-        Args:
-            aliases: List of alias strings
-
         Returns:
             JSON string representation or None
         """
-        if self._aliases is None:
-            return None
-        try:
-            return json.dumps(self._aliases)
-        except (TypeError, ValueError):
-            return str(self._aliases)
+        return serialize_aliases(self._aliases)
 
     def _serialize_metadata(
         self, metadata: Dict[str, Any] | None
@@ -98,13 +97,7 @@ class GridIn:
         Returns:
             JSON string representation or None
         """
-        if metadata is None:
-            return None
-        try:
-            return json.dumps(metadata)
-        except (TypeError, ValueError):
-            # Fallback to string representation if JSON serialization fails
-            return str(metadata)
+        return serialize_metadata(metadata)
 
     def _deserialize_metadata(
         self, metadata_str: str | None
@@ -118,32 +111,23 @@ class GridIn:
         Returns:
             Metadata dictionary or None
         """
-        if metadata_str is None:
-            return None
-        try:
-            return json.loads(metadata_str)
-        except (TypeError, ValueError, json.JSONDecodeError):
-            # Fallback to parsing as Python literal (for backward compatibility)
-            try:
-                # Try to evaluate as Python literal (for backward compatibility)
-                import ast
+        return deserialize_metadata(metadata_str)
 
-                result = ast.literal_eval(metadata_str)
-                if isinstance(result, dict):
-                    return result
-            except (ValueError, SyntaxError):
-                pass
-            # Return as simple string in a dict for backward compatibility
-            return {"_metadata": metadata_str}
+    def _deserialize_aliases(self, aliases_str: str | None) -> list[str] | None:
+        """
+        Deserialize aliases from JSON string.
+
+        Args:
+            aliases_str: JSON string representation of aliases
+
+        Returns:
+            List of alias strings or None
+        """
+        return deserialize_aliases(aliases_str)
 
     def _force_sync_if_needed(self):
         """Force database synchronization if write concern requires it."""
-        if (
-            self._write_concern.get("j") is True
-            or self._write_concern.get("w") == "majority"
-        ):
-            # Force sync to disk for maximum durability
-            self._db.execute("PRAGMA wal_checkpoint(PASSIVE)")
+        force_sync_if_needed(self._db, self._write_concern)
 
     def write(self, data: bytes | bytearray) -> int:
         """
@@ -229,9 +213,9 @@ class GridIn:
                     self._filename,
                     self._chunk_size_bytes,
                     upload_date,
-                    self._serialize_metadata(self._metadata),
+                    serialize_metadata(self._metadata),
                     self._content_type,
-                    self._serialize_aliases(),
+                    serialize_aliases(self._aliases),
                 ),
             )
             self._file_id = oid  # Store the ObjectId
@@ -250,9 +234,9 @@ class GridIn:
                         self._filename,
                         self._chunk_size_bytes,
                         upload_date,
-                        self._serialize_metadata(self._metadata),
+                        serialize_metadata(self._metadata),
                         self._content_type,
-                        self._serialize_aliases(),
+                        serialize_aliases(self._aliases),
                     ),
                 )
             else:
@@ -269,9 +253,9 @@ class GridIn:
                         self._filename,
                         self._chunk_size_bytes,
                         upload_date,
-                        self._serialize_metadata(self._metadata),
+                        serialize_metadata(self._metadata),
                         self._content_type,
-                        self._serialize_aliases(),
+                        serialize_aliases(self._aliases),
                     ),
                 )
 
@@ -530,8 +514,8 @@ class GridOut:
             # If no stored _id, fall back to the integer ID
             self._actual_id = file_id  # type: ignore
 
-        self._metadata = self._deserialize_metadata(metadata_str)
-        self._aliases = self._deserialize_aliases(aliases_str)
+        self._metadata = deserialize_metadata(metadata_str)
+        self._aliases = deserialize_aliases(aliases_str)
         self._position = 0
         self._current_chunk_data = b""
         self._current_chunk_index = -1
@@ -561,23 +545,7 @@ class GridOut:
         Returns:
             Metadata dictionary or None
         """
-        if metadata_str is None:
-            return None
-        try:
-            return json.loads(metadata_str)
-        except (TypeError, ValueError, json.JSONDecodeError):
-            # Fallback to parsing as Python literal (for backward compatibility)
-            try:
-                # Try to evaluate as Python literal (for backward compatibility)
-                import ast
-
-                result = ast.literal_eval(metadata_str)
-                if isinstance(result, dict):
-                    return result
-            except (ValueError, SyntaxError):
-                pass
-            # Return as simple string in a dict for backward compatibility
-            return {"_metadata": metadata_str}
+        return deserialize_metadata(metadata_str)
 
     def _deserialize_aliases(self, aliases_str: str | None) -> list[str] | None:
         """
@@ -589,20 +557,7 @@ class GridOut:
         Returns:
             List of alias strings or None
         """
-        if aliases_str is None:
-            return None
-        try:
-            aliases = json.loads(aliases_str)
-            if isinstance(aliases, list):
-                return aliases
-            else:
-                # If it's not a list, wrap it in a list
-                return [str(aliases)]
-        except (TypeError, ValueError, json.JSONDecodeError):
-            # Fallback to parsing as a simple string or return as-is
-            if aliases_str:
-                return [aliases_str]
-            return None
+        return deserialize_aliases(aliases_str)
 
     def read(self, size: int = -1) -> bytes:
         """

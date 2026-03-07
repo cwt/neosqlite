@@ -9,9 +9,11 @@ from typing import Any, Dict, List
 from .helpers import (
     _get_integer_id_for_oid,
     _get_json_error_position,
-    _normalize_id_query,
     _validate_json_document,
 )
+
+# Import the centralized ID normalization function
+from ..type_correction import normalize_id_query_for_db
 
 # Import utility functions
 from .utils import (
@@ -101,7 +103,7 @@ class QueryHelper(
         Returns:
             A new query dictionary with corrected ID types
         """
-        return _normalize_id_query(query)
+        return normalize_id_query_for_db(query)
 
     def _get_integer_id_for_oid(self, oid: Any) -> int:
         """

@@ -4,6 +4,7 @@ between integer IDs and ObjectIds in queries.
 """
 
 from ..objectid import ObjectId
+from ..sql_utils import quote_table_name
 from typing import Any, Dict
 
 
@@ -156,3 +157,60 @@ def normalize_id_query_for_db(query: Dict[str, Any]) -> Dict[str, Any]:
             corrected_query[key] = value
 
     return corrected_query
+
+
+def get_integer_id_for_oid(
+    db_connection: Any,
+    collection_name: str,
+    oid: Any,
+) -> int:
+    """
+    Get the integer ID for a given ObjectId or other ID type.
+
+    Args:
+        db_connection: SQLite database connection
+        collection_name: Name of the collection/table
+        oid: The ID value (ObjectId, int, str, etc.)
+
+    Returns:
+        Integer ID from the database
+
+    Raises:
+        ValueError: If the ID cannot be found
+    """
+    if isinstance(oid, int):
+        return oid
+
+    cursor = db_connection.execute(
+        f"SELECT id FROM {quote_table_name(collection_name)} WHERE _id = ?",
+        (str(oid) if hasattr(oid, "__str__") else oid,),
+    )
+    row = cursor.fetchone()
+    if row:
+        return row[0]
+    raise ValueError(f"Could not find integer ID for ObjectId: {oid}")
+
+
+def get_integer_id_for_table(
+    db_connection: Any,
+    table_name: str,
+    oid: Any,
+) -> int:
+    """
+    Get the integer ID for a file in GridFS tables.
+
+    This is an alias for get_integer_id_for_oid, provided for clarity
+    when working with GridFS tables.
+
+    Args:
+        db_connection: SQLite database connection
+        table_name: Name of the GridFS table
+        oid: The file ID
+
+    Returns:
+        Integer ID from the database
+
+    Raises:
+        ValueError: If the ID cannot be found
+    """
+    return get_integer_id_for_oid(db_connection, table_name, oid)

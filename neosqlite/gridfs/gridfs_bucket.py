@@ -1,10 +1,14 @@
 from .errors import NoFile, FileExists
 from .grid_file import GridIn, GridOut, GridOutCursor
+from .utils import (
+    force_sync_if_needed,
+    serialize_metadata,
+    deserialize_metadata,
+)
 from typing import Any, Dict
 import datetime
 import hashlib
 import io
-import json
 
 try:
     from pysqlite3 import dbapi2 as sqlite3
@@ -17,10 +21,11 @@ from ..objectid import ObjectId
 # Import JSONB support utilities to reuse existing implementation
 from ..collection.jsonb_support import supports_jsonb
 
-# Import _normalize_id_query to reuse existing ID normalization logic
-
-# Import the centralized ID normalization function
-from ..collection.type_correction import normalize_id_query_for_db
+# Import the centralized ID normalization and lookup functions
+from ..collection.type_correction import (
+    get_integer_id_for_table,
+    normalize_id_query_for_db,
+)
 
 
 class GridFSBucket:
@@ -270,13 +275,7 @@ class GridFSBucket:
         Returns:
             JSON string representation or None
         """
-        if metadata is None:
-            return None
-        try:
-            return json.dumps(metadata)
-        except (TypeError, ValueError):
-            # Fallback to string representation if JSON serialization fails
-            return str(metadata)
+        return serialize_metadata(metadata)
 
     def _deserialize_metadata(
         self, metadata_str: str | None
@@ -290,34 +289,11 @@ class GridFSBucket:
         Returns:
             Metadata dictionary or None
         """
-        if metadata_str is None:
-            return None
-        try:
-            return json.loads(metadata_str)
-        except (TypeError, ValueError, json.JSONDecodeError):
-            # Fallback to parsing as dictionary if possible, otherwise return as-is
-            try:
-                # Try to evaluate as Python literal (for backward compatibility)
-                import ast
-
-                result = ast.literal_eval(metadata_str)
-                if isinstance(result, dict):
-                    return result
-            except (ValueError, SyntaxError):
-                pass
-            # Return as simple string in a dict for backward compatibility
-            return {"_metadata": metadata_str}
+        return deserialize_metadata(metadata_str)
 
     def _force_sync_if_needed(self):
         """Force database synchronization if write concern requires it."""
-        if (
-            self._write_concern.get("j") is True
-            or self._write_concern.get("w") == "majority"
-        ):
-            # Force sync to disk for maximum durability
-            self._db.execute("PRAGMA wal_checkpoint(PASSIVE)")
-            # Note: In pysqlite, we can't directly call fsync on the file,
-            # but we can force SQLite to flush its buffers
+        force_sync_if_needed(self._db, self._write_concern)
 
     def upload_from_stream(
         self,
@@ -379,7 +355,7 @@ class GridFSBucket:
                 self._chunk_size_bytes,
                 upload_date,
                 md5_hash,
-                self._serialize_metadata(metadata),
+                serialize_metadata(metadata),
             ),
         )
 
@@ -470,41 +446,37 @@ class GridFSBucket:
         Returns:
             The integer ID corresponding to the file, or None if not found
         """
-        if isinstance(file_id, ObjectId):
-            # Look up by _id column containing ObjectId hex string
-            cursor = self._db.execute(
-                f"SELECT id FROM {self._files_collection} WHERE _id = ?",
-                (str(file_id),),
+        try:
+            return get_integer_id_for_table(
+                self._db, self._files_collection, file_id
             )
-        elif isinstance(file_id, str) and len(file_id) == 24:
-            # Check if it's a valid ObjectId hex string
-            try:
-                ObjectId(file_id)  # Validate the hex string
-                cursor = self._db.execute(
-                    f"SELECT id FROM {self._files_collection} WHERE _id = ?",
-                    (file_id,),
-                )
-            except ValueError:
-                # Not a valid ObjectId hex string, treat as integer string
+        except ValueError:
+            # Handle string ID types that the centralized function doesn't handle
+            if isinstance(file_id, str):
+                # Check if it's a valid ObjectId hex string
+                if len(file_id) == 24:
+                    try:
+                        ObjectId(file_id)  # Validate the hex string
+                        cursor = self._db.execute(
+                            f"SELECT id FROM {self._files_collection} WHERE _id = ?",
+                            (file_id,),
+                        )
+                        row = cursor.fetchone()
+                        return row[0] if row else None
+                    except ValueError:
+                        pass
+                # Try as integer string
                 try:
                     int_file_id = int(file_id)
                     cursor = self._db.execute(
                         f"SELECT id FROM {self._files_collection} WHERE id = ?",
                         (int_file_id,),
                     )
+                    row = cursor.fetchone()
+                    return row[0] if row else None
                 except ValueError:
-                    # Not an integer string either
-                    return None
-        elif isinstance(file_id, int):
-            cursor = self._db.execute(
-                f"SELECT id FROM {self._files_collection} WHERE id = ?",
-                (file_id,),
-            )
-        else:
+                    pass
             return None
-
-        row = cursor.fetchone()
-        return row[0] if row else None
 
     def download_to_stream_by_name(
         self, filename: str, destination: io.IOBase, revision: int = -1
@@ -642,19 +614,6 @@ class GridFSBucket:
             filter = normalize_id_query_for_db(filter)
         return GridOutCursor(self._db, self._bucket_name, filter or {})
 
-    def _normalize_id_query(self, query: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Normalize ID types in a query dictionary to correct common mismatches.
-        This reuses the centralized logic for consistent ID handling.
-
-        Args:
-            query: The query dictionary to process
-
-        Returns:
-            A new query dictionary with corrected ID types
-        """
-        return normalize_id_query_for_db(query)
-
     def open_upload_stream(
         self,
         filename: str,
@@ -764,7 +723,7 @@ class GridFSBucket:
                     chunk_size_bytes or self._chunk_size_bytes,
                     upload_date,
                     md5_hash,
-                    self._serialize_metadata(metadata),
+                    serialize_metadata(metadata),
                 ),
             )
         else:
@@ -786,7 +745,7 @@ class GridFSBucket:
                     chunk_size_bytes or self._chunk_size_bytes,
                     upload_date,
                     md5_hash,
-                    self._serialize_metadata(metadata),
+                    serialize_metadata(metadata),
                 ),
             )
 
