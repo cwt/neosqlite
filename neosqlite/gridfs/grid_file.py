@@ -9,6 +9,7 @@ from .utils import (
     serialize_aliases,
     serialize_metadata,
 )
+from ..collection.schema_utils import column_exists
 from typing import Any, Dict
 import datetime
 import hashlib
@@ -413,14 +414,8 @@ class GridOut:
         has_content_type = False
         has_aliases = False
         try:
-            cursor = self._db.execute(
-                f"PRAGMA table_info({self._files_collection})"
-            )
-            columns = {
-                row[1] for row in cursor.fetchall()
-            }  # Column names are in index 1
-            has_content_type = "content_type" in columns
-            has_aliases = "aliases" in columns
+            has_content_type = column_exists(self._db, self._files_collection, "content_type")
+            has_aliases = column_exists(self._db, self._files_collection, "aliases")
         except (AttributeError, TypeError):
             # Handle mocked databases in tests - assume old schema
             pass

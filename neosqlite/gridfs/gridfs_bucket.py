@@ -6,6 +6,7 @@ from .utils import (
     deserialize_metadata,
 )
 from .._sqlite import sqlite3
+from ..collection.schema_utils import column_exists
 from typing import Any, Dict
 import datetime
 import hashlib
@@ -239,17 +240,12 @@ class GridFSBucket:
         """Migrate existing tables to add new columns for content_type and aliases."""
         # Check if content_type column exists, add it if not
         try:
-            cursor = self._db.execute(
-                f"PRAGMA table_info({self._files_collection})"
-            )
-            columns = {row[1] for row in cursor}  # Column names are in index 1
-
-            if "content_type" not in columns:
+            if not column_exists(self._db, self._files_collection, "content_type"):
                 self._db.execute(
                     f"ALTER TABLE {self._files_collection} ADD COLUMN content_type TEXT"
                 )
 
-            if "aliases" not in columns:
+            if not column_exists(self._db, self._files_collection, "aliases"):
                 jsonb_supported = supports_jsonb(self._db)
                 column_type = "JSONB" if jsonb_supported else "TEXT"
                 self._db.execute(

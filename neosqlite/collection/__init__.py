@@ -16,8 +16,12 @@ from .cursor import Cursor
 from .index_manager import IndexManager
 from .query_engine import QueryEngine
 from .raw_batch_cursor import RawBatchCursor
+from .schema_utils import (
+    create_unique_index_on_id,
+    get_table_info,
+)
 from neosqlite.collection.json_helpers import neosqlite_json_loads
-from ..sql_utils import quote_table_name, quote_identifier
+from ..sql_utils import quote_table_name
 from typing import Any, Dict, List, Tuple, overload
 from typing_extensions import Literal
 
@@ -238,26 +242,17 @@ class Collection:
             )
 
         # Create unique index on _id column for faster lookups
-        try:
-            self.db.execute(
-                f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{quote_identifier(self.name)}_id ON {quote_table_name(self.name)}(_id)"
-            )
-        except Exception:
-            # If we can't create the index (e.g., due to duplicate values), continue without it
-            pass
+        create_unique_index_on_id(self.db, self.name)
 
         # Add the _id column if it doesn't exist (for backward compatibility)
         self._ensure_id_column_exists()
-
-        # Create unique index on _id column for faster lookups
-        self._create_unique_index_for_id()
 
     def _ensure_id_column_exists(self):
         """
         Ensure that the _id column exists in the collection table for backward compatibility.
         """
         try:
-            # Check if _id column exists
+            # Check if _id column exists using PRAGMA table_info
             cursor = self.db.execute(
                 "SELECT name FROM pragma_table_info(?) WHERE name = '_id'",
                 (self.name,),
@@ -275,7 +270,7 @@ class Collection:
                         f"ALTER TABLE {quote_table_name(self.name)} ADD COLUMN _id TEXT"
                     )
                 # Create unique index on _id column for faster lookups
-                self._create_unique_index_for_id()
+                create_unique_index_on_id(self.db, self.name)
         except Exception:
             # If we can't add the column, continue without it (for backward compatibility)
             pass
@@ -293,19 +288,6 @@ class Collection:
         raise AttributeError(
             f"'{self.__class__.__name__}' object has no attribute '{name}'"
         )
-
-    def _create_unique_index_for_id(self):
-        """
-        Create unique index on _id column for faster lookups.
-        """
-        try:
-            # Create unique index on _id column for faster lookups
-            self.db.execute(
-                f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{quote_identifier(self.name)}_id ON {quote_table_name(self.name)}(_id)"
-            )
-        except Exception:
-            # If we can't create the index (e.g., due to duplicate values), continue without it
-            pass
 
     def rename(self, new_name: str) -> None:
         """
@@ -352,33 +334,9 @@ class Collection:
 
         # Get table information
         try:
-            # Get table info
-            table_info = self.db.execute(
-                f"PRAGMA table_info({quote_table_name(self.name)})"
-            ).fetchall()
-            options["columns"] = [
-                {
-                    "name": str(col[1]),
-                    "type": str(col[2]),
-                    "notnull": bool(col[3]),
-                    "default": col[4] if len(col) > 4 else None,
-                    "pk": bool(col[5]),
-                }
-                for col in table_info
-            ]
-
-            # Get index information
-            indexes = self.db.execute(
-                "SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name=?",
-                (self.name,),
-            ).fetchall()
-            options["indexes"] = [
-                {
-                    "name": str(idx[0]),
-                    "definition": str(idx[1]) if idx[1] is not None else "",
-                }
-                for idx in indexes
-            ]
+            table_info = get_table_info(self.db, self.name)
+            options["columns"] = table_info["columns"]
+            options["indexes"] = table_info["indexes"]
 
             # Get row count
             if count_row := self.db.execute(

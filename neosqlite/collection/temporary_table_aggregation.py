@@ -1235,13 +1235,19 @@ class TemporaryTableAggregationProcessor:
 
         # When data is stored as JSONB (binary), we need to convert it to text JSON for Python
         # Check the column type of the table to determine if we need json() wrapper
-        cursor = self.db.execute(f"PRAGMA table_info({table_name})")
-        columns = cursor.fetchall()
+        from .schema_utils import get_table_columns
+
+        columns = get_table_columns(self.db, table_name)
         data_column_type = None
-        for col in columns:
-            if col[1] == "data":  # col[1] is the column name
-                data_column_type = col[2].upper()  # col[2] is the column type
-                break
+        if "data" in columns:
+            # Need to get the full column info to check the type
+            cursor = self.db.execute(
+                f"PRAGMA table_info({quote_table_name(table_name)})"
+            )
+            for col in cursor.fetchall():
+                if col[1] == "data":
+                    data_column_type = col[2].upper()
+                    break
 
         use_json_wrapper = data_column_type == "JSONB"
 
