@@ -255,6 +255,8 @@ class TemporaryTableAggregationProcessor:
         self.json_group_array_function = _get_json_group_array_function(
             self._jsonb_supported
         )
+        # Track if pipeline has $sort stage (for $first/$last limitation)
+        self._has_sort_stage = False
 
     def process_pipeline(
         self,
@@ -294,6 +296,9 @@ class TemporaryTableAggregationProcessor:
         Raises:
             NotImplementedError: If the pipeline contains unsupported stages
         """
+        # Reset sort stage tracking for this pipeline
+        self._has_sort_stage = False
+
         # Check if pipeline ends with $count for optimization
         if (
             pipeline
@@ -383,6 +388,10 @@ class TemporaryTableAggregationProcessor:
                             limit_value,
                         )
                         i = j  # Skip processed stages
+
+                        # Track that we've seen a $sort stage (needed for $first/$last limitation)
+                        if sort_spec is not None:
+                            self._has_sort_stage = True
 
                     case "$addFields":
                         current_table = self._process_add_fields_stage(
@@ -955,9 +964,14 @@ class TemporaryTableAggregationProcessor:
         Supports these accumulators in SQL tier:
         - $sum, $avg, $min, $max: Standard SQL aggregators
         - $count: COUNT(*)
-        - $first, $last: Using window functions or subqueries
+        - $first, $last: Using subqueries (LIMITATION: requires no preceding $sort)
         - $addToSet: Using json_group_array(DISTINCT ...)
         - $push: Using json_group_array(...)
+
+        Limitation:
+        - $first/$last with preceding $sort stage falls back to Python for correctness.
+          The current implementation uses correlated subqueries that don't preserve
+          sort order across groups.
 
         Args:
             create_temp (Callable): Function to create temporary tables
@@ -967,6 +981,20 @@ class TemporaryTableAggregationProcessor:
         Returns:
             str: Name of the newly created temporary table with grouped results
         """
+        # Check for $first/$last with preceding $sort - fall back to Python
+        if self._has_sort_stage:
+            for field, accumulator in group_spec.items():
+                if field == "_id":
+                    continue
+                if isinstance(accumulator, dict) and len(accumulator) == 1:
+                    op = next(
+                        iter(accumulator.keys())
+                    )  # Get the key (operator name), not value
+                    if op in ("$first", "$last"):
+                        raise NotImplementedError(
+                            "$first/$last with preceding $sort requires Python fallback for correctness"
+                        )
+
         group_id_expr = group_spec.get("_id")
         select_parts = []
         group_by_parts = []

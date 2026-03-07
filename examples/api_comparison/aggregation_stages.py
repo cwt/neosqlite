@@ -93,6 +93,54 @@ def compare_aggregation_stages():
                 [{"$group": {"_id": "$dept", "count": {"$count": {}}}}],
                 "$group $count",
             ),
+            # $first/$last accumulators (without $sort - uses insertion order)
+            (
+                [
+                    {
+                        "$group": {
+                            "_id": "$dept",
+                            "first_salary": {"$first": "$salary"},
+                        }
+                    }
+                ],
+                "$group $first (no sort)",
+            ),
+            (
+                [
+                    {
+                        "$group": {
+                            "_id": "$dept",
+                            "last_salary": {"$last": "$salary"},
+                        }
+                    }
+                ],
+                "$group $last (no sort)",
+            ),
+            # $first/$last with $sort (falls back to Python for correctness)
+            (
+                [
+                    {"$sort": {"salary": 1}},
+                    {
+                        "$group": {
+                            "_id": "$dept",
+                            "first_salary": {"$first": "$salary"},
+                        }
+                    },
+                ],
+                "$group $first (with $sort)",
+            ),
+            (
+                [
+                    {"$sort": {"salary": 1}},
+                    {
+                        "$group": {
+                            "_id": "$dept",
+                            "last_salary": {"$last": "$salary"},
+                        }
+                    },
+                ],
+                "$group $last (with $sort)",
+            ),
             ([{"$sort": {"age": DESCENDING}}], "$sort"),
             ([{"$skip": 2}], "$skip"),
             ([{"$limit": 2}], "$limit"),
