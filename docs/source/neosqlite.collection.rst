@@ -8,6 +8,7 @@ Subpackages
    :maxdepth: 4
 
    neosqlite.collection.expr_evaluator
+   neosqlite.collection.query_engine
    neosqlite.collection.query_helper
 
 Submodules
@@ -25,7 +26,6 @@ Submodules
    neosqlite.collection.json_helpers
    neosqlite.collection.json_path_utils
    neosqlite.collection.jsonb_support
-   neosqlite.collection.query_engine
    neosqlite.collection.raw_batch_cursor
    neosqlite.collection.schema_utils
    neosqlite.collection.sql_tier_aggregator
