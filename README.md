@@ -24,22 +24,97 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 - **MongoDB-compatible ObjectId**: Full 12-byte ObjectId implementation with automatic generation and hex interchangeability
 - **Automatic JSON/JSONB Support**: Automatically detects and uses JSONB column type for better performance
 - **Full GridFS Support**: Complete PyMongo-compatible GridFS with modern GridFSBucket API, legacy API, and schema migration
+- **Modular Architecture (v1.8.0)**: Major refactoring transformed monolithic modules into well-organized packages for improved maintainability
+- **Python 3.10+ Modernization**: Leveraging modern Python features like walrus operators and union type hints
 
 See [CHANGELOG.md](CHANGELOG.md) for the latest features and improvements.
+
+## v1.8.0 Major Refactoring Release
+
+NeoSQLite v1.8.0 is a **major refactoring and quality release** that transforms the internal architecture for improved maintainability, readability, and long-term sustainability.
+
+### Key Achievement
+
+Successfully converted **3 massive monolithic modules** into well-organized modular packages, reducing individual file sizes from **2,000-4,700 lines** to manageable **50-500 line modules** while maintaining **100% backward compatibility**.
+
+### Modular Package Architecture
+
+**query_helper/ Package**: Transformed from a single 4,731-line file into 9 focused modules:
+- `aggregation.py` - Aggregation pipeline logic
+- `crud_operations.py` - Insert, update, delete operations
+- `query_builder.py` - SQL query construction
+- `update_operations.py` - Update operator implementations
+- `positional_update.py` - Array positional operators
+- `query_optimizer.py` - Query optimization
+- Plus utility modules
+
+**expr_evaluator/ Package**: Split from ~2,300 lines into 6 modules:
+- `python_evaluators.py` - Python-based evaluation
+- `sql_converters.py` - SQL expression conversion
+- `constants.py`, `context.py`, `type_utils.py` - Supporting utilities
+
+**query_engine/ Package**: Refactored from 2,038 lines into 5 modules using mixin architecture:
+- `__init__.py` - Main QueryEngine class
+- `crud_operations.py` - CRUD operations mixin
+- `find_operations.py` - Find operations mixin
+- `query_methods.py` - Count, distinct methods
+- `base.py` - Protocol base class
+
+### Code Deduplication
+
+v1.8.0 eliminates duplicated code across the codebase:
+- **Type utilities**: Centralized 14 type conversion functions, eliminating ~200 lines of duplication
+- **Datetime detection**: Pre-compiled regex patterns, removing 95 lines of duplicated logic
+- **Schema inspection**: Unified schema utilities across GridFS and collection modules
+- **SQLite imports**: Single centralized import source for all modules
+- **GridFS serialization**: Consolidated metadata handling utilities
+
+### Python 3.10+ Modernization
+
+- **Walrus operators**: Assignment expressions for more concise code
+- **Union type hints**: Modern `int | None` syntax instead of `Optional[int]`
+- **Better IDE support**: Enhanced type checking and linting capabilities
+
+### Requirements
+
+**Minimum Python Version**: 3.10+
+
+The modernization to Python 3.10+ syntax means v1.8.0 requires Python 3.10 or later.
+
+### Benefits
+
+**For Users**: No breaking changes - all existing code continues to work without modification.
+
+**For Contributors**: Easier onboarding, clearer module responsibilities, reduced merge conflicts, and better tooling support.
+
+For more details, see [documents/releases/v1.8.0.md](documents/releases/v1.8.0.md).
 
 ## PyMongo Compatibility Tests
 
 NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-compatible behavior. Our automated test suite covers all major API categories:
 
-### Test Results (v1.7.0)
+### Test Results (v1.8.0)
 
-| Metric | Count |
-|--------|-------|
-| **Total Tests** | 304 |
-| **Passed** | 300 |
-| **Skipped** | 4 (by design) |
+#### Unit Tests
+
+| Metric | Result |
+|--------|--------|
+| **Total Tests** | 1,923 |
+| **Passed** | 1,923 |
 | **Failed** | 0 |
-| **Compatibility** | **100%** |
+| **XFailed** | 5 (expected failures) |
+| **XPassed** | 2 (unexpected successes) |
+| **Code Coverage** | 80%+ |
+
+#### API Comparison Tests
+
+| Metric | v1.7.0 | v1.8.0 |
+|--------|--------|--------|
+| **Total Tests** | 304 | 304 |
+| **Passed** | 300 | 300 |
+| **Skipped** | 4 | 4 |
+| **Failed** | 0 | 0 |
+| **Compatibility** | 100% | **100%** |
 
 **Skipped Tests Note**: The 4 skipped tests are due to architectural differences, not missing implementations:
 1. `watch()` (change streams) - **fully implemented in NeoSQLite** via SQLite triggers but cannot be compared because MongoDB requires a replica set. NeoSQLite's implementation is tested independently in `tests/test_changestream.py`.

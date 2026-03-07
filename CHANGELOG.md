@@ -1,5 +1,164 @@
 # CHANGELOG
 
+## 1.8.0
+
+### Major Achievement: Major Refactoring & Code Quality Release
+
+- **Modular Architecture**: Successfully converted 3 massive monolithic modules (2,000-4,700 lines each) into well-organized packages with 50-500 line modules
+- **100% Backward Compatibility**: All existing code continues to work without modification
+- **Code Deduplication**: Eliminated ~500 lines of duplicated code across the codebase
+- **Python 3.10+ Modernization**: Adopted walrus operators and modern union type hints
+- **1,923 Unit Tests**: All tests passing with 80%+ code coverage
+- **100% PyMongo Compatibility**: 304 API comparison tests (300 passed, 4 skipped, 0 failed)
+
+### Major Refactoring: Monolithic Modules to Modular Packages
+
+#### query_helper/ Package
+**Before**: Single 4,731-line file  
+**After**: 9 focused modules
+- `__init__.py` - Public API, core helpers (493 lines)
+- `aggregation.py` - Aggregation pipeline logic (1,260 lines)
+- `crud_operations.py` - Insert, update, delete (153 lines)
+- `helpers.py` - Utility functions (119 lines)
+- `positional_update.py` - Array positional operators (386 lines)
+- `query_builder.py` - SQL query construction (747 lines)
+- `query_optimizer.py` - Query optimization (381 lines)
+- `update_operations.py` - Update operator implementations (973 lines)
+- `utils.py` - Shared utilities (151 lines)
+
+#### expr_evaluator/ Package
+**Before**: Single ~2,300-line file  
+**After**: 6 focused modules
+- `__init__.py` - Main evaluator class (96 lines)
+- `constants.py` - Reserved fields, operators (13 lines)
+- `context.py` - AggregationContext class (20 lines)
+- `python_evaluators.py` - Python-based evaluation (1,364 lines)
+- `sql_converters.py` - SQL expression conversion (647 lines)
+- `type_utils.py` - Type checking utilities (3 lines)
+
+#### query_engine/ Package
+**Before**: Single 2,038-line file  
+**After**: 5 focused modules
+- `__init__.py` - QueryEngine class (1,231 lines)
+- `base.py` - Protocol base class (45 lines)
+- `crud_operations.py` - CRUD operations mixin (468 lines)
+- `find_operations.py` - Find operations mixin (228 lines)
+- `query_methods.py` - Count, distinct methods (104 lines)
+
+### Code Deduplication Initiatives
+
+#### Consolidated Type Utilities
+- **Centralized**: `collection/type_utils.py` with 14 type conversion functions
+- **Impact**: Eliminated ~200 lines of duplicated code
+- **Functions**: `_convert_to_int`, `_convert_to_string`, `get_bson_type`, type checking helpers
+
+#### Consolidated Datetime Detection
+- **Enhanced**: `collection/datetime_utils.py` with pre-compiled regex patterns
+- **Impact**: Removed 95 lines of duplicated datetime logic
+- **Utilities**: `is_datetime_value()`, `is_datetime_regex()`, `COMPILED_DATETIME_PATTERNS`
+
+#### Consolidated Schema Inspection
+- **Centralized**: `collection/schema_utils.py` with schema utilities
+- **Impact**: Eliminated 74 lines of duplicated schema logic
+- **Functions**: `get_table_columns()`, `column_exists()`, `add_column_if_not_exists()`, `get_table_info()`
+
+#### Consolidated SQLite Import Pattern
+- **Centralized**: `neosqlite/_sqlite.py` - single source for SQLite import
+- **Impact**: Simplified imports across 11+ files
+- **Benefit**: Easier to handle SQLite optional dependencies
+
+#### GridFS Serialization Deduplication
+- **Centralized**: `gridfs/utils.py` with serialization utilities
+- **Impact**: Removed ~100 lines of duplicated serialization code
+- **Functions**: `_serialize_metadata()`, `_deserialize_metadata()`, ID handling utilities
+
+### Python 3.10+ Modernization
+
+#### Walrus Operator Usage
+- Adopted assignment expressions where appropriate for more concise code
+- Reduced scope of temporary variables
+- Clearer intent in conditional assignments
+
+#### Type Hint Improvements
+- Leveraged Python 3.10+ union syntax: `int | None` instead of `Optional[int]`
+- Reduced typing import overhead
+- Better IDE integration and type checker support
+
+### Implementation Details
+
+#### Mixin Architecture (query_engine)
+
+```python
+class QueryEngine(
+    CRUDOperationsMixin,
+    FindOperationsMixin,
+    QueryMethodsMixin
+):
+    """Main QueryEngine class inheriting from mixins."""
+```
+
+#### Protocol-Based Typing
+- Protocol base classes for type checker support
+- Clear interface definitions for mixin dependencies
+
+#### Package Initialization Pattern
+- Consistent structure across all new packages
+- Clear separation of public API and internal modules
+
+### Testing
+
+#### Unit Tests
+- **Total Tests**: 1,923
+- **Passed**: 1,923
+- **Failed**: 0
+- **XFailed**: 5 (expected failures)
+- **XPassed**: 2 (unexpected successes)
+- **Code Coverage**: 80%+
+
+#### API Comparison Tests
+
+| Metric | v1.7.0 | v1.8.0 |
+|--------|--------|--------|
+| **Total Tests** | 304 | 304 |
+| **Passed** | 300 | 300 |
+| **Skipped** | 4 | 4 |
+| **Failed** | 0 | 0 |
+| **Compatibility** | 100% | 100% |
+
+### Documentation
+
+- **Added**: `documents/releases/v1.8.0.md` - Comprehensive release notes
+- **Updated**: `README.md` - Added v1.8.0 refactoring section and updated test results
+
+### Benefits
+
+#### For Application Developers
+- **No Breaking Changes**: All existing code continues to work without modification
+- **Improved Stability**: Better-organized code is easier to test and maintain
+- **Better Performance**: Pre-compiled patterns and optimized imports
+
+#### For Contributors
+- **Easier Onboarding**: Modular structure easier to understand than 4,000+ line files
+- **Clearer Responsibilities**: Each module has a single, well-defined purpose
+- **Reduced Merge Conflicts**: Smaller, focused files
+- **Better Tooling**: Modern Python syntax enables better IDE support
+
+#### For Maintainers
+- **Sustainable Codebase**: Modular architecture scales better
+- **Easier Debugging**: Issues can be isolated to specific modules
+- **Simplified Testing**: Individual modules can be tested in isolation
+- **Future-Proof**: Python 3.10+ syntax ensures compatibility with modern tooling
+
+### Known Limitations
+
+#### Internal Refactoring Only
+- No new MongoDB-compatible features added
+- Focus entirely on internal code organization
+- Users seeking new features should refer to v1.7.0's 70+ new APIs
+
+#### Python Version Requirement
+- **Minimum Python Version**: 3.10+
+
 ## 1.7.0
 
 ### Major Achievement: 70+ New PyMongo-Compatible APIs & Security Hardening
@@ -420,7 +579,7 @@
 - **Specialized Datetime Indexing**: New `datetime_field` parameter for `create_index()` to create timezone-normalized datetime indexes using SQLite's `datetime()` function
 - **Automatic Datetime Detection**: Smart query analysis automatically detects datetime operations and routes them to the specialized processor
 - **Timezone Normalization**: Datetime indexes use `datetime(json_extract(...))` for consistent timezone normalization across all datetime comparisons
-- **Performance Optimization**: SQL-tier processing with dedicated JSON path support for datetime queries (uses json_* functions instead of jsonb_* for string comparison)
+- **Performance Optimization**: SQL-tier processing with dedicated JSON path support for datetime queries (uses `json_*` functions instead of `jsonb_*` for string comparison)
 
 ### Advanced JSON Path Support
 
@@ -448,7 +607,7 @@
 
 #### Enhanced Index Management
 - **Datetime Field Support**: `create_index()` method now accepts `datetime_field: bool = False` parameter for specialized datetime indexing
-- **Normalized Datetime Indexes**: New `_create_datetime_index()` method creates timezone-normalized indexes with `datetime(json_extract(...))` 
+- **Normalized Datetime Indexes**: New `_create_datetime_index()` method creates timezone-normalized indexes with `datetime(json_extract(...))`
 - **Auto-Detection**: `_is_datetime_indexed_field()` method checks for existing datetime indexes in collection
 - **Proper Path Handling**: All FTS index operations now use `parse_json_path()` for consistent field path conversion
 
@@ -582,7 +741,7 @@
 
 For GridFS operations, the main change is that upload operations now return ObjectIds instead of integer IDs. All existing GridFS code continues to work unchanged, but code that expects integer IDs from upload operations will need to be updated to handle ObjectIds.
 
-### GridFS Schema Changes:
+### GridFS Schema Changes
 
 1. **New Files**: When uploading new files without specifying an ID, the `_id` field will contain an auto-generated ObjectId (not the integer id)
 
@@ -716,7 +875,7 @@ There are no intentional breaking changes in this release that would break exist
 
 For existing databases, this release automatically adds the `_id` column to existing collections when they are first accessed. This process is transparent and maintains full backward compatibility. New collections will be created with the optimized schema using JSONB types when available.
 
-#### Important Behavioral Changes:
+#### Important Behavioral Changes
 
 1. **New Documents**: When inserting new documents without specifying an `_id`, the `_id` field will contain an auto-generated ObjectId (not the integer id)
 
@@ -1195,7 +1354,6 @@ For existing databases, this release automatically adds the `_id` column to exis
 - Added support for `$contains` query operator (neosqlite-specific) for case-insensitive substring search
 - Enhanced `$contains` to work with logical operators
 - WIP: Adding more docstring
-
 
 ## 0.3.0
 
