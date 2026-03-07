@@ -11,6 +11,7 @@ Submodules
    neosqlite.gridfs.grid_file
    neosqlite.gridfs.gridfs_bucket
    neosqlite.gridfs.gridfs_legacy
+   neosqlite.gridfs.utils
 
 Module contents
 ---------------

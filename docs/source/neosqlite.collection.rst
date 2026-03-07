@@ -27,6 +27,7 @@ Submodules
    neosqlite.collection.jsonb_support
    neosqlite.collection.query_engine
    neosqlite.collection.raw_batch_cursor
+   neosqlite.collection.schema_utils
    neosqlite.collection.sql_tier_aggregator
    neosqlite.collection.sql_translator_unified
    neosqlite.collection.temporary_table_aggregation
