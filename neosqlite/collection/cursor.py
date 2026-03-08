@@ -46,6 +46,7 @@ class Cursor:
         self._limit: int | None = None
         self._sort: Dict[str, int] | None = None
         self._retrieved: int = 0
+        self._batch_size = 101  # MongoDB-compatible default
 
     def __iter__(self) -> Iterator[Dict[str, Any]]:
         """
@@ -109,16 +110,21 @@ class Cursor:
         """
         Set the batch size for the cursor.
 
-        This is a placeholder method for PyMongo API compatibility.
-        NeoSQLite doesn't use batch sizes in the same way as MongoDB.
+        MongoDB-compatible batchSize parameter for controlling memory usage.
+        Results are fetched from the database in batches of the specified size.
 
         Args:
-            size (int): The batch size (ignored)
+            size (int): The batch size (default: 101, matches MongoDB)
 
         Returns:
             Cursor: The cursor object for chaining
+
+        Example:
+            >>> cursor = collection.find().batch_size(50)
         """
-        # Placeholder for API compatibility
+        if size < 1:
+            raise ValueError("batch_size must be at least 1")
+        self._batch_size = size
         return self
 
     def hint(self, index: str) -> Cursor:
@@ -609,11 +615,17 @@ class Cursor:
                 )
                 cmd = f"/* {safe_comment} */ {cmd}"
             db_cursor = self._collection.db.execute(cmd, params)
-            docs = self._load_documents(db_cursor.fetchall())
+            # Use fetchmany for memory-efficient batch fetching
+            docs: List[Dict[str, Any]] = []
+            while True:
+                rows = db_cursor.fetchmany(self._batch_size)
+                if not rows:
+                    break
+                docs.extend(self._load_documents(rows))
 
             # Apply where predicate if specified (Tier-3 Python filtering)
             if self._where_predicate:
-                return filter(self._where_predicate, docs)
+                return filter(self._where_predicate, docs)  # type: ignore[arg-type]
 
             return docs
         else:
@@ -647,12 +659,18 @@ class Cursor:
                 cmd = f"/* {safe_comment} */ {cmd}"
             db_cursor = self._collection.db.execute(cmd, params)
             apply = partial(self._query_helpers._apply_query, self._filter)
-            all_docs = self._load_documents(db_cursor.fetchall())
-            filtered_docs = filter(apply, all_docs)
+            # Use fetchmany for memory-efficient batch fetching
+            all_docs: List[Dict[str, Any]] = []
+            while True:
+                rows = db_cursor.fetchmany(self._batch_size)
+                if not rows:
+                    break
+                all_docs.extend(self._load_documents(rows))
+            filtered_docs: Iterable[Dict[str, Any]] = filter(apply, all_docs)
 
             # Apply where predicate if specified (Tier-3 Python filtering)
             if self._where_predicate:
-                return filter(self._where_predicate, filtered_docs)
+                return filter(self._where_predicate, filtered_docs)  # type: ignore[arg-type]
 
             return filtered_docs
 
@@ -686,7 +704,14 @@ class Cursor:
                 )
                 cmd = f"/* {safe_comment} */ {cmd}"
             db_cursor = self._collection.db.execute(cmd, params)
-            return self._load_documents(db_cursor.fetchall())
+            # Use fetchmany for memory-efficient batch fetching
+            docs: List[Dict[str, Any]] = []
+            while True:
+                rows = db_cursor.fetchmany(self._batch_size)
+                if not rows:
+                    break
+                docs.extend(self._load_documents(rows))
+            return docs
         else:
             # Fallback to Python evaluation
             expr = self._filter["$expr"]
@@ -708,7 +733,13 @@ class Cursor:
                 cmd = f"/* {safe_comment} */ {cmd}"
 
             db_cursor = self._collection.db.execute(cmd)
-            all_docs = self._load_documents(db_cursor.fetchall())
+            # Use fetchmany for memory-efficient batch fetching
+            all_docs: List[Dict[str, Any]] = []
+            while True:
+                rows = db_cursor.fetchmany(self._batch_size)
+                if not rows:
+                    break
+                all_docs.extend(self._load_documents(rows))
 
             # Filter documents using $expr Python evaluation
             def expr_filter(doc: Dict[str, Any]) -> bool:
@@ -727,7 +758,7 @@ class Cursor:
                     # If evaluation fails, exclude the document
                     return False
 
-            return filter(expr_filter, all_docs)
+            return filter(expr_filter, all_docs)  # type: ignore[arg-type]
 
     def _build_minmax_clause(
         self,
