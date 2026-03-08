@@ -93,14 +93,14 @@ For more details, see [documents/releases/v1.8.0.md](documents/releases/v1.8.0.m
 
 NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-compatible behavior. Our automated test suite covers all major API categories:
 
-### Test Results (v1.8.0)
+### Test Results (v1.8.0+)
 
 #### Unit Tests
 
 | Metric | Result |
 |--------|--------|
-| **Total Tests** | 1,923 |
-| **Passed** | 1,923 |
+| **Total Tests** | 1,963 |
+| **Passed** | 1,956 |
 | **Failed** | 0 |
 | **XFailed** | 5 (expected failures) |
 | **XPassed** | 2 (unexpected successes) |
@@ -108,13 +108,13 @@ NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-
 
 #### API Comparison Tests
 
-| Metric | v1.7.0 | v1.8.0 |
-|--------|--------|--------|
-| **Total Tests** | 304 | 304 |
-| **Passed** | 300 | 300 |
-| **Skipped** | 4 | 4 |
-| **Failed** | 0 | 0 |
-| **Compatibility** | 100% | **100%** |
+| Metric | v1.7.0 | v1.8.0 | v1.8.0+ |
+|--------|--------|--------|---------|
+| **Total Tests** | 304 | 304 | 309 |
+| **Passed** | 300 | 300 | 305 |
+| **Skipped** | 4 | 4 | 4 |
+| **Failed** | 0 | 0 | 0 |
+| **Compatibility** | 100% | 100% | **100%** |
 
 **Skipped Tests Note**: The 4 skipped tests are due to architectural differences, not missing implementations:
 1. `watch()` (change streams) - **fully implemented in NeoSQLite** via SQLite triggers but cannot be compared because MongoDB requires a replica set. NeoSQLite's implementation is tested independently in `tests/test_changestream.py`.
