@@ -46,7 +46,7 @@ class AggregationCursor:
         self._position = 0
         self._executed = False
         # Memory constraint settings
-        self._batch_size = batchSize if batchSize is not None else 1000
+        self._batch_size = batchSize if batchSize is not None else 101
         self._memory_threshold = 100 * 1024 * 1024  # 100MB default threshold
         # Quez settings
         self._use_quez = False
@@ -212,9 +212,9 @@ class AggregationCursor:
                 )
             )
         else:
-            # Use normal processing
+            # Use normal processing - pass batch_size for fetchmany
             self._results = self.collection.query_engine.aggregate(
-                self.pipeline
+                self.pipeline, batch_size=self._batch_size
             )
 
         self._executed = True

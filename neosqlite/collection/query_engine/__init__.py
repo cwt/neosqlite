@@ -57,7 +57,11 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
             ),
         )
 
-    def aggregate(self, pipeline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def aggregate(
+        self,
+        pipeline: List[Dict[str, Any]],
+        batch_size: int = 101,
+    ) -> List[Dict[str, Any]]:
         """
         Applies a list of aggregation pipeline stages to the collection.
 
@@ -68,16 +72,17 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
 
         Args:
             pipeline (List[Dict[str, Any]]): A list of aggregation pipeline stages to apply.
+            batch_size (int): The batch size for fetching results from database.
 
         Returns:
             List[Dict[str, Any]]: The list of documents after applying the aggregation pipeline.
         """
-        return self.aggregate_with_constraints(pipeline)
+        return self.aggregate_with_constraints(pipeline, batch_size=batch_size)
 
     def aggregate_with_constraints(
         self,
         pipeline: List[Dict[str, Any]],
-        batch_size: int = 1000,
+        batch_size: int = 101,
         memory_constrained: bool = False,
     ) -> List[Dict[str, Any]] | "CompressedQueue":
         """
@@ -105,19 +110,24 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                 if sql is not None:
                     db_cursor = self.collection.db.execute(sql, params)
                     results = []
-                    for row in db_cursor.fetchall():
-                        # Load document from data column
-                        # Row structure: (id, data) or (id, root_data, data)
-                        if len(row) == 3:
-                            # root_data is present, data is in row[2]
-                            results.append(
-                                self.collection._load(row[0], row[2])
-                            )
-                        else:
-                            # No root_data, data is in row[1]
-                            results.append(
-                                self.collection._load(row[0], row[1])
-                            )
+                    # Use fetchmany to avoid loading all results into memory at once
+                    while True:
+                        rows = db_cursor.fetchmany(batch_size)
+                        if not rows:
+                            break
+                        for row in rows:
+                            # Load document from data column
+                            # Row structure: (id, data) or (id, root_data, data)
+                            if len(row) == 3:
+                                # root_data is present, data is in row[2]
+                                results.append(
+                                    self.collection._load(row[0], row[2])
+                                )
+                            else:
+                                # No root_data, data is in row[1]
+                                results.append(
+                                    self.collection._load(row[0], row[1])
+                                )
                     return results
         except Exception:
             # If SQL tier optimization fails, continue to next approach
@@ -136,33 +146,47 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                     )
 
                     results = []
-                    for row in db_cursor.fetchall():
-                        processed_row = []
-                        for i, value in enumerate(row):
-                            # If this field contains a JSON array string, parse it
-                            # This handles $push and $addToSet results
-                            if (
-                                output_fields[i] != "_id"
-                                and isinstance(value, str)
-                                and value.startswith("[")
-                                and value.endswith("]")
-                            ):
-                                try:
-                                    processed_row.append(
-                                        neosqlite_json_loads(value)
-                                    )
-                                except Exception:
+                    # Use fetchmany to avoid loading all results into memory at once
+                    while True:
+                        rows = db_cursor.fetchmany(batch_size)
+                        if not rows:
+                            break
+                        for row in rows:
+                            processed_row = []
+                            for i, value in enumerate(row):
+                                # If this field contains a JSON array string, parse it
+                                # This handles $push and $addToSet results
+                                if (
+                                    output_fields[i] != "_id"
+                                    and isinstance(value, str)
+                                    and value.startswith("[")
+                                    and value.endswith("]")
+                                ):
+                                    try:
+                                        processed_row.append(
+                                            neosqlite_json_loads(value)
+                                        )
+                                    except Exception:
+                                        processed_row.append(value)
+                                else:
                                     processed_row.append(value)
-                            else:
-                                processed_row.append(value)
-                        results.append(dict(zip(output_fields, processed_row)))
+                            results.append(
+                                dict(zip(output_fields, processed_row))
+                            )
                     return results
                 else:
                     # Handle results from a regular find query
-                    return [
-                        self.collection._load(row[0], row[1])
-                        for row in db_cursor.fetchall()
-                    ]
+                    # Use fetchmany to avoid loading all results into memory at once
+                    results = []
+                    while True:
+                        rows = db_cursor.fetchmany(batch_size)
+                        if not rows:
+                            break
+                        for row in rows:
+                            results.append(
+                                self.collection._load(row[0], row[1])
+                            )
+                    return results
         except Exception:
             # If SQL optimization fails, continue to next approach
             pass
@@ -176,7 +200,9 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
 
             # Use the temporary table aggregation which provides enhanced
             # SQL processing for complex pipelines
-            return execute_2nd_tier_aggregation(self, pipeline)
+            return execute_2nd_tier_aggregation(
+                self, pipeline, batch_size=batch_size
+            )
         except NotImplementedError:
             # If temporary table approach indicates it needs Python fallback,
             # continue to fallback below
@@ -512,14 +538,40 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                                     del current[keys[-1]]
                 case "$facet":
                     facet_spec = stage["$facet"]
-                    facet_results: Dict[str, Any] = {}
+                    facet_tables: Dict[str, str] = {}
+
+                    # Get input documents
+                    sub_docs = [dc["__doc__"] for dc in docs_with_context]
+
+                    # Run each sub-pipeline, streaming results to temp tables
                     for facet_name, sub_pipeline in facet_spec.items():
-                        # Run sub-pipeline with current documents
-                        sub_docs = [dc["__doc__"] for dc in docs_with_context]
-                        facet_result = self.helpers._run_subpipeline(
+                        result_table = self.helpers._run_subpipeline(
                             sub_pipeline, sub_docs
                         )
-                        facet_results[facet_name] = facet_result
+                        facet_tables[facet_name] = result_table
+
+                    # Load all results from temp tables and combine
+                    facet_results: Dict[str, Any] = {}
+                    for facet_name, table_name in facet_tables.items():
+                        cursor = self.collection.db.execute(
+                            f"SELECT data FROM {table_name}"
+                        )
+                        from neosqlite.collection.json_helpers import (
+                            neosqlite_json_loads,
+                        )
+
+                        facet_results[facet_name] = [
+                            neosqlite_json_loads(row[0])
+                            for row in cursor.fetchall()
+                        ]
+                        # Clean up temp table after loading
+                        try:
+                            self.collection.db.execute(
+                                f"DROP TABLE IF EXISTS {table_name}"
+                            )
+                        except Exception:
+                            pass
+
                     docs_with_context = [
                         {"__doc__": facet_results, "__root__": facet_results}
                     ]
@@ -1180,7 +1232,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         )
 
     def _aggregate_with_quez(
-        self, pipeline: List[Dict[str, Any]], batch_size: int = 1000
+        self, pipeline: List[Dict[str, Any]], batch_size: int = 101
     ) -> CompressedQueue:
         """
         Process aggregation pipeline with quez compressed queue for memory efficiency.

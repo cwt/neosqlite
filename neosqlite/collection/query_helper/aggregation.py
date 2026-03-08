@@ -1025,133 +1025,95 @@ class AggregationMixin:
         self,
         sub_pipeline: List[Dict[str, Any]],
         docs: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
+        batch_size: int = 101,
+    ) -> str:
         """
         Run a sub-pipeline (e.g., for $facet) on a list of documents.
 
-        This is a simplified pipeline execution for sub-pipelines that doesn't
-        preserve $$ROOT context (since sub-pipelines start fresh).
+        Uses tier optimization (Tier-1/Tier-2/Tier-3) for each sub-pipeline.
+        Results are streamed to a temporary table in batches to avoid memory issues.
 
         Args:
             sub_pipeline: List of pipeline stages to execute
             docs: Input documents
+            batch_size: Number of documents to process in each batch
 
         Returns:
-            List of processed documents
+            Name of the temporary table containing results
         """
-        from ..expr_evaluator import ExprEvaluator, _is_expression
+        # Create a temporary in-memory collection to run the sub-pipeline
+        # This allows each sub-pipeline to use Tier-1/Tier-2 optimization
+        from .. import Collection
+        import uuid
 
-        for stage in sub_pipeline:
-            stage_name = next(iter(stage.keys()))
-            match stage_name:
-                case "$match":
-                    query = stage["$match"]
-                    docs = [
-                        doc for doc in docs if self._apply_query(query, doc)
-                    ]
-                case "$addFields":
-                    add_fields_spec = stage["$addFields"]
-                    evaluator = ExprEvaluator(
-                        data_column="data", db_connection=self.collection.db
-                    )
-                    for doc in docs:
-                        for new_field, expr in add_fields_spec.items():
-                            if _is_expression(expr):
-                                value = evaluator._evaluate_expr_python(
-                                    expr, doc
-                                )
-                                self.collection._set_val(doc, new_field, value)
-                            elif isinstance(expr, str) and expr.startswith("$"):
-                                if expr.startswith("$$"):
-                                    if expr == "$$ROOT":
-                                        value = doc.copy()
-                                    elif expr == "$$CURRENT":
-                                        value = doc.copy()
-                                    else:
-                                        value = None
-                                    self.collection._set_val(
-                                        doc, new_field, value
-                                    )
-                                else:
-                                    source_field_name = expr[1:]
-                                    source_value = self.collection._get_val(
-                                        doc, source_field_name
-                                    )
-                                    self.collection._set_val(
-                                        doc, new_field, source_value
-                                    )
-                            else:
-                                self.collection._set_val(doc, new_field, expr)
-                case "$project":
-                    projection = stage["$project"]
-                    docs = [
-                        self._apply_projection(projection, doc) for doc in docs
-                    ]
-                case "$group":
-                    group_spec = stage["$group"]
-                    docs = self._process_group_stage(group_spec, docs)
-                case "$sort":
-                    sort_spec = stage["$sort"]
-                    for key, direction in reversed(list(sort_spec.items())):
+        # Create temp collection for processing this batch
+        temp_collection_name = f"_facet_batch_{uuid.uuid4().hex[:12]}"
+        temp_collection = Collection(
+            db=self.collection.db,
+            name=temp_collection_name,
+            create=True,
+            database=self.collection._database,
+        )
 
-                        def make_sort_key(key, dir):
-                            """
-                            Create a sort key function for the given key and direction.
-                            """
+        # Create result temp table to store sub-pipeline results
+        result_table = f"_facet_result_{uuid.uuid4().hex[:12]}"
+        self.collection.db.execute(
+            f"""
+            CREATE TEMP TABLE {result_table} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                data TEXT
+            )
+        """
+        )
 
-                            def sort_key(doc):
-                                """
-                                Extract sort key from document.
-                                """
-                                val = self.collection._get_val(doc, key)
-                                if val is None:
-                                    return (0 if dir == DESCENDING else 1, None)
-                                return (0, val)
+        try:
+            # Process input docs in batches
+            for i in range(0, len(docs), batch_size):
+                batch = docs[i : i + batch_size]
 
-                            return sort_key
-
-                        sort_key_func = make_sort_key(key, direction)
-                        docs.sort(
-                            key=sort_key_func,
-                            reverse=direction == DESCENDING,
-                        )
-                case "$skip":
-                    count = stage["$skip"]
-                    docs = docs[count:]
-                case "$limit":
-                    count = stage["$limit"]
-                    docs = docs[:count]
-                case "$unwind":
-                    # Simplified $unwind for sub-pipelines
-                    unwind_spec = stage["$unwind"]
-                    if isinstance(unwind_spec, str):
-                        field_path = unwind_spec.lstrip("$")
-                    elif isinstance(unwind_spec, dict):
-                        field_path = unwind_spec["path"].lstrip("$")
+                # Strip __doc__ wrapper if present
+                docs_to_insert = []
+                for doc in batch:
+                    if isinstance(doc, dict) and "__doc__" in doc:
+                        docs_to_insert.append(doc["__doc__"])
                     else:
-                        continue
-                    unwound_docs = []
-                    for doc in docs:
-                        array_to_unwind = self.collection._get_val(
-                            doc, field_path
-                        )
-                        if isinstance(array_to_unwind, list):
-                            for item in array_to_unwind:
-                                new_doc = deepcopy(doc)
-                                self.collection._set_val(
-                                    new_doc, field_path, item
-                                )
-                                unwound_docs.append(new_doc)
-                        else:
-                            unwound_docs.append(doc)
-                    docs = unwound_docs
-                case "$count":
-                    count_field = stage["$count"]
-                    docs = [{count_field: len(docs)}]
-                case _:
-                    # Unsupported stage in sub-pipeline, skip
-                    pass
-        return docs
+                        docs_to_insert.append(doc)
+
+                if not docs_to_insert:
+                    continue
+
+                # Insert batch into temp collection
+                temp_collection.insert_many(docs_to_insert)
+
+                # Run sub-pipeline through normal aggregation (uses Tier-1/Tier-2/Tier-3)
+                result = list(
+                    temp_collection.aggregate(
+                        sub_pipeline, batchSize=batch_size
+                    )
+                )
+
+                # Insert results into result temp table
+                for doc in result:
+                    from neosqlite.collection.json_helpers import (
+                        neosqlite_json_dumps,
+                    )
+
+                    self.collection.db.execute(
+                        f"INSERT INTO {result_table} (data) VALUES (?)",
+                        (neosqlite_json_dumps(doc),),
+                    )
+
+                # Clear temp collection for next batch
+                temp_collection.delete_many({})
+
+            return result_table
+
+        finally:
+            # Clean up temporary collection
+            try:
+                temp_collection.drop()
+            except Exception:
+                pass  # Ignore cleanup errors
 
     def _apply_projection(
         self,

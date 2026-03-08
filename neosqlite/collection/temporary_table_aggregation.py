@@ -263,6 +263,7 @@ class TemporaryTableAggregationProcessor:
         pipeline: List[Dict[str, Any]],
         is_count: bool = False,
         count_field: str | None = None,
+        batch_size: int = 101,
     ) -> List[Dict[str, Any]]:
         """
         Process an aggregation pipeline using temporary tables for intermediate results.
@@ -507,7 +508,7 @@ class TemporaryTableAggregationProcessor:
 
             # Return final results
             return self._get_results_from_table(
-                current_table, is_count, count_field
+                current_table, is_count, count_field, batch_size
             )
 
     def _process_match_stage(
@@ -1358,6 +1359,7 @@ class TemporaryTableAggregationProcessor:
         table_name: str,
         is_count: bool = False,
         count_field: str | None = None,
+        batch_size: int = 101,
     ) -> List[Dict[str, Any]]:
         """
         Get results from a temporary table.
@@ -1411,43 +1413,51 @@ class TemporaryTableAggregationProcessor:
                 )
             else:
                 cursor = self.db.execute(f"SELECT id, data FROM {table_name}")
+
+        # Use fetchmany to avoid loading all results into memory at once
         results = []
-        for row in cursor.fetchall():
-            # For grouped results, we need to preserve the _id from the JSON data
-            # instead of using the row id. Parse the JSON directly.
-            from neosqlite.collection.json_helpers import neosqlite_json_loads
+        while True:
+            rows = cursor.fetchmany(batch_size)
+            if not rows:
+                break
+            for row in rows:
+                # For grouped results, we need to preserve the _id from the JSON data
+                # instead of using the row id. Parse the JSON directly.
+                from neosqlite.collection.json_helpers import (
+                    neosqlite_json_loads,
+                )
 
-            # Handle both 2-column (id, data) and 3-column (id, _id, data) results
-            if has_id_column and len(row) == 3:
-                # _id is provided as a separate column, use it directly
-                doc = neosqlite_json_loads(row[2])
-                # Only set _id from column if it's not already in the JSON
-                if "_id" not in doc:
-                    doc["_id"] = row[1]
-            else:
-                # Parse _id from JSON data
-                doc = neosqlite_json_loads(row[1])
+                # Handle both 2-column (id, data) and 3-column (id, _id, data) results
+                if has_id_column and len(row) == 3:
+                    # _id is provided as a separate column, use it directly
+                    doc = neosqlite_json_loads(row[2])
+                    # Only set _id from column if it's not already in the JSON
+                    if "_id" not in doc:
+                        doc["_id"] = row[1]
+                else:
+                    # Parse _id from JSON data
+                    doc = neosqlite_json_loads(row[1])
 
-            # Parse array fields that were created with json_group_array
-            # These are stored as JSON strings and need to be parsed
-            # Optimization: Only check fields we know are arrays (from $push/$addToSet)
-            array_fields = getattr(self, "_array_fields_map", {}).get(
-                table_name, []
-            )
-            for key in array_fields:
-                if key in doc:
-                    value = doc[key]
-                    if (
-                        isinstance(value, str)
-                        and value.startswith("[")
-                        and value.endswith("]")
-                    ):
-                        try:
-                            doc[key] = neosqlite_json_loads(value)
-                        except Exception:
-                            pass  # Keep as string if parsing fails
+                # Parse array fields that were created with json_group_array
+                # These are stored as JSON strings and need to be parsed
+                # Optimization: Only check fields we know are arrays (from $push/$addToSet)
+                array_fields = getattr(self, "_array_fields_map", {}).get(
+                    table_name, []
+                )
+                for key in array_fields:
+                    if key in doc:
+                        value = doc[key]
+                        if (
+                            isinstance(value, str)
+                            and value.startswith("[")
+                            and value.endswith("]")
+                        ):
+                            try:
+                                doc[key] = neosqlite_json_loads(value)
+                            except Exception:
+                                pass  # Keep as string if parsing fails
 
-            results.append(doc)
+                results.append(doc)
         return results
 
     def _matches_text_search(
@@ -2035,7 +2045,9 @@ def _contains_text_search(match_spec: Dict[str, Any]) -> bool:
 
 
 def execute_2nd_tier_aggregation(
-    query_engine, pipeline: List[Dict[str, Any]]
+    query_engine,
+    pipeline: List[Dict[str, Any]],
+    batch_size: int = 101,
 ) -> List[Dict[str, Any]]:
     """
     Execute aggregation pipeline using temporary table approach for complex pipelines.
@@ -2051,6 +2063,7 @@ def execute_2nd_tier_aggregation(
     Args:
         query_engine: The NeoSQLite QueryEngine instance to use for processing
         pipeline (List[Dict[str, Any]]): List of aggregation pipeline stages to process
+        batch_size (int): Batch size for fetching results from temporary tables
 
     Returns:
         List[Dict[str, Any]]: List of result documents after processing the pipeline
@@ -2069,7 +2082,7 @@ def execute_2nd_tier_aggregation(
             processor = TemporaryTableAggregationProcessor(
                 query_engine.collection, query_engine
             )
-            return processor.process_pipeline(pipeline)
+            return processor.process_pipeline(pipeline, batch_size=batch_size)
         except Exception:
             # If temporary table approach fails, let the caller handle fallback
             raise NotImplementedError(

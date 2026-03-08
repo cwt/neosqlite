@@ -364,7 +364,7 @@ class TestAggregationCursor:
         assert cursor._results is None
         assert cursor._position == 0
         assert cursor._executed is False
-        assert cursor._batch_size == 1000
+        assert cursor._batch_size == 101
         assert cursor._memory_threshold == 100 * 1024 * 1024
         assert cursor._use_quez is False
 
@@ -949,7 +949,7 @@ def test_aggregation_cursor_initialization(collection):
     assert cursor._results is None
     assert cursor._position == 0
     assert not cursor._executed
-    assert cursor._batch_size == 1000
+    assert cursor._batch_size == 101
     assert cursor._memory_threshold == 100 * 1024 * 1024
     assert not cursor._use_quez
 
@@ -1431,7 +1431,7 @@ def test_aggregation_cursor_execute_with_constraints(monkeypatch, collection):
     assert len(called_with_args) == 1
     args, kwargs = called_with_args[0]
     assert args[0] == pipeline
-    assert kwargs.get("batch_size") == 1000
+    assert kwargs.get("batch_size") == 101
     assert kwargs.get("memory_constrained")
 
     # Verify results
