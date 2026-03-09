@@ -560,18 +560,20 @@ class PythonEvaluatorsMixin:
                 raise ValueError(f"Unknown trig operator: {operator}")
 
     def _evaluate_angle_python(
-        self, operator: str, operands: List[Any], document: Dict[str, Any]
+        self, operator: str, operands: Any, document: Dict[str, Any]
     ) -> float | None:
         """Evaluate angle conversion operators in Python."""
 
         # Handle both list and single operand formats
         if not isinstance(operands, list):
-            operands = [operands]
+            ops = [operands]
+        else:
+            ops = operands
 
-        if len(operands) != 1:
+        if len(ops) != 1:
             raise ValueError(f"{operator} requires exactly 1 operand")
 
-        value = self._evaluate_operand_python(operands[0], document)
+        value = self._evaluate_operand_python(ops[0], document)
         if value is None:
             return None
 
@@ -668,9 +670,15 @@ class PythonEvaluatorsMixin:
                 value = self._evaluate_operand_python(operands[0], document)
                 return isinstance(value, list)
             case "$sum" | "$avg" | "$min" | "$max":
-                if len(operands) != 1:
+                # Handle both list and single operand formats
+                if not isinstance(operands, list):
+                    array_ops = [operands]
+                else:
+                    array_ops = operands
+
+                if len(array_ops) != 1:
                     raise ValueError(f"{operator} requires exactly 1 operand")
-                array = self._evaluate_operand_python(operands[0], document)
+                array = self._evaluate_operand_python(array_ops[0], document)
                 if not isinstance(array, list):
                     return 0 if operator == "$sum" else None
 
@@ -711,20 +719,24 @@ class PythonEvaluatorsMixin:
             case "$first":
                 # Handle both list and single operand formats
                 if not isinstance(operands, list):
-                    operands = [operands]
-                if len(operands) != 1:
+                    ops = [operands]
+                else:
+                    ops = operands
+                if len(ops) != 1:
                     raise ValueError("$first requires exactly 1 operand")
-                array = self._evaluate_operand_python(operands[0], document)
+                array = self._evaluate_operand_python(ops[0], document)
                 if isinstance(array, list) and len(array) > 0:
                     return array[0]
                 return None
             case "$last":
                 # Handle both list and single operand formats
                 if not isinstance(operands, list):
-                    operands = [operands]
-                if len(operands) != 1:
+                    ops = [operands]
+                else:
+                    ops = operands
+                if len(ops) != 1:
                     raise ValueError("$last requires exactly 1 operand")
-                array = self._evaluate_operand_python(operands[0], document)
+                array = self._evaluate_operand_python(ops[0], document)
                 if isinstance(array, list) and len(array) > 0:
                     return array[-1]
                 return None
@@ -791,7 +803,7 @@ class PythonEvaluatorsMixin:
                 try:
                     sorted_array = sorted(array, reverse=True)
                     return sorted_array[: int(n)]
-                except TypeError:
+                except (TypeError, ValueError):
                     return []
             case "$minN":
                 # Get minimum N elements from array (sorted ascending, take first N)
@@ -815,7 +827,7 @@ class PythonEvaluatorsMixin:
                 try:
                     sorted_array = sorted(array)
                     return sorted_array[: int(n)]
-                except TypeError:
+                except (TypeError, ValueError):
                     return []
             case "$sortArray":
                 # Sort array elements
@@ -1461,11 +1473,14 @@ class PythonEvaluatorsMixin:
             case "$millisecond":
                 return dt.microsecond // 1000
             case "$dayOfWeek":
-                return dt.weekday()  # 0=Monday
+                # MongoDB uses 1 (Sunday) to 7 (Saturday)
+                # Python's weekday() returns 0 (Monday) to 6 (Sunday)
+                return ((dt.weekday() + 1) % 7) + 1
             case "$dayOfYear":
                 return dt.timetuple().tm_yday
             case "$week":
-                return dt.isocalendar()[1]
+                # Week of year (0-53)
+                return int(dt.strftime("%U"))
             case "$isoDayOfWeek":
                 return dt.isocalendar()[2]  # 1=Monday
             case "$isoWeek":
@@ -2139,10 +2154,10 @@ class PythonEvaluatorsMixin:
                     raise ValueError("$toDecimal requires exactly 1 operand")
                 value = self._evaluate_operand_python(operands[0], document)
                 try:
-                    from decimal import Decimal
+                    from decimal import Decimal, InvalidOperation
 
                     return Decimal(str(value)) if value is not None else None
-                except (ValueError, TypeError, ImportError):
+                except (ValueError, TypeError, ImportError, InvalidOperation):
                     return None
             case "$toObjectId":
                 if len(operands) != 1:
