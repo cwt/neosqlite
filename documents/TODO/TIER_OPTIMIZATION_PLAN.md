@@ -398,14 +398,25 @@ FROM collection
 
 #### 6. `$split` String Operator
 
-**Current Status**: Tier-3 only
+**Current Status**: ✅ COMPLETED
 
 **Target**: Tier-1 using recursive CTE
 
-**Files to Modify**:
-- `neosqlite/collection/expr_evaluator/sql_converters.py`
+**Files Modified**:
+- `neosqlite/collection/expr_evaluator/sql_converters.py` - `_convert_string_operator()`
 
-**Estimated Effort**: 8-16 hours
+**Implementation**:
+- Recursive CTE with `instr()` and `substr()` for string splitting
+- Pattern: `WITH RECURSIVE split(remaining, element, idx) AS (...)`
+- Handles edge cases: empty strings, leading/trailing delimiters, multiple consecutive delimiters
+- Safety limit of 1000 iterations to prevent infinite recursion
+- Returns `json_group_array()` of split elements
+
+**Test Coverage**:
+- 15 new tests in `tests/test_tier1/test_split.py`
+- All tests compare Tier-1 vs Tier-3 results for correctness
+
+**Estimated Effort**: 8-16 hours ✅ COMPLETED
 
 ---
 
@@ -628,9 +639,34 @@ FROM collection
     - `test_group_empty_collection` - Empty collection edge case
   - **Test Results**: All 1966 tests pass, no regressions
 
-- [ ] `$split` Tier-1 support
-  - [ ] Implement recursive CTE
-  - [ ] Add unit tests with kill switch comparison
+- [x] `$split` Tier-1 support ✅ COMPLETED
+  - [x] Implement recursive CTE in `expr_evaluator/sql_converters.py`
+  - [x] Add unit tests with kill switch comparison (`tests/test_tier1/test_split.py`)
+  - [x] Verify results match Tier-3 Python
+  - [x] All tests pass: 15 new tests added
+  - **Implementation Details**:
+    - Uses recursive CTE with `instr()` and `substr()` for string splitting
+    - Pattern: `WITH RECURSIVE split(remaining, element, idx) AS (...)`
+    - Handles edge cases: empty strings, leading/trailing delimiters, multiple consecutive delimiters
+    - Safety limit of 1000 iterations to prevent infinite recursion
+    - Returns `json_group_array()` of split elements
+  - **Test Coverage**:
+    - `test_split_basic` - Basic space delimiter
+    - `test_split_with_comma_delimiter` - Comma delimiter
+    - `test_split_with_hyphen_delimiter` - Hyphen delimiter
+    - `test_split_no_delimiter_found` - Delimiter not in string
+    - `test_split_empty_string` - Empty input string
+    - `test_split_multiple_consecutive_delimiters` - Multiple delimiters
+    - `test_split_with_literal_string` - Literal string input
+    - `test_split_with_literal_delimiter` - Literal delimiter
+    - `test_split_kill_switch_forces_tier3` - Kill switch enforcement
+    - `test_split_in_group_context` - $split in $group
+    - `test_split_leading_delimiter` - Leading delimiter edge case
+    - `test_split_trailing_delimiter` - Trailing delimiter edge case
+    - `test_split_only_delimiters` - String with only delimiters
+    - `test_split_single_element` - No delimiter found
+    - `test_split_empty_collection` - Empty collection
+  - **Test Results**: All 1981 tests pass, no regressions
 
 ### Phase 4: P3 Lower Priority
 

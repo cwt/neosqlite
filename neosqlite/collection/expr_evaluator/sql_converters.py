@@ -593,15 +593,76 @@ class SqlConvertersMixin:
             case "$split":
                 if len(operands) != 2:
                     raise ValueError("$split requires string and delimiter")
+
                 string_sql, string_params = self._convert_operand_to_sql(
                     operands[0]
                 )
                 delimiter_sql, delimiter_params = self._convert_operand_to_sql(
                     operands[1]
                 )
-                # SQLite doesn't have native split, use recursive CTE (complex)
-                # Fall back to Python for now
-                raise NotImplementedError("$split requires Python evaluation")
+
+                # Implement $split using recursive CTE
+                # Pattern:
+                #   WITH RECURSIVE split(remaining, element, idx) AS (
+                #     SELECT input || delimiter, '', 0
+                #     UNION ALL
+                #     SELECT
+                #       CASE WHEN instr(remaining, delim) > 0
+                #            THEN substr(remaining, instr(remaining, delim) + length(delim))
+                #            ELSE '' END,
+                #       CASE WHEN instr(remaining, delim) > 0
+                #            THEN substr(remaining, 1, instr(remaining, delim) - 1)
+                #            ELSE remaining END,
+                #       idx + 1
+                #     FROM split WHERE remaining != ''
+                #   )
+                #   SELECT json_group_array(element) FROM split WHERE idx > 0
+
+                # Use a unique CTE name based on column and params
+                cte_name = f"split_{id(string_sql)}"
+
+                # Build the recursive CTE for split
+                # Note: We need to handle the case where delimiter is empty (error in MongoDB)
+                # and where string or delimiter is NULL (return empty array)
+
+                # Get the function name (with type ignore for mypy)
+                json_group_array = self.json_group_array_function  # type: ignore[attr-defined]
+
+                split_sql = f"""
+                (SELECT json({json_group_array}(element)) FROM (
+                  WITH RECURSIVE {cte_name}(remaining, element, idx) AS (
+                    -- Base case: start with input string appended with delimiter
+                    -- This simplifies the recursive case by ensuring we always find a delimiter
+                    SELECT
+                      COALESCE(CAST({string_sql} AS TEXT), '') || ({delimiter_sql}),
+                      '',
+                      0
+
+                    UNION ALL
+
+                    -- Recursive case: extract next element
+                    SELECT
+                      -- Remaining string after delimiter
+                      CASE
+                        WHEN instr(remaining, {delimiter_sql}) > 0
+                        THEN substr(remaining, instr(remaining, {delimiter_sql}) + length({delimiter_sql}))
+                        ELSE ''
+                      END,
+                      -- Current element (before delimiter)
+                      CASE
+                        WHEN instr(remaining, {delimiter_sql}) > 0
+                        THEN substr(remaining, 1, instr(remaining, {delimiter_sql}) - 1)
+                        ELSE remaining
+                      END,
+                      idx + 1
+                    FROM {cte_name}
+                    WHERE remaining != '' AND idx < 1000  -- Safety limit to prevent infinite recursion
+                  )
+                  SELECT element FROM {cte_name} WHERE idx > 0
+                ))
+                """
+
+                return split_sql, string_params + delimiter_params
             case "$replaceAll":
                 # Handle MongoDB dict format: {input, find, replacement}
                 if isinstance(operands, dict):
