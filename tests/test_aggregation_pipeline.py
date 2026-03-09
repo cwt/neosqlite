@@ -891,12 +891,12 @@ def test_aggregation_unwind_advanced_options_comprehensive(collection):
     )
 
     # Verify null/empty handling
-    # Bob has empty array (set to null per MongoDB behavior), Charlie has null, David has missing field
+    # Bob has empty array (field removed per MongoDB behavior), Charlie has null, David has missing field
     bob_docs = [doc for doc in result_list if doc["name"] == "Bob"]
     assert len(bob_docs) == 1
     assert (
-        bob_docs[0]["scores"] is None
-    )  # Empty array set to null (MongoDB behavior)
+        "scores" not in bob_docs[0]
+    )  # Empty array removed entirely (MongoDB behavior)
     assert bob_docs[0]["scoreIndex"] is None
 
     null_scores = [doc for doc in result_list if doc.get("scores") is None]

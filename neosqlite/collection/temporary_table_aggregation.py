@@ -715,30 +715,31 @@ class TemporaryTableAggregationProcessor:
                 # Build the data expression for preserved documents
                 if include_index:
                     index_field = parse_json_path(include_index.lstrip("$"))
-                    # For empty arrays, set both the field and index to null
+                    # For empty arrays, remove the array field but keep index as None (MongoDB behavior)
+                    # For null/missing fields, keep the field with None value and index as None
                     preserved_data_expr = f"""
                         CASE
                             WHEN json_type({json_extract_func}({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}')) = 'array'
                                  AND {json_wrapper}{json_extract_func}({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}'){json_wrapper_close} = '[]'
                             THEN {self._json_function_prefix}_set(
-                                   {self._json_function_prefix}_set({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}', NULL),
-                                   '{index_field}',
-                                   NULL
-                                 )
+                                    {self._json_function_prefix}_remove({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}'),
+                                    '{index_field}',
+                                    NULL
+                                  )
                             ELSE {self._json_function_prefix}_set(
-                                   {quote_table_name(self.collection.name)}.data,
-                                   '{index_field}',
-                                   NULL
-                                 )
+                                    {quote_table_name(self.collection.name)}.data,
+                                    '{index_field}',
+                                    NULL
+                                  )
                         END
                     """
                 else:
-                    # For empty arrays, set the field to null (MongoDB behavior)
+                    # For empty arrays, remove the field entirely (MongoDB behavior)
                     preserved_data_expr = f"""
                         CASE
                             WHEN json_type({json_extract_func}({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}')) = 'array'
                                  AND {json_wrapper}{json_extract_func}({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}'){json_wrapper_close} = '[]'
-                            THEN {self._json_function_prefix}_set({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}', NULL)
+                            THEN {self._json_function_prefix}_remove({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}')
                             ELSE {quote_table_name(self.collection.name)}.data
                         END
                     """

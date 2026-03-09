@@ -392,9 +392,25 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                             elif preserve_null_and_empty:
                                 # Empty array but preserve is requested
                                 new_doc = deepcopy(doc)
-                                self.collection._set_val(
-                                    new_doc, field_path, None
-                                )
+                                # Remove the field entirely (MongoDB behavior)
+                                # For nested fields, we need to navigate to parent
+                                if "." in field_path:
+                                    # Handle nested field removal
+                                    parts = field_path.split(".")
+                                    current = new_doc
+                                    for part in parts[:-1]:
+                                        if part in current:
+                                            current = current[part]
+                                        else:
+                                            break
+                                    else:
+                                        # Remove the final field
+                                        if parts[-1] in current:
+                                            del current[parts[-1]]
+                                else:
+                                    # Simple field removal
+                                    if field_path in new_doc:
+                                        del new_doc[field_path]
                                 # Add array index if requested
                                 if include_array_index:
                                     new_doc[include_array_index] = None

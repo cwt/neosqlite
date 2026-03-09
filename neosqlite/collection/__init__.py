@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from .._sqlite import sqlite3
 from ..bulk_operations import BulkOperationExecutor
 from ..changestream import ChangeStream
@@ -810,14 +811,30 @@ class Collection:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.initialize_ordered_bulk_op`.
+
+        .. deprecated::
+            Use :meth:`bulk_write` instead.
         """
+        warnings.warn(
+            "initialize_ordered_bulk_op is deprecated, use bulk_write instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.query_engine.initialize_ordered_bulk_op()
 
     def initialize_unordered_bulk_op(self) -> BulkOperationExecutor:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.initialize_unordered_bulk_op`.
+
+        .. deprecated::
+            Use :meth:`bulk_write` instead.
         """
+        warnings.warn(
+            "initialize_unordered_bulk_op is deprecated, use bulk_write instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.query_engine.initialize_unordered_bulk_op()
 
     # --- Indexing methods delegated to IndexManager ---
