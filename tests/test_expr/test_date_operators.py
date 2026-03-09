@@ -175,12 +175,13 @@ class TestDateOperatorsPython:
         """Test $dayOfWeek Python evaluation."""
         evaluator = ExprEvaluator()
         expr = {"$dayOfWeek": ["$date"]}
-        # 2024-01-15 is Monday (weekday() returns 0)
+        # 2024-01-15 is Monday
+        # MongoDB: 1=Sunday, 2=Monday, ..., 7=Saturday
         result = evaluator._evaluate_expr_python(
             expr,
             {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
         )
-        assert result == 0
+        assert result == 2
 
     def test_day_of_year_python(self):
         """Test $dayOfYear Python evaluation."""
@@ -200,7 +201,7 @@ class TestDateOperatorsPython:
             expr,
             {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
         )
-        assert result == 3  # Week 3 of 2024
+        assert result == 2  # Week 2 (strftime %U, Sunday as first day of week)
 
     def test_iso_day_of_week_python(self):
         """Test $isoDayOfWeek Python evaluation."""
