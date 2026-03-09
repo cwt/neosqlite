@@ -40,7 +40,7 @@ def _normalize_id(value: Any) -> Any:
     # Handle datetime - normalize to naive UTC for comparison
     if hasattr(value, "__class__") and value.__class__.__name__ == "datetime":
         # If timezone-aware, convert to UTC and make naive
-        if getattr(value, 'tzinfo', None) is not None:
+        if getattr(value, "tzinfo", None) is not None:
             # Convert to UTC
             utc_dt = value.astimezone(timezone.utc)
             # Return as naive datetime

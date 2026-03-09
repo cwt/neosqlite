@@ -1,6 +1,5 @@
 """Unit tests for positional array update operations."""
 
-import pytest
 from neosqlite.collection.query_helper.positional_update import (
     _apply_positional_update,
     _apply_positional_recursive,
@@ -64,7 +63,12 @@ def test_apply_positional_recursive_dollar_with_filter_doc():
     # scores field matches 90 in filter_doc
     assert (
         _apply_positional_recursive(
-            doc, parts, 1, 95, filter_doc={"scores": 90}, parent_array=doc["scores"]
+            doc,
+            parts,
+            1,
+            95,
+            filter_doc={"scores": 90},
+            parent_array=doc["scores"],
         )
         is True
     )
@@ -247,9 +251,7 @@ def test_apply_positional_recursive_regular_field_nested():
 def test_apply_positional_recursive_array_filters_no_identifier():
     """Test $[identifier] when array_filters exists but doesn't have the identifier."""
     doc = [{"a": 1}]
-    assert (
-        _apply_positional_recursive(doc, ["$[x]"], 0, 2, [{"y": 1}]) is False
-    )
+    assert _apply_positional_recursive(doc, ["$[x]"], 0, 2, [{"y": 1}]) is False
 
 
 def test_apply_positional_recursive_array_filters_none():
@@ -281,9 +283,7 @@ def test_apply_positional_recursive_filtered_matching_filter():
     """Test $[identifier] when filter is found and matched."""
     doc = [1, 2, 3]
     # This should hit line 133
-    assert (
-        _apply_positional_recursive(doc, ["$[x]"], 0, 10, [{"x": 2}]) is True
-    )
+    assert _apply_positional_recursive(doc, ["$[x]"], 0, 10, [{"x": 2}]) is True
     assert doc == [1, 10, 3]
 
 

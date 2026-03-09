@@ -5,9 +5,6 @@ Tests for the watch() method and ChangeStream functionality
 import pytest
 import json
 import time
-from unittest.mock import MagicMock
-from neosqlite.changestream import ChangeStream
-from neosqlite.objectid import ObjectId
 
 
 def test_watch_basic_functionality(collection):
@@ -330,6 +327,7 @@ def test_changestream_iter(collection):
     with collection.watch() as stream:
         assert iter(stream) is stream
 
+
 def test_changestream_closed_next(collection):
     """Test __next__ raises StopIteration when closed."""
     stream = collection.watch()
@@ -337,148 +335,166 @@ def test_changestream_closed_next(collection):
     with pytest.raises(StopIteration, match="Change stream is closed"):
         next(stream)
 
+
 def test_next_document_id_value_not_objectid(collection):
     """Test __next__ when document_id_value is not a valid ObjectId hex."""
     stream = collection.watch()
-    
+
     # Manually insert a record with a non-ObjectId string as document_id_value
     collection.db.execute(
         "INSERT INTO _neosqlite_changestream (collection_name, operation, document_id, document_id_value) VALUES (?, ?, ?, ?)",
-        (collection.name, "insert", 1, "not-an-objectid")
+        (collection.name, "insert", 1, "not-an-objectid"),
     )
-    
+
     change = next(stream)
     assert change["documentKey"]["_id"] == "not-an-objectid"
     stream.close()
 
+
 def test_next_document_data_bytes_decode_fail(collection):
     """Test __next__ when document_data bytes fail to decode as UTF-8."""
     stream = collection.watch()
-    
+
     # \xcc is invalid UTF-8
     invalid_utf8 = b"\xcc\xdd\xee"
     collection.db.execute(
         "INSERT INTO _neosqlite_changestream (collection_name, operation, document_id, document_data) VALUES (?, ?, ?, ?)",
-        (collection.name, "insert", 1, invalid_utf8)
+        (collection.name, "insert", 1, invalid_utf8),
     )
-    
+
     change = next(stream)
     # Should fall back to document_id (1) because decoding failed
     assert change["documentKey"]["_id"] == 1
     stream.close()
 
+
 def test_next_document_data_json_decode_fail(collection):
     """Test __next__ when document_data is invalid JSON."""
     stream = collection.watch()
-    
+
     collection.db.execute(
         "INSERT INTO _neosqlite_changestream (collection_name, operation, document_id, document_data) VALUES (?, ?, ?, ?)",
-        (collection.name, "insert", 1, "{invalid-json}")
+        (collection.name, "insert", 1, "{invalid-json}"),
     )
-    
+
     change = next(stream)
     # Should fall back to database lookup or document_id
     assert change["documentKey"]["_id"] == 1
     stream.close()
+
 
 def test_next_document_data_no_id_in_json(collection):
     """Test __next__ when document_data is JSON but missing _id."""
     stream = collection.watch()
-    
+
     collection.db.execute(
         "INSERT INTO _neosqlite_changestream (collection_name, operation, document_id, document_data) VALUES (?, ?, ?, ?)",
-        (collection.name, "insert", 1, json.dumps({"name": "test"}))
+        (collection.name, "insert", 1, json.dumps({"name": "test"})),
     )
-    
+
     change = next(stream)
     # Should fall back to database lookup or document_id
     assert change["documentKey"]["_id"] == 1
     stream.close()
 
+
 def test_next_no_json_data_fallback(collection):
     """Test fallback when document_data is None."""
     stream = collection.watch()
-    
+
     collection.db.execute(
         "INSERT INTO _neosqlite_changestream (collection_name, operation, document_id, document_data) VALUES (?, ?, ?, ?)",
-        (collection.name, "insert", 999, None)
+        (collection.name, "insert", 999, None),
     )
-    
+
     change = next(stream)
     # Should fall back to document_id 999
     assert change["documentKey"]["_id"] == 999
     stream.close()
 
+
 def test_updatelookup_decode_fail(collection):
     """Test updateLookup when document_data bytes fail to decode."""
-    stream = collection.watch(full_document="updateLookup", max_await_time_ms=500)
-    
+    stream = collection.watch(
+        full_document="updateLookup", max_await_time_ms=500
+    )
+
     # Insert invalid record that should be skipped (causing a continue in the loop)
     invalid_utf8 = b"\xcc\xdd\xee"
     collection.db.execute(
         "INSERT INTO _neosqlite_changestream (collection_name, operation, document_id, document_data) VALUES (?, ?, ?, ?)",
-        (collection.name, "update", 1, invalid_utf8)
+        (collection.name, "update", 1, invalid_utf8),
     )
-    
+
     # After one invalid record, it should keep polling until timeout
     with pytest.raises(StopIteration, match="Change stream timeout exceeded"):
         next(stream)
-    
+
     stream.close()
+
 
 def test_updatelookup_json_fail(collection):
     """Test updateLookup when JSON parsing fails (should just pass through)."""
     stream = collection.watch(full_document="updateLookup")
-    
+
     collection.db.execute(
         "INSERT INTO _neosqlite_changestream (collection_name, operation, document_id, document_data) VALUES (?, ?, ?, ?)",
-        (collection.name, "update", 1, "{invalid-json}")
+        (collection.name, "update", 1, "{invalid-json}"),
     )
-    
+
     change = next(stream)
     assert "fullDocument" not in change
     stream.close()
 
+
 def test_updatelookup_non_objectid_value(collection):
     """Test updateLookup with non-ObjectId document_id_value."""
     stream = collection.watch(full_document="updateLookup")
-    
+
     doc_data = json.dumps({"_id": 1, "name": "test"})
     collection.db.execute(
         "INSERT INTO _neosqlite_changestream (collection_name, operation, document_id, document_data, document_id_value) VALUES (?, ?, ?, ?, ?)",
-        (collection.name, "update", 1, doc_data, "string-id")
+        (collection.name, "update", 1, doc_data, "string-id"),
     )
-    
+
     change = next(stream)
     assert change["fullDocument"]["_id"] == "string-id"
     stream.close()
 
+
 def test_updatelookup_no_id_in_json_fallback(collection):
     """Test updateLookup fallback when _id is missing in JSON and no document_id_value."""
     stream = collection.watch(full_document="updateLookup")
-    
+
     doc_data = json.dumps({"name": "test"})
     collection.db.execute(
         "INSERT INTO _neosqlite_changestream (collection_name, operation, document_id, document_data) VALUES (?, ?, ?, ?)",
-        (collection.name, "update", 1, doc_data)
+        (collection.name, "update", 1, doc_data),
     )
-    
+
     change = next(stream)
     assert change["fullDocument"]["_id"] == 1
     stream.close()
 
+
 def test_next_document_data_has_id_in_json(collection):
     """Test __next__ when document_data is JSON and has _id."""
     stream = collection.watch()
-    
+
     collection.db.execute(
         "INSERT INTO _neosqlite_changestream (collection_name, operation, document_id, document_data) VALUES (?, ?, ?, ?)",
-        (collection.name, "insert", 1, json.dumps({"_id": "custom-id", "name": "test"}))
+        (
+            collection.name,
+            "insert",
+            1,
+            json.dumps({"_id": "custom-id", "name": "test"}),
+        ),
     )
-    
+
     change = next(stream)
     assert change["documentKey"]["_id"] == "custom-id"
     stream.close()
+
 
 def test_close_idempotent(collection):
     """Test that close() can be called multiple times."""

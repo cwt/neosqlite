@@ -6,7 +6,7 @@ import warnings
 import neosqlite
 
 from .reporter import reporter
-from .utils import test_pymongo_connection, compare_results
+from .utils import test_pymongo_connection
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -138,9 +138,7 @@ def compare_date_expr_operators():
                     neo_collection.aggregate([{"$project": {"val": op_expr}}])
                 )
                 neo_results[op_name] = result
-                print(
-                    f"Neo {op_name}: OK ({len(result)} results)"
-                )
+                print(f"Neo {op_name}: OK ({len(result)} results)")
             except Exception as e:
                 neo_results[op_name] = None
                 print(f"Neo {op_name}: Error - {e}")
@@ -180,9 +178,7 @@ def compare_date_expr_operators():
                     mongo_collection.aggregate([{"$project": {"val": op_expr}}])
                 )
                 mongo_results[op_name] = result
-                print(
-                    f"Mongo {op_name}: OK ({len(result)} results)"
-                )
+                print(f"Mongo {op_name}: OK ({len(result)} results)")
             except Exception as e:
                 mongo_results[op_name] = None
                 print(f"Mongo {op_name}: Error - {e}")
@@ -232,9 +228,7 @@ def compare_date_expr_operators():
                 )
             )
             mongo_datesubtract = result
-            print(
-                f"Mongo $dateSubtract: OK ({len(result)} results)"
-            )
+            print(f"Mongo $dateSubtract: OK ({len(result)} results)")
         except Exception as e:
             mongo_datesubtract = None
             print(f"Mongo $dateSubtract: Error - {e}")

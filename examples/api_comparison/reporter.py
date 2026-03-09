@@ -173,11 +173,13 @@ class CompatibilityReporter:
             skip_reason: Reason for skipping test (if MongoDB not available)
         """
         if mongo_results is None and skip_reason:
-            self.skipped_tests.append({
-                "category": category,
-                "api": api_name,
-                "reason": skip_reason,
-            })
+            self.skipped_tests.append(
+                {
+                    "category": category,
+                    "api": api_name,
+                    "reason": skip_reason,
+                }
+            )
             return
 
         if isinstance(neo_results, list) and isinstance(mongo_results, list):
@@ -186,7 +188,11 @@ class CompatibilityReporter:
             )
         else:
             passed = neo_results == mongo_results
-            error = f"Value mismatch: {neo_results} vs {mongo_results}" if not passed else None
+            error = (
+                f"Value mismatch: {neo_results} vs {mongo_results}"
+                if not passed
+                else None
+            )
 
         self.record_result(
             category=category,
