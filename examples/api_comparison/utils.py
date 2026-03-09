@@ -2,6 +2,7 @@
 Utility functions for API comparison tests
 """
 
+from datetime import timezone
 from typing import Any, Optional
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
@@ -27,6 +28,7 @@ def _normalize_id(value: Any) -> Any:
 
     Converts ObjectId to string and removes _id fields for comparison purposes.
     This handles auto-generated IDs that differ between NeoSQLite and MongoDB.
+    Also normalizes datetime objects (tz-aware vs naive).
     """
     if value is None:
         return None
@@ -34,6 +36,16 @@ def _normalize_id(value: Any) -> Any:
     # Handle ObjectId
     if hasattr(value, "__class__") and value.__class__.__name__ == "ObjectId":
         return str(value)
+
+    # Handle datetime - normalize to naive UTC for comparison
+    if hasattr(value, "__class__") and value.__class__.__name__ == "datetime":
+        # If timezone-aware, convert to UTC and make naive
+        if getattr(value, 'tzinfo', None) is not None:
+            # Convert to UTC
+            utc_dt = value.astimezone(timezone.utc)
+            # Return as naive datetime
+            return utc_dt.replace(tzinfo=None)
+        return value
 
     # Handle dict - remove _id and normalize nested values
     if isinstance(value, dict):

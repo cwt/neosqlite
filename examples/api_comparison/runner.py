@@ -271,9 +271,10 @@ def run_all_comparisons():
 
             traceback.print_exc()
 
-    # Print final report
+    # Print final report - this should be the last output
     from . import reporter as global_reporter
 
+    print("\n")
     global_reporter.print_report(show_passed_results=True)
 
     if len(global_reporter.failed_tests) > 0:

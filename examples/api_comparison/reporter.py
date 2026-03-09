@@ -4,6 +4,7 @@ Compatibility Reporter - Tracks and reports API compatibility between NeoSQLite 
 
 import json
 from typing import Any, Optional
+from .utils import compare_results
 
 
 def _sort_for_display(value: Any) -> Any:
@@ -148,6 +149,55 @@ class CompatibilityReporter:
                     "error": error,
                 }
             )
+
+    def record_comparison(
+        self,
+        category: str,
+        api_name: str,
+        neo_results: Any,
+        mongo_results: Any,
+        tolerance: float = 1e-9,
+        ignore_order: bool = True,
+        skip_reason: Optional[str] = None,
+    ):
+        """
+        Record a test result by comparing actual values between NeoSQLite and MongoDB.
+
+        Args:
+            category: Test category
+            api_name: API/test name
+            neo_results: Results from NeoSQLite
+            mongo_results: Results from MongoDB
+            tolerance: Tolerance for floating point comparisons
+            ignore_order: If True, sort results before comparison
+            skip_reason: Reason for skipping test (if MongoDB not available)
+        """
+        if mongo_results is None and skip_reason:
+            self.skipped_tests.append({
+                "category": category,
+                "api": api_name,
+                "reason": skip_reason,
+            })
+            return
+
+        if isinstance(neo_results, list) and isinstance(mongo_results, list):
+            passed, error = compare_results(
+                neo_results, mongo_results, tolerance, ignore_order
+            )
+        else:
+            passed = neo_results == mongo_results
+            error = f"Value mismatch: {neo_results} vs {mongo_results}" if not passed else None
+
+        self.record_result(
+            category=category,
+            api_name=api_name,
+            passed=passed,
+            neo_result=neo_results,
+            mongo_result=mongo_results,
+            error=error,
+            skip_reason=skip_reason if mongo_results is None else None,
+            show_results=not passed,
+        )
 
     def get_compatibility_percentage(self) -> float:
         """Get the compatibility percentage"""
