@@ -1,8 +1,8 @@
 # Aggregation Expression Support Implementation Plan
 
-**Status Update (February 27, 2026):** Phase 1-4 ✅ **COMPLETE**
+**Status Update:** ✅ **COMPLETE** - All active items implemented
 
-See [SQL_TIER_PROGRESS_REPORT.md](../SQL_TIER_PROGRESS_REPORT.md) for current implementation status and Phase 2-4 plans.
+See [AGGREGATION_PIPELINE_OPTIMIZATION.md](../AGGREGATION_PIPELINE_OPTIMIZATION.md) for current implementation status and complete documentation.
 
 ## Overview
 
@@ -523,7 +523,7 @@ As of February 2026, NeoSQLite includes **SQL Tier 1 and Tier 2 optimization** f
 - **Tier 2 (Temp Tables)**: 5-20x speedup for complex pipelines
 - **Tier 3 (Python)**: 100% correctness guarantee as fallback
 
-See [SQL_TIER_PROGRESS_REPORT.md](../SQL_TIER_PROGRESS_REPORT.md) for complete details.
+See [AGGREGATION_PIPELINE_OPTIMIZATION.md](../AGGREGATION_PIPELINE_OPTIMIZATION.md) for complete details.
 
 ## Code Examples
 
@@ -732,7 +732,7 @@ collection.aggregate([
 - [MongoDB Aggregation Pipeline](https://docs.mongodb.com/manual/aggregation/)
 - [MongoDB Aggregation Expressions](https://docs.mongodb.com/manual/meta/aggregation-quick-reference/)
 - [SQLite Math Functions](https://sqlite.org/lang_mathfunc.html)
-- [NeoSQLite Three-Tier Architecture](../AGGREGATION_PIPELINE_ENHANCEMENTS.md)
+- [NeoSQLite Aggregation Pipeline Optimization](../AGGREGATION_PIPELINE_OPTIMIZATION.md)
 - [NeoSQLite $expr Implementation](../EXPR_IMPLEMENTATION.md)
 
 ## Conclusion

@@ -143,6 +143,8 @@ NeoSQLite includes comprehensive benchmarks demonstrating the performance benefi
 - **Enhanced SQL Optimization Benchmark**: Covers additional optimizations like pipeline reordering and text search with array processing
 - **Text Search + json_each() Benchmark**: Demonstrates specialized optimizations for text search on array fields
 
+See [`documents/AGGREGATION_PIPELINE_OPTIMIZATION.md`](documents/AGGREGATION_PIPELINE_OPTIMIZATION.md) for complete architecture details, operator support matrix, and performance benchmarks (10-100x speedup).
+
 See the [`examples/`](examples/) directory for detailed benchmark implementations and results.
 
 ## Drop-in Replacement for PyMongo and NoSQL Solutions

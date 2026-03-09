@@ -119,11 +119,12 @@ The **comprehensive, integrated API reference** containing:
    - Risk mitigation strategies
    - Success metrics and resource allocation
 
-10. **SQL_TIER_IMPLEMENTATION_SUMMARY.md**
-    - Three-tier processing architecture
-    - SQL optimization techniques
+10. **AGGREGATION_PIPELINE_OPTIMIZATION.md**
+    - Three-tier processing architecture (Tier 1/2/3)
+    - SQL optimization with CTEs
     - Temporary table aggregation
-    - Python fallback mechanisms
+    - Performance benchmarks (10-100x speedup)
+    - Complete operator support matrix
 
 11. **PERFORMANCE_OPTIMIZATION.md**
     - Query optimization strategies
