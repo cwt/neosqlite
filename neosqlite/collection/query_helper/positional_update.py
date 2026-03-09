@@ -145,31 +145,6 @@ def _apply_positional_recursive(
 
         return True
 
-    # Handle $[] - all array elements (duplicate - kept for backward compatibility)
-    elif current_part == "$[]":
-        # The array should be in doc (we're already at the array level)
-        arr = doc if parent_array is None else parent_array
-        if not isinstance(arr, list):
-            return False
-
-        # Update all elements
-        for i, elem in enumerate(arr):
-            if is_last:
-                arr[i] = value
-            else:
-                if isinstance(elem, dict):
-                    _apply_positional_recursive(
-                        elem,
-                        parts,
-                        index + 1,
-                        value,
-                        array_filters,
-                        filter_doc,
-                        None,
-                    )
-
-        return True
-
     # Handle $ - first matching array element
     elif current_part == "$":
         # Use parent_array if available, otherwise doc should be the array
@@ -229,6 +204,23 @@ def _apply_positional_recursive(
                                         None,
                                     )
                                     matched = True
+                    else:
+                        # index <= 0, no field name to look back to, update first element
+                        if is_last:
+                            arr[i] = value
+                            matched = True
+                        else:
+                            if isinstance(elem, dict):
+                                _apply_positional_recursive(
+                                    elem,
+                                    parts,
+                                    index + 1,
+                                    value,
+                                    array_filters,
+                                    filter_doc,
+                                    None,
+                                )
+                                matched = True
                 else:
                     # No filter, just update first element
                     if is_last:
