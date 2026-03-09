@@ -15,6 +15,7 @@ from .jsonb_support import (
     _get_json_group_array_function,
 )
 from .sql_translator_unified import SQLTranslator
+from .expr_evaluator import ExprEvaluator
 from contextlib import contextmanager
 from typing import Any, Dict, List, Callable
 import hashlib
@@ -242,6 +243,10 @@ class TemporaryTableAggregationProcessor:
         self.db = collection.db
         self.query_engine = query_engine
         self.sql_translator = SQLTranslator(collection.name, "data", "id")
+        # Create ExprEvaluator for expression key support in $group
+        self.expr_evaluator = ExprEvaluator(
+            data_column="data", db_connection=collection.db
+        )
         # Check if JSONB is supported for this connection
         self._jsonb_supported = supports_jsonb(self.db)
         self._jsonb_each_supported = supports_jsonb_each(self.db)
@@ -1091,6 +1096,7 @@ class TemporaryTableAggregationProcessor:
         - $first, $last: Using subqueries (LIMITATION: requires no preceding $sort)
         - $addToSet: Using json_group_array(DISTINCT ...)
         - $push: Using json_group_array(...)
+        - Expression keys: Using SQLTranslator for expression evaluation
 
         Limitation:
         - $first/$last with preceding $sort stage falls back to Python for correctness.
@@ -1105,6 +1111,14 @@ class TemporaryTableAggregationProcessor:
         Returns:
             str: Name of the newly created temporary table with grouped results
         """
+        # Check kill switch FIRST (Bug 010 fix)
+        from .query_helper import get_force_fallback
+
+        if get_force_fallback():
+            raise NotImplementedError(
+                "Force fallback - use Tier 3 Python evaluation"
+            )
+
         # Check for $first/$last with preceding $sort - fall back to Python
         if self._has_sort_stage:
             for field, accumulator in group_spec.items():
@@ -1144,10 +1158,28 @@ class TemporaryTableAggregationProcessor:
                     f"{json_extract}(data, '{parse_json_path(field_name)}')"
                 )
         else:
-            # For complex expressions, fall back to Python
-            raise NotImplementedError(
-                f"$group with expression key {group_id_expr} requires Python fallback"
-            )
+            # Support expression keys using ExprEvaluator
+            # This allows grouping by computed fields like {$concat: ["$firstName", " ", "$lastName"]}
+            try:
+                # Use ExprEvaluator to build the SQL expression
+                key_expr, key_params = (
+                    self.expr_evaluator.build_select_expression(group_id_expr)
+                )
+                if key_expr:
+                    select_parts.append(f"{key_expr} AS _id")
+                    group_by_parts.append(key_expr)
+                    # Store params for later use (though currently not used in CREATE TABLE AS SELECT)
+                    self._group_key_params = key_params
+                else:
+                    raise NotImplementedError(
+                        f"$group with expression key {group_id_expr} requires Python fallback"
+                    )
+            except NotImplementedError:
+                raise
+            except Exception:
+                raise NotImplementedError(
+                    f"$group with expression key {group_id_expr} requires Python fallback"
+                )
 
         # Handle accumulators
         for field, accumulator in group_spec.items():
@@ -1315,6 +1347,17 @@ class TemporaryTableAggregationProcessor:
         # Wrap with json() to ensure text output for Python consumption
         # (jsonb_object returns binary JSONB which Python can't read directly)
         json_output_func = f"json({json_object_func}"
+
+        # Check if we have params from expression keys
+        # Note: CREATE TABLE AS SELECT doesn't support params, so we inline them
+        group_params = getattr(self, "_group_key_params", [])
+        if group_params:
+            # For expression keys with params, we need to inline them
+            # This is a limitation - for now, fall back to Python if params are needed
+            # A future enhancement could use a different approach (e.g., CTEs)
+            raise NotImplementedError(
+                "$group with parameterized expression key requires Python fallback"
+            )
 
         new_table = create_temp(
             group_stage,
