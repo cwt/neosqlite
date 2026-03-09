@@ -82,14 +82,21 @@ def compare_update_operators():
                 print(f"Mongo {op_name}: Error - {e}")
 
         for op_name in neo_results:
-            passed = "OK" in str(neo_results[op_name]) and "OK" in str(
-                mongo_results.get(op_name, "")
-            )
-            reporter.record_result(
+            reporter.record_comparison(
                 "Update Operators",
                 op_name,
-                passed,
                 neo_results[op_name],
                 mongo_results.get(op_name),
+                skip_reason="MongoDB not available" if not client else None,
             )
         client.close()
+    else:
+        # MongoDB not available, record NeoSQLite results as skipped
+        for op_name in neo_results:
+            reporter.record_comparison(
+                "Update Operators",
+                op_name,
+                neo_results[op_name],
+                None,
+                skip_reason="MongoDB not available",
+            )

@@ -30,11 +30,12 @@ def compare_mod_operator():
 
         # Test $mod: age % 5 == 0
         try:
-            neo_result = list(neo_collection.find({"age": {"$mod": [5, 0]}}))
-            neo_mod = len(neo_result)
-            print(f"Neo $mod (age % 5 == 0): {neo_mod}")
+            neo_mod_result = list(
+                neo_collection.find({"age": {"$mod": [5, 0]}})
+            )
+            print(f"Neo $mod (age % 5 == 0): {len(neo_mod_result)}")
         except Exception as e:
-            neo_mod = f"Error: {e}"
+            neo_mod_result = f"Error: {e}"
             print(f"Neo $mod: Error - {e}")
 
     client = test_pymongo_connection()
@@ -44,9 +45,7 @@ def compare_mod_operator():
 
     mongo_db = None
 
-    mongo_mod = None
-
-    mongo_result = None
+    mongo_mod_result = None
 
     if client:
         mongo_db = client.test_database
@@ -63,29 +62,19 @@ def compare_mod_operator():
         )
 
         try:
-            mongo_result = list(
+            mongo_mod_result = list(
                 mongo_collection.find({"age": {"$mod": [5, 0]}})
             )
-            mongo_mod = len(mongo_result)
-            print(f"Mongo $mod (age % 5 == 0): {mongo_mod}")
+            print(f"Mongo $mod (age % 5 == 0): {len(mongo_mod_result)}")
         except Exception as e:
-            mongo_mod = f"Error: {e}"
+            mongo_mod_result = f"Error: {e}"
             print(f"Mongo $mod: Error - {e}")
         client.close()
 
-    reporter.record_result(
+    reporter.record_comparison(
         "Query Operators",
         "$mod",
-        (
-            neo_mod == mongo_mod
-            if mongo_mod is not None
-            else (
-                False
-                if not isinstance(neo_mod, str)
-                and not isinstance(mongo_mod, str)
-                else False
-            )
-        ),
-        neo_mod,
-        mongo_mod,
+        neo_mod_result,
+        mongo_mod_result,
+        skip_reason="MongoDB not available" if not client else None,
     )

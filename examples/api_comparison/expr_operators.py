@@ -26,6 +26,7 @@ def compare_expr_operator():
                     "salary": 50000,
                     "score": 85.5,
                     "angle": 1.5708,
+                    "tags": ["a", "b"],
                 },
                 {
                     "name": "Bob",
@@ -33,6 +34,7 @@ def compare_expr_operator():
                     "salary": 45000,
                     "score": 92.3,
                     "angle": 0.7854,
+                    "tags": ["c"],
                 },
                 {
                     "name": "Charlie",
@@ -40,6 +42,7 @@ def compare_expr_operator():
                     "salary": 60000,
                     "score": 78.1,
                     "angle": 3.1416,
+                    "tags": [],
                 },
                 {
                     "name": "David",
@@ -47,6 +50,7 @@ def compare_expr_operator():
                     "salary": 55000,
                     "score": 88.9,
                     "angle": 0.0,
+                    "tags": ["d", "e", "f"],
                 },
             ]
         )
@@ -145,9 +149,8 @@ def compare_expr_operator():
         neo_results = {}
         for query, op_name in expr_queries:
             try:
-                result = list(neo_collection.find(query))
-                neo_results[op_name] = len(result)
-                print(f"Neo {op_name}: {len(result)}")
+                neo_results[op_name] = list(neo_collection.find(query))
+                print(f"Neo {op_name}: {len(neo_results[op_name])} documents")
             except Exception as e:
                 neo_results[op_name] = f"Error: {e}"
                 print(f"Neo {op_name}: Error - {e}")
@@ -157,11 +160,9 @@ def compare_expr_operator():
 
     mongo_collection = None
 
-    mongo_count = None
-
     mongo_db = None
 
-    mongo_results = None
+    mongo_results = {}
 
     if client:
         mongo_db = client.test_database
@@ -204,28 +205,32 @@ def compare_expr_operator():
             ]
         )
 
-        mongo_results = {}
         for query, op_name in expr_queries:
             try:
-                result = list(mongo_collection.find(query))
-                mongo_results[op_name] = len(result)
-                print(f"Mongo {op_name}: {len(result)}")
+                mongo_results[op_name] = list(mongo_collection.find(query))
+                print(
+                    f"Mongo {op_name}: {len(mongo_results[op_name])} documents"
+                )
             except Exception as e:
                 mongo_results[op_name] = f"Error: {e}"
                 print(f"Mongo {op_name}: Error - {e}")
 
         for op_name in neo_results:
-            neo_count = neo_results[op_name]
-            mongo_count = mongo_results.get(op_name, "N/A")
-            if isinstance(neo_count, str) or isinstance(mongo_count, str):
-                passed = False
-            else:
-                passed = (
-                    neo_count == mongo_count
-                    if mongo_count is not None
-                    else False
-                )
-            reporter.record_result(
-                "$expr Operator", op_name, passed, neo_count, mongo_count
+            reporter.record_comparison(
+                "$expr Operator",
+                op_name,
+                neo_results[op_name],
+                mongo_results.get(op_name),
+                skip_reason="MongoDB not available" if not client else None,
             )
         client.close()
+    else:
+        # MongoDB not available, record NeoSQLite results as skipped
+        for op_name in neo_results:
+            reporter.record_comparison(
+                "$expr Operator",
+                op_name,
+                neo_results[op_name],
+                None,
+                skip_reason="MongoDB not available",
+            )

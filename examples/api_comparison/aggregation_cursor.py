@@ -95,17 +95,17 @@ def compare_aggregation_cursor_methods():
 
         client.close()
 
-        reporter.record_result(
-            "Aggregation Cursor Methods",
-            "batch_size",
-            neo_agg_batch_size,
-            neo_agg_batch_size,
-            mongo_agg_batch_size,
-        )
-        reporter.record_result(
-            "Aggregation Cursor Methods",
-            "allow_disk_use",
-            neo_allow_disk_use,
-            neo_allow_disk_use,
-            mongo_allow_disk_use,
-        )
+    reporter.record_comparison(
+        "Aggregation Cursor Methods",
+        "batch_size",
+        neo_agg_batch_size if neo_agg_batch_size else "FAIL",
+        mongo_agg_batch_size if mongo_agg_batch_size else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Aggregation Cursor Methods",
+        "allow_disk_use",
+        neo_allow_disk_use if neo_allow_disk_use else "FAIL",
+        mongo_allow_disk_use if mongo_allow_disk_use else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )

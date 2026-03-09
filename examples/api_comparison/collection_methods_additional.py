@@ -55,6 +55,7 @@ def compare_additional_collection_methods():
 
         # Test full_name property
         neo_collection_fullname = neo_conn.test_fullname
+        neo_full_name = None
         try:
             neo_full_name = neo_collection_fullname.full_name
             neo_full_name_ok = (
@@ -132,6 +133,7 @@ def compare_additional_collection_methods():
 
         # Test full_name property
         mongo_collection_fullname = mongo_db.test_fullname
+        mongo_full_name = None
         try:
             mongo_full_name = mongo_collection_fullname.full_name
             mongo_full_name_ok = (
@@ -163,37 +165,46 @@ def compare_additional_collection_methods():
 
         client.close()
 
-    reporter.record_result(
-        "Collection Methods", "drop", neo_drop, neo_drop, mongo_drop
+    reporter.record_comparison(
+        "Collection Methods",
+        "drop",
+        neo_drop if neo_drop else "FAIL",
+        mongo_drop if mongo_drop else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
-    reporter.record_result(
+    reporter.record_comparison(
         "Collection Methods",
         "database_property",
-        neo_db_ok,
-        neo_db_ok,
-        mongo_db_ok,
+        neo_db_ok if neo_db_ok else "FAIL",
+        mongo_db_ok if mongo_db_ok else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
     # watch() is implemented in NeoSQLite (SQLite triggers) but can't be compared
     # with MongoDB in this test because MongoDB requires a replica set
-    reporter.record_result(
+    reporter.record_comparison(
         "Collection Methods",
         "watch",
-        neo_watch,  # Implemented in NeoSQLite
-        "IMPLEMENTED (SQLite triggers)",
-        mongo_watch,
+        "IMPLEMENTED (SQLite triggers)" if neo_watch else "FAIL",
+        "IMPLEMENTED (replica set)" if mongo_watch else None,
         skip_reason="NeoSQLite: Implemented via SQLite triggers; MongoDB: Requires replica set (not available in standalone test)",
     )
-    reporter.record_result(
+    # Extract collection name from full_name (e.g., "memory.test_fullname" -> "test_fullname")
+    neo_coll_name = neo_full_name.split(".")[-1] if neo_full_name else None
+    mongo_coll_name = (
+        mongo_full_name.split(".")[-1] if mongo_full_name else None
+    )
+
+    reporter.record_comparison(
         "Collection Methods",
         "full_name",
-        neo_full_name_ok,
-        neo_full_name_ok,
-        mongo_full_name_ok,
+        neo_coll_name if neo_full_name_ok else "FAIL",
+        mongo_coll_name if mongo_full_name_ok else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
-    reporter.record_result(
+    reporter.record_comparison(
         "Collection Methods",
         "with_options",
-        neo_with_options,
-        neo_with_options,
-        mongo_with_options,
+        neo_with_options if neo_with_options else "FAIL",
+        mongo_with_options if mongo_with_options else None,
+        skip_reason="MongoDB not available" if not client else None,
     )

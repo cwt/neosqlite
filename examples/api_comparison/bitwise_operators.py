@@ -63,7 +63,7 @@ def compare_bitwise_operators():
         for query, op_name in operators:
             try:
                 result = list(neo_collection.find(query))
-                neo_results[op_name] = len(result)
+                neo_results[op_name] = result
                 print(f"Neo {op_name}: {len(result)} documents")
             except Exception as e:
                 neo_results[op_name] = f"Error: {e}"
@@ -71,7 +71,7 @@ def compare_bitwise_operators():
 
     client = test_pymongo_connection()
     mongo_collection = None
-    mongo_results = None
+    mongo_results = {}
 
     if client:
         mongo_db = client.test_database
@@ -89,36 +89,32 @@ def compare_bitwise_operators():
             ]
         )
 
-        mongo_results = {}
         for query, op_name in operators:
             try:
                 mongo_query = copy.deepcopy(query)
                 result = list(mongo_collection.find(mongo_query))
-                mongo_results[op_name] = len(result)
+                mongo_results[op_name] = result
                 print(f"Mongo {op_name}: {len(result)} documents")
             except Exception as e:
                 mongo_results[op_name] = f"Error: {e}"
                 print(f"Mongo {op_name}: Error - {e}")
 
         for op_name in neo_results:
-            neo_count = neo_results[op_name]
-            mongo_count = (
-                mongo_results.get(op_name, "N/A") if mongo_results else "N/A"
-            )
-            passed = (
-                neo_count == mongo_count
-                if not isinstance(neo_count, str)
-                and not isinstance(mongo_count, str)
-                else False
-            )
-            reporter.record_result(
-                "Bitwise Operators", op_name, passed, neo_count, mongo_count
+            reporter.record_comparison(
+                "Bitwise Operators",
+                op_name,
+                neo_results[op_name],
+                mongo_results.get(op_name),
+                skip_reason="MongoDB not available" if not client else None,
             )
         client.close()
     else:
-        # No MongoDB connection, just record NeoSQLite results
+        # MongoDB not available, record NeoSQLite results as skipped
         for op_name in neo_results:
-            neo_count = neo_results[op_name]
-            reporter.record_result(
-                "Bitwise Operators", op_name, False, neo_count, "N/A"
+            reporter.record_comparison(
+                "Bitwise Operators",
+                op_name,
+                neo_results[op_name],
+                None,
+                skip_reason="MongoDB not available",
             )

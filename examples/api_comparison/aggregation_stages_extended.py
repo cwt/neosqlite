@@ -195,31 +195,31 @@ def compare_additional_aggregation_stages_extended():
 
         client.close()
 
-        reporter.record_result(
-            "Aggregation Stages Extended",
-            "$replaceRoot",
-            neo_replaceroot,
-            neo_replaceroot,
-            mongo_replaceroot,
-        )
-        reporter.record_result(
-            "Aggregation Stages Extended",
-            "$replaceWith",
-            neo_replacewith,
-            neo_replacewith,
-            mongo_replacewith,
-        )
-        reporter.record_result(
-            "Aggregation Stages Extended",
-            "$unset",
-            neo_unset,
-            neo_unset,
-            mongo_unset,
-        )
-        reporter.record_result(
-            "Aggregation Stages Extended",
-            "$count",
-            neo_count,
-            neo_count,
-            mongo_count,
-        )
+    reporter.record_comparison(
+        "Aggregation Stages Extended",
+        "$replaceRoot",
+        neo_replaceroot if neo_replaceroot else "FAIL",
+        mongo_replaceroot if mongo_replaceroot else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Aggregation Stages Extended",
+        "$replaceWith",
+        neo_replacewith if neo_replacewith else "FAIL",
+        mongo_replacewith if mongo_replacewith else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Aggregation Stages Extended",
+        "$unset",
+        neo_unset if neo_unset else "FAIL",
+        mongo_unset if mongo_unset else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Aggregation Stages Extended",
+        "$count",
+        neo_count if neo_count else "FAIL",
+        mongo_count if mongo_count else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )

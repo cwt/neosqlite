@@ -142,32 +142,31 @@ def compare_update_modifiers():
 
         client.close()
 
-    # Record results
-    reporter.record_result(
+    reporter.record_comparison(
         "Update Modifiers",
         "$each",
-        neo_each and mongo_each,
-        neo_each,
-        mongo_each,
+        neo_each if neo_each else "FAIL",
+        mongo_each if mongo_each else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
-    reporter.record_result(
+    reporter.record_comparison(
         "Update Modifiers",
         "$position",
-        neo_position and mongo_position,
-        neo_position,
-        mongo_position,
+        neo_position if neo_position else "FAIL",
+        mongo_position if mongo_position else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
-    reporter.record_result(
+    reporter.record_comparison(
         "Update Modifiers",
         "$slice",
-        neo_slice and mongo_slice,
-        neo_slice,
-        mongo_slice,
+        neo_slice if neo_slice else "FAIL",
+        mongo_slice if mongo_slice else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
-    reporter.record_result(
+    reporter.record_comparison(
         "Update Modifiers",
         "$bit",
-        neo_bit_and and mongo_bit_and,
-        neo_bit_and,
-        mongo_bit_and,
+        neo_bit_and if neo_bit_and else "FAIL",
+        mongo_bit_and if mongo_bit_and else None,
+        skip_reason="MongoDB not available" if not client else None,
     )

@@ -207,43 +207,25 @@ def compare_pullall_operator():
         for test_name in neo_results:
             neo_result = neo_results[test_name]
             mongo_result = (
-                mongo_results.get(test_name, "N/A") if mongo_results else "N/A"
+                mongo_results.get(test_name) if mongo_results else None
             )
 
-            if isinstance(neo_result, dict) and isinstance(mongo_result, dict):
-                passed = (
-                    neo_result["modified"] == mongo_result["modified"]
-                    and neo_result["result"] == mongo_result["result"]
-                )
-                reporter.record_result(
-                    "Update Operators",
-                    f"$pullAll ({test_name})",
-                    passed,
-                    f"modified={neo_result['modified']}, result={neo_result['result']}",
-                    f"modified={mongo_result['modified']}, result={mongo_result['result']}",
-                )
-            else:
-                reporter.record_result(
-                    "Update Operators",
-                    f"$pullAll ({test_name})",
-                    False,
-                    neo_result,
-                    mongo_result,
-                )
+            reporter.record_comparison(
+                "Update Operators",
+                f"$pullAll ({test_name})",
+                neo_result,
+                mongo_result,
+                skip_reason="MongoDB not available" if not client else None,
+            )
 
         client.close()
     else:
-        # No MongoDB connection, just record NeoSQLite results
+        # MongoDB not available, record NeoSQLite results as skipped
         for test_name in neo_results:
-            neo_result = neo_results[test_name]
-            reporter.record_result(
+            reporter.record_comparison(
                 "Update Operators",
                 f"$pullAll ({test_name})",
-                False,
-                (
-                    neo_result
-                    if isinstance(neo_result, str)
-                    else f"modified={neo_result['modified']}, result={neo_result['result']}"
-                ),
-                "N/A",
+                neo_results[test_name],
+                None,
+                skip_reason="MongoDB not available",
             )

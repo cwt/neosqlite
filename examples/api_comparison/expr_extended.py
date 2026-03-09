@@ -357,51 +357,59 @@ def compare_additional_expr_operators_extended():
 
         client.close()
 
-        reporter.record_result(
-            "Expression Operators Extended", "$cmp", neo_cmp, neo_cmp, mongo_cmp
-        )
-        reporter.record_result(
-            "Expression Operators Extended", "$pow", neo_pow, neo_pow, mongo_pow
-        )
-        reporter.record_result(
-            "Expression Operators Extended",
-            "$sqrt",
-            neo_sqrt,
-            neo_sqrt,
-            mongo_sqrt,
-        )
-        reporter.record_result(
-            "Expression Operators Extended",
-            "$arrayElemAt",
-            neo_arrayelemat,
-            neo_arrayelemat,
-            mongo_arrayelemat,
-        )
-        reporter.record_result(
-            "Expression Operators Extended",
-            "$concat",
-            neo_concat,
-            neo_concat,
-            mongo_concat,
-        )
-        reporter.record_result(
-            "Expression Operators Extended",
-            "$objectToArray",
-            neo_objecttoarray,
-            neo_objecttoarray,
-            mongo_objecttoarray,
-        )
-        reporter.record_result(
-            "Expression Operators Extended",
-            "$switch",
-            neo_switch,
-            neo_switch,
-            mongo_switch,
-        )
-        reporter.record_result(
-            "Expression Operators Extended",
-            "$ifNull",
-            neo_ifnull,
-            neo_ifnull,
-            mongo_ifnull,
-        )
+    reporter.record_comparison(
+        "Expression Operators Extended",
+        "$cmp",
+        neo_cmp if neo_cmp else "FAIL",
+        mongo_cmp if mongo_cmp else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Expression Operators Extended",
+        "$pow",
+        neo_pow if neo_pow else "FAIL",
+        mongo_pow if mongo_pow else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Expression Operators Extended",
+        "$sqrt",
+        neo_sqrt if neo_sqrt else "FAIL",
+        mongo_sqrt if mongo_sqrt else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Expression Operators Extended",
+        "$arrayElemAt",
+        neo_arrayelemat if neo_arrayelemat else "FAIL",
+        mongo_arrayelemat if mongo_arrayelemat else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Expression Operators Extended",
+        "$concat",
+        neo_concat if neo_concat else "FAIL",
+        mongo_concat if mongo_concat else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Expression Operators Extended",
+        "$objectToArray",
+        neo_objecttoarray if neo_objecttoarray else "FAIL",
+        mongo_objecttoarray if mongo_objecttoarray else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Expression Operators Extended",
+        "$switch",
+        neo_switch if neo_switch else "FAIL",
+        mongo_switch if mongo_switch else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Expression Operators Extended",
+        "$ifNull",
+        neo_ifnull if neo_ifnull else "FAIL",
+        mongo_ifnull if mongo_ifnull else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )

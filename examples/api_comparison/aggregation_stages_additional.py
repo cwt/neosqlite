@@ -226,12 +226,24 @@ def compare_additional_aggregation_stages():
 
         client.close()
 
-    reporter.record_result(
-        "Aggregation Stages", "$sample", True, neo_sample, mongo_sample
+    reporter.record_comparison(
+        "Aggregation Stages",
+        "$sample",
+        neo_sample if not isinstance(neo_sample, str) else neo_sample,
+        mongo_sample if mongo_sample is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
-    reporter.record_result(
-        "Aggregation Stages", "$facet", neo_facet, neo_facet, mongo_facet
+    reporter.record_comparison(
+        "Aggregation Stages",
+        "$facet",
+        neo_facet if neo_facet else "FAIL",
+        mongo_facet if mongo_facet else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
-    reporter.record_result(
-        "Aggregation Stages", "$lookup", neo_lookup, neo_lookup, mongo_lookup
+    reporter.record_comparison(
+        "Aggregation Stages",
+        "$lookup",
+        neo_lookup if neo_lookup else "FAIL",
+        mongo_lookup if mongo_lookup else None,
+        skip_reason="MongoDB not available" if not client else None,
     )

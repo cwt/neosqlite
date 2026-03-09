@@ -76,25 +76,25 @@ def compare_objectid_operations():
         )
         client.close()
 
-    reporter.record_result("ObjectId", "create", True, "OK", "OK")
-    reporter.record_result(
+    reporter.record_comparison("ObjectId", "create", "OK", "OK")
+    reporter.record_comparison(
         "ObjectId",
         "find_by_id",
-        neo_found,
-        neo_found,
-        mongo_found if mongo_found is not None else None,
+        neo_found if neo_found else "FAIL",
+        mongo_found if mongo_found else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
-    reporter.record_result(
+    reporter.record_comparison(
         "ObjectId",
         "unique",
-        neo_unique,
-        neo_unique,
-        mongo_unique if mongo_unique is not None else None,
+        neo_unique if neo_unique else "FAIL",
+        mongo_unique if mongo_unique else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
-    reporter.record_result(
+    reporter.record_comparison(
         "ObjectId",
         "hex_format",
-        neo_hex,
-        neo_hex,
-        mongo_hex if mongo_hex is not None else None,
+        neo_hex if neo_hex else "FAIL",
+        mongo_hex if mongo_hex else None,
+        skip_reason="MongoDB not available" if not client else None,
     )

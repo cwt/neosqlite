@@ -305,28 +305,52 @@ def compare_array_operators():
 
         client.close()
 
-        reporter.record_result(
-            "Array Operators", "$first", neo_first, neo_first, mongo_first
+        reporter.record_comparison(
+            "Array Operators",
+            "$first",
+            neo_first if neo_first else "FAIL",
+            mongo_first if mongo_first else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
-            "Array Operators", "$last", neo_last, neo_last, mongo_last
+        reporter.record_comparison(
+            "Array Operators",
+            "$last",
+            neo_last if neo_last else "FAIL",
+            mongo_last if mongo_last else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
-            "Array Operators", "$filter", neo_filter, neo_filter, mongo_filter
+        reporter.record_comparison(
+            "Array Operators",
+            "$filter",
+            neo_filter if neo_filter else "FAIL",
+            mongo_filter if mongo_filter else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
-            "Array Operators", "$map", neo_map, neo_map, mongo_map
+        reporter.record_comparison(
+            "Array Operators",
+            "$map",
+            neo_map if neo_map else "FAIL",
+            mongo_map if mongo_map else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
-            "Array Operators", "$reduce", neo_reduce, neo_reduce, mongo_reduce
+        reporter.record_comparison(
+            "Array Operators",
+            "$reduce",
+            neo_reduce if neo_reduce else "FAIL",
+            mongo_reduce if mongo_reduce else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
-            "Array Operators", "$slice", neo_slice, neo_slice, mongo_slice
+        reporter.record_comparison(
+            "Array Operators",
+            "$slice",
+            neo_slice if neo_slice else "FAIL",
+            mongo_slice if mongo_slice else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Array Operators",
             "$indexOfArray",
-            neo_indexofarray,
-            neo_indexofarray,
-            mongo_indexofarray,
+            neo_indexofarray if neo_indexofarray else "FAIL",
+            mongo_indexofarray if mongo_indexofarray else None,
+            skip_reason="MongoDB not available" if not client else None,
         )

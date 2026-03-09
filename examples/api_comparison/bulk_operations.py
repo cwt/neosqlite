@@ -56,4 +56,4 @@ def compare_bulk_operations():
         )
         client.close()
 
-    reporter.record_result("Bulk Operations", "bulk_write", True, "OK", "OK")
+    reporter.record_comparison("Bulk Operations", "bulk_write", "OK", "OK")

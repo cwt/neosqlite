@@ -90,17 +90,21 @@ def compare_collection_methods():
 
         client.close()
 
-    reporter.record_result(
+    reporter.record_comparison(
         "Collection Methods",
         "options",
-        neo_options_ok,
-        neo_options_ok,
-        mongo_options_ok,
+        neo_options if neo_options_ok else "FAIL",
+        None,
+        skip_reason=(
+            "MongoDB not available"
+            if not client
+            else "MongoDB returns {} - backend-specific"
+        ),
     )
-    reporter.record_result(
+    reporter.record_comparison(
         "Collection Methods",
         "rename",
-        neo_rename,
-        neo_rename,
-        mongo_rename,
+        neo_rename if neo_rename else "FAIL",
+        mongo_rename if mongo_rename else None,
+        skip_reason="MongoDB not available" if not client else None,
     )

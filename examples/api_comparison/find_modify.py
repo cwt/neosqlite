@@ -80,16 +80,24 @@ def compare_find_and_modify():
         )
         client.close()
 
-    reporter.record_result(
-        "Find and Modify", "find_one_and_delete", neo_foad, neo_foad, mongo_foad
+    reporter.record_comparison(
+        "Find and Modify",
+        "find_one_and_delete",
+        neo_foad if neo_foad else "FAIL",
+        mongo_foad if mongo_foad else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
-    reporter.record_result(
+    reporter.record_comparison(
         "Find and Modify",
         "find_one_and_replace",
-        neo_foar,
-        neo_foar,
-        mongo_foar,
+        neo_foar if neo_foar else "FAIL",
+        mongo_foar if mongo_foar else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
-    reporter.record_result(
-        "Find and Modify", "find_one_and_update", neo_foau, neo_foau, mongo_foau
+    reporter.record_comparison(
+        "Find and Modify",
+        "find_one_and_update",
+        neo_foau if neo_foau else "FAIL",
+        mongo_foau if mongo_foau else None,
+        skip_reason="MongoDB not available" if not client else None,
     )

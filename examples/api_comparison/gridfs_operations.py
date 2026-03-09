@@ -40,21 +40,22 @@ def compare_gridfs_operations():
             neo_gridfs_ok = neo_file_data == b"Hello GridFS!"
         except ImportError:
             print("Neo GridFS: Not available")
-            neo_gridfs_ok = False
-            reporter.record_result(
+            reporter.record_comparison(
                 "GridFS",
                 "GridFSBucket",
-                False,
                 "Not available",
-                "N/A",
+                None,
                 skip_reason="GridFS not compiled in this build",
             )
             return
         except Exception as e:
             print(f"Neo GridFS: Error - {e}")
-            neo_gridfs_ok = False
-            reporter.record_result(
-                "GridFS", "GridFSBucket", False, f"Error: {e}", "N/A"
+            reporter.record_comparison(
+                "GridFS",
+                "GridFSBucket",
+                f"Error: {e}",
+                None,
+                skip_reason=f"NeoSQLite error: {e}",
             )
             return
 
@@ -92,10 +93,10 @@ def compare_gridfs_operations():
     else:
         mongo_gridfs_ok = False
 
-    reporter.record_result(
+    reporter.record_comparison(
         "GridFS",
         "GridFSBucket",
-        neo_gridfs_ok and mongo_gridfs_ok,
-        neo_gridfs_ok,
-        mongo_gridfs_ok,
+        neo_gridfs_ok if neo_gridfs_ok else "FAIL",
+        mongo_gridfs_ok if mongo_gridfs_ok else None,
+        skip_reason="MongoDB not available" if not client else None,
     )

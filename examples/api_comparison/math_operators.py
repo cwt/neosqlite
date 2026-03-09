@@ -386,58 +386,94 @@ def compare_math_operators():
 
         client.close()
 
-        reporter.record_result(
-            "Math Operators", "$pow", neo_pow, neo_pow, mongo_pow
+        reporter.record_comparison(
+            "Math Operators",
+            "$pow",
+            neo_pow if neo_pow else "FAIL",
+            mongo_pow if mongo_pow else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
-            "Math Operators", "$sqrt", neo_sqrt, neo_sqrt, mongo_sqrt
+        reporter.record_comparison(
+            "Math Operators",
+            "$sqrt",
+            neo_sqrt if neo_sqrt else "FAIL",
+            mongo_sqrt if mongo_sqrt else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
-            "Math Operators", "$asin", neo_asin, neo_asin, mongo_asin
+        reporter.record_comparison(
+            "Math Operators",
+            "$asin",
+            neo_asin if neo_asin else "FAIL",
+            mongo_asin if mongo_asin else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
-            "Math Operators", "$acos", neo_acos, neo_acos, mongo_acos
+        reporter.record_comparison(
+            "Math Operators",
+            "$acos",
+            neo_acos if neo_acos else "FAIL",
+            mongo_acos if mongo_acos else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Math Operators",
             "$log2 (NeoSQLite extension)",
-            neo_log2,
-            neo_log2,
-            False,
+            neo_log2 if neo_log2 else "FAIL",
+            None,
+            skip_reason="NeoSQLite extension only",
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Math Operators",
             "$sigmoid",
-            neo_sigmoid,
-            neo_sigmoid,
-            mongo_sigmoid,
+            neo_sigmoid if neo_sigmoid else "FAIL",
+            mongo_sigmoid if mongo_sigmoid else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
-            "Math Operators", "$atan", neo_atan, neo_atan, mongo_atan
+        reporter.record_comparison(
+            "Math Operators",
+            "$atan",
+            neo_atan if neo_atan else "FAIL",
+            mongo_atan if mongo_atan else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
-            "Math Operators", "$exp", neo_exp, neo_exp, mongo_exp
+        reporter.record_comparison(
+            "Math Operators",
+            "$exp",
+            neo_exp if neo_exp else "FAIL",
+            mongo_exp if mongo_exp else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
-            "Math Operators", "$asinh", neo_asinh, neo_asinh, mongo_asinh
+        reporter.record_comparison(
+            "Math Operators",
+            "$asinh",
+            neo_asinh if neo_asinh else "FAIL",
+            mongo_asinh if mongo_asinh else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
-            "Math Operators", "$acosh", neo_acosh, neo_acosh, mongo_acosh
+        reporter.record_comparison(
+            "Math Operators",
+            "$acosh",
+            neo_acosh if neo_acosh else "FAIL",
+            mongo_acosh if mongo_acosh else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
-            "Math Operators", "$atanh", neo_atanh, neo_atanh, mongo_atanh
+        reporter.record_comparison(
+            "Math Operators",
+            "$atanh",
+            neo_atanh if neo_atanh else "FAIL",
+            mongo_atanh if mongo_atanh else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Math Operators",
             "$degreesToRadians",
-            neo_degstorad,
-            neo_degstorad,
-            mongo_degstorad,
+            neo_degstorad if neo_degstorad else "FAIL",
+            mongo_degstorad if mongo_degstorad else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Math Operators",
             "$radiansToDegrees",
-            neo_radtodeg,
-            neo_radtodeg,
-            mongo_radtodeg,
+            neo_radtodeg if neo_radtodeg else "FAIL",
+            mongo_radtodeg if mongo_radtodeg else None,
+            skip_reason="MongoDB not available" if not client else None,
         )

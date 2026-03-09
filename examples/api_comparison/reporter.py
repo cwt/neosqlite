@@ -173,6 +173,7 @@ class CompatibilityReporter:
             skip_reason: Reason for skipping test (if MongoDB not available)
         """
         if mongo_results is None and skip_reason:
+            self.total_tests += 1
             self.skipped_tests.append(
                 {
                     "category": category,

@@ -457,34 +457,22 @@ def compare_new_operators():
 
         # Compare results
         for op_name in neo_results:
-            neo_result = neo_results[op_name]
-            mongo_result = (
-                mongo_results.get(op_name, "N/A") if mongo_results else "N/A"
-            )
-
-            # Compare results (handle different types)
-            if isinstance(neo_result, list) and isinstance(mongo_result, list):
-                passed = (
-                    set(neo_result) == set(mongo_result)
-                    if neo_result and mongo_result
-                    else neo_result == mongo_result
-                )
-            elif isinstance(neo_result, dict) and isinstance(
-                mongo_result, dict
-            ):
-                passed = neo_result == mongo_result
-            else:
-                passed = neo_result == mongo_result
-
-            reporter.record_result(
-                "New Operators", op_name, passed, neo_result, mongo_result
+            reporter.record_comparison(
+                "New Operators",
+                op_name,
+                neo_results[op_name],
+                mongo_results.get(op_name) if mongo_results else None,
+                skip_reason="MongoDB not available" if not client else None,
             )
 
         client.close()
     else:
-        # No MongoDB connection, just record NeoSQLite results
+        # MongoDB not available, record NeoSQLite results as skipped
         for op_name in neo_results:
-            neo_result = neo_results[op_name]
-            reporter.record_result(
-                "New Operators", op_name, False, neo_result, "N/A"
+            reporter.record_comparison(
+                "New Operators",
+                op_name,
+                neo_results[op_name],
+                None,
+                skip_reason="MongoDB not available",
             )

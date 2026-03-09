@@ -60,20 +60,14 @@ def compare_raw_batch_operations():
             print(f"Mongo find_raw_batches: Error - {e}")
         client.close()
 
-    passed = (
-        neo_raw_batches == mongo_raw_batches
-        if mongo_raw_batches is not None
-        else (
-            False
-            if not isinstance(neo_raw_batches, str)
-            and not isinstance(mongo_raw_batches, str)
-            else False
-        )
-    )
-    reporter.record_result(
+    reporter.record_comparison(
         "Raw Batch Operations",
         "find_raw_batches",
-        passed,
-        neo_raw_batches,
+        (
+            neo_raw_batches
+            if not isinstance(neo_raw_batches, str)
+            else neo_raw_batches
+        ),
         mongo_raw_batches if mongo_raw_batches is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
     )

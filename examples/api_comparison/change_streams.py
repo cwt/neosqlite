@@ -55,10 +55,9 @@ def compare_change_streams():
         client.close()
 
     # Skip this test as it requires different infrastructure
-    reporter.record_result(
+    reporter.record_comparison(
         "Change Streams",
         "watch",
-        True,
         "OK",
         "OK",
         skip_reason="Requires MongoDB replica set; NeoSQLite uses SQLite triggers",

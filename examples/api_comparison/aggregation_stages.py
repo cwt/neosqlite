@@ -6,7 +6,7 @@ from neosqlite import DESCENDING
 import neosqlite
 
 from .reporter import reporter
-from .utils import test_pymongo_connection, compare_results
+from .utils import test_pymongo_connection
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -163,30 +163,22 @@ def compare_aggregation_stages():
         ]
 
         neo_results = {}
-        neo_raw_results = {}
         for pipeline, op_name in pipelines:
             try:
                 result = list(neo_collection.aggregate(pipeline))
-                neo_raw_results[op_name] = result
-                neo_results[op_name] = len(result)
+                neo_results[op_name] = result
                 print(f"Neo {op_name}: {len(result)}")
             except Exception as e:
                 neo_results[op_name] = f"Error: {e}"
-                neo_raw_results[op_name] = None
                 print(f"Neo {op_name}: Error - {e}")
 
     client = test_pymongo_connection()
-    # Initialize MongoDB result variables
 
     mongo_collection = None
 
-    mongo_count = None
-
     mongo_db = None
 
-    mongo_results = None
-
-    mongo_raw_results = {}
+    mongo_results = {}
 
     if client:
         mongo_db = client.test_database
@@ -232,49 +224,31 @@ def compare_aggregation_stages():
             ]
         )
 
-        mongo_results = {}
         for pipeline, op_name in pipelines:
             try:
                 result = list(mongo_collection.aggregate(pipeline))
-                mongo_raw_results[op_name] = result
-                mongo_results[op_name] = len(result)
+                mongo_results[op_name] = result
                 print(f"Mongo {op_name}: {len(result)}")
             except Exception as e:
                 mongo_results[op_name] = f"Error: {e}"
-                mongo_raw_results[op_name] = None
                 print(f"Mongo {op_name}: Error - {e}")
 
         for op_name in neo_results:
-            neo_count = neo_results[op_name]
-            mongo_count = mongo_results.get(op_name, "N/A")
-
-            # Check for errors
-            if isinstance(neo_count, str) or isinstance(mongo_count, str):
-                passed = False
-                error_msg = (
-                    f"Error occurred: Neo={neo_count}, Mongo={mongo_count}"
-                )
-            elif (
-                neo_raw_results[op_name] is None
-                or mongo_raw_results[op_name] is None
-            ):
-                passed = False
-                error_msg = "Results are None"
-            else:
-                # Compare full results (not just counts)
-                passed, error_msg = compare_results(
-                    neo_raw_results[op_name],
-                    mongo_raw_results[op_name],
-                    ignore_order=True,  # Allow different ordering
-                )
-
-            reporter.record_result(
+            reporter.record_comparison(
                 "Aggregation Stages",
                 op_name,
-                passed,
-                neo_count if not passed else neo_raw_results[op_name],
-                mongo_count if not passed else mongo_raw_results[op_name],
-                error_msg if not passed else None,
-                show_results=True,  # Show JSON results for passed tests
+                neo_results[op_name],
+                mongo_results.get(op_name),
+                skip_reason="MongoDB not available" if not client else None,
             )
         client.close()
+    else:
+        # MongoDB not available, record NeoSQLite results as skipped
+        for op_name in neo_results:
+            reporter.record_comparison(
+                "Aggregation Stages",
+                op_name,
+                neo_results[op_name],
+                None,
+                skip_reason="MongoDB not available",
+            )

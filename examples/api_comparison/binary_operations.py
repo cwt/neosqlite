@@ -135,39 +135,36 @@ def compare_binary_support():
 
         client.close()
 
-    reporter.record_result(
+    reporter.record_comparison(
         "Binary Support",
         "Binary",
-        neo_has_binary,
-        neo_has_binary,
-        mongo_has_binary if mongo_has_binary is not None else None,
+        neo_has_binary if neo_has_binary else "FAIL",
+        mongo_has_binary if mongo_has_binary else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
-    reporter.record_result(
+    reporter.record_comparison(
         "Binary Support",
         "from_uuid",
-        neo_from_uuid,
         neo_from_uuid if neo_from_uuid else "NOT IMPLEMENTED",
-        mongo_from_uuid,
+        mongo_from_uuid if mongo_from_uuid else None,
         skip_reason=(
             "Not yet implemented in NeoSQLite" if not neo_from_uuid else None
         ),
     )
-    reporter.record_result(
+    reporter.record_comparison(
         "Binary Support",
         "as_uuid",
-        neo_as_uuid,
         neo_as_uuid if neo_as_uuid else "NOT IMPLEMENTED",
-        mongo_as_uuid,
+        mongo_as_uuid if mongo_as_uuid else None,
         skip_reason=(
             "Not yet implemented in NeoSQLite" if not neo_as_uuid else None
         ),
     )
-    reporter.record_result(
+    reporter.record_comparison(
         "Binary Support",
         "subtypes",
-        neo_subtypes,
         neo_subtypes if neo_subtypes else "NOT IMPLEMENTED",
-        mongo_subtypes,
+        mongo_subtypes if mongo_subtypes else None,
         skip_reason=(
             "Not yet implemented in NeoSQLite" if not neo_subtypes else None
         ),

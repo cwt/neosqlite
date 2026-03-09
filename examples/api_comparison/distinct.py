@@ -52,15 +52,10 @@ def compare_distinct():
         print(f"Mongo distinct: {sorted(mongo_distinct)}")
         client.close()
 
-    passed = (
-        set(neo_distinct) == set(mongo_distinct)
-        if mongo_distinct is not None
-        else False if mongo_distinct is not None else False
-    )
-    reporter.record_result(
+    reporter.record_comparison(
         "Distinct",
         "distinct",
-        passed,
         sorted(neo_distinct),
         sorted(mongo_distinct) if mongo_distinct is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
     )

@@ -67,10 +67,10 @@ def compare_reindex_operation():
 
         client.close()
 
-        reporter.record_result(
-            "Reindex Operation",
-            "reindex",
-            neo_reindex_ok,
-            neo_reindex_ok,
-            mongo_reindex_ok,
-        )
+    reporter.record_comparison(
+        "Reindex Operation",
+        "reindex",
+        neo_reindex_ok if neo_reindex_ok else "FAIL",
+        mongo_reindex_ok if mongo_reindex_ok else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )

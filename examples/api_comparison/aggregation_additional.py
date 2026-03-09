@@ -213,66 +213,43 @@ def compare_additional_aggregation():
 
         client.close()
 
-    if not isinstance(neo_unwind, str) and not isinstance(mongo_unwind, str):
-        reporter.record_result(
-            "Additional Aggregation",
-            "$unwind",
-            neo_unwind == mongo_unwind if mongo_unwind is not None else False,
-            neo_unwind,
-            mongo_unwind,
-        )
-    else:
-        reporter.record_result(
-            "Additional Aggregation", "$unwind", False, neo_unwind, mongo_unwind
-        )
+    reporter.record_comparison(
+        "Additional Aggregation",
+        "$unwind",
+        neo_unwind if not isinstance(neo_unwind, str) else neo_unwind,
+        mongo_unwind if mongo_unwind is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
 
     # Report $unwind advanced options
-    if not isinstance(neo_unwind_advanced, str) and not isinstance(
-        mongo_unwind_advanced, str
-    ):
-        # Compare document counts (main functionality)
-        passed = neo_unwind_advanced == mongo_unwind_advanced
-        # Note: MongoDB removes the unwound field for preserved documents,
-        # while NeoSQLite keeps it as null/empty. This is a minor difference.
-        reporter.record_result(
-            "Additional Aggregation",
-            "$unwind (advanced)",
-            passed,
-            neo_unwind_advanced if passed else neo_unwind_advanced_result,
-            mongo_unwind_advanced if passed else mongo_unwind_advanced_result,
-            (
-                None
-                if passed
-                else "Document count matches, field structure differs slightly"
-            ),
-            show_results=False,
-        )
-    else:
-        reporter.record_result(
-            "Additional Aggregation",
-            "$unwind (advanced)",
-            False,
-            neo_unwind_advanced,
-            mongo_unwind_advanced,
-        )
+    reporter.record_comparison(
+        "Additional Aggregation",
+        "$unwind (advanced)",
+        (
+            neo_unwind_advanced_result
+            if neo_unwind_advanced_result
+            else neo_unwind_advanced
+        ),
+        (
+            mongo_unwind_advanced_result
+            if mongo_unwind_advanced_result
+            else mongo_unwind_advanced
+        ),
+        skip_reason="MongoDB not available" if not client else None,
+    )
 
-    if not isinstance(neo_push, str) and not isinstance(mongo_push, str):
-        reporter.record_result(
-            "Additional Aggregation", "$group $push", True, neo_push, mongo_push
-        )
-    else:
-        reporter.record_result(
-            "Additional Aggregation",
-            "$group $push",
-            False,
-            neo_push,
-            mongo_push,
-        )
+    reporter.record_comparison(
+        "Additional Aggregation",
+        "$group $push",
+        neo_push_result if neo_push_result else neo_push,
+        mongo_push_result if mongo_push_result else mongo_push,
+        skip_reason="MongoDB not available" if not client else None,
+    )
 
-    reporter.record_result(
+    reporter.record_comparison(
         "Additional Aggregation",
         "$switch",
-        neo_switch if neo_switch is not None else False,
-        neo_switch,
-        mongo_switch,
+        neo_switch_result if neo_switch_result else neo_switch,
+        mongo_switch_result if mongo_switch_result else mongo_switch,
+        skip_reason="MongoDB not available" if not client else None,
     )

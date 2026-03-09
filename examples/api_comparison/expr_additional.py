@@ -297,31 +297,31 @@ def compare_additional_expr_operators():
 
         client.close()
 
-    reporter.record_result(
+    reporter.record_comparison(
         "Aggregation Expressions",
         "$arrayElemAt",
-        neo_arrayelemat,
-        neo_arrayelemat,
-        mongo_arrayelemat,
+        neo_arrayelemat if neo_arrayelemat else "FAIL",
+        mongo_arrayelemat if mongo_arrayelemat else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
-    reporter.record_result(
+    reporter.record_comparison(
         "Aggregation Expressions",
         "$concat",
-        neo_concat,
-        neo_concat,
-        mongo_concat,
+        neo_concat if neo_concat else "FAIL",
+        mongo_concat if mongo_concat else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
-    reporter.record_result(
+    reporter.record_comparison(
         "Aggregation Expressions",
         "$objectToArray",
-        neo_objecttoarray,
-        neo_objecttoarray,
-        mongo_objecttoarray,
+        neo_objecttoarray if neo_objecttoarray else "FAIL",
+        mongo_objecttoarray if mongo_objecttoarray else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
-    reporter.record_result(
+    reporter.record_comparison(
         "Aggregation Expressions",
         "$switch",
-        neo_switch,
-        neo_switch,
-        mongo_switch,
+        neo_switch if neo_switch else "FAIL",
+        mongo_switch if mongo_switch else None,
+        skip_reason="MongoDB not available" if not client else None,
     )

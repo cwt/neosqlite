@@ -255,60 +255,60 @@ def compare_database_methods():
 
         client.close()
 
-        reporter.record_result(
-            "Database Methods",
-            "get_collection",
-            neo_get_collection,
-            neo_get_collection,
-            mongo_get_collection,
-        )
-        reporter.record_result(
-            "Database Methods",
-            "create_collection",
-            neo_create_collection,
-            neo_create_collection,
-            mongo_create_collection,
-        )
-        reporter.record_result(
-            "Database Methods",
-            "list_collection_names",
-            neo_list_collections,
-            neo_list_collections,
-            mongo_list_collections,
-        )
-        reporter.record_result(
-            "Database Methods",
-            "drop_collection",
-            neo_drop_collection,
-            neo_drop_collection,
-            mongo_drop_collection,
-        )
-        # Note: MongoDB uses collection.rename() instead of db.rename_collection()
-        reporter.record_result(
-            "Database Methods",
-            "rename_collection",
-            neo_rename_collection,
-            neo_rename_collection,
-            mongo_rename_collection,
-        )
-        reporter.record_result(
-            "Database Methods",
-            "command_ping",
-            neo_ping_ok,
-            neo_ping_ok,
-            mongo_ping_ok,
-        )
-        reporter.record_result(
-            "Database Methods",
-            "command_server_status",
-            neo_server_status_ok,
-            neo_server_status_ok,
-            mongo_server_status_ok,
-        )
-        reporter.record_result(
-            "Database Methods",
-            "with_options",
-            neo_with_options,
-            neo_with_options,
-            mongo_with_options,
-        )
+    reporter.record_comparison(
+        "Database Methods",
+        "get_collection",
+        neo_get_collection if neo_get_collection else "FAIL",
+        mongo_get_collection if mongo_get_collection else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Database Methods",
+        "create_collection",
+        neo_create_collection if neo_create_collection else "FAIL",
+        mongo_create_collection if mongo_create_collection else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Database Methods",
+        "list_collection_names",
+        neo_list_collections if neo_list_collections else "FAIL",
+        mongo_list_collections if mongo_list_collections else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Database Methods",
+        "drop_collection",
+        neo_drop_collection if neo_drop_collection else "FAIL",
+        mongo_drop_collection if mongo_drop_collection else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    # Note: MongoDB uses collection.rename() instead of db.rename_collection()
+    reporter.record_comparison(
+        "Database Methods",
+        "rename_collection",
+        neo_rename_collection if neo_rename_collection else "FAIL",
+        mongo_rename_collection if mongo_rename_collection else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Database Methods",
+        "command_ping",
+        neo_ping_ok if neo_ping_ok else "FAIL",
+        mongo_ping_ok if mongo_ping_ok else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Database Methods",
+        "command_server_status",
+        neo_server_status_ok if neo_server_status_ok else "FAIL",
+        mongo_server_status_ok if mongo_server_status_ok else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Database Methods",
+        "with_options",
+        neo_with_options if neo_with_options else "FAIL",
+        mongo_with_options if mongo_with_options else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )

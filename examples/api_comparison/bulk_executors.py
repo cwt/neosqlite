@@ -15,6 +15,9 @@ def compare_bulk_operation_executors():
     """Compare bulk operation executor methods"""
     print("\n=== Bulk Operation Executors Comparison ===")
 
+    neo_ordered_ok = False
+    neo_unordered_ok = False
+
     with neosqlite.Connection(":memory:") as neo_conn:
         neo_collection = neo_conn.test_bulk_exec
         neo_collection.insert_many(
@@ -39,7 +42,6 @@ def compare_bulk_operation_executors():
                 f"Neo initialize_ordered_bulk_op: OK (matched={neo_ordered_result.matched_count})"
             )
         except Exception as e:
-            neo_ordered_ok = False
             print(f"Neo initialize_ordered_bulk_op: Error - {e}")
 
         # Test initialize_unordered_bulk_op with add() method
@@ -55,13 +57,15 @@ def compare_bulk_operation_executors():
                 f"Neo initialize_unordered_bulk_op: OK (matched={neo_unordered_result.matched_count})"
             )
         except Exception as e:
-            neo_unordered_ok = False
             print(f"Neo initialize_unordered_bulk_op: Error - {e}")
 
-    # Note: PyMongo removed initialize_ordered_bulk_op/initialize_unordered_bulk_op in favor of bulk_write()
-    # We test with the NeoSQLite API which follows the older pattern
+    # Note: The old initialize_ordered_bulk_op/initialize_unordered_bulk_op API
+    # was deprecated in PyMongo 3.5 and completely removed in PyMongo 4.x.
+    # Use bulk_write() instead. We skip this test since NeoSQLite supports
+    # the old API for backward compatibility but PyMongo doesn't.
     print(
-        "Mongo: Methods not available in modern PyMongo (use bulk_write instead)"
+        "Mongo: initialize_ordered_bulk_op/initialize_unordered_bulk_op "
+        "removed in PyMongo 4.x (use bulk_write instead)"
     )
 
     reporter.record_result(
@@ -69,12 +73,14 @@ def compare_bulk_operation_executors():
         "initialize_ordered_bulk_op",
         neo_ordered_ok,
         neo_ordered_ok,
-        "N/A (removed in modern PyMongo)",
+        None,
+        skip_reason="Deprecated/removed in PyMongo 4.x (use bulk_write)",
     )
     reporter.record_result(
         "Bulk Operation Executors",
         "initialize_unordered_bulk_op",
         neo_unordered_ok,
         neo_unordered_ok,
-        "N/A (removed in modern PyMongo)",
+        None,
+        skip_reason="Deprecated/removed in PyMongo 4.x (use bulk_write)",
     )

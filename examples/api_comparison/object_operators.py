@@ -279,38 +279,38 @@ def compare_object_operators():
 
         client.close()
 
-        reporter.record_result(
+        reporter.record_comparison(
             "Object Operators",
             "$mergeObjects",
-            neo_mergeobjects,
-            neo_mergeobjects,
-            mongo_mergeobjects,
+            neo_mergeobjects if neo_mergeobjects else "FAIL",
+            mongo_mergeobjects if mongo_mergeobjects else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Object Operators",
             "$getField",
-            neo_getfield,
-            neo_getfield,
-            mongo_getfield,
+            neo_getfield if neo_getfield else "FAIL",
+            mongo_getfield if mongo_getfield else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Object Operators",
             "$setField",
-            neo_setfield,
-            neo_setfield,
-            mongo_setfield,
+            neo_setfield if neo_setfield else "FAIL",
+            mongo_setfield if mongo_setfield else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Object Operators",
             "$unsetField",
-            neo_unsetfield,
-            neo_unsetfield,
-            mongo_unsetfield,
+            neo_unsetfield if neo_unsetfield else "FAIL",
+            mongo_unsetfield if mongo_unsetfield else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Object Operators",
             "$objectToArray",
-            neo_objecttoarray,
-            neo_objecttoarray,
-            mongo_objecttoarray,
+            neo_objecttoarray if neo_objecttoarray else "FAIL",
+            mongo_objecttoarray if mongo_objecttoarray else None,
+            skip_reason="MongoDB not available" if not client else None,
         )

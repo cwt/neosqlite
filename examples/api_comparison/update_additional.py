@@ -230,26 +230,38 @@ def compare_additional_update_operators():
 
         client.close()
 
-    reporter.record_result(
-        "Update Operators", "$push", neo_push, neo_push, mongo_push
+    reporter.record_comparison(
+        "Update Operators",
+        "$push",
+        neo_push if neo_push else neo_push,
+        mongo_push if mongo_push else mongo_push,
+        skip_reason="MongoDB not available" if not client else None,
     )
-    reporter.record_result(
+    reporter.record_comparison(
         "Update Operators",
         "$addToSet",
-        neo_addtoset,
-        neo_addtoset,
-        mongo_addtoset,
+        neo_addtoset if neo_addtoset else neo_addtoset,
+        mongo_addtoset if mongo_addtoset else mongo_addtoset,
+        skip_reason="MongoDB not available" if not client else None,
     )
-    reporter.record_result(
-        "Update Operators", "$pull", neo_pull, neo_pull, mongo_pull
+    reporter.record_comparison(
+        "Update Operators",
+        "$pull",
+        neo_pull if neo_pull else neo_pull,
+        mongo_pull if mongo_pull else mongo_pull,
+        skip_reason="MongoDB not available" if not client else None,
     )
-    reporter.record_result(
-        "Update Operators", "$pop", neo_pop, neo_pop, mongo_pop
+    reporter.record_comparison(
+        "Update Operators",
+        "$pop",
+        neo_pop if neo_pop else neo_pop,
+        mongo_pop if mongo_pop else mongo_pop,
+        skip_reason="MongoDB not available" if not client else None,
     )
-    reporter.record_result(
+    reporter.record_comparison(
         "Update Operators",
         "$currentDate",
-        neo_currentdate,
-        neo_currentdate,
-        mongo_currentdate,
+        neo_currentdate if neo_currentdate else neo_currentdate,
+        mongo_currentdate if mongo_currentdate else mongo_currentdate,
+        skip_reason="MongoDB not available" if not client else None,
     )

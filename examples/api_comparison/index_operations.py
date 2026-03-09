@@ -72,7 +72,7 @@ def compare_index_operations():
         "drop_index",
         "drop_indexes",
     ]:
-        reporter.record_result("Index Operations", op, True, "OK", "OK")
+        reporter.record_comparison("Index Operations", op, "OK", "OK")
 
 
 # Import needed for PyMongo comparison

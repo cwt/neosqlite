@@ -92,20 +92,14 @@ def compare_text_search():
             print(f"Mongo text search: Error - {e}")
         client.close()
 
-    passed = (
-        neo_text_search == mongo_text_search
-        if mongo_text_search is not None
-        else (
-            False
-            if not isinstance(neo_text_search, str)
-            and not isinstance(mongo_text_search, str)
-            else False
-        )
-    )
-    reporter.record_result(
+    reporter.record_comparison(
         "Text Search",
         "regex_search",
-        passed,
-        neo_text_search,
+        (
+            neo_text_search
+            if not isinstance(neo_text_search, str)
+            else neo_text_search
+        ),
         mongo_text_search if mongo_text_search is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
     )

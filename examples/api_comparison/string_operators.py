@@ -457,60 +457,80 @@ def compare_string_operators():
 
         client.close()
 
-        reporter.record_result(
-            "String Operators", "$substr", neo_substr, neo_substr, mongo_substr
+        reporter.record_comparison(
+            "String Operators",
+            "$substr",
+            neo_substr if neo_substr else "FAIL",
+            mongo_substr if mongo_substr else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
-            "String Operators", "$trim", neo_trim, neo_trim, mongo_trim
+        reporter.record_comparison(
+            "String Operators",
+            "$trim",
+            neo_trim if neo_trim else "FAIL",
+            mongo_trim if mongo_trim else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
-            "String Operators", "$split", neo_split, neo_split, mongo_split
+        reporter.record_comparison(
+            "String Operators",
+            "$split",
+            neo_split if neo_split else "FAIL",
+            mongo_split if mongo_split else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "String Operators",
             "$replaceAll",
-            neo_replaceall,
-            neo_replaceall,
-            mongo_replaceall,
+            neo_replaceall if neo_replaceall else "FAIL",
+            mongo_replaceall if mongo_replaceall else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
-            "String Operators", "$ltrim", neo_ltrim, neo_ltrim, mongo_ltrim
+        reporter.record_comparison(
+            "String Operators",
+            "$ltrim",
+            neo_ltrim if neo_ltrim else "FAIL",
+            mongo_ltrim if mongo_ltrim else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
-            "String Operators", "$rtrim", neo_rtrim, neo_rtrim, mongo_rtrim
+        reporter.record_comparison(
+            "String Operators",
+            "$rtrim",
+            neo_rtrim if neo_rtrim else "FAIL",
+            mongo_rtrim if mongo_rtrim else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "String Operators",
             "$strLenCP",
-            neo_strlencp,
-            neo_strlencp,
-            mongo_strlencp,
+            neo_strlencp if neo_strlencp else "FAIL",
+            mongo_strlencp if mongo_strlencp else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "String Operators",
             "$regexFind",
-            neo_regexfind,
-            neo_regexfind,
-            mongo_regexfind,
+            neo_regexfind if neo_regexfind else "FAIL",
+            mongo_regexfind if mongo_regexfind else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "String Operators",
             "$replaceOne",
-            neo_replaceone,
-            neo_replaceone,
-            mongo_replaceone,
+            neo_replaceone if neo_replaceone else "FAIL",
+            mongo_replaceone if mongo_replaceone else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "String Operators",
             "$indexOfCP",
-            neo_indexofcp,
-            neo_indexofcp,
-            mongo_indexofcp,
+            neo_indexofcp if neo_indexofcp else "FAIL",
+            mongo_indexofcp if mongo_indexofcp else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "String Operators",
             "$regexFindAll",
-            neo_regexfindall,
-            neo_regexfindall,
-            mongo_regexfindall,
+            neo_regexfindall if neo_regexfindall else "FAIL",
+            mongo_regexfindall if mongo_regexfindall else None,
+            skip_reason="MongoDB not available" if not client else None,
         )

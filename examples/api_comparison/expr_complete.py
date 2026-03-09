@@ -1200,192 +1200,199 @@ def compare_additional_expr_operators_complete():
         client.close()
 
         # Record results
-        reporter.record_result(
-            "Additional $expr Operators", "$map", neo_map, neo_map, mongo_map
+        reporter.record_comparison(
+            "Additional $expr Operators",
+            "$map",
+            neo_map if neo_map else "FAIL",
+            mongo_map if mongo_map else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Additional $expr Operators",
             "$reduce",
-            neo_reduce,
-            neo_reduce,
-            mongo_reduce,
+            neo_reduce if neo_reduce else "FAIL",
+            mongo_reduce if mongo_reduce else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Additional $expr Operators",
             "$indexOfArray",
-            neo_indexofarray,
-            neo_indexofarray,
-            mongo_indexofarray,
+            neo_indexofarray if neo_indexofarray else "FAIL",
+            mongo_indexofarray if mongo_indexofarray else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Additional $expr Operators",
             "$setEquals",
-            neo_setequals,
-            neo_setequals,
-            mongo_setequals,
+            neo_setequals if neo_setequals else "FAIL",
+            mongo_setequals if mongo_setequals else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Additional $expr Operators",
             "$setIntersection",
-            neo_setintersection,
-            neo_setintersection,
-            mongo_setintersection,
+            neo_setintersection if neo_setintersection else "FAIL",
+            mongo_setintersection if mongo_setintersection else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Additional $expr Operators",
             "$setUnion",
-            neo_setunion,
-            neo_setunion,
-            mongo_setunion,
+            neo_setunion if neo_setunion else "FAIL",
+            mongo_setunion if mongo_setunion else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Additional $expr Operators",
             "$setDifference",
-            neo_setdifference,
-            neo_setdifference,
-            mongo_setdifference,
+            neo_setdifference if neo_setdifference else "FAIL",
+            mongo_setdifference if mongo_setdifference else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Additional $expr Operators",
             "$setIsSubset",
-            neo_setissubset,
-            neo_setissubset,
-            mongo_setissubset,
+            neo_setissubset if neo_setissubset else "FAIL",
+            mongo_setissubset if mongo_setissubset else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Additional $expr Operators",
             "$anyElementTrue",
-            neo_anyelementtrue,
-            neo_anyelementtrue,
-            mongo_anyelementtrue,
+            neo_anyelementtrue if neo_anyelementtrue else "FAIL",
+            mongo_anyelementtrue if mongo_anyelementtrue else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Additional $expr Operators",
             "$allElementsTrue",
-            neo_allelementstrue,
-            neo_allelementstrue,
-            mongo_allelementstrue,
+            neo_allelementstrue if neo_allelementstrue else "FAIL",
+            mongo_allelementstrue if mongo_allelementstrue else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
-            "Additional $expr Operators", "$nor", neo_nor, neo_nor, mongo_nor
+        reporter.record_comparison(
+            "Additional $expr Operators",
+            "$nor",
+            neo_nor if neo_nor else "FAIL",
+            mongo_nor if mongo_nor else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Additional $expr Operators",
             "$literal",
-            neo_literal,
-            neo_literal,
-            mongo_literal,
+            neo_literal if neo_literal else "FAIL",
+            mongo_literal if mongo_literal else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Additional $expr Operators",
             "$setField",
-            neo_setfield,
-            neo_setfield,
-            mongo_setfield,
+            neo_setfield if neo_setfield else "FAIL",
+            mongo_setfield if mongo_setfield else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Additional $expr Operators",
             "$unsetField",
-            neo_unsetfield,
-            neo_unsetfield,
-            mongo_unsetfield,
+            neo_unsetfield if neo_unsetfield else "FAIL",
+            mongo_unsetfield if mongo_unsetfield else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Additional $expr Operators",
             "$log2",
-            neo_log2,
-            neo_log2,
-            mongo_log2,
+            neo_log2 if neo_log2 else "FAIL",
+            mongo_log2 if mongo_log2 else None,
             skip_reason="NeoSQLite extension not in MongoDB",
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Additional $expr Operators",
             "$sigmoid",
-            neo_sigmoid,
-            neo_sigmoid,
-            mongo_sigmoid,
+            neo_sigmoid if neo_sigmoid else "FAIL",
+            mongo_sigmoid if mongo_sigmoid else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Additional $expr Operators",
             "$asinh",
-            neo_asinh,
-            neo_asinh,
-            mongo_asinh,
+            neo_asinh if neo_asinh else "FAIL",
+            mongo_asinh if mongo_asinh else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Additional $expr Operators",
             "$acosh",
-            neo_acosh,
-            neo_acosh,
-            mongo_acosh,
+            neo_acosh if neo_acosh else "FAIL",
+            mongo_acosh if mongo_acosh else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Additional $expr Operators",
             "$atanh",
-            neo_atanh,
-            neo_atanh,
-            mongo_atanh,
+            neo_atanh if neo_atanh else "FAIL",
+            mongo_atanh if mongo_atanh else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Additional $expr Operators",
             "$regexMatch",
-            neo_regexmatch,
-            neo_regexmatch,
-            mongo_regexmatch,
+            neo_regexmatch if neo_regexmatch else "FAIL",
+            mongo_regexmatch if mongo_regexmatch else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Additional $expr Operators",
             "$replaceOne",
-            neo_replaceone,
-            neo_replaceone,
-            mongo_replaceone,
+            neo_replaceone if neo_replaceone else "FAIL",
+            mongo_replaceone if mongo_replaceone else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Additional $expr Operators",
             "$ltrim",
-            neo_ltrim,
-            neo_ltrim,
-            mongo_ltrim,
+            neo_ltrim if neo_ltrim else "FAIL",
+            mongo_ltrim if mongo_ltrim else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Additional $expr Operators",
             "$rtrim",
-            neo_rtrim,
-            neo_rtrim,
-            mongo_rtrim,
+            neo_rtrim if neo_rtrim else "FAIL",
+            mongo_rtrim if mongo_rtrim else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Additional $expr Operators",
             "$indexOfBytes",
-            neo_indexofbytes,
-            neo_indexofbytes,
-            mongo_indexofbytes,
+            neo_indexofbytes if neo_indexofbytes else "FAIL",
+            mongo_indexofbytes if mongo_indexofbytes else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Additional $expr Operators",
             "$toLong",
-            neo_tolong,
-            neo_tolong,
-            mongo_tolong,
+            neo_tolong if neo_tolong else "FAIL",
+            mongo_tolong if mongo_tolong else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Additional $expr Operators",
             "$toDecimal",
-            neo_todecimal,
-            neo_todecimal,
-            mongo_todecimal,
+            neo_todecimal if neo_todecimal else "FAIL",
+            mongo_todecimal if mongo_todecimal else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Additional $expr Operators",
             "$toObjectId",
-            neo_toobjectid,
-            neo_toobjectid,
-            mongo_toobjectid,
+            neo_toobjectid if neo_toobjectid else "FAIL",
+            mongo_toobjectid if mongo_toobjectid else None,
+            skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_result(
+        reporter.record_comparison(
             "Additional $expr Operators",
             "$convert",
-            neo_convert,
-            neo_convert,
-            mongo_convert,
+            neo_convert if neo_convert else "FAIL",
+            mongo_convert if mongo_convert else None,
+            skip_reason="MongoDB not available" if not client else None,
         )

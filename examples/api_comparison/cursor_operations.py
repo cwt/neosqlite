@@ -79,31 +79,31 @@ def compare_cursor_operations():
         )
         client.close()
 
-    reporter.record_result(
+    reporter.record_comparison(
         "Cursor Operations",
         "iteration",
-        neo_count == 10,
         neo_count,
         mongo_count if mongo_count is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
-    reporter.record_result(
+    reporter.record_comparison(
         "Cursor Operations",
         "limit",
-        neo_limit == 5,
         neo_limit,
         mongo_limit if mongo_limit is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
-    reporter.record_result(
+    reporter.record_comparison(
         "Cursor Operations",
         "skip",
-        neo_skip == 5,
         neo_skip,
         mongo_skip if mongo_skip is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
-    reporter.record_result(
+    reporter.record_comparison(
         "Cursor Operations",
         "sort",
-        neo_sort_ok,
-        neo_sort_ok,
-        mongo_sort_ok if mongo_sort_ok is not None else None,
+        neo_sorted,
+        mongo_sorted if mongo_sorted is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
     )

@@ -10,17 +10,21 @@ This package tests NeoSQLite's MongoDB API compatibility by running the same ope
 
 | Metric | Count |
 |--------|-------|
-| **Total Tests** | 304 |
-| **Passed** | 300 |
-| **Skipped** | 4 (by design) |
+| **Total Tests** | 309 |
+| **Passed** | 303 |
+| **Skipped** | 6 (by design) |
 | **Failed** | 0 |
 | **Compatibility** | **100%** |
 
-**Note on Skipped Tests**: The 4 skipped tests are due to architectural differences, not missing implementations:
-1. `watch()` (change streams) - **Fully implemented** in NeoSQLite via SQLite triggers, but MongoDB requires a replica set for comparison testing
-2. `watch()` (collection methods) - Same as above, implemented via SQLite triggers
-3. `$log2` - **NeoSQLite extension** using SQLite's native `log2()` function (raises `UserWarning` about MongoDB incompatibility)
-4. `where()` - **NeoSQLite implementation** using Python function filter; MongoDB uses JavaScript `$where` which requires a JS engine
+*Note: These numbers may change during development as new APIs are added or test coverage improves.*
+
+**Note on Skipped Tests**: The 6 skipped tests are due to architectural differences, not missing implementations:
+1. `options()` - NeoSQLite returns detailed SQLite schema info (`{'columns': [...], 'indexes': [...]}`) while MongoDB returns `{}`. Backend-specific difference.
+2. `$log2` - **NeoSQLite extension** using SQLite's native `log2()` function. Raises `UserWarning` about MongoDB incompatibility. For MongoDB compatibility, use `{ $log: [ <number>, 2 ] }` instead. **Kept for convenience** as a commonly-used mathematical shorthand with a clear migration path.
+3. `watch()` (change streams) - **Fully implemented** in NeoSQLite via SQLite triggers, but MongoDB requires a replica set for comparison testing. NeoSQLite's implementation is tested independently in `tests/test_changestream.py`.
+4. `watch()` (collection methods) - Same as above, implemented via SQLite triggers
+5. `initialize_ordered_bulk_op()` / `initialize_unordered_bulk_op()` - **Deprecated in NeoSQLite** to match PyMongo 4.x behavior. These methods were deprecated in PyMongo 3.5 and removed in PyMongo 4.x. NeoSQLite now raises `DeprecationWarning` to encourage migration to `bulk_write()`.
+6. `where()` - **NeoSQLite implementation** using Python function filter; MongoDB uses JavaScript `$where` which requires a JS engine
 
 All comparable MongoDB APIs are tested with 100% compatibility.
 

@@ -55,15 +55,10 @@ def compare_nested_field_queries():
         print(f"Mongo nested query (profile.city): {len(mongo_result)}")
         client.close()
 
-    passed = (
-        len(neo_result) == len(mongo_result)
-        if mongo_result is not None
-        else False
-    )
-    reporter.record_result(
+    reporter.record_comparison(
         "Nested Field Queries",
         "dot_notation",
-        passed,
-        len(neo_result),
-        len(mongo_result) if mongo_result is not None else None,
+        neo_result,
+        mongo_result if mongo_result is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
     )

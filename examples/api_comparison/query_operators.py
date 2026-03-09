@@ -78,17 +78,17 @@ def compare_query_operators():
         neo_results = {}
         for query, op_name in operators:
             try:
-                result = list(neo_collection.find(query))
-                neo_results[op_name] = len(result)
+                neo_results[op_name] = list(neo_collection.find(query))
             except Exception as e:
                 neo_results[op_name] = f"Error: {e}"
 
         # Test $text separately as it requires index creation
         try:
             neo_collection.create_index([("name", "text")])
-            result = list(neo_collection.find({"$text": {"$search": "Alice"}}))
-            neo_results["$text"] = len(result)
-            print(f"Neo $text: {len(result)} documents")
+            neo_results["$text"] = list(
+                neo_collection.find({"$text": {"$search": "Alice"}})
+            )
+            print(f"Neo $text: {len(neo_results['$text'])} documents")
         except Exception as e:
             neo_results["$text"] = f"Error: {e}"
             print(f"Neo $text: Error - {e}")
@@ -98,13 +98,11 @@ def compare_query_operators():
 
     mongo_collection = None
 
-    mongo_count = None
-
     mongo_db = None
 
     mongo_query = None
 
-    mongo_results = None
+    mongo_results = {}
 
     if client:
         mongo_db = client.test_database
@@ -145,7 +143,6 @@ def compare_query_operators():
             ]
         )
 
-        mongo_results = {}
         for query, op_name in operators:
             try:
                 mongo_query = copy.deepcopy(query)
@@ -153,37 +150,39 @@ def compare_query_operators():
                     field = list(query.keys())[0]
                     value = list(query[field].values())[0]
                     mongo_query = {field: {"$regex": value, "$options": "i"}}
-                result = list(mongo_collection.find(mongo_query))
-                mongo_results[op_name] = len(result)
+                mongo_results[op_name] = list(
+                    mongo_collection.find(mongo_query)
+                )
             except Exception as e:
                 mongo_results[op_name] = f"Error: {e}"
 
         # Test $text separately for MongoDB
         try:
             mongo_collection.create_index([("name", "text")])
-            result = list(
+            mongo_results["$text"] = list(
                 mongo_collection.find({"$text": {"$search": "Alice"}})
             )
-            mongo_results["$text"] = len(result)
-            print(f"Mongo $text: {len(result)} documents")
+            print(f"Mongo $text: {len(mongo_results['$text'])} documents")
         except Exception as e:
             mongo_results["$text"] = f"Error: {e}"
             print(f"Mongo $text: Error - {e}")
 
         for op_name in neo_results:
-            neo_count = neo_results[op_name]
-            mongo_count = mongo_results.get(op_name, "N/A")
-            passed = (
-                neo_count == mongo_count
-                if mongo_count is not None
-                else (
-                    False
-                    if not isinstance(neo_count, str)
-                    and not isinstance(mongo_count, str)
-                    else False
-                )
-            )
-            reporter.record_result(
-                "Query Operators", op_name, passed, neo_count, mongo_count
+            reporter.record_comparison(
+                "Query Operators",
+                op_name,
+                neo_results[op_name],
+                mongo_results.get(op_name),
+                skip_reason="MongoDB not available" if not client else None,
             )
         client.close()
+    else:
+        # MongoDB not available, record NeoSQLite results as skipped
+        for op_name in neo_results:
+            reporter.record_comparison(
+                "Query Operators",
+                op_name,
+                neo_results[op_name],
+                None,
+                skip_reason="MongoDB not available",
+            )

@@ -102,21 +102,12 @@ def compare_additional_expr_success_stories():
             print(f"Mongo $elemMatch: Error - {e}")
         client.close()
 
-    reporter.record_result(
+    reporter.record_comparison(
         "Additional $expr Operators",
         "$elemMatch",
-        (
-            neo_elemMatch == mongo_elemMatch
-            if mongo_elemMatch is not None
-            else (
-                False
-                if not isinstance(neo_elemMatch, str)
-                and not isinstance(mongo_elemMatch, str)
-                else False
-            )
-        ),
-        neo_elemMatch,
-        mongo_elemMatch,
+        neo_elemMatch if not isinstance(neo_elemMatch, str) else neo_elemMatch,
+        mongo_elemMatch if mongo_elemMatch is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
 
     # Test $expr $not
@@ -153,21 +144,12 @@ def compare_additional_expr_success_stories():
             print(f"Mongo $expr $not: Error - {e}")
         client.close()
 
-    reporter.record_result(
+    reporter.record_comparison(
         "Additional $expr Operators",
         "$expr $not",
-        (
-            neo_not == mongo_not
-            if mongo_not is not None
-            else (
-                False
-                if not isinstance(neo_not, str)
-                and not isinstance(mongo_not, str)
-                else False
-            )
-        ),
-        neo_not,
-        mongo_not,
+        neo_not if not isinstance(neo_not, str) else neo_not,
+        mongo_not if mongo_not is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
 
     # Test $expr $concat
@@ -220,21 +202,12 @@ def compare_additional_expr_success_stories():
             print(f"Mongo $expr $concat: Error - {e}")
         client.close()
 
-    reporter.record_result(
+    reporter.record_comparison(
         "Additional $expr Operators",
         "$expr $concat",
-        (
-            neo_concat == mongo_concat
-            if mongo_concat is not None
-            else (
-                False
-                if not isinstance(neo_concat, str)
-                and not isinstance(mongo_concat, str)
-                else False
-            )
-        ),
-        neo_concat,
-        mongo_concat,
+        neo_concat if not isinstance(neo_concat, str) else neo_concat,
+        mongo_concat if mongo_concat is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
 
     # Test $expr $ifNull
@@ -277,21 +250,12 @@ def compare_additional_expr_success_stories():
             print(f"Mongo $expr $ifNull: Error - {e}")
         client.close()
 
-    reporter.record_result(
+    reporter.record_comparison(
         "Additional $expr Operators",
         "$expr $ifNull",
-        (
-            neo_ifnull == mongo_ifnull
-            if mongo_ifnull is not None
-            else (
-                False
-                if not isinstance(neo_ifnull, str)
-                and not isinstance(mongo_ifnull, str)
-                else False
-            )
-        ),
-        neo_ifnull,
-        mongo_ifnull,
+        neo_ifnull if not isinstance(neo_ifnull, str) else neo_ifnull,
+        mongo_ifnull if mongo_ifnull is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
 
     # Test $expr $isArray
@@ -328,21 +292,12 @@ def compare_additional_expr_success_stories():
             print(f"Mongo $expr $isArray: Error - {e}")
         client.close()
 
-    reporter.record_result(
+    reporter.record_comparison(
         "Additional $expr Operators",
         "$expr $isArray",
-        (
-            neo_isarray == mongo_isarray
-            if mongo_isarray is not None
-            else (
-                False
-                if not isinstance(neo_isarray, str)
-                and not isinstance(mongo_isarray, str)
-                else False
-            )
-        ),
-        neo_isarray,
-        mongo_isarray,
+        neo_isarray if not isinstance(neo_isarray, str) else neo_isarray,
+        mongo_isarray if mongo_isarray is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
 
     # Test $expr $round
@@ -381,21 +336,12 @@ def compare_additional_expr_success_stories():
             print(f"Mongo $expr $round: Error - {e}")
         client.close()
 
-    reporter.record_result(
+    reporter.record_comparison(
         "Additional $expr Operators",
         "$expr $round",
-        (
-            neo_round == mongo_round
-            if mongo_round is not None
-            else (
-                False
-                if not isinstance(neo_round, str)
-                and not isinstance(mongo_round, str)
-                else False
-            )
-        ),
-        neo_round,
-        mongo_round,
+        neo_round if not isinstance(neo_round, str) else neo_round,
+        mongo_round if mongo_round is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
 
     # Test $expr $exp
@@ -474,21 +420,12 @@ def compare_additional_expr_success_stories():
             print(f"Mongo $expr $exp: Error - {e}")
         client.close()
 
-    reporter.record_result(
+    reporter.record_comparison(
         "Additional $expr Operators",
         "$expr $exp",
-        (
-            neo_exp == mongo_exp
-            if mongo_exp is not None
-            else (
-                False
-                if not isinstance(neo_exp, str)
-                and not isinstance(mongo_exp, str)
-                else False
-            )
-        ),
-        neo_exp,
-        mongo_exp,
+        neo_exp if not isinstance(neo_exp, str) else neo_exp,
+        mongo_exp if mongo_exp is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
 
     # Test $expr $degreesToRadians
@@ -583,21 +520,12 @@ def compare_additional_expr_success_stories():
             print(f"Mongo $expr $degreesToRadians: Error - {e}")
         client.close()
 
-    reporter.record_result(
+    reporter.record_comparison(
         "Additional $expr Operators",
         "$expr $degreesToRadians",
-        (
-            neo_deg2rad == mongo_deg2rad
-            if mongo_deg2rad is not None
-            else (
-                False
-                if not isinstance(neo_deg2rad, str)
-                and not isinstance(mongo_deg2rad, str)
-                else False
-            )
-        ),
-        neo_deg2rad,
-        mongo_deg2rad,
+        neo_deg2rad if not isinstance(neo_deg2rad, str) else neo_deg2rad,
+        mongo_deg2rad if mongo_deg2rad is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
 
     # Test $expr $radiansToDegrees
@@ -712,19 +640,10 @@ def compare_additional_expr_success_stories():
             print(f"Mongo $expr $radiansToDegrees: Error - {e}")
         client.close()
 
-    reporter.record_result(
+    reporter.record_comparison(
         "Additional $expr Operators",
         "$expr $radiansToDegrees",
-        (
-            neo_rad2deg == mongo_rad2deg
-            if mongo_rad2deg is not None
-            else (
-                False
-                if not isinstance(neo_rad2deg, str)
-                and not isinstance(mongo_rad2deg, str)
-                else False
-            )
-        ),
-        neo_rad2deg,
-        mongo_rad2deg,
+        neo_rad2deg if not isinstance(neo_rad2deg, str) else neo_rad2deg,
+        mongo_rad2deg if mongo_rad2deg is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
     )
