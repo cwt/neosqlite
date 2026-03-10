@@ -1,3 +1,4 @@
+from __future__ import annotations
 from .binary import Binary
 from .bulk_operations import BulkOperationExecutor
 from .changestream import ChangeStream
@@ -15,6 +16,12 @@ from .results import (
     InsertManyResult,
     InsertOneResult,
     UpdateResult,
+)
+from .options import (
+    WriteConcern,
+    ReadPreference,
+    ReadConcern,
+    CodecOptions,
 )
 
 # Import cursor classes from collection module
@@ -41,6 +48,7 @@ __all__ = [
     "BulkOperationExecutor",
     "BulkWriteResult",
     "ChangeStream",
+    "CodecOptions",
     "Collection",
     "CollectionInvalid",
     "Connection",
@@ -54,8 +62,11 @@ __all__ = [
     "MalformedDocument",
     "MalformedQueryException",
     "RawBatchCursor",
+    "ReadConcern",
+    "ReadPreference",
     "UpdateOne",
     "UpdateResult",
+    "WriteConcern",
 ]
 
 # Add GridFS to __all__ if available

@@ -150,7 +150,6 @@ def compare_database_methods():
     # Initialize MongoDB result variables
 
     mongo_client = None
-    mongo_db_path = None
     mongo_coll_rename = None
     mongo_create_collection = None
     mongo_db = None

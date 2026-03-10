@@ -249,6 +249,13 @@ class QueryBuilderMixin:
         if "$expr" in query:
             return self._build_expr_where_clause(query)
 
+        if "$where" in query:
+            raise NotImplementedError(
+                "The '$where' operator (JavaScript) is not supported in NeoSQLite. "
+                "Please use the '$expr' operator for field-to-field comparisons, "
+                "which is fully compatible with MongoDB and highly optimized in NeoSQLite."
+            )
+
         clauses: List[str] = []
         params: List[Any] = []
 

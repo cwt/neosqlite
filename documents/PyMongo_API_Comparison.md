@@ -444,7 +444,7 @@ The following APIs have been implemented and tested:
 
 | Operator | Description | Priority | Status | Notes |
 |----------|-------------|----------|--------|-------|
-| `$where` | JavaScript expression | Medium | ❌ Missing | MongoDB-specific |
+| `$where` | JavaScript expression | Medium | ❌ Not Supported | Raises NotImplementedError; use `$expr` |
 | `$jsonSchema` | JSON Schema validation | Medium | ❌ Missing | Complex validation |
 | `$vectorSearch` | Vector search | Medium | ❌ Missing | MongoDB Atlas feature |
 
@@ -839,15 +839,14 @@ NeoSQLite maintains comprehensive PyMongo compatibility tests:
     - `abort_transaction()` -> `ROLLBACK`
 - **Integration**: Update CRUD methods to accept an optional `session` parameter. If provided, the operation must execute on the session's specific connection/transaction state.
 
-### 7.2 Durability & Configuration (`write_concern`, `codec_options`)
+#### Durability & Configuration (ALL COMPLETED)
 
-**Feasibility**: **High**
-**Recommendation**: Map MongoDB durability settings to SQLite session PRAGMAs.
-- **`write_concern`**: Since `journal_mode=WAL` is enforced at initialization for performance and concurrency, durability should be managed via `PRAGMA synchronous`:
-    - `w: 0` -> `PRAGMA synchronous = OFF`
-    - `w: 1` -> `PRAGMA synchronous = NORMAL` (WAL Default)
-    - `j: True` -> `PRAGMA synchronous = FULL`
-- **`codec_options`**: Utilize this to configure custom JSON serialization/deserialization logic (e.g., handling `Decimal`, `UUID`, or custom classes) when interacting with SQLite's JSONB/TEXT columns.
+| Method | Description | Priority | Status | Notes |
+|--------|-------------|----------|--------|-------|
+| `write_concern` | Write concern class | High | ✅ **Implemented** | Maps to SQLite PRAGMA synchronous |
+| `codec_options` | Codec options class | High | ✅ **Implemented** | Formal class for configuration |
+| `read_preference` | Read preference class | High | ✅ **Implemented** | Formal class for configuration |
+| `read_concern` | Read concern class | High | ✅ **Implemented** | Formal class for configuration |
 
 ### 7.3 Database Utility Methods (`dereference`, `client`)
 

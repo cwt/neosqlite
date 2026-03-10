@@ -3,6 +3,7 @@ Tests for find_one, find_raw_batches, and RawBatchCursor.
 """
 
 import json
+import pytest
 import neosqlite
 from neosqlite.collection.query_helper import (
     set_force_fallback,
@@ -1757,6 +1758,14 @@ class TestCursorWhere:
         assert all(
             doc["value"] % 2 == 0 and doc["value"] > 10 for doc in results
         )
+
+    def test_where_operator_raises_not_implemented(self, collection):
+        """Test that the $where operator in a query dictionary raises NotImplementedError."""
+        with pytest.raises(
+            NotImplementedError,
+            match=r"The '\$where' operator .* is not supported",
+        ):
+            list(collection.find({"$where": "this.value > 10"}))
 
 
 def test_cursor_new_properties_and_methods():

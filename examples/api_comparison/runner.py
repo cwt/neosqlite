@@ -53,6 +53,7 @@ from .expr_success import compare_additional_expr_success_stories
 from .bitwise_operators import compare_bitwise_operators
 from .pullall_operator import compare_pullall_operator
 from .new_operators import compare_new_operators
+from .options_classes import compare_options_classes
 
 
 # Ordered list of all comparison functions with their category names
@@ -103,6 +104,7 @@ COMPARISON_FUNCTIONS = [
     ("bitwise", compare_bitwise_operators),
     ("pullall", compare_pullall_operator),
     ("new_operators", compare_new_operators),
+    ("options_classes", compare_options_classes),
 ]
 
 

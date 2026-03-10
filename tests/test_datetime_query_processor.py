@@ -456,12 +456,10 @@ def test_sql_tier_exception_handling(setup_test_db):
     collection, db, db_path = setup_test_db
     processor = DateTimeQueryProcessor(collection)
 
-    # Mock a SQL failure by injecting an invalid query that will cause an error
-    # when the SQL tier tries to execute it.
-    # This should be caught and return None to trigger fallback
-    invalid_query = {"$where": "invalid_sql"}  # This would cause SQL issues
-    processor._process_with_sql_tier(invalid_query)
-    # May return None due to exception handling
+    # Use $where which now raises NotImplementedError
+    invalid_query = {"$where": "invalid_sql"}
+    with pytest.raises(NotImplementedError):
+        processor._process_with_sql_tier(invalid_query)
 
 
 def test_process_with_enhanced_python_tier(setup_test_db):

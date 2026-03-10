@@ -553,6 +553,13 @@ class SQLClauseBuilder:
         clauses: List[str] = []
 
         for field, value in query.items():
+            if field == "$where":
+                raise NotImplementedError(
+                    "The '$where' operator (JavaScript) is not supported in NeoSQLite. "
+                    "Please use the '$expr' operator for field-to-field comparisons, "
+                    "which is fully compatible with MongoDB and highly optimized in NeoSQLite."
+                )
+
             if field in ("$and", "$or", "$nor"):
                 # Handle logical operators directly
                 sql, clause_params = self._build_logical_condition(

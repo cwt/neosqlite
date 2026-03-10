@@ -5,6 +5,7 @@ from .collection import Collection
 from .collection.aggregation_cursor import AggregationCursor
 from .exceptions import CollectionInvalid
 from .client_session import ClientSession
+from .options import WriteConcern
 from .sql_utils import quote_table_name
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Tuple
@@ -700,13 +701,20 @@ class Connection:
         - j: True -> PRAGMA synchronous = FULL
 
         Args:
-            write_concern (Any): The write concern to apply.
+            write_concern (Any): The write concern to apply (dict or WriteConcern object).
         """
-        if not write_concern or not isinstance(write_concern, dict):
+        if not write_concern:
             return
 
-        w = write_concern.get("w")
-        j = write_concern.get("j")
+        if isinstance(write_concern, WriteConcern):
+            wc_doc = write_concern.document
+        elif isinstance(write_concern, dict):
+            wc_doc = write_concern
+        else:
+            return
+
+        w = wc_doc.get("w")
+        j = wc_doc.get("j")
 
         try:
             if w == 0:

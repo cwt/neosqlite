@@ -500,8 +500,8 @@ def compare_cursor_methods():
             # In PyMongo, there is no public _options, we just check it doesn't fail
             mongo_add_option = mongo_remove_option = True
             cursor.remove_option(2)
-            print(f"Mongo add_option(): OK")
-            print(f"Mongo remove_option(): OK")
+            print("Mongo add_option(): OK")
+            print("Mongo remove_option(): OK")
         except Exception as e:
             mongo_add_option = mongo_remove_option = False
             print(f"Mongo options: Error - {e}")
@@ -510,7 +510,7 @@ def compare_cursor_methods():
         try:
             cursor = mongo_collection.find({}).max_await_time_ms(100)
             mongo_max_await = True
-            print(f"Mongo max_await_time_ms(): OK")
+            print("Mongo max_await_time_ms(): OK")
         except Exception as e:
             mongo_max_await = False
             print(f"Mongo max_await_time_ms: Error - {e}")
