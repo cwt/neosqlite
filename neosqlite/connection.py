@@ -28,17 +28,29 @@ class Connection:
                      - tokenizers: List of tuples (name, path) for FTS5 tokenizers to load
                      - debug: Boolean flag to enable debug printing
                      - name: Optional name for the database (for PyMongo API compatibility)
+                     - _is_clone: Internal flag for cloning (not for public use)
         """
         self._collections: Dict[str, Collection] = {}
         self._tokenizers: List[Tuple[str, str]] = kwargs.pop("tokenizers", [])
         self.debug: bool = kwargs.pop("debug", False)
+        # Internal flag for cloning
+        _is_clone = kwargs.pop("_is_clone", False)
+
+        # PyMongo compatibility attributes
+        self._codec_options = None
+        self._read_preference = None
+        self._write_concern = None
+        self._read_concern = None
+
         # Extract database name from args or kwargs for PyMongo API compatibility
         self.name: str = kwargs.pop("name", None)
         if self.name is None and args:
             # Use the database file path as the name
             db_path = args[0] if args else ":memory:"
             self.name = db_path if db_path != ":memory:" else "memory"
-        self.connect(*args, **kwargs)
+
+        if not _is_clone:
+            self.connect(*args, **kwargs)
 
     def connect(self, *args: Any, **kwargs: Any) -> None:
         """
@@ -494,13 +506,20 @@ class Connection:
             ...     read_preference={"mode": "primaryPreferred"}
             ... )
         """
-        # Return self for now - options are stored for API compatibility
-        # but don't affect SQLite behavior
-        self._codec_options = codec_options
-        self._read_preference = read_preference
-        self._write_concern = write_concern
-        self._read_concern = read_concern
-        return self
+        # Return a new Connection instance that shares the same database connection
+        clone = Connection(name=self.name, _is_clone=True)
+        clone.db = self.db
+        clone._tokenizers = self._tokenizers
+        clone.debug = self.debug
+        clone._collections = self._collections
+
+        # Store the new options
+        clone._codec_options = codec_options
+        clone._read_preference = read_preference
+        clone._write_concern = write_concern
+        clone._read_concern = read_concern
+
+        return clone
 
     @contextmanager
     def transaction(self) -> Iterator[None]:

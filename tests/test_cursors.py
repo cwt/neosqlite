@@ -1662,16 +1662,19 @@ class TestDatabaseWithOptions:
     """Tests for Connection.with_options() method."""
 
     def test_with_options_returns_connection(self):
-        """Test with_options() returns a connection."""
+        """Test with_options() returns a new clone."""
         conn = neosqlite.Connection(":memory:")
 
         result = conn.with_options()
 
-        assert result is conn  # Returns self for API compatibility
+        assert (
+            result is not conn
+        )  # Now returns a clone for PyMongo compatibility
+        assert result.db is conn.db  # Shares the same underlying DB connection
         conn.close()
 
     def test_with_options_stores_options(self):
-        """Test with_options() stores the provided options."""
+        """Test with_options() stores the provided options in a clone."""
         conn = neosqlite.Connection(":memory:")
 
         result = conn.with_options(
@@ -1679,8 +1682,11 @@ class TestDatabaseWithOptions:
             read_preference={"mode": "primaryPreferred"},
         )
 
+        assert result is not conn
         assert result._write_concern == {"w": "majority"}
         assert result._read_preference == {"mode": "primaryPreferred"}
+        # Original should remain unchanged
+        assert conn._write_concern is None
         conn.close()
 
     def test_with_options_all_parameters(self):
@@ -1694,6 +1700,7 @@ class TestDatabaseWithOptions:
             read_concern={"level": "local"},
         )
 
+        assert result is not conn
         assert result._codec_options == {"document_class": dict}
         assert result._read_preference == {"mode": "secondary"}
         assert result._write_concern == {"w": 1}
