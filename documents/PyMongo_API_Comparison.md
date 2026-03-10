@@ -1,8 +1,8 @@
 # PyMongo API Comparison
 
-**Last Updated**: March 5, 2026
+**Last Updated**: March 10, 2026
 **NeoSQLite Version**: v1.6.1+
-**PyMongo Compatibility**: 100% (304 tests: 300 passed, 4 skipped by design, 0 failed)
+**PyMongo Compatibility**: 100% (309 tests: 303 passed, 6 skipped by design, 0 failed)
 
 ---
 
@@ -44,12 +44,23 @@ The following APIs have been implemented and tested:
 - ✅ `$redact` - Field-level redaction (3 tests)
 - ✅ `$densify` - Fill gaps in sequential data (2 tests)
 
-#### Aggregation Operators - String (2 operators)
+#### Aggregation Operators - String (12+ operators)
 - ✅ `$strcasecmp` - Case-insensitive string comparison (5 tests)
-- ✅ `$substrBytes` - Substring by bytes (4 tests)
+- ✅ `$substrBytes` / `$substrCP` - Substring by bytes/code points (4 tests)
+- ✅ `$toLower` / `$toUpper` - Case conversion (4 tests)
+- ✅ `$trim` / `$ltrim` / `$rtrim` - Whitespace/character trimming (6 tests)
+- ✅ `$split` - Split string by delimiter (15 tests)
+- ✅ `$replaceAll` / `$replaceOne` - String replacement (6 tests)
+- ✅ `$indexOfBytes` / `$indexOfCP` - Find substring position (4 tests)
+- ✅ `$strLenBytes` / `$strLenCP` - String length (4 tests)
+- ✅ `$regexMatch` / `$regexFind` / `$regexFindAll` - Regex operations (12 tests)
 
-#### Aggregation Operators - Type Conversion (1 operator)
+#### Aggregation Operators - Type Conversion (8 operators)
 - ✅ `$isNumber` - Check if value is numeric (8 tests)
+- ✅ `$convert` - General type conversion (6 tests)
+- ✅ `$toBool` / `$toDate` / `$toString` - Specific type conversion (12 tests)
+- ✅ `$toInt` / `$toLong` / `$toDouble` - Numeric conversion (12 tests)
+- ✅ `$toObjectId` - Convert to ObjectId (4 tests)
 
 #### Aggregation Operators - Date (6 operators)
 - ✅ `$dateFromString` - Parse ISO 8601 date string (3 tests)
@@ -97,6 +108,7 @@ The following APIs have been implemented and tested:
 - ✅ `to_list(length)` - Convert cursor to list efficiently (7 tests)
 - ✅ `clone()` - Create unevaluated cursor copy (7 tests)
 - ✅ `explain(verbosity)` - Return query execution plan via SQLite EXPLAIN QUERY PLAN (8 tests)
+- ⚠️ `AggregationCursor` currently lacks `explain()`, `alive()`, and `to_list(length)` (Planned)
 
 #### Collection Methods
 - ✅ `validate()` - Validate collection integrity via SQLite PRAGMA (5 tests, NeoSQLite extension)
@@ -105,12 +117,13 @@ The following APIs have been implemented and tested:
 - ✅ `with_options()` - Get collection clone with different options (6 tests)
 
 #### Database Methods
-- ✅ `with_options()` - Return database clone with different options (3 tests)
+- ✅ `with_options()` - Return database clone with different options (Now correctly returns a clone)
 - ✅ `command()` - Issue database commands (ping, serverStatus, listCollections, etc.) (11 tests)
 
-**Test Coverage**: 190+ new unit tests, all passing
-**API Compatibility**: 100% (304 tests total)
+**Test Coverage**: 210+ unit tests, all passing
+**API Compatibility**: 100% (309 tests total)
 **Kill Switch Verified**: All APIs work identically with/without kill switch (Tier-3 Python implementation)
+**Deprecated APIs**: `initialize_ordered_bulk_op()` and `initialize_unordered_bulk_op()` are now deprecated to match PyMongo 4.x behavior.
 
 ---
 
@@ -480,31 +493,31 @@ The following APIs have been implemented and tested:
 
 ### 2.4 MEDIUM PRIORITY - Aggregation Operators ($expr)
 
-#### String Operators (16 Missing)
+#### String Operators (ALL IMPLEMENTED)
 
 | Operator | Priority | Status |
 |----------|----------|--------|
-| `$toLower`, `$toUpper` | Medium | ❌ Missing |
-| `$trim`, `$ltrim`, `$rtrim` | Medium | ❌ Missing |
-| `$split` | Medium | ❌ Missing |
-| `$replaceOne`, `$replaceAll` | Medium | ⚠️ Partial |
-| `$indexOfBytes`, `$indexOfCP` | Medium | ❌ Missing |
-| `$strLenBytes`, `$strLenCP` | Medium | ❌ Missing |
+| `$toLower`, `$toUpper` | Medium | ✅ **Implemented** |
+| `$trim`, `$ltrim`, `$rtrim` | Medium | ✅ **Implemented** |
+| `$split` | Medium | ✅ **Implemented** |
+| `$replaceOne`, `$replaceAll` | Medium | ✅ **Implemented** |
+| `$indexOfBytes`, `$indexOfCP` | Medium | ✅ **Implemented** |
+| `$strLenBytes`, `$strLenCP` | Medium | ✅ **Implemented** |
 | `$strcasecmp` | Medium | ✅ **Implemented** |
-| `$substr`, `$substrBytes`, `$substrCP` | Medium | ⚠️ Partial |
-| `$regexFind`, `$regexFindAll`, `$regexMatch` | Medium | ⚠️ Partial |
+| `$substr`, `$substrBytes`, `$substrCP` | Medium | ✅ **Implemented** |
+| `$regexFind`, `$regexFindAll`, `$regexMatch` | Medium | ✅ **Implemented** |
 
-#### Type Conversion Operators (11 Missing)
+#### Type Conversion Operators (ALL IMPLEMENTED)
 
 | Operator | Priority | Status |
 |----------|----------|--------|
-| `$convert` | Medium | ❌ Missing |
-| `$toBool`, `$toDate`, `$toString` | Medium | ❌ Missing |
-| `$toInt`, `$toLong`, `$toDouble` | Medium | ❌ Missing |
+| `$convert` | Medium | ✅ **Implemented** |
+| `$toBool`, `$toDate`, `$toString` | Medium | ✅ **Implemented** |
+| `$toInt`, `$toLong`, `$toDouble` | Medium | ✅ **Implemented** |
 | `$toDecimal` | Medium | ❌ Missing (MongoDB-specific) |
-| `$toObjectId`, `$toUUID` | Medium | ❌ Missing |
+| `$toObjectId`, `$toUUID` | Medium | ✅ **Implemented** |
 | `$isNumber` | Medium | ✅ **Implemented** |
-| `$type` | Medium | ⚠️ Partial |
+| `$type` | Medium | ✅ **Implemented** |
 
 #### Date Operators (2 Missing)
 
@@ -546,15 +559,15 @@ The following APIs have been implemented and tested:
 | `$setIntersection`, `$setIsSubset` | Medium | ✅ **Implemented** |
 | `$setUnion` | Medium | ✅ **Implemented** |
 
-#### Trigonometry Operators (15 Missing)
+#### Trigonometry Operators (ALL IMPLEMENTED)
 
 | Operator | Priority | Status |
 |----------|----------|--------|
-| `$sin`, `$cos`, `$tan` | Low | ❌ Missing |
-| `$asin`, `$acos`, `$atan`, `$atan2` | Low | ❌ Missing |
-| `$sinh`, `$cosh`, `$tanh` | Low | ❌ Missing |
-| `$asinh`, `$acosh`, `$atanh` | Low | ❌ Missing |
-| `$degreesToRadians`, `$radiansToDegrees` | Low | ❌ Missing |
+| `$sin`, `$cos`, `$tan` | Low | ✅ **Implemented** |
+| `$asin`, `$acos`, `$atan`, `$atan2` | Low | ✅ **Implemented** |
+| `$sinh`, `$cosh`, `$tanh` | Low | ✅ **Implemented** |
+| `$asinh`, `$acosh`, `$atanh` | Low | ✅ **Implemented** |
+| `$degreesToRadians`, `$radiansToDegrees` | Low | ✅ **Implemented** |
 
 #### Other Missing Operators
 
@@ -696,25 +709,23 @@ The following APIs have been implemented and tested:
 - [x] `$redact` - Field-level redaction ✅ **Implemented**
 - [x] `$densify` - Fill gaps ✅ **Implemented**
 
-#### Aggregation Operators (MOSTLY COMPLETED)
-- [x] String operators (`$strcasecmp`, `$substrBytes`) ✅ **Implemented**
-- [x] Type conversion (`$isNumber`) ✅ **Implemented**
+#### Aggregation Operators (ALL COMPLETED)
+- [x] String operators (All 16+ operators) ✅ **Implemented**
+- [x] Type conversion (All 11+ operators) ✅ **Implemented**
+- [x] Trigonometry operators (All 15 operators) ✅ **Implemented**
 - [x] Date operators (6 operators) ✅ **Implemented**
 - [x] Array operators (5 operators) ✅ **Implemented**
 - [x] Set operators (7 operators) ✅ **Implemented**
 - [x] Other operators (`$mergeObjects`, `$getField`, `$let`, `$literal`, `$rand`, `$objectToArray`) ✅ **Implemented**
 
 **Impact**: Comprehensive aggregation framework with 100% PyMongo compatibility for all comparable features
-**Test Coverage**: 150 new unit tests, all passing
-**API Compatibility**: 100% (304 tests total)
+**Test Coverage**: 210+ unit tests, all passing
+**API Compatibility**: 100% (309 tests total)
 
 ### Phase 3: Low Priority (Remaining - 12+ months)
 
 #### Advanced Features
-- [ ] Remaining string operators (`$toLower`, `$toUpper`, `$trim`, `$split`)
-- [ ] Remaining type conversion operators
 - [ ] Window operators (MongoDB 5.0+ features)
-- [ ] Trigonometry operators
 - [ ] Geospatial integration (if needed, via SQLite R*Tree)
 
 **Expected Impact**: Specialized use cases and advanced analytics
@@ -854,6 +865,6 @@ NeoSQLite maintains comprehensive PyMongo compatibility tests:
 
 ---
 
-**Last Updated**: March 9, 2026
+**Last Updated**: March 10, 2026
 **Maintained By**: NeoSQLite Development Team
 **License**: MIT
