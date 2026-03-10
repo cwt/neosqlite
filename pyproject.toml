@@ -42,6 +42,12 @@ pymongo = "^4.16.0"
 [tool.pyright]
 stubPath = "typings"
 
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning",
+]
+
 [build-system]
 requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
