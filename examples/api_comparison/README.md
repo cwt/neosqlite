@@ -10,21 +10,22 @@ This package tests NeoSQLite's MongoDB API compatibility by running the same ope
 
 | Metric | Count |
 |--------|-------|
-| **Total Tests** | 309 |
-| **Passed** | 303 |
-| **Skipped** | 6 (by design) |
+| **Total Tests** | 324 |
+| **Passed** | 314 |
+| **Skipped** | 10 |
 | **Failed** | 0 |
 | **Compatibility** | **100%** |
 
 *Note: These numbers may change during development as new APIs are added or test coverage improves.*
 
-**Note on Skipped Tests**: The 6 skipped tests are due to architectural differences, not missing implementations:
+**Note on Skipped Tests**: The 10 skipped tests are due to architectural differences or environment limitations, not missing implementations:
 1. `options()` - NeoSQLite returns detailed SQLite schema info (`{'columns': [...], 'indexes': [...]}`) while MongoDB returns `{}`. Backend-specific difference.
-2. `$log2` - **NeoSQLite extension** using SQLite's native `log2()` function. Raises `UserWarning` about MongoDB incompatibility. For MongoDB compatibility, use `{ $log: [ <number>, 2 ] }` instead. **Kept for convenience** as a commonly-used mathematical shorthand with a clear migration path.
-3. `watch()` (change streams) - **Fully implemented** in NeoSQLite via SQLite triggers, but MongoDB requires a replica set for comparison testing. NeoSQLite's implementation is tested independently in `tests/test_changestream.py`.
-4. `watch()` (collection methods) - Same as above, implemented via SQLite triggers
-5. `initialize_ordered_bulk_op()` / `initialize_unordered_bulk_op()` - **Deprecated in NeoSQLite** to match PyMongo 4.x behavior. These methods were deprecated in PyMongo 3.5 and removed in PyMongo 4.x. NeoSQLite now raises `DeprecationWarning` to encourage migration to `bulk_write()`.
-6. `where()` - **NeoSQLite implementation** using Python function filter; MongoDB uses JavaScript `$where` which requires a JS engine
+2. `$log2` - **NeoSQLite extension** using SQLite's native `log2()` function. Raises `UserWarning` about MongoDB incompatibility.
+3. `watch()` (Collection & Database) - **Fully implemented in NeoSQLite** via SQLite triggers but cannot be compared because MongoDB requires a replica set for change streams.
+4. `transaction_commit` / `transaction_abort` - **Fully implemented in NeoSQLite** via `ClientSession` but skipped in comparison because MongoDB requires a replica set for multi-document transactions.
+5. `db_path` (Collection & Database) - **NeoSQLite extension** providing the underlying SQLite database file path. No MongoDB equivalent.
+6. `initialize_ordered_bulk_op()` / `initialize_unordered_bulk_op()` - **Deprecated in NeoSQLite** to match PyMongo 4.x behavior.
+7. `where()` - **NeoSQLite implementation** using Python function filter. MongoDB uses JavaScript `$where` which requires a JS engine.
 
 All comparable MongoDB APIs are tested with 100% compatibility.
 
@@ -32,7 +33,7 @@ All comparable MongoDB APIs are tested with 100% compatibility.
 
 ## Package Structure
 
-```
+```text
 api_comparison/
 ├── __init__.py              # Package initialization and exports
 ├── reporter.py              # CompatibilityReporter class
@@ -148,13 +149,14 @@ reporter.print_report()
 | `search_index` | search_index.py | Search index operations |
 | `reindex` | reindex.py | Reindex operations |
 | `elemmatch` | elemmatch.py | $elemMatch operator |
+| `session_methods` | session_methods.py | Session and transaction methods |
 
 ## Adding New Tests
 
 To add tests for a missing API:
 
 1. **Find the appropriate module** or create a new one
-2. **Add the test function** following this pattern:
+1. **Add the test function** following this pattern:
 
 ```python
 """Module docstring describing what this file tests"""
@@ -203,7 +205,7 @@ def compare_your_feature():
     )
 ```
 
-3. **Register the function** in `runner.py`:
+1. **Register the function** in `runner.py`:
 
 ```python
 from .your_module import compare_your_feature
@@ -214,7 +216,7 @@ COMPARISON_FUNCTIONS = [
 ]
 ```
 
-4. **Update this README.md** to document the new test category
+1. **Update this README.md** to document the new test category
 
 ## Requirements
 
@@ -229,6 +231,7 @@ The following tests are skipped during comparison due to architectural differenc
 | Feature | NeoSQLite Status | MongoDB Requirement | Reason |
 |---------|-----------------|---------------------|--------|
 | `watch()` (Change Streams) | ✅ **Implemented** via SQLite triggers | Replica set required | NeoSQLite uses SQLite triggers; MongoDB requires replica set (not available in single-node test setup). See `tests/test_changestream.py` for NeoSQLite tests. |
+| `transactions` | ✅ **Implemented** via ClientSession | Replica set required | NeoSQLite uses SQLite transactions; MongoDB requires replica set for start_session(). |
 | `$log2` | ✅ **Implemented** using SQLite's native `log2()` function | N/A | NeoSQLite extension. Raises `UserWarning` about MongoDB incompatibility. For MongoDB compatibility, use `{ $log: [ <number>, 2 ] }` instead. |
 
 **Note**: The `watch()` method is fully functional in NeoSQLite and tested independently. It's only skipped in the comparison script because the test setup runs MongoDB as a single node (no replica set).
@@ -241,6 +244,7 @@ NeoSQLite includes some features that don't exist in MongoDB and therefore aren'
 |---------|---------|----------|
 | `use_quez()` | Enable memory-constrained processing using quez library | `AggregationCursor` |
 | `get_quez_stats()` | Get quez processing statistics | `AggregationCursor` |
+| `db_path` | Get the underlying SQLite database file path | `Connection`, `Collection` |
 
 These are internal NeoSQLite optimizations for specific use cases.
 

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..client_session import ClientSession
 
 from .base import QueryEngineProtocol
 from ...results import (
@@ -22,25 +25,39 @@ from neosqlite.collection.json_helpers import neosqlite_json_dumps_for_sql
 class CRUDOperationsMixin(QueryEngineProtocol):
     """Mixin class providing CRUD operations for QueryEngine."""
 
-    def insert_one(self, document: Dict[str, Any]) -> InsertOneResult:
+    def insert_one(
+        self, document: Dict[str, Any], session: ClientSession | None = None
+    ) -> InsertOneResult:
         """
         Insert a single document into the collection.
 
         Args:
             document (Dict[str, Any]): The document to insert.
+            session (ClientSession, optional): A ClientSession for transactions.
 
         Returns:
-            InsertOneResult: The result of the insert operation, containing the inserted document ID.
+            InsertOneResult: The result of the insert operation.
         """
         inserted_id = self.helpers._internal_insert(document)
         return InsertOneResult(inserted_id)
 
-    def insert_many(self, documents: List[Dict[str, Any]]) -> InsertManyResult:
+    def insert_many(
+        self,
+        documents: List[Dict[str, Any]],
+        ordered: bool = True,
+        session: ClientSession | None = None,
+    ) -> InsertManyResult:
         """
         Insert multiple documents into the collection.
 
         Args:
             documents (List[Dict[str, Any]]): List of documents to insert.
+            ordered (bool, optional): If True, insert documents in the order they
+                                      appear in the list. If an error occurs,
+                                      the operation will stop. If False, the
+                                      operation will continue even if an error
+                                      occurs.
+            session (ClientSession, optional): A ClientSession for transactions.
 
         Returns:
             InsertManyResult: Result of the insert operation, containing a list of inserted document IDs.
@@ -54,6 +71,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         update: Dict[str, Any],
         upsert: bool = False,
         array_filters: List[Dict[str, Any]] | None = None,
+        session: ClientSession | None = None,
     ) -> UpdateResult:
         """
         Updates a single document in the collection based on the provided filter
@@ -64,6 +82,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             update (Dict[str, Any]): A dictionary specifying the update operations to apply to the document.
             upsert (bool, optional): If True, inserts a new document if no document matches the filter. Defaults to False.
             array_filters (List[Dict[str, Any]], optional): A list of filter documents for array positional operators.
+            session (ClientSession, optional): A ClientSession for transactions.
 
         Returns:
             UpdateResult: An object containing information about the update operation,
@@ -262,7 +281,9 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         self,
         filter: Dict[str, Any],
         update: Dict[str, Any],
+        upsert: bool = False,
         array_filters: List[Dict[str, Any]] | None = None,
+        session: ClientSession | None = None,
     ) -> UpdateResult:
         """
         Update multiple documents based on a filter.
@@ -273,7 +294,9 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         Args:
             filter (Dict[str, Any]): A dictionary representing the filter to select documents to update.
             update (Dict[str, Any]): A dictionary representing the updates to apply.
+            upsert (bool, optional): If True, inserts a new document if no document matches the filter. Defaults to False.
             array_filters (List[Dict[str, Any]], optional): A list of filter documents for array positional operators.
+            session (ClientSession, optional): A ClientSession for transactions.
 
         Returns:
             UpdateResult: A result object containing information about the update operation.
@@ -333,13 +356,16 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             upserted_id=None,
         )
 
-    def delete_one(self, filter: Dict[str, Any]) -> DeleteResult:
+    def delete_one(
+        self, filter: Dict[str, Any], session: ClientSession | None = None
+    ) -> DeleteResult:
         """
         Delete a single document matching the filter.
 
         Args:
             filter (Dict[str, Any]): A dictionary specifying the filter conditions
                                      for the document to delete.
+            session (ClientSession, optional): A ClientSession for transactions.
 
         Returns:
             DeleteResult: A result object indicating whether the deletion was
@@ -365,13 +391,16 @@ class CRUDOperationsMixin(QueryEngineProtocol):
                 return DeleteResult(deleted_count=1)
         return DeleteResult(deleted_count=0)
 
-    def delete_many(self, filter: Dict[str, Any]) -> DeleteResult:
+    def delete_many(
+        self, filter: Dict[str, Any], session: ClientSession | None = None
+    ) -> DeleteResult:
         """
         Deletes multiple documents in the collection that match the provided filter.
 
         Args:
             filter (Dict[str, Any]): A dictionary specifying the query criteria
                                      for finding the documents to delete.
+            session (ClientSession, optional): A ClientSession for transactions.
 
         Returns:
             DeleteResult: A result object indicating whether the deletion was successful or not.
@@ -418,6 +447,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         filter: Dict[str, Any],
         replacement: Dict[str, Any],
         upsert: bool = False,
+        session: ClientSession | None = None,
     ) -> UpdateResult:
         """
         Replace one document in the collection that matches the filter with the
@@ -428,6 +458,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             replacement (Dict[str, Any]): The new document that replaces the matched document.
             upsert (bool, optional): If true, inserts the replacement document if no document matches the filter.
                                      Default is False.
+            session (ClientSession, optional): A ClientSession for transactions.
 
         Returns:
             UpdateResult: A result object containing the number of matched and

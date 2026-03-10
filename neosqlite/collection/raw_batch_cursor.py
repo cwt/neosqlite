@@ -5,6 +5,7 @@ from typing import Any, Dict, Iterator, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from . import Collection
+    from ..client_session import ClientSession
 
 
 class RawBatchCursor:
@@ -18,6 +19,7 @@ class RawBatchCursor:
         hint: str | None = None,
         batch_size: int = 100,
         pipeline: List[Dict[str, Any]] | None = None,
+        session: ClientSession | None = None,
     ):
         """
         Initialize a RawBatchCursor object.
@@ -29,6 +31,7 @@ class RawBatchCursor:
             hint (str): A string hinting at the index to use for the query.
             batch_size (int): The number of documents to return in each batch.
             pipeline (List[Dict[str, Any]]): An optional aggregation pipeline to execute.
+            session (ClientSession, optional): A ClientSession for transactions.
         """
         self._collection = collection
         self._query_helpers = collection.query_engine.helpers
@@ -40,6 +43,7 @@ class RawBatchCursor:
         self._limit: int | None = None
         self._sort: Dict[str, int] | None = None
         self._pipeline = pipeline
+        self._session = session
 
     def batch_size(self, batch_size: int) -> RawBatchCursor:
         """

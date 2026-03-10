@@ -494,3 +494,57 @@ class TestDatabaseCommand:
         # Results should be identical
         assert result_normal["ok"] == result_fallback["ok"]
         assert result_normal["ok"] == 1.0
+
+
+def test_connection_properties():
+    """Test newly added Connection properties."""
+    conn = neosqlite.Connection(":memory:")
+    assert conn.client == conn
+    assert conn.codec_options is None
+    assert conn.read_preference is None
+    assert conn.write_concern is None
+    assert conn.read_concern is None
+    assert conn.db_path == ":memory:"
+    conn.close()
+
+
+def test_connection_with_options():
+    """Test with_options on Connection."""
+    conn = neosqlite.Connection(":memory:")
+    wc = {"w": 1}
+    conn2 = conn.with_options(write_concern=wc)
+    assert conn2.write_concern == wc
+    assert conn2._is_clone is True
+    # Verify clone doesn't close shared connection
+    conn2.close()
+    # Shared connection should still work
+    conn.db.execute("SELECT 1")
+    conn.close()
+
+
+def test_cursor_command_and_dereference():
+    """Test cursor_command and dereference methods on Connection."""
+    conn = neosqlite.Connection(":memory:")
+    coll = conn["test_collection"]
+    coll.insert_one({"name": "initial"})
+
+    # cursor_command
+    cursor = conn.cursor_command("listCollections")
+    from neosqlite.collection.aggregation_cursor import AggregationCursor
+
+    assert isinstance(cursor, AggregationCursor)
+    results = list(cursor)
+    assert any(c["name"] == "test_collection" for c in results)
+
+    # dereference
+    res = coll.insert_one({"name": "ref_me"})
+    dbref = {"$ref": "test_collection", "$id": res.inserted_id}
+
+    deref_doc = conn.dereference(dbref)
+    assert deref_doc is not None
+    assert deref_doc["name"] == "ref_me"
+
+    # Test invalid dereference
+    assert conn.dereference({"$ref": "nonexistent", "$id": 123}) is None
+    assert conn.dereference(None) is None
+    conn.close()

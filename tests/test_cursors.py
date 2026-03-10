@@ -1757,3 +1757,48 @@ class TestCursorWhere:
         assert all(
             doc["value"] % 2 == 0 and doc["value"] > 10 for doc in results
         )
+
+
+def test_cursor_new_properties_and_methods():
+    """Test newly added Cursor properties and methods."""
+    with neosqlite.Connection(":memory:") as conn:
+        coll = conn.test
+        coll.insert_one({"a": 1})
+        cursor = coll.find({"a": 1})
+
+        from neosqlite.collection.cursor import Cursor
+
+        assert isinstance(cursor, Cursor)
+        assert cursor.cursor_id == 0
+        assert cursor.session is None
+        assert cursor.alive is True
+        assert cursor.retrieved == 0
+
+        # Method chaining
+        cursor.add_option(1).remove_option(1).max_await_time_ms(100)
+
+        list(cursor)
+        assert cursor.retrieved == 1
+        assert cursor.alive is False
+
+
+def test_aggregation_cursor_new_properties():
+    """Test newly added AggregationCursor properties."""
+    with neosqlite.Connection(":memory:") as conn:
+        coll = conn.test
+        coll.insert_one({"a": 1})
+        cursor = coll.aggregate([{"$match": {"a": 1}}])
+
+        from neosqlite.collection.aggregation_cursor import AggregationCursor
+
+        assert isinstance(cursor, AggregationCursor)
+        assert cursor.cursor_id == 0
+        assert cursor.session is None
+        assert cursor.alive is True
+        assert cursor.retrieved == 0
+        assert cursor.collection == coll
+
+        list(cursor)
+        assert cursor.retrieved == 1
+        assert cursor.alive is False
+        assert cursor.address is not None

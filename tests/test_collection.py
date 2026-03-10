@@ -1476,3 +1476,35 @@ def test_insert_invalid_json_document():
     finally:
         # Restore the original function
         json_helpers.neosqlite_json_dumps = original_dumps
+
+
+def test_collection_properties():
+    """Test newly added Collection properties."""
+    conn = neosqlite.Connection(":memory:")
+    coll = conn["test_collection"]
+    coll.insert_one({"name": "initial"})
+
+    assert coll.client == conn
+    assert coll.database == conn
+    assert coll.full_name == "memory.test_collection"
+    assert coll.db_path == ":memory:"
+
+    # Test options()
+    opts = coll.options()
+    assert "codec_options" in opts
+    assert "write_concern" in opts
+    assert "count" in opts
+    assert opts["count"] == 1
+    conn.close()
+
+
+def test_collection_with_options():
+    """Test with_options on Collection."""
+    conn = neosqlite.Connection(":memory:")
+    coll = conn["test_collection"]
+    coll2 = coll.with_options(read_preference={"mode": "secondary"})
+    assert coll2.read_preference == {"mode": "secondary"}
+    # Should still point to same DB
+    coll2.insert_one({"a": 1})
+    assert coll.count_documents({}) == 1
+    conn.close()

@@ -44,6 +44,7 @@ from . import objectid_ops
 from . import type_operator
 from . import cursor_operations
 from . import cursor_methods
+from . import session_methods
 from . import collection_methods
 from . import collection_methods_additional
 from . import database_methods
@@ -97,6 +98,7 @@ __all__ = [
     "type_operator",
     "cursor_operations",
     "cursor_methods",
+    "session_methods",
     "collection_methods",
     "collection_methods_additional",
     "database_methods",

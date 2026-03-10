@@ -17,6 +17,14 @@ def compare_database_methods():
     print("\n=== Database Methods Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
+        # Test client property
+        neo_client = neo_conn.client == neo_conn
+        print(f"Neo client property: {'OK' if neo_client else 'FAIL'}")
+
+        # Test db_path property (NeoSQLite specific)
+        neo_db_path = neo_conn.db_path == ":memory:"
+        print(f"Neo db_path property: {'OK' if neo_db_path else 'FAIL'}")
+
         # Test get_collection (doesn't create until used)
         try:
             coll = neo_conn.get_collection("test_get_coll")
@@ -101,12 +109,37 @@ def compare_database_methods():
             neo_server_status_ok = False
             print(f"Neo command(): Error - {e}")
 
+        # Test cursor_command()
+        try:
+            # listCollections can be run as a cursor command
+            cursor = neo_conn.cursor_command("listCollections")
+            results = list(cursor)
+            neo_cursor_command = len(results) > 0
+            print(
+                f"Neo cursor_command(): {'OK' if neo_cursor_command else 'FAIL'}"
+            )
+        except Exception as e:
+            neo_cursor_command = False
+            print(f"Neo cursor_command(): Error - {e}")
+
+        # Test dereference()
+        try:
+            coll = neo_conn["deref_test"]
+            res = coll.insert_one({"a": 1})
+            dbref = {"$ref": "deref_test", "$id": res.inserted_id}
+            doc = neo_conn.dereference(dbref)
+            neo_deref = doc is not None and doc.get("a") == 1
+            print(f"Neo dereference(): {'OK' if neo_deref else 'FAIL'}")
+        except Exception as e:
+            neo_deref = False
+            print(f"Neo dereference(): Error - {e}")
+
         # Test with_options()
         try:
             neo_db_opts = neo_conn.with_options(write_concern={"w": "majority"})
             neo_with_options = (
                 neo_db_opts is not None
-                and neo_db_opts._write_concern == {"w": "majority"}
+                and neo_db_opts.write_concern == {"w": "majority"}
             )
             print(f"Neo with_options(): {'OK' if neo_with_options else 'FAIL'}")
         except Exception as e:
@@ -116,26 +149,27 @@ def compare_database_methods():
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
 
+    mongo_client = None
+    mongo_db_path = None
     mongo_coll_rename = None
-
     mongo_create_collection = None
-
     mongo_db = None
-
     mongo_drop_collection = None
-
     mongo_get_collection = None
-
     mongo_list_collections = None
-
     mongo_ping_ok = None
-
     mongo_rename_collection = None
-
     mongo_server_status_ok = None
+    mongo_cursor_command = None
+    mongo_deref = None
+    mongo_with_options = None
 
     if client:
         mongo_db = client.test_database_methods
+
+        # Test client property
+        mongo_client = client == client
+        print(f"Mongo client property: {'OK' if mongo_client else 'FAIL'}")
 
         # Clean up any leftover collections from previous runs BEFORE testing
         for coll_name in [
@@ -143,6 +177,7 @@ def compare_database_methods():
             "test_create_coll",
             "rename_old",
             "rename_new",
+            "deref_test",
         ]:
             try:
                 mongo_db.drop_collection(coll_name)
@@ -230,6 +265,33 @@ def compare_database_methods():
             mongo_server_status_ok = False
             print(f"Mongo command(): Error - {e}")
 
+        # Test cursor_command()
+        try:
+            from pymongo.command_cursor import CommandCursor
+
+            cursor = mongo_db.cursor_command("listCollections")
+            mongo_cursor_command = isinstance(cursor, CommandCursor)
+            print(
+                f"Mongo cursor_command(): {'OK' if mongo_cursor_command else 'FAIL'}"
+            )
+        except Exception as e:
+            mongo_cursor_command = False
+            print(f"Mongo cursor_command(): Error - {e}")
+
+        # Test dereference()
+        try:
+            from bson.dbref import DBRef
+
+            coll = mongo_db["deref_test"]
+            res = coll.insert_one({"a": 1})
+            dbref = DBRef("deref_test", res.inserted_id)
+            doc = mongo_db.dereference(dbref)
+            mongo_deref = doc is not None and doc.get("a") == 1
+            print(f"Mongo dereference(): {'OK' if mongo_deref else 'FAIL'}")
+        except Exception as e:
+            mongo_deref = False
+            print(f"Mongo dereference(): Error - {e}")
+
         # Test with_options()
         # Note: MongoDB with_options() returns a new Database instance
         try:
@@ -247,7 +309,7 @@ def compare_database_methods():
             print(f"Mongo with_options(): Error - {e}")
 
         # Clean up
-        for coll_name in ["test_get_coll", "rename_new"]:
+        for coll_name in ["test_get_coll", "rename_new", "deref_test"]:
             try:
                 mongo_db.drop_collection(coll_name)
             except Exception:
@@ -255,6 +317,20 @@ def compare_database_methods():
 
         client.close()
 
+    reporter.record_comparison(
+        "Database Methods",
+        "client",
+        neo_client if neo_client else "FAIL",
+        mongo_client if mongo_client else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Database Methods",
+        "db_path",
+        neo_db_path if neo_db_path else "FAIL",
+        None,
+        skip_reason="NeoSQLite specific (SQLite database path)",
+    )
     reporter.record_comparison(
         "Database Methods",
         "get_collection",
@@ -303,6 +379,20 @@ def compare_database_methods():
         "command_server_status",
         neo_server_status_ok if neo_server_status_ok else "FAIL",
         mongo_server_status_ok if mongo_server_status_ok else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Database Methods",
+        "cursor_command",
+        neo_cursor_command if neo_cursor_command else "FAIL",
+        mongo_cursor_command if mongo_cursor_command else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Database Methods",
+        "dereference",
+        neo_deref if neo_deref else "FAIL",
+        mongo_deref if mongo_deref else None,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(

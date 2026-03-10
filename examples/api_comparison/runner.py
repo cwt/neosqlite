@@ -45,6 +45,7 @@ from .aggregation_stages_extended import (
 )
 from .expr_extended import compare_additional_expr_operators_extended
 from .cursor_methods import compare_cursor_methods
+from .session_methods import compare_session_methods
 from .aggregation_cursor import compare_aggregation_cursor_methods
 from .database_methods import compare_database_methods
 from .expr_complete import compare_additional_expr_operators_complete
@@ -94,6 +95,7 @@ COMPARISON_FUNCTIONS = [
     ("aggregation_extended", compare_additional_aggregation_stages_extended),
     ("expr_extended", compare_additional_expr_operators_extended),
     ("cursor_methods", compare_cursor_methods),
+    ("session_methods", compare_session_methods),
     ("aggregation_cursor", compare_aggregation_cursor_methods),
     ("database", compare_database_methods),
     ("expr_complete", compare_additional_expr_operators_complete),

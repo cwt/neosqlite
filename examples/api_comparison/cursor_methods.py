@@ -205,18 +205,63 @@ def compare_cursor_methods():
             neo_max = False
             print(f"Neo max(): Error - {e}")
 
+        # Test add_option() and remove_option()
+        try:
+            cursor = neo_collection.find({})
+            cursor.add_option(1 << 1)  # OP_QUERY_TAILABLE_CURSOR
+            neo_add_option = (
+                hasattr(cursor, "_options")
+                and (cursor._options & (1 << 1)) != 0
+            )
+            cursor.remove_option(1 << 1)
+            neo_remove_option = (cursor._options & (1 << 1)) == 0
+            print(f"Neo add_option(): {'OK' if neo_add_option else 'FAIL'}")
+            print(
+                f"Neo remove_option(): {'OK' if neo_remove_option else 'FAIL'}"
+            )
+        except Exception as e:
+            neo_add_option = neo_remove_option = False
+            print(f"Neo options: Error - {e}")
+
+        # Test max_await_time_ms()
+        try:
+            cursor = neo_collection.find({}).max_await_time_ms(100)
+            neo_max_await = cursor._max_await_time_ms == 100
+            print(
+                f"Neo max_await_time_ms(): {'OK' if neo_max_await else 'FAIL'}"
+            )
+        except Exception as e:
+            neo_max_await = False
+            print(f"Neo max_await_time_ms: Error - {e}")
+
+        # Test session and cursor_id properties
+        try:
+            cursor = neo_collection.find({})
+            neo_session_prop = cursor.session is None
+            neo_cursor_id_prop = cursor.cursor_id == 0
+            print(
+                f"Neo session property: {'OK' if neo_session_prop else 'FAIL'}"
+            )
+            print(
+                f"Neo cursor_id property: {'OK' if neo_cursor_id_prop else 'FAIL'}"
+            )
+        except Exception as e:
+            neo_session_prop = neo_cursor_id_prop = False
+            print(f"Neo cursor props: Error - {e}")
+
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
 
     mongo_batch_size = None
-
     mongo_collection = None
-
     mongo_cursor_methods = None
-
     mongo_db = None
-
     mongo_hint = None
+    mongo_add_option = None
+    mongo_remove_option = None
+    mongo_max_await = None
+    mongo_session_prop = None
+    mongo_cursor_id_prop = None
 
     if client:
         mongo_db = client.test_database
@@ -448,117 +493,191 @@ def compare_cursor_methods():
         except Exception as e:
             print(f"Neo where(): Error - {e}")
 
+        # Test add_option() and remove_option()
+        try:
+            cursor = mongo_collection.find({})
+            cursor.add_option(2)  # OP_QUERY_TAILABLE_CURSOR
+            # In PyMongo, there is no public _options, we just check it doesn't fail
+            mongo_add_option = mongo_remove_option = True
+            cursor.remove_option(2)
+            print(f"Mongo add_option(): OK")
+            print(f"Mongo remove_option(): OK")
+        except Exception as e:
+            mongo_add_option = mongo_remove_option = False
+            print(f"Mongo options: Error - {e}")
+
+        # Test max_await_time_ms()
+        try:
+            cursor = mongo_collection.find({}).max_await_time_ms(100)
+            mongo_max_await = True
+            print(f"Mongo max_await_time_ms(): OK")
+        except Exception as e:
+            mongo_max_await = False
+            print(f"Mongo max_await_time_ms: Error - {e}")
+
+        # Test session and cursor_id properties
+        try:
+            cursor = mongo_collection.find({})
+            mongo_session_prop = cursor.session is None
+            mongo_cursor_id_prop = isinstance(
+                cursor.cursor_id, (int, type(None))
+            )
+            print(
+                f"Mongo session property: {'OK' if mongo_session_prop else 'FAIL'}"
+            )
+            print(
+                f"Mongo cursor_id property: {'OK' if mongo_cursor_id_prop else 'FAIL'}"
+            )
+        except Exception as e:
+            mongo_session_prop = mongo_cursor_id_prop = False
+            print(f"Mongo cursor props: Error - {e}")
+
         client.close()
 
-        reporter.record_comparison(
-            "Cursor Methods",
-            "chained_methods",
-            neo_cursor_methods if neo_cursor_methods else "FAIL",
-            mongo_cursor_methods if mongo_cursor_methods else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Cursor Methods",
-            "batch_size",
-            neo_batch_size if neo_batch_size else "FAIL",
-            mongo_batch_size if mongo_batch_size else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Cursor Methods",
-            "hint",
-            neo_hint if neo_hint else "FAIL",
-            mongo_hint if mongo_hint else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Cursor Methods",
-            "to_list",
-            neo_to_list if neo_to_list else "FAIL",
-            mongo_to_list if mongo_to_list else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Cursor Methods",
-            "to_list_length",
-            neo_to_list_length if neo_to_list_length else "FAIL",
-            mongo_to_list_length if mongo_to_list_length else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Cursor Methods",
-            "clone",
-            neo_clone if neo_clone else "FAIL",
-            mongo_clone if mongo_clone else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Cursor Methods",
-            "explain",
-            neo_explain if neo_explain else "FAIL",
-            mongo_explain if mongo_explain else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Cursor Methods",
-            "comment",
-            neo_comment if neo_comment else "FAIL",
-            mongo_comment if mongo_comment else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Cursor Methods",
-            "retrieved",
-            neo_retrieved if neo_retrieved else "FAIL",
-            mongo_retrieved if mongo_retrieved else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Cursor Methods",
-            "alive",
-            neo_alive if neo_alive else "FAIL",
-            mongo_alive if mongo_alive else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Cursor Methods",
-            "collection",
-            neo_collection_prop if neo_collection_prop else "FAIL",
-            mongo_collection_prop if mongo_collection_prop else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Cursor Methods",
-            "address",
-            neo_address if neo_address else "FAIL",
-            mongo_address if mongo_address else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Cursor Methods",
-            "min",
-            neo_min if neo_min else "FAIL",
-            mongo_min if mongo_min else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Cursor Methods",
-            "max",
-            neo_max if neo_max else "FAIL",
-            mongo_max if mongo_max else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Cursor Methods",
-            "collation",
-            neo_collation if neo_collation else "FAIL",
-            mongo_collation if mongo_collation else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Cursor Methods",
-            "where",
-            "NeoSQLite-specific (Python filter)",
-            None,
-            skip_reason="NeoSQLite uses Python function filter; MongoDB uses JavaScript $where",
-        )
+    reporter.record_comparison(
+        "Cursor Methods",
+        "chained_methods",
+        neo_cursor_methods if neo_cursor_methods else "FAIL",
+        mongo_cursor_methods if mongo_cursor_methods else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Cursor Methods",
+        "batch_size",
+        neo_batch_size if neo_batch_size else "FAIL",
+        mongo_batch_size if mongo_batch_size else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Cursor Methods",
+        "hint",
+        neo_hint if neo_hint else "FAIL",
+        mongo_hint if mongo_hint else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Cursor Methods",
+        "to_list",
+        neo_to_list if neo_to_list else "FAIL",
+        mongo_to_list if mongo_to_list else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Cursor Methods",
+        "to_list_length",
+        neo_to_list_length if neo_to_list_length else "FAIL",
+        mongo_to_list_length if mongo_to_list_length else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Cursor Methods",
+        "clone",
+        neo_clone if neo_clone else "FAIL",
+        mongo_clone if mongo_clone else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Cursor Methods",
+        "explain",
+        neo_explain if neo_explain else "FAIL",
+        mongo_explain if mongo_explain else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Cursor Methods",
+        "comment",
+        neo_comment if neo_comment else "FAIL",
+        mongo_comment if mongo_comment else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Cursor Methods",
+        "retrieved",
+        neo_retrieved if neo_retrieved else "FAIL",
+        mongo_retrieved if mongo_retrieved else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Cursor Methods",
+        "alive",
+        neo_alive if neo_alive else "FAIL",
+        mongo_alive if mongo_alive else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Cursor Methods",
+        "collection",
+        neo_collection_prop if neo_collection_prop else "FAIL",
+        mongo_collection_prop if mongo_collection_prop else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Cursor Methods",
+        "address",
+        neo_address if neo_address else "FAIL",
+        mongo_address if mongo_address else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Cursor Methods",
+        "min",
+        neo_min if neo_min else "FAIL",
+        mongo_min if mongo_min else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Cursor Methods",
+        "max",
+        neo_max if neo_max else "FAIL",
+        mongo_max if mongo_max else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Cursor Methods",
+        "collation",
+        neo_collation if neo_collation else "FAIL",
+        mongo_collation if mongo_collation else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Cursor Methods",
+        "where",
+        "NeoSQLite-specific (Python filter)",
+        None,
+        skip_reason="NeoSQLite uses Python function filter; MongoDB uses JavaScript $where",
+    )
+    reporter.record_comparison(
+        "Cursor Methods",
+        "add_option",
+        neo_add_option if neo_add_option else "FAIL",
+        mongo_add_option if mongo_add_option else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Cursor Methods",
+        "remove_option",
+        neo_remove_option if neo_remove_option else "FAIL",
+        mongo_remove_option if mongo_remove_option else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Cursor Methods",
+        "max_await_time_ms",
+        neo_max_await if neo_max_await else "FAIL",
+        mongo_max_await if mongo_max_await else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Cursor Methods",
+        "session",
+        neo_session_prop if neo_session_prop else "FAIL",
+        mongo_session_prop if mongo_session_prop else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Cursor Methods",
+        "cursor_id",
+        neo_cursor_id_prop if neo_cursor_id_prop else "FAIL",
+        mongo_cursor_id_prop if mongo_cursor_id_prop else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )

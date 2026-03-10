@@ -4,6 +4,7 @@ import time
 
 if TYPE_CHECKING:
     from .collection import Collection
+    from .client_session import ClientSession
 
 
 class ChangeStream:
@@ -24,7 +25,7 @@ class ChangeStream:
         batch_size: int | None = None,
         collation: Dict[str, Any] | None = None,
         start_at_operation_time: Any | None = None,
-        session: Any | None = None,
+        session: ClientSession | None = None,
         start_after: Dict[str, Any] | None = None,
     ):
         """

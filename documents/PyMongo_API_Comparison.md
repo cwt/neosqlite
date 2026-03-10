@@ -374,20 +374,20 @@ The following APIs have been implemented and tested:
 | `with_options()` | Get collection clone with different options | High | ✅ **Implemented** | Options stored for API compatibility |
 | `estimated_document_count()` options | Count with options | High | ✅ **Implemented** | Accepts options dict (stored for API compatibility) |
 | `full_name` | Full collection name | High | ✅ **Implemented** | Returns "database.collection" |
-| `codec_options` | Codec options | High | ❌ Missing | Property (MongoDB-specific) |
-| `read_preference` | Read preference | High | ❌ Missing | Property (MongoDB-specific) |
-| `write_concern` | Write concern | High | ❌ Missing | Property (MongoDB-specific) |
-| `read_concern` | Read concern | High | ❌ Missing | Property (MongoDB-specific) |
+| `codec_options` | Codec options | High | ✅ **Implemented** | Property delegating to database |
+| `read_preference` | Read preference | High | ✅ **Implemented** | Property delegating to database |
+| `write_concern` | Write concern | High | ✅ **Implemented** | Property delegating to database |
+| `read_concern` | Read concern | High | ✅ **Implemented** | Property delegating to database |
 
 #### Database Methods (Implemented)
 
 | Method | Description | Priority | Status | Notes |
 |--------|-------------|----------|--------|-------|
 | `command()` | Run database commands | High | ✅ **Implemented** | Supports ping, serverStatus, listCollections, PRAGMA commands |
-| `cursor_command()` | Run commands returning cursors | High | ❌ Missing | MongoDB-specific |
-| `dereference()` | Dereference DBRef | High | ❌ Missing | DBRef is MongoDB-specific |
+| `cursor_command()` | Run commands returning cursors | High | ✅ **Implemented** | Wraps command result in AggregationCursor |
+| `dereference()` | Dereference DBRef | High | ✅ **Implemented** | Resolves DBRef objects |
 | `with_options()` | Get database clone | High | ✅ **Implemented** | Stores options for API compatibility |
-| `client` | MongoClient instance | High | ❌ Missing | Property (MongoDB-specific) |
+| `client` | MongoClient instance | High | ✅ **Implemented** | Returns parent connection |
 
 #### Cursor Methods (Implemented)
 
@@ -401,21 +401,22 @@ The following APIs have been implemented and tested:
 | `hint()` | Index hint for query | High | ✅ **Implemented** | Index hint support |
 | `alive` | Check if cursor has more data | High | ✅ **Implemented** | Property tracking cursor exhaustion |
 | `collection` | Return collection reference | High | ✅ **Implemented** | Property returning parent collection |
-| `address` | Return database address | High | ✅ **Implemented** | Returns None before iteration, tuple after |
+| `address` | Return database address | High | ✅ **Implemented** | Returns database path |
 | `min()` | Min index bound | High | ✅ **Implemented** | Sets minimum index bounds |
 | `max()` | Max index bound | High | ✅ **Implemented** | Sets maximum index bounds |
 | `collation()` | Language-specific string comparison | High | ✅ **Implemented** | Case-insensitive sorting via strength |
 | `where()` | Python function filter | High | ✅ **Implemented** | Tier-3 Python fallback filtering |
-| `add_option()` | Set query flags (bitmask) | High | ❌ Missing | Low-level MongoDB options |
-| `remove_option()` | Unset query flags | High | ❌ Missing | Low-level MongoDB options |
-| `max_await_time_ms()` | Time limit for getMore | High | ❌ Missing | Tailable cursors only |
+| `add_option()` | Set query flags (bitmask) | High | ✅ **Implemented** | State-tracking for API compatibility |
+| `remove_option()` | Unset query flags | High | ✅ **Implemented** | State-tracking for API compatibility |
+| `max_await_time_ms()` | Time limit for getMore | High | ✅ **Implemented** | Placeholder for tailable cursors |
 
-#### Cursor Properties (Missing)
+#### Cursor Properties (Implemented)
 
 | Property | Description | Priority | Status |
 |----------|-------------|----------|--------|
-| `session` | ClientSession | High | ❌ Missing |
-| `cursor_id` | Cursor ID | High | ⚠️ Partial |
+| `session` | ClientSession | High | ✅ **Implemented** |
+| `cursor_id` | Cursor ID | High | ✅ **Implemented** |
+
 
 ### 2.2 MEDIUM PRIORITY - Query & Update Operators
 

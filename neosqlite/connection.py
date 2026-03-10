@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from ._sqlite import sqlite3
 from .collection import Collection
+from .collection.aggregation_cursor import AggregationCursor
 from .exceptions import CollectionInvalid
+from .client_session import ClientSession
 from .sql_utils import quote_table_name
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Tuple
@@ -34,23 +36,35 @@ class Connection:
         self._tokenizers: List[Tuple[str, str]] = kwargs.pop("tokenizers", [])
         self.debug: bool = kwargs.pop("debug", False)
         # Internal flag for cloning
-        _is_clone = kwargs.pop("_is_clone", False)
+        self._is_clone = kwargs.pop("_is_clone", False)
 
         # PyMongo compatibility attributes
-        self._codec_options = None
-        self._read_preference = None
-        self._write_concern = None
-        self._read_concern = None
+        self._codec_options = kwargs.pop("codec_options", None)
+        self._read_preference = kwargs.pop("read_preference", None)
+        self._write_concern = kwargs.pop("write_concern", None)
+        self._read_concern = kwargs.pop("read_concern", None)
 
         # Extract database name from args or kwargs for PyMongo API compatibility
         self.name: str = kwargs.pop("name", None)
-        if self.name is None and args:
+        self._db_path = args[0] if args else ":memory:"
+        if self.name is None:
             # Use the database file path as the name
-            db_path = args[0] if args else ":memory:"
-            self.name = db_path if db_path != ":memory:" else "memory"
+            self.name = (
+                self._db_path if self._db_path != ":memory:" else "memory"
+            )
 
-        if not _is_clone:
+        if not self._is_clone:
             self.connect(*args, **kwargs)
+
+    @property
+    def db_path(self) -> str:
+        """
+        Get the path to the database file.
+
+        Returns:
+            str: The database file path.
+        """
+        return self._db_path
 
     def connect(self, *args: Any, **kwargs: Any) -> None:
         """
@@ -68,6 +82,10 @@ class Connection:
         self.db.isolation_level = None
         self.db.execute("PRAGMA journal_mode=WAL")
 
+        # Apply initial write concern if set
+        if hasattr(self, "_write_concern") and self._write_concern:
+            self._apply_write_concern(self._write_concern)
+
         # Enable extension loading and load custom FTS5 tokenizers if provided
         if self._tokenizers:
             self.db.enable_load_extension(True)
@@ -82,10 +100,63 @@ class Connection:
         connection. This method ensures resources are released and the connection
         is no longer usable after being called.
         """
+        if self._is_clone:
+            return
+
         if self.db is not None:
             if self.db.in_transaction:
                 self.db.commit()
             self.db.close()
+
+    @property
+    def client(self) -> Connection:
+        """
+        Get the MongoClient instance (returns self for NeoSQLite).
+
+        Returns:
+            Connection: The connection instance itself.
+        """
+        return self
+
+    @property
+    def codec_options(self) -> Any:
+        """
+        Get the codec options for this connection.
+
+        Returns:
+            Any: The codec options.
+        """
+        return self._codec_options
+
+    @property
+    def read_preference(self) -> Any:
+        """
+        Get the read preference for this connection.
+
+        Returns:
+            Any: The read preference.
+        """
+        return self._read_preference
+
+    @property
+    def write_concern(self) -> Any:
+        """
+        Get the write concern for this connection.
+
+        Returns:
+            Any: The write concern.
+        """
+        return self._write_concern
+
+    @property
+    def read_concern(self) -> Any:
+        """
+        Get the read concern for this connection.
+
+        Returns:
+            Any: The read concern.
+        """
+        return self._read_concern
 
     def __getitem__(self, name: str) -> Collection:
         """
@@ -119,6 +190,35 @@ class Connection:
         if name in self.__dict__:
             return self.__dict__[name]
         return self[name]
+
+    def start_session(
+        self,
+        causal_consistency: bool | None = None,
+        default_transaction_options: Dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ClientSession:
+        """
+        Start a new client session for transactions.
+
+        This method provides PyMongo-compatible session management by wrapping
+        SQLite's native ACID transactions.
+
+        Args:
+            causal_consistency (bool, optional): Whether to enable causal consistency.
+                Ignored in NeoSQLite (stored for API compatibility).
+            default_transaction_options (dict, optional): Default transaction options.
+            **kwargs: Additional session arguments.
+
+        Returns:
+            ClientSession: A new ClientSession instance.
+        """
+        options = kwargs.copy()
+        if causal_consistency is not None:
+            options["causal_consistency"] = causal_consistency
+        if default_transaction_options:
+            options["default_transaction_options"] = default_transaction_options
+
+        return ClientSession(self, options=options)
 
     def __enter__(self) -> Connection:
         """
@@ -466,6 +566,73 @@ class Connection:
         except Exception as e:
             return {"ok": 0, "errmsg": str(e), "code": 1}
 
+    def cursor_command(
+        self, command: str | Dict[str, Any], **kwargs: Any
+    ) -> AggregationCursor:
+        """
+        Execute a database command and return a cursor for its results.
+
+        This method provides PyMongo-compatible cursor-based command execution.
+        It wraps the results of `command()` in an `AggregationCursor`, allowing
+        them to be iterated.
+
+        Args:
+            command: The command to execute.
+            **kwargs: Additional command arguments.
+
+        Returns:
+            AggregationCursor: A cursor over the command results.
+        """
+        result = self.command(command, **kwargs)
+
+        # Determine the results to iterate over
+        if isinstance(result, dict) and "collections" in result:
+            items = result["collections"]
+        elif (
+            isinstance(result, dict)
+            and "cursor" in result
+            and isinstance(result["cursor"], dict)
+            and "firstBatch" in result["cursor"]
+        ):
+            items = result["cursor"]["firstBatch"]
+        else:
+            # Wrap the entire result in a list
+            items = [result]
+
+        # Use a safe dummy collection name for AggregationCursor
+        # We don't want to use existing collection names because some might be reserved (e.g. sqlite_sequence)
+        collection = self["__command_results__"]
+
+        # Create an AggregationCursor with the pre-computed results
+        cursor = AggregationCursor(collection, [])
+        cursor._results = items
+        cursor._executed = True
+        return cursor
+
+    def dereference(self, dbref: Dict[str, Any]) -> Dict[str, Any] | None:
+        """
+        Resolve a DBRef object.
+
+        This method provides PyMongo-compatible DBRef resolution by performing
+        a `find_one` on the target collection using the provided `$id`.
+
+        Args:
+            dbref: A dictionary representing a DBRef with '$ref' and '$id' keys.
+
+        Returns:
+            Dict[str, Any] | None: The referenced document, or None if not found.
+        """
+        if not isinstance(dbref, dict):
+            return None
+
+        collection_name = dbref.get("$ref")
+        document_id = dbref.get("$id")
+
+        if not collection_name or document_id is None:
+            return None
+
+        return self[collection_name].find_one({"_id": document_id})
+
     def with_options(
         self,
         codec_options: Any | None = None,
@@ -519,7 +686,39 @@ class Connection:
         clone._write_concern = write_concern
         clone._read_concern = read_concern
 
+        # Apply write concern mapping to SQLite PRAGMAs
+        clone._apply_write_concern(write_concern)
+
         return clone
+
+    def _apply_write_concern(self, write_concern: Any) -> None:
+        """
+        Apply write concern to the underlying SQLite connection via PRAGMAs.
+
+        - w: 0 -> PRAGMA synchronous = OFF
+        - w: 1 -> PRAGMA synchronous = NORMAL
+        - j: True -> PRAGMA synchronous = FULL
+
+        Args:
+            write_concern (Any): The write concern to apply.
+        """
+        if not write_concern or not isinstance(write_concern, dict):
+            return
+
+        w = write_concern.get("w")
+        j = write_concern.get("j")
+
+        try:
+            if w == 0:
+                self.db.execute("PRAGMA synchronous = OFF")
+            elif w == 1:
+                self.db.execute("PRAGMA synchronous = NORMAL")
+
+            if j is True:
+                self.db.execute("PRAGMA synchronous = FULL")
+        except Exception as e:
+            if self.debug:
+                print(f"Error applying write concern: {e}")
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
@@ -552,6 +751,9 @@ class Connection:
         this process are caught and ignored to prevent crashes during garbage
         collection.
         """
+        if getattr(self, "_is_clone", False):
+            return
+
         try:
             if hasattr(self, "db") and self.db is not None:
                 # Only close if it's not already closed

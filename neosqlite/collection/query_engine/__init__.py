@@ -21,6 +21,7 @@ from .query_methods import QueryMethodsMixin
 
 if TYPE_CHECKING:
     from quez import CompressedQueue
+    from ..client_session import ClientSession
 
 # Check if quez is available
 _HAS_QUEZ = importlib.util.find_spec("quez") is not None
@@ -61,6 +62,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         self,
         pipeline: List[Dict[str, Any]],
         batch_size: int = 101,
+        session: ClientSession | None = None,
     ) -> List[Dict[str, Any]]:
         """
         Applies a list of aggregation pipeline stages to the collection.
@@ -73,17 +75,21 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         Args:
             pipeline (List[Dict[str, Any]]): A list of aggregation pipeline stages to apply.
             batch_size (int): The batch size for fetching results from database.
+            session (ClientSession, optional): A ClientSession for transactions.
 
         Returns:
             List[Dict[str, Any]]: The list of documents after applying the aggregation pipeline.
         """
-        return self.aggregate_with_constraints(pipeline, batch_size=batch_size)
+        return self.aggregate_with_constraints(
+            pipeline, batch_size=batch_size, session=session
+        )
 
     def aggregate_with_constraints(
         self,
         pipeline: List[Dict[str, Any]],
         batch_size: int = 101,
         memory_constrained: bool = False,
+        session: ClientSession | None = None,
     ) -> List[Dict[str, Any]] | "CompressedQueue":
         """
         Applies a list of aggregation pipeline stages with memory constraints.
@@ -92,6 +98,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
             pipeline (List[Dict[str, Any]]): A list of aggregation pipeline stages to apply.
             batch_size (int): The batch size for processing large result sets.
             memory_constrained (bool): Whether to use memory-constrained processing.
+            session (ClientSession, optional): A ClientSession for transactions.
 
         Returns:
             List[Dict[str, Any]] | CompressedQueue: The results as either a list or compressed queue.
@@ -1172,6 +1179,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         self,
         pipeline: List[Dict[str, Any]],
         batch_size: int = 100,
+        session: ClientSession | None = None,
     ) -> RawBatchCursor:
         """
         Perform aggregation and retrieve batches of raw JSON.
@@ -1186,12 +1194,19 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         Args:
             pipeline (List[Dict[str, Any]]): A list of aggregation pipeline stages to apply.
             batch_size (int): The number of documents to include in each batch.
+            session (ClientSession, optional): A ClientSession for transactions.
 
         Returns:
             RawBatchCursor instance.
         """
         return RawBatchCursor(
-            self.collection, None, None, None, batch_size, pipeline=pipeline
+            self.collection,
+            None,
+            None,
+            None,
+            batch_size,
+            pipeline=pipeline,
+            session=session,
         )
 
     # --- Bulk Write methods ---
@@ -1199,6 +1214,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         self,
         requests: List[Any],
         ordered: bool = True,
+        session: ClientSession | None = None,
     ) -> BulkWriteResult:
         """
         Execute bulk write operations on the collection.
@@ -1207,6 +1223,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
             requests: List of write operations to execute.
             ordered: If true, operations will be performed in order and will
                      raise an exception if a single operation fails.
+            session (ClientSession, optional): A ClientSession for transactions.
 
         Returns:
             BulkWriteResult: A result object containing the number of matched,

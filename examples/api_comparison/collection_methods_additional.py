@@ -66,6 +66,24 @@ def compare_additional_collection_methods():
             neo_full_name_ok = False
             print(f"Neo full_name: Error - {e}")
 
+        # Test client property
+        try:
+            neo_client_prop = neo_collection2.client == neo_conn
+            print(f"Neo client property: {'OK' if neo_client_prop else 'FAIL'}")
+        except Exception as e:
+            neo_client_prop = False
+            print(f"Neo client property: Error - {e}")
+
+        # Test db_path property (NeoSQLite specific)
+        try:
+            neo_db_path_prop = neo_collection2.db_path == ":memory:"
+            print(
+                f"Neo db_path property: {'OK' if neo_db_path_prop else 'FAIL'}"
+            )
+        except Exception as e:
+            neo_db_path_prop = False
+            print(f"Neo db_path property: Error - {e}")
+
         # Test with_options()
         neo_collection_opts = neo_conn.test_with_opts
         try:
@@ -89,6 +107,7 @@ def compare_additional_collection_methods():
     mongo_drop = None
     mongo_watch = None
     mongo_full_name_ok = None
+    mongo_client_prop = None
     mongo_with_options = None
 
     if client:
@@ -143,6 +162,18 @@ def compare_additional_collection_methods():
         except Exception as e:
             mongo_full_name_ok = False
             print(f"Mongo full_name: Error - {e}")
+
+        # Test client property
+        try:
+            # In PyMongo, Collection has a .database property, and Database has a .client property
+            # NeoSQLite added .client directly to Collection for convenience/compatibility
+            mongo_client_prop = mongo_collection2.database.client == client
+            print(
+                f"Mongo client property: {'OK' if mongo_client_prop else 'FAIL'}"
+            )
+        except Exception as e:
+            mongo_client_prop = False
+            print(f"Mongo client property: Error - {e}")
 
         # Test with_options()
         mongo_collection_opts = mongo_db.test_with_opts
@@ -200,6 +231,20 @@ def compare_additional_collection_methods():
         neo_coll_name if neo_full_name_ok else "FAIL",
         mongo_coll_name if mongo_full_name_ok else None,
         skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Collection Methods",
+        "client",
+        neo_client_prop if neo_client_prop else "FAIL",
+        mongo_client_prop if mongo_client_prop else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Collection Methods",
+        "db_path",
+        neo_db_path_prop if neo_db_path_prop else "FAIL",
+        None,
+        skip_reason="NeoSQLite specific (SQLite database path)",
     )
     reporter.record_comparison(
         "Collection Methods",

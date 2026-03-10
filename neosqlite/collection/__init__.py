@@ -23,8 +23,12 @@ from .schema_utils import (
 )
 from neosqlite.collection.json_helpers import neosqlite_json_loads
 from ..sql_utils import quote_table_name
-from typing import Any, Dict, List, Tuple, overload
+from typing import Any, Dict, List, Tuple, overload, TYPE_CHECKING
 from typing_extensions import Literal
+
+if TYPE_CHECKING:
+    from ..connection import Connection
+    from ..client_session import ClientSession
 
 
 class Collection:
@@ -338,7 +342,6 @@ class Collection:
             table_info = get_table_info(self.db, self.name)
             options["columns"] = table_info["columns"]
             options["indexes"] = table_info["indexes"]
-
             # Get row count
             if count_row := self.db.execute(
                 f"SELECT COUNT(*) FROM {quote_table_name(self.name)}"
@@ -349,6 +352,13 @@ class Collection:
             else:
                 options["count"] = 0
 
+            # Add PyMongo compatibility options
+            options["codec_options"] = self.codec_options
+            options["read_preference"] = self.read_preference
+            options["write_concern"] = self.write_concern
+            options["read_concern"] = self.read_concern
+
+            return options
         except sqlite3.Error:
             # If we can't get detailed information, return basic info
             options["columns"] = []
@@ -358,19 +368,28 @@ class Collection:
         return options
 
     # --- Querying methods delegated to QueryEngine ---
-    def insert_one(self, document: Dict[str, Any]) -> InsertOneResult:
+    def insert_one(
+        self, document: Dict[str, Any], session: ClientSession | None = None
+    ) -> InsertOneResult:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.insert_one`.
         """
-        return self.query_engine.insert_one(document)
+        return self.query_engine.insert_one(document, session=session)
 
-    def insert_many(self, documents: List[Dict[str, Any]]) -> InsertManyResult:
+    def insert_many(
+        self,
+        documents: List[Dict[str, Any]],
+        ordered: bool = True,
+        session: ClientSession | None = None,
+    ) -> InsertManyResult:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.insert_many`.
         """
-        return self.query_engine.insert_many(documents)
+        return self.query_engine.insert_many(
+            documents, ordered=ordered, session=session
+        )
 
     def update_one(
         self,
@@ -378,40 +397,58 @@ class Collection:
         update: Dict[str, Any],
         upsert: bool = False,
         array_filters: List[Dict[str, Any]] | None = None,
+        session: ClientSession | None = None,
     ) -> UpdateResult:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.update_one`.
         """
         return self.query_engine.update_one(
-            filter, update, upsert, array_filters
+            filter,
+            update,
+            upsert=upsert,
+            array_filters=array_filters,
+            session=session,
         )
 
     def update_many(
         self,
         filter: Dict[str, Any],
         update: Dict[str, Any],
+        upsert: bool = False,
         array_filters: List[Dict[str, Any]] | None = None,
+        session: ClientSession | None = None,
     ) -> UpdateResult:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.update_many`.
         """
-        return self.query_engine.update_many(filter, update, array_filters)
+        return self.query_engine.update_many(
+            filter,
+            update,
+            upsert=upsert,
+            array_filters=array_filters,
+            session=session,
+        )
 
     def replace_one(
         self,
         filter: Dict[str, Any],
         replacement: Dict[str, Any],
         upsert: bool = False,
+        session: ClientSession | None = None,
     ) -> UpdateResult:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.replace_one`.
         """
-        return self.query_engine.replace_one(filter, replacement, upsert)
+        return self.query_engine.replace_one(
+            filter, replacement, upsert=upsert, session=session
+        )
 
-    def delete_one(self, filter: Dict[str, Any]) -> DeleteResult:
+    def delete_one(
+        self, filter: Dict[str, Any], session: ClientSession | None = None
+    ) -> DeleteResult:
         """
         Delete a single document.
 
@@ -421,6 +458,7 @@ class Collection:
 
         Args:
             filter: Query filter to match document to delete
+            session: A ClientSession for transactions.
 
         Returns:
             DeleteResult: Result of the delete operation
@@ -429,7 +467,7 @@ class Collection:
         if self._is_gridfs_collection():
             return self._delete_one_as_gridfs(filter)
 
-        return self.query_engine.delete_one(filter)
+        return self.query_engine.delete_one(filter, session=session)
 
     def _delete_one_as_gridfs(self, filter: Dict[str, Any]):
         """
@@ -473,7 +511,9 @@ class Collection:
         # Return DeleteResult with deleted count
         return DeleteResult(1)
 
-    def delete_many(self, filter: Dict[str, Any]) -> DeleteResult:
+    def delete_many(
+        self, filter: Dict[str, Any], session: ClientSession | None = None
+    ) -> DeleteResult:
         """
         Delete multiple documents.
 
@@ -483,6 +523,7 @@ class Collection:
 
         Args:
             filter: Query filter to match documents to delete
+            session: A ClientSession for transactions.
 
         Returns:
             DeleteResult: Result of the delete operation
@@ -491,7 +532,7 @@ class Collection:
         if self._is_gridfs_collection():
             return self._delete_many_as_gridfs(filter)
 
-        return self.query_engine.delete_many(filter)
+        return self.query_engine.delete_many(filter, session=session)
 
     def _delete_many_as_gridfs(self, filter: Dict[str, Any]):
         """
@@ -542,6 +583,7 @@ class Collection:
         filter: Dict[str, Any] | None = None,
         projection: Dict[str, Any] | None = None,
         hint: str | None = None,
+        session: ClientSession | None = None,
     ) -> Cursor:
         """
         Find documents in the collection.
@@ -553,6 +595,7 @@ class Collection:
             filter: Query filter
             projection: Field projection (not supported for GridFS collections)
             hint: Index hint (not supported for GridFS collections)
+            session: A ClientSession for transactions.
 
         Returns:
             Cursor or GridOutCursor: Query results
@@ -561,7 +604,7 @@ class Collection:
         if self._is_gridfs_collection():
             return self._find_as_gridfs(filter)
 
-        return self.query_engine.find(filter, projection, hint)
+        return self.query_engine.find(filter, projection, hint, session=session)
 
     def _is_gridfs_collection(self) -> bool:
         """
@@ -645,13 +688,14 @@ class Collection:
         projection: Dict[str, Any] | None = None,
         hint: str | None = None,
         batch_size: int = 100,
+        session: ClientSession | None = None,
     ) -> RawBatchCursor:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.find_raw_batches`.
         """
         return self.query_engine.find_raw_batches(
-            filter, projection, hint, batch_size
+            filter, projection, hint, batch_size, session=session
         )
 
     def find_one(
@@ -659,6 +703,7 @@ class Collection:
         filter: Dict[str, Any] | None = None,
         projection: Dict[str, Any] | None = None,
         hint: str | None = None,
+        session: ClientSession | None = None,
     ) -> Dict[str, Any] | None:
         """
         Find a single document.
@@ -670,6 +715,7 @@ class Collection:
             filter: Query filter
             projection: Field projection (not supported for GridFS collections)
             hint: Index hint (not supported for GridFS collections)
+            session: A ClientSession for transactions.
 
         Returns:
             Dict or GridOut or None: Query result
@@ -684,15 +730,19 @@ class Collection:
 
         return self.query_engine.find_one(filter, projection, hint)
 
-    def count_documents(self, filter: Dict[str, Any]) -> int:
+    def count_documents(
+        self, filter: Dict[str, Any], session: ClientSession | None = None
+    ) -> int:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.count_documents`.
         """
-        return self.query_engine.count_documents(filter)
+        return self.query_engine.count_documents(filter, session=session)
 
     def estimated_document_count(
-        self, options: Dict[str, Any] | None = None
+        self,
+        options: Dict[str, Any] | None = None,
+        session: ClientSession | None = None,
     ) -> int:
         """
         Get an estimated count of documents in the collection.
@@ -705,6 +755,7 @@ class Collection:
                 Supported options (for PyMongo API compatibility):
                 - maxTimeMS: Maximum execution time in milliseconds (ignored in NeoSQLite)
                 - hint: Index to use for the count (ignored in NeoSQLite)
+            session: A ClientSession for transactions.
 
         Returns:
             int: Estimated number of documents in the collection
@@ -717,45 +768,84 @@ class Collection:
         """
         # Options are accepted for API compatibility but not used
         # maxTimeMS, hint, etc. are MongoDB-specific
-        return self.query_engine.estimated_document_count()
+        return self.query_engine.estimated_document_count(session=session)
 
     def find_one_and_delete(
         self,
         filter: Dict[str, Any],
+        projection: Dict[str, Any] | None = None,
+        sort: List[Tuple[str, int]] | None = None,
+        session: ClientSession | None = None,
+        **kwargs: Any,
     ) -> Dict[str, Any] | None:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.find_one_and_delete`.
         """
-        return self.query_engine.find_one_and_delete(filter)
+        return self.query_engine.find_one_and_delete(
+            filter, projection=projection, sort=sort, session=session, **kwargs
+        )
 
     def find_one_and_replace(
         self,
         filter: Dict[str, Any],
         replacement: Dict[str, Any],
+        projection: Dict[str, Any] | None = None,
+        sort: List[Tuple[str, int]] | None = None,
+        upsert: bool = False,
+        return_document: bool = False,
+        session: ClientSession | None = None,
+        **kwargs: Any,
     ) -> Dict[str, Any] | None:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.find_one_and_replace`.
         """
-        return self.query_engine.find_one_and_replace(filter, replacement)
+        return self.query_engine.find_one_and_replace(
+            filter,
+            replacement,
+            projection=projection,
+            sort=sort,
+            upsert=upsert,
+            return_document=return_document,
+            session=session,
+            **kwargs,
+        )
 
     def find_one_and_update(
         self,
         filter: Dict[str, Any],
         update: Dict[str, Any],
+        projection: Dict[str, Any] | None = None,
+        sort: List[Tuple[str, int]] | None = None,
+        upsert: bool = False,
+        return_document: bool = False,
+        array_filters: List[Dict[str, Any]] | None = None,
+        session: ClientSession | None = None,
+        **kwargs: Any,
     ) -> Dict[str, Any] | None:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.find_one_and_update`.
         """
-        return self.query_engine.find_one_and_update(filter, update)
+        return self.query_engine.find_one_and_update(
+            filter,
+            update,
+            projection=projection,
+            sort=sort,
+            upsert=upsert,
+            return_document=return_document,
+            array_filters=array_filters,
+            session=session,
+            **kwargs,
+        )
 
     def aggregate(
         self,
         pipeline: List[Dict[str, Any]],
         allowDiskUse: bool | None = None,
         batchSize: int | None = None,
+        session: ClientSession | None = None,
         **kwargs: Any,
     ) -> AggregationCursor:
         """
@@ -766,46 +856,59 @@ class Collection:
             pipeline: The aggregation pipeline to execute
             allowDiskUse: Ignored in NeoSQLite (kept for PyMongo compatibility)
             batchSize: Batch size for results (kept for PyMongo compatibility)
+            session: A ClientSession for transactions.
             **kwargs: Additional keyword arguments for PyMongo compatibility
 
         Returns:
             An AggregationCursor instance
         """
         return AggregationCursor(
-            self, pipeline, allowDiskUse, batchSize, **kwargs
+            self,
+            pipeline,
+            allowDiskUse=allowDiskUse,
+            batchSize=batchSize,
+            session=session,
+            **kwargs,
         )
 
     def aggregate_raw_batches(
         self,
         pipeline: List[Dict[str, Any]],
         batch_size: int = 100,
+        session: ClientSession | None = None,
     ) -> RawBatchCursor:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.aggregate_raw_batches`.
         """
-        return self.query_engine.aggregate_raw_batches(pipeline, batch_size)
+        return self.query_engine.aggregate_raw_batches(
+            pipeline, batch_size, session=session
+        )
 
     def distinct(
-        self, key: str, filter: Dict[str, Any] | None = None
+        self,
+        key: str,
+        filter: Dict[str, Any] | None = None,
+        session: ClientSession | None = None,
     ) -> List[Any]:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.distinct`.
         """
-        return self.query_engine.distinct(key, filter)
+        return self.query_engine.distinct(key, filter, session=session)
 
     # --- Bulk Write methods delegated to QueryEngine ---
     def bulk_write(
         self,
         requests: List[Any],
         ordered: bool = True,
+        session: ClientSession | None = None,
     ) -> BulkWriteResult:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.bulk_write`.
         """
-        return self.query_engine.bulk_write(requests, ordered)
+        return self.query_engine.bulk_write(requests, ordered, session=session)
 
     def initialize_ordered_bulk_op(self) -> BulkOperationExecutor:
         """
@@ -963,7 +1066,68 @@ class Collection:
 
     # --- Other methods ---
     @property
-    def database(self):
+    def client(self) -> Connection:
+        """
+        Get the MongoClient instance (returns the parent Connection).
+
+        Returns:
+            Connection: The parent connection instance.
+        """
+        return self.database
+
+    @property
+    def codec_options(self) -> Any:
+        """
+        Get the codec options for this collection.
+
+        Returns:
+            Any: The codec options.
+        """
+        if hasattr(self, "_codec_options") and self._codec_options is not None:
+            return self._codec_options
+        return self.database.codec_options if self.database else None
+
+    @property
+    def read_preference(self) -> Any:
+        """
+        Get the read preference for this collection.
+
+        Returns:
+            Any: The read preference.
+        """
+        if (
+            hasattr(self, "_read_preference")
+            and self._read_preference is not None
+        ):
+            return self._read_preference
+        return self.database.read_preference if self.database else None
+
+    @property
+    def write_concern(self) -> Any:
+        """
+        Get the write concern for this collection.
+
+        Returns:
+            Any: The write concern.
+        """
+        if hasattr(self, "_write_concern") and self._write_concern is not None:
+            return self._write_concern
+        return self.database.write_concern if self.database else None
+
+    @property
+    def read_concern(self) -> Any:
+        """
+        Get the read concern for this collection.
+
+        Returns:
+            Any: The read concern.
+        """
+        if hasattr(self, "_read_concern") and self._read_concern is not None:
+            return self._read_concern
+        return self.database.read_concern if self.database else None
+
+    @property
+    def database(self) -> Connection:
         """
         Get the database that this collection is a part of.
 
@@ -971,6 +1135,16 @@ class Collection:
             Connection: The connection object this collection is associated with.
         """
         return self._database
+
+    @property
+    def db_path(self) -> str:
+        """
+        Get the path to the database file.
+
+        Returns:
+            str: The database file path.
+        """
+        return self.database.db_path if self.database else ":memory:"
 
     @property
     def full_name(self) -> str:

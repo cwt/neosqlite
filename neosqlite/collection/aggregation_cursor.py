@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Iterator, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from . import Collection
+    from ..client_session import ClientSession
 
 # Try to import quez, but make it optional
 try:
@@ -28,6 +29,7 @@ class AggregationCursor:
         pipeline: List[Dict[str, Any]],
         allowDiskUse: bool | None = None,
         batchSize: int | None = None,
+        session: ClientSession | None = None,
         **kwargs: Any,
     ):
         """
@@ -38,9 +40,10 @@ class AggregationCursor:
             pipeline: The aggregation pipeline to execute
             allowDiskUse: Ignored in NeoSQLite (kept for PyMongo compatibility)
             batchSize: Batch size for results (kept for PyMongo compatibility)
+            session: A ClientSession for transactions
             **kwargs: Additional keyword arguments for PyMongo compatibility
         """
-        self.collection = collection
+        self._collection = collection
         self.pipeline = pipeline
         self._results: List[Dict[str, Any]] | CompressedQueue | None = None
         self._position = 0
@@ -52,6 +55,72 @@ class AggregationCursor:
         self._use_quez = False
         # Store allowDiskUse for API compatibility (ignored in NeoSQLite)
         self._allow_disk_use = allowDiskUse
+        self._session = session
+
+    def max_await_time_ms(
+        self, max_await_time_ms: int | None
+    ) -> AggregationCursor:
+        """
+        Set the maximum time to wait for new documents (for tailable cursors).
+
+        Args:
+            max_await_time_ms (int, optional): The maximum time to wait in milliseconds.
+
+        Returns:
+            AggregationCursor: The cursor object with the max_await_time_ms applied.
+        """
+        self._max_await_time_ms = max_await_time_ms
+        return self
+
+    def add_option(self, mask: int) -> AggregationCursor:
+        """
+        Set query flags (bitmask) for this cursor.
+
+        Args:
+            mask (int): The bitmask of options to set.
+
+        Returns:
+            AggregationCursor: The cursor object with the options applied.
+        """
+        if not hasattr(self, "_options"):
+            self._options = 0
+        self._options |= mask
+        return self
+
+    def remove_option(self, mask: int) -> AggregationCursor:
+        """
+        Unset query flags (bitmask) for this cursor.
+
+        Args:
+            mask (int): The bitmask of options to unset.
+
+        Returns:
+            AggregationCursor: The cursor object with the options removed.
+        """
+        if not hasattr(self, "_options"):
+            self._options = 0
+        self._options &= ~mask
+        return self
+
+    @property
+    def session(self) -> Any | None:
+        """
+        Get the ClientSession associated with this cursor.
+
+        Returns:
+            Any | None: The ClientSession, or None if no session is associated.
+        """
+        return getattr(self, "_session", None)
+
+    @property
+    def cursor_id(self) -> int:
+        """
+        Get the ID of this cursor.
+
+        Returns:
+            int: The cursor ID (always 0 for NeoSQLite).
+        """
+        return 0
 
     def __iter__(self) -> Iterator[Dict[str, Any]]:
         """
@@ -287,21 +356,6 @@ class AggregationCursor:
         self._batch_size = size
         return self
 
-    def max_await_time_ms(self, time_ms: int) -> AggregationCursor:
-        """
-        Set the maximum time to wait for new documents.
-
-        This is a placeholder method for API compatibility with PyMongo.
-
-        Args:
-            time_ms: Time in milliseconds
-
-        Returns:
-            The cursor itself for chaining
-        """
-        # This is a placeholder for API compatibility
-        return self
-
     def allow_disk_use(self, allow: bool = True) -> AggregationCursor:
         """
         Enable or disable disk use for aggregation operations.
@@ -330,6 +384,68 @@ class AggregationCursor:
         """
         self._use_quez = use_quez and QUEZ_AVAILABLE
         return self
+
+    @property
+    def retrieved(self) -> int:
+        """
+        Return the number of documents retrieved from the cursor.
+
+        Returns:
+            int: The number of documents retrieved so far
+        """
+        return self._position
+
+    @property
+    def alive(self) -> bool:
+        """
+        Check if the cursor has more documents to iterate.
+
+        Returns:
+            bool: True if the cursor may have more documents, False if exhausted
+        """
+        if not self._executed:
+            return True
+
+        if self._results is None:
+            return False
+
+        if QUEZ_AVAILABLE and isinstance(self._results, CompressedQueue):
+            return not self._results.empty()
+
+        if isinstance(self._results, list):
+            return self._position < len(self._results)
+
+        return False
+
+    @property
+    def collection(self):
+        """
+        Return a reference to the collection this cursor is iterating over.
+
+        Returns:
+            Collection: The collection associated with this cursor
+        """
+        return self._collection
+
+    @property
+    def address(self) -> tuple | None:
+        """
+        Return the address of the database.
+
+        Returns:
+            tuple | None: A tuple of (database_path, 0) after execution starts,
+                          None before the cursor has been executed.
+        """
+        if not self._executed:
+            return None
+        return (
+            (
+                self.collection.db_path
+                if hasattr(self.collection, "db_path")
+                else "memory"
+            ),
+            0,
+        )
 
     def get_quez_stats(self) -> Dict[str, Any] | None:
         """

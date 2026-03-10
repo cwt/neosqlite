@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..client_session import ClientSession
 
 import json
 
@@ -18,12 +21,15 @@ from neosqlite.collection.json_helpers import (
 class QueryMethodsMixin(QueryEngineProtocol):
     """Mixin class providing query methods for QueryEngine."""
 
-    def count_documents(self, filter: Dict[str, Any]) -> int:
+    def count_documents(
+        self, filter: Dict[str, Any], session: ClientSession | None = None
+    ) -> int:
         """
         Return the count of documents that match the given filter.
 
         Args:
             filter (Dict[str, Any]): A dictionary specifying the query filter.
+            session (ClientSession, optional): A ClientSession for transactions.
 
         Returns:
             int: The number of documents matching the filter.
@@ -36,11 +42,16 @@ class QueryMethodsMixin(QueryEngineProtocol):
             cmd = f"SELECT COUNT(id) FROM {quote_table_name(self.collection.name)} {where_clause}"
             row = self.collection.db.execute(cmd, params).fetchone()
             return row[0] if row else 0
-        return len(list(self.find(filter)))
+        return len(list(self.find(filter, session=session)))
 
-    def estimated_document_count(self) -> int:
+    def estimated_document_count(
+        self, session: ClientSession | None = None
+    ) -> int:
         """
         Return the estimated number of documents in the collection.
+
+        Args:
+            session (ClientSession, optional): A ClientSession for transactions.
 
         Returns:
             int: The estimated number of documents.
@@ -51,7 +62,10 @@ class QueryMethodsMixin(QueryEngineProtocol):
         return row[0] if row else 0
 
     def distinct(
-        self, key: str, filter: Dict[str, Any] | None = None
+        self,
+        key: str,
+        filter: Dict[str, Any] | None = None,
+        session: ClientSession | None = None,
     ) -> List[Any]:
         """
         Return a list of distinct values from the specified key in the documents
@@ -60,6 +74,7 @@ class QueryMethodsMixin(QueryEngineProtocol):
         Args:
             key (str): The field name to extract distinct values from.
             filter (Dict[str, Any] | None): An optional query filter to apply to the documents.
+            session (ClientSession, optional): A ClientSession for transactions.
 
         Returns:
             List[Any]: A list containing the distinct values from the specified key.

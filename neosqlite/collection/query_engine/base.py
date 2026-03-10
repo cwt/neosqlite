@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, TYPE_CHECKING, Protocol
+from typing import Any, Dict, TYPE_CHECKING, Protocol, List
 
 if TYPE_CHECKING:
     from ..cursor import Cursor
     from ..query_helper import QueryHelper
     from ..sql_translator_unified import SQLTranslator
+    from ..client_session import ClientSession
 
 
 class QueryEngineProtocol(Protocol):
@@ -27,6 +28,7 @@ class QueryEngineProtocol(Protocol):
         filter: Dict[str, Any] | None = None,
         projection: Dict[str, Any] | None = None,
         hint: str | None = None,
+        session: ClientSession | None = None,
     ) -> "Cursor":
         """Find documents."""
         ...
@@ -36,10 +38,30 @@ class QueryEngineProtocol(Protocol):
         filter: Dict[str, Any] | None = None,
         projection: Dict[str, Any] | None = None,
         hint: str | None = None,
+        session: ClientSession | None = None,
     ) -> Dict[str, Any] | None:
         """Find a single document."""
         ...
 
-    def insert_one(self, document: Dict[str, Any]) -> Any:
+    def insert_one(
+        self, document: Dict[str, Any], session: ClientSession | None = None
+    ) -> Any:
         """Insert a single document."""
+        ...
+
+    def update_one(
+        self,
+        filter: Dict[str, Any],
+        update: Dict[str, Any],
+        upsert: bool = False,
+        array_filters: List[Dict[str, Any]] | None = None,
+        session: ClientSession | None = None,
+    ) -> Any:
+        """Update a single document."""
+        ...
+
+    def delete_one(
+        self, filter: Dict[str, Any], session: ClientSession | None = None
+    ) -> Any:
+        """Delete a single document."""
         ...

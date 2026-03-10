@@ -28,7 +28,7 @@ def compare_aggregation_cursor_methods():
                 [{"$match": {"value": {"$gte": 3}}}]
             ).batch_size(3)
             results = list(cursor)
-            neo_agg_batch_size = len(results) <= 10
+            neo_agg_batch_size = len(results) == 7
             print(f"Neo aggregate batch_size: {len(results)} results")
         except Exception as e:
             neo_agg_batch_size = False
@@ -48,16 +48,49 @@ def compare_aggregation_cursor_methods():
             neo_allow_disk_use = False
             print(f"Neo allow_disk_use: Error - {e}")
 
+        # Test new AggregationCursor properties
+        try:
+            cursor = neo_collection.aggregate([{"$match": {}}])
+            neo_retrieved = cursor.retrieved == 0
+            neo_alive = cursor.alive is True
+            neo_coll_prop = cursor.collection == neo_collection
+            neo_address_before = cursor.address is None
+            neo_session = cursor.session is None
+            neo_cursor_id = cursor.cursor_id == 0
+
+            list(cursor)
+            neo_retrieved_after = cursor.retrieved == 10
+            neo_alive_after = cursor.alive is False
+            neo_address_after = cursor.address is not None
+
+            neo_props_ok = all(
+                [
+                    neo_retrieved,
+                    neo_alive,
+                    neo_coll_prop,
+                    neo_address_before,
+                    neo_session,
+                    neo_cursor_id,
+                    neo_retrieved_after,
+                    neo_alive_after,
+                    neo_address_after,
+                ]
+            )
+            print(
+                f"Neo AggregationCursor properties: {'OK' if neo_props_ok else 'FAIL'}"
+            )
+        except Exception as e:
+            neo_props_ok = False
+            print(f"Neo AggregationCursor properties: Error - {e}")
+
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
 
     mongo_agg_batch_size = None
-
     mongo_allow_disk_use = None
-
     mongo_collection = None
-
     mongo_db = None
+    mongo_props_ok = None
 
     if client:
         mongo_db = client.test_database
@@ -73,7 +106,7 @@ def compare_aggregation_cursor_methods():
                 [{"$match": {"value": {"$gte": 3}}}]
             ).batch_size(3)
             results = list(cursor)
-            mongo_agg_batch_size = len(results) <= 10
+            mongo_agg_batch_size = len(results) == 7
             print(f"Mongo aggregate batch_size: {len(results)} results")
         except Exception as e:
             mongo_agg_batch_size = False
@@ -93,6 +126,28 @@ def compare_aggregation_cursor_methods():
             mongo_allow_disk_use = False
             print(f"Mongo allow_disk_use: Error - {e}")
 
+        # Test AggregationCursor properties (called CommandCursor in PyMongo)
+        try:
+            cursor = mongo_collection.aggregate([{"$match": {}}])
+            # CommandCursor has fewer properties than standard Cursor in some drivers,
+            # but let's check what we can.
+            mongo_alive = cursor.alive is True
+            mongo_session = cursor.session is None
+            mongo_cursor_id = isinstance(cursor.cursor_id, (int, type(None)))
+
+            list(cursor)
+            mongo_alive_after = cursor.alive is False
+
+            mongo_props_ok = all(
+                [mongo_alive, mongo_session, mongo_cursor_id, mongo_alive_after]
+            )
+            print(
+                f"Mongo AggregationCursor properties: {'OK' if mongo_props_ok else 'FAIL'}"
+            )
+        except Exception as e:
+            mongo_props_ok = False
+            print(f"Mongo AggregationCursor properties: Error - {e}")
+
         client.close()
 
     reporter.record_comparison(
@@ -107,5 +162,12 @@ def compare_aggregation_cursor_methods():
         "allow_disk_use",
         neo_allow_disk_use if neo_allow_disk_use else "FAIL",
         mongo_allow_disk_use if mongo_allow_disk_use else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Aggregation Cursor Methods",
+        "properties",
+        neo_props_ok if neo_props_ok else "FAIL",
+        mongo_props_ok if mongo_props_ok else None,
         skip_reason="MongoDB not available" if not client else None,
     )

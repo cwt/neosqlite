@@ -5,6 +5,7 @@ from .json_path_utils import parse_json_path
 
 if TYPE_CHECKING:
     from . import Collection
+    from ..client_session import ClientSession
 
 ASCENDING = 1
 DESCENDING = -1
@@ -22,6 +23,7 @@ class Cursor:
         filter: Dict[str, Any] | None = None,
         projection: Dict[str, Any] | None = None,
         hint: str | None = None,
+        session: ClientSession | None = None,
     ):
         """
         Initialize a new cursor instance.
@@ -31,6 +33,7 @@ class Cursor:
             filter (Dict[str, Any], optional): Filter criteria to apply to the documents.
             projection (Dict[str, Any], optional): Projection criteria to specify which fields to include.
             hint (str, optional): Hint for the database to improve query performance.
+            session (ClientSession, optional): A ClientSession for transactions.
         """
         self._collection = collection
         self._query_helpers = collection.query_engine.helpers
@@ -47,6 +50,70 @@ class Cursor:
         self._sort: Dict[str, int] | None = None
         self._retrieved: int = 0
         self._batch_size = 101  # MongoDB-compatible default
+        self._session = session
+
+    def max_await_time_ms(self, max_await_time_ms: int | None) -> Cursor:
+        """
+        Set the maximum time to wait for new documents (for tailable cursors).
+
+        Args:
+            max_await_time_ms (int, optional): The maximum time to wait in milliseconds.
+
+        Returns:
+            Cursor: The cursor object with the max_await_time_ms applied.
+        """
+        self._max_await_time_ms = max_await_time_ms
+        return self
+
+    def add_option(self, mask: int) -> Cursor:
+        """
+        Set query flags (bitmask) for this cursor.
+
+        Args:
+            mask (int): The bitmask of options to set.
+
+        Returns:
+            Cursor: The cursor object with the options applied.
+        """
+        if not hasattr(self, "_options"):
+            self._options = 0
+        self._options |= mask
+        return self
+
+    def remove_option(self, mask: int) -> Cursor:
+        """
+        Unset query flags (bitmask) for this cursor.
+
+        Args:
+            mask (int): The bitmask of options to unset.
+
+        Returns:
+            Cursor: The cursor object with the options removed.
+        """
+        if not hasattr(self, "_options"):
+            self._options = 0
+        self._options &= ~mask
+        return self
+
+    @property
+    def session(self) -> Any | None:
+        """
+        Get the ClientSession associated with this cursor.
+
+        Returns:
+            Any | None: The ClientSession, or None if no session is associated.
+        """
+        return getattr(self, "_session", None)
+
+    @property
+    def cursor_id(self) -> int:
+        """
+        Get the ID of this cursor.
+
+        Returns:
+            int: The cursor ID (always 0 for NeoSQLite).
+        """
+        return 0
 
     def __iter__(self) -> Iterator[Dict[str, Any]]:
         """
@@ -556,6 +623,9 @@ class Cursor:
         for doc in docs:
             self._retrieved += 1
             yield doc
+
+        # Mark as exhausted
+        self._exhausted = True
 
     def _get_filtered_documents(self) -> Iterable[Dict[str, Any]]:
         """

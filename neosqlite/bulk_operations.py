@@ -6,6 +6,7 @@ from typing import Dict, Any, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
     import neosqlite
+    from .client_session import ClientSession
 
 from .results import BulkWriteResult
 
@@ -269,7 +270,7 @@ class BulkOperationExecutor:
         """
         return BulkOperationContext(self._operations, filter)
 
-    def execute(self) -> BulkWriteResult:
+    def execute(self, session: ClientSession | None = None) -> BulkWriteResult:
         """
         Execute all bulk operations.
 
@@ -277,23 +278,25 @@ class BulkOperationExecutor:
         is True, operations are executed in the order they were added. Otherwise,
         operations may be executed in any order.
 
+        Args:
+            session (ClientSession, optional): A ClientSession for transactions.
+
         Returns:
             BulkWriteResult: A result object containing the counts of inserted, matched, modified, deleted, and upserted documents.
         """
         if self._ordered:
-            return self._execute_ordered()
+            return self._execute_ordered(session=session)
         else:
-            return self._execute_unordered()
+            return self._execute_unordered(session=session)
 
-    def _execute_ordered(self) -> BulkWriteResult:
+    def _execute_ordered(
+        self, session: ClientSession | None = None
+    ) -> BulkWriteResult:
         """
         Execute operations in order.
 
-        This method executes each bulk operation in the `_operations` list in the
-        order they were added. It handles different types of operations (insert,
-        update, delete) using conditional logic. The method uses savepoints and
-        transactions to ensure atomicity and handle exceptions by rolling back
-        changes.
+        Args:
+            session (ClientSession, optional): A ClientSession for transactions.
 
         Returns:
             BulkWriteResult: A result object containing the counts of inserted, matched, modified, deleted, and upserted documents.
@@ -344,9 +347,14 @@ class BulkOperationExecutor:
             upserted_count=upserted_count,
         )
 
-    def _execute_unordered(self) -> BulkWriteResult:
+    def _execute_unordered(
+        self, session: ClientSession | None = None
+    ) -> BulkWriteResult:
         """
         Execute operations in any order (for now, we'll just execute them in order).
+
+        Args:
+            session (ClientSession, optional): A ClientSession for transactions.
 
         Returns:
             BulkWriteResult: A result object containing the counts of inserted, matched, modified, deleted, and upserted documents.
@@ -354,4 +362,4 @@ class BulkOperationExecutor:
         # For simplicity, we'll execute unordered operations the same as ordered
         # In a more advanced implementation, we might group operations by type
         # or execute them in parallel
-        return self._execute_ordered()
+        return self._execute_ordered(session=session)
