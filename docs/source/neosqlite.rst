@@ -19,9 +19,11 @@ Submodules
    neosqlite.binary
    neosqlite.bulk_operations
    neosqlite.changestream
+   neosqlite.client_session
    neosqlite.connection
    neosqlite.exceptions
    neosqlite.objectid
+   neosqlite.options
    neosqlite.query_operators
    neosqlite.requests
    neosqlite.results
