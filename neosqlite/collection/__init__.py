@@ -45,6 +45,7 @@ class Collection:
         name: str,
         create: bool = True,
         database=None,
+        **kwargs: Any,
     ):
         """
         Initialize a new collection object.
@@ -54,15 +55,17 @@ class Collection:
             name: Name of the collection.
             create: Whether to create the collection table if it doesn't exist.
             database: Database object that contains this collection.
+            **kwargs: Additional options for collection creation.
         """
         self.db = db
         self.name = name
         self._database = database
         self.indexes = IndexManager(self)
         self.query_engine = QueryEngine(self)
+        self._options = kwargs
 
         if create:
-            self.create()
+            self.create(**kwargs)
 
     # --- Collection helper methods ---
     def _load(self, id: int, data: str | bytes) -> Dict[str, Any]:
@@ -216,7 +219,7 @@ class Collection:
         current[keys[-1]] = value
 
     # --- Collection methods ---
-    def create(self):
+    def create(self, **kwargs: Any):
         """
         Initialize the collection table if it does not exist.
 
@@ -225,6 +228,19 @@ class Collection:
         If the JSONB data type is supported, it will be used,
         otherwise, TEXT data type will be used.
         """
+        validator = kwargs.get("validator")
+        check_clause = ""
+
+        if validator and "$jsonSchema" in validator:
+            from .query_helper.schema_compiler import compile_schema_to_sql
+
+            schema_sql = compile_schema_to_sql(
+                validator["$jsonSchema"],
+                jsonb=self.query_engine._jsonb_supported,
+            )
+            if schema_sql and schema_sql != "1":
+                check_clause = f", CHECK ({schema_sql})"
+
         # Use the QueryEngine's cached JSONB support flag
         if self.query_engine._jsonb_supported:
             self.db.execute(
@@ -233,6 +249,7 @@ class Collection:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     _id JSONB,
                     data JSONB NOT NULL
+                    {check_clause}
                 )"""
             )
         else:
@@ -242,6 +259,7 @@ class Collection:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     _id TEXT,
                     data TEXT NOT NULL
+                    {check_clause}
                 )
                 """
             )
