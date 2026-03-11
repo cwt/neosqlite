@@ -998,6 +998,12 @@ class SQLTierAggregator:
                 return "DENSE_RANK", "", []
             case "$documentNumber":
                 return "ROW_NUMBER", "", []
+            case "$first":
+                sql, params = self.evaluator.build_select_expression(op_val)
+                return "FIRST_VALUE", sql, params
+            case "$last":
+                sql, params = self.evaluator.build_select_expression(op_val)
+                return "LAST_VALUE", sql, params
             case "$shift":
                 output_expr = op_val.get("output")
                 by = op_val.get("by", 0)

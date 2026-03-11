@@ -161,24 +161,57 @@ def _apply_window_operator(
             return evaluator._evaluate_operand_python(output_expr, doc)
         return default
 
-    if op_name in ["$sum", "$avg", "$min", "$max", "$push", "$addToSet"]:
+    if op_name in [
+        "$sum",
+        "$avg",
+        "$min",
+        "$max",
+        "$push",
+        "$addToSet",
+        "$first",
+        "$last",
+        "$firstN",
+        "$lastN",
+        "$minN",
+        "$maxN",
+    ]:
+        if op_name in ["$firstN", "$lastN", "$minN", "$maxN"]:
+            input_expr = op_val.get("input")
+            n_expr = op_val.get("n", 1)
+            # n can be an expression
+            n = evaluator._evaluate_operand_python(
+                n_expr, partition_docs[current_idx]["__doc__"]
+            )
+            if not isinstance(n, int) or n < 0:
+                return None
+        else:
+            input_expr = op_val
+
         values = []
         for doc in frame_docs:
-            val = evaluator._evaluate_operand_python(op_val, doc)
+            val = evaluator._evaluate_operand_python(input_expr, doc)
             if val is not None:
                 values.append(val)
 
-        if not values and op_name not in ["$push", "$addToSet"]:
+        if not values and op_name not in [
+            "$push",
+            "$addToSet",
+            "$firstN",
+            "$lastN",
+            "$minN",
+            "$maxN",
+        ]:
             return None
 
         if op_name == "$sum":
-            return sum(values)
+            return sum(v for v in values if isinstance(v, (int, float)))
         if op_name == "$avg":
-            return sum(values) / len(values) if values else None
+            num_values = [v for v in values if isinstance(v, (int, float))]
+            return sum(num_values) / len(num_values) if num_values else None
         if op_name == "$min":
-            return min(values)
+            return min(values) if values else None
         if op_name == "$max":
-            return max(values)
+            return max(values) if values else None
         if op_name == "$push":
             return values
         if op_name == "$addToSet":
@@ -187,6 +220,18 @@ def _apply_window_operator(
                 if v not in unique_values:
                     unique_values.append(v)
             return unique_values
+        if op_name == "$first":
+            return values[0] if values else None
+        if op_name == "$last":
+            return values[-1] if values else None
+        if op_name == "$firstN":
+            return values[:n]
+        if op_name == "$lastN":
+            return values[-n:] if n > 0 else []
+        if op_name == "$minN":
+            return sorted(values)[:n]
+        if op_name == "$maxN":
+            return sorted(values, reverse=True)[:n]
 
     return None
 

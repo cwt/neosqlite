@@ -253,3 +253,113 @@ def test_window_unsupported_operator_fallback(collection):
     results = list(collection.aggregate(pipeline))
     assert len(results) == 6
     assert results[0]["complex"] == {"a": 1}
+
+
+def test_window_first_last(collection):
+    """Test $first and $last operators in window fields."""
+    pipeline = [
+        {
+            "$setWindowFields": {
+                "partitionBy": "$dept",
+                "sortBy": {"date": 1},
+                "output": {
+                    "firstVal": {"$first": "$score"},
+                    "lastVal": {"$last": "$score"},
+                },
+            }
+        },
+        {"$sort": {"_id": 1}},
+    ]
+
+    # These should use Tier 1 SQL (FIRST_VALUE / LAST_VALUE)
+    cursor = collection.aggregate(pipeline)
+    explanation = cursor.explain()
+    assert explanation["tier"] == 1
+
+    results = list(cursor)
+    # Sales: first=100 (date 1), last=90 (date 3)
+    assert results[0]["firstVal"] == 100
+    assert results[0]["lastVal"] == 90
+    # Eng: first=80 (date 4), last=110 (date 6)
+    assert results[3]["firstVal"] == 80
+    assert results[3]["lastVal"] == 110
+
+
+def test_window_firstN_lastN(collection):
+    """Test $firstN and $lastN operators in window fields (Python fallback)."""
+    pipeline = [
+        {
+            "$setWindowFields": {
+                "partitionBy": "$dept",
+                "sortBy": {"date": 1},
+                "output": {
+                    "first2": {"$firstN": {"input": "$score", "n": 2}},
+                    "last2": {"$lastN": {"input": "$score", "n": 2}},
+                },
+            }
+        },
+        {"$sort": {"_id": 1}},
+    ]
+
+    # N operators currently use Tier 3 fallback
+    results = list(collection.aggregate(pipeline))
+
+    # Sales: scores [100, 90, 90]
+    assert results[0]["first2"] == [100, 90]
+    assert results[0]["last2"] == [90, 90]
+
+    # Eng: scores [80, 110, 110]
+    assert results[3]["first2"] == [80, 110]
+    assert results[3]["last2"] == [110, 110]
+
+
+def test_window_minN_maxN(collection):
+    """Test $minN and $maxN operators in window fields (Python fallback)."""
+    pipeline = [
+        {
+            "$setWindowFields": {
+                "partitionBy": "$dept",
+                "output": {
+                    "min2": {"$minN": {"input": "$score", "n": 2}},
+                    "max2": {"$maxN": {"input": "$score", "n": 2}},
+                },
+            }
+        },
+        {"$sort": {"_id": 1}},
+    ]
+
+    results = list(collection.aggregate(pipeline))
+
+    # Sales: scores [100, 90, 90] -> min2=[90, 90], max2=[100, 90]
+    assert sorted(results[0]["min2"]) == [90, 90]
+    assert sorted(results[0]["max2"], reverse=True) == [100, 90]
+
+    # Eng: scores [80, 110, 110] -> min2=[80, 110], max2=[110, 110]
+    assert sorted(results[3]["min2"]) == [80, 110]
+    assert sorted(results[3]["max2"], reverse=True) == [110, 110]
+
+
+def test_window_n_as_expression(collection):
+    """Test using an expression for 'n' in N-operators."""
+    collection.insert_one({"_id": 7, "score": 100, "dept": "C", "count": 1})
+    collection.insert_one({"_id": 8, "score": 200, "dept": "C", "count": 1})
+
+    pipeline = [
+        {"$match": {"dept": "C"}},
+        {
+            "$setWindowFields": {
+                "sortBy": {"_id": 1},
+                "output": {
+                    "dynamicFirst": {
+                        "$firstN": {"input": "$score", "n": "$count"}
+                    }
+                },
+            }
+        },
+        {"$sort": {"_id": 1}},
+    ]
+
+    results = list(collection.aggregate(pipeline))
+    # Should only take 1 element because count=1
+    assert results[0]["dynamicFirst"] == [100]
+    assert results[1]["dynamicFirst"] == [100]
