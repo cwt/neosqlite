@@ -544,11 +544,11 @@ The following APIs have been implemented and tested:
 | `$rank`, `$denseRank` | Medium | ✅ **Implemented** |
 | `$shift` | Medium | ✅ **Implemented** |
 | `$top`, `$topN`, `$bottom`, `$bottomN` | Medium | ❌ Missing |
-| `$covariancePop`, `$covarianceSamp` | Medium | ❌ Missing |
-| `$derivative`, `$integral` | Medium | ❌ Missing |
-| `$expMovingAvg` | Medium | ❌ Missing |
+| `$covariancePop`, `$covarianceSamp` | Medium | ✅ **Implemented** |
+| `$derivative`, `$integral` | Medium | ✅ **Implemented** |
+| `$expMovingAvg` | Medium | ✅ **Implemented** |
 | `$documentNumber` | Medium | ✅ **Implemented** |
-| `$linearFill`, `$locf` | Medium | ❌ Missing |
+| `$linearFill`, `$locf` | Medium | ✅ **Implemented** |
 | `$addToSet` (window) | Medium | ❌ Missing |
 
 #### Set Operators (ALL IMPLEMENTED)

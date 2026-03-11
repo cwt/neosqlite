@@ -95,6 +95,7 @@ def process_set_window_fields(
                         frame,
                         evaluator,
                         collection,
+                        sort_by,
                     )
 
                 collection._set_val(doc, field_path, result)
@@ -144,9 +145,9 @@ def _apply_window_operator(
     frame_indices: List[int],
     evaluator: ExprEvaluator,
     collection: Collection,
+    sort_by: Dict[str, int],
 ) -> Any:
-    frame_docs = [partition_docs[idx]["__doc__"] for idx in frame_indices]
-
+    # 1. Operators that don't use frames or use documents directly
     if op_name == "$documentNumber":
         return current_idx + 1
 
@@ -161,6 +162,114 @@ def _apply_window_operator(
             return evaluator._evaluate_operand_python(output_expr, doc)
         return default
 
+    # 2. Operators that use frames
+    frame_docs = [partition_docs[idx]["__doc__"] for idx in frame_indices]
+
+    if op_name in ["$covariancePop", "$covarianceSamp"]:
+        val1_expr, val2_expr = op_val
+        v1_list = []
+        v2_list = []
+        for doc in frame_docs:
+            v1 = evaluator._evaluate_operand_python(val1_expr, doc)
+            v2 = evaluator._evaluate_operand_python(val2_expr, doc)
+            if isinstance(v1, (int, float)) and isinstance(v2, (int, float)):
+                v1_list.append(v1)
+                v2_list.append(v2)
+
+        if not v1_list:
+            return None
+
+        mean1 = sum(v1_list) / len(v1_list)
+        mean2 = sum(v2_list) / len(v2_list)
+        cov_sum = sum(
+            (v1 - mean1) * (v2 - mean2) for v1, v2 in zip(v1_list, v2_list)
+        )
+        div = len(v1_list) if op_name == "$covariancePop" else len(v1_list) - 1
+        return cov_sum / div if div > 0 else None
+
+    if op_name == "$expMovingAvg":
+        input_expr = op_val.get("input")
+        if "alpha" in op_val:
+            alpha = op_val["alpha"]
+        elif "n" in op_val:
+            alpha = 2 / (op_val["n"] + 1)
+        else:
+            return None
+
+        # Standard MongoDB $expMovingAvg usually operates on the sequence from start of partition.
+        # If the window is [-inf, current] or similar, we calculate it cumulatively.
+        # For simplicity in this fallback, we re-calculate up to the current point.
+        # In a more optimized version, we could cache the previous EMA value.
+        ema = None
+        # We search from the START of the partition up to current_idx
+        for i in range(current_idx + 1):
+            doc = partition_docs[i]["__doc__"]
+            val = evaluator._evaluate_operand_python(input_expr, doc)
+            if not isinstance(val, (int, float)):
+                continue
+            if ema is None:
+                ema = val
+            else:
+                ema = val * alpha + ema * (1 - alpha)
+        return ema
+
+    if op_name in ["$derivative", "$integral"]:
+        if not sort_by:
+            return None
+        input_expr = op_val.get("input")
+        # Find the time/coordinate field (first field in sortBy)
+        time_field = next(iter(sort_by.keys()))
+
+        if op_name == "$derivative":
+            if len(frame_indices) < 2:
+                return None
+            # (v_end - v_start) / (t_end - t_start)
+            idx_start, idx_end = frame_indices[0], frame_indices[-1]
+            doc_start, doc_end = (
+                partition_docs[idx_start]["__doc__"],
+                partition_docs[idx_end]["__doc__"],
+            )
+            v_start = evaluator._evaluate_operand_python(input_expr, doc_start)
+            v_end = evaluator._evaluate_operand_python(input_expr, doc_end)
+            t_start = collection._get_val(doc_start, time_field)
+            t_end = collection._get_val(doc_end, time_field)
+
+            if (
+                all(
+                    isinstance(x, (int, float))
+                    for x in [v_start, v_end, t_start, t_end]
+                )
+                and t_start != t_end
+            ):
+                return (v_end - v_start) / (t_end - t_start)
+            return None
+
+        if op_name == "$integral":
+            # Trapezoidal rule: sum of (v_i + v_{i-1})/2 * (t_i - t_{i-1})
+            total = 0.0
+            for i in range(1, len(frame_indices)):
+                idx_prev, idx_curr = frame_indices[i - 1], frame_indices[i]
+                doc_prev, doc_curr = (
+                    partition_docs[idx_prev]["__doc__"],
+                    partition_docs[idx_curr]["__doc__"],
+                )
+                v_prev = evaluator._evaluate_operand_python(
+                    input_expr, doc_prev
+                )
+                v_curr = evaluator._evaluate_operand_python(
+                    input_expr, doc_curr
+                )
+                t_prev = collection._get_val(doc_prev, time_field)
+                t_curr = collection._get_val(doc_curr, time_field)
+
+                if all(
+                    isinstance(x, (int, float))
+                    for x in [v_prev, v_curr, t_prev, t_curr]
+                ):
+                    total += (v_prev + v_curr) / 2.0 * (t_curr - t_prev)
+            return total
+
+    # 3. Standard accumulators
     if op_name in [
         "$sum",
         "$avg",
@@ -178,7 +287,6 @@ def _apply_window_operator(
         if op_name in ["$firstN", "$lastN", "$minN", "$maxN"]:
             input_expr = op_val.get("input")
             n_expr = op_val.get("n", 1)
-            # n can be an expression
             n = evaluator._evaluate_operand_python(
                 n_expr, partition_docs[current_idx]["__doc__"]
             )

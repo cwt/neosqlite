@@ -1034,8 +1034,45 @@ class SQLTierAggregator:
                 sql, params = self.evaluator.build_select_expression(op_val)
                 return func, sql, params
 
+            case (
+                "$derivative"
+                | "$integral"
+                | "$covariancePop"
+                | "$covarianceSamp"
+                | "$expMovingAvg"
+            ):
+                # These require complex SQL expressions that we build manually
+                # We return a special 'EXPR' type to signal the caller to use the operand as the full expression
+                expr, params = self._build_complex_window_op_sql(
+                    op_name, op_val
+                )
+                if expr:
+                    return "EXPR", expr, params
+                return None, "", []
+
             case _:
                 return None, "", []
+
+    def _build_complex_window_op_sql(
+        self, op_name: str, op_val: Any
+    ) -> Tuple[str | None, List[Any]]:
+        """Build complex SQL expressions for advanced window operators."""
+        # Note: These will be placed inside '... OVER (...)'
+        # So we must NOT include the OVER clause here.
+        match op_name:
+            case "$derivative":
+                # We need to access the sortBy field. This is tricky since it's not passed here.
+                # However, we can't easily get it here without architectural changes.
+                # Let's return None for now to trigger Python fallback for these.
+                return None, []
+
+            case "$covariancePop" | "$covarianceSamp":
+                # Covariance(X,Y) = E[XY] - E[X]E[Y]
+                # In SQL: (SUM(X*Y) - SUM(X)*SUM(Y)/COUNT(*)) / COUNT(*)
+                return None, []  # Too complex for simple OVER clause mapping
+
+            case _:
+                return None, []
 
     def _build_window_frame_sql(
         self, window_spec: Dict[str, Any] | None

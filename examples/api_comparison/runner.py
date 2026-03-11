@@ -57,6 +57,7 @@ from .window_functions import compare_window_functions
 from .graph_lookup import compare_graph_lookup
 from .fill_stage import compare_fill_stage
 from .json_schema import compare_json_schema
+from .window_math import compare_window_math
 from .options_classes import compare_options_classes
 
 
@@ -112,6 +113,7 @@ COMPARISON_FUNCTIONS = [
     ("graph_lookup", compare_graph_lookup),
     ("fill", compare_fill_stage),
     ("json_schema", compare_json_schema),
+    ("window_math", compare_window_math),
     ("options_classes", compare_options_classes),
 ]
 
