@@ -467,7 +467,7 @@ The following APIs have been implemented and tested:
 | `$densify` | Fill missing sequence values | Medium | ✅ **Implemented** | Python fallback |
 | `$fill` | Populate null/missing | Medium | ❌ Missing | MongoDB 5.3+ |
 | `$geoNear` | Proximity documents | Medium | ❌ Missing | Requires geospatial |
-| `$graphLookup` | Recursive search | Medium | ❌ Missing | Complex recursive query |
+| `$graphLookup` | Recursive search | Medium | ✅ **Implemented** | SQL, Temp Table and Python fallback |
 | `$merge` | Write to collection | Medium | ✅ **Implemented** | Python fallback |
 | `$setWindowFields` | Window functions | Medium | ✅ **Implemented** | SQL, Temp Table and Python fallback |
 | `$unionWith` | Combine collections | Medium | ✅ **Implemented** | SQL and Python fallback |

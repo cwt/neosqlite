@@ -54,6 +54,7 @@ from .bitwise_operators import compare_bitwise_operators
 from .pullall_operator import compare_pullall_operator
 from .new_operators import compare_new_operators
 from .window_functions import compare_window_functions
+from .graph_lookup import compare_graph_lookup
 from .options_classes import compare_options_classes
 
 
@@ -106,6 +107,7 @@ COMPARISON_FUNCTIONS = [
     ("pullall", compare_pullall_operator),
     ("new_operators", compare_new_operators),
     ("window_functions", compare_window_functions),
+    ("graph_lookup", compare_graph_lookup),
     ("options_classes", compare_options_classes),
 ]
 

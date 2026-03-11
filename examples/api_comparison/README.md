@@ -10,8 +10,8 @@ This package tests NeoSQLite's MongoDB API compatibility by running the same ope
 
 | Metric | Count |
 |--------|-------|
-| **Total Tests** | 333 |
-| **Passed** | 323 |
+| **Total Tests** | 337 |
+| **Passed** | 327 |
 | **Skipped** | 10 |
 | **Failed** | 0 |
 | **Compatibility** | **100%** |
@@ -129,6 +129,7 @@ reporter.print_report()
 | `object` | object_operators.py | Object operators |
 | `new_ops` | new_operators.py | New aggregation operators |
 | `window` | window_functions.py | Window functions ($setWindowFields) |
+| `graph` | graph_lookup.py | Graph lookup ($graphLookup) |
 | `collection_methods` | collection_methods.py | Collection methods |
 | `database` | database_methods.py | Database methods |
 | `cursor` | cursor_operations.py | Cursor operations |

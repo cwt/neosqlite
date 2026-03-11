@@ -67,6 +67,7 @@ from . import bitwise_operators
 from . import pullall_operator
 from . import new_operators
 from . import window_functions
+from . import graph_lookup
 
 __all__ = [
     "CompatibilityReporter",
@@ -122,4 +123,5 @@ __all__ = [
     "pullall_operator",
     "new_operators",
     "window_functions",
+    "graph_lookup",
 ]

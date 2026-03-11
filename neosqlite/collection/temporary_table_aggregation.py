@@ -425,6 +425,14 @@ class TemporaryTableAggregationProcessor:
                         )
                         i += 1
 
+                    case "$graphLookup":
+                        current_table = self._process_graph_lookup_stage(
+                            create_temp,
+                            current_table,
+                            stage["$graphLookup"],
+                        )
+                        i += 1
+
                     case "$sample":
                         sample_spec = stage["$sample"]
                         sample_size = sample_spec["size"]
@@ -580,9 +588,17 @@ class TemporaryTableAggregationProcessor:
 
         # Create filtered temporary table for regular match operations
         match_stage = {"$match": match_spec}
-        new_table = create_temp(
-            match_stage, f"SELECT * FROM {current_table} {where_clause}", params
+        json_set_func = "jsonb_set" if self._jsonb_supported else "json_set"
+
+        # We must explicitly select columns and inject _id into JSON data
+        # to ensure it's available for subsequent stages (like $lookup or $graphLookup)
+        sql = (
+            f"SELECT id, "
+            f"json({json_set_func}(data, '$._id', id)) AS data "
+            f"FROM {current_table} {where_clause}"
         )
+
+        new_table = create_temp(match_stage, sql, params)
         return new_table
 
     def _process_unwind_stages(
@@ -832,30 +848,30 @@ class TemporaryTableAggregationProcessor:
 
         # Build the optimized SQL query for $lookup
         if foreign_field == "_id":
-            foreign_extract = "related.id"
+            # For real collections, _id column is the source of truth for _id field
+            foreign_extract = "related._id"
         else:
             foreign_extract = f"{self._json_function_prefix}_extract(related.data, '{parse_json_path(foreign_field)}')"
 
         if local_field == "_id":
-            local_extract = f"{quote_table_name(self.collection.name)}.id"
+            # In temporary tables, we should use the injected JSON _id or the id column
+            local_extract = f"COALESCE({self._json_function_prefix}_extract(main_table.data, '$._id'), main_table.id)"
         else:
-            local_extract = f"{self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(local_field)}')"
+            local_extract = f"{self._json_function_prefix}_extract(main_table.data, '{parse_json_path(local_field)}')"
 
+        json_set_func = f"{self._json_function_prefix}_set"
         select_clause = (
-            f"SELECT {quote_table_name(self.collection.name)}.id, "
-            f"{quote_table_name(self.collection.name)}._id, "
-            f"{self._json_function_prefix}_set({quote_table_name(self.collection.name)}.data, '{parse_json_path(as_field)}', "
-            f"coalesce(( "
+            f"SELECT main_table.id, "
+            f"json({json_set_func}({json_set_func}(main_table.data, '$._id', main_table.id), '{parse_json_path(as_field)}', "
+            f"coalesCE(( "
             f"  SELECT {self.json_group_array_function}(json(related.data)) "
             f"  FROM {from_collection} as related "
             f"  WHERE {foreign_extract} = "
             f"        {local_extract} "
-            f"), '[]')) as data"
+            f"), '[]'))) as data"
         )
 
-        from_clause = (
-            f"FROM {current_table} as {quote_table_name(self.collection.name)}"
-        )
+        from_clause = f"FROM {current_table} as main_table"
 
         lookup_stage = {"$lookup": lookup_spec}
         # Create lookup temporary table
@@ -2125,6 +2141,149 @@ class TemporaryTableAggregationProcessor:
 
         return ""
 
+    def _process_graph_lookup_stage(
+        self,
+        create_temp: Callable[[Dict[str, Any], str, List[Any]], str],
+        current_table: str,
+        spec: Dict[str, Any],
+    ) -> str:
+        """
+        Process $graphLookup stage.
+        """
+        from_collection = spec.get("from")
+        start_with = spec.get("startWith")
+        connect_from_field = spec.get("connectFromField")
+        connect_to_field = spec.get("connectToField")
+        as_field = spec.get("as")
+        max_depth = spec.get("maxDepth")
+        depth_field = spec.get("depthField")
+        restrict_search = spec.get("restrictSearchWithMatch")
+
+        if not all(
+            [
+                from_collection,
+                start_with,
+                connect_from_field,
+                connect_to_field,
+                as_field,
+            ]
+        ):
+            return current_table
+
+        all_params: List[Any] = []
+
+        # 1. Build startWith expression
+        start_with_sql, start_with_params = (
+            self.expr_evaluator.build_select_expression(start_with)
+        )
+        # Prefix with p. to avoid ambiguity during JOIN
+        start_with_sql = start_with_sql.replace(
+            "json_extract(data", "json_extract(p.data"
+        )
+        start_with_sql = start_with_sql.replace(
+            "jsonb_extract(data", "jsonb_extract(p.data"
+        )
+        all_params.extend(start_with_params)
+
+        # 2. Build restrictSearchWithMatch if present
+        restrict_sql = ""
+        if restrict_search:
+            from .query_helper import QueryHelper
+
+            target_coll = self.collection.database.get_collection(
+                from_collection
+            )
+            helper = QueryHelper(target_coll)
+            query_result = helper._build_simple_where_clause(restrict_search)
+            if query_result:
+                r_sql, r_params = query_result
+                r_sql = r_sql.replace(
+                    "json_extract(data", "json_extract(t.data"
+                )
+                r_sql = r_sql.replace(
+                    "jsonb_extract(data", "jsonb_extract(t.data"
+                )
+                restrict_sql = f"AND ({r_sql})"
+                all_params.extend(r_params)
+
+        # 3. Build recursive search
+        recurse_cte = "graph_recurse_tier2"
+
+        # Build field access SQL
+        def get_field_sql(table_alias, field_name, is_recursive_table=False):
+            if field_name == "_id":
+                return (
+                    f"{table_alias}.found_id"
+                    if is_recursive_table
+                    else f"{table_alias}._id"
+                )
+            data_col = "found_data" if is_recursive_table else "data"
+            return f"json_extract({table_alias}.{data_col}, '$.{field_name}')"
+
+        target_to_sql = get_field_sql("t", connect_to_field)
+        recurse_from_sql = get_field_sql(
+            "r", connect_from_field, is_recursive_table=True
+        )
+
+        start_points_sql = f"""
+            SELECT
+                p.id as original_id,
+                t.id as found_id,
+                t.data as found_data,
+                0 as depth
+            FROM {current_table} p
+            JOIN {from_collection} t ON {target_to_sql} = {start_with_sql}
+            WHERE 1=1 {restrict_sql}
+        """
+
+        max_depth_cond = (
+            f"AND r.depth < {max_depth}" if max_depth is not None else ""
+        )
+        recursive_step_sql = f"""
+            SELECT
+                r.original_id,
+                t.id as found_id,
+                t.data as found_data,
+                r.depth + 1
+            FROM {recurse_cte} r
+            JOIN {from_collection} t ON {target_to_sql} = {recurse_from_sql}
+            WHERE 1=1 {max_depth_cond} {restrict_sql}
+        """
+
+        # 4. Combine into stage SQL
+        depth_json_sql = ""
+        if depth_field:
+            depth_json_sql = f", '{parse_json_path(str(depth_field))}', depth"
+
+        json_group_func = _get_json_group_array_function(self._jsonb_supported)
+        json_set_func = "jsonb_set" if self._jsonb_supported else "json_set"
+
+        as_field_str = str(as_field)
+        stage_sql = f"""
+            SELECT
+                p.id AS id,
+                json({json_set_func}({json_set_func}(p.data, '$._id', p.id), '{parse_json_path(as_field_str)}',
+                    COALESCE((
+                        SELECT {json_group_func}(
+                            json({json_set_func}(sub.found_data, '$._id', sub.found_id {depth_json_sql}))
+                        )
+                        FROM (
+                            WITH RECURSIVE {recurse_cte} AS (
+                                {start_points_sql}
+                                UNION
+                                {recursive_step_sql}
+                            )
+                            SELECT found_id, found_data, depth FROM {recurse_cte}
+                            WHERE original_id = p.id
+                            GROUP BY found_id
+                        ) sub
+                    ), json('[]'))
+                )) as data
+            FROM {current_table} p
+        """
+
+        return create_temp({"$graphLookup": spec}, stage_sql, all_params)
+
     def _process_densify_stage(self, create_temp, current_table, densify_spec):
         """
         Process $densify stage - fills gaps in data.
@@ -2185,7 +2344,8 @@ def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
         "$addFields",
         "$bucket",
         "$bucketAuto",
-        "$count",
+        "$facet",
+        "$graphLookup",
         "$group",
         "$limit",
         "$lookup",

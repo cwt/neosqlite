@@ -545,6 +545,19 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                         self.collection,
                         evaluator,
                     )
+                case "$graphLookup":
+                    from ..query_helper.graph_lookup import process_graph_lookup
+
+                    graph_spec = stage["$graphLookup"]
+                    evaluator = ExprEvaluator(
+                        data_column="data", db_connection=self.collection.db
+                    )
+                    docs_with_context = process_graph_lookup(
+                        docs_with_context,
+                        graph_spec,
+                        self.collection,
+                        evaluator,
+                    )
                 case "$sample":
                     sample_spec = stage["$sample"]
                     sample_size = sample_spec["size"]

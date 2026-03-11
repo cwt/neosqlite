@@ -69,7 +69,10 @@ from .expr_evaluator import (
     _is_expression,
     _is_aggregation_variable,
 )
-from .jsonb_support import supports_jsonb
+from .jsonb_support import (
+    supports_jsonb,
+    _get_json_group_array_function,
+)
 
 
 class PipelineContext:
@@ -235,12 +238,12 @@ class SQLTierAggregator:
         "$unwind",
         "$count",
         "$setWindowFields",
+        "$graphLookup",
     }
 
     # Stages that require Python fallback
     UNSUPPORTED_STAGES = {
         "$lookup",
-        "$graphLookup",
         "$indexStats",
         "$merge",
         "$out",
@@ -360,6 +363,11 @@ class SQLTierAggregator:
         stage_name = next(iter(stage.keys()))
         spec = stage[stage_name]
 
+        if stage_name == "$graphLookup":
+            # $graphLookup keys are mostly field names or simple expressions
+            # For now, allow it and let _build_graph_lookup_sql handle it
+            return True
+
         # Check for unsupported expressions in spec
         return self._check_expression_support(spec)
 
@@ -461,13 +469,16 @@ class SQLTierAggregator:
             prev_stage = cte_name
 
         # Final SELECT
+        with_keyword = (
+            "WITH RECURSIVE"
+            if any("$graphLookup" in stage for stage in pipeline)
+            else "WITH"
+        )
         if needs_root:
             # Include root_data in final output if it was preserved
-            final_sql = f"WITH {', '.join(cte_parts)} SELECT id, root_data, data FROM {prev_stage}"
+            final_sql = f"{with_keyword} {', '.join(cte_parts)} SELECT id, root_data, data FROM {prev_stage}"
         else:
-            final_sql = (
-                f"WITH {', '.join(cte_parts)} SELECT id, data FROM {prev_stage}"
-            )
+            final_sql = f"{with_keyword} {', '.join(cte_parts)} SELECT id, data FROM {prev_stage}"
 
         return final_sql, all_params
 
@@ -572,6 +583,10 @@ class SQLTierAggregator:
                 return self._build_set_window_fields_sql(
                     stage_spec, prev_stage, context, preserve_root
                 )
+            case "$graphLookup":
+                return self._build_graph_lookup_sql(
+                    stage_spec, prev_stage, context, preserve_root
+                )
             case _:
                 return None, []
 
@@ -665,6 +680,164 @@ class SQLTierAggregator:
 
         sql = f"SELECT {', '.join(select_parts)} FROM {prev_stage}"
         return sql, all_params
+
+    def _build_graph_lookup_sql(
+        self,
+        spec: Dict[str, Any],
+        prev_stage: str,
+        context: PipelineContext,
+        preserve_root: bool = False,
+    ) -> Tuple[str | None, List[Any]]:
+        """
+        Build SQL for $graphLookup stage using recursive CTE.
+        """
+        from_collection = spec.get("from")
+        start_with = spec.get("startWith")
+        connect_from_field = spec.get("connectFromField")
+        connect_to_field = spec.get("connectToField")
+        as_field = spec.get("as")
+        max_depth = spec.get("maxDepth")
+        depth_field = spec.get("depthField")
+        restrict_search = spec.get("restrictSearchWithMatch")
+
+        if not all(
+            [
+                from_collection,
+                start_with,
+                connect_from_field,
+                connect_to_field,
+                as_field,
+            ]
+        ):
+            return None, []
+
+        all_params: List[Any] = []
+
+        # 1. Build startWith expression
+        start_with_sql, start_with_params = (
+            self.evaluator.build_select_expression(start_with)
+        )
+        # Prefix with p. to avoid ambiguity during JOIN
+        start_with_sql = start_with_sql.replace(
+            "json_extract(data", "json_extract(p.data"
+        )
+        start_with_sql = start_with_sql.replace(
+            "jsonb_extract(data", "jsonb_extract(p.data"
+        )
+        all_params.extend(start_with_params)
+
+        # 2. Build restrictSearchWithMatch if present
+        restrict_sql = ""
+        if restrict_search:
+            from .query_helper import QueryHelper
+
+            # Get collection instance to use its helpers
+            target_coll = self.collection.database.get_collection(
+                from_collection
+            )
+            helper = QueryHelper(target_coll)
+
+            # We want to prefix 'data' with 't.' to avoid ambiguity
+            query_result = helper._build_simple_where_clause(restrict_search)
+            if query_result:
+                r_sql, r_params = query_result
+                # Basic workaround: replace 'data' with 't.data' in the generated WHERE clause
+                r_sql = r_sql.replace(
+                    "json_extract(data", "json_extract(t.data"
+                )
+                r_sql = r_sql.replace(
+                    "jsonb_extract(data", "jsonb_extract(t.data"
+                )
+                restrict_sql = f"AND ({r_sql})"
+                all_params.extend(r_params)
+
+        # 3. Build recursive search
+        recurse_cte = f"graph_recurse_{context.stage_index}"
+
+        # Build field access SQL
+        def get_field_sql(table_alias, field_name, is_recursive_table=False):
+            if field_name == "_id":
+                return (
+                    f"{table_alias}.found_id"
+                    if is_recursive_table
+                    else f"{table_alias}._id"
+                )
+            data_col = "found_data" if is_recursive_table else "data"
+            return f"json_extract({table_alias}.{data_col}, '$.{field_name}')"
+
+        target_to_sql = get_field_sql("t", connect_to_field)
+        recurse_from_sql = get_field_sql(
+            "r", connect_from_field, is_recursive_table=True
+        )
+
+        # We must prefix ALL columns to avoid ambiguity
+        start_points_sql = f"""
+            SELECT
+                p.id as original_id,
+                t.id as found_id,
+                t.data as found_data,
+                0 as depth
+            FROM {prev_stage} p
+            JOIN {from_collection} t ON {target_to_sql} = {start_with_sql}
+            WHERE 1=1 {restrict_sql}
+        """
+
+        # Recursive step
+        max_depth_cond = (
+            f"AND r.depth < {max_depth}" if max_depth is not None else ""
+        )
+        # restrict_sql for the recursive step also needs to prefix target table t.
+        recursive_step_sql = f"""
+            SELECT
+                r.original_id,
+                t.id as found_id,
+                t.data as found_data,
+                r.depth + 1
+            FROM {recurse_cte} r
+            JOIN {from_collection} t ON {target_to_sql} = {recurse_from_sql}
+            WHERE 1=1 {max_depth_cond} {restrict_sql}
+        """
+
+        # 4. Combine into final aggregation
+        depth_json_sql = ""
+        if depth_field:
+            depth_json_sql = f", '{parse_json_path(str(depth_field))}', depth"
+
+        json_group_func = _get_json_group_array_function(self._jsonb_supported)
+        json_set_func = f"{self._json_function_prefix}_set"
+
+        # Build the stage SQL
+        # Use p.id and p.data explicitly
+        # We also MUST inject _id into the data for this stage because _load()
+        # expects it to be there if it's not a real table with _id column.
+        as_field_str = str(as_field)
+        stage_sql = f"""
+            SELECT
+                p.id AS id,
+                json({json_set_func}({json_set_func}(p.data, '$._id', p.id), '{parse_json_path(as_field_str)}',
+                    COALESCE((
+                        SELECT {json_group_func}(
+                            json({json_set_func}(sub.found_data, '$._id', sub.found_id {depth_json_sql}))
+                        )
+                        FROM (
+                            WITH RECURSIVE {recurse_cte} AS (
+                                {start_points_sql}
+                                UNION
+                                {recursive_step_sql}
+                            )
+                            SELECT found_id, found_data, depth FROM {recurse_cte}
+                            WHERE original_id = p.id
+                            GROUP BY found_id
+                        ) sub
+                    ), json('[]'))
+                )) as data
+                {", p.root_data" if context.has_root or preserve_root else ""}
+            FROM {prev_stage} p
+        """
+
+        # Note: UNION (not ALL) helps with cycles and duplicates
+
+        return stage_sql, all_params
 
     def _map_window_operator_to_sql(
         self, op_name: str, op_val: Any
