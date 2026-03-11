@@ -260,6 +260,17 @@ class AggregationCursor:
 
         return self
 
+    def explain(self) -> Dict[str, Any]:
+        """
+        Explain the aggregation pipeline execution plan.
+
+        Returns:
+            Dict[str, Any]: Execution plan information.
+        """
+        return self._collection.query_engine.explain_aggregation(
+            self.pipeline, session=self._session
+        )
+
     def _execute(self) -> None:
         """
         Execute the aggregation pipeline and store the results.

@@ -530,6 +530,21 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
 
                         # Update $$CURRENT after all fields are added
                         ctx.update_current(doc)
+                case "$setWindowFields":
+                    from ..query_helper.window_operators import (
+                        process_set_window_fields,
+                    )
+
+                    window_spec = stage["$setWindowFields"]
+                    evaluator = ExprEvaluator(
+                        data_column="data", db_connection=self.collection.db
+                    )
+                    docs_with_context = process_set_window_fields(
+                        docs_with_context,
+                        window_spec,
+                        self.collection,
+                        evaluator,
+                    )
                 case "$sample":
                     sample_spec = stage["$sample"]
                     sample_size = sample_spec["size"]
@@ -1174,6 +1189,71 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                         f"Aggregation stage '{stage_name}' not supported"
                     )
         return [dc["__doc__"] for dc in docs_with_context]
+
+    def explain_aggregation(
+        self,
+        pipeline: List[Dict[str, Any]],
+        session: ClientSession | None = None,
+    ) -> Dict[str, Any]:
+        """
+        Explain the execution plan for an aggregation pipeline.
+
+        Args:
+            pipeline (List[Dict[str, Any]]): The aggregation pipeline to explain.
+            session (ClientSession, optional): A ClientSession for transactions.
+
+        Returns:
+            Dict[str, Any]: The execution plan explanation.
+        """
+        # 1. Try SQL Tier 1 optimization
+        if self.sql_tier_aggregator.can_optimize_pipeline(pipeline):
+            sql, params = self.sql_tier_aggregator.build_pipeline_sql(pipeline)
+            if sql is not None:
+                # Use EXPLAIN QUERY PLAN to get SQLite's plan
+                explain_sql = f"EXPLAIN QUERY PLAN {sql}"
+                db_cursor = self.collection.db.execute(explain_sql, params)
+                plan = db_cursor.fetchall()
+                return {
+                    "tier": 1,
+                    "type": "SQL Tier 1 (CTE-based)",
+                    "sql": sql,
+                    "params": params,
+                    "sqlite_plan": plan,
+                }
+
+        # 2. Try legacy SQL optimization
+        query_result = self.helpers._build_aggregation_query(pipeline)
+        if query_result is not None:
+            cmd, params, _ = query_result
+            explain_sql = f"EXPLAIN QUERY PLAN {cmd}"
+            db_cursor = self.collection.db.execute(explain_sql, params)
+            plan = db_cursor.fetchall()
+            return {
+                "tier": 1,
+                "type": "SQL Tier (Legacy)",
+                "sql": cmd,
+                "params": params,
+                "sqlite_plan": plan,
+            }
+
+        # 3. Check if Tier 2 (Temp Table) can handle it
+        from ..temporary_table_aggregation import (
+            can_process_with_temporary_tables,
+        )
+
+        if can_process_with_temporary_tables(pipeline):
+            return {
+                "tier": 2,
+                "type": "Temporary Table Aggregation",
+                "pipeline": pipeline,
+            }
+
+        # 4. Fallback to Python
+        return {
+            "tier": 3,
+            "type": "Python Fallback",
+            "pipeline": pipeline,
+        }
 
     def aggregate_raw_batches(
         self,

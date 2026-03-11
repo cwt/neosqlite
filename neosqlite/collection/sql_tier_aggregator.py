@@ -61,6 +61,7 @@ Usage:
 """
 
 from __future__ import annotations
+from .._sqlite import sqlite3
 from .json_path_utils import parse_json_path
 from typing import Any, Dict, List, Tuple, Set
 from .expr_evaluator import (
@@ -233,6 +234,7 @@ class SQLTierAggregator:
         "$facet",
         "$unwind",
         "$count",
+        "$setWindowFields",
     }
 
     # Stages that require Python fallback
@@ -244,7 +246,6 @@ class SQLTierAggregator:
         "$out",
         "$replaceRoot",
         "$replaceWith",
-        "$setWindowFields",
     }
 
     # Expressions that require Python fallback
@@ -326,6 +327,13 @@ class SQLTierAggregator:
 
             if stage_name not in self.SUPPORTED_STAGES:
                 # Unknown stage - fall back to Python for safety
+                return False
+
+            # Check for window function support if $setWindowFields is used
+            if (
+                stage_name == "$setWindowFields"
+                and sqlite3.sqlite_version_info < (3, 25, 0)
+            ):
                 return False
 
         # Check for unsupported expressions
@@ -560,8 +568,173 @@ class SQLTierAggregator:
                 return self._build_unwind_sql(stage_spec, prev_stage, context)
             case "$count":
                 return self._build_count_sql(stage_spec, prev_stage, context)
+            case "$setWindowFields":
+                return self._build_set_window_fields_sql(
+                    stage_spec, prev_stage, context, preserve_root
+                )
             case _:
                 return None, []
+
+    def _build_set_window_fields_sql(
+        self,
+        spec: Dict[str, Any],
+        prev_stage: str,
+        context: PipelineContext,
+        preserve_root: bool = False,
+    ) -> Tuple[str | None, List[Any]]:
+        """
+        Build SQL for $setWindowFields stage.
+        """
+        partition_by = spec.get("partitionBy")
+        sort_by = spec.get("sortBy", {})
+        output = spec.get("output", {})
+        all_params: List[Any] = []
+
+        # 1. Build PARTITION BY clause
+        partition_parts = []
+        if partition_by is not None:
+            # partition_by can be an expression
+            sql, params = self.evaluator.build_select_expression(partition_by)
+            partition_parts.append(sql)
+            all_params.extend(params)
+
+        partition_clause = ""
+        if partition_parts:
+            partition_clause = f"PARTITION BY {', '.join(partition_parts)}"
+
+        # 2. Build ORDER BY clause
+        sort_parts = []
+        if sort_by:
+            for field, direction in sort_by.items():
+                # direction: 1 for ascending, -1 for descending
+                order = "ASC" if direction == 1 else "DESC"
+                # Use json_extract for fields
+                sql, params = self.evaluator.build_select_expression(
+                    f"${field}"
+                )
+                sort_parts.append(f"{sql} {order}")
+                all_params.extend(params)
+
+        sort_clause = ""
+        if sort_parts:
+            sort_clause = f"ORDER BY {', '.join(sort_parts)}"
+
+        # 3. Build output fields with window functions
+        json_set_args = []
+        for field, op_spec in output.items():
+            op_name = next(iter(op_spec.keys()))
+            op_val = op_spec[op_name]
+            window_spec = op_spec.get("window")
+
+            # Map MongoDB operator to SQL window function
+            sql_func, sql_operand, sql_params = (
+                self._map_window_operator_to_sql(op_name, op_val)
+            )
+            if sql_func is None:
+                return None, []
+
+            all_params.extend(sql_params)
+
+            # Build frame clause (ROWS BETWEEN ...)
+            frame_clause = self._build_window_frame_sql(window_spec)
+
+            # Combine into window function
+            window_sql = f"{sql_func}({sql_operand}) OVER ({partition_clause} {sort_clause} {frame_clause})".strip()
+
+            # Clean up extra spaces in OVER clause if parts are empty
+            window_sql = (
+                window_sql.replace("  ", " ")
+                .replace("( ", "(")
+                .replace(" )", ")")
+            )
+
+            json_set_args.append(f"'{parse_json_path(field)}'")
+            json_set_args.append(window_sql)
+
+        # 4. Build the final SQL
+        select_parts = ["id"]
+        if preserve_root:
+            select_parts.append("data AS root_data")
+        elif context.has_root:
+            select_parts.append("root_data")
+
+        args_str = ", ".join(json_set_args)
+        json_set_func = f"{self._json_function_prefix}_set"
+        data_expr = f"json({json_set_func}(data, {args_str}))"
+        select_parts.append(f"{data_expr} AS data")
+
+        sql = f"SELECT {', '.join(select_parts)} FROM {prev_stage}"
+        return sql, all_params
+
+    def _map_window_operator_to_sql(
+        self, op_name: str, op_val: Any
+    ) -> Tuple[str | None, str, List[Any]]:
+        """Map MongoDB window operator to SQL function and operand."""
+        match op_name:
+            case "$rank":
+                return "RANK", "", []
+            case "$denseRank":
+                return "DENSE_RANK", "", []
+            case "$documentNumber":
+                return "ROW_NUMBER", "", []
+            case "$shift":
+                output_expr = op_val.get("output")
+                by = op_val.get("by", 0)
+                default = op_val.get("default")
+
+                # SQLite LEAD/LAG: LEAD(expr, offset, default)
+                # MongoDB $shift: by > 0 is LEAD, by < 0 is LAG
+                if by >= 0:
+                    func = "LEAD"
+                    offset = by
+                else:
+                    func = "LAG"
+                    offset = -by
+
+                sql, params = self.evaluator.build_select_expression(
+                    output_expr
+                )
+                # default needs to be handled
+                if default is not None:
+                    # TODO: handle default value literal/expression
+                    return f"{func}", f"{sql}, {offset}, ?", params + [default]
+                return f"{func}", f"{sql}, {offset}", params
+
+            case "$sum" | "$avg" | "$min" | "$max":
+                func = op_name[1:].upper()
+                sql, params = self.evaluator.build_select_expression(op_val)
+                return func, sql, params
+
+            case _:
+                return None, "", []
+
+    def _build_window_frame_sql(
+        self, window_spec: Dict[str, Any] | None
+    ) -> str:
+        """Build SQL window frame clause (ROWS BETWEEN ...)."""
+        if not window_spec:
+            return ""
+
+        if "documents" in window_spec:
+            lower, upper = window_spec["documents"]
+
+            def map_bound(val):
+                if val == "unbounded":
+                    return "UNBOUNDED"
+                if val == "current":
+                    return "CURRENT ROW"
+                if val < 0:
+                    return f"{-val} PRECEDING"
+                if val > 0:
+                    return f"{val} FOLLOWING"
+                return "CURRENT ROW"
+
+            l_bound = map_bound(lower)
+            u_bound = map_bound(upper)
+
+            return f"ROWS BETWEEN {l_bound} AND {u_bound}"
+
+        return ""
 
     def _build_addfields_sql(
         self,

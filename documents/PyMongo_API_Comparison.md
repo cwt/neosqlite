@@ -469,7 +469,7 @@ The following APIs have been implemented and tested:
 | `$geoNear` | Proximity documents | Medium | ❌ Missing | Requires geospatial |
 | `$graphLookup` | Recursive search | Medium | ❌ Missing | Complex recursive query |
 | `$merge` | Write to collection | Medium | ✅ **Implemented** | Python fallback |
-| `$setWindowFields` | Window functions | Medium | ❌ Missing | MongoDB 5.0+ |
+| `$setWindowFields` | Window functions | Medium | ✅ **Implemented** | SQL, Temp Table and Python fallback |
 | `$unionWith` | Combine collections | Medium | ✅ **Implemented** | SQL and Python fallback |
 | `$vectorSearch` | Vector search | Medium | ❌ Missing | MongoDB Atlas 7.0.2+ |
 | `$redact` | Field-level redaction | Medium | ✅ **Implemented** | Python fallback |
@@ -537,17 +537,17 @@ The following APIs have been implemented and tested:
 | `$maxN`, `$minN` | Medium | ✅ **Implemented** |
 | `$sortArray` | Medium | ✅ **Implemented** |
 
-#### Window Operators (16 Missing - MongoDB 5.0+)
+#### Window Operators (12 Missing - MongoDB 5.0+)
 
 | Operator | Priority | Status |
 |----------|----------|--------|
-| `$rank`, `$denseRank` | Medium | ❌ Missing |
-| `$shift` | Medium | ❌ Missing |
+| `$rank`, `$denseRank` | Medium | ✅ **Implemented** |
+| `$shift` | Medium | ✅ **Implemented** |
 | `$top`, `$topN`, `$bottom`, `$bottomN` | Medium | ❌ Missing |
 | `$covariancePop`, `$covarianceSamp` | Medium | ❌ Missing |
 | `$derivative`, `$integral` | Medium | ❌ Missing |
 | `$expMovingAvg` | Medium | ❌ Missing |
-| `$documentNumber` | Medium | ❌ Missing |
+| `$documentNumber` | Medium | ✅ **Implemented** |
 | `$linearFill`, `$locf` | Medium | ❌ Missing |
 | `$addToSet` (window) | Medium | ❌ Missing |
 

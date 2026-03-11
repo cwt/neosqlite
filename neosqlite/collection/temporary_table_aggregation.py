@@ -17,7 +17,7 @@ from .jsonb_support import (
 from .sql_translator_unified import SQLTranslator
 from .expr_evaluator import ExprEvaluator
 from contextlib import contextmanager
-from typing import Any, Dict, List, Callable
+from typing import Any, Dict, List, Callable, Tuple
 import hashlib
 
 
@@ -414,6 +414,14 @@ class TemporaryTableAggregationProcessor:
                     case "$group":
                         current_table = self._process_group_stage(
                             create_temp, current_table, stage["$group"]
+                        )
+                        i += 1
+
+                    case "$setWindowFields":
+                        current_table = self._process_set_window_fields_stage(
+                            create_temp,
+                            current_table,
+                            stage["$setWindowFields"],
                         )
                         i += 1
 
@@ -1968,6 +1976,155 @@ class TemporaryTableAggregationProcessor:
         # Return current table unchanged
         return current_table
 
+    def _process_set_window_fields_stage(
+        self,
+        create_temp: Callable[[Dict[str, Any], str, List[Any]], str],
+        current_table: str,
+        spec: Dict[str, Any],
+    ) -> str:
+        """
+        Process $setWindowFields stage.
+        """
+        partition_by = spec.get("partitionBy")
+        sort_by: Dict[str, int] = spec.get("sortBy", {})
+        output: Dict[str, Any] = spec.get("output", {})
+        all_params: List[Any] = []
+
+        # 1. Build PARTITION BY clause
+        partition_parts = []
+        if partition_by is not None:
+            sql, params = self.expr_evaluator.build_select_expression(
+                partition_by
+            )
+            partition_parts.append(sql)
+            all_params.extend(params)
+
+        partition_clause = ""
+        if partition_parts:
+            partition_clause = f"PARTITION BY {', '.join(partition_parts)}"
+
+        # 2. Build ORDER BY clause
+        sort_parts = []
+        if sort_by:
+            for field, direction in sort_by.items():
+                order = "ASC" if direction == 1 else "DESC"
+                sql, params = self.expr_evaluator.build_select_expression(
+                    f"${field}"
+                )
+                sort_parts.append(f"{sql} {order}")
+                all_params.extend(params)
+
+        sort_clause = ""
+        if sort_parts:
+            sort_clause = f"ORDER BY {', '.join(sort_parts)}"
+
+        # 3. Build output fields with window functions
+        json_set_args = []
+        for field, op_spec in output.items():
+            op_name = next(iter(op_spec.keys()))
+            op_val = op_spec[op_name]
+            window_spec = op_spec.get("window")
+
+            sql_func, sql_operand, sql_params = (
+                self._map_window_operator_to_sql(op_name, op_val)
+            )
+            if sql_func is None:
+                # Fall back to Python if operator not supported in SQL
+                raise NotImplementedError(
+                    f"Window operator {op_name} not supported in SQL"
+                )
+
+            all_params.extend(sql_params)
+            frame_clause = self._build_window_frame_sql(window_spec)
+
+            window_sql = f"{sql_func}({sql_operand}) OVER ({partition_clause} {sort_clause} {frame_clause})".strip()
+            window_sql = (
+                window_sql.replace("  ", " ")
+                .replace("( ", "(")
+                .replace(" )", ")")
+            )
+
+            json_set_args.append(f"'{parse_json_path(field)}'")
+            json_set_args.append(window_sql)
+
+        # 4. Create the temporary table
+        json_set_func = "jsonb_set" if self._jsonb_supported else "json_set"
+        args_str = ", ".join(json_set_args)
+
+        # We need to maintain the id column
+        sql = f"SELECT id, json({json_set_func}(data, {args_str})) AS data FROM {current_table}"
+
+        return create_temp({"$setWindowFields": spec}, sql, all_params)
+
+    def _map_window_operator_to_sql(
+        self, op_name: str, op_val: Any
+    ) -> Tuple[str | None, str, List[Any]]:
+        """Map MongoDB window operator to SQL function and operand."""
+        match op_name:
+            case "$rank":
+                return "RANK", "", []
+            case "$denseRank":
+                return "DENSE_RANK", "", []
+            case "$documentNumber":
+                return "ROW_NUMBER", "", []
+            case "$shift":
+                output_expr = op_val.get("output")
+                by = op_val.get("by", 0)
+                default = op_val.get("default")
+
+                if by >= 0:
+                    func = "LEAD"
+                    offset = by
+                else:
+                    func = "LAG"
+                    offset = -by
+
+                sql, params = self.expr_evaluator.build_select_expression(
+                    output_expr
+                )
+                if default is not None:
+                    return f"{func}", f"{sql}, {offset}, ?", params + [default]
+                return f"{func}", f"{sql}, {offset}", params
+
+            case "$sum" | "$avg" | "$min" | "$max":
+                func = op_name[1:].upper()
+                sql, params = self.expr_evaluator.build_select_expression(
+                    op_val
+                )
+                return func, sql, params
+
+            case _:
+                return None, "", []
+
+    def _build_window_frame_sql(
+        self, window_spec: Dict[str, Any] | None
+    ) -> str:
+        """Build SQL window frame clause (ROWS BETWEEN ...)."""
+        if not window_spec:
+            return ""
+
+        if "documents" in window_spec:
+            lower, upper = window_spec["documents"]
+
+            def map_bound(val: Any) -> str:
+                if val == "unbounded":
+                    return "UNBOUNDED"
+                if val == "current":
+                    return "CURRENT ROW"
+                if isinstance(val, int):
+                    if val < 0:
+                        return f"{-val} PRECEDING"
+                    if val > 0:
+                        return f"{val} FOLLOWING"
+                return "CURRENT ROW"
+
+            l_bound = map_bound(lower)
+            u_bound = map_bound(upper)
+
+            return f"ROWS BETWEEN {l_bound} AND {u_bound}"
+
+        return ""
+
     def _process_densify_stage(self, create_temp, current_table, densify_spec):
         """
         Process $densify stage - fills gaps in data.
@@ -2036,6 +2193,7 @@ def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
         "$replaceRoot",
         "$replaceWith",
         "$sample",
+        "$setWindowFields",
         "$skip",
         "$sort",
         "$unionWith",
@@ -2051,6 +2209,12 @@ def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
         stage_name = next(iter(stage.keys()))
         if stage_name not in supported_stages:
             return False
+
+        if stage_name == "$setWindowFields":
+            import sqlite3
+
+            if sqlite3.sqlite_version_info < (3, 25, 0):
+                return False
 
         if stage_name == "$unwind":
             unwind_count += 1

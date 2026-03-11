@@ -66,6 +66,7 @@ from . import elemmatch
 from . import bitwise_operators
 from . import pullall_operator
 from . import new_operators
+from . import window_functions
 
 __all__ = [
     "CompatibilityReporter",
@@ -120,4 +121,5 @@ __all__ = [
     "bitwise_operators",
     "pullall_operator",
     "new_operators",
+    "window_functions",
 ]
