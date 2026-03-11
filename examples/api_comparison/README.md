@@ -10,8 +10,8 @@ This package tests NeoSQLite's MongoDB API compatibility by running the same ope
 
 | Metric | Count |
 |--------|-------|
-| **Total Tests** | 337 |
-| **Passed** | 327 |
+| **Total Tests** | 340 |
+| **Passed** | 330 |
 | **Skipped** | 10 |
 | **Failed** | 0 |
 | **Compatibility** | **100%** |
@@ -59,6 +59,10 @@ api_comparison/
 ├── pullall_operator.py      # $pullAll operator tests
 ├── positional_operators.py  # Positional update tests ($, $[], $[identifier])
 ├── new_operators.py         # New aggregation operators
+├── window_functions.py      # Window function tests ($setWindowFields)
+├── graph_lookup.py          # Graph lookup tests ($graphLookup)
+├── fill_stage.py            # Fill nulls stage tests ($fill)
+├── options_classes.py       # Options classes (WriteConcern, etc.)
 ├── gridfs_operations.py     # GridFS tests
 ├── text_search.py           # Text search tests
 └── ...                      # And more specialized test modules
@@ -121,6 +125,8 @@ reporter.print_report()
 | `pullall` | pullall_operator.py | $pullAll operator |
 | `aggregation_stages` | aggregation_stages.py | Core aggregation stages |
 | `aggregation_additional` | aggregation_additional.py | Additional aggregation |
+| `aggregation_stages_additional` | aggregation_stages_additional.py | More aggregation stages |
+| `aggregation_extended` | aggregation_stages_extended.py | Extended aggregation stages |
 | `aggregation_cursor` | aggregation_cursor.py | Aggregation cursor methods |
 | `array` | array_operators.py | Array operators |
 | `string` | string_operators.py | String operators |
@@ -130,7 +136,9 @@ reporter.print_report()
 | `new_ops` | new_operators.py | New aggregation operators |
 | `window` | window_functions.py | Window functions ($setWindowFields) |
 | `graph` | graph_lookup.py | Graph lookup ($graphLookup) |
+| `fill` | fill_stage.py | Fill nulls ($fill) |
 | `collection_methods` | collection_methods.py | Collection methods |
+| `collection_additional` | collection_methods_additional.py | More collection methods |
 | `database` | database_methods.py | Database methods |
 | `cursor` | cursor_operations.py | Cursor operations |
 | `cursor_methods` | cursor_methods.py | Cursor methods |
@@ -152,6 +160,7 @@ reporter.print_report()
 | `reindex` | reindex.py | Reindex operations |
 | `elemmatch` | elemmatch.py | $elemMatch operator |
 | `session_methods` | session_methods.py | Session and transaction methods |
+| `options_classes` | options_classes.py | Options classes (WriteConcern, etc.) |
 
 ## Adding New Tests
 

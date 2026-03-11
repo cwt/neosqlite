@@ -55,6 +55,7 @@ from .pullall_operator import compare_pullall_operator
 from .new_operators import compare_new_operators
 from .window_functions import compare_window_functions
 from .graph_lookup import compare_graph_lookup
+from .fill_stage import compare_fill_stage
 from .options_classes import compare_options_classes
 
 
@@ -108,6 +109,7 @@ COMPARISON_FUNCTIONS = [
     ("new_operators", compare_new_operators),
     ("window_functions", compare_window_functions),
     ("graph_lookup", compare_graph_lookup),
+    ("fill", compare_fill_stage),
     ("options_classes", compare_options_classes),
 ]
 

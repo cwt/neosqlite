@@ -239,6 +239,7 @@ class SQLTierAggregator:
         "$count",
         "$setWindowFields",
         "$graphLookup",
+        "$fill",
     }
 
     # Stages that require Python fallback
@@ -587,6 +588,10 @@ class SQLTierAggregator:
                 return self._build_graph_lookup_sql(
                     stage_spec, prev_stage, context, preserve_root
                 )
+            case "$fill":
+                return self._build_fill_sql(
+                    stage_spec, prev_stage, context, preserve_root
+                )
             case _:
                 return None, []
 
@@ -679,6 +684,149 @@ class SQLTierAggregator:
         select_parts.append(f"{data_expr} AS data")
 
         sql = f"SELECT {', '.join(select_parts)} FROM {prev_stage}"
+        return sql, all_params
+
+    def _build_fill_sql(
+        self,
+        spec: Dict[str, Any],
+        prev_stage: str,
+        context: PipelineContext,
+        preserve_root: bool = False,
+    ) -> Tuple[str | None, List[Any]]:
+        """
+        Build SQL for $fill stage.
+        """
+        partition_by = spec.get("partitionBy")
+        sort_by = spec.get("sortBy", {})
+        output = spec.get("output", {})
+        all_params: List[Any] = []
+
+        # Check for 'linear' method which we don't support in Tier 1 yet
+        for fill_spec in output.values():
+            if fill_spec.get("method") == "linear":
+                return None, []
+
+        # 1. Build PARTITION BY and ORDER BY clauses
+        partition_parts = []
+        if partition_by is not None:
+            sql, params = self.evaluator.build_select_expression(partition_by)
+            partition_parts.append(sql)
+            all_params.extend(params)
+        partition_clause = (
+            f"PARTITION BY {', '.join(partition_parts)}"
+            if partition_parts
+            else ""
+        )
+
+        sort_parts = []
+        if sort_by:
+            for field, direction in sort_by.items():
+                order = "ASC" if direction == 1 else "DESC"
+                sql, params = self.evaluator.build_select_expression(
+                    f"${field}"
+                )
+                sort_parts.append(f"{sql} {order}")
+                all_params.extend(params)
+        sort_clause = f"ORDER BY {', '.join(sort_parts)}" if sort_parts else ""
+
+        # 2. For locf, we need a "grouping" CTE to identify blocks of nulls
+        # If any locf is present, we wrap the logic.
+        has_locf = any(fs.get("method") == "locf" for fs in output.values())
+
+        json_set_args = []
+
+        if not has_locf:
+            # Simple constant value fill
+            for field, fill_spec in output.items():
+                value = fill_spec.get("value")
+                field_sql, field_params = (
+                    self.evaluator.build_select_expression(f"${field}")
+                )
+                all_params.extend(field_params)
+
+                # COALESCE(field, value)
+                fill_expr = f"COALESCE({field_sql}, ?)"
+                all_params.append(value)
+
+                json_set_args.append(f"'{parse_json_path(field)}'")
+                json_set_args.append(fill_expr)
+
+            json_set_func = f"{self._json_function_prefix}_set"
+            data_expr = (
+                f"json({json_set_func}(data, {', '.join(json_set_args)}))"
+            )
+
+            select_parts = ["id", f"{data_expr} AS data"]
+            if preserve_root or context.has_root:
+                select_parts.append("root_data")
+
+            sql = f"SELECT {', '.join(select_parts)} FROM {prev_stage}"
+            return sql, all_params
+
+        # Complex locf fill using two window functions
+        # We'll use a subquery to calculate the block IDs
+
+        block_id_selects = ["id", "data"]
+        if preserve_root or context.has_root:
+            block_id_selects.append("root_data")
+
+        for field, fill_spec in output.items():
+            if fill_spec.get("method") == "locf":
+                field_sql, _ = self.evaluator.build_select_expression(
+                    f"${field}"
+                )
+                # Block ID: how many non-nulls we've seen so far
+                block_id_selects.append(
+                    f"COUNT({field_sql}) OVER ({partition_clause} {sort_clause}) AS block_id_{parse_json_path(field).replace('.', '_')}"
+                )
+
+        subquery_alias = f"fill_blocks_{context.stage_index}"
+
+        # Final SELECT with FIRST_VALUE over blocks
+        final_json_args = []
+        for field, fill_spec in output.items():
+            field_path = parse_json_path(field)
+            if fill_spec.get("method") == "locf":
+                field_sql, _ = self.evaluator.build_select_expression(
+                    f"${field}"
+                )
+                block_col = f"block_id_{field_path.replace('.', '_')}"
+
+                # Partition by both original partition AND the block ID
+                block_partition = (
+                    f"PARTITION BY {', '.join(partition_parts + [block_col])}"
+                    if partition_parts
+                    else f"PARTITION BY {block_col}"
+                )
+
+                # FIRST_VALUE in this block will be the non-null value that started it
+                locf_expr = f"FIRST_VALUE({field_sql}) OVER ({block_partition} {sort_clause})"
+                final_json_args.append(f"'{field_path}'")
+                final_json_args.append(locf_expr)
+            else:
+                # Constant value
+                value = fill_spec.get("value")
+                field_sql, _ = self.evaluator.build_select_expression(
+                    f"${field}"
+                )
+                final_json_args.append(f"'{field_path}'")
+                final_json_args.append(f"COALESCE({field_sql}, ?)")
+                all_params.append(value)
+
+        json_set_func = f"{self._json_function_prefix}_set"
+        data_expr = f"json({json_set_func}(data, {', '.join(final_json_args)}))"
+
+        select_parts = ["id", f"{data_expr} AS data"]
+        if preserve_root or context.has_root:
+            select_parts.append("root_data")
+
+        sql = f"""
+            SELECT {', '.join(select_parts)}
+            FROM (
+                SELECT {', '.join(block_id_selects)}
+                FROM {prev_stage}
+            ) {subquery_alias}
+        """
         return sql, all_params
 
     def _build_graph_lookup_sql(

@@ -433,6 +433,14 @@ class TemporaryTableAggregationProcessor:
                         )
                         i += 1
 
+                    case "$fill":
+                        current_table = self._process_fill_stage(
+                            create_temp,
+                            current_table,
+                            stage["$fill"],
+                        )
+                        i += 1
+
                     case "$sample":
                         sample_spec = stage["$sample"]
                         sample_size = sample_spec["size"]
@@ -2284,6 +2292,126 @@ class TemporaryTableAggregationProcessor:
 
         return create_temp({"$graphLookup": spec}, stage_sql, all_params)
 
+    def _process_fill_stage(
+        self,
+        create_temp: Callable[[Dict[str, Any], str, List[Any]], str],
+        current_table: str,
+        spec: Dict[str, Any],
+    ) -> str:
+        """
+        Process $fill stage.
+        """
+        partition_by = spec.get("partitionBy")
+        sort_by: Dict[str, int] = spec.get("sortBy", {})
+        output: Dict[str, Any] = spec.get("output", {})
+        all_params: List[Any] = []
+
+        # Check for 'linear' method
+        for fill_spec in output.values():
+            if fill_spec.get("method") == "linear":
+                raise NotImplementedError(
+                    "$fill method 'linear' requires Python fallback"
+                )
+
+        # 1. Build PARTITION BY and ORDER BY clauses
+        partition_parts = []
+        if partition_by is not None:
+            sql, params = self.expr_evaluator.build_select_expression(
+                partition_by
+            )
+            partition_parts.append(sql)
+            all_params.extend(params)
+        partition_clause = (
+            f"PARTITION BY {', '.join(partition_parts)}"
+            if partition_parts
+            else ""
+        )
+
+        sort_parts = []
+        if sort_by:
+            for field, direction in sort_by.items():
+                order = "ASC" if direction == 1 else "DESC"
+                sql, params = self.expr_evaluator.build_select_expression(
+                    f"${field}"
+                )
+                sort_parts.append(f"{sql} {order}")
+                all_params.extend(params)
+        sort_clause = f"ORDER BY {', '.join(sort_parts)}" if sort_parts else ""
+
+        # 2. Process output fields
+        has_locf = any(fs.get("method") == "locf" for fs in output.values())
+        json_set_func = "jsonb_set" if self._jsonb_supported else "json_set"
+
+        if not has_locf:
+            # Simple constant value fill
+            json_set_args = []
+            for field, fill_spec in output.items():
+                value = fill_spec.get("value")
+                field_sql, field_params = (
+                    self.expr_evaluator.build_select_expression(f"${field}")
+                )
+                all_params.extend(field_params)
+
+                fill_expr = f"COALESCE({field_sql}, ?)"
+                all_params.append(value)
+
+                json_set_args.append(f"'{parse_json_path(field)}'")
+                json_set_args.append(fill_expr)
+
+            args_str = ", ".join(json_set_args)
+            data_expr = f"json({json_set_func}(data, {args_str}))"
+            sql = f"SELECT id, {data_expr} AS data FROM {current_table}"
+            return create_temp({"$fill": spec}, sql, all_params)
+
+        # Complex locf fill
+        block_id_selects = ["id", "data"]
+        for field, fill_spec in output.items():
+            if fill_spec.get("method") == "locf":
+                field_sql, _ = self.expr_evaluator.build_select_expression(
+                    f"${field}"
+                )
+                block_id_selects.append(
+                    f"COUNT({field_sql}) OVER ({partition_clause} {sort_clause}) AS block_id_{parse_json_path(field).replace('.', '_')}"
+                )
+
+        subquery_alias = "fill_blocks_tier2"
+        final_json_args = []
+        for field, fill_spec in output.items():
+            field_path = parse_json_path(field)
+            if fill_spec.get("method") == "locf":
+                field_sql, _ = self.expr_evaluator.build_select_expression(
+                    f"${field}"
+                )
+                block_col = f"block_id_{field_path.replace('.', '_')}"
+                block_partition = (
+                    f"PARTITION BY {', '.join(partition_parts + [block_col])}"
+                    if partition_parts
+                    else f"PARTITION BY {block_col}"
+                )
+                locf_expr = f"FIRST_VALUE({field_sql}) OVER ({block_partition} {sort_clause})"
+                final_json_args.append(f"'{field_path}'")
+                final_json_args.append(locf_expr)
+            else:
+                value = fill_spec.get("value")
+                field_sql, _ = self.expr_evaluator.build_select_expression(
+                    f"${field}"
+                )
+                final_json_args.append(f"'{field_path}'")
+                final_json_args.append(f"COALESCE({field_sql}, ?)")
+                all_params.append(value)
+
+        args_str = ", ".join(final_json_args)
+        data_expr = f"json({json_set_func}(data, {args_str}))"
+
+        stage_sql = f"""
+            SELECT id, {data_expr} AS data
+            FROM (
+                SELECT {', '.join(block_id_selects)}
+                FROM {current_table}
+            ) {subquery_alias}
+        """
+        return create_temp({"$fill": spec}, stage_sql, all_params)
+
     def _process_densify_stage(self, create_temp, current_table, densify_spec):
         """
         Process $densify stage - fills gaps in data.
@@ -2345,6 +2473,7 @@ def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
         "$bucket",
         "$bucketAuto",
         "$facet",
+        "$fill",
         "$graphLookup",
         "$group",
         "$limit",

@@ -68,6 +68,7 @@ from . import pullall_operator
 from . import new_operators
 from . import window_functions
 from . import graph_lookup
+from . import fill_stage
 
 __all__ = [
     "CompatibilityReporter",
@@ -124,4 +125,5 @@ __all__ = [
     "new_operators",
     "window_functions",
     "graph_lookup",
+    "fill_stage",
 ]

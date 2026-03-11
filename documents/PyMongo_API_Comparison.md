@@ -465,7 +465,7 @@ The following APIs have been implemented and tested:
 | `$bucket` | Group by boundaries | Medium | ✅ **Implemented** | SQL and Python fallback |
 | `$bucketAuto` | Auto-sized buckets | Medium | ✅ **Implemented** | SQL and Python fallback |
 | `$densify` | Fill missing sequence values | Medium | ✅ **Implemented** | Python fallback |
-| `$fill` | Populate null/missing | Medium | ❌ Missing | MongoDB 5.3+ |
+| `$fill` | Populate null/missing | Medium | ✅ **Implemented** | SQL, Temp Table and Python fallback |
 | `$geoNear` | Proximity documents | Medium | ❌ Missing | Requires geospatial |
 | `$graphLookup` | Recursive search | Medium | ✅ **Implemented** | SQL, Temp Table and Python fallback |
 | `$merge` | Write to collection | Medium | ✅ **Implemented** | Python fallback |

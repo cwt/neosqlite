@@ -558,6 +558,19 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                         self.collection,
                         evaluator,
                     )
+                case "$fill":
+                    from ..query_helper.fill_stage import process_fill
+
+                    fill_spec = stage["$fill"]
+                    evaluator = ExprEvaluator(
+                        data_column="data", db_connection=self.collection.db
+                    )
+                    docs_with_context = process_fill(
+                        docs_with_context,
+                        fill_spec,
+                        self.collection,
+                        evaluator,
+                    )
                 case "$sample":
                     sample_spec = stage["$sample"]
                     sample_size = sample_spec["size"]
