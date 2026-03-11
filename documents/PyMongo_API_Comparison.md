@@ -445,7 +445,7 @@ The following APIs have been implemented and tested:
 | Operator | Description | Priority | Status | Notes |
 |----------|-------------|----------|--------|-------|
 | `$where` | JavaScript expression | Medium | ❌ Not Supported | Raises NotImplementedError; use `$expr` |
-| `$jsonSchema` | JSON Schema validation | Medium | ❌ Missing | Complex validation |
+| `$jsonSchema` | JSON Schema validation | Medium | ✅ **Implemented** | Query filtering and native SQL write validation |
 | `$vectorSearch` | Vector search | Medium | ❌ Missing | MongoDB Atlas feature |
 
 #### Update Operators
