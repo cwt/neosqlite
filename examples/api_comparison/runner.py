@@ -56,6 +56,7 @@ from .new_operators import compare_new_operators
 from .window_functions import compare_window_functions
 from .graph_lookup import compare_graph_lookup
 from .fill_stage import compare_fill_stage
+from .json_schema import compare_json_schema
 from .options_classes import compare_options_classes
 
 
@@ -110,6 +111,7 @@ COMPARISON_FUNCTIONS = [
     ("window_functions", compare_window_functions),
     ("graph_lookup", compare_graph_lookup),
     ("fill", compare_fill_stage),
+    ("json_schema", compare_json_schema),
     ("options_classes", compare_options_classes),
 ]
 

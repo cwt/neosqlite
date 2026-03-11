@@ -37,6 +37,10 @@ def _normalize_id(value: Any) -> Any:
     if hasattr(value, "__class__") and value.__class__.__name__ == "ObjectId":
         return str(value)
 
+    # Handle NeoSQLite's internal dict representation of ObjectId
+    if isinstance(value, dict) and "__neosqlite_objectid__" in value:
+        return str(value.get("id"))
+
     # Handle datetime - normalize to naive UTC for comparison
     if hasattr(value, "__class__") and value.__class__.__name__ == "datetime":
         # If timezone-aware, convert to UTC and make naive

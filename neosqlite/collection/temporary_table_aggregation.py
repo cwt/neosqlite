@@ -2509,7 +2509,12 @@ def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
         if stage_name not in supported_stages:
             return False
 
-        if stage_name == "$setWindowFields":
+        if stage_name == "$match":
+            match_spec = stage["$match"]
+            if "$jsonSchema" in match_spec:
+                return False
+
+        if stage_name in ("$setWindowFields", "$fill"):
             import sqlite3
 
             if sqlite3.sqlite_version_info < (3, 25, 0):

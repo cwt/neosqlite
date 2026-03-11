@@ -158,6 +158,9 @@ class QueryBuilderMixin:
         """
         from ...objectid import ObjectId
 
+        if field == "$jsonSchema":
+            return None
+
         if field == "_id":
             # Handle _id field specially
             if isinstance(value, ObjectId):
@@ -248,6 +251,9 @@ class QueryBuilderMixin:
         # Handle $expr queries
         if "$expr" in query:
             return self._build_expr_where_clause(query)
+
+        if "$jsonSchema" in query:
+            return None
 
         if "$where" in query:
             raise NotImplementedError(
@@ -608,7 +614,7 @@ class QueryBuilderMixin:
                     # Otherwise, fall through to normal field operator handling
                 case "$text":
                     # Handle $text operator in Python fallback
-                    # This is a simplified implementation that just does basic string matching
+                    text_match = False
                     if isinstance(value, dict) and "$search" in value:
                         search_term = value["$search"]
                         if isinstance(search_term, str):
@@ -622,65 +628,56 @@ class QueryBuilderMixin:
                             fts_tables = cursor.fetchall()
 
                             # Check each FTS-indexed field for matches
-                            for fts_table in fts_tables:
-                                fts_table_name = fts_table[0]
-                                # Extract field name from FTS table name
-                                # (collection_field_fts -> field)
-                                index_name = fts_table_name[
-                                    len(
-                                        f"{quote_table_name(self.collection.name)}_"
-                                    ) : -4
-                                ]  # Remove collection_ prefix and _fts suffix
-                                # Convert underscores back to dots for nested keys
-                                field_name = index_name.replace("_", ".")
-                                # Check if this field has content that matches the search term
-                                try:
-                                    field_value = self.collection._get_val(
-                                        document, field_name
-                                    )
-                                except (AttributeError, TypeError):
-                                    # Field path contains arrays that can't be handled in Python fallback
-                                    # Skip this field - the SQL FTS index will handle it
-                                    continue
-                                if field_value and isinstance(field_value, str):
-                                    # Simple case-insensitive substring search
-                                    if (
-                                        search_term.lower()
-                                        in field_value.lower()
+                            if fts_tables:
+                                for fts_table in fts_tables:
+                                    fts_table_name = fts_table[0]
+                                    index_name = fts_table_name[
+                                        len(
+                                            f"{quote_table_name(self.collection.name)}_"
+                                        ) : -4
+                                    ]
+                                    field_name = index_name.replace("_", ".")
+                                    try:
+                                        field_value = self.collection._get_val(
+                                            document, field_name
+                                        )
+                                    except (AttributeError, TypeError):
+                                        continue
+
+                                    if field_value and isinstance(
+                                        field_value, str
                                     ):
-                                        matches.append(True)
-                                        break
-                                elif isinstance(field_value, list):
-                                    # Field is an array - check each element
-                                    for elem in field_value:
                                         if (
-                                            isinstance(elem, str)
-                                            and search_term.lower()
-                                            in elem.lower()
+                                            search_term.lower()
+                                            in field_value.lower()
                                         ):
-                                            matches.append(True)
+                                            text_match = True
                                             break
-                                        elif isinstance(elem, dict):
-                                            # For object arrays, check all string values recursively
-                                            if self._search_in_value(
+                                    elif isinstance(field_value, list):
+                                        for elem in field_value:
+                                            if (
+                                                isinstance(elem, str)
+                                                and search_term.lower()
+                                                in elem.lower()
+                                            ):
+                                                text_match = True
+                                                break
+                                            elif isinstance(
+                                                elem, dict
+                                            ) and self._search_in_value(
                                                 elem, search_term
                                             ):
-                                                matches.append(True)
+                                                text_match = True
                                                 break
-                                    else:
-                                        continue
-                                    break
+                                        if text_match:
+                                            break
                             else:
-                                # If no FTS indexes exist, use enhanced text search on all fields
-                                # This provides better international character support and diacritic-insensitive matching
-                                if unified_text_search(document, search_term):
-                                    matches.append(True)
-                                else:
-                                    matches.append(False)
-                        else:
-                            matches.append(False)
-                    else:
-                        matches.append(False)
+                                # No FTS indexes, search all fields
+                                text_match = unified_text_search(
+                                    document, search_term
+                                )
+
+                    matches.append(text_match)
                 case "$and":
                     matches.append(all(map(reapply, value)))
                 case "$or":
@@ -689,6 +686,10 @@ class QueryBuilderMixin:
                     matches.append(not any(map(reapply, value)))
                 case "$not":
                     matches.append(not self._apply_query(value, document))
+                case "$jsonSchema":
+                    from .schema_validator import matches_json_schema
+
+                    matches.append(matches_json_schema(document, value))
                 case _:
                     if isinstance(value, dict):
                         for operator, arg in value.items():

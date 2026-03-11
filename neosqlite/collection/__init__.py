@@ -584,6 +584,7 @@ class Collection:
         projection: Dict[str, Any] | None = None,
         hint: str | None = None,
         session: ClientSession | None = None,
+        **kwargs: Any,
     ) -> Cursor:
         """
         Find documents in the collection.

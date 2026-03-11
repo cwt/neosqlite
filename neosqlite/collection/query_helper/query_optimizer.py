@@ -267,9 +267,10 @@ class QueryOptimizerMixin:
         for i, stage in enumerate(optimized):
             stage_name = next(iter(stage.keys()))
             if stage_name == "$match":
-                # Don't push down $match with $text search - it needs to operate
-                # on the data as transformed by previous stages (e.g., after $unwind)
-                if "$text" in stage["$match"]:
+                # Don't push down $match with $text search or $jsonSchema - they need to operate
+                # on the data as transformed by previous stages or required specific handling
+                match_spec = stage["$match"]
+                if "$text" in match_spec or "$jsonSchema" in match_spec:
                     other_stages.append((i, stage))
                 else:
                     match_stages.append((i, stage))

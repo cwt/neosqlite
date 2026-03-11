@@ -657,6 +657,7 @@ class Cursor:
             self._filter
         )
 
+        docs: Iterable[Dict[str, Any]]
         if where_result is not None:
             # Use SQL-based filtering
             where_clause, params = where_result
@@ -670,79 +671,87 @@ class Cursor:
                 params = minmax_params
 
             # Use the collection's JSONB support flag to determine how to select data
-            # Include _id column to support both integer id and ObjectId _id
             if self._collection.query_engine._jsonb_supported:
                 cmd = f"SELECT id, _id, json(data) as data FROM {self._collection.name} {where_clause}"
             else:
                 cmd = f"SELECT id, _id, data FROM {self._collection.name} {where_clause}"
+
             # Add comment if specified
             if self._comment:
-                # Sanitize comment to prevent SQL injection (remove comment delimiters)
                 safe_comment = (
                     self._comment.replace("/*", "")
                     .replace("*/", "")
                     .replace("--", "")
                 )
                 cmd = f"/* {safe_comment} */ {cmd}"
+
             db_cursor = self._collection.db.execute(cmd, params)
-            # Use fetchmany for memory-efficient batch fetching
-            docs: List[Dict[str, Any]] = []
-            while True:
-                rows = db_cursor.fetchmany(self._batch_size)
-                if not rows:
-                    break
-                docs.extend(self._load_documents(rows))
 
-            # Apply where predicate if specified (Tier-3 Python filtering)
-            if self._where_predicate:
-                return filter(self._where_predicate, docs)  # type: ignore[arg-type]
+            def doc_generator():
+                while True:
+                    rows = db_cursor.fetchmany(self._batch_size)
+                    if not rows:
+                        break
+                    for doc in self._load_documents(rows):
+                        yield doc
 
-            return docs
+            docs = doc_generator()
         else:
-            # Fallback to Python-based filtering for complex queries
-            # Use the collection's JSONB support flag to determine how to select data
-            # Include _id column to support both integer id and ObjectId _id
-            if self._collection.query_engine._jsonb_supported:
-                cmd = f"SELECT id, _id, json(data) as data FROM {self._collection.name}"
-            else:
-                cmd = f"SELECT id, _id, data FROM {self._collection.name}"
+            # Fall back to Python-based filtering
+            docs = self._handle_python_fallback()
 
-            # Add min/max bounds if specified (no filter case)
-            if self._min or self._max:
-                minmax_clause, minmax_params = self._build_minmax_clause(
-                    "", (), self._min, self._max
-                )
-                # Remove leading " WHERE" if present and add our own
-                minmax_clause = minmax_clause.lstrip().lstrip("WHERE").lstrip()
-                cmd = f"{cmd} WHERE {minmax_clause}"
-                params = minmax_params
-            else:
-                params = ()
+        # Apply where predicate if specified (Tier-3 Python filtering)
+        if self._where_predicate:
+            docs = filter(self._where_predicate, docs)  # type: ignore[arg-type]
 
-            # Add comment if specified
-            if self._comment:
-                safe_comment = (
-                    self._comment.replace("/*", "")
-                    .replace("*/", "")
-                    .replace("--", "")
-                )
-                cmd = f"/* {safe_comment} */ {cmd}"
-            db_cursor = self._collection.db.execute(cmd, params)
-            apply = partial(self._query_helpers._apply_query, self._filter)
-            # Use fetchmany for memory-efficient batch fetching
-            all_docs: List[Dict[str, Any]] = []
-            while True:
-                rows = db_cursor.fetchmany(self._batch_size)
-                if not rows:
-                    break
-                all_docs.extend(self._load_documents(rows))
-            filtered_docs: Iterable[Dict[str, Any]] = filter(apply, all_docs)
+        # Apply $jsonSchema filter if present
+        if "$jsonSchema" in self._filter:
+            from .query_helper.schema_validator import matches_json_schema
 
-            # Apply where predicate if specified (Tier-3 Python filtering)
-            if self._where_predicate:
-                return filter(self._where_predicate, filtered_docs)  # type: ignore[arg-type]
+            schema = self._filter["$jsonSchema"]
+            docs = (doc for doc in docs if matches_json_schema(doc, schema))
 
-            return filtered_docs
+        return docs
+
+    def _handle_python_fallback(self) -> Iterable[Dict[str, Any]]:
+        """Handle complex queries by filtering all documents in Python."""
+        # Use the collection's JSONB support flag to determine how to select data
+        if self._collection.query_engine._jsonb_supported:
+            cmd = f"SELECT id, _id, json(data) as data FROM {self._collection.name}"
+        else:
+            cmd = f"SELECT id, _id, data FROM {self._collection.name}"
+
+        # Add min/max bounds if specified (no filter case)
+        if self._min or self._max:
+            minmax_clause, minmax_params = self._build_minmax_clause(
+                "", (), self._min, self._max
+            )
+            # Remove leading " WHERE" if present and add our own
+            minmax_clause = minmax_clause.lstrip().lstrip("WHERE").lstrip()
+            cmd = f"{cmd} WHERE {minmax_clause}"
+            params = minmax_params
+        else:
+            params = ()
+
+        # Add comment if specified
+        if self._comment:
+            safe_comment = (
+                self._comment.replace("/*", "")
+                .replace("*/", "")
+                .replace("--", "")
+            )
+            cmd = f"/* {safe_comment} */ {cmd}"
+
+        db_cursor = self._collection.db.execute(cmd, params)
+        apply = partial(self._query_helpers._apply_query, self._filter)
+
+        while True:
+            rows = db_cursor.fetchmany(self._batch_size)
+            if not rows:
+                break
+            for doc in self._load_documents(rows):
+                if apply(doc):
+                    yield doc
 
     def _handle_expr_query(self) -> Iterable[Dict[str, Any]]:
         """

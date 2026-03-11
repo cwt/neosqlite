@@ -69,6 +69,7 @@ from . import new_operators
 from . import window_functions
 from . import graph_lookup
 from . import fill_stage
+from . import json_schema
 
 __all__ = [
     "CompatibilityReporter",
@@ -126,4 +127,5 @@ __all__ = [
     "window_functions",
     "graph_lookup",
     "fill_stage",
+    "json_schema",
 ]

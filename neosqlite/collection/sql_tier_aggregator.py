@@ -250,6 +250,7 @@ class SQLTierAggregator:
         "$out",
         "$replaceRoot",
         "$replaceWith",
+        "$jsonSchema",
     }
 
     # Expressions that require Python fallback
@@ -259,6 +260,7 @@ class SQLTierAggregator:
         "$function",  # Custom JavaScript
         "$accumulator",  # Custom accumulator
         "$script",  # JavaScript execution
+        "$jsonSchema",  # Complex validation logic in Python
     }
 
     def __init__(self, collection, expr_evaluator: ExprEvaluator | None = None):
