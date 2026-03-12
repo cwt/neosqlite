@@ -19,6 +19,10 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 - **Advanced Indexing**: Supports single-key, compound-key, and nested-key indexes.
 - **Text Search**: Full-text search capabilities using SQLite's FTS5 extension with the `$text` operator.
 - **Modern API**: Aligned with modern `pymongo` practices (using methods like `insert_one`, `update_one`, `delete_many`, etc.)
+- **ACID Transactions (v1.9.0)**: Full `ClientSession` API support for multi-document transactions with PyMongo 4.x parity.
+- **Advanced Aggregation (v1.9.0)**: Support for complex stages like `$setWindowFields`, `$graphLookup`, `$fill`, and streaming `$facet`.
+- **Tier-1 SQL Optimization**: Expanded SQL-level performance for dozens of operators including Set operators, `$split`, `$let`, and `$addToSet`.
+- **Native `$jsonSchema` (v1.9.0)**: Robust validation for queries and write-time schema enforcement using SQLite CHECK constraints.
 - **70+ New MongoDB-compatible APIs**: Massive expansion including Bitwise operators, positional array updates (`$`, `$[]`, `$[identifier]`), and complex aggregation stages (`$bucket`, `$unionWith`, `$merge`).
 - **Comprehensive Security Hardening**: Built-in SQL injection protection using centralized identifier and table name quoting across all engine layers.
 - **MongoDB-compatible ObjectId**: Full 12-byte ObjectId implementation with automatic generation and hex interchangeability
@@ -28,6 +32,26 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 - **Python 3.10+ Modernization**: Leveraging modern Python features like walrus operators and union type hints
 
 See [CHANGELOG.md](CHANGELOG.md) for the latest features and improvements.
+
+## v1.9.0 Major Feature & Compatibility Release
+
+NeoSQLite v1.9.0 is a major milestone focusing on **API Completeness** and **Optimization Expansion**.
+
+### Key Highlights
+
+- **ACID Transactions**: Full support for `ClientSession` API with `start_transaction`, `commit_transaction`, and `abort_transaction` (PyMongo 4.x parity).
+- **Advanced Aggregation Stages**:
+  - `$setWindowFields`: Comprehensive window function support.
+  - `$graphLookup`: Recursive hierarchical searches via Recursive CTEs.
+  - `$fill`: Intelligent data filling (constant or `locf`).
+  - **Streaming `$facet`**: Parallel sub-pipeline processing with streaming results.
+- **SQL-Level (Tier-1) Optimization Expansion**: Operators like Set operators, `$split`, `$let`, and `$addToSet` now run directly in SQL.
+- **Security & Validation**: Native `$jsonSchema` support for queries and write validation via SQLite CHECK constraints.
+- **Performance Improvements**:
+  - **JSONB Auto-Detection**: 2-5x performance boost on supported systems.
+  - **Rigorous Memory Bounding**: Constant memory footprint regardless of result set size.
+
+For more details, see [documents/releases/v1.9.0.md](documents/releases/v1.9.0.md).
 
 ## v1.8.0 Major Refactoring Release
 
@@ -93,7 +117,7 @@ For more details, see [documents/releases/v1.8.0.md](documents/releases/v1.8.0.m
 
 NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-compatible behavior. Our automated test suite covers all major API categories:
 
-### Test Results (v1.8.0+)
+### Test Results (v1.9.0)
 
 #### Unit Tests
 
@@ -108,15 +132,15 @@ NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-
 
 #### API Comparison Tests
 
-| Metric | v1.7.0 | v1.8.0 | v1.8.0+ |
-|--------|--------|--------|---------|
-| **Total Tests** | 304 | 304 | **373** |
-| **Passed** | 300 | 300 | **362** |
-| **Skipped** | 4 | 4 | **11** |
-| **Failed** | 0 | 0 | 0 |
-| **Compatibility** | 100% | 100% | **100%** |
+| Metric | v1.8.0 | v1.9.0 |
+|--------|--------|--------|
+| **Total Tests** | 304 | **373** |
+| **Passed** | 300 | **362** |
+| **Skipped** | 4 | **11** |
+| **Failed** | 0 | 0 |
+| **Compatibility** | 100% | **100%** |
 
-**Skipped Tests Note**: The 10 skipped tests are due to architectural differences or environment limitations, not missing implementations:
+**Skipped Tests Note**: The 11 skipped tests are due to architectural differences or environment limitations, not missing implementations:
 1. `options()` - NeoSQLite returns detailed SQLite schema info (`{'columns': [...], 'indexes': [...]}`) while MongoDB returns `{}`. Backend-specific difference.
 2. `$log2` - **NeoSQLite extension** using SQLite's native `log2()` function. Raises `UserWarning` about MongoDB incompatibility.
 3. `watch()` (Collection & Database) - **Fully implemented in NeoSQLite** via SQLite triggers but cannot be compared because MongoDB requires a replica set for change streams.
