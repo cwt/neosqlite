@@ -21,6 +21,7 @@ from .schema_utils import (
     create_unique_index_on_id,
     get_table_info,
 )
+from .type_utils import validate_session
 from neosqlite.collection.json_helpers import neosqlite_json_loads
 from ..sql_utils import quote_table_name
 from typing import Any, Dict, List, Tuple, overload, TYPE_CHECKING
@@ -621,7 +622,7 @@ class Collection:
         """
         # Check if this is a GridFS system collection
         if self._is_gridfs_collection():
-            return self._find_as_gridfs(filter)
+            return self._find_as_gridfs(filter, session=session)
 
         return self.query_engine.find(filter, projection, hint, session=session)
 
@@ -670,7 +671,11 @@ class Collection:
         # Default to naming convention if schema check fails
         return self.name.endswith("_files") or self.name.endswith("_chunks")
 
-    def _find_as_gridfs(self, filter: Dict[str, Any] | None = None):
+    def _find_as_gridfs(
+        self,
+        filter: Dict[str, Any] | None = None,
+        session: ClientSession | None = None,
+    ):
         """
         Execute find on a GridFS system collection using GridFSBucket API.
 
@@ -680,6 +685,7 @@ class Collection:
 
         Args:
             filter: Query filter
+            session: A ClientSession for transactions.
 
         Returns:
             GridOutCursor: Cursor over GridOut objects
@@ -699,7 +705,7 @@ class Collection:
 
         # Create GridFSBucket and delegate find operation
         bucket = GridFSBucket(self.db, bucket_name=bucket_name)
-        return bucket.find(filter)
+        return bucket.find(filter, session=session)
 
     def find_raw_batches(
         self,
@@ -1274,7 +1280,7 @@ class Collection:
         batch_size: int | None = None,
         collation: Dict[str, Any] | None = None,
         start_at_operation_time: Any | None = None,
-        session: Any | None = None,
+        session: ClientSession | None = None,
         start_after: Dict[str, Any] | None = None,
     ) -> ChangeStream:
         """
@@ -1293,12 +1299,13 @@ class Collection:
             batch_size (int): Number of documents to return per batch.
             collation (Dict[str, Any]): Collation settings for the operation.
             start_at_operation_time (Any): Operation time to start monitoring from.
-            session (Any): Client session for the operation.
+            session (ClientSession): Client session for the operation.
             start_after (Dict[str, Any]): Logical starting point for the change stream.
 
         Returns:
             ChangeStream: A change stream object that can be iterated over to receive change events.
         """
+        validate_session(session, self._database)
         return ChangeStream(
             collection=self,
             pipeline=pipeline,

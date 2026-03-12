@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, Dict, TYPE_CHECKING, Optional
+from typing import Any, Callable, Dict, TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from .connection import Connection
@@ -100,6 +100,41 @@ class ClientSession:
                 self.abort_transaction()
             except Exception:
                 pass
+
+    def with_transaction(
+        self,
+        callback: Callable[[ClientSession], Any],
+        read_concern: Any | None = None,
+        write_concern: Any | None = None,
+        read_preference: Any | None = None,
+        max_commit_time_ms: int | None = None,
+    ) -> Any:
+        """
+        Execute a callback in a transaction.
+
+        This method automatically starts a transaction, executes the callback,
+        and commits the transaction if the callback succeeds. If the callback
+        raises an exception, the transaction is aborted.
+
+        Args:
+            callback: A function that takes a ClientSession as its only argument.
+            read_concern (optional): Unused in NeoSQLite.
+            write_concern (optional): Unused in NeoSQLite.
+            read_preference (optional): Unused in NeoSQLite.
+            max_commit_time_ms (optional): Unused in NeoSQLite.
+
+        Returns:
+            The return value of the callback.
+        """
+        self.start_transaction()
+        try:
+            result = callback(self)
+            self.commit_transaction()
+            return result
+        except Exception:
+            if self._in_transaction:
+                self.abort_transaction()
+            raise
 
     def __enter__(self) -> ClientSession:
         return self

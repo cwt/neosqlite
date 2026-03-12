@@ -10,6 +10,7 @@ from ..raw_batch_cursor import RawBatchCursor
 from ..sql_translator_unified import SQLTranslator
 from ..expr_evaluator import ExprEvaluator, AggregationContext, _is_expression
 from ..sql_tier_aggregator import SQLTierAggregator
+from ..type_utils import validate_session
 from copy import deepcopy
 from neosqlite.collection.jsonb_support import supports_jsonb
 from typing import Any, Dict, List, TYPE_CHECKING
@@ -80,6 +81,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         Returns:
             List[Dict[str, Any]]: The list of documents after applying the aggregation pipeline.
         """
+        validate_session(session, self.collection._database)
         return self.aggregate_with_constraints(
             pipeline, batch_size=batch_size, session=session
         )
@@ -103,6 +105,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         Returns:
             List[Dict[str, Any]] | CompressedQueue: The results as either a list or compressed queue.
         """
+        validate_session(session, self.collection._database)
         # If memory_constrained is True and quez is available, use quez for processing
         if memory_constrained and _HAS_QUEZ:
             # Use quez for memory-constrained processing
@@ -890,9 +893,9 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                     # Get or create target collection
                     if "." in target_coll_name:
                         db_name, coll_name = target_coll_name.split(".", 1)
-                        target_coll = self.collection._database._client[
-                            db_name
-                        ][coll_name]
+                        target_coll = self.collection._database.client[db_name][
+                            coll_name
+                        ]
                     else:
                         target_coll = self.collection._database[
                             target_coll_name
@@ -1305,6 +1308,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         Returns:
             RawBatchCursor instance.
         """
+        validate_session(session, self.collection._database)
         return RawBatchCursor(
             self.collection,
             None,
@@ -1335,6 +1339,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
             BulkWriteResult: A result object containing the number of matched,
                              modified, and inserted documents.
         """
+        validate_session(session, self.collection._database)
         inserted_count = 0
         matched_count = 0
         modified_count = 0

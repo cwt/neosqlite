@@ -1,6 +1,8 @@
+import pytest
 import neosqlite
 from neosqlite.client_session import ClientSession
 from neosqlite import InsertOne, UpdateOne, DeleteOne
+from neosqlite.gridfs import GridFSBucket
 
 
 def test_client_session_basic():
@@ -22,6 +24,69 @@ def test_client_session_basic():
             assert coll.count_documents({"name": "tx_test"}) == 1
 
 
+def test_session_validation_cross_connection():
+    """Test that using a session from another connection raises ValueError."""
+    with neosqlite.Connection(":memory:") as conn1:
+        with neosqlite.Connection(":memory:") as conn2:
+            with conn1.start_session() as session1:
+                # Should work
+                conn1.test.insert_one({"a": 1}, session=session1)
+
+                # Should fail
+                with pytest.raises(
+                    ValueError,
+                    match="Session belongs to a different Connection",
+                ):
+                    conn2.test.insert_one({"a": 1}, session=session1)
+
+                with pytest.raises(
+                    ValueError,
+                    match="Session belongs to a different Connection",
+                ):
+                    list(conn2.test.find({}, session=session1))
+
+                with pytest.raises(
+                    ValueError,
+                    match="Session belongs to a different Connection",
+                ):
+                    conn2.test.aggregate([], session=session1)
+
+
+def test_session_in_aggregation_cursor():
+    """Test that session is correctly passed to aggregation cursor."""
+    with neosqlite.Connection(":memory:") as conn:
+        coll = conn.test
+        coll.insert_one({"a": 1})
+        with conn.start_session() as session:
+            cursor = coll.aggregate([], session=session)
+            assert cursor.session == session
+            results = list(cursor)
+            assert len(results) == 1
+
+
+def test_session_in_gridfs():
+    """Test session support in GridFSBucket."""
+    with neosqlite.Connection(":memory:") as conn:
+        bucket = GridFSBucket(conn.db)
+        with conn.start_session() as session:
+            # Test upload
+            file_id = bucket.upload_from_stream(
+                "test.txt", b"content", session=session
+            )
+            assert conn.fs_files.find_one({"_id": str(file_id)})
+
+            # Test session validation in GridFS
+            with neosqlite.Connection(":memory:") as conn2:
+                bucket2 = GridFSBucket(conn2.db)
+                with pytest.raises(
+                    ValueError,
+                    match="Session belongs to a different Connection",
+                ):
+                    bucket2.upload_from_stream(
+                        "fail.txt", b"content", session=session
+                    )
+
+
 def test_session_abort():
     """Test aborting a transaction."""
     with neosqlite.Connection(":memory:") as conn:
@@ -32,6 +97,33 @@ def test_session_abort():
             session.abort_transaction()
 
             assert coll.count_documents({"name": "to_abort"}) == 0
+
+
+def test_session_with_transaction():
+    """Test with_transaction convenience method."""
+    with neosqlite.Connection(":memory:") as conn:
+        coll = conn.test
+        with conn.start_session() as session:
+
+            def callback(s):
+                coll.insert_one({"name": "with_tx"}, session=s)
+                return "success"
+
+            result = session.with_transaction(callback)
+            assert result == "success"
+            assert coll.count_documents({"name": "with_tx"}) == 1
+
+            # Test failure
+            def failing_callback(s):
+                coll.insert_one({"name": "should_rollback"}, session=s)
+                raise ValueError("trigger rollback")
+
+            try:
+                session.with_transaction(failing_callback)
+            except ValueError:
+                pass
+
+            assert coll.count_documents({"name": "should_rollback"}) == 0
 
 
 def test_nested_transactions_savepoints():

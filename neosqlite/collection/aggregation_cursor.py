@@ -15,6 +15,9 @@ except ImportError:
     QUEZ_AVAILABLE = False
 
 
+from .type_utils import validate_session
+
+
 class AggregationCursor:
     """
     A cursor that iterates over the results of an aggregation pipeline.
@@ -56,6 +59,9 @@ class AggregationCursor:
         # Store allowDiskUse for API compatibility (ignored in NeoSQLite)
         self._allow_disk_use = allowDiskUse
         self._session = session
+
+        # Validate session
+        validate_session(session, collection._database)
 
     def max_await_time_ms(
         self, max_await_time_ms: int | None
@@ -289,12 +295,15 @@ class AggregationCursor:
                     self.pipeline,
                     batch_size=self._batch_size,
                     memory_constrained=True,
+                    session=self._session,
                 )
             )
         else:
             # Use normal processing - pass batch_size for fetchmany
             self._results = self.collection.query_engine.aggregate(
-                self.pipeline, batch_size=self._batch_size
+                self.pipeline,
+                batch_size=self._batch_size,
+                session=self._session,
             )
 
         self._executed = True

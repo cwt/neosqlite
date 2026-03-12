@@ -2,6 +2,7 @@ from __future__ import annotations
 from functools import partial
 from typing import Any, Callable, Dict, List, Iterator, Iterable, TYPE_CHECKING
 from .json_path_utils import parse_json_path
+from .type_utils import validate_session
 
 if TYPE_CHECKING:
     from . import Collection
@@ -51,6 +52,9 @@ class Cursor:
         self._retrieved: int = 0
         self._batch_size = 101  # MongoDB-compatible default
         self._session = session
+
+        # Validate session
+        validate_session(session, collection._database)
 
     def max_await_time_ms(self, max_await_time_ms: int | None) -> Cursor:
         """
@@ -604,6 +608,7 @@ class Cursor:
         Yields:
             Dict[str, Any]: A dictionary representing each document in the result set.
         """
+        validate_session(self._session, self._collection._database)
         # Get the documents based on filter
         docs = self._get_filtered_documents()
 

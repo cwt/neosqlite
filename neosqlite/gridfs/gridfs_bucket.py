@@ -25,6 +25,9 @@ from ..collection.type_correction import (
 )
 
 
+from ..collection.type_utils import validate_session
+
+
 class GridFSBucket:
     """
     A GridFSBucket-like class for storing large files in SQLite.
@@ -309,13 +312,13 @@ class GridFSBucket:
             source: The source data (bytes or file-like object)
             chunk_size_bytes: Bytes per chunk (defaults to bucket's chunk_size_bytes)
             metadata: Optional metadata for the file
-            session: A ClientSession (not supported in NeoSQLite)
+            session: A ClientSession for transactions.
 
         Returns:
             The ObjectId of the uploaded file document
         """
-        if session is not None:
-            raise NotImplementedError("Sessions are not supported in NeoSQLite")
+        if session:
+            validate_session(session, self._db)
 
         # Get the data from the source
         if isinstance(source, bytes):
@@ -592,16 +595,20 @@ class GridFSBucket:
         if cursor.rowcount == 0:
             raise NoFile(f"File with id {file_id} not found")
 
-    def find(self, filter: Dict[str, Any] | None = None) -> GridOutCursor:
+    def find(
+        self, filter: Dict[str, Any] | None = None, session: Any | None = None
+    ) -> GridOutCursor:
         """
         Find and return the files collection documents that match filter.
 
         Args:
             filter: The filter to apply when searching for files
+            session: A ClientSession for transactions.
 
         Returns:
             A GridOutCursor instance
         """
+        validate_session(session, self._db)
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         # or other common type mismatches, using the centralized function
         if filter is not None:
@@ -622,13 +629,12 @@ class GridFSBucket:
             filename: The name of the file to upload
             chunk_size_bytes: Bytes per chunk (defaults to bucket's chunk_size_bytes)
             metadata: Optional metadata for the file
-            session: A ClientSession (not supported in NeoSQLite)
+            session: A ClientSession for transactions.
 
         Returns:
             A GridIn instance to write the file contents
         """
-        if session is not None:
-            raise NotImplementedError("Sessions are not supported in NeoSQLite")
+        validate_session(session, self._db)
 
         return GridIn(
             self._db,
@@ -658,10 +664,9 @@ class GridFSBucket:
             source: The source data (bytes or file-like object)
             chunk_size_bytes: Bytes per chunk (defaults to bucket's chunk_size_bytes)
             metadata: Optional metadata for the file
-            session: A ClientSession (not supported in NeoSQLite)
+            session: A ClientSession for transactions.
         """
-        if session is not None:
-            raise NotImplementedError("Sessions are not supported in NeoSQLite")
+        validate_session(session, self._db)
 
         # Convert file_id to appropriate format for storage
         if isinstance(file_id, ObjectId):

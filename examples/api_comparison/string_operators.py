@@ -239,7 +239,7 @@ def compare_string_operators():
                                 "x": {
                                     "$regexMatch": {
                                         "input": "$text",
-                                        "regex": " L i n e   1 # comment",
+                                        "regex": " L i n e \\  1 # comment",
                                         "options": "x",
                                     }
                                 }
@@ -566,7 +566,7 @@ def compare_string_operators():
                                 "x": {
                                     "$regexMatch": {
                                         "input": "$text",
-                                        "regex": " L i n e   1 # comment",
+                                        "regex": " L i n e \\  1 # comment",
                                         "options": "x",
                                     }
                                 }

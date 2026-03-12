@@ -18,6 +18,9 @@ from neosqlite.collection.json_helpers import (
 )
 
 
+from ..type_utils import validate_session
+
+
 class QueryMethodsMixin(QueryEngineProtocol):
     """Mixin class providing query methods for QueryEngine."""
 
@@ -34,6 +37,7 @@ class QueryMethodsMixin(QueryEngineProtocol):
         Returns:
             int: The number of documents matching the filter.
         """
+        validate_session(session, self.collection._database)
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         filter = self.helpers._normalize_id_query(filter)
         # Try to use SQLTranslator for the WHERE clause
@@ -56,6 +60,7 @@ class QueryMethodsMixin(QueryEngineProtocol):
         Returns:
             int: The estimated number of documents.
         """
+        validate_session(session, self.collection._database)
         row = self.collection.db.execute(
             f"SELECT COUNT(1) FROM {quote_table_name(self.collection.name)}"
         ).fetchone()
@@ -79,6 +84,7 @@ class QueryMethodsMixin(QueryEngineProtocol):
         Returns:
             List[Any]: A list containing the distinct values from the specified key.
         """
+        validate_session(session, self.collection._database)
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         if filter is not None:
             filter = self.helpers._normalize_id_query(filter)

@@ -43,8 +43,18 @@ def compare_session_methods():
                 print(
                     f"Neo transaction abort: {'OK' if neo_tx_abort else 'FAIL'}"
                 )
+
+                # Test with_transaction
+                def callback(s):
+                    neo_collection.insert_one({"a": 3}, session=s)
+
+                session.with_transaction(callback)
+                neo_with_tx = neo_collection.count_documents({"a": 3}) == 1
+                print(
+                    f"Neo with_transaction: {'OK' if neo_with_tx else 'FAIL'}"
+                )
         except Exception as e:
-            neo_session = neo_tx_commit = neo_tx_abort = False
+            neo_session = neo_tx_commit = neo_tx_abort = neo_with_tx = False
             print(f"Neo session: Error - {e}")
 
     client = test_pymongo_connection()
@@ -53,6 +63,7 @@ def compare_session_methods():
     mongo_session = None
     mongo_tx_commit = None
     mongo_tx_abort = None
+    mongo_with_tx = None
 
     if client:
         mongo_db = client.test_session_methods
@@ -88,9 +99,21 @@ def compare_session_methods():
                     print(
                         f"Mongo transaction abort: {'OK' if mongo_tx_abort else 'FAIL'}"
                     )
+
+                    # Test with_transaction
+                    def mongo_callback(s):
+                        mongo_collection.insert_one({"a": 3}, session=s)
+
+                    session.with_transaction(mongo_callback)
+                    mongo_with_tx = (
+                        mongo_collection.count_documents({"a": 3}) == 1
+                    )
+                    print(
+                        f"Mongo with_transaction: {'OK' if mongo_with_tx else 'FAIL'}"
+                    )
                 except Exception as e:
                     # standalone MongoDB doesn't support transactions
-                    mongo_tx_commit = mongo_tx_abort = False
+                    mongo_tx_commit = mongo_tx_abort = mongo_with_tx = False
                     print(
                         f"Mongo transaction: SKIPPED (requires replica set) - {e}"
                     )
@@ -139,6 +162,20 @@ def compare_session_methods():
         skip_reason=(
             "NeoSQLite: OK; MongoDB: Requires replica set (skipped)"
             if (client and mongo_tx_abort is False)
+            else ("MongoDB not available" if not client else None)
+        ),
+    )
+    reporter.record_result(
+        "Session Methods",
+        "with_transaction",
+        passed=(
+            neo_with_tx == mongo_with_tx if mongo_with_tx is not None else True
+        ),
+        neo_result=neo_with_tx,
+        mongo_result=mongo_with_tx,
+        skip_reason=(
+            "NeoSQLite: OK; MongoDB: Requires replica set (skipped)"
+            if (client and mongo_with_tx is False)
             else ("MongoDB not available" if not client else None)
         ),
     )

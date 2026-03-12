@@ -14,6 +14,9 @@ from ..raw_batch_cursor import RawBatchCursor
 from ..json_path_utils import parse_json_path
 
 
+from ..type_utils import validate_session
+
+
 class FindOperationsMixin(QueryEngineProtocol):
     """Mixin class providing find operations for QueryEngine."""
 
@@ -36,6 +39,7 @@ class FindOperationsMixin(QueryEngineProtocol):
         Returns:
             Cursor: A cursor object to iterate over the results.
         """
+        validate_session(session, self.collection._database)
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         if filter is not None:
             filter = self.helpers._normalize_id_query(filter)
@@ -71,6 +75,7 @@ class FindOperationsMixin(QueryEngineProtocol):
         Returns:
             RawBatchCursor instance.
         """
+        validate_session(session, self.collection._database)
         return RawBatchCursor(
             self.collection,
             filter,
@@ -100,6 +105,7 @@ class FindOperationsMixin(QueryEngineProtocol):
             Dict[str, Any]: A dictionary representing the found document,
                             or None if no document matches.
         """
+        validate_session(session, self.collection._database)
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         if filter is not None:
             filter = self.helpers._normalize_id_query(filter)
@@ -136,6 +142,7 @@ class FindOperationsMixin(QueryEngineProtocol):
             Dict[str, Any] | None: The document before it was deleted,
                                  or None if not found.
         """
+        validate_session(session, self.collection._database)
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         filter = self.helpers._normalize_id_query(filter)
 
@@ -208,6 +215,7 @@ class FindOperationsMixin(QueryEngineProtocol):
             Dict[str, Any] | None: The document before or after replacement,
                                    or None if not found.
         """
+        validate_session(session, self.collection._database)
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         filter = self.helpers._normalize_id_query(filter)
 
@@ -301,6 +309,7 @@ class FindOperationsMixin(QueryEngineProtocol):
             Dict[str, Any] | None: The original document (before update),
                                    or None if no document was found and updated.
         """
+        validate_session(session, self.collection._database)
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         filter = self.helpers._normalize_id_query(filter)
 

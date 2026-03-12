@@ -22,6 +22,9 @@ from neosqlite.binary import Binary
 from neosqlite.collection.json_helpers import neosqlite_json_dumps_for_sql
 
 
+from ..type_utils import validate_session
+
+
 class CRUDOperationsMixin(QueryEngineProtocol):
     """Mixin class providing CRUD operations for QueryEngine."""
 
@@ -38,6 +41,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         Returns:
             InsertOneResult: The result of the insert operation.
         """
+        validate_session(session, self.collection._database)
         inserted_id = self.helpers._internal_insert(document)
         return InsertOneResult(inserted_id)
 
@@ -62,6 +66,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         Returns:
             InsertManyResult: Result of the insert operation, containing a list of inserted document IDs.
         """
+        validate_session(session, self.collection._database)
         inserted_ids = [self.helpers._internal_insert(doc) for doc in documents]
         return InsertManyResult(inserted_ids)
 
@@ -89,6 +94,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
                           including the count of matched and modified documents,
                           and the upserted ID if applicable.
         """
+        validate_session(session, self.collection._database)
         # Special handling for GridFS files collections
         if self.collection.name.endswith("_files"):
             return self._update_gridfs_file(filter, update, upsert)
@@ -301,6 +307,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         Returns:
             UpdateResult: A result object containing information about the update operation.
         """
+        validate_session(session, self.collection._database)
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         filter = self.helpers._normalize_id_query(filter)
         # Try to use SQLTranslator for the WHERE clause
@@ -371,6 +378,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             DeleteResult: A result object indicating whether the deletion was
                           successful or not.
         """
+        validate_session(session, self.collection._database)
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         filter = self.helpers._normalize_id_query(filter)
         # Use direct query to get integer ID for the delete operation
@@ -405,6 +413,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         Returns:
             DeleteResult: A result object indicating whether the deletion was successful or not.
         """
+        validate_session(session, self.collection._database)
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         filter = self.helpers._normalize_id_query(filter)
         # Try to use SQLTranslator for the WHERE clause
@@ -464,6 +473,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             UpdateResult: A result object containing the number of matched and
                           modified documents and the upserted ID.
         """
+        validate_session(session, self.collection._database)
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         filter = self.helpers._normalize_id_query(filter)
         # Find the document using the filter, but get the integer ID for internal operations
@@ -491,7 +501,9 @@ class CRUDOperationsMixin(QueryEngineProtocol):
                 )
 
         if upsert:
-            inserted_id = self.insert_one(replacement).inserted_id
+            inserted_id = self.insert_one(
+                replacement, session=session
+            ).inserted_id
             return UpdateResult(
                 matched_count=0, modified_count=0, upserted_id=inserted_id
             )

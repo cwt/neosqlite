@@ -264,6 +264,25 @@ def _is_numeric_value(value: Any) -> bool:
     return False
 
 
+def validate_session(session: Any | None, connection: Any) -> None:
+    """
+    Validate that the session belongs to this connection.
+
+    Args:
+        session: ClientSession instance or None
+        connection: The parent Connection or sqlite3.Connection object to validate against
+
+    Raises:
+        ValueError: If the session belongs to a different connection
+    """
+    if session is not None:
+        # connection could be neosqlite.Connection or sqlite3.Connection
+        # session.client is neosqlite.Connection
+        # neosqlite.Connection.db is sqlite3.Connection
+        if session.client != connection and session.client.db != connection:
+            raise ValueError("Session belongs to a different Connection")
+
+
 __all__ = [
     # Type conversion functions
     "_convert_to_int",
@@ -285,4 +304,5 @@ __all__ = [
     "_is_field_reference",
     "_is_literal",
     "_is_numeric_value",
+    "validate_session",
 ]
