@@ -657,11 +657,28 @@ class SQLTierAggregator:
 
             all_params.extend(sql_params)
 
+            # Check for operator-specific sortBy (used by $top, $bottom)
+            effective_sort_clause = sort_clause
+            if isinstance(op_val, dict) and "sortBy" in op_val:
+                op_sort_by = op_val["sortBy"]
+                op_sort_parts = []
+                for s_field, s_direction in op_sort_by.items():
+                    s_order = "ASC" if s_direction == 1 else "DESC"
+                    s_sql, s_params = self.evaluator.build_select_expression(
+                        f"${s_field}"
+                    )
+                    op_sort_parts.append(f"{s_sql} {s_order}")
+                    all_params.extend(s_params)
+                if op_sort_parts:
+                    effective_sort_clause = (
+                        f"ORDER BY {', '.join(op_sort_parts)}"
+                    )
+
             # Build frame clause (ROWS BETWEEN ...)
             frame_clause = self._build_window_frame_sql(window_spec)
 
             # Combine into window function
-            window_sql = f"{sql_func}({sql_operand}) OVER ({partition_clause} {sort_clause} {frame_clause})".strip()
+            window_sql = f"{sql_func}({sql_operand}) OVER ({partition_clause} {effective_sort_clause} {frame_clause})".strip()
 
             # Clean up extra spaces in OVER clause if parts are empty
             window_sql = (
@@ -1000,11 +1017,17 @@ class SQLTierAggregator:
                 return "DENSE_RANK", "", []
             case "$documentNumber":
                 return "ROW_NUMBER", "", []
-            case "$first":
-                sql, params = self.evaluator.build_select_expression(op_val)
+            case "$first" | "$top":
+                expr = (
+                    op_val.get("output") if isinstance(op_val, dict) else op_val
+                )
+                sql, params = self.evaluator.build_select_expression(expr)
                 return "FIRST_VALUE", sql, params
-            case "$last":
-                sql, params = self.evaluator.build_select_expression(op_val)
+            case "$last" | "$bottom":
+                expr = (
+                    op_val.get("output") if isinstance(op_val, dict) else op_val
+                )
+                sql, params = self.evaluator.build_select_expression(expr)
                 return "LAST_VALUE", sql, params
             case "$shift":
                 output_expr = op_val.get("output")

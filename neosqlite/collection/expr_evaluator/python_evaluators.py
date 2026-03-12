@@ -471,9 +471,22 @@ class PythonEvaluatorsMixin:
                     if input_val is None:
                         return self._evaluate_operand_python(on_null, document)
                     return 1.0 / (1.0 + math.exp(-input_val))
-                if value is None:
+
+                # Simple format: operands is a list [expr] or just expr
+                if isinstance(operands, list):
+                    if not operands:
+                        return None
+                    input_val = self._evaluate_operand_python(
+                        operands[0], document
+                    )
+                else:
+                    input_val = self._evaluate_operand_python(
+                        operands, document
+                    )
+
+                if input_val is None:
                     return None
-                return 1.0 / (1.0 + math.exp(-value))
+                return 1.0 / (1.0 + math.exp(-input_val))
             case _:
                 raise ValueError(f"Unknown math operator: {operator}")
 

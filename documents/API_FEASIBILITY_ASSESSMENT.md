@@ -214,6 +214,7 @@ This document provides a comprehensive analysis of implementing missing PyMongo 
 1. ✅ **Additional aggregation stages** that can leverage SQL optimization
 2. ✅ **Advanced indexing options** that make sense for SQLite
 3. ✅ **Session-like context managers** for transaction management
+4. ✅ **Window Operators** - Native SQLite window function support for analytical queries
 
 ### Not Recommended for Implementation
 

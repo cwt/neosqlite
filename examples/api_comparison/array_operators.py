@@ -152,6 +152,54 @@ def compare_array_operators():
             neo_indexofarray = False
             print(f"Neo $indexOfArray: Error - {e}")
 
+        # Test $sortArray
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "sorted": {
+                                    "$sortArray": {
+                                        "input": "$scores",
+                                        "sortBy": 1,
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            neo_sortarray = len(result) == 2 and result[0]["sorted"] == [
+                10,
+                20,
+                30,
+            ]
+            print(f"Neo $sortArray: {'OK' if neo_sortarray else 'FAIL'}")
+        except Exception as e:
+            neo_sortarray = False
+            print(f"Neo $sortArray: Error - {e}")
+
+        # Test $minN / $maxN
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "min2": {"$minN": {"input": "$scores", "n": 2}},
+                                "max2": {"$maxN": {"input": "$scores", "n": 2}},
+                            }
+                        }
+                    ]
+                )
+            )
+            neo_minmax_n = len(result) == 2
+            print(f"Neo $minN / $maxN: {'OK' if neo_minmax_n else 'FAIL'}")
+        except Exception as e:
+            neo_minmax_n = False
+            print(f"Neo $minN / $maxN: Error - {e}")
+
     client = test_pymongo_connection()
     mongo_collection = None
     mongo_db = None

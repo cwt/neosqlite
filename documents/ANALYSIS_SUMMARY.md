@@ -7,7 +7,7 @@
 
 ## Analysis Overview
 
-NeoSQLite provides a comprehensive PyMongo-compatible API for SQLite databases, implementing **100% of comparable PyMongo features** with 353 compatibility tests (343 passed, 10 skipped by design, 0 failed).
+NeoSQLite provides a comprehensive PyMongo-compatible API for SQLite databases, implementing **100% of comparable PyMongo features** with 370 compatibility tests (359 passed, 11 skipped by design, 0 failed).
 
 This document summarizes the API analysis and provides links to comprehensive documentation.
 
@@ -268,7 +268,7 @@ Fundamentally conflict with SQLite's architecture:
 
 | Metric | Current | Target |
 |--------|---------|--------|
-| PyMongo Compatibility Tests | 353 | 350+ |
+| PyMongo Compatibility Tests | 370 | 350+ |
 | API Coverage (comparable) | 100% | 100% |
 | SQL Optimization Coverage | 94% | 95%+ |
 | Missing High Priority APIs | 0 | 0 |

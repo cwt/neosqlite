@@ -363,3 +363,102 @@ def test_window_n_as_expression(collection):
     # Should only take 1 element because count=1
     assert results[0]["dynamicFirst"] == [100]
     assert results[1]["dynamicFirst"] == [100]
+
+
+def test_window_top_bottom(collection):
+    """Test $top and $bottom window operators (SQL and Python)."""
+    pipeline = [
+        {
+            "$setWindowFields": {
+                "partitionBy": "$dept",
+                "sortBy": {"score": -1},
+                "output": {
+                    "topScore": {
+                        "$top": {"output": "$score", "sortBy": {"score": -1}}
+                    },
+                    "bottomScore": {
+                        "$bottom": {"output": "$score", "sortBy": {"score": -1}}
+                    },
+                },
+            }
+        },
+        {"$sort": {"_id": 1}},
+    ]
+
+    # 1. SQL Tier
+    set_force_fallback(False)
+    results = list(collection.aggregate(pipeline))
+    assert results[0]["topScore"] == 100  # Sales max
+    assert results[0]["bottomScore"] == 90  # Sales min
+    assert results[3]["topScore"] == 110  # Eng max
+    assert results[3]["bottomScore"] == 80  # Eng min
+
+    # 2. Python Fallback
+    set_force_fallback(True)
+    results_py = list(collection.aggregate(pipeline))
+    set_force_fallback(False)
+    assert results_py == results
+
+
+def test_window_topN_bottomN(collection):
+    """Test $topN and $bottomN window operators (Python fallback)."""
+    pipeline = [
+        {
+            "$setWindowFields": {
+                "partitionBy": "$dept",
+                "sortBy": {"score": -1},
+                "output": {
+                    "top2": {
+                        "$topN": {
+                            "n": 2,
+                            "sortBy": {"score": -1},
+                            "output": "$name",
+                        }
+                    },
+                    "bottom2": {
+                        "$bottomN": {
+                            "n": 2,
+                            "sortBy": {"score": -1},
+                            "output": "$name",
+                        }
+                    },
+                },
+            }
+        },
+        {"$sort": {"_id": 1}},
+    ]
+
+    # These use Python fallback (Tier 3)
+    results = list(collection.aggregate(pipeline))
+
+    # Sales: {A:100, B:90, C:90} sorted desc by score -> [A, B, C] (or [A, C, B])
+    assert results[0]["top2"] == ["A", "B"] or results[0]["top2"] == ["A", "C"]
+    assert len(results[0]["bottom2"]) == 2
+    assert "C" in results[0]["bottom2"]
+
+    # Eng: {D:80, E:110, F:110} sorted desc by score -> [E, F, D]
+    assert "E" in results[3]["top2"]
+    assert "F" in results[3]["top2"]
+    assert results[3]["bottom2"] == ["F", "D"] or results[3]["bottom2"] == [
+        "E",
+        "D",
+    ]
+
+
+def test_window_addToSet(collection):
+    """Test $addToSet window operator."""
+    pipeline = [
+        {
+            "$setWindowFields": {
+                "partitionBy": "$dept",
+                "output": {"allScores": {"$addToSet": "$score"}},
+            }
+        },
+        {"$sort": {"_id": 1}},
+    ]
+
+    results = list(collection.aggregate(pipeline))
+    # Sales scores: [100, 90, 90] -> {90, 100}
+    assert set(results[0]["allScores"]) == {90, 100}
+    # Eng scores: [80, 110, 110] -> {80, 110}
+    assert set(results[3]["allScores"]) == {80, 110}

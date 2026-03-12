@@ -2,7 +2,7 @@
 
 **Last Updated**: March 12, 2026
 **NeoSQLite Version**: v1.8.0+
-**PyMongo Compatibility**: 100% (353 tests: 343 passed, 10 skipped by design, 0 failed)
+**PyMongo Compatibility**: 100% (370 tests: 359 passed, 11 skipped by design, 0 failed)
 
 ---
 
@@ -23,6 +23,11 @@ with **100% compatibility** for all comparable features. This document provides:
 ### Newly Implemented APIs
 
 The following APIs have been implemented and tested:
+
+#### Window Operators (NEW)
+- ✅ `$top` / `$bottom` - SQL-optimized and Python fallback support (4 tests)
+- ✅ `$topN` / `$bottomN` - Python fallback support (4 tests)
+- ✅ `$addToSet` (window) - Verified Python fallback support
 
 #### Query Operators - Regex Options (NEW)
 - ✅ `$options` - Support for regex flags (`i`, `m`, `s`, `x`) in `$regex` queries (4 tests)
@@ -124,8 +129,8 @@ The following APIs have been implemented and tested:
 - ✅ `with_options()` - Return database clone with different options (Now correctly returns a clone)
 - ✅ `command()` - Issue database commands (ping, serverStatus, listCollections, etc.) (11 tests)
 
-**Test Coverage**: 220+ unit tests, all passing
-**API Compatibility**: 100% (353 tests total)
+**Test Coverage**: 230+ unit tests, all passing
+**API Compatibility**: 100% (370 tests total)
 **Kill Switch Verified**: All APIs work identically with/without kill switch (Tier-3 Python implementation)
 **Deprecated APIs**: `initialize_ordered_bulk_op()` and `initialize_unordered_bulk_op()` are now deprecated to match PyMongo 4.x behavior.
 
@@ -551,19 +556,19 @@ The following APIs have been implemented and tested:
 | `$maxN`, `$minN` | Medium | ✅ **Implemented** |
 | `$sortArray` | Medium | ✅ **Implemented** |
 
-#### Window Operators (12 Missing - MongoDB 5.0+)
+#### Window Operators (ALL FEASIBLE IMPLEMENTED)
 
 | Operator | Priority | Status |
 |----------|----------|--------|
 | `$rank`, `$denseRank` | Medium | ✅ **Implemented** |
 | `$shift` | Medium | ✅ **Implemented** |
-| `$top`, `$topN`, `$bottom`, `$bottomN` | Medium | ❌ Missing |
+| `$top`, `$topN`, `$bottom`, `$bottomN` | Medium | ✅ **Implemented** |
 | `$covariancePop`, `$covarianceSamp` | Medium | ✅ **Implemented** |
 | `$derivative`, `$integral` | Medium | ✅ **Implemented** |
 | `$expMovingAvg` | Medium | ✅ **Implemented** |
 | `$documentNumber` | Medium | ✅ **Implemented** |
 | `$linearFill`, `$locf` | Medium | ✅ **Implemented** |
-| `$addToSet` (window) | Medium | ❌ Missing |
+| `$addToSet` (window) | Medium | ✅ **Implemented** |
 
 #### Set Operators (ALL IMPLEMENTED)
 
@@ -627,9 +632,9 @@ The following APIs have been implemented and tested:
 
 | Metric | Count | Percentage |
 |--------|-------|------------|
-| **Total PyMongo Compatibility Tests** | 353 | 100% |
-| **Passed** | 343 | 97.2% |
-| **Skipped** (by design) | 10 | 2.8% |
+| **Total PyMongo Compatibility Tests** | 370 | 100% |
+| **Passed** | 359 | 97.0% |
+| **Skipped** (by design) | 11 | 3.0% |
 | **Failed** | 0 | 0% |
 | **Compatibility** (comparable features) | **100%** | |
 
@@ -639,11 +644,13 @@ The following APIs have been implemented and tested:
 3. `$log2` - **NeoSQLite extension** using SQLite's native `log2()` (raises `UserWarning`)
 4. `where()` - **NeoSQLite implementation** using Python function filter; MongoDB uses JavaScript `$where`
 5. `options` - MongoDB returns `{}` (backend-specific)
-6. `db_path` - NeoSQLite specific extension
-7. `initialize_ordered_bulk_op` - Deprecated in PyMongo 4.x
-8. `initialize_unordered_bulk_op` - Deprecated in PyMongo 4.x
-9. `transaction_commit` - MongoDB requires replica set for transactions
-10. `transaction_abort` - MongoDB requires replica set for transactions
+6. `db_path` (collection) - NeoSQLite specific extension
+7. `db_path` (database) - NeoSQLite specific extension
+8. `initialize_ordered_bulk_op` - Deprecated in PyMongo 4.x
+9. `initialize_unordered_bulk_op` - Deprecated in PyMongo 4.x
+10. `transaction_commit` - MongoDB requires replica set for transactions
+11. `transaction_abort` - MongoDB requires replica set for transactions
+12. `with_transaction` - MongoDB requires replica set for transactions
 
 ### 3.2 API Coverage by Category
 
@@ -740,13 +747,13 @@ The following APIs have been implemented and tested:
 - [x] Other operators (`$mergeObjects`, `$getField`, `$let`, `$literal`, `$rand`, `$objectToArray`) ✅ **Implemented**
 
 **Impact**: Comprehensive aggregation framework with 100% PyMongo compatibility for all comparable features
-**Test Coverage**: 220+ unit tests, all passing
-**API Compatibility**: 100% (353 tests total)
+**Test Coverage**: 230+ unit tests, all passing
+**API Compatibility**: 100% (370 tests total)
 
 ### Phase 3: Low Priority (Remaining - 12+ months)
 
 #### Advanced Features
-- [ ] Window operators (MongoDB 5.0+ features)
+- [x] Window operators (Basic implementation complete) ✅
 - [ ] Geospatial integration (if needed, via SQLite R*Tree)
 
 **Expected Impact**: Specialized use cases and advanced analytics

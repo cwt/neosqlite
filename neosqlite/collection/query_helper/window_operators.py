@@ -269,6 +269,68 @@ def _apply_window_operator(
                     total += (v_prev + v_curr) / 2.0 * (t_curr - t_prev)
             return total
 
+    if op_name in ["$top", "$topN", "$bottom", "$bottomN"]:
+        # These operators can have their own sortBy
+        op_sortBy = op_val.get("sortBy")
+        output_expr = op_val.get("output")
+
+        # Determine the set of documents to sort
+        # These operators typically use the entire window frame
+        docs_to_sort = [partition_docs[idx] for idx in frame_indices]
+
+        effective_sortBy = op_sortBy if op_sortBy is not None else sort_by
+
+        if effective_sortBy:
+            # Sort the frame docs based on effective_sortBy
+            for field, direction in reversed(list(effective_sortBy.items())):
+                is_desc = direction == -1
+
+                def get_sort_val(dc):
+                    val = collection._get_val(dc["__doc__"], field)
+                    if val is None:
+                        return (0 if is_desc else 1, None)
+                    return (0, val)
+
+                docs_to_sort.sort(key=get_sort_val, reverse=is_desc)
+
+        sorted_frame_docs = [dc["__doc__"] for dc in docs_to_sort]
+
+        if op_name == "$top":
+            if not sorted_frame_docs:
+                return None
+            return evaluator._evaluate_operand_python(
+                output_expr, sorted_frame_docs[0]
+            )
+
+        if op_name == "$bottom":
+            if not sorted_frame_docs:
+                return None
+            return evaluator._evaluate_operand_python(
+                output_expr, sorted_frame_docs[-1]
+            )
+
+        if op_name in ["$topN", "$bottomN"]:
+            n_expr = op_val.get("n", 1)
+            n = evaluator._evaluate_operand_python(
+                n_expr, partition_docs[current_idx]["__doc__"]
+            )
+            if not isinstance(n, int) or n < 0:
+                return None
+
+            values = [
+                evaluator._evaluate_operand_python(output_expr, doc)
+                for doc in sorted_frame_docs
+            ]
+            if op_name == "$topN":
+                return values[:n]
+            else:
+                # bottomN returns values from the end, but preserves order or not?
+                # MongoDB $bottomN returns the last N elements.
+                # If n=2 and docs are [A, B, C, D], bottomN returns [C, D] or [D, C]?
+                # According to MongoDB docs, $bottomN returns the last N elements in the specified sort order.
+                # So [C, D].
+                return values[-n:] if n > 0 else []
+
     # 3. Standard accumulators
     if op_name in [
         "$sum",

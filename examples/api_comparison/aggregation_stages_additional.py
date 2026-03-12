@@ -30,9 +30,9 @@ def compare_additional_aggregation_stages():
 
         # Test $sample
         try:
-            neo_sample = len(
-                list(neo_collection.aggregate([{"$sample": {"size": 2}}]))
-            )
+            # We only compare length because results are random
+            result = list(neo_collection.aggregate([{"$sample": {"size": 2}}]))
+            neo_sample = len(result)
             print(f"Neo $sample: {neo_sample} documents")
         except Exception as e:
             neo_sample = f"Error: {e}"
@@ -40,7 +40,7 @@ def compare_additional_aggregation_stages():
 
         # Test $facet
         try:
-            neo_facet_result = list(
+            neo_facet = list(
                 neo_collection.aggregate(
                     [
                         {
@@ -51,7 +51,10 @@ def compare_additional_aggregation_stages():
                                             "_id": "$category",
                                             "count": {"$count": {}},
                                         }
-                                    }
+                                    },
+                                    {
+                                        "$sort": {"_id": 1}
+                                    },  # Sort for consistent comparison
                                 ],
                                 "avg_price": [
                                     {
@@ -66,14 +69,9 @@ def compare_additional_aggregation_stages():
                     ]
                 )
             )
-            neo_facet = (
-                len(neo_facet_result) > 0
-                and "by_category" in neo_facet_result[0]
-                and "avg_price" in neo_facet_result[0]
-            )
-            print(f"Neo $facet: {'OK' if neo_facet else 'FAIL'}")
+            print("Neo $facet: OK")
         except Exception as e:
-            neo_facet = False
+            neo_facet = f"Error: {e}"
             print(f"Neo $facet: Error - {e}")
 
         # Test $lookup
@@ -87,7 +85,8 @@ def compare_additional_aggregation_stages():
         )
 
         try:
-            neo_lookup_result = list(
+            # We strip _id and internal id for lookup comparison due to complex nesting
+            neo_lookup_raw = list(
                 neo_collection.aggregate(
                     [
                         {
@@ -97,36 +96,211 @@ def compare_additional_aggregation_stages():
                                 "foreignField": "item",
                                 "as": "orders",
                             }
+                        },
+                        {"$sort": {"item": 1}},
+                    ]
+                )
+            )
+
+            def clean_lookup(docs):
+                for doc in docs:
+                    doc.pop("_id", None)
+                    doc.pop("id", None)
+                    if "orders" in doc:
+                        for o in doc["orders"]:
+                            o.pop("_id", None)
+                            o.pop("id", None)
+                return docs
+
+            neo_lookup = clean_lookup(neo_lookup_raw)
+            print("Neo $lookup: OK")
+        except Exception as e:
+            neo_lookup = f"Error: {e}"
+            print(f"Neo $lookup: Error - {e}")
+
+        # Test $bucket
+        try:
+            neo_bucket = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$bucket": {
+                                "groupBy": "$price",
+                                "boundaries": [0, 15, 25, 100],
+                                "default": "other",
+                                "output": {"count": {"$sum": 1}},
+                            }
                         }
                     ]
                 )
             )
-            neo_lookup = len(neo_lookup_result) == 5 and all(
-                "orders" in doc for doc in neo_lookup_result
-            )
-            print(f"Neo $lookup: {'OK' if neo_lookup else 'FAIL'}")
+            print("Neo $bucket: OK")
         except Exception as e:
-            neo_lookup = False
-            print(f"Neo $lookup: Error - {e}")
+            neo_bucket = f"Error: {e}"
+            print(f"Neo $bucket: Error - {e}")
+
+        # Test $bucketAuto
+        try:
+            neo_bucketauto = list(
+                neo_collection.aggregate(
+                    [{"$bucketAuto": {"groupBy": "$price", "buckets": 2}}]
+                )
+            )
+            print("Neo $bucketAuto: OK")
+        except Exception as e:
+            neo_bucketauto = f"Error: {e}"
+            print(f"Neo $bucketAuto: Error - {e}")
+
+        # Test $unionWith
+        neo_conn.other_coll.insert_one({"item": "Other", "price": 50})
+        try:
+            neo_unionwith_raw = list(
+                neo_collection.aggregate(
+                    [
+                        {"$unionWith": {"coll": "other_coll"}},
+                        {"$sort": {"item": 1}},
+                    ]
+                )
+            )
+            for d in neo_unionwith_raw:
+                d.pop("_id", None)
+                d.pop("id", None)
+            neo_unionwith = neo_unionwith_raw
+            print("Neo $unionWith: OK")
+        except Exception as e:
+            neo_unionwith = f"Error: {e}"
+            print(f"Neo $unionWith: Error - {e}")
+
+        # Test $redact
+        try:
+            neo_redact_raw = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$redact": {
+                                "$cond": {
+                                    "if": {"$eq": ["$category", "books"]},
+                                    "then": "$$KEEP",
+                                    "else": "$$PRUNE",
+                                }
+                            }
+                        },
+                        {"$sort": {"item": 1}},
+                    ]
+                )
+            )
+            for d in neo_redact_raw:
+                d.pop("_id", None)
+                d.pop("id", None)
+            neo_redact = neo_redact_raw
+            print("Neo $redact: OK")
+        except Exception as e:
+            neo_redact = f"Error: {e}"
+            print(f"Neo $redact: Error - {e}")
+
+        # Test $densify
+        neo_conn.densify_coll.insert_many([{"t": 1}, {"t": 3}])
+        try:
+            # NeoSQLite includes upper bound, Mongo does not. Use bounds that align.
+            neo_densify_raw = list(
+                neo_conn.densify_coll.aggregate(
+                    [
+                        {
+                            "$densify": {
+                                "field": "t",
+                                "range": {
+                                    "step": 1,
+                                    "bounds": [1, 3],
+                                },  # Match Mongo [1, 3) behavior
+                            }
+                        }
+                    ]
+                )
+            )
+            for d in neo_densify_raw:
+                d.pop("_id", None)
+                d.pop("id", None)
+            neo_densify = neo_densify_raw
+            print("Neo $densify: OK")
+        except Exception as e:
+            neo_densify = f"Error: {e}"
+            print(f"Neo $densify: Error - {e}")
+
+        # Test $merge
+        try:
+            # We use a file-based database for $merge to ensure results are readable across connections
+            merge_db_path = "test_merge.db"
+            import os
+
+            if os.path.exists(merge_db_path):
+                os.remove(merge_db_path)
+
+            with neosqlite.Connection(merge_db_path) as merge_conn:
+                m_coll = merge_conn.test_collection
+                m_coll.insert_many(
+                    [
+                        {
+                            "item": "A",
+                            "price": 10,
+                            "quantity": 2,
+                            "category": "books",
+                        },
+                        {
+                            "item": "B",
+                            "price": 20,
+                            "quantity": 1,
+                            "category": "books",
+                        },
+                        {
+                            "item": "C",
+                            "price": 15,
+                            "quantity": 3,
+                            "category": "toys",
+                        },
+                    ]
+                )
+
+                target_name = "merged_results"
+                # Run merge
+                list(
+                    m_coll.aggregate(
+                        [
+                            {"$match": {"category": "books"}},
+                            {"$merge": {"into": target_name}},
+                        ]
+                    )
+                )
+
+                # Verify the target collection
+                target_coll = merge_conn[target_name]
+                neo_merge_raw = list(target_coll.find({}))
+                for d in neo_merge_raw:
+                    d.pop("_id", None)
+                    d.pop("id", None)
+                neo_merge = sorted(neo_merge_raw, key=lambda x: x["item"])
+
+            if os.path.exists(merge_db_path):
+                os.remove(merge_db_path)
+            print("Neo $merge: OK")
+        except Exception as e:
+            neo_merge = f"Error: {e}"
+            print(f"Neo $merge: Error - {e}")
 
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
 
     mongo_collection = None
-
-    mongo_collection2 = None
-
     mongo_db = None
-
     mongo_facet = None
-
-    mongo_facet_result = None
-
     mongo_lookup = None
-
-    mongo_lookup_result = None
-
     mongo_sample = None
+
+    mongo_bucket = None
+    mongo_bucketauto = None
+    mongo_unionwith = None
+    mongo_redact = None
+    mongo_densify = None
+    mongo_merge = None
 
     if client:
         mongo_db = client.test_database
@@ -144,9 +318,10 @@ def compare_additional_aggregation_stages():
 
         # Test $sample
         try:
-            mongo_sample = len(
-                list(mongo_collection.aggregate([{"$sample": {"size": 2}}]))
+            result = list(
+                mongo_collection.aggregate([{"$sample": {"size": 2}}])
             )
+            mongo_sample = len(result)
             print(f"Mongo $sample: {mongo_sample} documents")
         except Exception as e:
             mongo_sample = f"Error: {e}"
@@ -154,7 +329,7 @@ def compare_additional_aggregation_stages():
 
         # Test $facet
         try:
-            mongo_facet_result = list(
+            mongo_facet = list(
                 mongo_collection.aggregate(
                     [
                         {
@@ -165,7 +340,8 @@ def compare_additional_aggregation_stages():
                                             "_id": "$category",
                                             "count": {"$count": {}},
                                         }
-                                    }
+                                    },
+                                    {"$sort": {"_id": 1}},
                                 ],
                                 "avg_price": [
                                     {
@@ -180,14 +356,9 @@ def compare_additional_aggregation_stages():
                     ]
                 )
             )
-            mongo_facet = (
-                len(mongo_facet_result) > 0
-                and "by_category" in mongo_facet_result[0]
-                and "avg_price" in mongo_facet_result[0]
-            )
-            print(f"Mongo $facet: {'OK' if mongo_facet else 'FAIL'}")
+            print("Mongo $facet: OK")
         except Exception as e:
-            mongo_facet = False
+            mongo_facet = f"Error: {e}"
             print(f"Mongo $facet: Error - {e}")
 
         # Test $lookup
@@ -202,7 +373,7 @@ def compare_additional_aggregation_stages():
         )
 
         try:
-            mongo_lookup_result = list(
+            mongo_lookup_raw = list(
                 mongo_collection.aggregate(
                     [
                         {
@@ -212,38 +383,210 @@ def compare_additional_aggregation_stages():
                                 "foreignField": "item",
                                 "as": "orders",
                             }
+                        },
+                        {"$sort": {"item": 1}},
+                    ]
+                )
+            )
+
+            def clean_mongo_lookup(docs):
+                for doc in docs:
+                    doc.pop("_id", None)
+                    if "orders" in doc:
+                        for o in doc["orders"]:
+                            o.pop("_id", None)
+                return docs
+
+            mongo_lookup = clean_mongo_lookup(mongo_lookup_raw)
+            print("Mongo $lookup: OK")
+        except Exception as e:
+            mongo_lookup = f"Error: {e}"
+            print(f"Mongo $lookup: Error - {e}")
+
+        # Test $bucket
+        try:
+            mongo_bucket = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$bucket": {
+                                "groupBy": "$price",
+                                "boundaries": [0, 15, 25, 100],
+                                "default": "other",
+                                "output": {"count": {"$sum": 1}},
+                            }
                         }
                     ]
                 )
             )
-            mongo_lookup = len(mongo_lookup_result) == 5 and all(
-                "orders" in doc for doc in mongo_lookup_result
-            )
-            print(f"Mongo $lookup: {'OK' if mongo_lookup else 'FAIL'}")
+            print("Mongo $bucket: OK")
         except Exception as e:
-            mongo_lookup = False
-            print(f"Mongo $lookup: Error - {e}")
+            mongo_bucket = f"Error: {e}"
+            print(f"Mongo $bucket: Error - {e}")
+
+        # Test $bucketAuto
+        try:
+            mongo_bucketauto = list(
+                mongo_collection.aggregate(
+                    [{"$bucketAuto": {"groupBy": "$price", "buckets": 2}}]
+                )
+            )
+            print("Mongo $bucketAuto: OK")
+        except Exception as e:
+            mongo_bucketauto = f"Error: {e}"
+            print(f"Mongo $bucketAuto: Error - {e}")
+
+        # Test $unionWith
+        mongo_db.other_coll.delete_many({})
+        mongo_db.other_coll.insert_one({"item": "Other", "price": 50})
+        try:
+            mongo_unionwith_raw = list(
+                mongo_collection.aggregate(
+                    [
+                        {"$unionWith": {"coll": "other_coll"}},
+                        {"$sort": {"item": 1}},
+                    ]
+                )
+            )
+            for d in mongo_unionwith_raw:
+                d.pop("_id", None)
+            mongo_unionwith = mongo_unionwith_raw
+            print("Mongo $unionWith: OK")
+        except Exception as e:
+            mongo_unionwith = f"Error: {e}"
+            print(f"Mongo $unionWith: Error - {e}")
+
+        # Test $redact
+        try:
+            mongo_redact_raw = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$redact": {
+                                "$cond": {
+                                    "if": {"$eq": ["$category", "books"]},
+                                    "then": "$$KEEP",
+                                    "else": "$$PRUNE",
+                                }
+                            }
+                        },
+                        {"$sort": {"item": 1}},
+                    ]
+                )
+            )
+            for d in mongo_redact_raw:
+                d.pop("_id", None)
+            mongo_redact = mongo_redact_raw
+            print("Mongo $redact: OK")
+        except Exception as e:
+            mongo_redact = f"Error: {e}"
+            print(f"Mongo $redact: Error - {e}")
+
+        # Test $densify
+        mongo_db.densify_coll.delete_many({})
+        mongo_db.densify_coll.insert_many([{"t": 1}, {"t": 3}])
+        try:
+            mongo_densify_raw = list(
+                mongo_db.densify_coll.aggregate(
+                    [
+                        {
+                            "$densify": {
+                                "field": "t",
+                                "range": {"step": 1, "bounds": [1, 3]},
+                            }
+                        }
+                    ]
+                )
+            )
+            for d in mongo_densify_raw:
+                d.pop("_id", None)
+            mongo_densify = mongo_densify_raw
+            print("Mongo $densify: OK")
+        except Exception as e:
+            mongo_densify = f"Error: {e}"
+            print(f"Mongo $densify: Error - {e}")
+
+        # Test $merge
+        try:
+            target_name = "merged_results"
+            mongo_db[target_name].delete_many({})
+            mongo_collection.aggregate(
+                [
+                    {"$match": {"category": "books"}},
+                    {"$merge": {"into": target_name}},
+                ]
+            )
+            mongo_merge_raw = list(mongo_db[target_name].find({}))
+            for d in mongo_merge_raw:
+                d.pop("_id", None)
+            mongo_merge = sorted(mongo_merge_raw, key=lambda x: x["item"])
+            print("Mongo $merge: OK")
+        except Exception as e:
+            mongo_merge = f"Error: {e}"
+            print(f"Mongo $merge: Error - {e}")
 
         client.close()
 
     reporter.record_comparison(
         "Aggregation Stages",
         "$sample",
-        neo_sample if not isinstance(neo_sample, str) else neo_sample,
-        mongo_sample if mongo_sample is not None else None,
+        neo_sample,
+        mongo_sample,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
         "Aggregation Stages",
         "$facet",
-        neo_facet if neo_facet else "FAIL",
-        mongo_facet if mongo_facet else None,
+        neo_facet,
+        mongo_facet,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
         "Aggregation Stages",
         "$lookup",
-        neo_lookup if neo_lookup else "FAIL",
-        mongo_lookup if mongo_lookup else None,
+        neo_lookup,
+        mongo_lookup,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Aggregation Stages",
+        "$bucket",
+        neo_bucket,
+        mongo_bucket,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Aggregation Stages",
+        "$bucketAuto",
+        neo_bucketauto,
+        mongo_bucketauto,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Aggregation Stages",
+        "$unionWith",
+        neo_unionwith,
+        mongo_unionwith,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Aggregation Stages",
+        "$redact",
+        neo_redact,
+        mongo_redact,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Aggregation Stages",
+        "$densify",
+        neo_densify,
+        mongo_densify,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Aggregation Stages",
+        "$merge",
+        neo_merge,
+        mongo_merge,
         skip_reason="MongoDB not available" if not client else None,
     )

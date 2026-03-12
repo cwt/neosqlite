@@ -48,6 +48,24 @@ def compare_date_expr_operators():
             ("$isoDayOfWeek", {"$isoDayOfWeek": "$date"}),
             ("$isoWeek", {"$isoWeek": "$date"}),
             ("$millisecond", {"$millisecond": "$date"}),
+            (
+                "$dateTrunc",
+                {
+                    "$dateTrunc": {
+                        "date": "$date",
+                        "unit": "month",
+                        "binSize": 1,
+                    }
+                },
+            ),
+            (
+                "$dateToString",
+                {"$dateToString": {"format": "%Y-%m-%d", "date": "$date"}},
+            ),
+            (
+                "$dateFromString",
+                {"$dateFromString": {"dateString": "2024-06-15"}},
+            ),
         ]
 
         # Test $dateAdd

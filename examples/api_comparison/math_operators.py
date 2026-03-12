@@ -1,7 +1,6 @@
 """Module for comparing math operators between NeoSQLite and PyMongo"""
 
 import warnings
-
 import neosqlite
 
 from .reporter import reporter
@@ -25,189 +24,33 @@ def compare_math_operators():
             ]
         )
 
-        # Test $pow
-        try:
-            result = list(
-                neo_collection.aggregate(
-                    [{"$project": {"squared": {"$pow": ["$value", 2]}}}]
-                )
-            )
-            neo_pow = len(result) == 2
-            print(f"Neo $pow: {'OK' if neo_pow else 'FAIL'}")
-        except Exception as e:
-            neo_pow = False
-            print(f"Neo $pow: Error - {e}")
+        # Helper to run a project aggregate
+        def neo_project(expr):
+            return list(neo_collection.aggregate([{"$project": {"val": expr}}]))
 
-        # Test $sqrt
-        try:
-            result = list(
-                neo_collection.aggregate(
-                    [{"$project": {"root": {"$sqrt": "$value"}}}]
-                )
-            )
-            neo_sqrt = len(result) == 2
-            print(f"Neo $sqrt: {'OK' if neo_sqrt else 'FAIL'}")
-        except Exception as e:
-            neo_sqrt = False
-            print(f"Neo $sqrt: Error - {e}")
-
-        # Test $asin
-        try:
-            result = list(
-                neo_collection.aggregate(
-                    [{"$project": {"asin_val": {"$asin": 0.5}}}]
-                )
-            )
-            neo_asin = len(result) == 2
-            print(f"Neo $asin: {'OK' if neo_asin else 'FAIL'}")
-        except Exception as e:
-            neo_asin = False
-            print(f"Neo $asin: Error - {e}")
-
-        # Test $acos
-        try:
-            result = list(
-                neo_collection.aggregate(
-                    [{"$project": {"acos_val": {"$acos": 0.5}}}]
-                )
-            )
-            neo_acos = len(result) == 2
-            print(f"Neo $acos: {'OK' if neo_acos else 'FAIL'}")
-        except Exception as e:
-            neo_acos = False
-            print(f"Neo $acos: Error - {e}")
-
-        # Test $atan
-        try:
-            result = list(
-                neo_collection.aggregate(
-                    [{"$project": {"atan_val": {"$atan": 1}}}]
-                )
-            )
-            neo_atan = len(result) == 2
-            print(f"Neo $atan: {'OK' if neo_atan else 'FAIL'}")
-        except Exception as e:
-            neo_atan = False
-            print(f"Neo $atan: Error - {e}")
-
-        # Test $exp
-        try:
-            result = list(
-                neo_collection.aggregate(
-                    [{"$project": {"exp_val": {"$exp": 1}}}]
-                )
-            )
-            neo_exp = len(result) == 2
-            print(f"Neo $exp: {'OK' if neo_exp else 'FAIL'}")
-        except Exception as e:
-            neo_exp = False
-            print(f"Neo $exp: Error - {e}")
-
-        # Test $asinh
-        try:
-            result = list(
-                neo_collection.aggregate(
-                    [{"$project": {"asinh_val": {"$asinh": 0.5}}}]
-                )
-            )
-            neo_asinh = len(result) == 2
-            print(f"Neo $asinh: {'OK' if neo_asinh else 'FAIL'}")
-        except Exception as e:
-            neo_asinh = False
-            print(f"Neo $asinh: Error - {e}")
-
-        # Test $acosh
-        try:
-            result = list(
-                neo_collection.aggregate(
-                    [{"$project": {"acosh_val": {"$acosh": 1.5}}}]
-                )
-            )
-            neo_acosh = len(result) == 2
-            print(f"Neo $acosh: {'OK' if neo_acosh else 'FAIL'}")
-        except Exception as e:
-            neo_acosh = False
-            print(f"Neo $acosh: Error - {e}")
-
-        # Test $atanh
-        try:
-            result = list(
-                neo_collection.aggregate(
-                    [{"$project": {"atanh_val": {"$atanh": 0.5}}}]
-                )
-            )
-            neo_atanh = len(result) == 2
-            print(f"Neo $atanh: {'OK' if neo_atanh else 'FAIL'}")
-        except Exception as e:
-            neo_atanh = False
-            print(f"Neo $atanh: Error - {e}")
-
-        # Test $degreesToRadians
-        try:
-            result = list(
-                neo_collection.aggregate(
-                    [{"$project": {"rad_val": {"$degreesToRadians": 180}}}]
-                )
-            )
-            neo_degstorad = len(result) == 2
-            print(f"Neo $degreesToRadians: {'OK' if neo_degstorad else 'FAIL'}")
-        except Exception as e:
-            neo_degstorad = False
-            print(f"Neo $degreesToRadians: Error - {e}")
-
-        # Test $radiansToDegrees
-        try:
-            result = list(
-                neo_collection.aggregate(
-                    [{"$project": {"deg_val": {"$radiansToDegrees": 3.14159}}}]
-                )
-            )
-            neo_radtodeg = len(result) == 2
-            print(f"Neo $radiansToDegrees: {'OK' if neo_radtodeg else 'FAIL'}")
-        except Exception as e:
-            neo_radtodeg = False
-            print(f"Neo $radiansToDegrees: Error - {e}")
-
-        # Test $log2 (NeoSQLite extension)
-        try:
-            result = list(
-                neo_collection.aggregate(
-                    [{"$project": {"log2_val": {"$log2": "$value"}}}]
-                )
-            )
-            neo_log2 = len(result) == 2
-            print(f"Neo $log2: {'OK' if neo_log2 else 'FAIL'}")
-        except Exception as e:
-            neo_log2 = False
-            print(f"Neo $log2: Error - {e}")
-
-        # Test $sigmoid
-        try:
-            result = list(
-                neo_collection.aggregate(
-                    [{"$project": {"sigmoid_val": {"$sigmoid": "$value"}}}]
-                )
-            )
-            neo_sigmoid = len(result) == 2
-            print(f"Neo $sigmoid: {'OK' if neo_sigmoid else 'FAIL'}")
-        except Exception as e:
-            neo_sigmoid = False
-            print(f"Neo $sigmoid: Error - {e}")
+        # Run NeoSQLite tests
+        neo_pow = neo_project({"$pow": ["$value", 2]})
+        neo_sqrt = neo_project({"$sqrt": "$value"})
+        neo_asin = neo_project({"$asin": 0.5})
+        neo_acos = neo_project({"$acos": 0.5})
+        neo_atan = neo_project({"$atan": 1})
+        neo_exp = neo_project({"$exp": 1})
+        neo_asinh = neo_project({"$asinh": 0.5})
+        neo_acosh = neo_project({"$acosh": 1.5})
+        neo_atanh = neo_project({"$atanh": 0.5})
+        neo_degstorad = neo_project({"$degreesToRadians": 180})
+        neo_radtodeg = neo_project({"$radiansToDegrees": 3.14159})
+        neo_ln = neo_project({"$ln": 10})
+        neo_log = neo_project({"$log": ["$value", 10]})
+        neo_log10 = neo_project({"$log10": "$value"})
+        neo_log2 = neo_project({"$log2": "$value"})
+        neo_sigmoid = neo_project({"$sigmoid": "$value"})
 
     client = test_pymongo_connection()
-    mongo_acos = None
-    mongo_asin = None
-    mongo_atan = None
-    mongo_collection = None
-    mongo_db = None
-    mongo_pow = None
-    mongo_sqrt = None
-    mongo_exp = None
-    mongo_asinh = None
-    mongo_acosh = None
-    mongo_atanh = None
-    mongo_degstorad = None
-    mongo_radtodeg = None
+    # Initialize MongoDB result variables
+    mongo_pow = mongo_sqrt = mongo_asin = mongo_acos = mongo_atan = None
+    mongo_exp = mongo_asinh = mongo_acosh = mongo_atanh = None
+    mongo_degstorad = mongo_radtodeg = mongo_ln = mongo_log = mongo_log10 = None
     mongo_sigmoid = None
 
     if client:
@@ -221,259 +64,70 @@ def compare_math_operators():
             ]
         )
 
-        # Test $pow
-        try:
-            result = list(
-                mongo_collection.aggregate(
-                    [{"$project": {"squared": {"$pow": ["$value", 2]}}}]
-                )
+        def mongo_project(expr):
+            return list(
+                mongo_collection.aggregate([{"$project": {"val": expr}}])
             )
-            mongo_pow = len(result) == 2
-            print(f"Mongo $pow: {'OK' if mongo_pow else 'FAIL'}")
-        except Exception as e:
-            mongo_pow = False
-            print(f"Mongo $pow: Error - {e}")
 
-        # Test $sqrt
+        # Run MongoDB tests
         try:
-            result = list(
-                mongo_collection.aggregate(
-                    [{"$project": {"root": {"$sqrt": "$value"}}}]
-                )
-            )
-            mongo_sqrt = len(result) == 2
-            print(f"Mongo $sqrt: {'OK' if mongo_sqrt else 'FAIL'}")
-        except Exception as e:
-            mongo_sqrt = False
-            print(f"Mongo $sqrt: Error - {e}")
+            mongo_pow = mongo_project({"$pow": ["$value", 2]})
+            mongo_sqrt = mongo_project({"$sqrt": "$value"})
+            mongo_asin = mongo_project({"$asin": 0.5})
+            mongo_acos = mongo_project({"$acos": 0.5})
+            mongo_atan = mongo_project({"$atan": 1})
+            mongo_exp = mongo_project({"$exp": 1})
+            mongo_asinh = mongo_project({"$asinh": 0.5})
+            mongo_acosh = mongo_project({"$acosh": 1.5})
+            mongo_atanh = mongo_project({"$atanh": 0.5})
+            mongo_degstorad = mongo_project({"$degreesToRadians": 180})
+            mongo_radtodeg = mongo_project({"$radiansToDegrees": 3.14159})
+            mongo_ln = mongo_project({"$ln": 10})
+            mongo_log = mongo_project({"$log": ["$value", 10]})
+            mongo_log10 = mongo_project({"$log10": "$value"})
 
-        # Test $asin
-        try:
-            result = list(
-                mongo_collection.aggregate(
-                    [{"$project": {"asin_val": {"$asin": 0.5}}}]
-                )
-            )
-            mongo_asin = len(result) == 2
-            print(f"Mongo $asin: {'OK' if mongo_asin else 'FAIL'}")
+            # $sigmoid is MongoDB 8.0+
+            try:
+                mongo_sigmoid = mongo_project({"$sigmoid": "$value"})
+            except Exception:
+                mongo_sigmoid = None
         except Exception as e:
-            mongo_asin = False
-            print(f"Mongo $asin: Error - {e}")
-
-        # Test $acos
-        try:
-            result = list(
-                mongo_collection.aggregate(
-                    [{"$project": {"acos_val": {"$acos": 0.5}}}]
-                )
-            )
-            mongo_acos = len(result) == 2
-            print(f"Mongo $acos: {'OK' if mongo_acos else 'FAIL'}")
-        except Exception as e:
-            mongo_acos = False
-            print(f"Mongo $acos: Error - {e}")
-
-        # Test $atan
-        try:
-            result = list(
-                mongo_collection.aggregate(
-                    [{"$project": {"atan_val": {"$atan": 1}}}]
-                )
-            )
-            mongo_atan = len(result) == 2
-            print(f"Mongo $atan: {'OK' if mongo_atan else 'FAIL'}")
-        except Exception as e:
-            mongo_atan = False
-            print(f"Mongo $atan: Error - {e}")
-
-        # Test $exp
-        try:
-            result = list(
-                mongo_collection.aggregate(
-                    [{"$project": {"exp_val": {"$exp": 1}}}]
-                )
-            )
-            mongo_exp = len(result) == 2
-            print(f"Mongo $exp: {'OK' if mongo_exp else 'FAIL'}")
-        except Exception as e:
-            mongo_exp = False
-            print(f"Mongo $exp: Error - {e}")
-
-        # Test $asinh
-        try:
-            result = list(
-                mongo_collection.aggregate(
-                    [{"$project": {"asinh_val": {"$asinh": 0.5}}}]
-                )
-            )
-            mongo_asinh = len(result) == 2
-            print(f"Mongo $asinh: {'OK' if mongo_asinh else 'FAIL'}")
-        except Exception as e:
-            mongo_asinh = False
-            print(f"Mongo $asinh: Error - {e}")
-
-        # Test $acosh
-        try:
-            result = list(
-                mongo_collection.aggregate(
-                    [{"$project": {"acosh_val": {"$acosh": 1.5}}}]
-                )
-            )
-            mongo_acosh = len(result) == 2
-            print(f"Mongo $acosh: {'OK' if mongo_acosh else 'FAIL'}")
-        except Exception as e:
-            mongo_acosh = False
-            print(f"Mongo $acosh: Error - {e}")
-
-        # Test $atanh
-        try:
-            result = list(
-                mongo_collection.aggregate(
-                    [{"$project": {"atanh_val": {"$atanh": 0.5}}}]
-                )
-            )
-            mongo_atanh = len(result) == 2
-            print(f"Mongo $atanh: {'OK' if mongo_atanh else 'FAIL'}")
-        except Exception as e:
-            mongo_atanh = False
-            print(f"Mongo $atanh: Error - {e}")
-
-        # Test $degreesToRadians
-        try:
-            result = list(
-                mongo_collection.aggregate(
-                    [{"$project": {"rad_val": {"$degreesToRadians": 180}}}]
-                )
-            )
-            mongo_degstorad = len(result) == 2
-            print(
-                f"Mongo $degreesToRadians: {'OK' if mongo_degstorad else 'FAIL'}"
-            )
-        except Exception as e:
-            mongo_degstorad = False
-            print(f"Mongo $degreesToRadians: Error - {e}")
-
-        # Test $radiansToDegrees
-        try:
-            result = list(
-                mongo_collection.aggregate(
-                    [{"$project": {"deg_val": {"$radiansToDegrees": 3.14159}}}]
-                )
-            )
-            mongo_radtodeg = len(result) == 2
-            print(
-                f"Mongo $radiansToDegrees: {'OK' if mongo_radtodeg else 'FAIL'}"
-            )
-        except Exception as e:
-            mongo_radtodeg = False
-            print(f"Mongo $radiansToDegrees: Error - {e}")
-
-        # Test $sigmoid (MongoDB 8.0+)
-        try:
-            result = list(
-                mongo_collection.aggregate(
-                    [{"$project": {"sigmoid_val": {"$sigmoid": "$value"}}}]
-                )
-            )
-            mongo_sigmoid = len(result) == 2
-            print(f"Mongo $sigmoid: {'OK' if mongo_sigmoid else 'FAIL'}")
-        except Exception as e:
-            mongo_sigmoid = False
-            print(f"Mongo $sigmoid: Error - {e}")
-
-        # NeoSQLite extensions - these don't exist in MongoDB
-        # Set to False as they are NeoSQLite-specific
+            print(f"Mongo math operators: Error - {e}")
 
         client.close()
 
+    # Record comparisons
+    ops = [
+        ("$pow", neo_pow, mongo_pow),
+        ("$sqrt", neo_sqrt, mongo_sqrt),
+        ("$asin", neo_asin, mongo_asin),
+        ("$acos", neo_acos, mongo_acos),
+        ("$atan", neo_atan, mongo_atan),
+        ("$exp", neo_exp, mongo_exp),
+        ("$asinh", neo_asinh, mongo_asinh),
+        ("$acosh", neo_acosh, mongo_acosh),
+        ("$atanh", neo_atanh, mongo_atanh),
+        ("$degreesToRadians", neo_degstorad, mongo_degstorad),
+        ("$radiansToDegrees", neo_radtodeg, mongo_radtodeg),
+        ("$ln", neo_ln, mongo_ln),
+        ("$log", neo_log, mongo_log),
+        ("$log10", neo_log10, mongo_log10),
+        ("$sigmoid", neo_sigmoid, mongo_sigmoid),
+    ]
+
+    for name, neo_res, mongo_res in ops:
         reporter.record_comparison(
             "Math Operators",
-            "$pow",
-            neo_pow if neo_pow else "FAIL",
-            mongo_pow if mongo_pow else None,
+            name,
+            neo_res,
+            mongo_res,
             skip_reason="MongoDB not available" if not client else None,
         )
-        reporter.record_comparison(
-            "Math Operators",
-            "$sqrt",
-            neo_sqrt if neo_sqrt else "FAIL",
-            mongo_sqrt if mongo_sqrt else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Math Operators",
-            "$asin",
-            neo_asin if neo_asin else "FAIL",
-            mongo_asin if mongo_asin else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Math Operators",
-            "$acos",
-            neo_acos if neo_acos else "FAIL",
-            mongo_acos if mongo_acos else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Math Operators",
-            "$log2 (NeoSQLite extension)",
-            neo_log2 if neo_log2 else "FAIL",
-            None,
-            skip_reason="NeoSQLite extension only",
-        )
-        reporter.record_comparison(
-            "Math Operators",
-            "$sigmoid",
-            neo_sigmoid if neo_sigmoid else "FAIL",
-            mongo_sigmoid if mongo_sigmoid else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Math Operators",
-            "$atan",
-            neo_atan if neo_atan else "FAIL",
-            mongo_atan if mongo_atan else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Math Operators",
-            "$exp",
-            neo_exp if neo_exp else "FAIL",
-            mongo_exp if mongo_exp else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Math Operators",
-            "$asinh",
-            neo_asinh if neo_asinh else "FAIL",
-            mongo_asinh if mongo_asinh else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Math Operators",
-            "$acosh",
-            neo_acosh if neo_acosh else "FAIL",
-            mongo_acosh if mongo_acosh else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Math Operators",
-            "$atanh",
-            neo_atanh if neo_atanh else "FAIL",
-            mongo_atanh if mongo_atanh else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Math Operators",
-            "$degreesToRadians",
-            neo_degstorad if neo_degstorad else "FAIL",
-            mongo_degstorad if mongo_degstorad else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Math Operators",
-            "$radiansToDegrees",
-            neo_radtodeg if neo_radtodeg else "FAIL",
-            mongo_radtodeg if mongo_radtodeg else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
+
+    reporter.record_comparison(
+        "Math Operators",
+        "$log2 (NeoSQLite extension)",
+        neo_log2,
+        None,
+        skip_reason="NeoSQLite extension only",
+    )

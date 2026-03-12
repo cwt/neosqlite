@@ -217,7 +217,9 @@ Python fallback is used for:
 7. **✅ 94% Pipeline Coverage**: Achieved ~94% of common aggregation pipelines processed at SQL level (up from ~60%)
 8. **✅ 55x Average Performance**: Achieved 55x average performance improvements across optimized features, with up to 437.7x for specific operations
 9. **✅ 119+ Operators Supported**: Full support for 119+ aggregation expression operators with SQL optimization where possible
-10. **✅ $options Support**: Full support for regex `$options` in optimized queries
+10. ✅ $options Support: Full support for regex $options in optimized queries
+11. ✅ Window Operators: SQL optimization for $top and $bottom window operators
+
 
 ## API Feasibility and Performance Implications
 

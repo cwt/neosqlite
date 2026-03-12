@@ -82,6 +82,78 @@ def compare_window_functions():
             },
             {"$sort": {"_id": 1}},
         ],
+        "top_bottom": [
+            {
+                "$setWindowFields": {
+                    "partitionBy": "$dept",
+                    "sortBy": {"score": -1},
+                    "output": {
+                        "topScore": {
+                            "$top": {
+                                "output": "$score",
+                                "sortBy": {"score": -1},
+                            }
+                        },
+                        "bottomScore": {
+                            "$bottom": {
+                                "output": "$score",
+                                "sortBy": {"score": -1},
+                            }
+                        },
+                    },
+                }
+            },
+            {"$sort": {"_id": 1}},
+        ],
+        "topN_bottomN": [
+            {
+                "$setWindowFields": {
+                    "partitionBy": "$dept",
+                    "sortBy": {"score": -1},
+                    "output": {
+                        "top2": {
+                            "$topN": {
+                                "n": 2,
+                                "sortBy": {"score": -1},
+                                "output": "$name",
+                            }
+                        },
+                        "bottom2": {
+                            "$bottomN": {
+                                "n": 2,
+                                "sortBy": {"score": -1},
+                                "output": "$name",
+                            }
+                        },
+                    },
+                }
+            },
+            {"$sort": {"_id": 1}},
+        ],
+        "addToSet": [
+            {
+                "$setWindowFields": {
+                    "partitionBy": "$dept",
+                    "output": {"allScores": {"$addToSet": "$score"}},
+                }
+            },
+            {"$sort": {"_id": 1}},
+        ],
+        "n_operators": [
+            {
+                "$setWindowFields": {
+                    "partitionBy": "$dept",
+                    "sortBy": {"score": -1},
+                    "output": {
+                        "first2": {"$firstN": {"input": "$name", "n": 2}},
+                        "last2": {"$lastN": {"input": "$name", "n": 2}},
+                        "min2": {"$minN": {"input": "$score", "n": 2}},
+                        "max2": {"$maxN": {"input": "$score", "n": 2}},
+                    },
+                }
+            },
+            {"$sort": {"_id": 1}},
+        ],
     }
 
     neo_results = {}
@@ -144,11 +216,30 @@ def compare_window_functions():
 
     # Record comparisons
     for name in pipelines:
+        neo_res = neo_results.get(name)
+        mongo_res = mongo_results.get(name)
+
+        # $addToSet results are unordered sets, so we sort them for comparison
+        if (
+            name == "addToSet"
+            and isinstance(neo_res, list)
+            and isinstance(mongo_res, list)
+        ):
+            for i in range(min(len(neo_res), len(mongo_res))):
+                if "allScores" in neo_res[i] and isinstance(
+                    neo_res[i]["allScores"], list
+                ):
+                    neo_res[i]["allScores"].sort()
+                if "allScores" in mongo_res[i] and isinstance(
+                    mongo_res[i]["allScores"], list
+                ):
+                    mongo_res[i]["allScores"].sort()
+
         reporter.record_comparison(
             "Window Functions",
             f"$setWindowFields ({name})",
-            neo_results.get(name),
-            mongo_results.get(name),
+            neo_res,
+            mongo_res,
             skip_reason="MongoDB not available" if not client else None,
         )
 
