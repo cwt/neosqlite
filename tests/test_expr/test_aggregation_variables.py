@@ -109,6 +109,27 @@ class TestAggregationVariables:
         finally:
             set_force_fallback(False)
 
+    def test_root_inside_expression_python(self, collection):
+        """Test $$ROOT inside an expression in Python tier (regression)."""
+        from neosqlite.collection.query_helper import set_force_fallback
+
+        set_force_fallback(True)
+        try:
+            pipeline = [
+                {
+                    "$addFields": {
+                        "root_copy": {"$mergeObjects": ["$$ROOT", {"b": 2}]}
+                    }
+                }
+            ]
+            results = list(collection.aggregate(pipeline))
+            assert len(results) == 2
+            assert "name" in results[0]["root_copy"]
+            assert results[0]["root_copy"]["name"] == "Alice"
+            assert results[0]["root_copy"]["b"] == 2
+        finally:
+            set_force_fallback(False)
+
 
 class TestRemoveSentinel:
     """Test $$REMOVE sentinel for field removal."""

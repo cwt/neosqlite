@@ -241,6 +241,10 @@ class PythonEvaluatorsMixin:
                 | "$convert"
             ):
                 return self._evaluate_type_python(operator, operands, document)
+            case "$binarySize" | "$bsonSize":
+                return self._evaluate_data_size_python(
+                    operator, operands, document
+                )
             case "$literal":
                 return self._evaluate_literal_python(operands, document)
             case _:
@@ -2120,6 +2124,51 @@ class PythonEvaluatorsMixin:
                     f"Object operator {operator} not supported in Python evaluation"
                 )
 
+    def _evaluate_data_size_python(
+        self, operator: str, operands: Any, document: Dict[str, Any]
+    ) -> int:
+        """Evaluate data size operators ($binarySize, $bsonSize) in Python."""
+        if not isinstance(operands, list):
+            operands = [operands]
+
+        if len(operands) != 1:
+            raise ValueError(f"{operator} requires exactly 1 operand")
+
+        value = self._evaluate_operand_python(operands[0], document)
+
+        if operator == "$binarySize":
+            if isinstance(value, (bytes, bytearray, memoryview)):
+                return len(value)
+            # Binary class is a subclass of bytes, so it's already covered.
+            # Handle encoded binary objects
+            if isinstance(value, dict) and value.get("__neosqlite_binary__"):
+                from ...binary import Binary
+
+                try:
+                    bin_val = Binary.decode_from_storage(value)
+                    return len(bin_val)
+                except Exception:
+                    pass
+
+            raise TypeError(
+                f"$binarySize requires a binary value, got {type(value)}"
+            )
+
+        elif operator == "$bsonSize":
+            # MongoDB $bsonSize returns the size of the document in BSON bytes.
+            # In NeoSQLite, we'll return the size of the JSON representation.
+            import json
+
+            # Use simple JSON dump for size calculation (approximates BSON)
+            try:
+                # Use a basic approach for now
+                return len(json.dumps(value).encode("utf-8"))
+            except Exception:
+                # Fallback to string length for non-serializable objects
+                return len(str(value).encode("utf-8"))
+
+        raise NotImplementedError(f"Operator {operator} not supported")
+
     def _evaluate_type_python(
         self, operator: str, operands: List[Any], document: Dict[str, Any]
     ) -> Any:
@@ -2351,6 +2400,12 @@ class PythonEvaluatorsMixin:
                     if var_name == "$$REMOVE":
                         # Special sentinel for field removal in $project
                         return REMOVE_SENTINEL
+
+                    if var_name == "$$ROOT" or var_name == "$$CURRENT":
+                        # If not explicitly in document context, the document itself
+                        # is the root/current context
+                        return document.get(var_name, document)
+
                     # Otherwise look up directly in document context
                     return document.get(var_name)
 

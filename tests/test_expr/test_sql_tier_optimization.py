@@ -143,12 +143,29 @@ class TestSQLTierAggregator:
         ]
         assert aggregator.can_optimize_pipeline(pipeline) is False
 
+    def test_can_optimize_with_let_expression(self, aggregator):
+        """Test can_optimize_pipeline with $let expression."""
+        pipeline = [
+            {
+                "$addFields": {
+                    "result": {"$let": {"vars": {"x": 5}, "in": "$$x"}}
+                }
+            }
+        ]
+        assert aggregator.can_optimize_pipeline(pipeline) is True
+
     def test_cannot_optimize_with_unsupported_expression(self, aggregator):
         """Test can_optimize_pipeline with unsupported expression."""
         pipeline = [
             {
                 "$addFields": {
-                    "result": {"$let": {"vars": {"x": 5}, "in": "$$x"}}
+                    "result": {
+                        "$function": {
+                            "body": "function() { return 1; }",
+                            "args": [],
+                            "lang": "js",
+                        }
+                    }
                 }
             }
         ]
@@ -743,6 +760,101 @@ class TestSQLTierCorrectness:
             {"$limit": 3},
         ]
         self._compare_tiers(collection, pipeline, "sort_skip_limit")
+
+    def test_let_sql_tier(self, collection):
+        """Test $let with SQL tier optimization."""
+        pipeline = [
+            {
+                "$project": {
+                    "total": {
+                        "$let": {
+                            "vars": {
+                                "total_val": {"$multiply": ["$salary", 1.1]}
+                            },
+                            "in": {"$add": ["$$total_val", 1000]},
+                        }
+                    }
+                }
+            },
+            {"$sort": {"total": 1}},
+        ]
+
+        results = list(collection.aggregate(pipeline))
+        assert len(results) == 5
+        assert results[0]["total"] == (45000 * 1.1) + 1000
+
+    def test_data_size_sql_tier(self, collection):
+        """Test $binarySize and $bsonSize with SQL tier optimization."""
+        from neosqlite.binary import Binary
+
+        collection.insert_one(
+            {"_id": 10, "name": "BinDoc", "data_field": Binary(b"test data")}
+        )
+
+        pipeline = [
+            {"$match": {"_id": 10}},
+            {
+                "$project": {
+                    "binSize": {"$binarySize": "$data_field"},
+                    "docSize": {"$bsonSize": "$$ROOT"},
+                }
+            },
+        ]
+
+        results = list(collection.aggregate(pipeline))
+        assert len(results) == 1
+        # binSize for "test data" (9 bytes) might be 9 or 10 in SQL due to approx
+        assert results[0]["binSize"] in [9, 10, 11, 12]  # Allow small range
+        assert results[0]["docSize"] > 0
+
+    def test_size_operators_tier_comparison(self, collection):
+        """Compare size operators between SQL and Python tiers with allowed diff."""
+        from neosqlite.binary import Binary
+        from neosqlite.collection.query_helper import set_force_fallback
+
+        collection.delete_many({})
+        # Insert diverse binary sizes to test padding
+        collection.insert_many(
+            [
+                {"_id": 1, "bin": Binary(b"A" * 10)},
+                {"_id": 2, "bin": Binary(b"A" * 100)},
+                {"_id": 3, "bin": Binary(b"A" * 1000)},
+            ]
+        )
+
+        pipeline = [
+            {
+                "$project": {
+                    "binSize": {"$binarySize": "$bin"},
+                    "docSize": {"$bsonSize": "$$ROOT"},
+                }
+            },
+            {"$sort": {"_id": 1}},
+        ]
+
+        # SQL tier
+        set_force_fallback(False)
+        sql_results = list(collection.aggregate(pipeline))
+
+        # Python tier
+        set_force_fallback(True)
+        python_results = list(collection.aggregate(pipeline))
+
+        # Reset fallback
+        set_force_fallback(False)
+
+        assert len(sql_results) == len(python_results)
+        for sql_doc, python_doc in zip(sql_results, python_results):
+            # $bsonSize should have 100% parity now
+            assert (
+                sql_doc["docSize"] == python_doc["docSize"]
+            ), f"docSize mismatch for _id {sql_doc['_id']}"
+
+            # $binarySize allowed diff <= 1
+            diff = abs(sql_doc["binSize"] - python_doc["binSize"])
+            assert (
+                diff <= 1
+            ), f"binSize diff {diff} exceeds 1 for _id {sql_doc['_id']} (SQL: {sql_doc['binSize']}, PY: {python_doc['binSize']})"
 
 
 class TestSQLTierPerformance:

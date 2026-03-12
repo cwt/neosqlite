@@ -118,6 +118,44 @@ def test_math_operators(evaluator):
     assert eval_py(evaluator, {"$sqrt": -1}, doc) is None
 
 
+def test_data_size_operators(evaluator):
+    """Test $binarySize and $bsonSize operators."""
+    from neosqlite.binary import Binary
+
+    doc = {
+        "bin": Binary(b"hello world"),
+        "obj": {"a": 1, "b": "test"},
+        "nested_bin": {"data": Binary(b"nested")},
+    }
+
+    # $binarySize
+    assert eval_py(evaluator, {"$binarySize": "$bin"}, doc) == 11
+    assert eval_py(evaluator, {"$binarySize": "$nested_bin.data"}, doc) == 6
+
+    # Encoded binary object (as it might appear in raw storage)
+    encoded_bin = {
+        "__neosqlite_binary__": True,
+        "data": "SGVsbG8=",
+        "subtype": 0,
+    }
+    doc_encoded = {"bin": encoded_bin}
+    assert eval_py(evaluator, {"$binarySize": "$bin"}, doc_encoded) == 5
+
+    with pytest.raises(TypeError, match="requires a binary value"):
+        eval_py(evaluator, {"$binarySize": "$obj"}, doc)
+
+    # $bsonSize
+    # We use JSON size as an approximation
+    size = eval_py(evaluator, {"$bsonSize": "$$ROOT"}, doc)
+    assert size > 0
+    assert isinstance(size, int)
+
+    # Size of sub-object
+    sub_size = eval_py(evaluator, {"$bsonSize": "$obj"}, doc)
+    assert sub_size > 0
+    assert sub_size < size
+
+
 def test_trig_operators(evaluator):
     assert eval_py(evaluator, {"$sin": 0}, {}) == 0.0
     assert eval_py(evaluator, {"$cos": 0}, {}) == 1.0

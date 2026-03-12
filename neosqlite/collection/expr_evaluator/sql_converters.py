@@ -15,7 +15,7 @@ from ..json_path_utils import parse_json_path, build_json_extract_expression
 
 if TYPE_CHECKING:
     # Avoid circular import by using TYPE_CHECKING
-    pass
+    from .context import AggregationContext
 
 
 class SqlConvertersMixin:
@@ -39,6 +39,7 @@ class SqlConvertersMixin:
     data_column: str
     _jsonb_supported: bool
     _log2_warned: bool
+    _current_context: AggregationContext | None
 
     def _convert_expr_to_sql(
         self, expr: Dict[str, Any]
@@ -172,6 +173,8 @@ class SqlConvertersMixin:
                 | "$objectToArray"
             ):
                 return self._convert_object_operator(operator, operands)
+            case "$let":
+                return self._convert_let_operator(operands)
             case (
                 "$type"
                 | "$toString"
@@ -185,6 +188,8 @@ class SqlConvertersMixin:
                 | "$convert"
             ):
                 return self._convert_type_operator(operator, operands)
+            case "$binarySize" | "$bsonSize":
+                return self._convert_data_size_operator(operator, operands)
             case _:
                 raise NotImplementedError(
                     f"Operator {operator} not supported in SQL tier"
@@ -1438,6 +1443,91 @@ class SqlConvertersMixin:
                     f"Object operator {operator} not supported in SQL tier"
                 )
 
+    def _convert_let_operator(self, operands: Any) -> Tuple[str, List[Any]]:
+        """
+        Convert $let operator to SQL by inlining variables.
+
+        MongoDB syntax: { $let: { vars: { <var1>: <expr1>, ... }, in: <expr> } }
+        """
+        if not isinstance(operands, dict):
+            raise ValueError("$let requires a dictionary")
+
+        vars_spec = operands.get("vars", {})
+        in_expr = operands.get("in")
+
+        if in_expr is None:
+            raise ValueError("$let requires 'in' expression")
+
+        # We need the current context to store variables for inlining
+        if (
+            not hasattr(self, "_current_context")
+            or self._current_context is None
+        ):
+            # Fallback to Python if no context is available
+            raise NotImplementedError(
+                "$let requires an aggregation context in SQL tier"
+            )
+
+        context = self._current_context
+        # Create a new context for nested scoping
+        nested_context = context.clone()
+
+        for var_name, var_expr in vars_spec.items():
+            # Evaluate the variable expression to SQL
+            var_sql, var_params = self._convert_operand_to_sql(var_expr)
+            # Store the SQL and params in the nested context
+            # var_name should be prefixed with $$
+            nested_context.set_variable("$$" + var_name, (var_sql, var_params))
+
+        # Now evaluate 'in' using the nested context by temporarily swapping it
+        old_context = self._current_context
+        self._current_context = nested_context
+        try:
+            return self._convert_operand_to_sql(in_expr)
+        finally:
+            self._current_context = old_context
+
+    def _convert_data_size_operator(
+        self, operator: str, operands: Any
+    ) -> Tuple[str, List[Any]]:
+        """Convert $binarySize and $bsonSize operators to SQL."""
+        if not isinstance(operands, list):
+            operands = [operands]
+
+        if len(operands) != 1:
+            raise ValueError(f"{operator} requires exactly 1 operand")
+
+        value_sql, value_params = self._convert_operand_to_sql(operands[0])
+
+        if operator == "$binarySize":
+            # In NeoSQLite, binary data is stored as base64 in a JSON object:
+            # {"__neosqlite_binary__": true, "data": "...", "subtype": 0}
+            # The 'data' field is base64 encoded.
+
+            # Use 'json_extract' (not jsonb) to ensure we get a text string
+            # if the value is extracted from a JSON document.
+
+            # If value_sql is a field reference, it might be jsonb_extract.
+            # We want the text version for base64 length calculation.
+            text_value_sql = value_sql.replace("jsonb_extract", "json_extract")
+
+            # Extract the base64 string if it's a binary object
+            base64_data = f"CASE WHEN typeof({text_value_sql}) = 'text' AND json_extract({text_value_sql}, '$.__neosqlite_binary__') = 1 THEN json_extract({text_value_sql}, '$.data') ELSE {text_value_sql} END"
+
+            # Simple base64 decoded length approximation: (len * 3 / 4)
+            # We use CAST AS TEXT to ensure we don't have any JSONB weirdness
+            return (
+                f"((length(CAST({base64_data} AS TEXT)) * 3) / 4)",
+                value_params,
+            )
+
+        else:  # $bsonSize
+            # MongoDB $bsonSize returns the size of the document in BSON bytes.
+            # In NeoSQLite, we return the size of the JSON representation.
+            # Use json() to ensure we are measuring the serialized string size,
+            # and octet_length/length to get the byte count.
+            return f"length(json({value_sql}))", value_params
+
     def _convert_type_operator(
         self, operator: str, operands: List[Any]
     ) -> Tuple[str, List[Any]]:
@@ -1499,6 +1589,19 @@ class SqlConvertersMixin:
         - Literals: numbers, strings, booleans
         - Nested expressions: {"$operator": [...]}
         """
+        # Check for aggregation variables if context is available
+        from .context import _is_aggregation_variable
+
+        if (
+            _is_aggregation_variable(operand)
+            and hasattr(self, "_current_context")
+            and self._current_context is not None
+        ):
+            # We are inside an aggregator that set the context
+            # Use the handle_aggregation_variable method from the parent/mixin
+            # which is mixed into ExprEvaluator
+            return self._handle_aggregation_variable(operand, self._current_context)  # type: ignore[attr-defined]
+
         match operand:
             case str() if operand.startswith("$"):
                 # Field reference

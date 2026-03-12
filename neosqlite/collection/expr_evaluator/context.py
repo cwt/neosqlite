@@ -94,6 +94,20 @@ class AggregationContext:
         """
         self.variables[name] = value
 
+    def clone(self) -> AggregationContext:
+        """
+        Create a shallow copy of the context for nested scoping.
+
+        Returns:
+            AggregationContext: A copy of the context.
+        """
+        new_ctx = AggregationContext()
+        new_ctx.variables = self.variables.copy()
+        new_ctx.stage_index = self.stage_index
+        new_ctx.current_field = self.current_field
+        new_ctx.pipeline_id = self.pipeline_id
+        return new_ctx
+
 
 def _is_aggregation_variable(value: Any) -> bool:
     """

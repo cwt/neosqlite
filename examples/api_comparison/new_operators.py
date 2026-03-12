@@ -61,13 +61,13 @@ def compare_new_operators():
 
         # Test $bucket
         try:
-            # Use unique _ids and clean collection to avoid constraint errors
-            neo_collection.delete_many({})
-            neo_collection.insert_many(
+            # Use separate collection for bucket test to avoid clearing main data
+            bucket_coll = neo_conn.bucket_test
+            bucket_coll.insert_many(
                 [{"_id": 100 + i, "value": i * 10} for i in range(1, 6)]
             )
             result = list(
-                neo_collection.aggregate(
+                bucket_coll.aggregate(
                     [
                         {
                             "$bucket": {
@@ -232,6 +232,72 @@ def compare_new_operators():
             neo_results["$rand"] = f"Error: {e}"
             print(f"Neo $rand: Error - {e}")
 
+        # Test $let
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [
+                        {"$match": {"_id": 1}},
+                        {
+                            "$project": {
+                                "let_val": {
+                                    "$let": {
+                                        "vars": {"x": 5},
+                                        "in": {"$add": ["$$x", 10]},
+                                    }
+                                }
+                            }
+                        },
+                    ]
+                )
+            )
+            neo_results["$let"] = result[0].get("let_val") if result else None
+            print(f"Neo $let: {neo_results['$let']}")
+        except Exception as e:
+            neo_results["$let"] = f"Error: {e}"
+            print(f"Neo $let: Error - {e}")
+
+        # Test $binarySize
+        try:
+            from neosqlite.binary import Binary
+
+            neo_collection.insert_one({"_id": 200, "data": Binary(b"hello")})
+            result = list(
+                neo_collection.aggregate(
+                    [
+                        {"$match": {"_id": 200}},
+                        {"$project": {"size": {"$binarySize": "$data"}}},
+                    ]
+                )
+            )
+            val = result[0].get("size") if result else None
+            neo_results["$binarySize"] = (
+                "valid" if isinstance(val, int) and val > 0 else "invalid"
+            )
+            print(f"Neo $binarySize: {val} bytes")
+        except Exception as e:
+            neo_results["$binarySize"] = f"Error: {e}"
+            print(f"Neo $binarySize: Error - {e}")
+
+        # Test $bsonSize
+        try:
+            result = list(
+                neo_collection.aggregate(
+                    [
+                        {"$match": {"_id": 1}},
+                        {"$project": {"size": {"$bsonSize": "$$ROOT"}}},
+                    ]
+                )
+            )
+            val = result[0].get("size") if result else None
+            neo_results["$bsonSize"] = (
+                "valid" if isinstance(val, int) and val > 0 else "invalid"
+            )
+            print(f"Neo $bsonSize: {val} bytes")
+        except Exception as e:
+            neo_results["$bsonSize"] = f"Error: {e}"
+            print(f"Neo $bsonSize: Error - {e}")
+
     client = test_pymongo_connection()
     mongo_results = {}
 
@@ -280,13 +346,14 @@ def compare_new_operators():
 
         # Test $bucket
         try:
-            # Delete existing docs and insert fresh data with value field
-            mongo_collection.delete_many({})
-            mongo_collection.insert_many(
+            # Use separate collection for bucket test
+            bucket_coll_mongo = mongo_db.bucket_test
+            bucket_coll_mongo.delete_many({})
+            bucket_coll_mongo.insert_many(
                 [{"_id": 100 + i, "value": i * 10} for i in range(1, 6)]
             )
             result = list(
-                mongo_collection.aggregate(
+                bucket_coll_mongo.aggregate(
                     [
                         {
                             "$bucket": {
@@ -454,6 +521,74 @@ def compare_new_operators():
         except Exception as e:
             mongo_results["$rand"] = f"Error: {e}"
             print(f"Mongo $rand: Error - {e}")
+
+        # Test $let
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [
+                        {"$match": {"_id": 1}},
+                        {
+                            "$project": {
+                                "let_val": {
+                                    "$let": {
+                                        "vars": {"x": 5},
+                                        "in": {"$add": ["$$x", 10]},
+                                    }
+                                }
+                            }
+                        },
+                    ]
+                )
+            )
+            mongo_results["$let"] = result[0].get("let_val") if result else None
+            print(f"Mongo $let: {mongo_results['$let']}")
+        except Exception as e:
+            mongo_results["$let"] = f"Error: {e}"
+            print(f"Mongo $let: Error - {e}")
+
+        # Test $binarySize
+        try:
+            from bson.binary import Binary as MongoBinary
+
+            mongo_collection.insert_one(
+                {"_id": 200, "data": MongoBinary(b"hello")}
+            )
+            result = list(
+                mongo_collection.aggregate(
+                    [
+                        {"$match": {"_id": 200}},
+                        {"$project": {"size": {"$binarySize": "$data"}}},
+                    ]
+                )
+            )
+            val = result[0].get("size") if result else None
+            mongo_results["$binarySize"] = (
+                "valid" if isinstance(val, int) and val > 0 else "invalid"
+            )
+            print(f"Mongo $binarySize: {val} bytes")
+        except Exception as e:
+            mongo_results["$binarySize"] = f"Error: {e}"
+            print(f"Mongo $binarySize: Error - {e}")
+
+        # Test $bsonSize
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [
+                        {"$match": {"_id": 1}},
+                        {"$project": {"size": {"$bsonSize": "$$ROOT"}}},
+                    ]
+                )
+            )
+            val = result[0].get("size") if result else None
+            mongo_results["$bsonSize"] = (
+                "valid" if isinstance(val, int) and val > 0 else "invalid"
+            )
+            print(f"Mongo $bsonSize: {val} bytes")
+        except Exception as e:
+            mongo_results["$bsonSize"] = f"Error: {e}"
+            print(f"Mongo $bsonSize: Error - {e}")
 
         # Compare results
         for op_name in neo_results:

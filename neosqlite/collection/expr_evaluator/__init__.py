@@ -152,6 +152,7 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
         self._jsonb_supported = False
         self._jsonb_each_supported = False
         self._log2_warned = False  # Track if we've warned about $log2
+        self._current_context = None  # Temporary context for SQL conversion
         if db_connection is not None:
             self._jsonb_supported = supports_jsonb(db_connection)
             self._jsonb_each_supported = supports_jsonb_each(db_connection)
@@ -282,12 +283,20 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
         if context is None:
             context = AggregationContext()
 
-        sql, params = self._convert_operand_to_sql_agg(expr, context)
+        # Set temporary context for SQL conversion
+        old_context = self._current_context
+        self._current_context = context
 
-        if as_alias:
-            sql = f"{sql} AS {as_alias}"
+        try:
+            sql, params = self._convert_operand_to_sql_agg(expr, context)
 
-        return sql, params
+            if as_alias:
+                sql = f"{sql} AS {as_alias}"
+
+            return sql, params
+        finally:
+            # Restore previous context
+            self._current_context = old_context
 
     def _convert_operand_to_sql_agg(
         self, operand: Any, context: AggregationContext
@@ -353,6 +362,20 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
                     "$$REMOVE is handled at the application level (use REMOVE_SENTINEL)"
                 )
             case _:
+                # Check for custom variables defined via $let
+                if (
+                    var_name in context.variables
+                    and context.variables[var_name] is not None
+                ):
+                    var_val = context.variables[var_name]
+                    # If it's already a Tuple(sql, params), return it
+                    if (
+                        isinstance(var_val, tuple)
+                        and len(var_val) == 2
+                        and isinstance(var_val[0], str)
+                    ):
+                        return var_val
+
                 # Unknown variable
                 raise NotImplementedError(
                     f"Aggregation variable {var_name} not supported in SQL tier"
@@ -406,12 +429,20 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
         if context is None:
             context = AggregationContext()
 
-        sql, params = self._convert_operand_to_sql_agg(expr, context)
+        # Set temporary context for SQL conversion
+        old_context = self._current_context
+        self._current_context = context
 
-        if alias:
-            sql = f"{sql} AS {alias}"
+        try:
+            sql, params = self._convert_operand_to_sql_agg(expr, context)
 
-        return sql, params
+            if alias:
+                sql = f"{sql} AS {alias}"
+
+            return sql, params
+        finally:
+            # Restore previous context
+            self._current_context = old_context
 
     def build_group_by_expression(
         self,

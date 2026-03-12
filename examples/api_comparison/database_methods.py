@@ -111,10 +111,21 @@ def compare_database_methods():
 
         # Test cursor_command()
         try:
+            # Ensure collection exists for PRAGMA test
+            coll_dummy = neo_conn.create_collection("cursor_test_coll")
+            coll_dummy.insert_one({"a": 1})
+
             # listCollections can be run as a cursor command
             cursor = neo_conn.cursor_command("listCollections")
             results = list(cursor)
-            neo_cursor_command = len(results) > 0
+
+            # PRAGMA test (NeoSQLite specific improvement)
+            cursor_pragma = neo_conn.cursor_command(
+                "table_info", table="cursor_test_coll"
+            )
+            results_pragma = list(cursor_pragma)
+
+            neo_cursor_command = len(results) > 0 and len(results_pragma) > 0
             print(
                 f"Neo cursor_command(): {'OK' if neo_cursor_command else 'FAIL'}"
             )
@@ -269,7 +280,11 @@ def compare_database_methods():
             from pymongo.command_cursor import CommandCursor
 
             cursor = mongo_db.cursor_command("listCollections")
-            mongo_cursor_command = isinstance(cursor, CommandCursor)
+            # In some PyMongo versions, cursor_command returns a cursor directly
+            # In others it might return a dict with a cursor key
+            mongo_cursor_command = isinstance(cursor, CommandCursor) or (
+                isinstance(cursor, dict) and "cursor" in cursor
+            )
             print(
                 f"Mongo cursor_command(): {'OK' if mongo_cursor_command else 'FAIL'}"
             )

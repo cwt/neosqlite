@@ -589,6 +589,12 @@ class Connection:
         # Determine the results to iterate over
         if isinstance(result, dict) and "collections" in result:
             items = result["collections"]
+        elif isinstance(result, dict) and "columns" in result:
+            items = result["columns"]
+        elif isinstance(result, dict) and "result" in result:
+            items = result["result"]
+            if not isinstance(items, list):
+                items = [items]
         elif (
             isinstance(result, dict)
             and "cursor" in result

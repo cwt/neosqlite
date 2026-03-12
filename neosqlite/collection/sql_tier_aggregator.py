@@ -66,6 +66,7 @@ from .json_path_utils import parse_json_path
 from typing import Any, Dict, List, Tuple, Set
 from .expr_evaluator import (
     ExprEvaluator,
+    AggregationContext,
     _is_expression,
     _is_aggregation_variable,
 )
@@ -255,7 +256,6 @@ class SQLTierAggregator:
 
     # Expressions that require Python fallback
     UNSUPPORTED_EXPRESSIONS = {
-        "$let",  # Variables not supported in SQL
         "$objectToArray",  # Complex conversion
         "$function",  # Custom JavaScript
         "$accumulator",  # Custom accumulator
@@ -1182,10 +1182,13 @@ class SQLTierAggregator:
                 all_params = []
             else:
                 # Build SQL expression normally
-                # Note: We don't pass context here because build_select_expression
-                # expects AggregationContext, not PipelineContext
+                # Create aggregation context for variable resolution
+                agg_ctx = AggregationContext()
+                agg_ctx.stage_index = context.stage_index
+                agg_ctx.current_field = field
+
                 expr_sql, expr_params = self.evaluator.build_select_expression(
-                    expr
+                    expr, context=agg_ctx
                 )
                 all_params.extend(expr_params)
 
@@ -1330,10 +1333,13 @@ class SQLTierAggregator:
                         continue
 
                 # Build SQL expression
-                # Note: We don't pass context here because build_select_expression
-                # expects AggregationContext, not PipelineContext
+                # Create aggregation context for variable resolution
+                agg_ctx = AggregationContext()
+                agg_ctx.stage_index = context.stage_index
+                agg_ctx.current_field = field
+
                 expr_sql, expr_params = self.evaluator.build_select_expression(
-                    value
+                    value, context=agg_ctx
                 )
                 all_params.extend(expr_params)
 
@@ -1650,7 +1656,13 @@ class SQLTierAggregator:
                 # Handle $expr operator
                 if not self._check_expression_support(value):
                     return None, []
-                expr_sql, expr_params = self.evaluator.evaluate(value)
+
+                agg_ctx = AggregationContext()
+                agg_ctx.stage_index = context.stage_index
+
+                expr_sql, expr_params = self.evaluator.evaluate_for_aggregation(
+                    value, context=agg_ctx
+                )
                 if expr_sql is None:
                     return None, []
                 where_clauses.append(expr_sql)
@@ -1659,10 +1671,13 @@ class SQLTierAggregator:
                 # Handle direct expression (no $expr wrapper)
                 if not self._check_expression_support({field: value}):
                     return None, []
-                # Note: We don't pass context here because build_select_expression
-                # expects AggregationContext, not PipelineContext
+
+                agg_ctx = AggregationContext()
+                agg_ctx.stage_index = context.stage_index
+                agg_ctx.current_field = field
+
                 expr_sql, expr_params = self.evaluator.build_select_expression(
-                    {field: value}
+                    {field: value}, context=agg_ctx
                 )
                 where_clauses.append(expr_sql)
                 all_params.extend(expr_params)

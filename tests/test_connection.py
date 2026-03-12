@@ -543,6 +543,24 @@ def test_cursor_command_and_dereference():
     deref_doc = conn.dereference(dbref)
     assert deref_doc is not None
     assert deref_doc["name"] == "ref_me"
+    conn.close()
+
+
+def test_cursor_command_pragma():
+    """Test cursor_command with PRAGMA results."""
+    conn = neosqlite.Connection(":memory:")
+    # Run PRAGMA table_info using cursor_command
+    # We need a table first
+    conn["test"].insert_one({"a": 1})
+
+    cursor = conn.cursor_command("table_info", table="test")
+    results = list(cursor)
+
+    assert len(results) > 0
+    # PRAGMA table_info returns columns like 'name', 'type', etc.
+    column_names = [r["name"] for r in results]
+    assert "data" in column_names
+    assert "id" in column_names
 
     # Test invalid dereference
     assert conn.dereference({"$ref": "nonexistent", "$id": 123}) is None

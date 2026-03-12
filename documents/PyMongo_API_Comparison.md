@@ -593,7 +593,7 @@ The following APIs have been implemented and tested:
 
 | Category | Operators | Priority | Status |
 |----------|-----------|----------|--------|
-| Data Size | `$binarySize`, `$bsonSize` | Low | ❌ Missing |
+| Data Size | `$binarySize`, `$bsonSize` | Low | ✅ **Implemented** |
 | Object | `$mergeObjects`, `$setField` | Low | ✅ **Implemented** |
 | Variable | `$let` | Low | ✅ **Implemented** |
 | Literal | `$literal` | Low | ✅ **Implemented** |
@@ -709,7 +709,7 @@ The following APIs have been implemented and tested:
 #### Database Methods (MOSTLY COMPLETED)
 - [x] `command()` - Database commands ✅ **Implemented** (includes 'validate')
 - [x] `with_options()` - Database clone with options ✅ **Implemented**
-- [ ] `cursor_command()` - Commands returning cursors (still pending)
+- [x] `cursor_command()` - Commands returning cursors ✅ **Implemented**
 
 **Impact**: Improved developer experience and API completeness
 **Test Coverage**: 83 new unit tests total, all passing
