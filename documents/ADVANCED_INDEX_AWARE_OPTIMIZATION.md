@@ -42,12 +42,14 @@ The system automatically optimizes pipeline execution through:
 The optimization works automatically when you:
 
 1. Create indexes on frequently queried fields:
+
    ```python
    collection.create_index("category")
    collection.create_index("status")
    ```
 
 2. Use those fields in your aggregation pipelines:
+
    ```python
    pipeline = [
        {"$unwind": "$tags"},  // Expensive operation

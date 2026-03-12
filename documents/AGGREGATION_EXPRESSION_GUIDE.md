@@ -6,7 +6,7 @@
 
 ## Overview
 
-NeoSQLite supports **106+ aggregation expression operators** in all pipeline stages, enabling powerful data transformations.
+NeoSQLite supports **119+ aggregation expression operators** in all pipeline stages, enabling powerful data transformations.
 
 ```python
 from neosqlite import Connection
@@ -41,7 +41,7 @@ All operators from `$expr` queries work in aggregation pipelines:
 | **Comparison** | `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$cmp` |
 | **Logical** | `$and`, `$or`, `$not`, `$nor` |
 | **Conditional** | `$cond`, `$ifNull`, `$switch` |
-| **String** | `$concat`, `$toLower`, `$toUpper`, `$trim`, `$replaceAll`, `$split` |
+| **String** | `$concat`, `$toLower`, `$toUpper`, `$trim`, `$replaceAll`, `$split`, `$regexMatch`, `$regexFind`, `$regexFindAll` |
 | **Math** | `$sin`, `$cos`, `$tan`, `$ln`, `$log`, `$log10` |
 | **Date** | `$year`, `$month`, `$dayOfMonth`, `$hour`, `$minute`, `$second` |
 | **Type Conversion** | `$toString`, `$toInt`, `$toDouble`, `$toBool` |

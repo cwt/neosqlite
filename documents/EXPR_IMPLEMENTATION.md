@@ -59,6 +59,7 @@ Complexity is calculated by:
 | `$cmp` | Compare two values | ✅ | ✅ |
 
 **Example:**
+
 ```python
 # Find documents where qty > reserved
 collection.find({"$expr": {"$gt": ["$qty", "$reserved"]}})
@@ -74,6 +75,7 @@ collection.find({"$expr": {"$gt": ["$qty", "$reserved"]}})
 | `$nor` | Logical NOR | ✅ | ✅ |
 
 **Example:**
+
 ```python
 # Find documents where qty > 5 AND qty < 10
 collection.find({
@@ -109,6 +111,7 @@ collection.find({
 | `$exp` | Exponential | ✅ | ✅ |
 
 **Example:**
+
 ```python
 # Find documents where price * qty != total
 collection.find({
@@ -147,6 +150,7 @@ collection.find({
 | `$switch` | Multi-branch conditional | ❌ | ✅ |
 
 **Example:**
+
 ```python
 # Apply discount based on quantity
 collection.find({
@@ -196,6 +200,7 @@ collection.find({
 | `$range` | Generate range | ❌ | ❌ |
 
 **Example:**
+
 ```python
 # Find documents where array size > 2
 collection.find({
@@ -227,6 +232,7 @@ collection.find({
 | `$replaceOne` | Replace one | ❌ | ✅ |
 
 **Example:**
+
 ```python
 # Find documents where lowercase name equals "john"
 collection.find({
@@ -270,6 +276,7 @@ collection.find({
 | `$dateTrunc` | Truncate date | ❌ | ❌ |
 
 **Example:**
+
 ```python
 # Find documents from year 2024
 collection.find({
@@ -288,6 +295,7 @@ collection.find({
 | `$objectToArray` | Object to array | ❌ | ✅ |
 
 **Example:**
+
 ```python
 # Merge two objects
 collection.find({
@@ -325,6 +333,7 @@ collection.find({
 | `$convert` | General conversion | ❌ | ✅ |
 
 **Example:**
+
 ```python
 # Convert string to int for comparison
 collection.find({
@@ -354,6 +363,7 @@ collection.find({
 | `$let` | Define variables | ❌ | ❌ |
 
 **Example:**
+
 ```python
 # Use $literal to escape special characters
 collection.find({
@@ -365,7 +375,7 @@ collection.find({
 
 ## Implementation Status Summary
 
-**As of v1.5.0, NeoSQLite supports 119 out of 120 implementable $expr operators (99% coverage)**
+### As of v1.8.0+, NeoSQLite supports 119 out of 120 implementable $expr operators (99% coverage)
 
 | Category | Implemented | Coverage |
 |----------|-------------|----------|
@@ -388,7 +398,7 @@ collection.find({
 
 ## Missing Features Summary
 
-**119 out of 120 operators implemented (99% coverage)**
+### 119 out of 120 operators implemented (99% coverage)
 
 *Note: This analysis focuses on operators implementable in NeoSQLite's 3-tier architecture (SQL, Temp Tables, Python). Excluded are server-specific features (e.g., $rand, $function, $meta), window functions ($denseRank, $rank, etc.), time series operators ($tsIncrement, $tsSecond), encryption features ($encStrContains, etc.), and other SQLite-irrelevant operators.*
 
@@ -413,14 +423,14 @@ collection.find({
 
 ## Missing Features by Priority
 
-### 🔴 High Priority (0 operators) - ✅ ALL IMPLEMENTED!
+### 🔴 High Priority (0 operators) - ✅ ALL IMPLEMENTED
 
 **All high-priority operators have been implemented:**
 - ✅ Date Arithmetic: `$dateAdd`, `$dateSubtract`, `$dateDiff`
 - ✅ Array Transformation: `$filter`, `$map`, `$reduce`
 - ✅ Regex Operations: `$regexFind`, `$regexFindAll`
 
-### 🟡 Medium Priority (0 operators) - ✅ ALL IMPLEMENTED!
+### 🟡 Medium Priority (0 operators) - ✅ ALL IMPLEMENTED
 
 **All medium-priority operators have been implemented:**
 
@@ -446,7 +456,7 @@ collection.find({
 - ✅ `$unsetField` - Remove field from object
 - ✅ `$objectToArray` - Convert object to key-value array
 
-### 🟢 Low Priority (0 operators) - ✅ ALL IMPLEMENTED!
+### 🟢 Low Priority (0 operators) - ✅ ALL IMPLEMENTED
 
 **All low-priority operators have been implemented:**
 
@@ -493,6 +503,7 @@ collection.find({
 ### Medium Priority Operators (18 operators) - ✅ COMPLETE
 
 #### Set Operations (7 operators)
+
 | Operator | SQL Support | Python Support | Description |
 |----------|-------------|----------------|-------------|
 | `$setEquals` | ❌ (fallback) | ✅ | Check if two sets are equal |
@@ -506,6 +517,7 @@ collection.find({
 **Note**: Set operations use Python fallback due to SQLite's limited set manipulation capabilities. They work correctly with the kill switch.
 
 #### Trigonometric Functions (7 operators)
+
 | Operator | SQL Support | Python Support | Description |
 |----------|-------------|----------------|-------------|
 | `$sin` | ✅ | ✅ | Sine function |
@@ -517,12 +529,14 @@ collection.find({
 | `$atan2` | ✅ | ✅ | Two-argument arc tangent |
 
 #### Angle Conversion (2 operators)
+
 | Operator | SQL Support | Python Support | Description |
 |----------|-------------|----------------|-------------|
 | `$degreesToRadians` | ✅ | ✅ | Convert degrees to radians |
 | `$radiansToDegrees` | ✅ | ✅ | Convert radians to degrees |
 
 #### Object Manipulation (2 operators)
+
 | Operator | SQL Support | Python Support | Description |
 |----------|-------------|----------------|-------------|
 | `$unsetField` | ✅ | ✅ | Remove field from object |
@@ -531,6 +545,7 @@ collection.find({
 ### Low Priority Operators (22 operators) - ✅ COMPLETE
 
 #### Advanced Math (7 operators)
+
 | Operator | SQL Support | Python Support | Description |
 |----------|-------------|----------------|-------------|
 | `$ln` | ✅ | ✅ | Natural logarithm (base e) |
@@ -541,6 +556,7 @@ collection.find({
 | `$sigmoid` | ✅ | ✅ | Sigmoid function 1/(1+e^-x) |
 
 #### Hyperbolic Functions (6 operators)
+
 | Operator | SQL Support | Python Support | Description |
 |----------|-------------|----------------|-------------|
 | `$sinh` | ✅ | ✅ | Hyperbolic sine |
@@ -551,6 +567,7 @@ collection.find({
 | `$atanh` | ✅ | ✅ | Inverse hyperbolic tangent |
 
 #### Advanced String (4 operators)
+
 | Operator | SQL Support | Python Support | Description |
 |----------|-------------|----------------|-------------|
 | `$strLenCP` | ✅ | ✅ | String length in code points |
@@ -559,6 +576,7 @@ collection.find({
 | `$replaceOne` | ❌ (fallback) | ✅ | Replace first occurrence |
 
 #### Type Conversion (6 operators)
+
 | Operator | SQL Support | Python Support | Description |
 |----------|-------------|----------------|-------------|
 | `$toLong` | ✅ | ✅ | Convert to 64-bit integer |
@@ -846,6 +864,17 @@ collection.find({
         ]
     }
 })
+
+# Using $regexMatch with options
+collection.find({
+    "$expr": {
+        "$regexMatch": {
+            "input": "$text",
+            "regex": "^hello",
+            "options": "m"  # multiline
+        }
+    }
+})
 ```
 
 ## Kill Switch
@@ -888,11 +917,13 @@ tests/test_expr/
 ```
 
 Run tests:
+
 ```bash
 pytest tests/test_expr/ -v
 ```
 
 Run high-priority operator tests:
+
 ```bash
 pytest tests/test_expr/test_high_priority_operators.py -v
 ```
@@ -977,13 +1008,13 @@ See `documents/EXPR_IMPLEMENTATION_SUMMARY.md` for detailed implementation notes
 
 ## Conclusion
 
-The `$expr` operator implementation in NeoSQLite is now **complete** with **100% coverage** of all implementable MongoDB $expr operators (106 out of 106). The three-tier architecture ensures optimal performance where possible (SQL tier) while maintaining complete functionality through Python fallback. All operators respect the kill switch for debugging and benchmarking purposes.
+The `$expr` operator implementation in NeoSQLite is now **virtually complete** with **99% coverage** of all implementable MongoDB $expr operators (119 out of 120). The three-tier architecture ensures optimal performance where possible (SQL tier) while maintaining complete functionality through Python fallback. All operators respect the kill switch for debugging and benchmarking purposes.
 
 **Key Achievements:**
-- ✅ 106 operators implemented (100% coverage)
-- ✅ 22 operators with SQL tier optimization
+- ✅ 119 operators implemented (99% coverage)
+- ✅ 22+ operators with SQL tier optimization
 - ✅ All operators with Python fallback
 - ✅ Full kill switch support
-- ✅ 281 test cases with comprehensive coverage
+- ✅ 353+ test cases with comprehensive coverage
 - ✅ Three-tier architecture compliance
-- ✅ Full backward compatibility
+- ✅ Full backward compatibility (v1.8.0+)

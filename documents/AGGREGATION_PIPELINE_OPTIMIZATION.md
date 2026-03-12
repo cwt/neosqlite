@@ -1,8 +1,8 @@
 # Aggregation Pipeline Optimization
 
 **Status:** ✅ **COMPLETE**  
-**Last Updated:** March 9, 2026  
-**Version:** 1.0
+**Last Updated:** March 12, 2026  
+**Version:** 1.1
 
 ---
 
@@ -14,7 +14,7 @@ NeoSQLite implements a **sophisticated three-tier execution engine** for MongoDB
 
 | Metric | Result |
 |--------|--------|
-| **Tests Passing** | 2005 tests (100% coverage) |
+| **Tests Passing** | 2163+ tests (100% coverage) |
 | **Performance** | 3-7x average, up to 100x for complex pipelines |
 | **SQL Coverage** | ~94% of pipelines optimize to Tier 1/2 |
 | **Backward Compatibility** | 100% maintained |
@@ -158,12 +158,12 @@ The optimization system evolved through five key phases:
 
 **Target:** Move 75% of Tier 3 pipelines to Tier 1/2
 
-### Phase 5: Final Completion (March 9, 2026)
+### Phase 5: Final Completion (March 12, 2026)
 
 **Status:** All active optimization items complete.
 
 **Final Stats:**
-- 2005 tests passing
+- 2163+ tests passing
 - ~94% of pipelines optimized to Tier 1 or Tier 2
 - 3-7x average performance improvement
 - Full JSONB support
@@ -222,7 +222,7 @@ SELECT id, data FROM stage2
 | `$facet` | ⚠️ Partial | Hybrid approach: streams sub-pipeline results to temp tables |
 | `$unwind` | ⚠️ Partial | Falls back for advanced options |
 
-**Supported Expressions (106+ operators):**
+**Supported Expressions (119+ operators):**
 
 - **Arithmetic:** `$add`, `$subtract`, `$multiply`, `$divide`, `$mod`
 - **Comparison:** `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$cmp`
@@ -232,7 +232,8 @@ SELECT id, data FROM stage2
 - **Trigonometric:** `$sin`, `$cos`, `$tan`, `$asin`, `$acos`, `$atan`, `$atan2`
 - **Hyperbolic:** `$sinh`, `$cosh`, `$tanh`, `$asinh`, `$acosh`, `$atanh`
 - **Logarithmic:** `$ln`, `$log`, `$log10`, `$log2`
-- **String:** `$concat`, `$toLower`, `$toUpper`, `$trim`, `$replaceAll`
+- **String:** `$concat`, `$toLower`, `$toUpper`, `$trim`, `$replaceAll`, `$regexMatch`, `$regexFind`, `$regexFindAll`
+- **Regex:** `$options` support for regex operations
 - **Date:** `$year`, `$month`, `$dayOfMonth`, `$hour`, `$minute`, `$second`
 - **Date Arithmetic:** `$dateAdd`, `$dateSubtract`, `$dateDiff`
 - **Type Conversion:** `$toString`, `$toInt`, `$toDouble`, `$toBool`
@@ -595,7 +596,7 @@ def my_tier_implementation(...):
 
 | Metric | Count |
 |--------|-------|
-| **Total Tests** | 2005 passing |
+| **Total Tests** | 2163+ passing |
 | **Expected Failures** | 5 xfailed |
 | **Unexpected Passes** | 2 xpassed |
 | **Regressions** | 0 |
@@ -826,7 +827,7 @@ The aggregation pipeline optimization system is **100% complete** for all active
 ✅ **Significant performance improvements** (3-7x average, up to 100x for complex pipelines)  
 ✅ **Full correctness guarantee** through tier comparison tests  
 ✅ **MongoDB compatibility** with graceful fallback to Python  
-✅ **Comprehensive test coverage** (2005 tests passing)  
+✅ **Comprehensive test coverage** (2163+ tests passing)  
 ✅ **Production-ready code** with proper error handling and edge case coverage  
 
 All deferred items have working alternatives and can be addressed in future optimization efforts if performance requirements demand it.
@@ -834,5 +835,5 @@ All deferred items have working alternatives and can be addressed in future opti
 ---
 
 **Development Team:** NeoSQLite Core Team  
-**Last Review:** March 9, 2026  
+**Last Review:** March 12, 2026  
 **Status:** ✅ **COMPLETE**

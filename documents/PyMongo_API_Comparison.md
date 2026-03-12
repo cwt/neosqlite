@@ -1,8 +1,8 @@
 # PyMongo API Comparison
 
-**Last Updated**: March 10, 2026
-**NeoSQLite Version**: v1.6.1+
-**PyMongo Compatibility**: 100% (309 tests: 303 passed, 6 skipped by design, 0 failed)
+**Last Updated**: March 12, 2026
+**NeoSQLite Version**: v1.8.0+
+**PyMongo Compatibility**: 100% (353 tests: 343 passed, 10 skipped by design, 0 failed)
 
 ---
 
@@ -23,6 +23,10 @@ with **100% compatibility** for all comparable features. This document provides:
 ### Newly Implemented APIs
 
 The following APIs have been implemented and tested:
+
+#### Query Operators - Regex Options (NEW)
+- ✅ `$options` - Support for regex flags (`i`, `m`, `s`, `x`) in `$regex` queries (4 tests)
+- ✅ `re.Pattern` support - Ability to use compiled Python regex objects directly in queries
 
 #### Query Operators - Bitwise (4 operators)
 - ✅ `$bitsAllClear` - Match documents where all specified bits are 0 (4 tests)
@@ -53,7 +57,7 @@ The following APIs have been implemented and tested:
 - ✅ `$replaceAll` / `$replaceOne` - String replacement (6 tests)
 - ✅ `$indexOfBytes` / `$indexOfCP` - Find substring position (4 tests)
 - ✅ `$strLenBytes` / `$strLenCP` - String length (4 tests)
-- ✅ `$regexMatch` / `$regexFind` / `$regexFindAll` - Regex operations (12 tests)
+- ✅ `$regexMatch` / `$regexFind` / `$regexFindAll` - Regex operations with full `$options` support (16 tests)
 
 #### Aggregation Operators - Type Conversion (8 operators)
 - ✅ `$isNumber` - Check if value is numeric (8 tests)
@@ -120,8 +124,8 @@ The following APIs have been implemented and tested:
 - ✅ `with_options()` - Return database clone with different options (Now correctly returns a clone)
 - ✅ `command()` - Issue database commands (ping, serverStatus, listCollections, etc.) (11 tests)
 
-**Test Coverage**: 210+ unit tests, all passing
-**API Compatibility**: 100% (309 tests total)
+**Test Coverage**: 220+ unit tests, all passing
+**API Compatibility**: 100% (353 tests total)
 **Kill Switch Verified**: All APIs work identically with/without kill switch (Tier-3 Python implementation)
 **Deprecated APIs**: `initialize_ordered_bulk_op()` and `initialize_unordered_bulk_op()` are now deprecated to match PyMongo 4.x behavior.
 
@@ -252,7 +256,7 @@ The following APIs have been implemented and tested:
 - [x] `$in` - In array
 - [x] `$nin` - Not in array
 - [x] `$mod` - Modulo operation
-- [x] `$regex` - Regular expression
+- [x] `$regex` - Regular expression (with `$options` support)
 - [x] `$expr` - Expression queries (119/120 operators, 99.2%)
 
 #### Logical Operators
@@ -416,7 +420,6 @@ The following APIs have been implemented and tested:
 |----------|-------------|----------|--------|
 | `session` | ClientSession | High | ✅ **Implemented** |
 | `cursor_id` | Cursor ID | High | ✅ **Implemented** |
-
 
 ### 2.2 MEDIUM PRIORITY - Query & Update Operators
 
@@ -613,9 +616,9 @@ The following APIs have been implemented and tested:
 
 | Metric | Count | Percentage |
 |--------|-------|------------|
-| **Total PyMongo Compatibility Tests** | 304 | 100% |
-| **Passed** | 300 | 98.7% |
-| **Skipped** (by design) | 4 | 1.3% |
+| **Total PyMongo Compatibility Tests** | 353 | 100% |
+| **Passed** | 343 | 97.2% |
+| **Skipped** (by design) | 10 | 2.8% |
 | **Failed** | 0 | 0% |
 | **Compatibility** (comparable features) | **100%** | |
 
@@ -624,6 +627,12 @@ The following APIs have been implemented and tested:
 2. `watch()` (collection methods) - Same as above
 3. `$log2` - **NeoSQLite extension** using SQLite's native `log2()` (raises `UserWarning`)
 4. `where()` - **NeoSQLite implementation** using Python function filter; MongoDB uses JavaScript `$where`
+5. `options` - MongoDB returns `{}` (backend-specific)
+6. `db_path` - NeoSQLite specific extension
+7. `initialize_ordered_bulk_op` - Deprecated in PyMongo 4.x
+8. `initialize_unordered_bulk_op` - Deprecated in PyMongo 4.x
+9. `transaction_commit` - MongoDB requires replica set for transactions
+10. `transaction_abort` - MongoDB requires replica set for transactions
 
 ### 3.2 API Coverage by Category
 
@@ -720,8 +729,8 @@ The following APIs have been implemented and tested:
 - [x] Other operators (`$mergeObjects`, `$getField`, `$let`, `$literal`, `$rand`, `$objectToArray`) ✅ **Implemented**
 
 **Impact**: Comprehensive aggregation framework with 100% PyMongo compatibility for all comparable features
-**Test Coverage**: 210+ unit tests, all passing
-**API Compatibility**: 100% (309 tests total)
+**Test Coverage**: 220+ unit tests, all passing
+**API Compatibility**: 100% (353 tests total)
 
 ### Phase 3: Low Priority (Remaining - 12+ months)
 
@@ -833,10 +842,10 @@ NeoSQLite maintains comprehensive PyMongo compatibility tests:
 
 **Feasibility**: **High**
 **Recommendation**: Implement a `ClientSession` class that wraps SQLite's native ACID transactions.
-- **Mapping**: 
-    - `start_transaction()` -> `BEGIN IMMEDIATE`
-    - `commit_transaction()` -> `COMMIT`
-    - `abort_transaction()` -> `ROLLBACK`
+- **Mapping**:
+  - `start_transaction()` -> `BEGIN IMMEDIATE`
+  - `commit_transaction()` -> `COMMIT`
+  - `abort_transaction()` -> `ROLLBACK`
 - **Integration**: Update CRUD methods to accept an optional `session` parameter. If provided, the operation must execute on the session's specific connection/transaction state.
 
 #### Durability & Configuration (ALL COMPLETED)
@@ -858,13 +867,13 @@ NeoSQLite maintains comprehensive PyMongo compatibility tests:
 ### 7.4 Cursor Management (`cursor_command`, `add_option`)
 
 **Feasibility**: **Medium**
-**Recommendation**: 
+**Recommendation**:
 - **`cursor_command()`**: Wrap the existing `command()` infrastructure to return an `AggregationCursor`, allowing command results to be iterated like standard queries.
-- **`add_option()` / `remove_option()`**: Implement as state-tracking flags for API compatibility. 
+- **`add_option()` / `remove_option()`**: Implement as state-tracking flags for API compatibility.
 - **`max_await_time_ms()`**: Integrate with the existing `watch()` (change stream) mechanism to allow tailable-like behavior where a cursor "waits" for new data matching a filter via SQLite triggers.
 
 ---
 
-**Last Updated**: March 10, 2026
+**Last Updated**: March 12, 2026
 **Maintained By**: NeoSQLite Development Team
 **License**: MIT

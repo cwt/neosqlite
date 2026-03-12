@@ -47,6 +47,7 @@ For complex pipelines (when `$lookup` is followed by other stages like `$unwind`
 ### Supported Use Cases
 
 1. **Basic $lookup operations**:
+
    ```python
    [
      {"$lookup": {
@@ -59,6 +60,7 @@ For complex pipelines (when `$lookup` is followed by other stages like `$unwind`
    ```
 
 2. **$lookup with $match**:
+
    ```python
    [
      {"$match": {"status": "active"}},
@@ -72,6 +74,7 @@ For complex pipelines (when `$lookup` is followed by other stages like `$unwind`
    ```
 
 3. **$lookup followed by $unwind**:
+
    ```python
    [
      {"$lookup": {
@@ -100,11 +103,11 @@ For complex pipelines (when `$lookup` is followed by other stages like `$unwind`
 
 ### Limitations
 
-1. **No Advanced $lookup Features**: 
+1. **No Advanced $lookup Features**:
    - Does not support the `let` and `pipeline` options for more complex lookups
    - Does not support outer joins with conditions beyond simple field matching
 
-2. **Performance**: 
+2. **Performance**:
    - Complex pipelines fall back to Python processing
    - Large datasets may be slow with Python fallback
 

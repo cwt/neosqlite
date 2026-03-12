@@ -53,6 +53,7 @@ case "$facet":
 ## Code Examples
 
 ### Basic Usage
+
 ```python
 pipeline = [
     {
@@ -69,6 +70,7 @@ result = collection.aggregate(pipeline)
 ```
 
 ### With Post-Facet Processing
+
 ```python
 pipeline = [
     {

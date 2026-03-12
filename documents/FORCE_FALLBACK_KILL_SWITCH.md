@@ -4,9 +4,9 @@
 
 The force fallback kill switch is a debugging and benchmarking feature that allows you to force all aggregation queries to use the Python fallback implementation instead of the SQL optimization path. This is useful for:
 
-1.  **Benchmarking**: Comparing performance between the optimized SQL path and the Python fallback.
-2.  **Debugging**: Isolating issues that may only appear in one of the execution paths.
-3.  **Regression Testing**: Ensuring both paths produce identical results.
+1. **Benchmarking**: Comparing performance between the optimized SQL path and the Python fallback.
+2. **Debugging**: Isolating issues that may only appear in one of the execution paths.
+3. **Regression Testing**: Ensuring both paths produce identical results.
 
 ## Usage
 
@@ -65,6 +65,6 @@ The kill switch works by adding a check at the beginning of the `_build_aggregat
 
 ## Best Practices
 
--   **Always reset the flag** after testing to avoid unintended side effects.
--   Use only in controlled testing and benchmarking environments.
--   Always verify that the results from both paths are identical when benchmarking.
+- **Always reset the flag** after testing to avoid unintended side effects.
+- Use only in controlled testing and benchmarking environments.
+- Always verify that the results from both paths are identical when benchmarking.

@@ -17,6 +17,7 @@ This document describes the enhancements made to NeoSQLite to leverage SQLite's 
 - It generates SQL queries that chain multiple `json_each()` calls, creating a Cartesian product efficiently at the database level.
 
 **Example SQL for `[{"$unwind": "$tags"}, {"$unwind": "$categories"}]`**:
+
 ```sql
 SELECT collection.id, 
        json_set(
@@ -35,6 +36,7 @@ FROM collection,
 - Supported accumulators: `$sum`, `$count`, `$avg`, `$min`, `$max`, `$push`, and `$addToSet`.
 
 **Example SQL for `[{"$unwind": "$tags"}, {"$group": {"_id": "$tags", "count": {"$sum": 1}}}]`**:
+
 ```sql
 SELECT je.value AS _id, COUNT(*) AS count
 FROM collection, json_each(json_extract(collection.data, '$.tags')) as je
@@ -118,11 +120,13 @@ All enhancements are implemented in the `QueryHelper` class in `neosqlite/collec
 ## Usage Examples
 
 ### Basic $unwind
+
 ```python
 pipeline = [{"$unwind": "$tags"}]
 ```
 
 ### Multiple $unwind
+
 ```python
 pipeline = [
     {"$unwind": "$tags"},
@@ -131,6 +135,7 @@ pipeline = [
 ```
 
 ### $unwind + $group
+
 ```python
 pipeline = [
     {"$unwind": "$tags"},
@@ -139,6 +144,7 @@ pipeline = [
 ```
 
 ### $unwind + $sort + $limit
+
 ```python
 pipeline = [
     {"$unwind": "$tags"},
@@ -148,6 +154,7 @@ pipeline = [
 ```
 
 ### Nested Array Unwinding
+
 ```python
 pipeline = [
     {"$unwind": "$orders"},
@@ -156,6 +163,7 @@ pipeline = [
 ```
 
 ### $unwind + $text (New)
+
 ```python
 pipeline = [
     {"$unwind": "$comments"},
@@ -164,6 +172,7 @@ pipeline = [
 ```
 
 **Example of an optimizable pipeline:**
+
 ```python
 pipeline = [
     {"$match": {"status": "active"}},

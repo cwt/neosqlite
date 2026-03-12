@@ -24,6 +24,7 @@ with collection.watch() as change_stream:
 
 ### Change Event Structure
 The change events are designed to be similar to MongoDB's:
+
 ```json
 {
     "_id": {"id": 1}, 

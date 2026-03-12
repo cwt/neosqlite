@@ -30,6 +30,7 @@ This comprehensive guide covers NeoSQLite's GridFS implementation, including API
 ### 1. Collection Access Pattern
 
 **PyMongo:**
+
 ```python
 from pymongo import MongoClient
 client = MongoClient()
@@ -42,6 +43,7 @@ db.fs.files.delete_one(...)    # ✅ Works
 ```
 
 **NeoSQLite:**
+
 ```python
 from neosqlite import Connection
 from neosqlite.gridfs import GridFSBucket
@@ -73,6 +75,7 @@ bucket.delete(file_id)           # ✅ Recommended for deletes
 ### 3. File ID Handling
 
 **PyMongo:**
+
 ```python
 # File ID is always an ObjectId
 file_id = bucket.upload_from_stream("file.txt", data)
@@ -80,6 +83,7 @@ file_id = bucket.upload_from_stream("file.txt", data)
 ```
 
 **NeoSQLite:**
+
 ```python
 # File ID is ObjectId, but internal storage uses dual-ID system
 file_id = bucket.upload_from_stream("file.txt", data)
@@ -92,6 +96,7 @@ file_id = bucket.upload_from_stream("file.txt", data)
 ### 5. Metadata Storage
 
 **PyMongo:**
+
 ```python
 # Metadata stored as BSON document
 bucket.upload_from_stream("file.txt", data, metadata={"key": "value"})
@@ -99,6 +104,7 @@ bucket.upload_from_stream("file.txt", data, metadata={"key": "value"})
 ```
 
 **NeoSQLite:**
+
 ```python
 # Metadata stored as JSON/JSONB
 bucket.upload_from_stream("file.txt", data, metadata={"key": "value"})
@@ -133,6 +139,7 @@ bucket.drop()  # Remove entire bucket
 ```
 
 ### Streaming Operations
+
 ```python
 # Streaming upload
 with bucket.open_upload_stream("large_file.dat") as stream:
@@ -298,13 +305,13 @@ conn.fs.files.update_one(
 
 ## Recommendations
 
-### Use PyMongo GridFS When:
+### Use PyMongo GridFS When
 - You need horizontal scaling
 - You require distributed storage
 - Your application needs high concurrent write throughput
 - You're already using MongoDB
 
-### Use NeoSQLite GridFS When:
+### Use NeoSQLite GridFS When
 - You need an embedded solution
 - You want zero-configuration deployment
 - Your application is single-user or low-concurrency

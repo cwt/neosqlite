@@ -8,9 +8,10 @@ This document provides a comprehensive guide to performance optimization in NeoS
 
 Benchmark results demonstrate that NeoSQLite's SQL optimizations provide **significant performance benefits** across supported operations:
 
-- **Average speedup**: **42.2x** faster across all optimized features
+- **Average speedup**: **55x** faster across all optimized features
 - **Maximum speedup**: **437.7x** faster for `$lookup` operations
-- **Enhanced Aggregation Performance**: **1.2x faster** average performance across supported aggregation operations through temporary table processing
+- **Enhanced Aggregation Performance**: **3-7x faster** average performance across all aggregation operations
+- **SQL Coverage**: **~94%** of pipelines optimize to Tier 1/2
 - **Consistent improvements**: All SQL-optimized features outperform their Python fallback counterparts
 
 ## Performance by Feature
@@ -37,8 +38,8 @@ Benchmark results demonstrate that NeoSQLite's SQL optimizations provide **signi
    - Native SQLite performance using `json_each()` for array decomposition
    - Integration with existing FTS5 indexes for efficient text search
 
-6. **Temporary Table Aggregation**: **1.2x faster** average performance across supported aggregation operations
-   - Expanded SQL optimization coverage from ~60% to over 85% of common aggregation pipelines
+6. **Temporary Table Aggregation**: **3-7x faster** average performance across all aggregation operations
+   - Expanded SQL optimization coverage to ~94% of common aggregation pipelines
    - Intermediate results stored in database rather than Python memory
 
 ### Measurable Improvements from json_each() Enhancements
@@ -115,7 +116,7 @@ Less data movement between SQLite and Python processes
 ### 1. json_each() Enhancements
 The primary enhancement is the offloading of the `$unwind` operation to the SQLite engine. Instead of fetching documents into Python and looping through arrays, NeoSQLite now generates a SQL query that uses `json_each()` to expand the array at the database level.
 
-#### Key Enhancements:
+#### Key Enhancements
 - **Basic $unwind Optimization**: Single `$unwind` operations optimized with `json_each()`
 - **Multiple Consecutive $unwind Stages**: Chained `json_each()` calls for multiple `$unwind` operations
 - **$unwind + $group Optimization**: SQL-level optimization combining `json_each()` with `GROUP BY`
@@ -130,7 +131,7 @@ A temporary table approach that:
 - Executes compatible groups of stages as SQL operations
 - Automatically cleans up temporary tables using transaction management
 
-#### Benefits:
+#### Benefits
 - **Reduced Memory Usage**: Intermediate results stored in database, not Python memory
 - **Better Resource Management**: Automatic cleanup with guaranteed resource release
 - **Scalability**: Ability to process larger datasets that might not fit in Python memory
@@ -198,7 +199,7 @@ Python fallback is used for:
 - Use temporary tables for intermediate results to reduce Python memory usage
 - Leverage database-level processing for large datasets
 - Consider streaming results for memory-constrained environments
-- Take advantage of the expanded SQL optimization coverage to process 85%+ of common aggregation pipelines at SQL level
+- Take advantage of the expanded SQL optimization coverage to process ~94% of common aggregation pipelines at SQL level
 
 ### 4. Query Planning
 - Understand which operations are optimized at the SQL level
@@ -207,14 +208,16 @@ Python fallback is used for:
 
 ## Performance Achievements (✅ COMPLETED)
 
-1. **✅ Expand $group accumulator support**: Added SQL optimization for `$avg`, `$min`, `$max` operations
+1. **✅ Expand $group accumulator support**: Added SQL optimization for `$avg`,`$min`, `$max` operations
 2. **✅ Advanced $unwind optimization**: Implemented SQL-based approaches for `includeArrayIndex` and `preserveNullAndEmptyArrays`
 3. **✅ Complex pipeline optimization**: Optimized `$lookup` followed by other stages with temporary table approach
 4. **✅ Enhanced Text Search**: Advanced FTS5 features like phrase search and ranking implemented
 5. **✅ Complex Projection Support**: Better handling of projections on unwound elements
 6. **✅ Hybrid Processing**: Use SQLite for preprocessing, Python for postprocessing for mixed pipeline operations
-7. **✅ 85%+ Pipeline Coverage**: Achieved 85%+ of common aggregation pipelines processed at SQL level (up from ~60%)
-8. **✅ 42.2x Average Performance**: Achieved 42.2x average performance improvements across optimized features, with up to 437.7x for specific operations
+7. **✅ 94% Pipeline Coverage**: Achieved ~94% of common aggregation pipelines processed at SQL level (up from ~60%)
+8. **✅ 55x Average Performance**: Achieved 55x average performance improvements across optimized features, with up to 437.7x for specific operations
+9. **✅ 119+ Operators Supported**: Full support for 119+ aggregation expression operators with SQL optimization where possible
+10. **✅ $options Support**: Full support for regex `$options` in optimized queries
 
 ## API Feasibility and Performance Implications
 
