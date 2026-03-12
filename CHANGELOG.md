@@ -1,5 +1,53 @@
 # CHANGELOG
 
+## 1.9.0
+
+### Major Achievement: API Expansion & Optimization Mastery
+
+- **ACID Transactions**: Full support for `ClientSession` and transaction management (`start_transaction`, `commit_transaction`, `abort_transaction`) using SQLite SAVEPOINTs with PyMongo 4.x parity.
+- **Advanced Aggregation Stages**: Added support for high-impact stages including **`$setWindowFields`**, **`$graphLookup`**, **`$fill`**, **`$densify`**, **`$bucket`**, **`$bucketAuto`**, **`$unionWith`**, **`$redact`**, and **`$merge`**.
+- **Optimization Expansion (Tier-1 SQL)**: Massive expansion of Tier-1 (SQL CTE) optimizations to dozens of previously unoptimized operators:
+    - **Set Operators**: All 7 operators (`$setUnion`, `$setIntersection`, etc.) now run natively in SQL.
+    - **String Operators**: Added SQL-tier support for `$split` (via recursive CTE), `$replaceAll`, and `$replaceOne`.
+    - **Variable Inlining**: `$let` expression support with full SQL-tier optimization.
+    - **Accumulators**: `$addToSet` and `$stdDev` (Pop/Samp) now optimized for Tier-1 SQL execution.
+- **Security & Validation**: Native **`$jsonSchema`** support for query-time filtering and write validation (using SQLite CHECK constraints).
+- **Modern GridFS**: Complete implementation of the `GridFSBucket` API for standard-compliant file storage.
+
+### New Features
+
+#### Aggregation Framework
+- **Streaming `$facet`**: Implemented parallel sub-pipeline processing with streaming results and MongoDB-compatible `batchSize`.
+- **Recursive `$graphLookup`**: Added support for recursive hierarchical searches with `maxDepth` and `depthField` via Recursive CTEs.
+- **Data Filling**: Added `$fill` stage for populating missing values using constant values or "last observation carried forward" (locf).
+- **Window Operators**: Comprehensive window function suite including `$rank`, `$denseRank`, `$top`, `$bottom`, and N-operators.
+- **Improved String Suite**: Added `$strLenCP` and `$indexOfCP` for code-point aware string operations.
+
+#### CRUD & Update Operators
+- **Positional Updates**: Full support for `$` (first match), `$[]` (all elements), and `$[identifier]` (filtered elements with `arrayFilters`).
+- **Enhanced Updates**: Added `$pullAll` and updated `$push` with `$each`, `$position`, `$slice`, and `$sort` modifiers.
+- **Regex Options**: Added `$options` support for regex flags (`i`, `m`, `s`, `x`) and direct `re.Pattern` object support.
+- **Bitwise Queries**: Support for `$bitsAllSet`, `$bitsAllClear`, `$bitsAnySet`, and `$bitsAnyClear`.
+
+#### Cursor & API Compatibility
+- **Query Diagnostics**: Enhanced `cursor.explain()` providing detailed execution plans including tier optimization information.
+- **Cursor Parity**: Added `to_list(length)`, `clone()`, `hint()`, `comment()`, `retrieved`, `alive`, and `address`.
+- **Proactive Error Handling**: Added proactive `$where` error handling to guide users toward `$expr`.
+
+### Performance & Internals
+- **JSONB Auto-Detection**: Automatic utilization of SQLite's binary `jsonb` functions for 2-5x performance improvement.
+- **Memory Bounding**: Rigorous use of `fetchmany(101)` across all internal engines to ensure constant memory footprint.
+- **Deterministic Temp Tables**: Optimized query plan caching using SHA256-hashed temporary table names.
+- **Index-Aware Query Optimization**: Enhanced the SQL translator to better utilize SQLite indexes for complex document queries.
+
+### Bug Fixes
+- **Range Query Optimization**: Fixed an issue where only the first operator in multi-operator range queries (e.g., `$gte` + `$lte`) was being SQL-optimized.
+- **Pipeline Stage Ordering**: Corrected behavior when `$limit` follows `$unwind` + `$group` sequences.
+- **JSONB Text Conversion**: Fixed edge cases in JSONB to text conversion during Tier-3 fallback.
+- **Connection Cloning**: Fixed `Connection.with_options()` to correctly return a cloned instance instead of self.
+
+---
+
 ## 1.8.0
 
 ### Major Achievement: Major Refactoring & Code Quality Release
@@ -478,14 +526,14 @@ class QueryEngine(
 ### Enhancements
 
 #### Schema Evolution
-- **Automatic Column Addition** - New `content_type` and `aliases` columns added to existing GridFS tables
-- **JSONB Support** - Enhanced storage for aliases arrays when JSONB is available
-- **Backward Compatibility** - Zero-downtime migration for existing GridFS databases
+- **Automatic Column Addition**: New `content_type` and `aliases` columns added to existing GridFS tables
+- **JSONB Support**: Enhanced storage for aliases arrays when JSONB is available
+- **Backward Compatibility**: Zero-downtime migration for existing GridFS databases
 
 #### API Compatibility
-- **100% PyMongo Compatibility** - All standard GridFS operations now fully compatible
-- **Enhanced Features** - Content type and aliases support beyond standard PyMongo
-- **Collection Access** - PyMongo-style `db.fs.files.*` operations with auto-delegation
+- **100% PyMongo Compatibility**: All standard GridFS operations now fully compatible
+- **Enhanced Features**: Content type and aliases support beyond standard PyMongo
+- **Collection Access**: PyMongo-style `db.fs.files.*` operations with auto-delegation
 
 ## 1.3.1
 
