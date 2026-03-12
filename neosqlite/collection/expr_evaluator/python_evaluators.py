@@ -1215,10 +1215,21 @@ class PythonEvaluatorsMixin:
                     operands["input"], document
                 )
                 regex = operands.get("regex", "")
+                options = operands.get("options", "")
                 if input_val is None:
                     return False
 
-                return bool(re.search(regex, str(input_val)))
+                flags = 0
+                if "i" in options.lower():
+                    flags |= re.IGNORECASE
+                if "m" in options.lower():
+                    flags |= re.MULTILINE
+                if "s" in options.lower():
+                    flags |= re.DOTALL
+                if "x" in options.lower():
+                    flags |= re.VERBOSE
+
+                return bool(re.search(regex, str(input_val), flags))
             case "$split":
                 if len(operands) != 2:
                     raise ValueError("$split requires string and delimiter")
@@ -1369,12 +1380,14 @@ class PythonEvaluatorsMixin:
                     return None
 
                 flags = 0
-                if "i" in options:
+                if "i" in options.lower():
                     flags |= re.IGNORECASE
-                if "m" in options:
+                if "m" in options.lower():
                     flags |= re.MULTILINE
-                if "s" in options:
+                if "s" in options.lower():
                     flags |= re.DOTALL
+                if "x" in options.lower():
+                    flags |= re.VERBOSE
 
                 match_result = re.search(regex, str(input_val), flags)
                 if match_result:
@@ -1400,12 +1413,14 @@ class PythonEvaluatorsMixin:
                     return []
 
                 flags = 0
-                if "i" in options:
+                if "i" in options.lower():
                     flags |= re.IGNORECASE
-                if "m" in options:
+                if "m" in options.lower():
                     flags |= re.MULTILINE
-                if "s" in options:
+                if "s" in options.lower():
                     flags |= re.DOTALL
+                if "x" in options.lower():
+                    flags |= re.VERBOSE
 
                 matches = list(re.finditer(regex, str(input_val), flags))
                 all_results: List[Dict[str, Any]] = []

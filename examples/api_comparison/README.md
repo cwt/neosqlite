@@ -10,8 +10,8 @@ This package tests NeoSQLite's MongoDB API compatibility by running the same ope
 
 | Metric | Count |
 |--------|-------|
-| **Total Tests** | 351 |
-| **Passed** | 341 |
+| **Total Tests** | 353 |
+| **Passed** | 343 |
 | **Skipped** | 10 |
 | **Failed** | 0 |
 | **Compatibility** | **100%** |

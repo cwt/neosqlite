@@ -267,20 +267,42 @@ def _exists(field: str, value: bool, document: Dict[str, Any]) -> bool:
         return (field in document) if value else (field not in document)
 
 
-def _regex(field: str, value: str, document: Dict[str, Any]) -> bool:
+def _regex(
+    field: str, value: Any, document: Dict[str, Any], options: str = ""
+) -> bool:
     """
     Match a field value against a regular expression.
 
     Args:
         field (str): The document field to compare.
-        value (str): The regular expression to compare against.
+        value (Any): The regular expression to compare against (str or re.Pattern).
         document (Dict[str, Any]): The document to compare the field value from.
+        options (str): Optional regex flags (i, m, x, s).
 
     Returns:
         bool: True if the field value matches the regular expression, False otherwise.
     """
+    flags = 0
+    if options:
+        if "i" in options.lower():
+            flags |= re.IGNORECASE
+        if "m" in options.lower():
+            flags |= re.MULTILINE
+        if "x" in options.lower():
+            flags |= re.VERBOSE
+        if "s" in options.lower():
+            flags |= re.DOTALL
+
     try:
-        return re.search(value, document.get(field, "")) is not None
+        doc_val = _get_nested_field(field, document)
+        if doc_val is None:
+            doc_val = ""
+
+        # If value is already a compiled pattern, flags are ignored in re.search
+        if isinstance(value, re.Pattern):
+            return value.search(str(doc_val)) is not None
+
+        return re.search(value, str(doc_val), flags) is not None
     except (TypeError, re.error):
         return False
 
@@ -344,7 +366,16 @@ def _apply_query_operators(operators: Dict[str, Any], value: Any) -> bool:
     Returns:
         bool: True if all operators match, False otherwise
     """
+    # Extract $options for $regex if present
+    options = operators.get("$options", "")
+    if options and "$regex" not in operators:
+        raise MalformedQueryException("Can't use $options without $regex")
+
     for op, operand in operators.items():
+        if op == "$options":
+            # $options is handled together with $regex
+            continue
+
         # Create a temporary document with the value
         temp_doc = {"_temp": value}
 
@@ -362,8 +393,12 @@ def _apply_query_operators(operators: Dict[str, Any], value: Any) -> bool:
                 return False
 
             # Call the operator function
-            if not op_func("_temp", operand, temp_doc):
-                return False
+            if op == "$regex":
+                if not op_func("_temp", operand, temp_doc, options=options):
+                    return False
+            else:
+                if not op_func("_temp", operand, temp_doc):
+                    return False
         except Exception:
             return False
 

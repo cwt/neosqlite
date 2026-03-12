@@ -761,6 +761,11 @@ class SqlConvertersMixin:
             case "$regexMatch":
                 if not isinstance(operands, dict) or "input" not in operands:
                     raise ValueError("$regexMatch requires 'input' and 'regex'")
+
+                # SQLite's REGEXP doesn't support options natively, fallback to Python
+                if operands.get("options"):
+                    return None, []
+
                 input_sql, input_params = self._convert_operand_to_sql(
                     operands["input"]
                 )

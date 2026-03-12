@@ -70,6 +70,10 @@ def compare_query_operators():
             # Note: $elemMatch has known differences
             ({"scores": {"$size": 3}}, "$size"),
             ({"name": {"$regex": "A.*"}}, "$regex"),
+            (
+                {"name": {"$regex": "alice", "$options": "i"}},
+                "$regex with $options",
+            ),
             ({"name": {"$contains": "li"}}, "$contains"),
             # Additional missing operators
             ({"$nor": [{"age": 30}, {"name": "Alice"}]}, "$nor"),

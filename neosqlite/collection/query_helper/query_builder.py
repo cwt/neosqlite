@@ -5,6 +5,7 @@ This module contains the QueryBuilderMixin class, which provides methods for
 building SQL queries from MongoDB-like query specifications.
 """
 
+import re
 from typing import TYPE_CHECKING, Any, Dict, List
 
 from ...sql_utils import quote_table_name
@@ -207,6 +208,9 @@ class QueryBuilderMixin:
                 return f"{clause}", params
             else:
                 # Simple equality
+                if isinstance(value, re.Pattern):
+                    return None  # Fall back to Python for regex objects
+
                 extract_expr = (
                     f"{self._json_function_prefix}_extract(data, {json_path})"
                 )
@@ -692,12 +696,30 @@ class QueryBuilderMixin:
                     matches.append(matches_json_schema(document, value))
                 case _:
                     if isinstance(value, dict):
+                        # Extract $options for $regex if present
+                        options = value.get("$options", "")
+                        if options and "$regex" not in value:
+                            raise MalformedQueryException(
+                                "Can't use $options without $regex"
+                            )
+
                         for operator, arg in value.items():
-                            if not self._get_operator_fn(operator)(
-                                field, arg, document
-                            ):
-                                matches.append(False)
-                                break
+                            if operator == "$options":
+                                # $options is handled together with $regex
+                                continue
+
+                            fn = self._get_operator_fn(operator)
+                            # Call operator function, passing options if it's $regex
+                            if operator == "$regex":
+                                if not fn(
+                                    field, arg, document, options=options
+                                ):
+                                    matches.append(False)
+                                    break
+                            else:
+                                if not fn(field, arg, document):
+                                    matches.append(False)
+                                    break
                         else:
                             matches.append(True)
                     else:
@@ -709,7 +731,13 @@ class QueryBuilderMixin:
                                 if not isinstance(doc_value, dict):
                                     break
                                 doc_value = doc_value.get(path, None)
-                        if value != doc_value:
+
+                        if isinstance(value, re.Pattern):
+                            if doc_value is None or not value.search(
+                                str(doc_value)
+                            ):
+                                matches.append(False)
+                        elif value != doc_value:
                             matches.append(False)
         return all(matches)
 

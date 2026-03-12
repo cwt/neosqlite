@@ -139,6 +139,49 @@ def test_regex_operator():
     assert _regex("name", "[", doc) is False
     assert _regex("name", 123, doc) is False
 
+    # Test with options
+    assert _regex("name", "alice", doc, options="i") is True
+    assert _regex("name", "ALICE", doc, options="i") is True
+    assert _regex("name", "^alice", doc, options="i") is True
+
+    # Test multiline
+    multi_doc = {"text": "Line 1\nLine 2"}
+    assert _regex("text", "^Line 2", multi_doc) is False
+    assert _regex("text", "^Line 2", multi_doc, options="m") is True
+
+    # Test dotall
+    dotall_doc = {"text": "A\nB"}
+    assert _regex("text", "A.B", dotall_doc) is False
+    assert _regex("text", "A.B", dotall_doc, options="s") is True
+
+    # Test verbose
+    verbose_doc = {"verbose_doc": "Alice"}
+    # In verbose mode, whitespace is ignored and # starts a comment
+    assert (
+        _regex(
+            "verbose_doc", " A l i c e # match alice ", verbose_doc, options="x"
+        )
+        is True
+    )
+
+
+def test_apply_query_operators_with_options():
+    # $regex with $options
+    assert (
+        _apply_query_operators({"$regex": "alice", "$options": "i"}, "Alice")
+        is True
+    )
+    assert (
+        _apply_query_operators({"$regex": "bob", "$options": "i"}, "Alice")
+        is False
+    )
+
+    # $options without $regex should raise MalformedQueryException
+    with pytest.raises(
+        MalformedQueryException, match="Can't use \\$options without \\$regex"
+    ):
+        _apply_query_operators({"$options": "i"}, "Alice")
+
 
 def test_elemMatch_operator():
     doc = {

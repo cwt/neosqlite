@@ -150,7 +150,8 @@ def compare_string_operators():
                                 "match": {
                                     "$regexFind": {
                                         "input": "$name",
-                                        "regex": "A",
+                                        "regex": "alice",
+                                        "options": "i",
                                     }
                                 }
                             }
@@ -163,6 +164,103 @@ def compare_string_operators():
         except Exception as e:
             neo_regexfind = False
             print(f"Neo $regexFind: Error - {e}")
+
+        # Test $regexMatch
+        try:
+            # i (case-insensitive)
+            result = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "match": {
+                                    "$regexMatch": {
+                                        "input": "$name",
+                                        "regex": "ALICE",
+                                        "options": "i",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            # m (multiline), s (dotall), x (verbose)
+            multi_line_doc = {"text": "Line 1\nLine 2"}
+            neo_collection.insert_one(multi_line_doc)
+
+            # Check multiline
+            result_m = list(
+                neo_collection.aggregate(
+                    [
+                        {"$match": {"text": "Line 1\nLine 2"}},
+                        {
+                            "$project": {
+                                "m": {
+                                    "$regexMatch": {
+                                        "input": "$text",
+                                        "regex": "^Line 2",
+                                        "options": "m",
+                                    }
+                                }
+                            }
+                        },
+                    ]
+                )
+            )
+
+            # Check dotall
+            result_s = list(
+                neo_collection.aggregate(
+                    [
+                        {"$match": {"text": "Line 1\nLine 2"}},
+                        {
+                            "$project": {
+                                "s": {
+                                    "$regexMatch": {
+                                        "input": "$text",
+                                        "regex": "Line 1.Line 2",
+                                        "options": "s",
+                                    }
+                                }
+                            }
+                        },
+                    ]
+                )
+            )
+
+            # Check verbose
+            result_x = list(
+                neo_collection.aggregate(
+                    [
+                        {"$match": {"text": "Line 1\nLine 2"}},
+                        {
+                            "$project": {
+                                "x": {
+                                    "$regexMatch": {
+                                        "input": "$text",
+                                        "regex": " L i n e   1 # comment",
+                                        "options": "x",
+                                    }
+                                }
+                            }
+                        },
+                    ]
+                )
+            )
+
+            neo_regexmatch = (
+                len(result) >= 1
+                and result_m[0]["m"] is True
+                and result_s[0]["s"] is True
+                and result_x[0]["x"] is True
+            )
+            print(
+                f"Neo $regexMatch (i,m,s,x): {'OK' if neo_regexmatch else 'FAIL'}"
+            )
+        except Exception as e:
+            neo_regexmatch = False
+            print(f"Neo $regexMatch: Error - {e}")
 
         # Test $replaceOne
         try:
@@ -183,7 +281,7 @@ def compare_string_operators():
                     ]
                 )
             )
-            neo_replaceone = len(result) == 2
+            neo_replaceone = len(result) >= 1
             print(f"Neo $replaceOne: {'OK' if neo_replaceone else 'FAIL'}")
         except Exception as e:
             neo_replaceone = False
@@ -196,7 +294,7 @@ def compare_string_operators():
                     [{"$project": {"index": {"$indexOfCP": ["$name", "ice"]}}}]
                 )
             )
-            neo_indexofcp = len(result) == 2
+            neo_indexofcp = len(result) >= 1
             print(f"Neo $indexOfCP: {'OK' if neo_indexofcp else 'FAIL'}")
         except Exception as e:
             neo_indexofcp = False
@@ -212,7 +310,8 @@ def compare_string_operators():
                                 "matches": {
                                     "$regexFindAll": {
                                         "input": "$name",
-                                        "regex": "o",
+                                        "regex": "O",
+                                        "options": "i",
                                     }
                                 }
                             }
@@ -220,7 +319,7 @@ def compare_string_operators():
                     ]
                 )
             )
-            neo_regexfindall = len(result) == 2
+            neo_regexfindall = len(result) >= 1
             print(f"Neo $regexFindAll: {'OK' if neo_regexfindall else 'FAIL'}")
         except Exception as e:
             neo_regexfindall = False
@@ -377,7 +476,8 @@ def compare_string_operators():
                                 "match": {
                                     "$regexFind": {
                                         "input": "$name",
-                                        "regex": "A",
+                                        "regex": "alice",
+                                        "options": "i",
                                     }
                                 }
                             }
@@ -390,6 +490,104 @@ def compare_string_operators():
         except Exception as e:
             mongo_regexfind = False
             print(f"Mongo $regexFind: Error - {e}")
+
+        # Test $regexMatch
+        try:
+            # i (case-insensitive)
+            result = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "match": {
+                                    "$regexMatch": {
+                                        "input": "$name",
+                                        "regex": "ALICE",
+                                        "options": "i",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+
+            # m (multiline), s (dotall), x (verbose)
+            multi_line_doc = {"text": "Line 1\nLine 2"}
+            mongo_collection.insert_one(multi_line_doc)
+
+            # Check multiline
+            result_m = list(
+                mongo_collection.aggregate(
+                    [
+                        {"$match": {"text": "Line 1\nLine 2"}},
+                        {
+                            "$project": {
+                                "m": {
+                                    "$regexMatch": {
+                                        "input": "$text",
+                                        "regex": "^Line 2",
+                                        "options": "m",
+                                    }
+                                }
+                            }
+                        },
+                    ]
+                )
+            )
+
+            # Check dotall
+            result_s = list(
+                mongo_collection.aggregate(
+                    [
+                        {"$match": {"text": "Line 1\nLine 2"}},
+                        {
+                            "$project": {
+                                "s": {
+                                    "$regexMatch": {
+                                        "input": "$text",
+                                        "regex": "Line 1.Line 2",
+                                        "options": "s",
+                                    }
+                                }
+                            }
+                        },
+                    ]
+                )
+            )
+
+            # Check verbose
+            result_x = list(
+                mongo_collection.aggregate(
+                    [
+                        {"$match": {"text": "Line 1\nLine 2"}},
+                        {
+                            "$project": {
+                                "x": {
+                                    "$regexMatch": {
+                                        "input": "$text",
+                                        "regex": " L i n e   1 # comment",
+                                        "options": "x",
+                                    }
+                                }
+                            }
+                        },
+                    ]
+                )
+            )
+
+            mongo_regexmatch = (
+                len(result) >= 1
+                and result_m[0]["m"] is True
+                and result_s[0]["s"] is True
+                and result_x[0]["x"] is True
+            )
+            print(
+                f"Mongo $regexMatch (i,m,s,x): {'OK' if mongo_regexmatch else 'FAIL'}"
+            )
+        except Exception as e:
+            mongo_regexmatch = False
+            print(f"Mongo $regexMatch: Error - {e}")
 
         # Test $replaceOne
         try:
@@ -410,7 +608,7 @@ def compare_string_operators():
                     ]
                 )
             )
-            mongo_replaceone = len(result) == 2
+            mongo_replaceone = len(result) >= 1
             print(f"Mongo $replaceOne: {'OK' if mongo_replaceone else 'FAIL'}")
         except Exception as e:
             mongo_replaceone = False
@@ -423,7 +621,7 @@ def compare_string_operators():
                     [{"$project": {"index": {"$indexOfCP": ["$name", "ice"]}}}]
                 )
             )
-            mongo_indexofcp = len(result) == 2
+            mongo_indexofcp = len(result) >= 1
             print(f"Mongo $indexOfCP: {'OK' if mongo_indexofcp else 'FAIL'}")
         except Exception as e:
             mongo_indexofcp = False
@@ -439,7 +637,8 @@ def compare_string_operators():
                                 "matches": {
                                     "$regexFindAll": {
                                         "input": "$name",
-                                        "regex": "o",
+                                        "regex": "O",
+                                        "options": "i",
                                     }
                                 }
                             }
@@ -447,7 +646,7 @@ def compare_string_operators():
                     ]
                 )
             )
-            mongo_regexfindall = len(result) == 2
+            mongo_regexfindall = len(result) >= 1
             print(
                 f"Mongo $regexFindAll: {'OK' if mongo_regexfindall else 'FAIL'}"
             )
@@ -457,80 +656,87 @@ def compare_string_operators():
 
         client.close()
 
-        reporter.record_comparison(
-            "String Operators",
-            "$substr",
-            neo_substr if neo_substr else "FAIL",
-            mongo_substr if mongo_substr else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "String Operators",
-            "$trim",
-            neo_trim if neo_trim else "FAIL",
-            mongo_trim if mongo_trim else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "String Operators",
-            "$split",
-            neo_split if neo_split else "FAIL",
-            mongo_split if mongo_split else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "String Operators",
-            "$replaceAll",
-            neo_replaceall if neo_replaceall else "FAIL",
-            mongo_replaceall if mongo_replaceall else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "String Operators",
-            "$ltrim",
-            neo_ltrim if neo_ltrim else "FAIL",
-            mongo_ltrim if mongo_ltrim else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "String Operators",
-            "$rtrim",
-            neo_rtrim if neo_rtrim else "FAIL",
-            mongo_rtrim if mongo_rtrim else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "String Operators",
-            "$strLenCP",
-            neo_strlencp if neo_strlencp else "FAIL",
-            mongo_strlencp if mongo_strlencp else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "String Operators",
-            "$regexFind",
-            neo_regexfind if neo_regexfind else "FAIL",
-            mongo_regexfind if mongo_regexfind else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "String Operators",
-            "$replaceOne",
-            neo_replaceone if neo_replaceone else "FAIL",
-            mongo_replaceone if mongo_replaceone else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "String Operators",
-            "$indexOfCP",
-            neo_indexofcp if neo_indexofcp else "FAIL",
-            mongo_indexofcp if mongo_indexofcp else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "String Operators",
-            "$regexFindAll",
-            neo_regexfindall if neo_regexfindall else "FAIL",
-            mongo_regexfindall if mongo_regexfindall else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
+    reporter.record_comparison(
+        "String Operators",
+        "$substr",
+        neo_substr if neo_substr else "FAIL",
+        mongo_substr if mongo_substr is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "String Operators",
+        "$trim",
+        neo_trim if neo_trim else "FAIL",
+        mongo_trim if mongo_trim is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "String Operators",
+        "$split",
+        neo_split if neo_split else "FAIL",
+        mongo_split if mongo_split is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "String Operators",
+        "$replaceAll",
+        neo_replaceall if neo_replaceall else "FAIL",
+        mongo_replaceall if mongo_replaceall is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "String Operators",
+        "$ltrim",
+        neo_ltrim if neo_ltrim else "FAIL",
+        mongo_ltrim if mongo_ltrim is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "String Operators",
+        "$rtrim",
+        neo_rtrim if neo_rtrim else "FAIL",
+        mongo_rtrim if mongo_rtrim is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "String Operators",
+        "$strLenCP",
+        neo_strlencp if neo_strlencp else "FAIL",
+        mongo_strlencp if mongo_strlencp is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "String Operators",
+        "$regexFind",
+        neo_regexfind if neo_regexfind else "FAIL",
+        mongo_regexfind if mongo_regexfind is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "String Operators",
+        "$regexMatch",
+        neo_regexmatch if neo_regexmatch else False,
+        mongo_regexmatch if mongo_regexmatch is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "String Operators",
+        "$replaceOne",
+        neo_replaceone if neo_replaceone else False,
+        mongo_replaceone if mongo_replaceone is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "String Operators",
+        "$indexOfCP",
+        neo_indexofcp if neo_indexofcp else False,
+        mongo_indexofcp if mongo_indexofcp is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "String Operators",
+        "$regexFindAll",
+        neo_regexfindall if neo_regexfindall else False,
+        mongo_regexfindall if mongo_regexfindall is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )

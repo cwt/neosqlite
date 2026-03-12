@@ -38,7 +38,9 @@ def compare_text_search():
         # Text search
         try:
             neo_results = list(
-                neo_collection.find({"description": {"$regex": "Python"}})
+                neo_collection.find(
+                    {"description": {"$regex": "Python", "$options": "i"}}
+                )
             )
             neo_text_search = len(neo_results)
             print(f"Neo text search (regex): {neo_text_search}")

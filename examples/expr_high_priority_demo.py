@@ -155,7 +155,7 @@ def main():
         print(f"   - {doc['name']}: {doc['numbers']} → sum={total}")
 
     # 6. Regex - $regexFind
-    print("\n6. Find documents containing email addresses:")
+    print("\n6. Find documents containing email addresses (case-insensitive):")
     results = list(
         collection.find(
             {
@@ -164,7 +164,8 @@ def main():
                         {
                             "$regexFind": {
                                 "input": "$text",
-                                "regex": r"\w+@\w+\.\w+",
+                                "regex": r"SUPPORT@\w+\.\w+",
+                                "options": "i",
                             }
                         },
                         None,

@@ -99,8 +99,8 @@ NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-
 
 | Metric | Result |
 |--------|--------|
-| **Total Tests** | 2,161 |
-| **Passed** | 2,154 |
+| **Total Tests** | 2,163 |
+| **Passed** | 2,156 |
 | **Failed** | 0 |
 | **XFailed** | 6 (expected failures) |
 | **XPassed** | 1 (unexpected successes) |
@@ -110,8 +110,8 @@ NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-
 
 | Metric | v1.7.0 | v1.8.0 | v1.8.0+ |
 |--------|--------|--------|---------|
-| **Total Tests** | 304 | 304 | **351** |
-| **Passed** | 300 | 300 | **341** |
+| **Total Tests** | 304 | 304 | **353** |
+| **Passed** | 300 | 300 | **343** |
 | **Skipped** | 4 | 4 | **10** |
 | **Failed** | 0 | 0 | 0 |
 | **Compatibility** | 100% | 100% | **100%** |

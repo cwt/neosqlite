@@ -149,6 +149,35 @@ class TestRegexOperationsPython:
         result = evaluator._evaluate_expr_python(expr, {"text": "hello world"})
         assert len(result) == 2
 
+    def test_regex_match_with_options_python(self):
+        """Test $regexMatch with options."""
+        evaluator = ExprEvaluator()
+        # Case insensitive
+        expr = {
+            "$regexMatch": {
+                "input": "$text",
+                "regex": "HELLO",
+                "options": "i",
+            }
+        }
+        assert (
+            evaluator._evaluate_expr_python(expr, {"text": "hello world"})
+            is True
+        )
+
+        # Multiline
+        expr = {
+            "$regexMatch": {
+                "input": "$text",
+                "regex": "^Line 2",
+                "options": "m",
+            }
+        }
+        assert (
+            evaluator._evaluate_expr_python(expr, {"text": "Line 1\nLine 2"})
+            is True
+        )
+
 
 class TestRegexIntegration:
     """Integration tests with actual collection queries."""

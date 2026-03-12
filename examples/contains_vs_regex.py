@@ -57,7 +57,7 @@ def main():
         print("\nTesting $regex operator with simpler pattern...")
         start_time = time.time()
         results = list(
-            users.find({"bio": {"$regex": "(?i)python"}})
+            users.find({"bio": {"$regex": "python", "$options": "i"}})
         )  # Case insensitive
         simple_regex_time = time.time() - start_time
         print(
