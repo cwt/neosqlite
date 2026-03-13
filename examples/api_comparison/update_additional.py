@@ -24,7 +24,6 @@ def compare_additional_update_operators():
     print("\n=== Additional Update Operators Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_collection
         neo_collection.insert_one(
             {"name": "Alice", "tags": ["python"], "score": 100}
@@ -32,9 +31,12 @@ def compare_additional_update_operators():
 
         # Test $push
         try:
+            start_neo_timing()
             neo_collection.update_one(
                 {"name": "Alice"}, {"$push": {"tags": "sql"}}
             )
+            end_neo_timing()
+
             doc = neo_collection.find_one({"name": "Alice"})
             neo_push = "sql" in doc.get("tags", [])
             print(f"Neo $push: {'OK' if neo_push else 'FAIL'}")
@@ -42,19 +44,22 @@ def compare_additional_update_operators():
             neo_push = False
             print(f"Neo $push: Error - {e}")
 
-        # Reset for $addToSet
+        # Reset for $addToSet (not timed)
         neo_collection.update_one(
             {"name": "Alice"}, {"$set": {"tags": ["python", "sql"]}}
         )
 
         # Test $addToSet
         try:
+            start_neo_timing()
             neo_collection.update_one(
                 {"name": "Alice"}, {"$addToSet": {"tags": "sql"}}
             )
             neo_collection.update_one(
                 {"name": "Alice"}, {"$addToSet": {"tags": "mongodb"}}
             )
+            end_neo_timing()
+
             doc = neo_collection.find_one({"name": "Alice"})
             tags = doc.get("tags", [])
             neo_addtoset = (
@@ -65,16 +70,19 @@ def compare_additional_update_operators():
             neo_addtoset = False
             print(f"Neo $addToSet: Error - {e}")
 
-        # Reset for $pull
+        # Reset for $pull (not timed)
         neo_collection.update_one(
             {"name": "Alice"}, {"$set": {"tags": ["python", "sql", "mongodb"]}}
         )
 
         # Test $pull
         try:
+            start_neo_timing()
             neo_collection.update_one(
                 {"name": "Alice"}, {"$pull": {"tags": "sql"}}
             )
+            end_neo_timing()
+
             doc = neo_collection.find_one({"name": "Alice"})
             neo_pull = "sql" not in doc.get("tags", [])
             print(f"Neo $pull: {'OK' if neo_pull else 'FAIL'}")
@@ -82,14 +90,17 @@ def compare_additional_update_operators():
             neo_pull = False
             print(f"Neo $pull: Error - {e}")
 
-        # Reset for $pop
+        # Reset for $pop (not timed)
         neo_collection.update_one(
             {"name": "Alice"}, {"$set": {"tags": ["first", "middle", "last"]}}
         )
 
         # Test $pop (remove last)
         try:
+            start_neo_timing()
             neo_collection.update_one({"name": "Alice"}, {"$pop": {"tags": 1}})
+            end_neo_timing()
+
             doc = neo_collection.find_one({"name": "Alice"})
             neo_pop = doc.get("tags", []) == ["first", "middle"]
             print(f"Neo $pop (last): {'OK' if neo_pop else 'FAIL'}")
@@ -97,16 +108,19 @@ def compare_additional_update_operators():
             neo_pop = False
             print(f"Neo $pop: Error - {e}")
 
-        # Reset for $currentDate
+        # Reset for $currentDate (not timed)
         neo_collection.update_one(
             {"name": "Alice"}, {"$set": {"updated_at": None}}
         )
 
         # Test $currentDate
         try:
+            start_neo_timing()
             neo_collection.update_one(
                 {"name": "Alice"}, {"$currentDate": {"updated_at": True}}
             )
+            end_neo_timing()
+
             doc = neo_collection.find_one({"name": "Alice"})
             updated_at = doc.get("updated_at")
             # MongoDB returns datetime object, NeoSQLite should too for compatibility
@@ -120,27 +134,18 @@ def compare_additional_update_operators():
             neo_currentdate = False
             print(f"Neo $currentDate: Error - {e}")
 
-        end_neo_timing()
-
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
 
     mongo_addtoset = None
-
     mongo_collection = None
-
     mongo_currentdate = None
-
     mongo_db = None
-
     mongo_pop = None
-
     mongo_pull = None
-
     mongo_push = None
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
@@ -150,9 +155,12 @@ def compare_additional_update_operators():
 
         # Test $push
         try:
+            start_mongo_timing()
             mongo_collection.update_one(
                 {"name": "Alice"}, {"$push": {"tags": "sql"}}
             )
+            end_mongo_timing()
+
             doc = mongo_collection.find_one({"name": "Alice"})
             mongo_push = "sql" in doc.get("tags", [])
             print(f"Mongo $push: {'OK' if mongo_push else 'FAIL'}")
@@ -160,19 +168,22 @@ def compare_additional_update_operators():
             mongo_push = False
             print(f"Mongo $push: Error - {e}")
 
-        # Reset for $addToSet
+        # Reset for $addToSet (not timed)
         mongo_collection.update_one(
             {"name": "Alice"}, {"$set": {"tags": ["python", "sql"]}}
         )
 
         # Test $addToSet
         try:
+            start_mongo_timing()
             mongo_collection.update_one(
                 {"name": "Alice"}, {"$addToSet": {"tags": "sql"}}
             )
             mongo_collection.update_one(
                 {"name": "Alice"}, {"$addToSet": {"tags": "mongodb"}}
             )
+            end_mongo_timing()
+
             doc = mongo_collection.find_one({"name": "Alice"})
             tags = doc.get("tags", [])
             mongo_addtoset = (
@@ -183,16 +194,19 @@ def compare_additional_update_operators():
             mongo_addtoset = False
             print(f"Mongo $addToSet: Error - {e}")
 
-        # Reset for $pull
+        # Reset for $pull (not timed)
         mongo_collection.update_one(
             {"name": "Alice"}, {"$set": {"tags": ["python", "sql", "mongodb"]}}
         )
 
         # Test $pull
         try:
+            start_mongo_timing()
             mongo_collection.update_one(
                 {"name": "Alice"}, {"$pull": {"tags": "sql"}}
             )
+            end_mongo_timing()
+
             doc = mongo_collection.find_one({"name": "Alice"})
             mongo_pull = "sql" not in doc.get("tags", [])
             print(f"Mongo $pull: {'OK' if mongo_pull else 'FAIL'}")
@@ -200,16 +214,19 @@ def compare_additional_update_operators():
             mongo_pull = False
             print(f"Mongo $pull: Error - {e}")
 
-        # Reset for $pop
+        # Reset for $pop (not timed)
         mongo_collection.update_one(
             {"name": "Alice"}, {"$set": {"tags": ["first", "middle", "last"]}}
         )
 
         # Test $pop (remove last)
         try:
+            start_mongo_timing()
             mongo_collection.update_one(
                 {"name": "Alice"}, {"$pop": {"tags": 1}}
             )
+            end_mongo_timing()
+
             doc = mongo_collection.find_one({"name": "Alice"})
             mongo_pop = doc.get("tags", []) == ["first", "middle"]
             print(f"Mongo $pop (last): {'OK' if mongo_pop else 'FAIL'}")
@@ -217,19 +234,21 @@ def compare_additional_update_operators():
             mongo_pop = False
             print(f"Mongo $pop: Error - {e}")
 
-        # Reset for $currentDate
+        # Reset for $currentDate (not timed)
         mongo_collection.update_one(
             {"name": "Alice"}, {"$set": {"updated_at": None}}
         )
 
         # Test $currentDate
         try:
+            start_mongo_timing()
             mongo_collection.update_one(
                 {"name": "Alice"}, {"$currentDate": {"updated_at": True}}
             )
+            end_mongo_timing()
+
             doc = mongo_collection.find_one({"name": "Alice"})
             updated_at = doc.get("updated_at")
-            # MongoDB returns a datetime object, NeoSQLite returns ISO string
             mongo_currentdate = updated_at is not None
             print(
                 f"Mongo $currentDate: {'OK' if mongo_currentdate else 'FAIL'} (returns datetime)"
@@ -238,7 +257,6 @@ def compare_additional_update_operators():
             mongo_currentdate = False
             print(f"Mongo $currentDate: Error - {e}")
 
-        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(

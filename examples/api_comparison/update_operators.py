@@ -23,7 +23,6 @@ def compare_update_operators():
     print("\n=== Update Operators Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_collection
         neo_collection.insert_one(
             {"name": "Alice", "age": 30, "score": 100, "tags": ["a"]}
@@ -43,11 +42,15 @@ def compare_update_operators():
         neo_results = {}
         for update, op_name in update_ops:
             try:
+                # Reset document to initial state (not timed)
                 neo_collection.update_one(
                     {}, {"$set": {"age": 30, "score": 100}}
                 )
+
+                start_neo_timing()
                 result = neo_collection.update_one({}, update)
-                _ = neo_collection.find_one({})
+                end_neo_timing()
+
                 neo_results[op_name] = (
                     "OK" if result.modified_count >= 0 else "FAIL"
                 )
@@ -55,8 +58,6 @@ def compare_update_operators():
             except Exception as e:
                 neo_results[op_name] = f"Error: {e}"
                 print(f"Neo {op_name}: Error - {e}")
-
-        end_neo_timing()
 
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
@@ -68,7 +69,6 @@ def compare_update_operators():
     mongo_results = None
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
@@ -79,10 +79,15 @@ def compare_update_operators():
         mongo_results = {}
         for update, op_name in update_ops:
             try:
+                # Reset document to initial state (not timed)
                 mongo_collection.update_one(
                     {}, {"$set": {"age": 30, "score": 100}}
                 )
+
+                start_mongo_timing()
                 result = mongo_collection.update_one({}, update)
+                end_mongo_timing()
+
                 mongo_results[op_name] = (
                     "OK" if result.modified_count >= 0 else "FAIL"
                 )
@@ -99,7 +104,6 @@ def compare_update_operators():
                 mongo_results.get(op_name),
                 skip_reason="MongoDB not available" if not client else None,
             )
-        end_mongo_timing()
         client.close()
     else:
         # MongoDB not available, record NeoSQLite results as skipped

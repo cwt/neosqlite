@@ -23,7 +23,6 @@ def compare_update_modifiers():
     print("\n=== Update Modifiers Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_modifiers
         neo_collection.insert_one(
             {"name": "A", "tags": ["a", "b"], "counter": 0, "flags": 0b0101}
@@ -32,9 +31,12 @@ def compare_update_modifiers():
         # Test $each with $push
         neo_each = False
         try:
+            start_neo_timing()
             neo_collection.update_one(
                 {"name": "A"}, {"$push": {"tags": {"$each": ["c", "d"]}}}
             )
+            end_neo_timing()
+
             doc = neo_collection.find_one({"name": "A"})
             neo_each = doc and len(doc.get("tags", [])) == 4
             print(f"Neo $push $each: {'OK' if neo_each else 'FAIL'}")
@@ -44,10 +46,13 @@ def compare_update_modifiers():
         # Test $position with $push
         neo_position = False
         try:
+            start_neo_timing()
             neo_collection.update_one(
                 {"name": "A"},
                 {"$push": {"tags": {"$each": ["x"], "$position": 0}}},
             )
+            end_neo_timing()
+
             doc = neo_collection.find_one({"name": "A"})
             neo_position = doc and doc.get("tags", [])[0] == "x"
             print(f"Neo $push $position: {'OK' if neo_position else 'FAIL'}")
@@ -57,10 +62,13 @@ def compare_update_modifiers():
         # Test $slice with $push
         neo_slice = False
         try:
+            start_neo_timing()
             neo_collection.update_one(
                 {"name": "A"},
                 {"$push": {"tags": {"$each": ["y", "z"], "$slice": -3}}},
             )
+            end_neo_timing()
+
             doc = neo_collection.find_one({"name": "A"})
             neo_slice = doc and len(doc.get("tags", [])) == 3
             print(f"Neo $push $slice: {'OK' if neo_slice else 'FAIL'}")
@@ -70,16 +78,17 @@ def compare_update_modifiers():
         # Test $bit (AND operation)
         neo_bit_and = False
         try:
+            start_neo_timing()
             neo_collection.update_one(
                 {"name": "A"}, {"$bit": {"flags": {"and": 0b0011}}}
             )
+            end_neo_timing()
+
             doc = neo_collection.find_one({"name": "A"})
             neo_bit_and = doc and doc.get("flags") == (0b0101 & 0b0011)
             print(f"Neo $bit and: {'OK' if neo_bit_and else 'FAIL'}")
         except Exception as e:
             print(f"Neo $bit and: Error - {e}")
-
-        end_neo_timing()
 
     client = test_pymongo_connection()
     mongo_bit_and = None
@@ -90,7 +99,6 @@ def compare_update_modifiers():
     mongo_slice = None
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_modifiers
         mongo_collection.delete_many({})
@@ -100,9 +108,12 @@ def compare_update_modifiers():
 
         # Test $each with $push
         try:
+            start_mongo_timing()
             mongo_collection.update_one(
                 {"name": "A"}, {"$push": {"tags": {"$each": ["c", "d"]}}}
             )
+            end_mongo_timing()
+
             doc = mongo_collection.find_one({"name": "A"})
             mongo_each = doc and len(doc.get("tags", [])) == 4
             print(f"Mongo $push $each: {'OK' if mongo_each else 'FAIL'}")
@@ -112,10 +123,13 @@ def compare_update_modifiers():
 
         # Test $position with $push
         try:
+            start_mongo_timing()
             mongo_collection.update_one(
                 {"name": "A"},
                 {"$push": {"tags": {"$each": ["x"], "$position": 0}}},
             )
+            end_mongo_timing()
+
             doc = mongo_collection.find_one({"name": "A"})
             mongo_position = doc and doc.get("tags", [])[0] == "x"
             print(
@@ -127,10 +141,13 @@ def compare_update_modifiers():
 
         # Test $slice with $push
         try:
+            start_mongo_timing()
             mongo_collection.update_one(
                 {"name": "A"},
                 {"$push": {"tags": {"$each": ["y", "z"], "$slice": -3}}},
             )
+            end_mongo_timing()
+
             doc = mongo_collection.find_one({"name": "A"})
             mongo_slice = doc and len(doc.get("tags", [])) == 3
             print(f"Mongo $push $slice: {'OK' if mongo_slice else 'FAIL'}")
@@ -140,9 +157,12 @@ def compare_update_modifiers():
 
         # Test $bit (AND operation)
         try:
+            start_mongo_timing()
             mongo_collection.update_one(
                 {"name": "A"}, {"$bit": {"flags": {"and": 0b0011}}}
             )
+            end_mongo_timing()
+
             doc = mongo_collection.find_one({"name": "A"})
             mongo_bit_and = doc and doc.get("flags") == (0b0101 & 0b0011)
             print(f"Mongo $bit and: {'OK' if mongo_bit_and else 'FAIL'}")
@@ -150,7 +170,6 @@ def compare_update_modifiers():
             mongo_bit_and = False
             print(f"Mongo $bit and: Error - {e}")
 
-        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(
