@@ -713,7 +713,7 @@ class SQLTierAggregator:
         preserve_root: bool = False,
     ) -> Tuple[str | None, List[Any]]:
         """
-        Build SQL for $fill stage.
+        Build optimized SQL for $fill stage.
         """
         partition_by = spec.get("partitionBy")
         sort_by = spec.get("sortBy", {})
@@ -725,54 +725,73 @@ class SQLTierAggregator:
             if fill_spec.get("method") == "linear":
                 return None, []
 
-        # 1. Build PARTITION BY and ORDER BY clauses
+        # 1. Collect all fields that need to be extracted for efficiency
+        # This avoids redundant json_extract calls in window functions
+        extract_selects = ["id", "data"]
+        if preserve_root or context.has_root:
+            extract_selects.append("root_data")
+
+        # Track fields to avoid duplicates
+        extracted_fields = set()
+
+        # Fields for partitionBy
         partition_parts = []
         if partition_by is not None:
+            # partition_by can be an expression
             sql, params = self.evaluator.build_select_expression(partition_by)
-            partition_parts.append(sql)
+            col_alias = f"part_expr_{context.stage_index}"
+            extract_selects.append(f"{sql} AS {col_alias}")
+            partition_parts.append(col_alias)
             all_params.extend(params)
+
         partition_clause = (
             f"PARTITION BY {', '.join(partition_parts)}"
             if partition_parts
             else ""
         )
 
+        # Fields for sortBy
         sort_parts = []
         if sort_by:
             for field, direction in sort_by.items():
                 order = "ASC" if direction == 1 else "DESC"
-                sql, params = self.evaluator.build_select_expression(
-                    f"${field}"
+                field_path = parse_json_path(field)
+                col_alias = (
+                    f"sort_{field.replace('.', '_')}_{context.stage_index}"
                 )
-                sort_parts.append(f"{sql} {order}")
-                all_params.extend(params)
+
+                if col_alias not in extracted_fields:
+                    extract_selects.append(
+                        f"{self._json_function_prefix}_extract(data, '{field_path}') AS {col_alias}"
+                    )
+                    extracted_fields.add(col_alias)
+
+                sort_parts.append(f"{col_alias} {order}")
+
         sort_clause = f"ORDER BY {', '.join(sort_parts)}" if sort_parts else ""
 
-        # 2. For locf, we need a "grouping" CTE to identify blocks of nulls
-        # If any locf is present, we wrap the logic.
+        # Fields for output (locf needs extraction)
         has_locf = any(fs.get("method") == "locf" for fs in output.values())
 
-        json_set_args = []
+        block_id_selects = ["*"]
+        final_json_args = []
 
         if not has_locf:
-            # Simple constant value fill
+            # Simple constant value fill - can be done in one SELECT
             for field, fill_spec in output.items():
                 value = fill_spec.get("value")
-                field_sql, field_params = (
-                    self.evaluator.build_select_expression(f"${field}")
-                )
-                all_params.extend(field_params)
+                field_path = parse_json_path(field)
 
-                # COALESCE(field, value)
-                fill_expr = f"COALESCE({field_sql}, ?)"
+                # COALESCE(json_extract(data, field), value)
+                fill_expr = f"COALESCE({self._json_function_prefix}_extract(data, '{field_path}'), ?)"
                 all_params.append(value)
 
-                json_set_args.append(f"'{parse_json_path(field)}'")
-                json_set_args.append(fill_expr)
+                final_json_args.append(f"'{field_path}'")
+                final_json_args.append(fill_expr)
 
             json_set_func = f"{self._json_function_prefix}_set"
             data_expr = (
-                f"json({json_set_func}(data, {', '.join(json_set_args)}))"
+                f"json({json_set_func}(data, {', '.join(final_json_args)}))"
             )
 
             select_parts = ["id", f"{data_expr} AS data"]
@@ -782,54 +801,58 @@ class SQLTierAggregator:
             sql = f"SELECT {', '.join(select_parts)} FROM {prev_stage}"
             return sql, all_params
 
-        # Complex locf fill using two window functions
-        # We'll use a subquery to calculate the block IDs
-
-        block_id_selects = ["id", "data"]
-        if preserve_root or context.has_root:
-            block_id_selects.append("root_data")
-
-        for field, fill_spec in output.items():
-            if fill_spec.get("method") == "locf":
-                field_sql, _ = self.evaluator.build_select_expression(
-                    f"${field}"
-                )
-                # Block ID: how many non-nulls we've seen so far
-                block_id_selects.append(
-                    f"COUNT({field_sql}) OVER ({partition_clause} {sort_clause}) AS block_id_{parse_json_path(field).replace('.', '_')}"
-                )
-
-        subquery_alias = f"fill_blocks_{context.stage_index}"
-
-        # Final SELECT with FIRST_VALUE over blocks
-        final_json_args = []
+        # For locf, we use the optimized multi-stage CTE approach
+        # Stage A: Extraction
         for field, fill_spec in output.items():
             field_path = parse_json_path(field)
-            if fill_spec.get("method") == "locf":
-                field_sql, _ = self.evaluator.build_select_expression(
-                    f"${field}"
+            col_alias = f"val_{field.replace('.', '_')}_{context.stage_index}"
+            if col_alias not in extracted_fields:
+                extract_selects.append(
+                    f"{self._json_function_prefix}_extract(data, '{field_path}') AS {col_alias}"
                 )
-                block_col = f"block_id_{field_path.replace('.', '_')}"
+                extracted_fields.add(col_alias)
+
+        extract_sql = f"SELECT {', '.join(extract_selects)} FROM {prev_stage}"
+        extract_cte = f"fill_extract_{context.stage_index}"
+
+        # Stage B: Block Identification
+        for field, fill_spec in output.items():
+            if fill_spec.get("method") == "locf":
+                val_col = f"val_{field.replace('.', '_')}_{context.stage_index}"
+                block_col = (
+                    f"block_{field.replace('.', '_')}_{context.stage_index}"
+                )
+                block_id_selects.append(
+                    f"COUNT({val_col}) OVER ({partition_clause} {sort_clause}) AS {block_col}"
+                )
+
+        blocks_sql = f"SELECT {', '.join(block_id_selects)} FROM {extract_cte}"
+
+        # Final Stage: Value Filling
+        for field, fill_spec in output.items():
+            field_path = parse_json_path(field)
+            field_safe = field.replace(".", "_")
+
+            if fill_spec.get("method") == "locf":
+                val_col = f"val_{field_safe}_{context.stage_index}"
+                block_col = f"block_{field_safe}_{context.stage_index}"
 
                 # Partition by both original partition AND the block ID
+                block_partition_parts = partition_parts + [block_col]
                 block_partition = (
-                    f"PARTITION BY {', '.join(partition_parts + [block_col])}"
-                    if partition_parts
-                    else f"PARTITION BY {block_col}"
+                    f"PARTITION BY {', '.join(block_partition_parts)}"
                 )
 
                 # FIRST_VALUE in this block will be the non-null value that started it
-                locf_expr = f"FIRST_VALUE({field_sql}) OVER ({block_partition} {sort_clause})"
+                locf_expr = f"FIRST_VALUE({val_col}) OVER ({block_partition} {sort_clause})"
                 final_json_args.append(f"'{field_path}'")
                 final_json_args.append(locf_expr)
             else:
                 # Constant value
+                val_col = f"val_{field_safe}_{context.stage_index}"
                 value = fill_spec.get("value")
-                field_sql, _ = self.evaluator.build_select_expression(
-                    f"${field}"
-                )
                 final_json_args.append(f"'{field_path}'")
-                final_json_args.append(f"COALESCE({field_sql}, ?)")
+                final_json_args.append(f"COALESCE({val_col}, ?)")
                 all_params.append(value)
 
         json_set_func = f"{self._json_function_prefix}_set"
@@ -839,13 +862,29 @@ class SQLTierAggregator:
         if preserve_root or context.has_root:
             select_parts.append("root_data")
 
+        # Combine into a nested subquery structure for this stage
+        # The build_pipeline_sql will wrap this stage in its own stageN CTE
+        sql = f"""
+            SELECT {', '.join(select_parts)}
+            FROM (
+                {blocks_sql}
+            )
+        """
+
+        # We need to manually add the extraction CTE to the pipeline because
+        # build_pipeline_sql expects a single SELECT.
+        # But wait, build_pipeline_sql handles CTEs. We can return a subquery.
+
         sql = f"""
             SELECT {', '.join(select_parts)}
             FROM (
                 SELECT {', '.join(block_id_selects)}
-                FROM {prev_stage}
-            ) {subquery_alias}
+                FROM (
+                    {extract_sql}
+                )
+            )
         """
+
         return sql, all_params
 
     def _build_graph_lookup_sql(

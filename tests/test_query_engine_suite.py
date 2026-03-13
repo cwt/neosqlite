@@ -353,6 +353,67 @@ def test_array_operators(collection, connection):
     assert results[0]["_id"] == 5
 
 
+def test_fill_operator(collection):
+    """Test $fill aggregation stage with SQL/Python consistency check."""
+
+    def verify_consistency(coll, pipeline):
+        """Helper to verify result consistency between SQL (Tier-1) and Python (Tier-3)."""
+        # Get results with Tier-3 (Python fallback)
+        set_force_fallback(True)
+        tier3_results = list(coll.aggregate(pipeline))
+        set_force_fallback(False)
+
+        # Get results with Tier-1 (SQL)
+        tier1_results = list(coll.aggregate(pipeline))
+
+        # Sort both by _id for comparison
+        tier1_sorted = sorted(tier1_results, key=lambda x: str(x.get("_id")))
+        tier3_sorted = sorted(tier3_results, key=lambda x: str(x.get("_id")))
+
+        # Results must be identical
+        assert tier1_sorted == tier3_sorted
+        return tier1_sorted
+
+    collection.insert_many(
+        [
+            {"_id": 1, "time": 1, "val": 10, "cat": "A"},
+            {"_id": 2, "time": 2, "val": None, "cat": "A"},
+            {"_id": 3, "time": 3, "val": None, "cat": "A"},
+            {"_id": 4, "time": 4, "val": 40, "cat": "A"},
+            {"_id": 5, "time": 1, "val": 100, "cat": "B"},
+            {"_id": 6, "time": 2, "val": None, "cat": "B"},
+        ]
+    )
+
+    # Test locf method
+    pipeline_locf = [
+        {
+            "$fill": {
+                "partitionBy": "$cat",
+                "sortBy": {"time": 1},
+                "output": {"val": {"method": "locf"}},
+            }
+        }
+    ]
+    results = verify_consistency(collection, pipeline_locf)
+    assert len(results) == 6
+    # Check A partition
+    docs_a = [d for d in results if d["cat"] == "A"]
+    docs_a.sort(key=lambda x: x["time"])
+    assert docs_a[0]["val"] == 10
+    assert docs_a[1]["val"] == 10
+    assert docs_a[2]["val"] == 10
+    assert docs_a[3]["val"] == 40
+
+    # Test constant value fill
+    pipeline_value = [{"$fill": {"output": {"val": {"value": -1}}}}]
+    results = verify_consistency(collection, pipeline_value)
+    # Documents with None should now have -1
+    none_docs = [d for d in results if d["_id"] in (2, 3, 6)]
+    for d in none_docs:
+        assert d["val"] == -1
+
+
 @pytest.mark.xfail(
     reason="There is a bug with _id queries causing ProgrammingError."
 )

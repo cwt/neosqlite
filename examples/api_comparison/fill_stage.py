@@ -59,10 +59,10 @@ def compare_fill_stage():
 
     neo_results = {}
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_fill
         neo_collection.insert_many(test_data)
 
+        start_neo_timing()
         for name, pipeline in pipelines.items():
             try:
                 neo_results[name] = list(neo_collection.aggregate(pipeline))
@@ -77,12 +77,12 @@ def compare_fill_stage():
     mongo_results = {}
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_fill
         mongo_collection.delete_many({})
         mongo_collection.insert_many(test_data)
 
+        start_mongo_timing()
         for name, pipeline in pipelines.items():
             try:
                 # MongoDB 5.3+ supports $fill
