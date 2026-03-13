@@ -10,6 +10,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -23,14 +24,15 @@ def compare_bucket_aggregation():
     print("\n=== $bucket Aggregation Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.bucket_test
         neo_collection.insert_many(
             [{"_id": 100 + i, "value": i * 10} for i in range(1, 6)]
         )
 
+        set_accumulation_mode(True)
         # Test $bucket
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [
@@ -44,19 +46,17 @@ def compare_bucket_aggregation():
                     ]
                 )
             )
+            end_neo_timing()
             neo_bucket = len(result)
             print(f"Neo $bucket: {len(result)} buckets")
         except Exception as e:
             neo_bucket = f"Error: {e}"
             print(f"Neo $bucket: Error - {e}")
 
-        end_neo_timing()
-
     client = test_pymongo_connection()
     mongo_bucket = None
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.bucket_test
         mongo_collection.delete_many({})
@@ -64,7 +64,9 @@ def compare_bucket_aggregation():
             [{"_id": 100 + i, "value": i * 10} for i in range(1, 6)]
         )
 
+        set_accumulation_mode(True)
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [
@@ -78,13 +80,13 @@ def compare_bucket_aggregation():
                     ]
                 )
             )
+            end_mongo_timing()
             mongo_bucket = len(result)
             print(f"Mongo $bucket: {len(result)} buckets")
         except Exception as e:
             mongo_bucket = f"Error: {e}"
             print(f"Mongo $bucket: Error - {e}")
 
-        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(
