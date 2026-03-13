@@ -364,7 +364,7 @@ class Connection:
         ]
 
     def command(
-        self, command: str | Dict[str, Any], **kwargs: Any
+        self, command: str | Dict[str, Any], value: Any = None, **kwargs: Any
     ) -> Dict[str, Any]:
         """
         Issue a database command and return the response.
@@ -377,6 +377,7 @@ class Connection:
             command: The command to execute. Can be:
                     - A string (e.g., "table_info", "integrity_check")
                     - A dict with command name as key (e.g., {"ping": 1})
+            value: Optional command value (for string commands)
             **kwargs: Additional command arguments
 
         Returns:
@@ -388,6 +389,8 @@ class Connection:
             - "listCollections" - Returns collection list
             - "table_info" - Returns table schema (PRAGMA table_info)
             - "integrity_check" - Returns integrity check results
+            - "validate" - Returns integrity check for a collection
+            - "reIndex" - Rebuilds indexes for a collection
             - "foreign_key_check" - Returns foreign key check results
             - "index_list" - Returns index list for a table
             - "vacuum" - Runs VACUUM command
@@ -399,6 +402,10 @@ class Connection:
             >>> print(result)
             {'ok': 1.0}
         """
+        # If command is a string and value is provided, it's equivalent to {command: value}
+        if isinstance(command, str) and value is not None:
+            command = {command: value}
+
         # Handle string commands
         if isinstance(command, str):
             cmd_name = command.lower()
@@ -540,6 +547,25 @@ class Connection:
                 self.db.execute("ANALYZE")
                 return {"ok": 1.0, "message": "ANALYZE completed"}
 
+            elif cmd_name == "reindex":
+                # MongoDB-compatible reIndex command
+                # In MongoDB: db.runCommand({reIndex: "collectionName"})
+                # Or db.command("reIndex", "collectionName")
+                collection_name = kwargs.get("reIndex")
+                if not collection_name and isinstance(command, dict):
+                    collection_name = command.get("reindex")
+                if not collection_name and isinstance(command, dict):
+                    collection_name = command.get("reIndex")
+
+                if collection_name:
+                    self.db.execute(
+                        f"REINDEX {quote_table_name(collection_name)}"
+                    )
+                else:
+                    self.db.execute("REINDEX")
+
+                return {"ok": 1.0, "message": "REINDEX completed"}
+
             elif cmd_name == "collstats":
                 # Collection statistics
                 collection_name = kwargs.get("collection")
@@ -584,7 +610,7 @@ class Connection:
             return {"ok": 0, "errmsg": str(e), "code": 1}
 
     def cursor_command(
-        self, command: str | Dict[str, Any], **kwargs: Any
+        self, command: str | Dict[str, Any], value: Any = None, **kwargs: Any
     ) -> AggregationCursor:
         """
         Execute a database command and return a cursor for its results.
@@ -595,12 +621,13 @@ class Connection:
 
         Args:
             command: The command to execute.
+            value: Optional command value.
             **kwargs: Additional command arguments.
 
         Returns:
             AggregationCursor: A cursor over the command results.
         """
-        result = self.command(command, **kwargs)
+        result = self.command(command, value=value, **kwargs)
 
         # Determine the results to iterate over
         if isinstance(result, dict) and "collections" in result:

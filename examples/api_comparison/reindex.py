@@ -23,7 +23,6 @@ def compare_reindex_operation():
     print("\n=== Reindex Operation Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_reindex
         neo_collection.insert_many(
             [
@@ -33,9 +32,10 @@ def compare_reindex_operation():
         )
         neo_collection.create_index("name")
 
+        start_neo_timing()
         # Test reindex
         try:
-            neo_collection.reindex("test_reindex")
+            neo_conn.command("reIndex", "test_reindex")
             neo_reindex_ok = True
             print("Neo reindex: OK")
         except Exception as e:
@@ -54,7 +54,6 @@ def compare_reindex_operation():
     mongo_reindex_ok = None
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_reindex
         mongo_collection.delete_many({})
@@ -66,6 +65,7 @@ def compare_reindex_operation():
         )
         mongo_collection.create_index("name")
 
+        start_mongo_timing()
         # Test reindex (MongoDB command)
         try:
             mongo_db.command("reIndex", "test_reindex")
