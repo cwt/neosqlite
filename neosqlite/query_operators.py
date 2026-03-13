@@ -341,9 +341,24 @@ def _elemMatch(field: str, value: Any, document: Dict[str, Any]) -> bool:
             # Handle field-value pairs for arrays of objects
             # e.g., {"scores": {"$elemMatch": {"subject": "math", "score": {"$gt": 80}}}}
             for elem in field_val:
-                if isinstance(elem, dict) and all(
-                    _eq(k, v, elem) for k, v in value.items()
-                ):
+                if not isinstance(elem, dict):
+                    continue
+                match_all = True
+                for k, v in value.items():
+                    if isinstance(v, dict) and any(
+                        sk.startswith("$") for sk in v.keys()
+                    ):
+                        # Handle query operators like {"$gt": 80} for fields
+                        field_val_in_elem = _get_nested_field(k, elem)
+                        if not _apply_query_operators(v, field_val_in_elem):
+                            match_all = False
+                            break
+                    else:
+                        # Handle literal field-value pairs
+                        if not _eq(k, v, elem):
+                            match_all = False
+                            break
+                if match_all:
                     return True
             return False
     else:

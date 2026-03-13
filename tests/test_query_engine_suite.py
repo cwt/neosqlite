@@ -270,14 +270,31 @@ def test_logical_operators(collection):
     assert results[0]["name"] == "Charlie"
 
 
-@pytest.mark.xfail(reason="The $all operator is not working correctly.")
 def test_array_operators(collection, connection):
-    """Test array operators $all and $elemMatch."""
+    """Test array operators $all and $elemMatch with SQL/Python consistency check."""
+
+    def verify_consistency(coll, query):
+        """Helper to verify result consistency between SQL (Tier-1) and Python (Tier-3)."""
+        # Get results with Tier-3 (Python fallback)
+        set_force_fallback(True)
+        tier3_results = list(coll.find(query).sort("_id", 1))
+        set_force_fallback(False)
+
+        # Get results with Tier-1 (SQL)
+        tier1_results = list(coll.find(query).sort("_id", 1))
+
+        # Results must be identical
+        assert [d.get("_id") for d in tier1_results] == [
+            d.get("_id") for d in tier3_results
+        ]
+        return tier1_results
+
     collection.insert_many(
         [
-            {"name": "Alice", "tags": ["python", "sql"]},
-            {"name": "Bob", "tags": ["java", "sql"]},
+            {"_id": 1, "name": "Alice", "tags": ["python", "sql"]},
+            {"_id": 2, "name": "Bob", "tags": ["java", "sql"]},
             {
+                "_id": 3,
                 "name": "Charlie",
                 "scores": [
                     {"subject": "math", "score": 90},
@@ -285,6 +302,7 @@ def test_array_operators(collection, connection):
                 ],
             },
             {
+                "_id": 4,
                 "name": "David",
                 "scores": [
                     {"subject": "math", "score": 75},
@@ -294,21 +312,16 @@ def test_array_operators(collection, connection):
         ]
     )
 
-    # Test $all
+    # Test $all (already optimized in other paths, but good to check)
     results = list(collection.find({"tags": {"$all": ["python", "sql"]}}))
     assert len(results) == 1
     assert results[0]["name"] == "Alice"
 
     # Test $elemMatch with field-value pairs
-    results = list(
-        collection.find(
-            {
-                "scores": {
-                    "$elemMatch": {"subject": "math", "score": {"$gt": 80}}
-                }
-            }
-        )
-    )
+    query = {
+        "scores": {"$elemMatch": {"subject": "math", "score": {"$gt": 80}}}
+    }
+    results = verify_consistency(collection, query)
     assert len(results) == 1
     assert results[0]["name"] == "Charlie"
 
@@ -316,17 +329,28 @@ def test_array_operators(collection, connection):
     collection2 = connection["test_elemmatch"]
     collection2.insert_many(
         [
-            {"scores": [80, 90, 100]},
-            {"scores": [70, 80]},
-            {"scores": [90, 95]},
+            {"_id": 5, "scores": [80, 90, 100]},
+            {"_id": 6, "scores": [70, 80]},
+            {"_id": 7, "scores": [90, 95]},
         ]
     )
-    results = list(collection2.find({"scores": {"$elemMatch": {"$gte": 90}}}))
+
+    results = verify_consistency(
+        collection2, {"scores": {"$elemMatch": {"$gte": 90}}}
+    )
     assert len(results) == 2
 
-    results = list(collection2.find({"scores": {"$elemMatch": {"$lt": 75}}}))
+    results = verify_consistency(
+        collection2, {"scores": {"$elemMatch": {"$lt": 75}}}
+    )
     assert len(results) == 1
     assert results[0]["scores"] == [70, 80]
+
+    # Test $elemMatch with complex field operators
+    query_complex = {"scores": {"$elemMatch": {"$in": [100, 101]}}}
+    results = verify_consistency(collection2, query_complex)
+    assert len(results) == 1
+    assert results[0]["_id"] == 5
 
 
 @pytest.mark.xfail(

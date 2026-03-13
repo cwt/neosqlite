@@ -315,7 +315,8 @@ def test_raw_batch_cursor_fallback_path():
             {"name": "Bob", "age": 25},
         ]
         collection.insert_many(docs)
-        complex_filter = {"nonexistent": {"$elemMatch": {"$eq": "value"}}}
+        # Use $jsonSchema which triggers Python fallback
+        complex_filter = {"$jsonSchema": {}}
         where_result = (
             collection.query_engine.helpers._build_simple_where_clause(
                 complex_filter

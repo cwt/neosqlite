@@ -239,8 +239,19 @@ def compare_additional_aggregation_stages():
             merge_db_path = "test_merge.db"
             import os
 
-            if os.path.exists(merge_db_path):
-                os.remove(merge_db_path)
+            def cleanup_merge_db():
+                for f in [
+                    merge_db_path,
+                    f"{merge_db_path}-wal",
+                    f"{merge_db_path}-shm",
+                ]:
+                    if os.path.exists(f):
+                        try:
+                            os.remove(f)
+                        except OSError:
+                            pass
+
+            cleanup_merge_db()
 
             with neosqlite.Connection(merge_db_path) as merge_conn:
                 m_coll = merge_conn.test_collection
@@ -286,8 +297,7 @@ def compare_additional_aggregation_stages():
                     d.pop("id", None)
                 neo_merge = sorted(neo_merge_raw, key=lambda x: x["item"])
 
-            if os.path.exists(merge_db_path):
-                os.remove(merge_db_path)
+            cleanup_merge_db()
             print("Neo $merge: OK")
         except Exception as e:
             neo_merge = f"Error: {e}"

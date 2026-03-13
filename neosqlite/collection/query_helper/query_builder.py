@@ -596,6 +596,77 @@ class QueryBuilderMixin:
                     else:
                         # Invalid value for $contains, fallback to Python
                         return None, []
+                case "$elemMatch":
+                    # Determine the json_each function to use
+                    json_each_func = getattr(
+                        self, "_json_each_function", "json_each"
+                    )
+
+                    # Build the inner WHERE clause for the subquery
+                    inner_clauses = []
+                    inner_params = []
+
+                    if isinstance(op_val, dict):
+                        has_operators = any(
+                            k.startswith("$") for k in op_val.keys()
+                        )
+                        if has_operators:
+                            # Case: {"field": {"$elemMatch": {"$gt": 10}}}
+                            # Use "value" as path which will be retargeted below
+                            c, p = self._build_operator_clause("value", op_val)
+                            if c is None:
+                                return None, []
+                            # Retarget: replace json_extract(data, value) with value
+                            # The _build_operator_clause uses f"{self._json_function_prefix}_extract(data, value)"
+                            c = c.replace(
+                                f"{self._json_function_prefix}_extract(data, value)",
+                                "value",
+                            )
+                            inner_clauses.append(c)
+                            inner_params.extend(p)
+                        else:
+                            # Case: {"field": {"$elemMatch": {"k": "v"}}}
+                            for sub_field, sub_val in op_val.items():
+                                if isinstance(sub_val, dict):
+                                    # Operator on subfield
+                                    c, p = self._build_operator_clause(
+                                        f"'{parse_json_path(sub_field)}'",
+                                        sub_val,
+                                    )
+                                else:
+                                    # Equality on subfield
+                                    c = (
+                                        f"{self._json_function_prefix}_extract(data, "
+                                        f"'{parse_json_path(sub_field)}') = ?"
+                                    )
+                                    p = [sub_val]
+
+                                if c is None:
+                                    return None, []
+                                # Retarget from 'data' to 'value' (the row from json_each)
+                                c = c.replace(
+                                    f"{self._json_function_prefix}_extract(data,",
+                                    f"{self._json_function_prefix}_extract(value,",
+                                )
+                                inner_clauses.append(c)
+                                inner_params.extend(p)
+                    else:
+                        # Case: {"field": {"$elemMatch": "value"}}
+                        # For simple values in an array
+                        inner_clauses.append("value = ?")
+                        inner_params.append(op_val)
+
+                    if not inner_clauses:
+                        return None, []
+
+                    where_inner = " AND ".join(inner_clauses)
+                    # EXISTS (SELECT 1 FROM json_each(data, '$.field') WHERE <inner_where>)
+                    # Use json_type check to ensure it only matches arrays (MongoDB semantics)
+                    clauses.append(
+                        f"json_type(data, {json_path}) = 'array' AND "
+                        f"EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) WHERE {where_inner})"
+                    )
+                    params.extend(inner_params)
                 case _:
                     # Unsupported operator, fallback to Python
                     return None, []

@@ -23,7 +23,6 @@ def compare_elemmatch_operator():
     print("\n=== $elemMatch Query Operator Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_elemmatch
         neo_collection.insert_many(
             [
@@ -34,6 +33,7 @@ def compare_elemmatch_operator():
             ]
         )
 
+        start_neo_timing()
         # Test $elemMatch with multiple conditions
         try:
             neo_elemmatch_result = list(
@@ -58,7 +58,6 @@ def compare_elemmatch_operator():
     mongo_elemmatch_result = None
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_elemmatch
         mongo_collection.delete_many({})
@@ -71,6 +70,7 @@ def compare_elemmatch_operator():
             ]
         )
 
+        start_mongo_timing()
         # Test $elemMatch with multiple conditions
         try:
             mongo_elemmatch_result = list(

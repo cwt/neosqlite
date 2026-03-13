@@ -29,7 +29,6 @@ def compare_additional_expr_success_stories():
     # Test $elemMatch
     print("--- $elemMatch ---")
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_collection
         neo_collection.insert_many(
             [
@@ -38,6 +37,7 @@ def compare_additional_expr_success_stories():
                 {"scores": [90, 95]},
             ]
         )
+        start_neo_timing()
         try:
             neo_result = list(
                 neo_collection.find({"scores": {"$elemMatch": {"$gte": 90}}})
@@ -90,7 +90,6 @@ def compare_additional_expr_success_stories():
     mongo_round = None
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
@@ -101,6 +100,7 @@ def compare_additional_expr_success_stories():
                 {"scores": [90, 95]},
             ]
         )
+        start_mongo_timing()
         try:
             mongo_result = list(
                 mongo_collection.find({"scores": {"$elemMatch": {"$gte": 90}}})

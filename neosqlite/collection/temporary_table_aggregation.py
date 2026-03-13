@@ -196,6 +196,8 @@ def aggregation_pipeline_context(db_connection, pipeline_id: str | None = None):
                 suffix = stage_or_suffix
             else:
                 suffix = "unknown"
+            import uuid
+
             table_name = f"temp_{suffix}_{uuid.uuid4().hex}"
 
         if params is not None:

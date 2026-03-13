@@ -60,6 +60,7 @@ class Connection:
                 self._db_path if self._db_path != ":memory:" else "memory"
             )
 
+        self._closed = False
         if not self._is_clone:
             self.connect(*args, **kwargs)
 
@@ -107,13 +108,22 @@ class Connection:
         connection. This method ensures resources are released and the connection
         is no longer usable after being called.
         """
-        if self._is_clone:
+        if getattr(self, "_is_clone", False) or getattr(self, "_closed", False):
             return
 
         if self.db is not None:
-            if self.db.in_transaction:
-                self.db.commit()
-            self.db.close()
+            try:
+                if self.db.in_transaction:
+                    self.db.commit()
+            except (sqlite3.ProgrammingError, sqlite3.OperationalError):
+                pass
+
+            try:
+                self.db.close()
+            except (sqlite3.ProgrammingError, sqlite3.OperationalError):
+                pass
+
+        self._closed = True
 
     @property
     def client(self) -> Connection:
@@ -765,21 +775,5 @@ class Connection:
     def __del__(self):
         """
         Ensure the database connection is closed when the object is garbage collected.
-
-        This method attempts to close the database connection when the Connection
-        object is being garbage collected. It checks if the connection exists and
-        is not already closed before attempting to close it. Any exceptions during
-        this process are caught and ignored to prevent crashes during garbage
-        collection.
         """
-        if getattr(self, "_is_clone", False):
-            return
-
-        try:
-            if hasattr(self, "db") and self.db is not None:
-                # Only close if it's not already closed
-                if not getattr(self.db, "closed", False):
-                    self.db.close()
-        except Exception:
-            # Ignore exceptions in __del__ to avoid crashes during garbage collection
-            pass
+        self.close()

@@ -1794,9 +1794,6 @@ def test_text_search_on_unwound_objects_with_fts(collection):
     assert "Optimizing JavaScript applications" in contents
 
 
-@pytest.mark.xfail(
-    reason="Nested array projection support not yet implemented - falls back to Python"
-)
 def test_text_search_on_unwound_nested_arrays(collection):
     """Test text search on nested array structures with projection."""
     # Insert documents with nested arrays
