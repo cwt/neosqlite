@@ -10,6 +10,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -23,7 +24,6 @@ def compare_additional_aggregation_stages():
     print("\n=== Additional Aggregation Pipeline Stages Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_collection
         neo_collection.insert_many(
             [
@@ -35,10 +35,13 @@ def compare_additional_aggregation_stages():
             ]
         )
 
+        set_accumulation_mode(True)
         # Test $sample
         try:
+            start_neo_timing()
             # We only compare length because results are random
             result = list(neo_collection.aggregate([{"$sample": {"size": 2}}]))
+            end_neo_timing()
             neo_sample = len(result)
             print(f"Neo $sample: {neo_sample} documents")
         except Exception as e:
@@ -47,6 +50,7 @@ def compare_additional_aggregation_stages():
 
         # Test $facet
         try:
+            start_neo_timing()
             neo_facet = list(
                 neo_collection.aggregate(
                     [
@@ -76,6 +80,7 @@ def compare_additional_aggregation_stages():
                     ]
                 )
             )
+            end_neo_timing()
             print("Neo $facet: OK")
         except Exception as e:
             neo_facet = f"Error: {e}"
@@ -92,6 +97,7 @@ def compare_additional_aggregation_stages():
         )
 
         try:
+            start_neo_timing()
             # We strip _id and internal id for lookup comparison due to complex nesting
             neo_lookup_raw = list(
                 neo_collection.aggregate(
@@ -108,6 +114,7 @@ def compare_additional_aggregation_stages():
                     ]
                 )
             )
+            end_neo_timing()
 
             def clean_lookup(docs):
                 for doc in docs:
@@ -127,6 +134,7 @@ def compare_additional_aggregation_stages():
 
         # Test $bucket
         try:
+            start_neo_timing()
             neo_bucket = list(
                 neo_collection.aggregate(
                     [
@@ -141,6 +149,7 @@ def compare_additional_aggregation_stages():
                     ]
                 )
             )
+            end_neo_timing()
             print("Neo $bucket: OK")
         except Exception as e:
             neo_bucket = f"Error: {e}"
@@ -148,11 +157,13 @@ def compare_additional_aggregation_stages():
 
         # Test $bucketAuto
         try:
+            start_neo_timing()
             neo_bucketauto = list(
                 neo_collection.aggregate(
                     [{"$bucketAuto": {"groupBy": "$price", "buckets": 2}}]
                 )
             )
+            end_neo_timing()
             print("Neo $bucketAuto: OK")
         except Exception as e:
             neo_bucketauto = f"Error: {e}"
@@ -161,6 +172,7 @@ def compare_additional_aggregation_stages():
         # Test $unionWith
         neo_conn.other_coll.insert_one({"item": "Other", "price": 50})
         try:
+            start_neo_timing()
             neo_unionwith_raw = list(
                 neo_collection.aggregate(
                     [
@@ -169,6 +181,7 @@ def compare_additional_aggregation_stages():
                     ]
                 )
             )
+            end_neo_timing()
             for d in neo_unionwith_raw:
                 d.pop("_id", None)
                 d.pop("id", None)
@@ -180,6 +193,7 @@ def compare_additional_aggregation_stages():
 
         # Test $redact
         try:
+            start_neo_timing()
             neo_redact_raw = list(
                 neo_collection.aggregate(
                     [
@@ -196,6 +210,7 @@ def compare_additional_aggregation_stages():
                     ]
                 )
             )
+            end_neo_timing()
             for d in neo_redact_raw:
                 d.pop("_id", None)
                 d.pop("id", None)
@@ -208,6 +223,7 @@ def compare_additional_aggregation_stages():
         # Test $densify
         neo_conn.densify_coll.insert_many([{"t": 1}, {"t": 3}])
         try:
+            start_neo_timing()
             # NeoSQLite includes upper bound, Mongo does not. Use bounds that align.
             neo_densify_raw = list(
                 neo_conn.densify_coll.aggregate(
@@ -224,6 +240,7 @@ def compare_additional_aggregation_stages():
                     ]
                 )
             )
+            end_neo_timing()
             for d in neo_densify_raw:
                 d.pop("_id", None)
                 d.pop("id", None)
@@ -279,6 +296,8 @@ def compare_additional_aggregation_stages():
                 )
 
                 target_name = "merged_results"
+
+                start_neo_timing()
                 # Run merge
                 list(
                     m_coll.aggregate(
@@ -288,6 +307,7 @@ def compare_additional_aggregation_stages():
                         ]
                     )
                 )
+                end_neo_timing()
 
                 # Verify the target collection
                 target_coll = merge_conn[target_name]
@@ -303,8 +323,6 @@ def compare_additional_aggregation_stages():
             neo_merge = f"Error: {e}"
             print(f"Neo $merge: Error - {e}")
 
-        end_neo_timing()
-
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
 
@@ -313,7 +331,6 @@ def compare_additional_aggregation_stages():
     mongo_facet = None
     mongo_lookup = None
     mongo_sample = None
-
     mongo_bucket = None
     mongo_bucketauto = None
     mongo_unionwith = None
@@ -322,7 +339,6 @@ def compare_additional_aggregation_stages():
     mongo_merge = None
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
@@ -336,11 +352,14 @@ def compare_additional_aggregation_stages():
             ]
         )
 
+        set_accumulation_mode(True)
         # Test $sample
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate([{"$sample": {"size": 2}}])
             )
+            end_mongo_timing()
             mongo_sample = len(result)
             print(f"Mongo $sample: {mongo_sample} documents")
         except Exception as e:
@@ -349,6 +368,7 @@ def compare_additional_aggregation_stages():
 
         # Test $facet
         try:
+            start_mongo_timing()
             mongo_facet = list(
                 mongo_collection.aggregate(
                     [
@@ -376,6 +396,7 @@ def compare_additional_aggregation_stages():
                     ]
                 )
             )
+            end_mongo_timing()
             print("Mongo $facet: OK")
         except Exception as e:
             mongo_facet = f"Error: {e}"
@@ -393,6 +414,7 @@ def compare_additional_aggregation_stages():
         )
 
         try:
+            start_mongo_timing()
             mongo_lookup_raw = list(
                 mongo_collection.aggregate(
                     [
@@ -408,6 +430,7 @@ def compare_additional_aggregation_stages():
                     ]
                 )
             )
+            end_mongo_timing()
 
             def clean_mongo_lookup(docs):
                 for doc in docs:
@@ -425,6 +448,7 @@ def compare_additional_aggregation_stages():
 
         # Test $bucket
         try:
+            start_mongo_timing()
             mongo_bucket = list(
                 mongo_collection.aggregate(
                     [
@@ -439,6 +463,7 @@ def compare_additional_aggregation_stages():
                     ]
                 )
             )
+            end_mongo_timing()
             print("Mongo $bucket: OK")
         except Exception as e:
             mongo_bucket = f"Error: {e}"
@@ -446,11 +471,13 @@ def compare_additional_aggregation_stages():
 
         # Test $bucketAuto
         try:
+            start_mongo_timing()
             mongo_bucketauto = list(
                 mongo_collection.aggregate(
                     [{"$bucketAuto": {"groupBy": "$price", "buckets": 2}}]
                 )
             )
+            end_mongo_timing()
             print("Mongo $bucketAuto: OK")
         except Exception as e:
             mongo_bucketauto = f"Error: {e}"
@@ -460,6 +487,7 @@ def compare_additional_aggregation_stages():
         mongo_db.other_coll.delete_many({})
         mongo_db.other_coll.insert_one({"item": "Other", "price": 50})
         try:
+            start_mongo_timing()
             mongo_unionwith_raw = list(
                 mongo_collection.aggregate(
                     [
@@ -468,6 +496,7 @@ def compare_additional_aggregation_stages():
                     ]
                 )
             )
+            end_mongo_timing()
             for d in mongo_unionwith_raw:
                 d.pop("_id", None)
             mongo_unionwith = mongo_unionwith_raw
@@ -478,6 +507,7 @@ def compare_additional_aggregation_stages():
 
         # Test $redact
         try:
+            start_mongo_timing()
             mongo_redact_raw = list(
                 mongo_collection.aggregate(
                     [
@@ -494,6 +524,7 @@ def compare_additional_aggregation_stages():
                     ]
                 )
             )
+            end_mongo_timing()
             for d in mongo_redact_raw:
                 d.pop("_id", None)
             mongo_redact = mongo_redact_raw
@@ -506,6 +537,7 @@ def compare_additional_aggregation_stages():
         mongo_db.densify_coll.delete_many({})
         mongo_db.densify_coll.insert_many([{"t": 1}, {"t": 3}])
         try:
+            start_mongo_timing()
             mongo_densify_raw = list(
                 mongo_db.densify_coll.aggregate(
                     [
@@ -518,6 +550,7 @@ def compare_additional_aggregation_stages():
                     ]
                 )
             )
+            end_mongo_timing()
             for d in mongo_densify_raw:
                 d.pop("_id", None)
             mongo_densify = mongo_densify_raw
@@ -530,12 +563,16 @@ def compare_additional_aggregation_stages():
         try:
             target_name = "merged_results"
             mongo_db[target_name].delete_many({})
+
+            start_mongo_timing()
             mongo_collection.aggregate(
                 [
                     {"$match": {"category": "books"}},
                     {"$merge": {"into": target_name}},
                 ]
             )
+            end_mongo_timing()
+
             mongo_merge_raw = list(mongo_db[target_name].find({}))
             for d in mongo_merge_raw:
                 d.pop("_id", None)
@@ -545,7 +582,6 @@ def compare_additional_aggregation_stages():
             mongo_merge = f"Error: {e}"
             print(f"Mongo $merge: Error - {e}")
 
-        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(

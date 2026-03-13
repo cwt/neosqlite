@@ -11,6 +11,9 @@ _timing_state: dict = {
     "current_phase": None,
     "last_neo_timing": 0.0,
     "last_mongo_timing": 0.0,
+    "accumulated_neo_timing": 0.0,
+    "accumulated_mongo_timing": 0.0,
+    "use_accumulation": False,
 }
 
 
@@ -27,7 +30,15 @@ def end_neo_timing():
     timing = (time.perf_counter() - _timing_state["neo_timing"]) * 1000
     _timing_state["neo_timing"] = None
     _timing_state["current_phase"] = None
-    _timing_state["last_neo_timing"] = timing
+
+    if _timing_state["use_accumulation"]:
+        _timing_state["accumulated_neo_timing"] += timing
+        _timing_state["last_neo_timing"] = _timing_state[
+            "accumulated_neo_timing"
+        ]
+    else:
+        _timing_state["last_neo_timing"] = timing
+
     return timing
 
 
@@ -44,15 +55,43 @@ def end_mongo_timing():
     timing = (time.perf_counter() - _timing_state["mongo_timing"]) * 1000
     _timing_state["mongo_timing"] = None
     _timing_state["current_phase"] = None
-    _timing_state["last_mongo_timing"] = timing
+
+    if _timing_state["use_accumulation"]:
+        _timing_state["accumulated_mongo_timing"] += timing
+        _timing_state["last_mongo_timing"] = _timing_state[
+            "accumulated_mongo_timing"
+        ]
+    else:
+        _timing_state["last_mongo_timing"] = timing
+
     return timing
 
 
+def reset_timings():
+    """Reset all timing state"""
+    _timing_state["last_neo_timing"] = 0.0
+    _timing_state["last_mongo_timing"] = 0.0
+    _timing_state["accumulated_neo_timing"] = 0.0
+    _timing_state["accumulated_mongo_timing"] = 0.0
+    _timing_state["neo_timing"] = None
+    _timing_state["mongo_timing"] = None
+    _timing_state["current_phase"] = None
+
+
+def set_accumulation_mode(enabled: bool):
+    """Set whether to accumulate timings or just use the last one"""
+    _timing_state["use_accumulation"] = enabled
+    if enabled:
+        # Reset accumulations when starting a new accumulated session
+        _timing_state["accumulated_neo_timing"] = 0.0
+        _timing_state["accumulated_mongo_timing"] = 0.0
+
+
 def get_last_neo_timing() -> float:
-    """Get the last NeoSQLite timing in ms"""
+    """Get the last NeoSQLite timing in ms (or accumulated if enabled)"""
     return _timing_state["last_neo_timing"]
 
 
 def get_last_mongo_timing() -> float:
-    """Get the last MongoDB timing in ms"""
+    """Get the last MongoDB timing in ms (or accumulated if enabled)"""
     return _timing_state["last_mongo_timing"]

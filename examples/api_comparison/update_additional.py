@@ -11,6 +11,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -29,6 +30,7 @@ def compare_additional_update_operators():
             {"name": "Alice", "tags": ["python"], "score": 100}
         )
 
+        set_accumulation_mode(True)
         # Test $push
         try:
             start_neo_timing()
@@ -153,6 +155,7 @@ def compare_additional_update_operators():
             {"name": "Alice", "tags": ["python"], "score": 100}
         )
 
+        set_accumulation_mode(True)
         # Test $push
         try:
             start_mongo_timing()

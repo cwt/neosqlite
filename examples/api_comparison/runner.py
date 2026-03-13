@@ -239,6 +239,10 @@ def run_benchmark(iterations: int = 10, silent: bool = False):
                 cleanup_db_files()
                 cleanup_test_collections()
 
+                from .timing import reset_timings
+
+                reset_timings()
+
                 try:
                     func()
                 except Exception as e:

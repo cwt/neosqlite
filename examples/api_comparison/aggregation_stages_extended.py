@@ -10,6 +10,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -23,7 +24,6 @@ def compare_additional_aggregation_stages_extended():
     print("\n=== Additional Aggregation Stages (Extended) Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_agg_stages
         neo_collection.insert_many(
             [
@@ -40,13 +40,16 @@ def compare_additional_aggregation_stages_extended():
             ]
         )
 
+        set_accumulation_mode(True)
         # Test $replaceRoot
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [{"$replaceRoot": {"newRoot": "$name"}}]
                 )
             )
+            end_neo_timing()
             neo_replaceroot = len(result) == 2 and "first" in result[0]
             print(f"Neo $replaceRoot: {'OK' if neo_replaceroot else 'FAIL'}")
         except Exception as e:
@@ -61,7 +64,9 @@ def compare_additional_aggregation_stages_extended():
                 "extra": "remove_me",
             }
         )
+
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [
@@ -70,6 +75,7 @@ def compare_additional_aggregation_stages_extended():
                     ]
                 )
             )
+            end_neo_timing()
             neo_replacewith = len(result) == 1 and "first" in result[0]
             print(f"Neo $replaceWith: {'OK' if neo_replacewith else 'FAIL'}")
         except Exception as e:
@@ -77,6 +83,7 @@ def compare_additional_aggregation_stages_extended():
             print(f"Neo $replaceWith: Error - {e}")
 
         # Test $unset (aggregation stage)
+        # Not timed because it includes delete/insert
         neo_collection.delete_many({})
         neo_collection.insert_many(
             [
@@ -85,7 +92,9 @@ def compare_additional_aggregation_stages_extended():
             ]
         )
         try:
+            start_neo_timing()
             result = list(neo_collection.aggregate([{"$unset": ["secret"]}]))
+            end_neo_timing()
             neo_unset = len(result) == 2 and "secret" not in result[0]
             print(f"Neo $unset: {'OK' if neo_unset else 'FAIL'}")
         except Exception as e:
@@ -94,32 +103,26 @@ def compare_additional_aggregation_stages_extended():
 
         # Test $count
         try:
+            start_neo_timing()
             result = list(neo_collection.aggregate([{"$count": "total"}]))
+            end_neo_timing()
             neo_count = len(result) == 1 and result[0].get("total") == 2
             print(f"Neo $count: {'OK' if neo_count else 'FAIL'}")
         except Exception as e:
             neo_count = False
             print(f"Neo $count: Error - {e}")
 
-        end_neo_timing()
-
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
 
     mongo_collection = None
-
     mongo_count = None
-
     mongo_db = None
-
     mongo_replaceroot = None
-
     mongo_replacewith = None
-
     mongo_unset = None
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_agg_stages
         mongo_collection.delete_many({})
@@ -138,13 +141,16 @@ def compare_additional_aggregation_stages_extended():
             ]
         )
 
+        set_accumulation_mode(True)
         # Test $replaceRoot
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [{"$replaceRoot": {"newRoot": "$name"}}]
                 )
             )
+            end_mongo_timing()
             mongo_replaceroot = len(result) == 2 and "first" in result[0]
             print(
                 f"Mongo $replaceRoot: {'OK' if mongo_replaceroot else 'FAIL'}"
@@ -161,7 +167,9 @@ def compare_additional_aggregation_stages_extended():
                 "extra": "remove_me",
             }
         )
+
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [
@@ -170,6 +178,7 @@ def compare_additional_aggregation_stages_extended():
                     ]
                 )
             )
+            end_mongo_timing()
             mongo_replacewith = len(result) == 1 and "first" in result[0]
             print(
                 f"Mongo $replaceWith: {'OK' if mongo_replacewith else 'FAIL'}"
@@ -187,7 +196,9 @@ def compare_additional_aggregation_stages_extended():
             ]
         )
         try:
+            start_mongo_timing()
             result = list(mongo_collection.aggregate([{"$unset": ["secret"]}]))
+            end_mongo_timing()
             mongo_unset = len(result) == 2 and "secret" not in result[0]
             print(f"Mongo $unset: {'OK' if mongo_unset else 'FAIL'}")
         except Exception as e:
@@ -196,14 +207,15 @@ def compare_additional_aggregation_stages_extended():
 
         # Test $count
         try:
+            start_mongo_timing()
             result = list(mongo_collection.aggregate([{"$count": "total"}]))
+            end_mongo_timing()
             mongo_count = len(result) == 1 and result[0].get("total") == 2
             print(f"Mongo $count: {'OK' if mongo_count else 'FAIL'}")
         except Exception as e:
             mongo_count = False
             print(f"Mongo $count: Error - {e}")
 
-        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(

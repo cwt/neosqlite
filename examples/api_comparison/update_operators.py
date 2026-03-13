@@ -10,6 +10,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -39,6 +40,7 @@ def compare_update_operators():
             ({"$setOnInsert": {"created": True}}, "$setOnInsert"),
         ]
 
+        set_accumulation_mode(True)
         neo_results = {}
         for update, op_name in update_ops:
             try:
@@ -76,6 +78,7 @@ def compare_update_operators():
             {"name": "Alice", "age": 30, "score": 100, "tags": ["a"]}
         )
 
+        set_accumulation_mode(True)
         mongo_results = {}
         for update, op_name in update_ops:
             try:

@@ -10,6 +10,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -28,6 +29,7 @@ def compare_update_modifiers():
             {"name": "A", "tags": ["a", "b"], "counter": 0, "flags": 0b0101}
         )
 
+        set_accumulation_mode(True)
         # Test $each with $push
         neo_each = False
         try:
@@ -106,6 +108,7 @@ def compare_update_modifiers():
             {"name": "A", "tags": ["a", "b"], "counter": 0, "flags": 0b0101}
         )
 
+        set_accumulation_mode(True)
         # Test $each with $push
         try:
             start_mongo_timing()
