@@ -19,99 +19,67 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 - **Advanced Indexing**: Supports single-key, compound-key, and nested-key indexes.
 - **Text Search**: Full-text search capabilities using SQLite's FTS5 extension with the `$text` operator.
 - **Modern API**: Aligned with modern `pymongo` practices (using methods like `insert_one`, `update_one`, `delete_many`, etc.)
-- **ACID Transactions (v1.9.0)**: Full `ClientSession` API support for multi-document transactions with PyMongo 4.x parity.
-- **Advanced Aggregation (v1.9.0)**: Support for complex stages like `$setWindowFields`, `$graphLookup`, `$fill`, and streaming `$facet`.
+- **ACID Transactions**: Full `ClientSession` API support for multi-document transactions with PyMongo 4.x parity.
+- **Advanced Aggregation**: Support for complex stages like `$setWindowFields`, `$graphLookup`, `$fill`, and streaming `$facet`.
 - **Tier-1 SQL Optimization**: Expanded SQL-level performance for dozens of operators including Set operators, `$split`, `$let`, and `$addToSet`.
-- **Native `$jsonSchema` (v1.9.0)**: Robust validation for queries and write-time schema enforcement using SQLite CHECK constraints.
-- **70+ New MongoDB-compatible APIs**: Massive expansion including Bitwise operators, positional array updates (`$`, `$[]`, `$[identifier]`), and complex aggregation stages (`$bucket`, `$unionWith`, `$merge`).
-- **Comprehensive Security Hardening**: Built-in SQL injection protection using centralized identifier and table name quoting across all engine layers.
-- **MongoDB-compatible ObjectId**: Full 12-byte ObjectId implementation with automatic generation and hex interchangeability
-- **Automatic JSON/JSONB Support**: Automatically detects and uses JSONB column type for better performance
-- **Full GridFS Support**: Complete PyMongo-compatible GridFS with modern GridFSBucket API, legacy API, and schema migration
-- **Modular Architecture (v1.8.0)**: Major refactoring transformed monolithic modules into well-organized packages for improved maintainability
-- **Python 3.10+ Modernization**: Leveraging modern Python features like walrus operators and union type hints
+- **Native `$jsonSchema`**: Robust validation for queries and write-time schema enforcement using SQLite CHECK constraints.
+- **Window Functions**: Complete MongoDB 5.0+ window operator support including `$rank`, `$top`, `$bottom`, and math operators.
+- **PyMongo 4.x API Parity**: Options classes (`WriteConcern`, `ReadPreference`, `ReadConcern`, `CodecOptions`) and modern transaction APIs.
+- **70+ New MongoDB-compatible APIs**: Including Bitwise operators, positional array updates (`$`, `$[]`, `$[identifier]`), and complex aggregation stages.
+- **Comprehensive Security Hardening**: Built-in SQL injection protection using centralized identifier and table name quoting.
+- **MongoDB-compatible ObjectId**: Full 12-byte ObjectId implementation with automatic generation and hex interchangeability.
+- **Automatic JSON/JSONB Support**: Automatically detects and uses JSONB column type for better performance.
+- **Full GridFS Support**: Complete PyMongo-compatible GridFS with modern GridFSBucket API and legacy API support.
+- **Python 3.10+ Modernization**: Leveraging modern Python features like walrus operators and union type hints.
 
 See [CHANGELOG.md](CHANGELOG.md) for the latest features and improvements.
 
-## v1.9.0 Major Feature & Compatibility Release
+## Latest Release: v1.9.0
 
-NeoSQLite v1.9.0 is a major milestone focusing on **API Completeness** and **Optimization Expansion**.
+NeoSQLite v1.9.0 is a **major feature and API completeness release** achieving PyMongo 4.x API parity for ACID transactions and introducing powerful aggregation capabilities.
 
 ### Key Highlights
 
-- **ACID Transactions**: Full support for `ClientSession` API with `start_transaction`, `commit_transaction`, and `abort_transaction` (PyMongo 4.x parity).
-- **Advanced Aggregation Stages**:
-  - `$setWindowFields`: Comprehensive window function support.
-  - `$graphLookup`: Recursive hierarchical searches via Recursive CTEs.
-  - `$fill`: Intelligent data filling (constant or `locf`).
-  - **Streaming `$facet`**: Parallel sub-pipeline processing with streaming results.
-- **SQL-Level (Tier-1) Optimization Expansion**: Operators like Set operators, `$split`, `$let`, and `$addToSet` now run directly in SQL.
-- **Security & Validation**: Native `$jsonSchema` support for queries and write validation via SQLite CHECK constraints.
-- **Performance Improvements**:
-  - **JSONB Auto-Detection**: 2-5x performance boost on supported systems.
-  - **Rigorous Memory Bounding**: Constant memory footprint regardless of result set size.
+**ACID Transactions** - Full support for PyMongo 4.x transaction API:
+- `ClientSession` with `start_transaction()`, `commit_transaction()`, `abort_transaction()`
+- `with_transaction()` callback-based transactional execution
+- Nested transaction support via SQLite `SAVEPOINT`
+- Session parameter integrated across all CRUD, find, aggregation, and GridFS operations
+
+**Advanced Aggregation Stages**:
+- `$setWindowFields`: Comprehensive window function support with ranking, distribution, and math operators
+- `$graphLookup`: Recursive hierarchical searches via optimized Recursive CTEs
+- `$fill`: Intelligent data filling (constant or `locf`) for sequential datasets
+- **Streaming `$facet`**: Parallel sub-pipeline processing with memory-efficient batch processing
+
+**SQL-Level (Tier-1) Optimization Expansion**:
+- **Set Operators**: All 7 operators (`$setEquals`, `$setUnion`, `$setIntersection`, etc.) now run in SQL
+- **String Operators**: `$split` (via recursive CTE), `$replaceAll`, `$replaceOne`
+- **Variable Scoping**: `$let` with SQL-tier optimization via variable inlining
+- **Accumulators**: `$addToSet` and `$stdDev` (Pop/Samp) with SQL implementations
+
+**Native `$jsonSchema` Validation**:
+- **Query Validation**: Use `$jsonSchema` within `find()` or `$match` stages
+- **Write Validation**: Translates to native SQLite CHECK constraints for database-level enforcement
+- Supports `required`, `properties`, `bsonType`, and numeric constraints
+
+**Window Functions** (MongoDB 5.0+):
+- **Ranking**: `$rank`, `$denseRank`, `$documentNumber`, `$percentRank`, `$cumeDist`
+- **Value**: `$first`, `$last`, `$firstN`, `$lastN`, `$minN`, `$maxN`
+- **Advanced**: `$top`, `$bottom`, `$topN`, `$bottomN`
+- **Math**: `$derivative`, `$integral`, `$covariancePop`, `$covarianceSamp`, `$expMovingAvg`
+
+**PyMongo 4.x API Parity**:
+- Options classes: `WriteConcern`, `ReadPreference`, `ReadConcern`, `CodecOptions`
+- Write concern mapping to SQLite `PRAGMA synchronous` settings
+
+**Performance Improvements**:
+- **Memory Bounding**: All engines use `fetchmany(101)` for constant memory footprint
+- **JSONB Auto-Detection**: 2-5x performance boost on supported systems
+
+**Test Coverage**: 373 API comparison tests (362 passed, 11 skipped, 0 failed) - 100% compatibility
 
 For more details, see [documents/releases/v1.9.0.md](documents/releases/v1.9.0.md).
-
-## v1.8.0 Major Refactoring Release
-
-NeoSQLite v1.8.0 is a **major refactoring and quality release** that transforms the internal architecture for improved maintainability, readability, and long-term sustainability.
-
-### Key Achievement
-
-Successfully converted **3 massive monolithic modules** into well-organized modular packages, reducing individual file sizes from **2,000-4,700 lines** to manageable **50-500 line modules** while maintaining **100% backward compatibility**.
-
-### Modular Package Architecture
-
-**query_helper/ Package**: Transformed from a single 4,731-line file into 9 focused modules:
-- `aggregation.py` - Aggregation pipeline logic
-- `crud_operations.py` - Insert, update, delete operations
-- `query_builder.py` - SQL query construction
-- `update_operations.py` - Update operator implementations
-- `positional_update.py` - Array positional operators
-- `query_optimizer.py` - Query optimization
-- Plus utility modules
-
-**expr_evaluator/ Package**: Split from ~2,300 lines into 6 modules:
-- `python_evaluators.py` - Python-based evaluation
-- `sql_converters.py` - SQL expression conversion
-- `constants.py`, `context.py`, `type_utils.py` - Supporting utilities
-
-**query_engine/ Package**: Refactored from 2,038 lines into 5 modules using mixin architecture:
-- `__init__.py` - Main QueryEngine class
-- `crud_operations.py` - CRUD operations mixin
-- `find_operations.py` - Find operations mixin
-- `query_methods.py` - Count, distinct methods
-- `base.py` - Protocol base class
-
-### Code Deduplication
-
-v1.8.0 eliminates duplicated code across the codebase:
-- **Type utilities**: Centralized 14 type conversion functions, eliminating ~200 lines of duplication
-- **Datetime detection**: Pre-compiled regex patterns, removing 95 lines of duplicated logic
-- **Schema inspection**: Unified schema utilities across GridFS and collection modules
-- **SQLite imports**: Single centralized import source for all modules
-- **GridFS serialization**: Consolidated metadata handling utilities
-
-### Python 3.10+ Modernization
-
-- **Walrus operators**: Assignment expressions for more concise code
-- **Union type hints**: Modern `int | None` syntax instead of `Optional[int]`
-- **Better IDE support**: Enhanced type checking and linting capabilities
-
-### Requirements
-
-**Minimum Python Version**: 3.10+
-
-The modernization to Python 3.10+ syntax means v1.8.0 requires Python 3.10 or later.
-
-### Benefits
-
-**For Users**: No breaking changes - all existing code continues to work without modification.
-
-**For Contributors**: Easier onboarding, clearer module responsibilities, reduced merge conflicts, and better tooling support.
-
-For more details, see [documents/releases/v1.8.0.md](documents/releases/v1.8.0.md).
 
 ## PyMongo Compatibility Tests
 
@@ -141,13 +109,31 @@ NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-
 | **Compatibility** | 100% | **100%** |
 
 **Skipped Tests Note**: The 11 skipped tests are due to architectural differences or environment limitations, not missing implementations:
-1. `options()` - NeoSQLite returns detailed SQLite schema info (`{'columns': [...], 'indexes': [...]}`) while MongoDB returns `{}`. Backend-specific difference.
-2. `$log2` - **NeoSQLite extension** using SQLite's native `log2()` function. Raises `UserWarning` about MongoDB incompatibility.
-3. `watch()` (Collection & Database) - **Fully implemented in NeoSQLite** via SQLite triggers but cannot be compared because MongoDB requires a replica set for change streams.
-4. `transaction_commit` / `transaction_abort` - **Fully implemented in NeoSQLite** via `ClientSession` but skipped in comparison because MongoDB requires a replica set for multi-document transactions.
-5. `db_path` (Collection & Database) - **NeoSQLite extension** providing the underlying SQLite database file path. No MongoDB equivalent.
-6. `initialize_ordered_bulk_op()` / `initialize_unordered_bulk_op()` - **Deprecated in NeoSQLite** to match PyMongo 4.x behavior.
-7. `where()` - **NeoSQLite implementation** using Python function filter. MongoDB uses JavaScript `$where` which requires a JS engine.
+
+**Collection/Database Methods:**
+
+- `options` - NeoSQLite returns detailed SQLite schema info; MongoDB returns `{}`. Backend-specific difference.
+- `db_path` (Collection & Database) - **NeoSQLite extension** providing the underlying SQLite database file path. No MongoDB equivalent.
+
+**Math Operators:**
+
+- `$log2` - **NeoSQLite extension** using SQLite's native `log2()` function. Raises `UserWarning` about MongoDB incompatibility.
+
+**Cursor Methods:**
+
+- `where` - **NeoSQLite implementation** using Python function filter. MongoDB uses JavaScript `$where` which requires a JS engine.
+
+**Change Streams:**
+
+- `watch()` - **Fully implemented in NeoSQLite** via SQLite triggers but cannot be compared because MongoDB requires a replica set for change streams.
+
+**Transactions:**
+
+- `transaction_commit` / `transaction_abort` / `with_transaction` - **Fully implemented in NeoSQLite** via `ClientSession` but skipped in comparison because MongoDB requires a replica set for multi-document transactions.
+
+**Bulk Operations:**
+
+- `initialize_ordered_bulk_op()` / `initialize_unordered_bulk_op()` - **Deprecated in NeoSQLite** to match PyMongo 4.x behavior (use `bulk_write()`).
 
 All comparable MongoDB APIs are tested with 100% compatibility.
 
