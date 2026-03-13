@@ -469,10 +469,10 @@ class BenchmarkReporter:
         if skipped_categories:
             lines.append(f"| Fully Skipped | {len(skipped_categories)} |")
         lines.append(
-            f"| Total NeoSQLite Time (valid only) | {total_neo:.2f}s |"
+            f"| Total NeoSQLite Time (valid only) | {total_neo:.0f}ms |"
         )
         lines.append(
-            f"| Total MongoDB Time (valid only) | {total_mongo:.2f}s |"
+            f"| Total MongoDB Time (valid only) | {total_mongo:.0f}ms |"
         )
         lines.append(f"| NeoSQLite Speedup (valid only) | {speedup:.2f}x |")
         lines.append("")

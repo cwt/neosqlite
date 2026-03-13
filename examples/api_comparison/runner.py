@@ -315,8 +315,8 @@ def run_benchmark(iterations: int = 10, silent: bool = False):
         print(f"Valid Comparisons: {valid_categories}")
         if partial_categories > 0:
             print(f"Partial (one side skipped): {partial_categories}")
-        print(f"Total NeoSQLite Time (valid only): {total_neo:.2f}s")
-        print(f"Total MongoDB Time (valid only): {total_mongo:.2f}s")
+        print(f"Total NeoSQLite Time (valid only): {total_neo:.0f}ms")
+        print(f"Total MongoDB Time (valid only): {total_mongo:.0f}ms")
         print(f"NeoSQLite Speedup (valid only): {speedup:.2f}x")
         print("=" * 80)
 
