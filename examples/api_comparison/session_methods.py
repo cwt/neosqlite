@@ -5,6 +5,12 @@ import warnings
 import neosqlite
 
 from .reporter import reporter
+from .timing import (
+    start_neo_timing,
+    end_neo_timing,
+    start_mongo_timing,
+    end_mongo_timing,
+)
 from .utils import test_pymongo_connection
 
 warnings.filterwarnings(
@@ -16,7 +22,14 @@ def compare_session_methods():
     """Compare session and transaction methods"""
     print("\n=== Session and Transaction Methods Comparison ===")
 
+    # Import benchmark_reporter here to get the current instance (not at module load time)
+    from .reporter import benchmark_reporter
+
+    # Track whether MongoDB actually ran tests or skipped
+    mongo_tx_executed = False
+
     with neosqlite.Connection(":memory:") as neo_conn:
+        start_neo_timing()
         neo_collection = neo_conn.test_session
 
         # Test start_session()
@@ -57,6 +70,8 @@ def compare_session_methods():
             neo_session = neo_tx_commit = neo_tx_abort = neo_with_tx = False
             print(f"Neo session: Error - {e}")
 
+        end_neo_timing()
+
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
 
@@ -66,6 +81,7 @@ def compare_session_methods():
     mongo_with_tx = None
 
     if client:
+        start_mongo_timing()
         mongo_db = client.test_session_methods
         mongo_collection = mongo_db.test_session
         mongo_collection.delete_many({})
@@ -111,6 +127,7 @@ def compare_session_methods():
                     print(
                         f"Mongo with_transaction: {'OK' if mongo_with_tx else 'FAIL'}"
                     )
+                    mongo_tx_executed = True
                 except Exception as e:
                     # standalone MongoDB doesn't support transactions
                     mongo_tx_commit = mongo_tx_abort = mongo_with_tx = False
@@ -121,10 +138,28 @@ def compare_session_methods():
             mongo_session = False
             print(f"Mongo session: Error - {e}")
 
+        # End timing (will capture whatever ran)
+        end_mongo_timing()
+
+        # If transactions didn't execute, mark this as a partial benchmark
+        # because the main functionality being tested is transactions, not just session creation
+        if not mongo_tx_executed:
+            if benchmark_reporter:
+                benchmark_reporter.mark_mongo_skipped(
+                    "Session & Transactions",
+                    "MongoDB requires replica set for transactions (only start_session() ran)",
+                )
+
         client.close()
+    else:
+        # MongoDB not available at all
+        if benchmark_reporter:
+            benchmark_reporter.mark_mongo_skipped(
+                "Session & Transactions", "MongoDB not available"
+            )
 
     reporter.record_comparison(
-        "Session Methods",
+        "Session & Transactions",
         "start_session",
         neo_session if neo_session else "FAIL",
         mongo_session if mongo_session is not None else None,
@@ -134,7 +169,7 @@ def compare_session_methods():
     # For transactions, we compare results if both were executed, otherwise mark as skipped
     # because MongoDB requires a replica set which might not be available
     reporter.record_result(
-        "Session Methods",
+        "Session & Transactions",
         "transaction_commit",
         passed=(
             neo_tx_commit == mongo_tx_commit
@@ -150,7 +185,7 @@ def compare_session_methods():
         ),
     )
     reporter.record_result(
-        "Session Methods",
+        "Session & Transactions",
         "transaction_abort",
         passed=(
             neo_tx_abort == mongo_tx_abort
@@ -166,7 +201,7 @@ def compare_session_methods():
         ),
     )
     reporter.record_result(
-        "Session Methods",
+        "Session & Transactions",
         "with_transaction",
         passed=(
             neo_with_tx == mongo_with_tx if mongo_with_tx is not None else True

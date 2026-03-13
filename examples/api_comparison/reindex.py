@@ -5,6 +5,12 @@ import warnings
 import neosqlite
 
 from .reporter import reporter
+from .timing import (
+    start_neo_timing,
+    end_neo_timing,
+    start_mongo_timing,
+    end_mongo_timing,
+)
 from .utils import test_pymongo_connection
 
 warnings.filterwarnings(
@@ -17,6 +23,7 @@ def compare_reindex_operation():
     print("\n=== Reindex Operation Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
+        start_neo_timing()
         neo_collection = neo_conn.test_reindex
         neo_collection.insert_many(
             [
@@ -35,6 +42,8 @@ def compare_reindex_operation():
             neo_reindex_ok = False
             print(f"Neo reindex: Error - {e}")
 
+        end_neo_timing()
+
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
 
@@ -45,6 +54,7 @@ def compare_reindex_operation():
     mongo_reindex_ok = None
 
     if client:
+        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_reindex
         mongo_collection.delete_many({})
@@ -65,6 +75,7 @@ def compare_reindex_operation():
             mongo_reindex_ok = False
             print(f"Mongo reIndex command: Error - {e}")
 
+        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(

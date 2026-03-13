@@ -5,6 +5,12 @@ import warnings
 import neosqlite
 
 from .reporter import reporter
+from .timing import (
+    start_neo_timing,
+    end_neo_timing,
+    start_mongo_timing,
+    end_mongo_timing,
+)
 from .utils import test_pymongo_connection
 
 warnings.filterwarnings(
@@ -17,6 +23,7 @@ def compare_database_methods():
     print("\n=== Database Methods Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
+        start_neo_timing()
         # Test client property
         neo_client = neo_conn.client == neo_conn
         print(f"Neo client property: {'OK' if neo_client else 'FAIL'}")
@@ -157,6 +164,8 @@ def compare_database_methods():
             neo_with_options = False
             print(f"Neo with_options(): Error - {e}")
 
+        end_neo_timing()
+
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
 
@@ -175,6 +184,7 @@ def compare_database_methods():
     mongo_with_options = None
 
     if client:
+        start_mongo_timing()
         mongo_db = client.test_database_methods
 
         # Test client property
@@ -329,6 +339,7 @@ def compare_database_methods():
             except Exception:
                 pass
 
+        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(

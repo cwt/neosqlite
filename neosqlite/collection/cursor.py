@@ -505,7 +505,7 @@ class Cursor:
         else:
             return (f"sqlite://{db_name}", 0)
 
-    def explain(self, verbosity: str = "executionStats") -> Dict[str, Any]:
+    def explain(self, verbosity: str = "queryPlanner") -> Dict[str, Any]:
         """
         Return the query execution plan.
 
@@ -515,6 +515,7 @@ class Cursor:
         Args:
             verbosity (str): Verbosity level - "executionStats" or "queryPlanner"
                            (kept for PyMongo compatibility, SQLite always returns full plan)
+                           Defaults to "queryPlanner".
 
         Returns:
             Dict[str, Any]: Query execution plan with the following structure:
@@ -535,19 +536,29 @@ class Cursor:
             self._filter
         )
 
+        # Build sorting and pagination clauses for SQL
+        sort_clause = self._query_helpers._build_sort_clause(
+            self._sort, self._collation
+        )
+        pagination_clause = self._query_helpers._build_pagination_clause(
+            self._limit, self._skip
+        )
+
         if where_result is not None:
             where_clause, params = where_result
             if self._collection.query_engine._jsonb_supported:
-                sql = f"SELECT id, _id, json(data) as data FROM {self._collection.name} {where_clause}"
+                sql = f"SELECT id, _id, json(data) as data FROM {self._collection.name} {where_clause}{sort_clause}{pagination_clause}"
             else:
-                sql = f"SELECT id, _id, data FROM {self._collection.name} {where_clause}"
+                sql = f"SELECT id, _id, data FROM {self._collection.name} {where_clause}{sort_clause}{pagination_clause}"
         else:
             # No filter - simple select
             if self._collection.query_engine._jsonb_supported:
-                sql = f"SELECT id, _id, json(data) as data FROM {self._collection.name}"
+                sql = f"SELECT id, _id, json(data) as data FROM {self._collection.name}{sort_clause}{pagination_clause}"
             else:
-                sql = f"SELECT id, _id, data FROM {self._collection.name}"
+                sql = f"SELECT id, _id, data FROM {self._collection.name}{sort_clause}{pagination_clause}"
             params = ()
+
+        # Get the query plan from SQLite
 
         # Get the query plan from SQLite
         try:
@@ -609,14 +620,21 @@ class Cursor:
             Dict[str, Any]: A dictionary representing each document in the result set.
         """
         validate_session(self._session, self._collection._database)
+
+        # track if SQL handled sorting and pagination
+        self._sql_handled_sort = False
+        self._sql_handled_pagination = False
+
         # Get the documents based on filter
         docs = self._get_filtered_documents()
 
-        # Apply sorting if specified
-        docs = self._apply_sorting(docs)
+        # Apply sorting if not handled by SQL
+        if not self._sql_handled_sort:
+            docs = self._apply_sorting(docs)
 
-        # Apply skip and limit
-        docs = self._apply_pagination(docs)
+        # Apply skip and limit if not handled by SQL
+        if not self._sql_handled_pagination:
+            docs = self._apply_pagination(docs)
 
         # Apply projection
         docs = self._apply_projection(docs)
@@ -675,11 +693,32 @@ class Cursor:
                 where_clause = minmax_clause
                 params = minmax_params
 
+            # Build sorting and pagination clauses for SQL
+            sort_clause = self._query_helpers._build_sort_clause(
+                self._sort, self._collation
+            )
+            # If we have a where predicate (Python filter), we CANNOT do SQL pagination
+            # because we need to see all documents that matched the SQL filter first.
+            if self._where_predicate:
+                pagination_clause = ""
+            else:
+                pagination_clause = (
+                    self._query_helpers._build_pagination_clause(
+                        self._limit, self._skip
+                    )
+                )
+
             # Use the collection's JSONB support flag to determine how to select data
             if self._collection.query_engine._jsonb_supported:
-                cmd = f"SELECT id, _id, json(data) as data FROM {self._collection.name} {where_clause}"
+                cmd = f"SELECT id, _id, json(data) as data FROM {self._collection.name} {where_clause}{sort_clause}{pagination_clause}"
             else:
-                cmd = f"SELECT id, _id, data FROM {self._collection.name} {where_clause}"
+                cmd = f"SELECT id, _id, data FROM {self._collection.name} {where_clause}{sort_clause}{pagination_clause}"
+
+            # Track which parts were handled by SQL
+            if sort_clause:
+                self._sql_handled_sort = True
+            if pagination_clause:
+                self._sql_handled_pagination = True
 
             # Add comment if specified
             if self._comment:
@@ -720,6 +759,16 @@ class Cursor:
 
     def _handle_python_fallback(self) -> Iterable[Dict[str, Any]]:
         """Handle complex queries by filtering all documents in Python."""
+        # Build sorting and pagination clauses for SQL
+        # Even in fallback mode, we can still use SQL to sort if possible
+        sort_clause = self._query_helpers._build_sort_clause(
+            self._sort, self._collation
+        )
+        # If we have a where predicate or we are in Python fallback mode for filter,
+        # we CANNOT do SQL pagination because the Python filter might exclude documents
+        # that the SQL LIMIT would have included.
+        pagination_clause = ""
+
         # Use the collection's JSONB support flag to determine how to select data
         if self._collection.query_engine._jsonb_supported:
             cmd = f"SELECT id, _id, json(data) as data FROM {self._collection.name}"
@@ -737,6 +786,15 @@ class Cursor:
             params = minmax_params
         else:
             params = ()
+
+        # Append sort and pagination
+        cmd = f"{cmd}{sort_clause}{pagination_clause}"
+
+        # Track which parts were handled by SQL
+        if sort_clause:
+            self._sql_handled_sort = True
+        if pagination_clause:
+            self._sql_handled_pagination = True
 
         # Add comment if specified
         if self._comment:
@@ -775,10 +833,32 @@ class Cursor:
         if where_result is not None:
             # Use SQL-based filtering
             where_clause, params = where_result
-            if self._collection.query_engine._jsonb_supported:
-                cmd = f"SELECT id, _id, json(data) as data FROM {self._collection.name} {where_clause}"
+
+            # Build sorting and pagination clauses for SQL
+            sort_clause = self._query_helpers._build_sort_clause(
+                self._sort, self._collation
+            )
+            # If we have a where predicate (Python filter), we CANNOT do SQL pagination
+            if self._where_predicate:
+                pagination_clause = ""
             else:
-                cmd = f"SELECT id, _id, data FROM {self._collection.name} {where_clause}"
+                pagination_clause = (
+                    self._query_helpers._build_pagination_clause(
+                        self._limit, self._skip
+                    )
+                )
+
+            if self._collection.query_engine._jsonb_supported:
+                cmd = f"SELECT id, _id, json(data) as data FROM {self._collection.name} {where_clause}{sort_clause}{pagination_clause}"
+            else:
+                cmd = f"SELECT id, _id, data FROM {self._collection.name} {where_clause}{sort_clause}{pagination_clause}"
+
+            # Track which parts were handled by SQL
+            if sort_clause:
+                self._sql_handled_sort = True
+            if pagination_clause:
+                self._sql_handled_pagination = True
+
             # Add comment if specified
             if self._comment:
                 safe_comment = (
@@ -802,11 +882,25 @@ class Cursor:
             # Create evaluator with database connection for JSONB support detection
             evaluator = ExprEvaluator(db_connection=self._collection.db)
 
+            # Build sorting clause for SQL even in fallback
+            sort_clause = self._query_helpers._build_sort_clause(
+                self._sort, self._collation
+            )
+            # Cannot do SQL pagination for expression fallback
+            pagination_clause = ""
+
             # Get all documents
             if self._collection.query_engine._jsonb_supported:
-                cmd = f"SELECT id, _id, json(data) as data FROM {self._collection.name}"
+                cmd = f"SELECT id, _id, json(data) as data FROM {self._collection.name}{sort_clause}{pagination_clause}"
             else:
-                cmd = f"SELECT id, _id, data FROM {self._collection.name}"
+                cmd = f"SELECT id, _id, data FROM {self._collection.name}{sort_clause}{pagination_clause}"
+
+            # Track which parts were handled by SQL
+            if sort_clause:
+                self._sql_handled_sort = True
+            if pagination_clause:
+                self._sql_handled_pagination = True
+
             # Add comment if specified
             if self._comment:
                 safe_comment = (

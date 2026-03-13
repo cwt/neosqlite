@@ -5,6 +5,12 @@ import warnings
 import neosqlite
 
 from .reporter import reporter
+from .timing import (
+    start_neo_timing,
+    end_neo_timing,
+    start_mongo_timing,
+    end_mongo_timing,
+)
 from .utils import test_pymongo_connection
 
 warnings.filterwarnings(
@@ -17,6 +23,7 @@ def compare_aggregation_cursor_methods():
     print("\n=== Aggregation Cursor Methods Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
+        start_neo_timing()
         neo_collection = neo_conn.test_agg_cursor
         neo_collection.insert_many(
             [{"name": f"Doc{i}", "value": i} for i in range(10)]
@@ -83,6 +90,8 @@ def compare_aggregation_cursor_methods():
             neo_props_ok = False
             print(f"Neo AggregationCursor properties: Error - {e}")
 
+        end_neo_timing()
+
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
 
@@ -93,6 +102,7 @@ def compare_aggregation_cursor_methods():
     mongo_props_ok = None
 
     if client:
+        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_agg_cursor
         mongo_collection.delete_many({})
@@ -148,6 +158,7 @@ def compare_aggregation_cursor_methods():
             mongo_props_ok = False
             print(f"Mongo AggregationCursor properties: Error - {e}")
 
+        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(

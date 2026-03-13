@@ -143,3 +143,51 @@ class CodecOptions:
                 and self.uuid_representation == other.uuid_representation
             )
         return False
+
+
+class JournalMode:
+    """
+    Represents valid SQLite journal modes.
+    Used to validate the journal_mode parameter in Connection.
+    """
+
+    DELETE = "DELETE"
+    TRUNCATE = "TRUNCATE"
+    PERSIST = "PERSIST"
+    MEMORY = "MEMORY"
+    WAL = "WAL"
+    OFF = "OFF"
+
+    @classmethod
+    def validate(cls, mode: str) -> str:
+        """
+        Validate and normalize a journal mode string.
+
+        Args:
+            mode (str): The journal mode string to validate.
+
+        Returns:
+            str: The normalized (uppercase) journal mode string.
+
+        Raises:
+            ValueError: If the journal mode is not valid.
+        """
+        if not isinstance(mode, str):
+            raise ValueError(f"journal_mode must be a string, not {type(mode)}")
+
+        normalized = mode.upper()
+        valid_modes = [
+            cls.DELETE,
+            cls.TRUNCATE,
+            cls.PERSIST,
+            cls.MEMORY,
+            cls.WAL,
+            cls.OFF,
+        ]
+
+        if normalized not in valid_modes:
+            raise ValueError(
+                f"Invalid journal_mode: '{mode}'. Must be one of: {', '.join(valid_modes)}"
+            )
+
+        return normalized

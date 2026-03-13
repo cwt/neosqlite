@@ -7,6 +7,7 @@ Each module focuses on a specific category of functionality.
 Usage:
     from api_comparison import run_all_comparisons
     from api_comparison import run_category
+    from api_comparison import run_benchmark
 
     # Run all comparisons
     run_all_comparisons()
@@ -14,10 +15,18 @@ Usage:
     # Run specific category
     run_category("crud")
     run_category("aggregation")
+
+    # Run benchmark
+    run_benchmark(iterations=10)
 """
 
 from .reporter import CompatibilityReporter, reporter
-from .runner import run_all_comparisons, run_category, cleanup_test_collections
+from .runner import (
+    run_all_comparisons,
+    run_category,
+    cleanup_test_collections,
+    run_benchmark,
+)
 
 # Import all comparison modules to register them
 from . import crud
@@ -65,18 +74,26 @@ from . import reindex
 from . import elemmatch
 from . import bitwise_operators
 from . import pullall_operator
-from . import new_operators
 from . import window_functions
 from . import graph_lookup
 from . import fill_stage
 from . import json_schema
 from . import window_math
 
+# Additional operator modules (split from new_operators)
+from . import aggregation_bucket
+from . import type_operators
+from . import expression_operators
+from . import object_operators_extended
+from . import array_operators_extended
+from . import binary_operators
+
 __all__ = [
     "CompatibilityReporter",
     "reporter",
     "run_all_comparisons",
     "run_category",
+    "run_benchmark",
     "cleanup_test_collections",
     # Comparison modules (imported for side effects)
     "crud",
@@ -124,10 +141,16 @@ __all__ = [
     "elemmatch",
     "bitwise_operators",
     "pullall_operator",
-    "new_operators",
     "window_functions",
     "graph_lookup",
     "fill_stage",
     "json_schema",
     "window_math",
+    # Additional operator modules
+    "aggregation_bucket",
+    "type_operators",
+    "expression_operators",
+    "object_operators_extended",
+    "array_operators_extended",
+    "binary_operators",
 ]

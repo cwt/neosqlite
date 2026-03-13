@@ -5,6 +5,12 @@ import warnings
 import neosqlite
 
 from .reporter import reporter
+from .timing import (
+    start_neo_timing,
+    end_neo_timing,
+    start_mongo_timing,
+    end_mongo_timing,
+)
 from .utils import test_pymongo_connection
 
 warnings.filterwarnings(
@@ -23,6 +29,7 @@ def compare_additional_expr_success_stories():
     # Test $elemMatch
     print("--- $elemMatch ---")
     with neosqlite.Connection(":memory:") as neo_conn:
+        start_neo_timing()
         neo_collection = neo_conn.test_collection
         neo_collection.insert_many(
             [
@@ -40,6 +47,8 @@ def compare_additional_expr_success_stories():
         except Exception as e:
             neo_elemMatch = f"Error: {e}"
             print(f"Neo $elemMatch: Error - {e}")
+
+        end_neo_timing()
 
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
@@ -81,6 +90,7 @@ def compare_additional_expr_success_stories():
     mongo_round = None
 
     if client:
+        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
@@ -100,6 +110,7 @@ def compare_additional_expr_success_stories():
         except Exception as e:
             mongo_elemMatch = f"Error: {e}"
             print(f"Mongo $elemMatch: Error - {e}")
+        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(
@@ -113,6 +124,7 @@ def compare_additional_expr_success_stories():
     # Test $expr $not
     print("\n--- $expr $not ---")
     with neosqlite.Connection(":memory:") as neo_conn:
+        start_neo_timing()
         neo_collection = neo_conn.test_collection
         neo_collection.insert_many([{"age": 25}, {"age": 30}, {"age": 35}])
         try:
@@ -125,8 +137,11 @@ def compare_additional_expr_success_stories():
             neo_not = f"Error: {e}"
             print(f"Neo $expr $not: Error - {e}")
 
+        end_neo_timing()
+
     client = test_pymongo_connection()
     if client:
+        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
@@ -142,6 +157,7 @@ def compare_additional_expr_success_stories():
         except Exception as e:
             mongo_not = f"Error: {e}"
             print(f"Mongo $expr $not: Error - {e}")
+        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(
@@ -155,6 +171,7 @@ def compare_additional_expr_success_stories():
     # Test $expr $concat
     print("\n--- $expr $concat ---")
     with neosqlite.Connection(":memory:") as neo_conn:
+        start_neo_timing()
         neo_collection = neo_conn.test_collection
         neo_collection.insert_one({"first": "John", "last": "Doe"})
         try:
@@ -176,8 +193,11 @@ def compare_additional_expr_success_stories():
             neo_concat = f"Error: {e}"
             print(f"Neo $expr $concat: Error - {e}")
 
+        end_neo_timing()
+
     client = test_pymongo_connection()
     if client:
+        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
@@ -200,6 +220,7 @@ def compare_additional_expr_success_stories():
         except Exception as e:
             mongo_concat = f"Error: {e}"
             print(f"Mongo $expr $concat: Error - {e}")
+        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(
@@ -213,6 +234,7 @@ def compare_additional_expr_success_stories():
     # Test $expr $ifNull
     print("\n--- $expr $ifNull ---")
     with neosqlite.Connection(":memory:") as neo_conn:
+        start_neo_timing()
         neo_collection = neo_conn.test_collection
         neo_collection.insert_many(
             [{"name": "Alice", "middle": None}, {"name": "Bob", "middle": "X"}]
@@ -229,8 +251,11 @@ def compare_additional_expr_success_stories():
             neo_ifnull = f"Error: {e}"
             print(f"Neo $expr $ifNull: Error - {e}")
 
+        end_neo_timing()
+
     client = test_pymongo_connection()
     if client:
+        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
@@ -248,6 +273,7 @@ def compare_additional_expr_success_stories():
         except Exception as e:
             mongo_ifnull = f"Error: {e}"
             print(f"Mongo $expr $ifNull: Error - {e}")
+        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(
@@ -261,6 +287,7 @@ def compare_additional_expr_success_stories():
     # Test $expr $isArray
     print("\n--- $expr $isArray ---")
     with neosqlite.Connection(":memory:") as neo_conn:
+        start_neo_timing()
         neo_collection = neo_conn.test_collection
         neo_collection.insert_many([{"data": [1, 2, 3]}, {"data": "not array"}])
         try:
@@ -273,8 +300,11 @@ def compare_additional_expr_success_stories():
             neo_isarray = f"Error: {e}"
             print(f"Neo $expr $isArray: Error - {e}")
 
+        end_neo_timing()
+
     client = test_pymongo_connection()
     if client:
+        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
@@ -290,6 +320,7 @@ def compare_additional_expr_success_stories():
         except Exception as e:
             mongo_isarray = f"Error: {e}"
             print(f"Mongo $expr $isArray: Error - {e}")
+        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(
@@ -303,6 +334,7 @@ def compare_additional_expr_success_stories():
     # Test $expr $round
     print("\n--- $expr $round ---")
     with neosqlite.Connection(":memory:") as neo_conn:
+        start_neo_timing()
         neo_collection = neo_conn.test_collection
         neo_collection.insert_one({"value": 3.14159})
         try:
@@ -317,8 +349,11 @@ def compare_additional_expr_success_stories():
             neo_round = f"Error: {e}"
             print(f"Neo $expr $round: Error - {e}")
 
+        end_neo_timing()
+
     client = test_pymongo_connection()
     if client:
+        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
@@ -334,6 +369,7 @@ def compare_additional_expr_success_stories():
         except Exception as e:
             mongo_round = f"Error: {e}"
             print(f"Mongo $expr $round: Error - {e}")
+        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(
@@ -348,6 +384,7 @@ def compare_additional_expr_success_stories():
     print("\n--- $expr $exp ---")
 
     with neosqlite.Connection(":memory:") as neo_conn:
+        start_neo_timing()
         neo_collection = neo_conn.test_collection
         # Insert documents with different values to test exp function
         neo_collection.insert_many(
@@ -383,8 +420,11 @@ def compare_additional_expr_success_stories():
             neo_exp = f"Error: {e}"
             print(f"Neo $expr $exp: Error - {e}")
 
+        end_neo_timing()
+
     client = test_pymongo_connection()
     if client:
+        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
@@ -418,6 +458,7 @@ def compare_additional_expr_success_stories():
         except Exception as e:
             mongo_exp = f"Error: {e}"
             print(f"Mongo $expr $exp: Error - {e}")
+        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(
@@ -431,6 +472,7 @@ def compare_additional_expr_success_stories():
     # Test $expr $degreesToRadians
     print("\n--- $expr $degreesToRadians ---")
     with neosqlite.Connection(":memory:") as neo_conn:
+        start_neo_timing()
         neo_collection = neo_conn.test_collection
         neo_collection.insert_many(
             [
@@ -474,8 +516,11 @@ def compare_additional_expr_success_stories():
             neo_deg2rad = f"Error: {e}"
             print(f"Neo $expr $degreesToRadians: Error - {e}")
 
+        end_neo_timing()
+
     client = test_pymongo_connection()
     if client:
+        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
@@ -518,6 +563,7 @@ def compare_additional_expr_success_stories():
         except Exception as e:
             mongo_deg2rad = f"Error: {e}"
             print(f"Mongo $expr $degreesToRadians: Error - {e}")
+        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(
@@ -531,6 +577,7 @@ def compare_additional_expr_success_stories():
     # Test $expr $radiansToDegrees
     print("\n--- $expr $radiansToDegrees ---")
     with neosqlite.Connection(":memory:") as neo_conn:
+        start_neo_timing()
         neo_collection = neo_conn.test_collection
         neo_collection.insert_many(
             [
@@ -584,8 +631,11 @@ def compare_additional_expr_success_stories():
             neo_rad2deg = f"Error: {e}"
             print(f"Neo $expr $radiansToDegrees: Error - {e}")
 
+        end_neo_timing()
+
     client = test_pymongo_connection()
     if client:
+        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
@@ -638,6 +688,7 @@ def compare_additional_expr_success_stories():
         except Exception as e:
             mongo_rad2deg = f"Error: {e}"
             print(f"Mongo $expr $radiansToDegrees: Error - {e}")
+        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(

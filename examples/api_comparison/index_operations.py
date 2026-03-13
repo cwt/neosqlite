@@ -11,6 +11,12 @@ from pymongo import IndexModel
 import neosqlite
 
 from .reporter import reporter
+from .timing import (
+    start_neo_timing,
+    end_neo_timing,
+    start_mongo_timing,
+    end_mongo_timing,
+)
 from .utils import test_pymongo_connection
 
 warnings.filterwarnings(
@@ -23,6 +29,7 @@ def compare_index_operations():
     print("\n=== Index Operations Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
+        start_neo_timing()
         neo_collection = neo_conn.test_collection
         neo_collection.create_index("name")
         neo_collection.create_indexes(
@@ -36,6 +43,8 @@ def compare_index_operations():
             "NeoSQLite: create_index, create_indexes, list_indexes, index_information, drop_index, drop_indexes"
         )
 
+        end_neo_timing()
+
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
 
@@ -44,6 +53,7 @@ def compare_index_operations():
     mongo_db = None
 
     if client:
+        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.create_index("name")
@@ -62,6 +72,7 @@ def compare_index_operations():
         print(
             "PyMongo: create_index, create_indexes, list_indexes, index_information, drop_index, drop_indexes"
         )
+        end_mongo_timing()
         client.close()
 
     for op in [

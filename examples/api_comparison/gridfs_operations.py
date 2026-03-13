@@ -5,6 +5,12 @@ import warnings
 import neosqlite
 
 from .reporter import reporter
+from .timing import (
+    start_neo_timing,
+    end_neo_timing,
+    start_mongo_timing,
+    end_mongo_timing,
+)
 from .utils import test_pymongo_connection
 
 warnings.filterwarnings(
@@ -17,6 +23,7 @@ def compare_gridfs_operations():
     print("\n=== GridFS Operations Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
+        start_neo_timing()
         try:
             from neosqlite.gridfs import GridFSBucket
 
@@ -59,12 +66,15 @@ def compare_gridfs_operations():
             )
             return
 
+        end_neo_timing()
+
     client = test_pymongo_connection()
     mongo_db = None
     mongo_file_data = None
     mongo_gridfs_ok = None
 
     if client:
+        start_mongo_timing()
         mongo_db = client.test_database
         try:
             from gridfs import GridFSBucket as MongoGridFSBucket
@@ -89,6 +99,7 @@ def compare_gridfs_operations():
         except Exception as e:
             print(f"Mongo GridFS: Error - {e}")
             mongo_gridfs_ok = False
+        end_mongo_timing()
         client.close()
     else:
         mongo_gridfs_ok = False

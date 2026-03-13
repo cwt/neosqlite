@@ -4,6 +4,12 @@ import warnings
 
 import neosqlite
 from .reporter import reporter
+from .timing import (
+    start_neo_timing,
+    end_neo_timing,
+    start_mongo_timing,
+    end_mongo_timing,
+)
 from .utils import test_pymongo_connection
 
 warnings.filterwarnings(
@@ -158,6 +164,7 @@ def compare_window_functions():
 
     neo_results = {}
     with neosqlite.Connection(":memory:") as neo_conn:
+        start_neo_timing()
         neo_collection = neo_conn.test_window
         neo_collection.insert_many(test_data)
 
@@ -180,11 +187,14 @@ def compare_window_functions():
             neo_explain_ok = False
             print(f"Neo AggregationCursor.explain(): Error - {e}")
 
+        end_neo_timing()
+
     client = test_pymongo_connection()
     mongo_results = {}
     mongo_explain_ok = False
 
     if client:
+        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_window
         mongo_collection.delete_many({})
@@ -212,6 +222,7 @@ def compare_window_functions():
             mongo_explain_ok = False
             print(f"Mongo AggregationCursor.explain(): Error - {e}")
 
+        end_mongo_timing()
         client.close()
 
     # Record comparisons

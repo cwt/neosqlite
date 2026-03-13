@@ -5,6 +5,12 @@ import neosqlite
 from neosqlite import WriteConcern, ReadPreference, ReadConcern, CodecOptions
 
 from .reporter import reporter
+from .timing import (
+    start_neo_timing,
+    end_neo_timing,
+    start_mongo_timing,
+    end_mongo_timing,
+)
 from .utils import test_pymongo_connection
 
 warnings.filterwarnings(
@@ -18,6 +24,7 @@ def compare_options_classes():
 
     # Test NeoSQLite
     with neosqlite.Connection(":memory:") as neo_conn:
+        start_neo_timing()
         # 1. WriteConcern
         neo_wc = WriteConcern(w=1, j=True)
         neo_wc_repr = repr(neo_wc)
@@ -37,17 +44,21 @@ def compare_options_classes():
         # 4. CodecOptions
         neo_co = CodecOptions(tz_aware=True)
 
-    # Test MongoDB
+        # Test MongoDB
+        end_neo_timing()
+
     client = test_pymongo_connection()
     mongo_wc_repr = None
 
     if client:
+        start_mongo_timing()
         from pymongo import WriteConcern as MongoWriteConcern
 
         # 1. WriteConcern
         mongo_wc = MongoWriteConcern(w=1, j=True)
         mongo_wc_repr = repr(mongo_wc)
 
+        end_mongo_timing()
         client.close()
 
     # Record results

@@ -4,6 +4,12 @@ import warnings
 
 import neosqlite
 from .reporter import reporter
+from .timing import (
+    start_neo_timing,
+    end_neo_timing,
+    start_mongo_timing,
+    end_mongo_timing,
+)
 from .utils import test_pymongo_connection
 
 warnings.filterwarnings(
@@ -53,6 +59,7 @@ def compare_fill_stage():
 
     neo_results = {}
     with neosqlite.Connection(":memory:") as neo_conn:
+        start_neo_timing()
         neo_collection = neo_conn.test_fill
         neo_collection.insert_many(test_data)
 
@@ -64,10 +71,13 @@ def compare_fill_stage():
                 neo_results[name] = f"Error: {e}"
                 print(f"Neo $fill ({name}): Error - {e}")
 
+        end_neo_timing()
+
     client = test_pymongo_connection()
     mongo_results = {}
 
     if client:
+        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_fill
         mongo_collection.delete_many({})
@@ -82,6 +92,7 @@ def compare_fill_stage():
                 mongo_results[name] = f"Error: {e}"
                 print(f"Mongo $fill ({name}): Error - {e}")
 
+        end_mongo_timing()
         client.close()
 
     # Record comparisons

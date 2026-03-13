@@ -5,6 +5,12 @@ import warnings
 import neosqlite
 
 from .reporter import reporter
+from .timing import (
+    start_neo_timing,
+    end_neo_timing,
+    start_mongo_timing,
+    end_mongo_timing,
+)
 from .utils import test_pymongo_connection
 
 warnings.filterwarnings(
@@ -17,6 +23,7 @@ def compare_update_modifiers():
     print("\n=== Update Modifiers Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
+        start_neo_timing()
         neo_collection = neo_conn.test_modifiers
         neo_collection.insert_one(
             {"name": "A", "tags": ["a", "b"], "counter": 0, "flags": 0b0101}
@@ -72,6 +79,8 @@ def compare_update_modifiers():
         except Exception as e:
             print(f"Neo $bit and: Error - {e}")
 
+        end_neo_timing()
+
     client = test_pymongo_connection()
     mongo_bit_and = None
     mongo_collection = None
@@ -81,6 +90,7 @@ def compare_update_modifiers():
     mongo_slice = None
 
     if client:
+        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_modifiers
         mongo_collection.delete_many({})
@@ -140,6 +150,7 @@ def compare_update_modifiers():
             mongo_bit_and = False
             print(f"Mongo $bit and: Error - {e}")
 
+        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(

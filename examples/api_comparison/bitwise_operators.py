@@ -6,6 +6,12 @@ import warnings
 import neosqlite
 
 from .reporter import reporter
+from .timing import (
+    start_neo_timing,
+    end_neo_timing,
+    start_mongo_timing,
+    end_mongo_timing,
+)
 from .utils import test_pymongo_connection
 
 warnings.filterwarnings(
@@ -18,6 +24,7 @@ def compare_bitwise_operators():
     print("\n=== Bitwise Query Operators Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
+        start_neo_timing()
         neo_collection = neo_conn.test_collection
         # Insert test documents with different bit patterns
         neo_collection.insert_many(
@@ -69,11 +76,14 @@ def compare_bitwise_operators():
                 neo_results[op_name] = f"Error: {e}"
                 print(f"Neo {op_name}: Error - {e}")
 
+        end_neo_timing()
+
     client = test_pymongo_connection()
     mongo_collection = None
     mongo_results = {}
 
     if client:
+        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
@@ -107,6 +117,7 @@ def compare_bitwise_operators():
                 mongo_results.get(op_name),
                 skip_reason="MongoDB not available" if not client else None,
             )
+        end_mongo_timing()
         client.close()
     else:
         # MongoDB not available, record NeoSQLite results as skipped

@@ -29,16 +29,38 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 - **Comprehensive Security Hardening**: Built-in SQL injection protection using centralized identifier and table name quoting.
 - **MongoDB-compatible ObjectId**: Full 12-byte ObjectId implementation with automatic generation and hex interchangeability.
 - **Automatic JSON/JSONB Support**: Automatically detects and uses JSONB column type for better performance.
+- **Configurable Journal Mode**: Support for different SQLite journal modes (WAL, DELETE, MEMORY, etc.) with WAL as default.
 - **Full GridFS Support**: Complete PyMongo-compatible GridFS with modern GridFSBucket API and legacy API support.
 - **Python 3.10+ Modernization**: Leveraging modern Python features like walrus operators and union type hints.
 
 See [CHANGELOG.md](CHANGELOG.md) for the latest features and improvements.
 
-## Latest Release: v1.9.0
+## Latest Release: v1.9.1
 
-NeoSQLite v1.9.0 is a **major feature and API completeness release** achieving PyMongo 4.x API parity for ACID transactions and introducing powerful aggregation capabilities.
+NeoSQLite v1.9.1 is a **maintenance and optimization release** that introduces **configurable journal modes** and **SQL-tier cursor optimizations**, allowing developers to adapt to specialized environments while achieving up to **2.4x performance improvement** for cursor operations.
 
 ### Key Highlights
+
+**Configurable Journal Mode** - Choose the optimal SQLite journal mode for your deployment:
+- **WAL** (Default) - Write-Ahead Logging for best concurrency
+- **DELETE** - Traditional rollback journal, single-file when closed
+- **TRUNCATE**, **PERSIST**, **MEMORY**, **OFF** - Specialized modes for specific use cases
+- Type-safe `JournalMode` class with validation
+- Correctly propagated to cloned connections
+
+**SQL-Tier Cursor Optimization** - Performance improvements for common operations:
+- `sort()` moved to SQL `ORDER BY` clause
+- `limit()` and `skip()` moved to SQL `LIMIT`/`OFFSET` clauses
+- Up to **2.4x performance improvement** in cursor benchmarks
+- Automatic tier selection with smart fallback
+
+**Benchmark Mode** - Automated performance testing:
+- Integrated into API comparison suite
+- Multiple iterations with statistical analysis
+- Markdown and CSV report generation
+- Shell script for automated benchmarking
+
+### Key Highlights (from v1.9.0)
 
 **ACID Transactions** - Full support for PyMongo 4.x transaction API:
 - `ClientSession` with `start_transaction()`, `commit_transaction()`, `abort_transaction()`
@@ -77,22 +99,22 @@ NeoSQLite v1.9.0 is a **major feature and API completeness release** achieving P
 - **Memory Bounding**: All engines use `fetchmany(101)` for constant memory footprint
 - **JSONB Auto-Detection**: 2-5x performance boost on supported systems
 
-**Test Coverage**: 373 API comparison tests (362 passed, 11 skipped, 0 failed) - 100% compatibility
+**Test Coverage**: 369 API comparison tests (358 passed, 11 skipped, 0 failed) - 100% compatibility
 
-For more details, see [documents/releases/v1.9.0.md](documents/releases/v1.9.0.md).
+For more details, see [documents/releases/v1.9.1.md](documents/releases/v1.9.1.md).
 
 ## PyMongo Compatibility Tests
 
 NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-compatible behavior. Our automated test suite covers all major API categories:
 
-### Test Results (v1.9.0)
+### Test Results (v1.9.1)
 
 #### Unit Tests
 
 | Metric | Result |
 |--------|--------|
-| **Total Tests** | 2,177 |
-| **Passed** | 2,170 |
+| **Total Tests** | 2,182 |
+| **Passed** | 2,175 |
 | **Failed** | 0 |
 | **XFailed** | 6 (expected failures) |
 | **XPassed** | 1 (unexpected successes) |
@@ -100,13 +122,13 @@ NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-
 
 #### API Comparison Tests
 
-| Metric | v1.8.0 | v1.9.0 |
-|--------|--------|--------|
-| **Total Tests** | 304 | **373** |
-| **Passed** | 300 | **362** |
-| **Skipped** | 4 | **11** |
-| **Failed** | 0 | 0 |
-| **Compatibility** | 100% | **100%** |
+| Metric | v1.8.0 | v1.9.0 | v1.9.1 |
+|--------|--------|--------|--------|
+| **Total Tests** | 304 | 373 | **369** |
+| **Passed** | 300 | 362 | **358** |
+| **Skipped** | 4 | 11 | **11** |
+| **Failed** | 0 | 0 | **0** |
+| **Compatibility** | 100% | 100% | **100%** |
 
 **Skipped Tests Note**: The 11 skipped tests are due to architectural differences or environment limitations, not missing implementations:
 
@@ -275,6 +297,32 @@ with neosqlite.Connection(':memory:') as conn:
         doc_strings = [s for s in batch_str.split('\n') if s]
         print(f"  Batch {i}: {len(doc_strings)} documents")
 ```
+
+## Journal Mode Configuration
+
+NeoSQLite allows you to configure the underlying SQLite journal mode to adapt to different environments (like NFS or single-file distribution).
+
+```python
+from neosqlite import Connection, JournalMode
+
+# Select mode via enum (recommended)
+db = Connection("app.db", journal_mode=JournalMode.WAL)
+
+# Or select via string
+db = Connection("app.db", journal_mode="DELETE")
+```
+
+| Mode | Description |
+| :--- | :--- |
+| **WAL** | **Default.** Write-Ahead Logging. Provides the best concurrency (readers do not block writers). Best performance for most applications. |
+| **DELETE** | Traditional rollback journal. Deletes the journal file after transactions, ensuring the database is a single file when closed. Writers block readers. |
+| **TRUNCATE** | Similar to DELETE, but truncates the journal instead of deleting it. |
+| **PERSIST** | Overwrites the journal with zeros to avoid disk re-allocation. |
+| **MEMORY** | Keeps the journal in RAM. Extremely fast but data is lost on system crash. |
+| **OFF** | Disables journaling. Fastest but offers no transaction safety or crash recovery. |
+
+**Why is WAL the default?**
+NeoSQLite defaults to `WAL` (Write-Ahead Logging) because it provides the best balance of performance and concurrency. It allows multiple readers to operate simultaneously even while a writer is active, which is essential for providing the "NoSQL" experience users expect when coming from MongoDB.
 
 ## JSON/JSONB Support
 

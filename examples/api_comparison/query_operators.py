@@ -6,7 +6,17 @@ import warnings
 import neosqlite
 
 from .reporter import reporter
+from .timing import (
+    start_neo_timing,
+    end_neo_timing,
+    start_mongo_timing,
+    end_mongo_timing,
+)
 from .utils import test_pymongo_connection
+
+warnings.filterwarnings(
+    "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
+)
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -80,6 +90,7 @@ def compare_query_operators():
         ]
 
         neo_results = {}
+        start_neo_timing()
         for query, op_name in operators:
             try:
                 neo_results[op_name] = list(neo_collection.find(query))
@@ -96,6 +107,7 @@ def compare_query_operators():
         except Exception as e:
             neo_results["$text"] = f"Error: {e}"
             print(f"Neo $text: Error - {e}")
+        end_neo_timing()
 
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
@@ -147,6 +159,7 @@ def compare_query_operators():
             ]
         )
 
+        start_mongo_timing()
         for query, op_name in operators:
             try:
                 mongo_query = copy.deepcopy(query)
@@ -170,6 +183,7 @@ def compare_query_operators():
         except Exception as e:
             mongo_results["$text"] = f"Error: {e}"
             print(f"Mongo $text: Error - {e}")
+        end_mongo_timing()
 
         for op_name in neo_results:
             reporter.record_comparison(

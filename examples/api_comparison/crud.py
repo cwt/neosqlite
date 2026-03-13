@@ -5,7 +5,17 @@ import warnings
 import neosqlite
 
 from .reporter import reporter
+from .timing import (
+    start_neo_timing,
+    end_neo_timing,
+    start_mongo_timing,
+    end_mongo_timing,
+)
 from .utils import test_pymongo_connection
+
+warnings.filterwarnings(
+    "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
+)
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -18,6 +28,7 @@ def compare_crud_operations():
 
     with neosqlite.Connection(":memory:") as neo_conn:
         neo_collection = neo_conn.test_collection
+        start_neo_timing()
 
         # insert_one
         result = neo_collection.insert_one({"name": "Alice", "age": 30})
@@ -64,6 +75,8 @@ def compare_crud_operations():
         # estimated_document_count
         _ = neo_collection.estimated_document_count()
 
+        end_neo_timing()
+
         print(
             "NeoSQLite CRUD: insert_one, insert_many, find, find_one, update_one, update_many, replace_one, delete_one, delete_many, count_documents, estimated_document_count"
         )
@@ -79,6 +92,8 @@ def compare_crud_operations():
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
+
+        start_mongo_timing()
 
         result = mongo_collection.insert_one({"name": "Alice", "age": 30})
         _ = mongo_collection.find_one({"name": "Alice"})
@@ -100,6 +115,8 @@ def compare_crud_operations():
         result = mongo_collection.delete_many({"age": {"$gt": 30}})
         _ = mongo_collection.count_documents({})
         _ = mongo_collection.estimated_document_count()
+
+        end_mongo_timing()
 
         print("PyMongo CRUD: All operations completed")
         client.close()

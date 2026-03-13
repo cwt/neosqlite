@@ -5,7 +5,7 @@ from .collection import Collection
 from .collection.aggregation_cursor import AggregationCursor
 from .exceptions import CollectionInvalid
 from .client_session import ClientSession
-from .options import WriteConcern
+from .options import WriteConcern, JournalMode
 from .sql_utils import quote_table_name
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Tuple
@@ -32,6 +32,7 @@ class Connection:
                      - debug: Boolean flag to enable debug printing
                      - name: Optional name for the database (for PyMongo API compatibility)
                      - _is_clone: Internal flag for cloning (not for public use)
+                     - journal_mode: Optional journal mode (default: "WAL")
         """
         self._collections: Dict[str, Collection] = {}
         self._tokenizers: List[Tuple[str, str]] = kwargs.pop("tokenizers", [])
@@ -44,6 +45,11 @@ class Connection:
         self._read_preference = kwargs.pop("read_preference", None)
         self._write_concern = kwargs.pop("write_concern", None)
         self._read_concern = kwargs.pop("read_concern", None)
+
+        # Journal mode configuration (default: WAL)
+        self.journal_mode = JournalMode.validate(
+            kwargs.pop("journal_mode", "WAL")
+        )
 
         # Extract database name from args or kwargs for PyMongo API compatibility
         self.name: str = kwargs.pop("name", None)
@@ -81,7 +87,7 @@ class Connection:
         """
         self.db = sqlite3.connect(*args, **kwargs)
         self.db.isolation_level = None
-        self.db.execute("PRAGMA journal_mode=WAL")
+        self.db.execute(f"PRAGMA journal_mode={self.journal_mode}")
 
         # Apply initial write concern if set
         if hasattr(self, "_write_concern") and self._write_concern:
@@ -686,6 +692,7 @@ class Connection:
         clone._tokenizers = self._tokenizers
         clone.debug = self.debug
         clone._collections = self._collections
+        clone.journal_mode = self.journal_mode
 
         # Store the new options
         clone._codec_options = codec_options

@@ -342,6 +342,80 @@ class QueryBuilderMixin:
             return "WHERE " + " AND ".join(clauses), params
         return "", params
 
+    def _build_sort_clause(
+        self,
+        sort: Dict[str, int] | None,
+        collation: Dict[str, Any] | None = None,
+    ) -> str:
+        """
+        Builds a SQL ORDER BY clause from a sort dictionary.
+
+        Args:
+            sort: A dictionary mapping fields to sort directions (1 for ASC, -1 for DESC).
+            collation: Optional collation settings for case-insensitive sorting.
+
+        Returns:
+            A SQL ORDER BY clause string (including 'ORDER BY' prefix), or empty string.
+        """
+        if not sort:
+            return ""
+
+        clauses = []
+
+        # Get collation settings
+        collate_clause = ""
+        if collation:
+            strength = collation.get("strength", 3)
+            case_level = collation.get("caseLevel", False)
+            if strength <= 2 or case_level is False:
+                collate_clause = " COLLATE NOCASE"
+
+        for field, direction in sort.items():
+            if field == "_id":
+                order_field = f"{quote_table_name(self.collection.name)}._id"
+            else:
+                json_path = f"'{parse_json_path(field)}'"
+                order_field = (
+                    f"{self._json_function_prefix}_extract(data, {json_path})"
+                )
+
+            order_dir = "ASC" if direction == 1 else "DESC"
+            clauses.append(f"{order_field}{collate_clause} {order_dir}")
+
+        if clauses:
+            return " ORDER BY " + ", ".join(clauses)
+        return ""
+
+    def _build_pagination_clause(
+        self,
+        limit: int | None,
+        skip: int = 0,
+    ) -> str:
+        """
+        Builds a SQL LIMIT and OFFSET clause.
+
+        Args:
+            limit: The maximum number of documents to return.
+            skip: The number of documents to skip.
+
+        Returns:
+            A SQL LIMIT/OFFSET clause string, or empty string.
+        """
+        if limit is None and skip == 0:
+            return ""
+
+        clause = ""
+        if limit is not None:
+            clause = f" LIMIT {limit}"
+            if skip > 0:
+                clause += f" OFFSET {skip}"
+        elif skip > 0:
+            # SQLite requires a LIMIT when using OFFSET
+            # Use -1 for unlimited if supported, or a very large number
+            clause = f" LIMIT -1 OFFSET {skip}"
+
+        return clause
+
     def _build_operator_clause(
         self,
         json_path: str,

@@ -2,6 +2,7 @@
 Test Runner - Orchestrates running all comparison tests
 """
 
+import time
 from .utils import test_pymongo_connection
 
 # Import all comparison functions
@@ -52,70 +53,278 @@ from .expr_complete import compare_additional_expr_operators_complete
 from .expr_success import compare_additional_expr_success_stories
 from .bitwise_operators import compare_bitwise_operators
 from .pullall_operator import compare_pullall_operator
-from .new_operators import compare_new_operators
 from .window_functions import compare_window_functions
 from .graph_lookup import compare_graph_lookup
 from .fill_stage import compare_fill_stage
 from .json_schema import compare_json_schema
 from .window_math import compare_window_math
 from .options_classes import compare_options_classes
+from .aggregation_bucket import compare_bucket_aggregation
+from .type_operators import compare_type_operators
+from .expression_operators import compare_expression_operators
+from .object_operators_extended import compare_object_operators_extended
+from .array_operators_extended import compare_array_operators_extended
+from .binary_operators import compare_binary_operators
 
 
 # Ordered list of all comparison functions with their category names
+# Format: (display_name, function)
 COMPARISON_FUNCTIONS = [
-    ("crud", compare_crud_operations),
-    ("query", compare_query_operators),
-    ("expr", compare_expr_operator),
-    ("update", compare_update_operators),
-    ("aggregation_stages", compare_aggregation_stages),
-    ("index", compare_index_operations),
-    ("find_modify", compare_find_and_modify),
-    ("bulk", compare_bulk_operations),
-    ("distinct", compare_distinct),
-    ("binary", compare_binary_support),
-    ("nested", compare_nested_field_queries),
-    ("raw_batches", compare_raw_batch_operations),
-    ("change_streams", compare_change_streams),
-    ("text", compare_text_search),
-    ("gridfs", compare_gridfs_operations),
-    ("objectid", compare_objectid_operations),
-    ("type", compare_type_operator),
-    ("aggregation_additional", compare_additional_aggregation),
-    ("cursor", compare_cursor_operations),
-    ("mod", compare_mod_operator),
-    ("update_additional", compare_additional_update_operators),
-    ("aggregation_stages_additional", compare_additional_aggregation_stages),
-    ("expr_additional", compare_additional_expr_operators),
-    ("collection_methods", compare_collection_methods),
-    ("date", compare_date_expr_operators),
-    ("math", compare_math_operators),
-    ("string", compare_string_operators),
-    ("array", compare_array_operators),
-    ("object", compare_object_operators),
-    ("collection_additional", compare_additional_collection_methods),
-    ("search_index", compare_search_index_operations),
-    ("bulk_executors", compare_bulk_operation_executors),
-    ("reindex", compare_reindex_operation),
-    ("elemmatch", compare_elemmatch_operator),
-    ("update_modifiers", compare_update_modifiers),
-    ("aggregation_extended", compare_additional_aggregation_stages_extended),
-    ("expr_extended", compare_additional_expr_operators_extended),
-    ("cursor_methods", compare_cursor_methods),
-    ("session_methods", compare_session_methods),
-    ("aggregation_cursor", compare_aggregation_cursor_methods),
-    ("database", compare_database_methods),
-    ("expr_complete", compare_additional_expr_operators_complete),
-    ("expr_success", compare_additional_expr_success_stories),
-    ("bitwise", compare_bitwise_operators),
-    ("pullall", compare_pullall_operator),
-    ("new_operators", compare_new_operators),
-    ("window_functions", compare_window_functions),
-    ("graph_lookup", compare_graph_lookup),
-    ("fill", compare_fill_stage),
-    ("json_schema", compare_json_schema),
-    ("window_math", compare_window_math),
-    ("options_classes", compare_options_classes),
+    # Core Operations
+    ("CRUD Operations", compare_crud_operations),
+    ("Query Operators", compare_query_operators),
+    ("$expr Operator", compare_expr_operator),
+    ("Update Operators", compare_update_operators),
+    # Aggregation
+    ("Aggregation Stages", compare_aggregation_stages),
+    ("Aggregation (Additional)", compare_additional_aggregation),
+    ("Aggregation Stages (Extended)", compare_additional_aggregation_stages),
+    ("Aggregation (Extended)", compare_additional_aggregation_stages_extended),
+    ("Aggregation Cursor", compare_aggregation_cursor_methods),
+    # Indexing
+    ("Index Operations", compare_index_operations),
+    ("Search Index", compare_search_index_operations),
+    ("Reindex", compare_reindex_operation),
+    # Bulk Operations
+    ("Bulk Operations", compare_bulk_operations),
+    ("Bulk Executors", compare_bulk_operation_executors),
+    # Query Features
+    ("Find & Modify", compare_find_and_modify),
+    ("Distinct", compare_distinct),
+    ("Nested Queries", compare_nested_field_queries),
+    ("$elemMatch", compare_elemmatch_operator),
+    # Cursor Operations
+    ("Cursor Operations", compare_cursor_operations),
+    ("Cursor Methods", compare_cursor_methods),
+    # Session & Transactions
+    ("Session & Transactions", compare_session_methods),
+    # Data Types
+    ("Binary Data", compare_binary_support),
+    ("ObjectId", compare_objectid_operations),
+    ("$type Operator", compare_type_operator),
+    ("Date Operations", compare_date_expr_operators),
+    # Aggregation Operators
+    ("Math Operators", compare_math_operators),
+    ("String Operators", compare_string_operators),
+    ("Array Operators", compare_array_operators),
+    ("Object Operators", compare_object_operators),
+    ("$expr (Additional)", compare_additional_expr_operators),
+    ("$expr (Extended)", compare_additional_expr_operators_extended),
+    ("$expr (Complete)", compare_additional_expr_operators_complete),
+    ("$expr (Success Cases)", compare_additional_expr_success_stories),
+    # Advanced Features
+    ("Raw Batches", compare_raw_batch_operations),
+    ("Change Streams", compare_change_streams),
+    ("Text Search", compare_text_search),
+    ("GridFS", compare_gridfs_operations),
+    ("Window Functions", compare_window_functions),
+    ("Window Math", compare_window_math),
+    ("$graphLookup", compare_graph_lookup),
+    ("$fill Stage", compare_fill_stage),
+    ("JSON Schema", compare_json_schema),
+    ("Bucket Aggregation", compare_bucket_aggregation),
+    # Update Operations
+    ("$mod Operator", compare_mod_operator),
+    ("Update (Additional)", compare_additional_update_operators),
+    ("Update Modifiers", compare_update_modifiers),
+    ("Bitwise Operators", compare_bitwise_operators),
+    ("$pullAll Operator", compare_pullall_operator),
+    # Collection & Database
+    ("Collection Methods", compare_collection_methods),
+    ("Collection (Additional)", compare_additional_collection_methods),
+    ("Database Methods", compare_database_methods),
+    # Additional Operators
+    ("Type Operators", compare_type_operators),
+    ("Expression Operators", compare_expression_operators),
+    ("Object Operators", compare_object_operators_extended),
+    ("Array Operators", compare_array_operators_extended),
+    ("Binary Operators", compare_binary_operators),
+    # Utility
+    ("Options Classes", compare_options_classes),
 ]
+
+
+class TimingContext:
+    """Context manager for timing operations"""
+
+    def __init__(self, name: str, reporter=None):
+        self.name = name
+        self.reporter = reporter
+        self.start_time: float = 0.0
+        self.timing_ms: float = 0.0
+
+    def __enter__(self):
+        self.start_time = time.perf_counter()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.timing_ms = (time.perf_counter() - self.start_time) * 1000
+        return False
+
+    def get_timing(self):
+        return self.timing_ms
+
+
+def run_benchmark(iterations: int = 10, silent: bool = False):
+    """Run all comparison tests as benchmark and return results"""
+    import sys
+    import os
+    from io import StringIO
+    from .reporter import BenchmarkReporter
+    import neosqlite
+
+    # Patch neosqlite.Connection to use a disk database instead of :memory:
+    # This allows us to benchmark disk I/O performance without changing every test file.
+    DB_PATH = "benchmark_api.db"
+    original_init = neosqlite.Connection.__init__
+
+    def patched_init(self, *args, **kwargs):
+        if not args or args[0] == ":memory:":
+            # Replace :memory: with our benchmark file
+            new_args = (DB_PATH,) + args[1:]
+            original_init(self, *new_args, **kwargs)
+        else:
+            original_init(self, *args, **kwargs)
+
+    # Apply the patch
+    neosqlite.Connection.__init__ = patched_init  # type: ignore[method-assign]
+
+    def cleanup_db_files():
+        for f in [DB_PATH, f"{DB_PATH}-wal", f"{DB_PATH}-shm"]:
+            if os.path.exists(f):
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
+
+    old_stdout = None
+
+    if not silent:
+        print("=" * 80)
+        print("NeoSQLite vs PyMongo - Benchmark Mode (DISK I/O)")
+        print(f"Iterations: {iterations}")
+        print(f"Database: {DB_PATH}")
+        print("=" * 80)
+    else:
+        devnull = StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = devnull
+
+    # Use the global benchmark_reporter instance so benchmark modules can mark skips
+    from .reporter import benchmark_reporter as global_reporter
+
+    if global_reporter is None:
+        bench_reporter = BenchmarkReporter(iterations=iterations)
+        # Update the global reference in the current module's namespace
+        import sys
+
+        sys.modules[__name__]
+        reporter_mod_name = (
+            __package__ + ".reporter" if __package__ else "reporter"
+        )
+        if reporter_mod_name in sys.modules:
+            sys.modules[reporter_mod_name].benchmark_reporter = bench_reporter  # type: ignore[attr-defined]
+    else:
+        bench_reporter = global_reporter
+        bench_reporter.results = {}
+        bench_reporter.iterations = iterations
+
+    try:
+        for category, func in COMPARISON_FUNCTIONS:
+            if not silent:
+                print(f"\nBenchmarking: {category}")
+            bench_reporter.start_category(category)
+
+            for i in range(iterations):
+                cleanup_db_files()
+                cleanup_test_collections()
+
+                try:
+                    func()
+                except Exception as e:
+                    print(f"  Iteration {i + 1} error: {e}")
+                    continue
+
+                from .timing import get_last_neo_timing, get_last_mongo_timing
+
+                neo_timing = get_last_neo_timing()
+                mongo_timing = get_last_mongo_timing()
+
+                if neo_timing > 0:
+                    bench_reporter.record_neo_timing(category, neo_timing)
+                if mongo_timing > 0:
+                    bench_reporter.record_mongo_timing(category, mongo_timing)
+
+            result = bench_reporter.results[category]
+            neo_stats = result.get_neo_stats()
+            mongo_stats = result.get_mongo_stats()
+
+            # Display status with skip information
+            if result.is_fully_skipped():
+                if not silent:
+                    print(f"  {category}: ⚠️ SKIPPED - {result.skip_reason}")
+            elif result.is_partial():
+                skip_side = "MongoDB" if result.mongo_skipped else "NeoSQLite"
+                if not silent:
+                    print(f"  {category}: ⚠️ PARTIAL ({skip_side} skipped)")
+                    if result.skip_reason:
+                        print(f"    Reason: {result.skip_reason}")
+            else:
+                if not silent:
+                    print(
+                        f"  {category}: NeoSQLite avg={neo_stats['avg']:.2f}ms, MongoDB avg={mongo_stats['avg']:.2f}ms"
+                    )
+    finally:
+        # Restore original Connection.__init__
+        neosqlite.Connection.__init__ = original_init  # type: ignore[method-assign]
+        cleanup_db_files()
+
+    if not silent:
+        print("\n" + "=" * 80)
+        print("Benchmark Complete - Generating Reports")
+        print("=" * 80)
+
+    md_file = bench_reporter.export_markdown()
+    csv_file = bench_reporter.export_csv()
+
+    if not silent:
+        print(f"Markdown report: {md_file}")
+        print(f"CSV report: {csv_file}")
+        print("\n" + "=" * 80)
+        print("Benchmark Summary")
+        print("=" * 80)
+
+    # Calculate totals excluding partial/skipped categories
+    total_neo: float = 0
+    total_mongo: float = 0
+    valid_categories = 0
+    partial_categories = 0
+
+    for result in bench_reporter.results.values():
+        if result.is_partial():
+            partial_categories += 1
+        elif not result.is_fully_skipped():
+            total_neo += sum(result.neo_timings)
+            total_mongo += sum(result.mongo_timings)
+            valid_categories += 1
+
+    speedup = total_mongo / total_neo if total_neo > 0 else 0
+
+    if not silent:
+        print(f"Total Categories: {len(bench_reporter.results)}")
+        print(f"Valid Comparisons: {valid_categories}")
+        if partial_categories > 0:
+            print(f"Partial (one side skipped): {partial_categories}")
+        print(f"Total NeoSQLite Time (valid only): {total_neo:.2f}s")
+        print(f"Total MongoDB Time (valid only): {total_mongo:.2f}s")
+        print(f"NeoSQLite Speedup (valid only): {speedup:.2f}x")
+        print("=" * 80)
+
+    if silent:
+        sys.stdout = old_stdout
+        print(f"Benchmark complete. Reports generated: {md_file}, {csv_file}")
+
+    return bench_reporter
 
 
 def cleanup_test_collections():
@@ -247,7 +456,7 @@ def run_category(category: str) -> bool:
     """
     for cat_name, func in COMPARISON_FUNCTIONS:
         if cat_name == category or category in cat_name:
-            print(f"\n{'='*80}")
+            print(f"\n{'=' * 80}")
             print(f"Running: {cat_name}")
             print("=" * 80)
             try:
@@ -274,7 +483,7 @@ def run_all_comparisons():
 
     # Run all comparison functions
     for category, func in COMPARISON_FUNCTIONS:
-        print(f"\n{'='*80}")
+        print(f"\n{'=' * 80}")
         print(f"Running: {category}")
         print("=" * 80)
         try:

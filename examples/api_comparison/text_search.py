@@ -5,6 +5,12 @@ import warnings
 import neosqlite
 
 from .reporter import reporter
+from .timing import (
+    start_neo_timing,
+    end_neo_timing,
+    start_mongo_timing,
+    end_mongo_timing,
+)
 from .utils import test_pymongo_connection
 
 warnings.filterwarnings(
@@ -17,6 +23,7 @@ def compare_text_search():
     print("\n=== Text Search Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
+        start_neo_timing()
         neo_collection = neo_conn.test_collection
         neo_collection.insert_many(
             [
@@ -48,6 +55,8 @@ def compare_text_search():
             neo_text_search = f"Error: {e}"
             print(f"Neo text search: Error - {e}")
 
+        end_neo_timing()
+
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
 
@@ -60,6 +69,7 @@ def compare_text_search():
     mongo_text_search = None
 
     if client:
+        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
@@ -92,6 +102,7 @@ def compare_text_search():
         except Exception as e:
             mongo_text_search = f"Error: {e}"
             print(f"Mongo text search: Error - {e}")
+        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(

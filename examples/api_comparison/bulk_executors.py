@@ -5,6 +5,7 @@ import warnings
 import neosqlite
 
 from .reporter import reporter
+from .timing import start_neo_timing
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -19,6 +20,7 @@ def compare_bulk_operation_executors():
     neo_unordered_ok = False
 
     with neosqlite.Connection(":memory:") as neo_conn:
+        start_neo_timing()
         neo_collection = neo_conn.test_bulk_exec
         neo_collection.insert_many(
             [

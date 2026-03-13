@@ -5,6 +5,12 @@ import warnings
 import neosqlite
 from neosqlite.objectid import ObjectId
 from .reporter import reporter
+from .timing import (
+    start_neo_timing,
+    end_neo_timing,
+    start_mongo_timing,
+    end_mongo_timing,
+)
 from .utils import test_pymongo_connection
 
 warnings.filterwarnings(
@@ -70,6 +76,7 @@ def compare_json_schema():
     neo_write_validation = False
 
     with neosqlite.Connection(":memory:") as neo_conn:
+        start_neo_timing()
         neo_collection = neo_conn.users
         neo_collection.insert_many(test_data)
 
@@ -108,11 +115,14 @@ def compare_json_schema():
         except Exception as e:
             print(f"Neo write validation: Error - {e}")
 
+        end_neo_timing()
+
     client = test_pymongo_connection()
     mongo_results = {}
     mongo_write_validation = False
 
     if client:
+        start_mongo_timing()
         from bson import ObjectId as BsonObjectId
 
         def to_bson(doc):
@@ -165,6 +175,7 @@ def compare_json_schema():
         except Exception as e:
             print(f"Mongo write validation: Error - {e}")
 
+        end_mongo_timing()
         client.close()
 
     # Record comparisons

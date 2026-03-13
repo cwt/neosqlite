@@ -8,21 +8,23 @@ This package tests NeoSQLite's MongoDB API compatibility by running the same ope
 
 ## Test Results
 
-| Metric | Count |
-|--------|-------|
-| **Total Tests** | 373 |
-| **Passed** | 362 |
-| **Skipped** | 11 |
-| **Failed** | 0 |
-| **Compatibility** | **100%** |
+### API Comparison Tests (v1.9.1)
 
-*Note: These numbers may change during development as new APIs are added or test coverage improves.*
+| Metric | v1.8.0 | v1.9.0 | v1.9.1 |
+|--------|--------|--------|--------|
+| **Total Tests** | 304 | 373 | **369** |
+| **Passed** | 300 | 362 | **358** |
+| **Skipped** | 4 | 11 | **11** |
+| **Failed** | 0 | 0 | **0** |
+| **Compatibility** | 100% | 100% | **100%** |
 
-**Note on Skipped Tests**: The 10 skipped tests are due to architectural differences or environment limitations, not missing implementations:
+*Note: These numbers may change during development as new APIs are added or test coverage improves. The decrease in total tests from v1.9.0 is due to deduplication during test module reorganization.*
+
+**Note on Skipped Tests**: The 11 skipped tests are due to architectural differences or environment limitations, not missing implementations:
 1. `options()` - NeoSQLite returns detailed SQLite schema info (`{'columns': [...], 'indexes': [...]}`) while MongoDB returns `{}`. Backend-specific difference.
 2. `$log2` - **NeoSQLite extension** using SQLite's native `log2()` function. Raises `UserWarning` about MongoDB incompatibility.
 3. `watch()` (Collection & Database) - **Fully implemented in NeoSQLite** via SQLite triggers but cannot be compared because MongoDB requires a replica set for change streams.
-4. `transaction_commit` / `transaction_abort` - **Fully implemented in NeoSQLite** via `ClientSession` but skipped in comparison because MongoDB requires a replica set for multi-document transactions.
+4. `transaction_commit` / `transaction_abort` / `with_transaction` - **Fully implemented in NeoSQLite** via `ClientSession` but skipped in comparison because MongoDB requires a replica set for multi-document transactions.
 5. `db_path` (Collection & Database) - **NeoSQLite extension** providing the underlying SQLite database file path. No MongoDB equivalent.
 6. `initialize_ordered_bulk_op()` / `initialize_unordered_bulk_op()` - **Deprecated in NeoSQLite** to match PyMongo 4.x behavior.
 7. `where()` - **NeoSQLite implementation** using Python function filter. MongoDB uses JavaScript `$where` which requires a JS engine.
@@ -38,17 +40,24 @@ api_comparison/
 ├── __init__.py              # Package initialization and exports
 ├── reporter.py              # CompatibilityReporter class
 ├── runner.py                # Test orchestration and function registry
+├── timing.py                # Timing utilities for benchmarking
 ├── utils.py                 # Utility functions (MongoDB connection)
 ├── crud.py                  # CRUD operations tests
 ├── query_operators.py       # Query operator tests
 ├── expr_*.py                # $expr operator tests (multiple files)
 ├── update_*.py              # Update operator tests
 ├── aggregation_*.py         # Aggregation tests
+├── aggregation_bucket.py    # $bucket aggregation tests
 ├── array_operators.py       # Array operator tests
+├── array_operators_extended.py # Extended array operator tests
 ├── string_operators.py      # String operator tests
 ├── math_operators.py        # Math operator tests
 ├── date_operators.py        # Date operator tests
 ├── object_operators.py      # Object operator tests
+├── object_operators_extended.py # Extended object operator tests
+├── type_operators.py        # Type conversion operator tests
+├── expression_operators.py  # Expression operator tests ($rand, $let)
+├── binary_operators.py      # Binary operator tests ($binarySize)
 ├── collection_*.py          # Collection method tests
 ├── database_methods.py      # Database method tests
 ├── cursor_*.py              # Cursor operation tests
@@ -58,7 +67,6 @@ api_comparison/
 ├── bitwise_operators.py     # Bitwise operator tests ($bitsAllSet, etc.)
 ├── pullall_operator.py      # $pullAll operator tests
 ├── positional_operators.py  # Positional update tests ($, $[], $[identifier])
-├── new_operators.py         # New aggregation operators
 ├── window_functions.py      # Window function tests ($setWindowFields)
 ├── graph_lookup.py          # Graph lookup tests ($graphLookup)
 ├── fill_stage.py            # Fill nulls stage tests ($fill)
@@ -133,7 +141,11 @@ reporter.print_report()
 | `math` | math_operators.py | Math operators |
 | `date` | date_operators.py | Date operators |
 | `object` | object_operators.py | Object operators |
-| `new_ops` | new_operators.py | New aggregation operators |
+| `object_ext` | object_operators_ext.py | Extended object operators |
+| `array_ext` | array_operators_ext.py | Extended array operators |
+| `type_ops` | type_operators.py | Type conversion operators |
+| `expr_ops` | expression_operators.py | Expression operators ($rand, $let) |
+| `binary_ops` | binary_operators.py | Binary operators ($binarySize) |
 | `window` | window_functions.py | Window functions ($setWindowFields) |
 | `graph` | graph_lookup.py | Graph lookup ($graphLookup) |
 | `fill` | fill_stage.py | Fill nulls ($fill) |
@@ -163,6 +175,7 @@ reporter.print_report()
 | `elemmatch` | elemmatch.py | $elemMatch operator |
 | `session_methods` | session_methods.py | Session and transaction methods |
 | `options_classes` | options_classes.py | Options classes (WriteConcern, etc.) |
+| `bucket_agg` | aggregation_bucket.py | $bucket aggregation tests |
 
 ## Adding New Tests
 

@@ -5,6 +5,12 @@ import warnings
 import neosqlite
 
 from .reporter import reporter
+from .timing import (
+    start_neo_timing,
+    end_neo_timing,
+    start_mongo_timing,
+    end_mongo_timing,
+)
 from .utils import test_pymongo_connection
 
 warnings.filterwarnings(
@@ -17,6 +23,7 @@ def compare_search_index_operations():
     print("\n=== Search Index Operations Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
+        start_neo_timing()
         neo_collection = neo_conn.test_search_index
         neo_collection.insert_many(
             [
@@ -65,6 +72,8 @@ def compare_search_index_operations():
             neo_drop_search_index = False
             print(f"Neo drop_search_index: Error - {e}")
 
+        end_neo_timing()
+
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
 
@@ -83,6 +92,7 @@ def compare_search_index_operations():
     mongo_update_search_index = None
 
     if client:
+        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_search_index
         mongo_collection.delete_many({})
@@ -128,6 +138,7 @@ def compare_search_index_operations():
             mongo_drop_search_index = False
             print(f"Mongo drop_index: Error - {e}")
 
+        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(
