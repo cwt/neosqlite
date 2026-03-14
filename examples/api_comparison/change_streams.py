@@ -6,10 +6,6 @@ import neosqlite
 
 from .reporter import reporter
 from .timing import (
-    start_neo_timing,
-    end_neo_timing,
-    start_mongo_timing,
-    end_mongo_timing,
     set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
@@ -34,9 +30,9 @@ def compare_change_streams():
         set_accumulation_mode(True)
         try:
             # NeoSQLite watch uses SQLite change tracking
-            start_neo_timing()
+            # Do not time watch() as it uses fundamentally different
+            # architectures and is often skipped.
             _ = neo_collection.watch()
-            end_neo_timing()
             print("Neo watch: Supported")
         except Exception as e:
             print(f"Neo watch: Error - {e}")
@@ -57,9 +53,9 @@ def compare_change_streams():
         try:
             # MongoDB change streams require replica set
             # This will likely fail on standalone MongoDB
-            start_mongo_timing()
+            # Do not time watch() as it uses fundamentally different
+            # architectures and is often skipped.
             _ = mongo_collection.watch()
-            end_mongo_timing()
             print("Mongo watch: Supported")
         except Exception as e:
             print(f"Mongo watch: Error - {e} (requires replica set)")

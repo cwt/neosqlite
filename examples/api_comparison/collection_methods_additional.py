@@ -56,9 +56,10 @@ def compare_additional_collection_methods():
         try:
             neo_collection_watch = neo_conn.test_watch
 
-            start_neo_timing()
+            # Do not time watch() as it uses fundamentally different
+            # architectures (Triggers vs Oplog) and MongoDB side
+            # is often skipped.
             neo_stream = neo_collection_watch.watch()
-            end_neo_timing()
 
             neo_watch = neo_stream is not None
             neo_stream.close()
@@ -174,9 +175,9 @@ def compare_additional_collection_methods():
             # watch() requires a replica set - will fail on standalone MongoDB
             pipeline = []
 
-            start_mongo_timing()
+            # Do not time watch() as it uses fundamentally different
+            # architectures and is often skipped.
             change_stream = mongo_collection3.watch(pipeline)
-            end_mongo_timing()
 
             # If we get here without exception, it means replica set is available
             mongo_watch = change_stream is not None
