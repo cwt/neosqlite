@@ -133,13 +133,7 @@ class TestSQLTierAggregator:
         """Test can_optimize_pipeline with unsupported stage."""
         pipeline = [
             {"$addFields": {"revenue": {"$multiply": ["$price", "$quantity"]}}},
-            {
-                "$lookup": {
-                    "from": "other",
-                    "localField": "id",
-                    "foreignField": "ref_id",
-                }
-            },
+            {"$indexStats": {}},
         ]
         assert aggregator.can_optimize_pipeline(pipeline) is False
 
@@ -184,7 +178,7 @@ class TestSQLTierAggregator:
         context = PipelineContext()
 
         sql, params = aggregator._build_addfields_sql(
-            spec, "collection", context
+            spec, "collection", context, False
         )
 
         assert sql is not None

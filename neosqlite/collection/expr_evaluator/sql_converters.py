@@ -1433,11 +1433,15 @@ class SqlConvertersMixin:
                 sql = f"{json_prefix}_remove({input_sql}, '{parse_json_path(field)}')"
                 return sql, input_params
             case "$objectToArray":
-                # Complex - convert object keys/values to array of {k, v} objects
-                # Fall back to Python for now
-                raise NotImplementedError(
-                    "$objectToArray not supported in SQL tier (use Python fallback)"
-                )
+                # Convert object to array of {k, v} objects
+                # Syntax: { $objectToArray: <object> }
+                sql_input, params = self._convert_operand_to_sql(operands)
+                json_group_array = self.json_group_array_function  # type: ignore[attr-defined]
+                json_each = self.json_each_function  # type: ignore[attr-defined]
+
+                # Use a subquery with json_each to build the array
+                sql = f"(SELECT json({json_group_array}(json_object('k', key, 'v', value))) FROM {json_each}({sql_input}))"
+                return sql, params
             case _:
                 raise NotImplementedError(
                     f"Object operator {operator} not supported in SQL tier"

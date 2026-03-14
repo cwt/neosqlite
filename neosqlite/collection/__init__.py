@@ -69,7 +69,9 @@ class Collection:
             self.create(**kwargs)
 
     # --- Collection helper methods ---
-    def _load(self, id: int, data: str | bytes) -> Dict[str, Any]:
+    def _load(
+        self, id: int, data: str | bytes, stored_id: Any = None
+    ) -> Dict[str, Any]:
         """
         Deserialize and load a document from its ID and JSON data.
 
@@ -79,6 +81,7 @@ class Collection:
         Args:
             id (int): The document ID.
             data (str | bytes): The JSON string or bytes representing the document.
+            stored_id (Any, optional): The stored _id value if already retrieved.
 
         Returns:
             Dict[str, Any]: The deserialized document with the _id field added.
@@ -86,10 +89,53 @@ class Collection:
         if isinstance(data, bytes):
             data = data.decode("utf-8")
         document: Dict[str, Any] = neosqlite_json_loads(data)
-        # Try to get the _id from the dedicated _id column first, otherwise use the auto-increment id
-        _id = self._get_stored_id(id)
-        document["_id"] = _id if _id is not None else id
+
+        # If stored_id is provided, parse it. Otherwise look it up or use the auto-increment id
+        final_id = (
+            self._parse_stored_id(stored_id) if stored_id is not None else None
+        )
+        if final_id is None:
+            final_id = self._get_stored_id(id)
+
+        document["_id"] = final_id if final_id is not None else id
         return document
+
+    def _parse_stored_id(self, stored_id: Any) -> Any:
+        """
+        Parse a value retrieved from the _id column into its appropriate Python type.
+
+        Args:
+            stored_id: The raw value from the _id column.
+
+        Returns:
+            Any: The parsed value (e.g., ObjectId, int, str, or None).
+        """
+        if stored_id is None:
+            return None
+
+        # Try to decode as ObjectId if it matches ObjectId format
+        if isinstance(stored_id, str) and len(stored_id) == 24:
+            try:
+                from ..objectid import ObjectId
+
+                return ObjectId(stored_id)
+            except (ValueError, ImportError):
+                # Not a valid ObjectId or ImportError, return as-is
+                pass
+
+        # Try to parse as JSON if it's a complex ID (e.g. dict or list)
+        if isinstance(stored_id, str) and (
+            (stored_id.startswith("{") and stored_id.endswith("}"))
+            or (stored_id.startswith("[") and stored_id.endswith("]"))
+        ):
+            try:
+                from .json_helpers import neosqlite_json_loads
+
+                return neosqlite_json_loads(stored_id)
+            except Exception:
+                pass
+
+        return stored_id
 
     def _load_with_stored_id(
         self, id_val: int, data: str | bytes, stored_id_val
@@ -152,15 +198,7 @@ class Collection:
                 )
                 row = cursor.fetchone()
                 if row and row[0] is not None:
-                    stored_id = row[0]
-                    # Try to decode as ObjectId if it matches ObjectId format
-                    if isinstance(stored_id, str) and len(stored_id) == 24:
-                        try:
-                            return ObjectId(stored_id)
-                        except ValueError:
-                            # Not a valid ObjectId, return as-is
-                            return stored_id
-                    return stored_id
+                    return self._parse_stored_id(row[0])
                 else:
                     # If no row is found or row[0] is None, return None
                     return None

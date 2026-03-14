@@ -219,8 +219,8 @@ def test_window_tier2_fallback(collection):
     cursor = collection.aggregate(pipeline)
     explanation = cursor.explain()
 
-    # $lookup makes it Tier 2
-    assert explanation["tier"] == 2
+    # With $lookup now supported in Tier 1 SQL, this should be Tier 1
+    assert explanation["tier"] == 1
 
     results = list(cursor)
     assert len(results) == 3

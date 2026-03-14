@@ -15,6 +15,11 @@ from copy import deepcopy
 from .utils import (
     get_force_fallback,
 )
+from ..expr_evaluator import (
+    ExprEvaluator,
+    AggregationContext,
+    _is_expression,
+)
 from ..json_path_utils import (
     parse_json_path,
 )
@@ -770,7 +775,6 @@ class AggregationMixin:
             List[Dict[str, Any]]: A list of grouped documents with applied
                                   accumulator operations.
         """
-        from ..expr_evaluator import ExprEvaluator, _is_expression
 
         grouped_docs: Dict[Any, Dict[str, Any]] = {}
         group_id_key = group_query.get("_id")
@@ -1133,9 +1137,6 @@ class AggregationMixin:
             Dict[str, Any]: The document with fields applied based on the projection.
         """
         from ..expr_evaluator import (
-            ExprEvaluator,
-            AggregationContext,
-            _is_expression,
             REMOVE_SENTINEL,
         )
 

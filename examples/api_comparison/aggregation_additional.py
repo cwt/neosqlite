@@ -23,9 +23,13 @@ def compare_additional_aggregation():
     """Compare additional aggregation features"""
     print("\n=== Additional Aggregation Features Comparison ===")
 
-    neo_switch = None
+    neo_unwind = None
     neo_unwind_advanced = None
     neo_unwind_advanced_result = None
+    neo_push = None
+    neo_push_result = None
+    neo_switch = None
+    neo_switch_result = None
     with neosqlite.Connection(":memory:") as neo_conn:
         neo_collection = neo_conn.test_collection
         neo_collection.insert_many(
@@ -141,6 +145,7 @@ def compare_additional_aggregation():
     mongo_unwind_advanced = None
     mongo_unwind_advanced_result = None
     mongo_switch = None
+    mongo_switch_result = None
 
     if client:
         mongo_db = client.test_database

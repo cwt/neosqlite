@@ -68,7 +68,7 @@ def compare_update_operators():
 
     mongo_db = None
 
-    mongo_results = None
+    mongo_results = {}
 
     if client:
         mongo_db = client.test_database

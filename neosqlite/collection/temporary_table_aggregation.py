@@ -475,7 +475,7 @@ class TemporaryTableAggregationProcessor:
                         unset_stage = {"$unset": unset_spec}
                         new_table = create_temp(
                             unset_stage,
-                            f"SELECT id, {data_expr} as data FROM {current_table}",
+                            f"SELECT id, _id, {data_expr} as data FROM {current_table}",
                         )
                         current_table = new_table
                         i += 1
@@ -603,8 +603,8 @@ class TemporaryTableAggregationProcessor:
         # We must explicitly select columns and inject _id into JSON data
         # to ensure it's available for subsequent stages (like $lookup or $graphLookup)
         sql = (
-            f"SELECT id, "
-            f"json({json_set_func}(data, '$._id', id)) AS data "
+            f"SELECT id, _id, "
+            f"json({json_set_func}(data, '$._id', _id)) AS data "
             f"FROM {current_table} {where_clause}"
         )
 
@@ -1051,13 +1051,13 @@ class TemporaryTableAggregationProcessor:
         if self._jsonb_supported:
             new_table = create_temp(
                 add_fields_stage,
-                f"SELECT id, json({data_expr}) as data FROM {current_table}",
+                f"SELECT id, _id, json({data_expr}) as data FROM {current_table}",
                 params if params else None,
             )
         else:
             new_table = create_temp(
                 add_fields_stage,
-                f"SELECT id, {data_expr} as data FROM {current_table}",
+                f"SELECT id, _id, {data_expr} as data FROM {current_table}",
                 params if params else None,
             )
         return new_table
@@ -1103,7 +1103,7 @@ class TemporaryTableAggregationProcessor:
             # Extract the field and use it as the new root document
             new_table = create_temp(
                 replace_stage,
-                f"SELECT id, {json_extract}(data, '{parse_json_path(field_name)}') as data FROM {current_table}",
+                f"SELECT id, _id, {json_extract}(data, '{parse_json_path(field_name)}') as data FROM {current_table}",
             )
             return new_table
         else:
@@ -1481,16 +1481,31 @@ class TemporaryTableAggregationProcessor:
                     f"SELECT id, _id, json(data) as data FROM {table_name}"
                 )
             else:
-                cursor = self.db.execute(
-                    f"SELECT id, json(data) as data FROM {table_name}"
-                )
+                # Even if no _id column, we still select it if it might be there (fallback)
+                try:
+                    cursor = self.db.execute(
+                        f"SELECT id, _id, json(data) as data FROM {table_name}"
+                    )
+                    has_id_column = True
+                except Exception:
+                    cursor = self.db.execute(
+                        f"SELECT id, json(data) as data FROM {table_name}"
+                    )
         else:
             if has_id_column:
                 cursor = self.db.execute(
                     f"SELECT id, _id, data FROM {table_name}"
                 )
             else:
-                cursor = self.db.execute(f"SELECT id, data FROM {table_name}")
+                try:
+                    cursor = self.db.execute(
+                        f"SELECT id, _id, data FROM {table_name}"
+                    )
+                    has_id_column = True
+                except Exception:
+                    cursor = self.db.execute(
+                        f"SELECT id, data FROM {table_name}"
+                    )
 
         # Use fetchmany to avoid loading all results into memory at once
         results = []
@@ -1511,7 +1526,7 @@ class TemporaryTableAggregationProcessor:
                     doc = neosqlite_json_loads(row[2])
                     # Only set _id from column if it's not already in the JSON
                     if "_id" not in doc:
-                        doc["_id"] = row[1]
+                        doc["_id"] = self.collection._parse_stored_id(row[1])
                 else:
                     # Parse _id from JSON data
                     doc = neosqlite_json_loads(row[1])
@@ -2078,7 +2093,7 @@ class TemporaryTableAggregationProcessor:
         args_str = ", ".join(json_set_args)
 
         # We need to maintain the id column
-        sql = f"SELECT id, json({json_set_func}(data, {args_str})) AS data FROM {current_table}"
+        sql = f"SELECT id, _id, json({json_set_func}(data, {args_str})) AS data FROM {current_table}"
 
         return create_temp({"$setWindowFields": spec}, sql, all_params)
 
@@ -2372,11 +2387,11 @@ class TemporaryTableAggregationProcessor:
 
             args_str = ", ".join(json_set_args)
             data_expr = f"json({json_set_func}(data, {args_str}))"
-            sql = f"SELECT id, {data_expr} AS data FROM {current_table}"
+            sql = f"SELECT id, _id, {data_expr} AS data FROM {current_table}"
             return create_temp({"$fill": spec}, sql, all_params)
 
         # Complex locf fill
-        block_id_selects = ["id", "data"]
+        block_id_selects = ["id", "_id", "data"]
         for field, fill_spec in output.items():
             if fill_spec.get("method") == "locf":
                 field_sql, _ = self.expr_evaluator.build_select_expression(
@@ -2416,7 +2431,7 @@ class TemporaryTableAggregationProcessor:
         data_expr = f"json({json_set_func}(data, {args_str}))"
 
         stage_sql = f"""
-            SELECT id, {data_expr} AS data
+            SELECT id, _id, {data_expr} AS data
             FROM (
                 SELECT {', '.join(block_id_selects)}
                 FROM {current_table}

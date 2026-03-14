@@ -24,6 +24,7 @@ def compare_aggregation_stages():
     """Compare aggregation pipeline stages between NeoSQLite and PyMongo"""
     print("\n=== Aggregation Pipeline Stages Comparison ===")
 
+    mongo_results = {}
     with neosqlite.Connection(":memory:") as neo_conn:
         neo_collection = neo_conn.test_collection
         neo_collection.insert_many(

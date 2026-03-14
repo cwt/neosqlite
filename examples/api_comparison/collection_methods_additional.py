@@ -133,6 +133,7 @@ def compare_additional_collection_methods():
     mongo_db_ok = None
     mongo_drop = None
     mongo_watch = None
+    mongo_full_name = None
     mongo_full_name_ok = None
     mongo_client_prop = None
     mongo_with_options = None

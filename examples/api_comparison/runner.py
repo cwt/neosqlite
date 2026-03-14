@@ -78,8 +78,11 @@ COMPARISON_FUNCTIONS = [
     # Aggregation
     ("Aggregation Stages", compare_aggregation_stages),
     ("Aggregation (Additional)", compare_additional_aggregation),
-    ("Aggregation Stages (Extended)", compare_additional_aggregation_stages),
-    ("Aggregation (Extended)", compare_additional_aggregation_stages_extended),
+    (
+        "Aggregation Stages (Extended)",
+        compare_additional_aggregation_stages_extended,
+    ),
+    ("Aggregation (Extended)", compare_additional_aggregation_stages),
     ("Aggregation Cursor", compare_aggregation_cursor_methods),
     # Indexing
     ("Index Operations", compare_index_operations),
@@ -136,8 +139,8 @@ COMPARISON_FUNCTIONS = [
     # Additional Operators
     ("Type Operators", compare_type_operators),
     ("Expression Operators", compare_expression_operators),
-    ("Object Operators", compare_object_operators_extended),
-    ("Array Operators", compare_array_operators_extended),
+    ("Object Operators (Extended)", compare_object_operators_extended),
+    ("Array Operators (Extended)", compare_array_operators_extended),
     ("Binary Operators", compare_binary_operators),
     # Utility
     ("Options Classes", compare_options_classes),

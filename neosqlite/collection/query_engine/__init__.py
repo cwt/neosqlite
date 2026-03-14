@@ -127,16 +127,40 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                             break
                         for row in rows:
                             # Load document from data column
-                            # Row structure: (id, data) or (id, root_data, data)
-                            if len(row) == 3:
-                                # root_data is present, data is in row[2]
-                                results.append(
-                                    self.collection._load(row[0], row[2])
+                            # Row structure:
+                            # If root_data preserved: (id, _id, root_data, data) - len 4
+                            # Normal: (id, _id, data) - len 3
+                            # GROUP BY results might have id=NULL and data as a custom object
+
+                            doc_data = row[-1]
+                            doc_id = row[0]
+                            stored_id = row[1]
+
+                            if doc_data.startswith("{") and doc_data.endswith(
+                                "}"
+                            ):
+                                # It's a JSON object (standard or GROUP BY result)
+                                from neosqlite.collection.json_helpers import (
+                                    neosqlite_json_loads,
                                 )
+
+                                document = neosqlite_json_loads(doc_data)
+                                if (
+                                    "_id" not in document
+                                    and stored_id is not None
+                                ):
+                                    document["_id"] = (
+                                        self.collection._parse_stored_id(
+                                            stored_id
+                                        )
+                                    )
+                                results.append(document)
                             else:
-                                # No root_data, data is in row[1]
+                                # Normal loading via _load
                                 results.append(
-                                    self.collection._load(row[0], row[1])
+                                    self.collection._load(
+                                        doc_id, doc_data, stored_id=stored_id
+                                    )
                                 )
                     return results
         except Exception:
@@ -193,9 +217,17 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                         if not rows:
                             break
                         for row in rows:
-                            results.append(
-                                self.collection._load(row[0], row[1])
-                            )
+                            # Row structure: (id, data) or (id, root_data, data)
+                            if len(row) == 3:
+                                # root_data is present, data is in row[2]
+                                results.append(
+                                    self.collection._load(row[0], row[2])
+                                )
+                            else:
+                                # No root_data, data is in row[1]
+                                results.append(
+                                    self.collection._load(row[0], row[1])
+                                )
                     return results
         except Exception:
             # If SQL optimization fails, continue to next approach
@@ -311,20 +343,69 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                     else:  # $replaceWith
                         new_root_expr = stage["$replaceWith"]
 
-                    docs_with_context = [
-                        {
-                            "__doc__": (
-                                self.collection._get_val(
-                                    dc["__doc__"], new_root_expr.lstrip("$")
-                                )
-                                if isinstance(new_root_expr, str)
-                                and new_root_expr.startswith("$")
-                                else dc["__doc__"]
-                            ),
-                            "__root__": dc["__root__"],
-                        }
-                        for dc in docs_with_context
-                    ]
+                    new_docs_with_context = []
+                    for dc in docs_with_context:
+                        # Evaluate the new root expression
+                        evaluator = ExprEvaluator()
+                        # Use _evaluate_operand_python to get the actual value (not forced to bool)
+                        try:
+                            new_doc = evaluator._evaluate_operand_python(
+                                new_root_expr, dc["__doc__"]
+                            )
+                        except Exception:
+                            # Fallback if evaluation fails
+                            new_doc = dc["__doc__"]
+
+                        # MongoDB requirement: result MUST be an object
+                        if not isinstance(new_doc, dict):
+                            raise MalformedQueryException(
+                                f"$replaceRoot requires an object, got {type(new_doc).__name__}"
+                            )
+
+                        # Ensure _id is preserved if it was present in the original
+                        if (
+                            "_id" not in new_doc
+                            and "__doc__" in dc
+                            and "_id" in dc["__doc__"]
+                        ):
+                            new_doc["_id"] = dc["__doc__"]["_id"]
+
+                        new_docs_with_context.append(
+                            {"__doc__": new_doc, "__root__": dc["__root__"]}
+                        )
+                    docs_with_context = new_docs_with_context
+                case "$unset":
+                    # Handle $unset aggregation stage
+                    unset_spec = stage["$unset"]
+                    if isinstance(unset_spec, str):
+                        fields_to_unset = [unset_spec]
+                    elif isinstance(unset_spec, list):
+                        fields_to_unset = unset_spec
+                    else:
+                        raise MalformedQueryException(
+                            "$unset requires a string or a list of strings"
+                        )
+
+                    for dc in docs_with_context:
+                        doc = dc["__doc__"]
+                        for field in fields_to_unset:
+                            # Use collection._get_val logic to navigate and pop
+                            if "." in field:
+                                parts = field.split(".")
+                                target: dict[str, Any] | None = doc
+                                for part in parts[:-1]:
+                                    if (
+                                        isinstance(target, dict)
+                                        and part in target
+                                    ):
+                                        target = target[part]
+                                    else:
+                                        target = None
+                                        break
+                                if isinstance(target, dict):
+                                    target.pop(parts[-1], None)
+                            else:
+                                doc.pop(field, None)
                 case "$group":
                     group_spec = stage["$group"]
                     # For $group, we don't preserve __root__ since grouping creates new documents
@@ -481,7 +562,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                 case "$addFields":
                     add_fields_spec = stage["$addFields"]
                     # Create expression evaluator for this stage
-                    evaluator = ExprEvaluator(
+                    evaluator_add = ExprEvaluator(
                         data_column="data", db_connection=self.collection.db
                     )
 
@@ -499,7 +580,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                         for new_field, expr in add_fields_spec.items():
                             if _is_expression(expr):
                                 # Full expression - evaluate in Python with current context
-                                value = evaluator._evaluate_expr_python(
+                                value = evaluator_add._evaluate_expr_python(
                                     expr, doc
                                 )
                                 self.collection._set_val(doc, new_field, value)
@@ -539,40 +620,40 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                     )
 
                     window_spec = stage["$setWindowFields"]
-                    evaluator = ExprEvaluator(
+                    evaluator_window = ExprEvaluator(
                         data_column="data", db_connection=self.collection.db
                     )
                     docs_with_context = process_set_window_fields(
                         docs_with_context,
                         window_spec,
                         self.collection,
-                        evaluator,
+                        evaluator_window,
                     )
                 case "$graphLookup":
                     from ..query_helper.graph_lookup import process_graph_lookup
 
                     graph_spec = stage["$graphLookup"]
-                    evaluator = ExprEvaluator(
+                    evaluator_graph = ExprEvaluator(
                         data_column="data", db_connection=self.collection.db
                     )
                     docs_with_context = process_graph_lookup(
                         docs_with_context,
                         graph_spec,
                         self.collection,
-                        evaluator,
+                        evaluator_graph,
                     )
                 case "$fill":
                     from ..query_helper.fill_stage import process_fill
 
                     fill_spec = stage["$fill"]
-                    evaluator = ExprEvaluator(
+                    evaluator_fill = ExprEvaluator(
                         data_column="data", db_connection=self.collection.db
                     )
                     docs_with_context = process_fill(
                         docs_with_context,
                         fill_spec,
                         self.collection,
-                        evaluator,
+                        evaluator_fill,
                     )
                 case "$sample":
                     sample_spec = stage["$sample"]
@@ -966,6 +1047,11 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                     # $redact filters document content based on conditions
                     redact_spec = stage["$redact"]
 
+                    # Create evaluator for condition evaluation
+                    evaluator_redact = ExprEvaluator(
+                        data_column="data", db_connection=self.collection.db
+                    )
+
                     def apply_redact(doc, spec):
                         """Recursively apply redaction to a document."""
                         if not isinstance(doc, dict):
@@ -1012,8 +1098,10 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
 
                             # Evaluate the condition
                             try:
-                                cond_result = evaluator._evaluate_expr_python(
-                                    if_expr, doc
+                                cond_result = (
+                                    evaluator_redact._evaluate_expr_python(
+                                        if_expr, doc
+                                    )
                                 )
                                 if cond_result:
                                     return then_expr
@@ -1029,7 +1117,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                             else False
                         ):
                             try:
-                                result = evaluator._evaluate_expr_python(
+                                result = evaluator_redact._evaluate_expr_python(
                                     spec, doc
                                 )
                                 if result in ("$$KEEP", "$$DESCEND", "$$PRUNE"):
@@ -1038,11 +1126,6 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                                 pass
 
                         return "$$DESCEND"
-
-                    # Create evaluator for condition evaluation
-                    evaluator = ExprEvaluator(
-                        data_column="data", db_connection=self.collection.db
-                    )
 
                     # Apply redaction to each document
                     new_docs_with_context = []
