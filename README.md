@@ -32,14 +32,41 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 - **Configurable Journal Mode**: Support for different SQLite journal modes (WAL, DELETE, MEMORY, etc.) with WAL as default.
 - **Full GridFS Support**: Complete PyMongo-compatible GridFS with modern GridFSBucket API and legacy API support.
 - **Python 3.10+ Modernization**: Leveraging modern Python features like walrus operators and union type hints.
+- **Benchmark Infrastructure**: High-precision timing with Markdown/CSV report generation for performance analysis.
 
 See [CHANGELOG.md](CHANGELOG.md) for the latest features and improvements.
 
-## Latest Release: v1.9.1
+## Latest Release: v1.9.2
 
-NeoSQLite v1.9.1 is a **maintenance and optimization release** that introduces **configurable journal modes** and **SQL-tier cursor optimizations**, allowing developers to adapt to specialized environments while achieving up to **2.4x performance improvement** for cursor operations.
+NeoSQLite v1.9.2 is a **performance-focused release** that significantly expands **SQL-tier aggregation pipeline optimization** and implements **SQL-level optimizations for complex update operators**. This version reduces reliance on Python fallback, delivering faster query execution and better resource utilization while maintaining full PyMongo API compatibility.
 
 ### Key Highlights
+
+**Expanded SQL-Tier Aggregation** - 10+ new aggregation stages translated to native SQL:
+- **New Stages**: `$unset`, `$replaceRoot`, `$replaceWith`, `$sample`, `$bucket`, `$bucketAuto`, `$redact`, `$unionWith`, `$lookup`, `$merge`
+- **New Operators**: `$objectToArray` for object-to-array conversion
+- **$redact Enhancements**: Support for both PRUNE/KEEP and KEEP/PRUNE patterns
+- **Performance**: 15-50x improvement for SQL-tier stages vs Python fallback
+
+**SQL-Level Update Operator Optimization** - Tier-2 SQL paths for array operators:
+- **`$pop`**: Remove first/last array element using native SQL
+- **`$push` with `$each`**: Array concatenation via `json_patch()`
+- **`$addToSet`**: Conditional insertion with existence checking
+- **Performance**: 5-20x improvement for optimized update operations
+
+**SQLite Version Detection** - Automatic feature enablement:
+- Detects SQLite 3.42.0+ for advanced JSON operations
+- Graceful fallback for older SQLite versions
+- Type-safe feature cache for efficient capability checking
+
+**Benchmark Improvements** - High-precision timing infrastructure:
+- Surgical timing placement excluding setup/reset overhead
+- 40+ benchmark modules refactored for consistency
+- Fixed total time unit calculations
+- Proper iteration timing aggregation
+- Shell script for automated CI/CD runs
+
+### Key Highlights (from v1.9.1)
 
 **Configurable Journal Mode** - Choose the optimal SQLite journal mode for your deployment:
 - **WAL** (Default) - Write-Ahead Logging for best concurrency
@@ -58,77 +85,35 @@ NeoSQLite v1.9.1 is a **maintenance and optimization release** that introduces *
 - Integrated into API comparison suite
 - Multiple iterations with statistical analysis
 - Markdown and CSV report generation
-- Shell script for automated benchmarking
+- Shell script for automated CI/CD runs
 
-### Key Highlights (from v1.9.0)
-
-**ACID Transactions** - Full support for PyMongo 4.x transaction API:
-- `ClientSession` with `start_transaction()`, `commit_transaction()`, `abort_transaction()`
-- `with_transaction()` callback-based transactional execution
-- Nested transaction support via SQLite `SAVEPOINT`
-- Session parameter integrated across all CRUD, find, aggregation, and GridFS operations
-
-**Advanced Aggregation Stages**:
-- `$setWindowFields`: Comprehensive window function support with ranking, distribution, and math operators
-- `$graphLookup`: Recursive hierarchical searches via optimized Recursive CTEs
-- `$fill`: Intelligent data filling (constant or `locf`) for sequential datasets
-- **Streaming `$facet`**: Parallel sub-pipeline processing with memory-efficient batch processing
-
-**SQL-Level (Tier-1) Optimization Expansion**:
-- **Set Operators**: All 7 operators (`$setEquals`, `$setUnion`, `$setIntersection`, etc.) now run in SQL
-- **String Operators**: `$split` (via recursive CTE), `$replaceAll`, `$replaceOne`
-- **Variable Scoping**: `$let` with SQL-tier optimization via variable inlining
-- **Accumulators**: `$addToSet` and `$stdDev` (Pop/Samp) with SQL implementations
-
-**Native `$jsonSchema` Validation**:
-- **Query Validation**: Use `$jsonSchema` within `find()` or `$match` stages
-- **Write Validation**: Translates to native SQLite CHECK constraints for database-level enforcement
-- Supports `required`, `properties`, `bsonType`, and numeric constraints
-
-**Window Functions** (MongoDB 5.0+):
-- **Ranking**: `$rank`, `$denseRank`, `$documentNumber`, `$percentRank`, `$cumeDist`
-- **Value**: `$first`, `$last`, `$firstN`, `$lastN`, `$minN`, `$maxN`
-- **Advanced**: `$top`, `$bottom`, `$topN`, `$bottomN`
-- **Math**: `$derivative`, `$integral`, `$covariancePop`, `$covarianceSamp`, `$expMovingAvg`
-
-**PyMongo 4.x API Parity**:
-- Options classes: `WriteConcern`, `ReadPreference`, `ReadConcern`, `CodecOptions`
-- Write concern mapping to SQLite `PRAGMA synchronous` settings
-
-**Performance Improvements**:
-- **Memory Bounding**: All engines use `fetchmany(101)` for constant memory footprint
-- **JSONB Auto-Detection**: 2-5x performance boost on supported systems
-
-**Test Coverage**: 369 API comparison tests (358 passed, 11 skipped, 0 failed) - 100% compatibility
-
-For more details, see [documents/releases/v1.9.1.md](documents/releases/v1.9.1.md).
+For more details, see [documents/releases/v1.9.2.md](documents/releases/v1.9.2.md).
 
 ## PyMongo Compatibility Tests
 
 NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-compatible behavior. Our automated test suite covers all major API categories:
 
-### Test Results (v1.9.1)
+### Test Results (v1.9.2)
 
 #### Unit Tests
 
 | Metric | Result |
 |--------|--------|
-| **Total Tests** | 2,182 |
-| **Passed** | 2,175 |
+| **Total Tests** | 2,185 |
+| **Passed** | 2,180 |
 | **Failed** | 0 |
-| **XFailed** | 6 (expected failures) |
-| **XPassed** | 1 (unexpected successes) |
-| **Code Coverage** | 83%+ |
+| **XFailed** | 5 (expected failures) |
+| **Code Coverage** | 82% |
 
 #### API Comparison Tests
 
-| Metric | v1.8.0 | v1.9.0 | v1.9.1 |
-|--------|--------|--------|--------|
-| **Total Tests** | 304 | 373 | **369** |
-| **Passed** | 300 | 362 | **358** |
-| **Skipped** | 4 | 11 | **11** |
-| **Failed** | 0 | 0 | **0** |
-| **Compatibility** | 100% | 100% | **100%** |
+| Metric | v1.8.0 | v1.9.0 | v1.9.1 | **v1.9.2** |
+|--------|--------|--------|--------|------------|
+| **Total Tests** | 304 | 373 | 369 | **371** |
+| **Passed** | 300 | 362 | 358 | **359** |
+| **Skipped** | 4 | 11 | 11 | **12** |
+| **Failed** | 0 | 0 | 0 | **0** |
+| **Compatibility** | 100% | 100% | 100% | **100%** |
 
 **Skipped Tests Note**: The 11 skipped tests are due to architectural differences or environment limitations, not missing implementations:
 
@@ -174,6 +159,13 @@ For more details, see the [`examples/api_comparison/`](examples/api_comparison/)
 
 NeoSQLite includes comprehensive benchmarks demonstrating the performance benefits of its SQL optimizations:
 
+**v1.9.2 Performance Improvements**:
+- **SQL-Tier Aggregation Expansion**: 10+ new stages ($bucket, $redact, $lookup, etc.) with 15-50x speedup
+- **Update Operator Optimization**: $pop, $push, $addToSet with 5-20x speedup via Tier-2 SQL paths
+- **High-Precision Timing**: Surgical benchmark infrastructure excluding setup/reset overhead
+- **40+ Benchmark Modules**: Refactored for consistent, accurate performance measurement
+
+**Previous Optimizations**:
 - **Three-Tier Aggregation Pipeline Processing**: Expanded SQL optimization coverage to over 85% of common aggregation pipelines
 - **Enhanced SQL Optimization Benchmark**: Covers additional optimizations like pipeline reordering and text search with array processing
 - **Text Search + json_each() Benchmark**: Demonstrates specialized optimizations for text search on array fields
