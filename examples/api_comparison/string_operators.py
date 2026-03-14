@@ -10,6 +10,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -22,8 +23,34 @@ def compare_string_operators():
     """Compare string operators in aggregation"""
     print("\n=== String Operators Comparison ===")
 
+    # Initialize result variables
+    neo_substr = None
+    neo_trim = None
+    neo_split = None
+    neo_replaceall = None
+    neo_ltrim = None
+    neo_rtrim = None
+    neo_strlencp = None
+    neo_regexfind = None
+    neo_regexmatch = None
+    neo_replaceone = None
+    neo_indexofcp = None
+    neo_regexfindall = None
+
+    mongo_substr = None
+    mongo_trim = None
+    mongo_split = None
+    mongo_replaceall = None
+    mongo_ltrim = None
+    mongo_rtrim = None
+    mongo_strlencp = None
+    mongo_regexfind = None
+    mongo_regexmatch = None
+    mongo_replaceone = None
+    mongo_indexofcp = None
+    mongo_regexfindall = None
+
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_collection
         neo_collection.insert_many(
             [
@@ -32,13 +59,17 @@ def compare_string_operators():
             ]
         )
 
+        set_accumulation_mode(True)
+
         # Test $substr
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [{"$project": {"short": {"$substr": ["$name", 2, 3]}}}]
                 )
             )
+            end_neo_timing()
             neo_substr = len(result) == 2
             print(f"Neo $substr: {'OK' if neo_substr else 'FAIL'}")
         except Exception as e:
@@ -47,11 +78,13 @@ def compare_string_operators():
 
         # Test $trim
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [{"$project": {"trimmed": {"$trim": {"input": "$name"}}}}]
                 )
             )
+            end_neo_timing()
             neo_trim = len(result) == 2
             print(f"Neo $trim: {'OK' if neo_trim else 'FAIL'}")
         except Exception as e:
@@ -60,11 +93,13 @@ def compare_string_operators():
 
         # Test $split
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [{"$project": {"parts": {"$split": ["$city", " "]}}}]
                 )
             )
+            end_neo_timing()
             neo_split = len(result) == 2
             print(f"Neo $split: {'OK' if neo_split else 'FAIL'}")
         except Exception as e:
@@ -73,6 +108,7 @@ def compare_string_operators():
 
         # Test $replaceAll
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [
@@ -90,6 +126,7 @@ def compare_string_operators():
                     ]
                 )
             )
+            end_neo_timing()
             neo_replaceall = len(result) == 2
             print(f"Neo $replaceAll: {'OK' if neo_replaceall else 'FAIL'}")
         except Exception as e:
@@ -98,6 +135,7 @@ def compare_string_operators():
 
         # Test $ltrim
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [
@@ -109,6 +147,7 @@ def compare_string_operators():
                     ]
                 )
             )
+            end_neo_timing()
             neo_ltrim = len(result) == 2
             print(f"Neo $ltrim: {'OK' if neo_ltrim else 'FAIL'}")
         except Exception as e:
@@ -117,6 +156,7 @@ def compare_string_operators():
 
         # Test $rtrim
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [
@@ -128,6 +168,7 @@ def compare_string_operators():
                     ]
                 )
             )
+            end_neo_timing()
             neo_rtrim = len(result) == 2
             print(f"Neo $rtrim: {'OK' if neo_rtrim else 'FAIL'}")
         except Exception as e:
@@ -136,11 +177,13 @@ def compare_string_operators():
 
         # Test $strLenCP
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [{"$project": {"name_len": {"$strLenCP": "$name"}}}]
                 )
             )
+            end_neo_timing()
             neo_strlencp = len(result) == 2
             print(f"Neo $strLenCP: {'OK' if neo_strlencp else 'FAIL'}")
         except Exception as e:
@@ -149,6 +192,7 @@ def compare_string_operators():
 
         # Test $regexFind
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [
@@ -166,6 +210,7 @@ def compare_string_operators():
                     ]
                 )
             )
+            end_neo_timing()
             neo_regexfind = len(result) == 2
             print(f"Neo $regexFind: {'OK' if neo_regexfind else 'FAIL'}")
         except Exception as e:
@@ -174,6 +219,7 @@ def compare_string_operators():
 
         # Test $regexMatch
         try:
+            start_neo_timing()
             # i (case-insensitive)
             result = list(
                 neo_collection.aggregate(
@@ -255,6 +301,7 @@ def compare_string_operators():
                     ]
                 )
             )
+            end_neo_timing()
 
             neo_regexmatch = (
                 len(result) >= 1
@@ -271,6 +318,7 @@ def compare_string_operators():
 
         # Test $replaceOne
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [
@@ -288,6 +336,7 @@ def compare_string_operators():
                     ]
                 )
             )
+            end_neo_timing()
             neo_replaceone = len(result) >= 1
             print(f"Neo $replaceOne: {'OK' if neo_replaceone else 'FAIL'}")
         except Exception as e:
@@ -296,11 +345,13 @@ def compare_string_operators():
 
         # Test $indexOfCP
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [{"$project": {"index": {"$indexOfCP": ["$name", "ice"]}}}]
                 )
             )
+            end_neo_timing()
             neo_indexofcp = len(result) >= 1
             print(f"Neo $indexOfCP: {'OK' if neo_indexofcp else 'FAIL'}")
         except Exception as e:
@@ -309,6 +360,7 @@ def compare_string_operators():
 
         # Test $regexFindAll
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [
@@ -326,31 +378,15 @@ def compare_string_operators():
                     ]
                 )
             )
+            end_neo_timing()
             neo_regexfindall = len(result) >= 1
             print(f"Neo $regexFindAll: {'OK' if neo_regexfindall else 'FAIL'}")
         except Exception as e:
             neo_regexfindall = False
             print(f"Neo $regexFindAll: Error - {e}")
 
-        end_neo_timing()
-
     client = test_pymongo_connection()
-    mongo_collection = None
-    mongo_db = None
-    mongo_replaceall = None
-    mongo_split = None
-    mongo_substr = None
-    mongo_trim = None
-    mongo_ltrim = None
-    mongo_rtrim = None
-    mongo_strlencp = None
-    mongo_regexfind = None
-    mongo_replaceone = None
-    mongo_indexofcp = None
-    mongo_regexfindall = None
-
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
@@ -361,13 +397,16 @@ def compare_string_operators():
             ]
         )
 
+        set_accumulation_mode(True)
         # Test $substr
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [{"$project": {"short": {"$substr": ["$name", 2, 3]}}}]
                 )
             )
+            end_mongo_timing()
             mongo_substr = len(result) == 2
             print(f"Mongo $substr: {'OK' if mongo_substr else 'FAIL'}")
         except Exception as e:
@@ -376,11 +415,13 @@ def compare_string_operators():
 
         # Test $trim
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [{"$project": {"trimmed": {"$trim": {"input": "$name"}}}}]
                 )
             )
+            end_mongo_timing()
             mongo_trim = len(result) == 2
             print(f"Mongo $trim: {'OK' if mongo_trim else 'FAIL'}")
         except Exception as e:
@@ -389,11 +430,13 @@ def compare_string_operators():
 
         # Test $split
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [{"$project": {"parts": {"$split": ["$city", " "]}}}]
                 )
             )
+            end_mongo_timing()
             mongo_split = len(result) == 2
             print(f"Mongo $split: {'OK' if mongo_split else 'FAIL'}")
         except Exception as e:
@@ -402,6 +445,7 @@ def compare_string_operators():
 
         # Test $replaceAll
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [
@@ -419,6 +463,7 @@ def compare_string_operators():
                     ]
                 )
             )
+            end_mongo_timing()
             mongo_replaceall = len(result) == 2
             print(f"Mongo $replaceAll: {'OK' if mongo_replaceall else 'FAIL'}")
         except Exception as e:
@@ -427,6 +472,7 @@ def compare_string_operators():
 
         # Test $ltrim
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [
@@ -438,6 +484,7 @@ def compare_string_operators():
                     ]
                 )
             )
+            end_mongo_timing()
             mongo_ltrim = len(result) == 2
             print(f"Mongo $ltrim: {'OK' if mongo_ltrim else 'FAIL'}")
         except Exception as e:
@@ -446,6 +493,7 @@ def compare_string_operators():
 
         # Test $rtrim
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [
@@ -457,6 +505,7 @@ def compare_string_operators():
                     ]
                 )
             )
+            end_mongo_timing()
             mongo_rtrim = len(result) == 2
             print(f"Mongo $rtrim: {'OK' if mongo_rtrim else 'FAIL'}")
         except Exception as e:
@@ -465,11 +514,13 @@ def compare_string_operators():
 
         # Test $strLenCP
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [{"$project": {"name_len": {"$strLenCP": "$name"}}}]
                 )
             )
+            end_mongo_timing()
             mongo_strlencp = len(result) == 2
             print(f"Mongo $strLenCP: {'OK' if mongo_strlencp else 'FAIL'}")
         except Exception as e:
@@ -478,6 +529,7 @@ def compare_string_operators():
 
         # Test $regexFind
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [
@@ -495,6 +547,7 @@ def compare_string_operators():
                     ]
                 )
             )
+            end_mongo_timing()
             mongo_regexfind = len(result) == 2
             print(f"Mongo $regexFind: {'OK' if mongo_regexfind else 'FAIL'}")
         except Exception as e:
@@ -503,6 +556,7 @@ def compare_string_operators():
 
         # Test $regexMatch
         try:
+            start_mongo_timing()
             # i (case-insensitive)
             result = list(
                 mongo_collection.aggregate(
@@ -585,6 +639,7 @@ def compare_string_operators():
                     ]
                 )
             )
+            end_mongo_timing()
 
             mongo_regexmatch = (
                 len(result) >= 1
@@ -601,6 +656,7 @@ def compare_string_operators():
 
         # Test $replaceOne
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [
@@ -618,6 +674,7 @@ def compare_string_operators():
                     ]
                 )
             )
+            end_mongo_timing()
             mongo_replaceone = len(result) >= 1
             print(f"Mongo $replaceOne: {'OK' if mongo_replaceone else 'FAIL'}")
         except Exception as e:
@@ -626,11 +683,13 @@ def compare_string_operators():
 
         # Test $indexOfCP
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [{"$project": {"index": {"$indexOfCP": ["$name", "ice"]}}}]
                 )
             )
+            end_mongo_timing()
             mongo_indexofcp = len(result) >= 1
             print(f"Mongo $indexOfCP: {'OK' if mongo_indexofcp else 'FAIL'}")
         except Exception as e:
@@ -639,6 +698,7 @@ def compare_string_operators():
 
         # Test $regexFindAll
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [
@@ -656,6 +716,7 @@ def compare_string_operators():
                     ]
                 )
             )
+            end_mongo_timing()
             mongo_regexfindall = len(result) >= 1
             print(
                 f"Mongo $regexFindAll: {'OK' if mongo_regexfindall else 'FAIL'}"
@@ -664,7 +725,6 @@ def compare_string_operators():
             mongo_regexfindall = False
             print(f"Mongo $regexFindAll: Error - {e}")
 
-        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(

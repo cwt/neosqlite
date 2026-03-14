@@ -10,6 +10,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -23,7 +24,6 @@ def compare_object_operators_extended():
     print("\n=== Object Operators Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_object_ops
         neo_collection.insert_one(
             {
@@ -33,10 +33,12 @@ def compare_object_operators_extended():
             }
         )
 
+        set_accumulation_mode(True)
         neo_results = {}
 
         # Test $mergeObjects
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [
@@ -49,6 +51,8 @@ def compare_object_operators_extended():
                     ]
                 )
             )
+            end_neo_timing()
+
             neo_results["$mergeObjects"] = (
                 result[0].get("merged") if result else None
             )
@@ -59,6 +63,7 @@ def compare_object_operators_extended():
 
         # Test $bsonSize
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [
@@ -67,6 +72,8 @@ def compare_object_operators_extended():
                     ]
                 )
             )
+            end_neo_timing()
+
             val = result[0].get("size") if result else None
             neo_results["$bsonSize"] = (
                 "valid" if isinstance(val, int) and val > 0 else "invalid"
@@ -76,13 +83,10 @@ def compare_object_operators_extended():
             neo_results["$bsonSize"] = f"Error: {e}"
             print(f"Neo $bsonSize: Error - {e}")
 
-        end_neo_timing()
-
     client = test_pymongo_connection()
     mongo_results = {}
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_object_ops
         mongo_collection.delete_many({})
@@ -94,8 +98,10 @@ def compare_object_operators_extended():
             }
         )
 
+        set_accumulation_mode(True)
         # Test $mergeObjects
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [
@@ -108,6 +114,8 @@ def compare_object_operators_extended():
                     ]
                 )
             )
+            end_mongo_timing()
+
             mongo_results["$mergeObjects"] = (
                 result[0].get("merged") if result else None
             )
@@ -118,6 +126,7 @@ def compare_object_operators_extended():
 
         # Test $bsonSize
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [
@@ -126,6 +135,8 @@ def compare_object_operators_extended():
                     ]
                 )
             )
+            end_mongo_timing()
+
             val = result[0].get("size") if result else None
             mongo_results["$bsonSize"] = (
                 "valid" if isinstance(val, int) and val > 0 else "invalid"
@@ -135,7 +146,6 @@ def compare_object_operators_extended():
             mongo_results["$bsonSize"] = f"Error: {e}"
             print(f"Mongo $bsonSize: Error - {e}")
 
-        end_mongo_timing()
         client.close()
 
     for op_name in neo_results:

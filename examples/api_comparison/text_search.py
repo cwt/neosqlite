@@ -10,6 +10,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -23,7 +24,6 @@ def compare_text_search():
     print("\n=== Text Search Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_collection
         neo_collection.insert_many(
             [
@@ -39,37 +39,37 @@ def compare_text_search():
             ]
         )
 
+        set_accumulation_mode(True)
         # Create FTS index
+        start_neo_timing()
         neo_collection.create_index("description", fts=True)
+        end_neo_timing()
 
         # Text search
         try:
+            start_neo_timing()
             neo_results = list(
                 neo_collection.find(
                     {"description": {"$regex": "Python", "$options": "i"}}
                 )
             )
+            end_neo_timing()
+
             neo_text_search = len(neo_results)
             print(f"Neo text search (regex): {neo_text_search}")
         except Exception as e:
             neo_text_search = f"Error: {e}"
             print(f"Neo text search: Error - {e}")
 
-        end_neo_timing()
-
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
 
     mongo_collection = None
-
     mongo_db = None
-
     mongo_results = None
-
     mongo_text_search = None
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
@@ -87,22 +87,26 @@ def compare_text_search():
             ]
         )
 
+        set_accumulation_mode(True)
         # Create text index
         try:
             from pymongo import ASCENDING as MONGO_ASCENDING
 
+            start_mongo_timing()
             mongo_collection.create_index([("description", MONGO_ASCENDING)])
             mongo_results = list(
                 mongo_collection.find(
                     {"description": {"$regex": "Python", "$options": "i"}}
                 )
             )
+            end_mongo_timing()
+
             mongo_text_search = len(mongo_results)
             print(f"Mongo text search (regex): {mongo_text_search}")
         except Exception as e:
             mongo_text_search = f"Error: {e}"
             print(f"Mongo text search: Error - {e}")
-        end_mongo_timing()
+
         client.close()
 
     reporter.record_comparison(

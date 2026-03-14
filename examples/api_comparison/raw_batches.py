@@ -10,6 +10,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -23,35 +24,32 @@ def compare_raw_batch_operations():
     print("\n=== Raw Batch Operations Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_collection
         neo_collection.insert_many(
             [{"name": f"doc{i}", "value": i} for i in range(10)]
         )
 
+        set_accumulation_mode(True)
         try:
+            start_neo_timing()
             cursor = neo_collection.find_raw_batches(
                 {"value": {"$gte": 5}}, batch_size=3
             )
             neo_raw_batches = sum(1 for _ in cursor)
+            end_neo_timing()
             print(f"Neo find_raw_batches: {neo_raw_batches} batches")
         except Exception as e:
             neo_raw_batches = f"Error: {e}"
             print(f"Neo find_raw_batches: Error - {e}")
 
-        end_neo_timing()
-
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
 
     mongo_collection = None
-
     mongo_db = None
-
     mongo_raw_batches = None
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
@@ -59,16 +57,19 @@ def compare_raw_batch_operations():
             [{"name": f"doc{i}", "value": i} for i in range(10)]
         )
 
+        set_accumulation_mode(True)
         try:
+            start_mongo_timing()
             cursor = mongo_collection.find_raw_batches(
                 {"value": {"$gte": 5}}, batch_size=3
             )
             mongo_raw_batches = sum(1 for _ in cursor)
+            end_mongo_timing()
             print(f"Mongo find_raw_batches: {mongo_raw_batches} batches")
         except Exception as e:
             mongo_raw_batches = f"Error: {e}"
             print(f"Mongo find_raw_batches: Error - {e}")
-        end_mongo_timing()
+
         client.close()
 
     reporter.record_comparison(

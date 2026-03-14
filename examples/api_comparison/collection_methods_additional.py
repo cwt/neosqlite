@@ -10,6 +10,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -23,12 +24,15 @@ def compare_additional_collection_methods():
     print("\n=== Additional Collection Methods Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
+        set_accumulation_mode(True)
         # Test drop()
         neo_collection = neo_conn.test_drop
         neo_collection.insert_one({"name": "test"})
         try:
+            start_neo_timing()
             neo_collection.drop()
+            end_neo_timing()
+
             neo_drop = "test_drop" not in neo_conn.list_collection_names()
             print(f"Neo drop(): {'OK' if neo_drop else 'FAIL'}")
         except Exception as e:
@@ -38,7 +42,10 @@ def compare_additional_collection_methods():
         # Test database property
         neo_collection2 = neo_conn.test
         try:
+            start_neo_timing()
             neo_db = neo_collection2.database
+            end_neo_timing()
+
             neo_db_ok = neo_db is not None
             print(f"Neo database property: {'OK' if neo_db_ok else 'FAIL'}")
         except Exception as e:
@@ -46,11 +53,13 @@ def compare_additional_collection_methods():
             print(f"Neo database property: Error - {e}")
 
         # Test watch() - Change streams
-        # NeoSQLite: Implemented via SQLite triggers
-        # MongoDB: Requires replica set (not available in standalone test)
         try:
             neo_collection_watch = neo_conn.test_watch
+
+            start_neo_timing()
             neo_stream = neo_collection_watch.watch()
+            end_neo_timing()
+
             neo_watch = neo_stream is not None
             neo_stream.close()
             print(
@@ -64,7 +73,10 @@ def compare_additional_collection_methods():
         neo_collection_fullname = neo_conn.test_fullname
         neo_full_name = None
         try:
+            start_neo_timing()
             neo_full_name = neo_collection_fullname.full_name
+            end_neo_timing()
+
             neo_full_name_ok = (
                 isinstance(neo_full_name, str) and len(neo_full_name) > 0
             )
@@ -75,7 +87,9 @@ def compare_additional_collection_methods():
 
         # Test client property
         try:
+            start_neo_timing()
             neo_client_prop = neo_collection2.client == neo_conn
+            end_neo_timing()
             print(f"Neo client property: {'OK' if neo_client_prop else 'FAIL'}")
         except Exception as e:
             neo_client_prop = False
@@ -83,7 +97,9 @@ def compare_additional_collection_methods():
 
         # Test db_path property (NeoSQLite specific)
         try:
+            start_neo_timing()
             neo_db_path_prop = neo_collection2.db_path == ":memory:"
+            end_neo_timing()
             print(
                 f"Neo db_path property: {'OK' if neo_db_path_prop else 'FAIL'}"
             )
@@ -94,9 +110,12 @@ def compare_additional_collection_methods():
         # Test with_options()
         neo_collection_opts = neo_conn.test_with_opts
         try:
+            start_neo_timing()
             neo_coll_opts = neo_collection_opts.with_options(
                 write_concern={"w": "majority"}, read_preference=None
             )
+            end_neo_timing()
+
             neo_with_options = (
                 neo_coll_opts is not None
                 and neo_coll_opts.name == neo_collection_opts.name
@@ -105,8 +124,6 @@ def compare_additional_collection_methods():
         except Exception as e:
             neo_with_options = False
             print(f"Neo with_options(): Error - {e}")
-
-        end_neo_timing()
 
     client = test_pymongo_connection()
     mongo_collection = None
@@ -120,13 +137,18 @@ def compare_additional_collection_methods():
     mongo_with_options = None
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
+        set_accumulation_mode(True)
+
         # Test drop()
         mongo_collection = mongo_db.test_drop
+        mongo_collection.delete_many({})
         mongo_collection.insert_one({"name": "test"})
         try:
+            start_mongo_timing()
             mongo_collection.drop()
+            end_mongo_timing()
+
             mongo_drop = "test_drop" not in mongo_db.list_collection_names()
             print(f"Mongo drop(): {'OK' if mongo_drop else 'FAIL'}")
         except Exception as e:
@@ -136,7 +158,10 @@ def compare_additional_collection_methods():
         # Test database property
         mongo_collection2 = mongo_db.test
         try:
+            start_mongo_timing()
             mongo_db_prop = mongo_collection2.database
+            end_mongo_timing()
+
             mongo_db_ok = mongo_db_prop is not None
             print(f"Mongo database property: {'OK' if mongo_db_ok else 'FAIL'}")
         except Exception as e:
@@ -148,7 +173,11 @@ def compare_additional_collection_methods():
             mongo_collection3 = mongo_db.test_watch
             # watch() requires a replica set - will fail on standalone MongoDB
             pipeline = []
+
+            start_mongo_timing()
             change_stream = mongo_collection3.watch(pipeline)
+            end_mongo_timing()
+
             # If we get here without exception, it means replica set is available
             mongo_watch = change_stream is not None
             print(
@@ -164,7 +193,10 @@ def compare_additional_collection_methods():
         mongo_collection_fullname = mongo_db.test_fullname
         mongo_full_name = None
         try:
+            start_mongo_timing()
             mongo_full_name = mongo_collection_fullname.full_name
+            end_mongo_timing()
+
             mongo_full_name_ok = (
                 isinstance(mongo_full_name, str) and len(mongo_full_name) > 0
             )
@@ -177,7 +209,10 @@ def compare_additional_collection_methods():
         try:
             # In PyMongo, Collection has a .database property, and Database has a .client property
             # NeoSQLite added .client directly to Collection for convenience/compatibility
+            start_mongo_timing()
             mongo_client_prop = mongo_collection2.database.client == client
+            end_mongo_timing()
+
             print(
                 f"Mongo client property: {'OK' if mongo_client_prop else 'FAIL'}"
             )
@@ -190,9 +225,12 @@ def compare_additional_collection_methods():
         try:
             from pymongo.write_concern import WriteConcern
 
+            start_mongo_timing()
             mongo_coll_opts = mongo_collection_opts.with_options(
                 write_concern=WriteConcern(w="majority"), read_preference=None
             )
+            end_mongo_timing()
+
             mongo_with_options = (
                 mongo_coll_opts is not None
                 and mongo_coll_opts.name == mongo_collection_opts.name
@@ -204,7 +242,6 @@ def compare_additional_collection_methods():
             mongo_with_options = False
             print(f"Mongo with_options(): Error - {e}")
 
-        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(

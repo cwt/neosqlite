@@ -9,6 +9,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -163,14 +164,19 @@ def compare_window_functions():
     }
 
     neo_results = {}
+    neo_explain_ok = False
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_window
         neo_collection.insert_many(test_data)
 
+        set_accumulation_mode(True)
         for name, pipeline in pipelines.items():
             try:
-                neo_results[name] = list(neo_collection.aggregate(pipeline))
+                start_neo_timing()
+                result = list(neo_collection.aggregate(pipeline))
+                end_neo_timing()
+
+                neo_results[name] = result
                 print(f"Neo $setWindowFields ({name}): OK")
             except Exception as e:
                 neo_results[name] = f"Error: {e}"
@@ -178,7 +184,10 @@ def compare_window_functions():
 
         # Test explain()
         try:
+            start_neo_timing()
             explanation = neo_collection.aggregate(pipelines["rank"]).explain()
+            end_neo_timing()
+
             neo_explain_ok = explanation.get("tier") == 1
             print(
                 f"Neo AggregationCursor.explain(): {'OK' if neo_explain_ok else 'FAIL'}"
@@ -187,33 +196,37 @@ def compare_window_functions():
             neo_explain_ok = False
             print(f"Neo AggregationCursor.explain(): Error - {e}")
 
-        end_neo_timing()
-
     client = test_pymongo_connection()
     mongo_results = {}
     mongo_explain_ok = False
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_window
         mongo_collection.delete_many({})
         mongo_collection.insert_many(test_data)
 
+        set_accumulation_mode(True)
         for name, pipeline in pipelines.items():
             try:
-                mongo_results[name] = list(mongo_collection.aggregate(pipeline))
+                start_mongo_timing()
+                result = list(mongo_collection.aggregate(pipeline))
+                end_mongo_timing()
+
+                mongo_results[name] = result
                 print(f"Mongo $setWindowFields ({name}): OK")
             except Exception as e:
                 mongo_results[name] = f"Error: {e}"
                 print(f"Mongo $setWindowFields ({name}): Error - {e}")
 
-        # Test explain() on MongoDB (returns a different format but should work)
+        # Test explain() on MongoDB
         try:
-            # PyMongo aggregate().explain() returns a dict
+            start_mongo_timing()
             explanation = mongo_collection.aggregate(
                 pipelines["rank"]
             ).explain()
+            end_mongo_timing()
+
             mongo_explain_ok = isinstance(explanation, dict)
             print(
                 f"Mongo AggregationCursor.explain(): {'OK' if mongo_explain_ok else 'FAIL'}"
@@ -222,7 +235,6 @@ def compare_window_functions():
             mongo_explain_ok = False
             print(f"Mongo AggregationCursor.explain(): Error - {e}")
 
-        end_mongo_timing()
         client.close()
 
     # Record comparisons

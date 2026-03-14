@@ -10,6 +10,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -23,7 +24,6 @@ def compare_array_operators_extended():
     print("\n=== Array Operators Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_array_ops
         neo_collection.insert_one(
             {
@@ -34,10 +34,12 @@ def compare_array_operators_extended():
             }
         )
 
+        set_accumulation_mode(True)
         neo_results = {}
 
         # Test $firstN
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [
@@ -50,6 +52,7 @@ def compare_array_operators_extended():
                     ]
                 )
             )
+            end_neo_timing()
             neo_results["$firstN"] = result[0].get("first2") if result else None
             print(f"Neo $firstN: {neo_results['$firstN']}")
         except Exception as e:
@@ -58,6 +61,7 @@ def compare_array_operators_extended():
 
         # Test $setIntersection
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [
@@ -72,6 +76,7 @@ def compare_array_operators_extended():
                     ]
                 )
             )
+            end_neo_timing()
             neo_results["$setIntersection"] = (
                 result[0].get("intersection") if result else None
             )
@@ -80,13 +85,10 @@ def compare_array_operators_extended():
             neo_results["$setIntersection"] = f"Error: {e}"
             print(f"Neo $setIntersection: Error - {e}")
 
-        end_neo_timing()
-
     client = test_pymongo_connection()
     mongo_results = {}
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_array_ops
         mongo_collection.delete_many({})
@@ -99,8 +101,10 @@ def compare_array_operators_extended():
             }
         )
 
+        set_accumulation_mode(True)
         # Test $firstN
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [
@@ -113,6 +117,7 @@ def compare_array_operators_extended():
                     ]
                 )
             )
+            end_mongo_timing()
             mongo_results["$firstN"] = (
                 result[0].get("first2") if result else None
             )
@@ -123,6 +128,7 @@ def compare_array_operators_extended():
 
         # Test $setIntersection
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [
@@ -137,6 +143,7 @@ def compare_array_operators_extended():
                     ]
                 )
             )
+            end_mongo_timing()
             mongo_results["$setIntersection"] = (
                 result[0].get("intersection") if result else None
             )
@@ -147,7 +154,6 @@ def compare_array_operators_extended():
             mongo_results["$setIntersection"] = f"Error: {e}"
             print(f"Mongo $setIntersection: Error - {e}")
 
-        end_mongo_timing()
         client.close()
 
     for op_name in neo_results:

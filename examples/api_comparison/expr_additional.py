@@ -10,6 +10,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -23,7 +24,6 @@ def compare_additional_expr_operators():
     print("\n=== Additional Aggregation Expression Operators Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_collection
         neo_collection.insert_many(
             [
@@ -40,8 +40,10 @@ def compare_additional_expr_operators():
             ]
         )
 
+        set_accumulation_mode(True)
         # Test $arrayElemAt
         try:
+            start_neo_timing()
             neo_result = list(
                 neo_collection.aggregate(
                     [
@@ -53,6 +55,7 @@ def compare_additional_expr_operators():
                     ]
                 )
             )
+            end_neo_timing()
             neo_arrayelemat = len(neo_result) == 2 and all(
                 "first_score" in doc for doc in neo_result
             )
@@ -63,6 +66,7 @@ def compare_additional_expr_operators():
 
         # Test $concat
         try:
+            start_neo_timing()
             neo_result = list(
                 neo_collection.aggregate(
                     [
@@ -76,6 +80,7 @@ def compare_additional_expr_operators():
                     ]
                 )
             )
+            end_neo_timing()
             neo_concat = len(neo_result) == 2
             print(f"Neo $concat: {'OK' if neo_concat else 'FAIL'}")
         except Exception as e:
@@ -84,11 +89,13 @@ def compare_additional_expr_operators():
 
         # Test $objectToArray
         try:
+            start_neo_timing()
             neo_result = list(
                 neo_collection.aggregate(
                     [{"$project": {"meta_array": {"$objectToArray": "$meta"}}}]
                 )
             )
+            end_neo_timing()
             neo_objecttoarray = len(neo_result) == 2 and all(
                 "meta_array" in doc for doc in neo_result
             )
@@ -101,6 +108,7 @@ def compare_additional_expr_operators():
 
         # Test $switch
         try:
+            start_neo_timing()
             neo_result = list(
                 neo_collection.aggregate(
                     [
@@ -146,6 +154,7 @@ def compare_additional_expr_operators():
                     ]
                 )
             )
+            end_neo_timing()
             neo_switch = len(neo_result) == 2
             print(f"Neo $switch: {'OK' if neo_switch else 'FAIL'}")
         except Exception as e:
@@ -172,7 +181,6 @@ def compare_additional_expr_operators():
     mongo_switch = None
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
@@ -191,8 +199,11 @@ def compare_additional_expr_operators():
             ]
         )
 
+        set_accumulation_mode(True)
+
         # Test $arrayElemAt
         try:
+            start_mongo_timing()
             mongo_result = list(
                 mongo_collection.aggregate(
                     [
@@ -204,6 +215,7 @@ def compare_additional_expr_operators():
                     ]
                 )
             )
+            end_mongo_timing()
             mongo_arrayelemat = len(mongo_result) == 2 and all(
                 "first_score" in doc for doc in mongo_result
             )
@@ -216,6 +228,7 @@ def compare_additional_expr_operators():
 
         # Test $concat
         try:
+            start_mongo_timing()
             mongo_result = list(
                 mongo_collection.aggregate(
                     [
@@ -229,6 +242,7 @@ def compare_additional_expr_operators():
                     ]
                 )
             )
+            end_mongo_timing()
             mongo_concat = len(mongo_result) == 2
             print(f"Mongo $concat: {'OK' if mongo_concat else 'FAIL'}")
         except Exception as e:
@@ -237,11 +251,13 @@ def compare_additional_expr_operators():
 
         # Test $objectToArray
         try:
+            start_mongo_timing()
             mongo_result = list(
                 mongo_collection.aggregate(
                     [{"$project": {"meta_array": {"$objectToArray": "$meta"}}}]
                 )
             )
+            end_mongo_timing()
             mongo_objecttoarray = len(mongo_result) == 2 and all(
                 "meta_array" in doc for doc in mongo_result
             )
@@ -254,6 +270,7 @@ def compare_additional_expr_operators():
 
         # Test $switch
         try:
+            start_mongo_timing()
             mongo_result = list(
                 mongo_collection.aggregate(
                     [
@@ -299,13 +316,13 @@ def compare_additional_expr_operators():
                     ]
                 )
             )
+            end_mongo_timing()
             mongo_switch = len(mongo_result) == 2
             print(f"Mongo $switch: {'OK' if mongo_switch else 'FAIL'}")
         except Exception as e:
             mongo_switch = False
             print(f"Mongo $switch: Error - {e}")
 
-        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(

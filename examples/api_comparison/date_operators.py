@@ -11,6 +11,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -24,7 +25,6 @@ def compare_date_expr_operators():
     print("\n=== Date Expression Operators Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_collection
         # Use datetime objects (MongoDB-compatible format)
         neo_collection.insert_many(
@@ -42,6 +42,7 @@ def compare_date_expr_operators():
             ]
         )
 
+        set_accumulation_mode(True)
         date_operators = [
             ("$year", {"$year": "$date"}),
             ("$month", {"$month": "$date"}),
@@ -78,6 +79,7 @@ def compare_date_expr_operators():
         # Test $dateAdd
         neo_dateadd = None
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [
@@ -95,6 +97,7 @@ def compare_date_expr_operators():
                     ]
                 )
             )
+            end_neo_timing()
             neo_dateadd = result
             print(f"Neo $dateAdd: OK ({len(result)} results)")
         except Exception as e:
@@ -103,6 +106,7 @@ def compare_date_expr_operators():
         # Test $dateSubtract
         neo_datesubtract = None
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [
@@ -120,6 +124,7 @@ def compare_date_expr_operators():
                     ]
                 )
             )
+            end_neo_timing()
             neo_datesubtract = result
             print(f"Neo $dateSubtract: OK ({len(result)} results)")
         except Exception as e:
@@ -128,6 +133,7 @@ def compare_date_expr_operators():
         # Test $dateDiff
         neo_datediff = None
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [
@@ -151,6 +157,7 @@ def compare_date_expr_operators():
                     ]
                 )
             )
+            end_neo_timing()
             neo_datediff = result
             print(f"Neo $dateDiff: OK ({len(result)} results)")
         except Exception as e:
@@ -159,16 +166,17 @@ def compare_date_expr_operators():
         neo_results = {}
         for op_name, op_expr in date_operators:
             try:
+                start_neo_timing()
                 result = list(
                     neo_collection.aggregate([{"$project": {"val": op_expr}}])
                 )
+                end_neo_timing()
+
                 neo_results[op_name] = result
                 print(f"Neo {op_name}: OK ({len(result)} results)")
             except Exception as e:
                 neo_results[op_name] = None
                 print(f"Neo {op_name}: Error - {e}")
-
-        end_neo_timing()
 
     client = test_pymongo_connection()
     mongo_collection = None
@@ -179,7 +187,6 @@ def compare_date_expr_operators():
     mongo_datediff = None
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
@@ -199,12 +206,16 @@ def compare_date_expr_operators():
             ]
         )
 
+        set_accumulation_mode(True)
         mongo_results = {}
         for op_name, op_expr in date_operators:
             try:
+                start_mongo_timing()
                 result = list(
                     mongo_collection.aggregate([{"$project": {"val": op_expr}}])
                 )
+                end_mongo_timing()
+
                 mongo_results[op_name] = result
                 print(f"Mongo {op_name}: OK ({len(result)} results)")
             except Exception as e:
@@ -213,6 +224,7 @@ def compare_date_expr_operators():
 
         # Test $dateAdd for MongoDB
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [
@@ -230,6 +242,7 @@ def compare_date_expr_operators():
                     ]
                 )
             )
+            end_mongo_timing()
             mongo_dateadd = result
             print(f"Mongo $dateAdd: OK ({len(result)} results)")
         except Exception as e:
@@ -238,6 +251,7 @@ def compare_date_expr_operators():
 
         # Test $dateSubtract for MongoDB
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [
@@ -255,6 +269,7 @@ def compare_date_expr_operators():
                     ]
                 )
             )
+            end_mongo_timing()
             mongo_datesubtract = result
             print(f"Mongo $dateSubtract: OK ({len(result)} results)")
         except Exception as e:
@@ -263,6 +278,7 @@ def compare_date_expr_operators():
 
         # Test $dateDiff for MongoDB
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [
@@ -286,16 +302,17 @@ def compare_date_expr_operators():
                     ]
                 )
             )
+            end_mongo_timing()
             mongo_datediff = result
             print(f"Mongo $dateDiff: OK ({len(result)} results)")
         except Exception as e:
             mongo_datediff = None
             print(f"Mongo $dateDiff: Error - {e}")
 
-        end_mongo_timing()
         client.close()
 
-        # Record comparison results with actual values
+    # Record comparison results with actual values
+    if neo_results:
         for op_name in neo_results:
             reporter.record_comparison(
                 "Date Expression Operators",
@@ -305,24 +322,24 @@ def compare_date_expr_operators():
                 skip_reason="MongoDB not available" if not client else None,
             )
 
-        reporter.record_comparison(
-            "Date Expression Operators",
-            "$dateAdd",
-            neo_dateadd,
-            mongo_dateadd,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Date Expression Operators",
-            "$dateSubtract",
-            neo_datesubtract,
-            mongo_datesubtract,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Date Expression Operators",
-            "$dateDiff",
-            neo_datediff,
-            mongo_datediff,
-            skip_reason="MongoDB not available" if not client else None,
-        )
+    reporter.record_comparison(
+        "Date Expression Operators",
+        "$dateAdd",
+        neo_dateadd,
+        mongo_dateadd,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Date Expression Operators",
+        "$dateSubtract",
+        neo_datesubtract,
+        mongo_datesubtract,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Date Expression Operators",
+        "$dateDiff",
+        neo_datediff,
+        mongo_datediff,
+        skip_reason="MongoDB not available" if not client else None,
+    )

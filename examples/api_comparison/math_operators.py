@@ -9,6 +9,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -22,7 +23,6 @@ def compare_math_operators():
     print("\n=== Additional Math Operators Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_collection
         neo_collection.insert_many(
             [
@@ -31,9 +31,14 @@ def compare_math_operators():
             ]
         )
 
+        set_accumulation_mode(True)
+
         # Helper to run a project aggregate
         def neo_project(expr):
-            return list(neo_collection.aggregate([{"$project": {"val": expr}}]))
+            start_neo_timing()
+            res = list(neo_collection.aggregate([{"$project": {"val": expr}}]))
+            end_neo_timing()
+            return res
 
         # Run NeoSQLite tests
         neo_pow = neo_project({"$pow": ["$value", 2]})
@@ -53,8 +58,6 @@ def compare_math_operators():
         neo_log2 = neo_project({"$log2": "$value"})
         neo_sigmoid = neo_project({"$sigmoid": "$value"})
 
-        end_neo_timing()
-
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
     mongo_pow = mongo_sqrt = mongo_asin = mongo_acos = mongo_atan = None
@@ -63,7 +66,6 @@ def compare_math_operators():
     mongo_sigmoid = None
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
@@ -74,10 +76,15 @@ def compare_math_operators():
             ]
         )
 
+        set_accumulation_mode(True)
+
         def mongo_project(expr):
-            return list(
+            start_mongo_timing()
+            res = list(
                 mongo_collection.aggregate([{"$project": {"val": expr}}])
             )
+            end_mongo_timing()
+            return res
 
         # Run MongoDB tests
         try:
@@ -104,7 +111,6 @@ def compare_math_operators():
         except Exception as e:
             print(f"Mongo math operators: Error - {e}")
 
-        end_mongo_timing()
         client.close()
 
     # Record comparisons

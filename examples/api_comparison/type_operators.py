@@ -10,6 +10,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -23,7 +24,6 @@ def compare_type_operators():
     print("\n=== Type Operators Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_type_ops
         neo_collection.insert_one(
             {
@@ -34,8 +34,10 @@ def compare_type_operators():
             }
         )
 
+        set_accumulation_mode(True)
         # Test $isNumber
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [
@@ -44,19 +46,18 @@ def compare_type_operators():
                     ]
                 )
             )
+            end_neo_timing()
+
             neo_is_number = result[0].get("is_num") if result else None
             print(f"Neo $isNumber: {neo_is_number}")
         except Exception as e:
             neo_is_number = f"Error: {e}"
             print(f"Neo $isNumber: Error - {e}")
 
-        end_neo_timing()
-
     client = test_pymongo_connection()
     mongo_is_number = None
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_type_ops
         mongo_collection.delete_many({})
@@ -69,7 +70,9 @@ def compare_type_operators():
             }
         )
 
+        set_accumulation_mode(True)
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [
@@ -78,13 +81,14 @@ def compare_type_operators():
                     ]
                 )
             )
+            end_mongo_timing()
+
             mongo_is_number = result[0].get("is_num") if result else None
             print(f"Mongo $isNumber: {mongo_is_number}")
         except Exception as e:
             mongo_is_number = f"Error: {e}"
             print(f"Mongo $isNumber: Error - {e}")
 
-        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(

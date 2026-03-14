@@ -10,6 +10,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -76,13 +77,17 @@ def compare_json_schema():
     neo_write_validation = False
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.users
         neo_collection.insert_many(test_data)
 
+        set_accumulation_mode(True)
         for name, query in queries.items():
             try:
-                neo_results[name] = list(neo_collection.find(query))
+                start_neo_timing()
+                result = list(neo_collection.find(query))
+                end_neo_timing()
+
+                neo_results[name] = result
                 print(f"Neo $jsonSchema query ({name}): OK")
             except Exception as e:
                 neo_results[name] = f"Error: {e}"
@@ -107,22 +112,22 @@ def compare_json_schema():
             import sqlite3
 
             try:
+                start_neo_timing()
                 v_coll.insert_one({"age": 25})  # Missing name
                 neo_write_validation = False
+                end_neo_timing()
             except sqlite3.IntegrityError:
+                end_neo_timing()
                 neo_write_validation = True
                 print("Neo write validation: OK (IntegrityError)")
         except Exception as e:
             print(f"Neo write validation: Error - {e}")
-
-        end_neo_timing()
 
     client = test_pymongo_connection()
     mongo_results = {}
     mongo_write_validation = False
 
     if client:
-        start_mongo_timing()
         from bson import ObjectId as BsonObjectId
 
         def to_bson(doc):
@@ -139,9 +144,14 @@ def compare_json_schema():
         mongo_collection.delete_many({})
         mongo_collection.insert_many(mongo_test_data)
 
+        set_accumulation_mode(True)
         for name, query in queries.items():
             try:
-                mongo_results[name] = list(mongo_collection.find(query))
+                start_mongo_timing()
+                result = list(mongo_collection.find(query))
+                end_mongo_timing()
+
+                mongo_results[name] = result
                 print(f"Mongo $jsonSchema query ({name}): OK")
             except Exception as e:
                 mongo_results[name] = f"Error: {e}"
@@ -167,15 +177,17 @@ def compare_json_schema():
             from pymongo.errors import WriteError
 
             try:
+                start_mongo_timing()
                 v_coll.insert_one({"age": 25})
                 mongo_write_validation = False
+                end_mongo_timing()
             except WriteError:
+                end_mongo_timing()
                 mongo_write_validation = True
                 print("Mongo write validation: OK (WriteError)")
         except Exception as e:
             print(f"Mongo write validation: Error - {e}")
 
-        end_mongo_timing()
         client.close()
 
     # Record comparisons

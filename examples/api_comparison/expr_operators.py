@@ -10,6 +10,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -152,17 +153,18 @@ def compare_expr_operator():
             # Note: $isArray has implementation issues - skip for now
             # ({"$expr": {"$isArray": ["$tags"]}}, "$expr $isArray"),
         ]
-
+        set_accumulation_mode(True)
         neo_results = {}
         for query, op_name in expr_queries:
             try:
-                neo_results[op_name] = list(neo_collection.find(query))
+                start_neo_timing()
+                result = list(neo_collection.find(query))
+                end_neo_timing()
+                neo_results[op_name] = result
                 print(f"Neo {op_name}: {len(neo_results[op_name])} documents")
             except Exception as e:
                 neo_results[op_name] = f"Error: {e}"
                 print(f"Neo {op_name}: Error - {e}")
-
-        end_neo_timing()
 
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
@@ -174,7 +176,7 @@ def compare_expr_operator():
     mongo_results = {}
 
     if client:
-        start_mongo_timing()
+        set_accumulation_mode(True)
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
@@ -217,7 +219,10 @@ def compare_expr_operator():
 
         for query, op_name in expr_queries:
             try:
-                mongo_results[op_name] = list(mongo_collection.find(query))
+                start_mongo_timing()
+                result = list(mongo_collection.find(query))
+                end_mongo_timing()
+                mongo_results[op_name] = result
                 print(
                     f"Mongo {op_name}: {len(mongo_results[op_name])} documents"
                 )

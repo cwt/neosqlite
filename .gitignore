@@ -35,3 +35,7 @@ htmlcov
 
 # Local settings
 my_settings.py
+
+# Benchmark reports
+documents/benchmarks/*.csv
+documents/benchmarks/*.md

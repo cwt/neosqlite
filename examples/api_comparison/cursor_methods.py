@@ -10,6 +10,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -29,9 +30,10 @@ def compare_cursor_methods():
         )
         neo_collection.create_index("value")
 
-        start_neo_timing()
+        set_accumulation_mode(True)
         # Test cursor with multiple methods chained
         try:
+            start_neo_timing()
             cursor = (
                 neo_collection.find({"value": {"$gte": 3}})
                 .limit(5)
@@ -39,6 +41,7 @@ def compare_cursor_methods():
                 .sort("value", neosqlite.DESCENDING)
             )
             results = list(cursor)
+            end_neo_timing()
             neo_cursor_methods = len(results) <= 5
             print(f"Neo cursor chained methods: {len(results)} results")
         except Exception as e:
@@ -47,7 +50,9 @@ def compare_cursor_methods():
 
         # Test batch_size
         try:
+            start_neo_timing()
             cursor = neo_collection.find({}).batch_size(3)
+            end_neo_timing()
             neo_batch_size = cursor is not None
             print(f"Neo batch_size: {'OK' if neo_batch_size else 'FAIL'}")
         except Exception as e:
@@ -56,10 +61,12 @@ def compare_cursor_methods():
 
         # Test hint
         try:
+            start_neo_timing()
             cursor = neo_collection.find({"value": 5}).hint(
                 "idx_test_cursor_value"
             )
             results = list(cursor)
+            end_neo_timing()
             neo_hint = len(results) >= 0
             print(f"Neo hint: {'OK' if neo_hint else 'FAIL'}")
         except Exception as e:
@@ -68,8 +75,10 @@ def compare_cursor_methods():
 
         # Test to_list()
         try:
+            start_neo_timing()
             cursor = neo_collection.find({"value": {"$gte": 5}})
             results = cursor.to_list()
+            end_neo_timing()
             neo_to_list = len(results) >= 0
             print(f"Neo to_list(): {len(results)} documents")
         except Exception as e:
@@ -78,8 +87,10 @@ def compare_cursor_methods():
 
         # Test to_list() with length
         try:
+            start_neo_timing()
             cursor = neo_collection.find({})
             results = cursor.to_list(3)
+            end_neo_timing()
             neo_to_list_length = len(results) == 3
             print(f"Neo to_list(3): {len(results)} documents")
         except Exception as e:
@@ -88,10 +99,12 @@ def compare_cursor_methods():
 
         # Test clone()
         try:
+            start_neo_timing()
             cursor = neo_collection.find({"value": {"$gte": 5}}).limit(3)
             cloned = cursor.clone()
             results_original = list(cursor)
             results_clone = list(cloned)
+            end_neo_timing()
             neo_clone = len(results_original) == len(results_clone)
             print(
                 f"Neo clone(): {len(results_clone)} documents (original: {len(results_original)})"
@@ -102,8 +115,10 @@ def compare_cursor_methods():
 
         # Test explain()
         try:
+            start_neo_timing()
             cursor = neo_collection.find({"value": {"$gte": 5}})
             plan = cursor.explain()
+            end_neo_timing()
             neo_explain = "queryPlanner" in plan
             print(
                 f"Neo explain(): {'OK' if neo_explain else 'FAIL'} (plan has {len(plan.get('queryPlanner', {}).get('winningPlan', []))} stages)"
@@ -114,10 +129,12 @@ def compare_cursor_methods():
 
         # Test comment()
         try:
+            start_neo_timing()
             cursor = neo_collection.find({"value": {"$gte": 5}}).comment(
                 "test comment"
             )
             results = list(cursor)
+            end_neo_timing()
             neo_comment = (
                 len(results) >= 0 and cursor._comment == "test comment"
             )
@@ -130,9 +147,11 @@ def compare_cursor_methods():
 
         # Test retrieved property
         try:
+            start_neo_timing()
             cursor = neo_collection.find({"value": {"$gte": 5}})
             results = list(cursor)
             neo_retrieved = cursor.retrieved == len(results)
+            end_neo_timing()
             print(
                 f"Neo retrieved: {'OK' if neo_retrieved else 'FAIL'} ({cursor.retrieved} docs)"
             )
@@ -142,11 +161,13 @@ def compare_cursor_methods():
 
         # Test alive property
         try:
+            start_neo_timing()
             cursor = neo_collection.find({"value": {"$gte": 5}})
             neo_alive_initial = cursor.alive is True
             list(cursor)
             neo_alive_after = isinstance(cursor.alive, bool)
             neo_alive = neo_alive_initial and neo_alive_after
+            end_neo_timing()
             print(f"Neo alive: {'OK' if neo_alive else 'FAIL'}")
         except Exception as e:
             neo_alive = False
@@ -154,8 +175,10 @@ def compare_cursor_methods():
 
         # Test collection property
         try:
+            start_neo_timing()
             cursor = neo_collection.find({})
             neo_collection_prop = cursor.collection is neo_collection
+            end_neo_timing()
             print(f"Neo collection: {'OK' if neo_collection_prop else 'FAIL'}")
         except Exception as e:
             neo_collection_prop = False
@@ -163,6 +186,7 @@ def compare_cursor_methods():
 
         # Test address property
         try:
+            start_neo_timing()
             cursor = neo_collection.find({})
             # Before iteration, should be None (matching PyMongo)
             neo_address_before = cursor.address is None
@@ -175,6 +199,7 @@ def compare_cursor_methods():
                 and cursor.address[1] == 0
             )
             neo_address = neo_address_before and neo_address_after
+            end_neo_timing()
             print(
                 f"Neo address: {'OK' if neo_address else 'FAIL'} (before=None, after={cursor.address})"
             )
@@ -186,8 +211,12 @@ def compare_cursor_methods():
         try:
             neo_collection.delete_many({})
             neo_collection.insert_many([{"value": i} for i in range(20)])
+
+            start_neo_timing()
             cursor = neo_collection.find({}).min({"value": 10})
             results = list(cursor)
+            end_neo_timing()
+
             neo_min = len(results) == 10 and all(
                 doc["value"] >= 10 for doc in results
             )
@@ -200,8 +229,11 @@ def compare_cursor_methods():
 
         # Test max() method
         try:
+            start_neo_timing()
             cursor = neo_collection.find({}).max({"value": 10})
             results = list(cursor)
+            end_neo_timing()
+
             neo_max = len(results) == 10 and all(
                 doc["value"] < 10 for doc in results
             )
@@ -214,6 +246,7 @@ def compare_cursor_methods():
 
         # Test add_option() and remove_option()
         try:
+            start_neo_timing()
             cursor = neo_collection.find({})
             cursor.add_option(1 << 1)  # OP_QUERY_TAILABLE_CURSOR
             neo_add_option = (
@@ -222,6 +255,7 @@ def compare_cursor_methods():
             )
             cursor.remove_option(1 << 1)
             neo_remove_option = (cursor._options & (1 << 1)) == 0
+            end_neo_timing()
             print(f"Neo add_option(): {'OK' if neo_add_option else 'FAIL'}")
             print(
                 f"Neo remove_option(): {'OK' if neo_remove_option else 'FAIL'}"
@@ -232,7 +266,9 @@ def compare_cursor_methods():
 
         # Test max_await_time_ms()
         try:
+            start_neo_timing()
             cursor = neo_collection.find({}).max_await_time_ms(100)
+            end_neo_timing()
             neo_max_await = cursor._max_await_time_ms == 100
             print(
                 f"Neo max_await_time_ms(): {'OK' if neo_max_await else 'FAIL'}"
@@ -243,9 +279,11 @@ def compare_cursor_methods():
 
         # Test session and cursor_id properties
         try:
+            start_neo_timing()
             cursor = neo_collection.find({})
             neo_session_prop = cursor.session is None
             neo_cursor_id_prop = cursor.cursor_id == 0
+            end_neo_timing()
             print(
                 f"Neo session property: {'OK' if neo_session_prop else 'FAIL'}"
             )
@@ -256,7 +294,30 @@ def compare_cursor_methods():
             neo_session_prop = neo_cursor_id_prop = False
             print(f"Neo cursor props: Error - {e}")
 
-        end_neo_timing()
+        # Test collation() method
+        try:
+            start_neo_timing()
+            cursor = neo_collection.find({}).collation(
+                {"locale": "en_US", "strength": 2}
+            )
+            neo_collation = cursor._collation == {
+                "locale": "en_US",
+                "strength": 2,
+            }
+            end_neo_timing()
+            print(f"Neo collation(): {'OK' if neo_collation else 'FAIL'}")
+        except Exception as e:
+            neo_collation = False
+            print(f"Neo collation(): Error - {e}")
+
+        # Test where() method (Python function filter)
+        try:
+            start_neo_timing()
+            cursor = neo_collection.find({}).where(lambda doc: True)
+            end_neo_timing()
+            print("Neo where(): OK (NeoSQLite-specific, Python filter)")
+        except Exception as e:
+            print(f"Neo where(): Error - {e}")
 
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
@@ -271,9 +332,9 @@ def compare_cursor_methods():
     mongo_max_await = None
     mongo_session_prop = None
     mongo_cursor_id_prop = None
+    mongo_collation = None
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_cursor
         mongo_collection.delete_many({})
@@ -282,10 +343,13 @@ def compare_cursor_methods():
         )
         mongo_collection.create_index("value")
 
+        set_accumulation_mode(True)
+
         # Test cursor with multiple methods chained
         try:
             from pymongo import DESCENDING as MONGO_DESCENDING
 
+            start_mongo_timing()
             cursor = (
                 mongo_collection.find({"value": {"$gte": 3}})
                 .limit(5)
@@ -293,6 +357,7 @@ def compare_cursor_methods():
                 .sort("value", MONGO_DESCENDING)
             )
             results = list(cursor)
+            end_mongo_timing()
             mongo_cursor_methods = len(results) <= 5
             print(f"Mongo cursor chained methods: {len(results)} results")
         except Exception as e:
@@ -301,7 +366,9 @@ def compare_cursor_methods():
 
         # Test batch_size
         try:
+            start_mongo_timing()
             cursor = mongo_collection.find({}).batch_size(3)
+            end_mongo_timing()
             mongo_batch_size = cursor is not None
             print(f"Mongo batch_size: {'OK' if mongo_batch_size else 'FAIL'}")
         except Exception as e:
@@ -310,8 +377,10 @@ def compare_cursor_methods():
 
         # Test hint
         try:
+            start_mongo_timing()
             cursor = mongo_collection.find({"value": 5}).hint("value_1")
             results = list(cursor)
+            end_mongo_timing()
             mongo_hint = len(results) >= 0
             print(f"Mongo hint: {'OK' if mongo_hint else 'FAIL'}")
         except Exception as e:
@@ -320,8 +389,10 @@ def compare_cursor_methods():
 
         # Test to_list()
         try:
+            start_mongo_timing()
             cursor = mongo_collection.find({"value": {"$gte": 5}})
             results = cursor.to_list()
+            end_mongo_timing()
             mongo_to_list = len(results) >= 0
             print(f"Mongo to_list(): {len(results)} documents")
         except Exception as e:
@@ -330,8 +401,10 @@ def compare_cursor_methods():
 
         # Test to_list() with length
         try:
+            start_mongo_timing()
             cursor = mongo_collection.find({})
             results = cursor.to_list(3)
+            end_mongo_timing()
             mongo_to_list_length = len(results) == 3
             print(f"Mongo to_list(3): {len(results)} documents")
         except Exception as e:
@@ -340,10 +413,12 @@ def compare_cursor_methods():
 
         # Test clone()
         try:
+            start_mongo_timing()
             cursor = mongo_collection.find({"value": {"$gte": 5}}).limit(3)
             cloned = cursor.clone()
             results_original = list(cursor)
             results_clone = list(cloned)
+            end_mongo_timing()
             mongo_clone = len(results_original) == len(results_clone)
             print(
                 f"Mongo clone(): {len(results_clone)} documents (original: {len(results_original)})"
@@ -354,8 +429,10 @@ def compare_cursor_methods():
 
         # Test explain()
         try:
+            start_mongo_timing()
             cursor = mongo_collection.find({"value": {"$gte": 5}})
             plan = cursor.explain()
+            end_mongo_timing()
             mongo_explain = "queryPlanner" in plan
             print(
                 f"Mongo explain(): {'OK' if mongo_explain else 'FAIL'} (plan has {len(plan.get('queryPlanner', {}).get('winningPlan', []))} stages)"
@@ -366,10 +443,12 @@ def compare_cursor_methods():
 
         # Test comment()
         try:
+            start_mongo_timing()
             cursor = mongo_collection.find({"value": {"$gte": 5}}).comment(
                 "test comment"
             )
             results = list(cursor)
+            end_mongo_timing()
             mongo_comment = len(results) >= 0
             print(
                 f"Mongo comment(): {'OK' if mongo_comment else 'FAIL'} ({len(results)} results)"
@@ -380,9 +459,11 @@ def compare_cursor_methods():
 
         # Test retrieved property
         try:
+            start_mongo_timing()
             cursor = mongo_collection.find({"value": {"$gte": 5}})
             results = list(cursor)
             mongo_retrieved = cursor.retrieved == len(results)
+            end_mongo_timing()
             print(
                 f"Mongo retrieved: {'OK' if mongo_retrieved else 'FAIL'} ({cursor.retrieved} docs)"
             )
@@ -392,11 +473,13 @@ def compare_cursor_methods():
 
         # Test alive property
         try:
+            start_mongo_timing()
             cursor = mongo_collection.find({"value": {"$gte": 5}})
             mongo_alive_initial = cursor.alive is True
             list(cursor)
             mongo_alive_after = isinstance(cursor.alive, bool)
             mongo_alive = mongo_alive_initial and mongo_alive_after
+            end_mongo_timing()
             print(f"Mongo alive: {'OK' if mongo_alive else 'FAIL'}")
         except Exception as e:
             mongo_alive = False
@@ -404,8 +487,10 @@ def compare_cursor_methods():
 
         # Test collection property
         try:
+            start_mongo_timing()
             cursor = mongo_collection.find({})
             mongo_collection_prop = cursor.collection is mongo_collection
+            end_mongo_timing()
             print(
                 f"Mongo collection: {'OK' if mongo_collection_prop else 'FAIL'}"
             )
@@ -415,6 +500,7 @@ def compare_cursor_methods():
 
         # Test address property
         try:
+            start_mongo_timing()
             cursor = mongo_collection.find({})
             # Before iteration, should be None
             mongo_address_before = cursor.address is None
@@ -424,6 +510,7 @@ def compare_cursor_methods():
                 isinstance(cursor.address, tuple) and len(cursor.address) == 2
             )
             mongo_address = mongo_address_before and mongo_address_after
+            end_mongo_timing()
             print(
                 f"Mongo address: {'OK' if mongo_address else 'FAIL'} (before=None, after={cursor.address})"
             )
@@ -434,10 +521,12 @@ def compare_cursor_methods():
         # Test min() method
         # Note: MongoDB min() takes a list of (field, value) tuples and requires hint()
         try:
+            start_mongo_timing()
             cursor = (
                 mongo_collection.find({}).hint("value_1").min([("value", 10)])
             )
             results = list(cursor)
+            end_mongo_timing()
             mongo_min = len(results) == 10 and all(
                 doc["value"] >= 10 for doc in results
             )
@@ -451,10 +540,12 @@ def compare_cursor_methods():
         # Test max() method
         # Note: MongoDB max() takes a list of (field, value) tuples and requires hint()
         try:
+            start_mongo_timing()
             cursor = (
                 mongo_collection.find({}).hint("value_1").max([("value", 10)])
             )
             results = list(cursor)
+            end_mongo_timing()
             mongo_max = len(results) == 10 and all(
                 doc["value"] < 10 for doc in results
             )
@@ -468,48 +559,29 @@ def compare_cursor_methods():
         # Test collation() method
         # Note: MongoDB collation requires server support and specific locale format
         try:
-            cursor = neo_collection.find({}).collation(
-                {"locale": "en_US", "strength": 2}
-            )
-            neo_collation = cursor._collation == {
-                "locale": "en_US",
-                "strength": 2,
-            }
-            print(f"Neo collation(): {'OK' if neo_collation else 'FAIL'}")
-        except Exception as e:
-            neo_collation = False
-            print(f"Neo collation(): Error - {e}")
-
-        try:
             from pymongo.collation import Collation
 
+            start_mongo_timing()
             cursor = mongo_collection.find({}).collation(
                 Collation(locale="en_US", strength=2)
             )
             # Just verify the cursor accepts collation without error
             mongo_collation = cursor is not None
+            end_mongo_timing()
             print(f"Mongo collation(): {'OK' if mongo_collation else 'FAIL'}")
         except Exception as e:
             mongo_collation = False
             print(f"Mongo collation(): Error - {e}")
 
-        # Test where() method (Python function filter)
-        # Note: MongoDB $where uses JavaScript, NeoSQLite uses Python functions
-        # This is a NeoSQLite-specific implementation, not directly comparable
-        try:
-            # Just verify the method exists and accepts a callable
-            cursor = neo_collection.find({}).where(lambda doc: True)
-            print("Neo where(): OK (NeoSQLite-specific, Python filter)")
-        except Exception as e:
-            print(f"Neo where(): Error - {e}")
-
         # Test add_option() and remove_option()
         try:
+            start_mongo_timing()
             cursor = mongo_collection.find({})
             cursor.add_option(2)  # OP_QUERY_TAILABLE_CURSOR
             # In PyMongo, there is no public _options, we just check it doesn't fail
             mongo_add_option = mongo_remove_option = True
             cursor.remove_option(2)
+            end_mongo_timing()
             print("Mongo add_option(): OK")
             print("Mongo remove_option(): OK")
         except Exception as e:
@@ -518,8 +590,10 @@ def compare_cursor_methods():
 
         # Test max_await_time_ms()
         try:
+            start_mongo_timing()
             cursor = mongo_collection.find({}).max_await_time_ms(100)
             mongo_max_await = True
+            end_mongo_timing()
             print("Mongo max_await_time_ms(): OK")
         except Exception as e:
             mongo_max_await = False
@@ -527,11 +601,13 @@ def compare_cursor_methods():
 
         # Test session and cursor_id properties
         try:
+            start_mongo_timing()
             cursor = mongo_collection.find({})
             mongo_session_prop = cursor.session is None
             mongo_cursor_id_prop = isinstance(
                 cursor.cursor_id, (int, type(None))
             )
+            end_mongo_timing()
             print(
                 f"Mongo session property: {'OK' if mongo_session_prop else 'FAIL'}"
             )
@@ -542,7 +618,6 @@ def compare_cursor_methods():
             mongo_session_prop = mongo_cursor_id_prop = False
             print(f"Mongo cursor props: Error - {e}")
 
-        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(

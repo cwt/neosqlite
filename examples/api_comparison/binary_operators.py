@@ -10,6 +10,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -23,14 +24,15 @@ def compare_binary_operators():
     print("\n=== Binary Operators Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_binary_ops
         from neosqlite.binary import Binary
 
         neo_collection.insert_one({"_id": 1, "data": Binary(b"hello")})
 
+        set_accumulation_mode(True)
         # Test $binarySize
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [
@@ -39,6 +41,8 @@ def compare_binary_operators():
                     ]
                 )
             )
+            end_neo_timing()
+
             val = result[0].get("size") if result else None
             neo_binary_size = (
                 f"{val} bytes"
@@ -50,13 +54,10 @@ def compare_binary_operators():
             neo_binary_size = f"Error: {e}"
             print(f"Neo $binarySize: Error - {e}")
 
-        end_neo_timing()
-
     client = test_pymongo_connection()
     mongo_binary_size = None
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_binary_ops
         mongo_collection.delete_many({})
@@ -65,7 +66,9 @@ def compare_binary_operators():
 
         mongo_collection.insert_one({"_id": 1, "data": MongoBinary(b"hello")})
 
+        set_accumulation_mode(True)
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [
@@ -74,6 +77,8 @@ def compare_binary_operators():
                     ]
                 )
             )
+            end_mongo_timing()
+
             val = result[0].get("size") if result else None
             mongo_binary_size = (
                 f"{val} bytes"
@@ -85,7 +90,6 @@ def compare_binary_operators():
             mongo_binary_size = f"Error: {e}"
             print(f"Mongo $binarySize: Error - {e}")
 
-        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(

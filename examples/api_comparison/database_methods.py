@@ -10,6 +10,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -23,18 +24,25 @@ def compare_database_methods():
     print("\n=== Database Methods Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
+        set_accumulation_mode(True)
+
         # Test client property
+        start_neo_timing()
         neo_client = neo_conn.client == neo_conn
+        end_neo_timing()
         print(f"Neo client property: {'OK' if neo_client else 'FAIL'}")
 
         # Test db_path property (NeoSQLite specific)
+        start_neo_timing()
         neo_db_path = neo_conn.db_path == ":memory:"
+        end_neo_timing()
         print(f"Neo db_path property: {'OK' if neo_db_path else 'FAIL'}")
 
         # Test get_collection (doesn't create until used)
         try:
+            start_neo_timing()
             coll = neo_conn.get_collection("test_get_coll")
+            end_neo_timing()
             neo_get_collection = (
                 coll is not None and coll.name == "test_get_coll"
             )
@@ -47,8 +55,10 @@ def compare_database_methods():
 
         # Test create_collection
         try:
+            start_neo_timing()
             new_coll = neo_conn.create_collection("test_create_coll")
             new_coll.insert_one({"name": "test"})
+            end_neo_timing()
             neo_create_collection = new_coll is not None
             print(
                 f"Neo create_collection: {'OK' if neo_create_collection else 'FAIL'}"
@@ -59,7 +69,9 @@ def compare_database_methods():
 
         # Test list_collection_names
         try:
+            start_neo_timing()
             names = neo_conn.list_collection_names()
+            end_neo_timing()
             # Filter out SQLite internal tables
             user_collections = [n for n in names if not n.startswith("sqlite_")]
             neo_list_collections = len(user_collections) >= 1
@@ -72,7 +84,9 @@ def compare_database_methods():
 
         # Test drop_collection
         try:
+            start_neo_timing()
             neo_conn.drop_collection("test_create_coll")
+            end_neo_timing()
             names = neo_conn.list_collection_names()
             neo_drop_collection = "test_create_coll" not in names
             print(
@@ -86,7 +100,11 @@ def compare_database_methods():
         try:
             neo_coll_rename = neo_conn.create_collection("rename_old")
             neo_coll_rename.insert_one({"name": "rename_test"})
+
+            start_neo_timing()
             neo_conn.rename_collection("rename_old", "rename_new")
+            end_neo_timing()
+
             names = neo_conn.list_collection_names()
             neo_rename_collection = (
                 "rename_new" in names and "rename_old" not in names
@@ -101,12 +119,16 @@ def compare_database_methods():
         # Test command()
         try:
             # Test ping command
+            start_neo_timing()
             neo_ping = neo_conn.command("ping")
+            end_neo_timing()
             neo_ping_ok = neo_ping.get("ok") == 1.0
             print(f"Neo command('ping'): {'OK' if neo_ping_ok else 'FAIL'}")
 
             # Test serverStatus command
+            start_neo_timing()
             neo_server_status = neo_conn.command("serverStatus")
+            end_neo_timing()
             neo_server_status_ok = neo_server_status.get("ok") == 1.0
             print(
                 f"Neo command('serverStatus'): {'OK' if neo_server_status_ok else 'FAIL'}"
@@ -122,6 +144,7 @@ def compare_database_methods():
             coll_dummy = neo_conn.create_collection("cursor_test_coll")
             coll_dummy.insert_one({"a": 1})
 
+            start_neo_timing()
             # listCollections can be run as a cursor command
             cursor = neo_conn.cursor_command("listCollections")
             results = list(cursor)
@@ -131,6 +154,7 @@ def compare_database_methods():
                 "table_info", table="cursor_test_coll"
             )
             results_pragma = list(cursor_pragma)
+            end_neo_timing()
 
             neo_cursor_command = len(results) > 0 and len(results_pragma) > 0
             print(
@@ -145,7 +169,11 @@ def compare_database_methods():
             coll = neo_conn["deref_test"]
             res = coll.insert_one({"a": 1})
             dbref = {"$ref": "deref_test", "$id": res.inserted_id}
+
+            start_neo_timing()
             doc = neo_conn.dereference(dbref)
+            end_neo_timing()
+
             neo_deref = doc is not None and doc.get("a") == 1
             print(f"Neo dereference(): {'OK' if neo_deref else 'FAIL'}")
         except Exception as e:
@@ -154,7 +182,9 @@ def compare_database_methods():
 
         # Test with_options()
         try:
+            start_neo_timing()
             neo_db_opts = neo_conn.with_options(write_concern={"w": "majority"})
+            end_neo_timing()
             neo_with_options = (
                 neo_db_opts is not None
                 and neo_db_opts.write_concern == {"w": "majority"}
@@ -163,8 +193,6 @@ def compare_database_methods():
         except Exception as e:
             neo_with_options = False
             print(f"Neo with_options(): Error - {e}")
-
-        end_neo_timing()
 
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
@@ -184,11 +212,13 @@ def compare_database_methods():
     mongo_with_options = None
 
     if client:
-        start_mongo_timing()
+        set_accumulation_mode(True)
         mongo_db = client.test_database_methods
 
         # Test client property
+        start_mongo_timing()
         mongo_client = client == client
+        end_mongo_timing()
         print(f"Mongo client property: {'OK' if mongo_client else 'FAIL'}")
 
         # Clean up any leftover collections from previous runs BEFORE testing
@@ -206,7 +236,9 @@ def compare_database_methods():
 
         # Test get_collection
         try:
+            start_mongo_timing()
             coll = mongo_db.get_collection("test_get_coll")
+            end_mongo_timing()
             mongo_get_collection = (
                 coll is not None and coll.name == "test_get_coll"
             )
@@ -219,8 +251,10 @@ def compare_database_methods():
 
         # Test create_collection
         try:
+            start_mongo_timing()
             new_coll = mongo_db.create_collection("test_create_coll")
             new_coll.insert_one({"name": "test"})
+            end_mongo_timing()
             mongo_create_collection = new_coll is not None
             print(
                 f"Mongo create_collection: {'OK' if mongo_create_collection else 'FAIL'}"
@@ -231,7 +265,9 @@ def compare_database_methods():
 
         # Test list_collection_names
         try:
+            start_mongo_timing()
             names = mongo_db.list_collection_names()
+            end_mongo_timing()
             mongo_list_collections = len(names) >= 1
             print(f"Mongo list_collection_names: {len(names)} collections")
         except Exception as e:
@@ -240,7 +276,9 @@ def compare_database_methods():
 
         # Test drop_collection
         try:
+            start_mongo_timing()
             mongo_db.drop_collection("test_create_coll")
+            end_mongo_timing()
             names = mongo_db.list_collection_names()
             mongo_drop_collection = "test_create_coll" not in names
             print(
@@ -254,8 +292,12 @@ def compare_database_methods():
         try:
             mongo_coll_rename = mongo_db.create_collection("rename_old")
             mongo_coll_rename.insert_one({"name": "rename_test"})
+
+            start_mongo_timing()
             # MongoDB doesn't have db.rename_collection(), uses collection.rename() instead
             mongo_coll_rename.rename("rename_new")
+            end_mongo_timing()
+
             names = mongo_db.list_collection_names()
             mongo_rename_collection = (
                 "rename_new" in names and "rename_old" not in names
@@ -270,12 +312,16 @@ def compare_database_methods():
         # Test command()
         try:
             # Test ping command
+            start_mongo_timing()
             mongo_ping = mongo_db.command("ping")
+            end_mongo_timing()
             mongo_ping_ok = mongo_ping.get("ok") == 1.0
             print(f"Mongo command('ping'): {'OK' if mongo_ping_ok else 'FAIL'}")
 
             # Test serverStatus command
+            start_mongo_timing()
             mongo_server_status = mongo_db.command("serverStatus")
+            end_mongo_timing()
             mongo_server_status_ok = mongo_server_status.get("ok") == 1.0
             print(
                 f"Mongo command('serverStatus'): {'OK' if mongo_server_status_ok else 'FAIL'}"
@@ -289,12 +335,14 @@ def compare_database_methods():
         try:
             from pymongo.command_cursor import CommandCursor
 
+            start_mongo_timing()
             cursor = mongo_db.cursor_command("listCollections")
             # In some PyMongo versions, cursor_command returns a cursor directly
             # In others it might return a dict with a cursor key
             mongo_cursor_command = isinstance(cursor, CommandCursor) or (
                 isinstance(cursor, dict) and "cursor" in cursor
             )
+            end_mongo_timing()
             print(
                 f"Mongo cursor_command(): {'OK' if mongo_cursor_command else 'FAIL'}"
             )
@@ -309,7 +357,11 @@ def compare_database_methods():
             coll = mongo_db["deref_test"]
             res = coll.insert_one({"a": 1})
             dbref = DBRef("deref_test", res.inserted_id)
+
+            start_mongo_timing()
             doc = mongo_db.dereference(dbref)
+            end_mongo_timing()
+
             mongo_deref = doc is not None and doc.get("a") == 1
             print(f"Mongo dereference(): {'OK' if mongo_deref else 'FAIL'}")
         except Exception as e:
@@ -321,9 +373,12 @@ def compare_database_methods():
         try:
             from pymongo import WriteConcern
 
+            start_mongo_timing()
             mongo_db_opts = mongo_db.with_options(
                 write_concern=WriteConcern(w="majority")
             )
+            end_mongo_timing()
+
             mongo_with_options = mongo_db_opts is not None
             print(
                 f"Mongo with_options(): {'OK' if mongo_with_options else 'FAIL'}"
@@ -339,7 +394,6 @@ def compare_database_methods():
             except Exception:
                 pass
 
-        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(

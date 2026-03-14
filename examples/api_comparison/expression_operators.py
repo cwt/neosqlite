@@ -10,6 +10,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -23,14 +24,15 @@ def compare_expression_operators():
     print("\n=== Expression Operators Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_expr_ops
         neo_collection.insert_one({"_id": 1, "value": 5})
 
+        set_accumulation_mode(True)
         neo_results = {}
 
         # Test $rand
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [
@@ -39,6 +41,8 @@ def compare_expression_operators():
                     ]
                 )
             )
+            end_neo_timing()
+
             val = result[0].get("random") if result else None
             neo_results["$rand"] = (
                 "generated" if val is not None and 0 <= val <= 1 else "invalid"
@@ -50,6 +54,7 @@ def compare_expression_operators():
 
         # Test $let
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [
@@ -67,26 +72,27 @@ def compare_expression_operators():
                     ]
                 )
             )
+            end_neo_timing()
+
             neo_results["$let"] = result[0].get("let_val") if result else None
             print(f"Neo $let: {neo_results['$let']}")
         except Exception as e:
             neo_results["$let"] = f"Error: {e}"
             print(f"Neo $let: Error - {e}")
 
-        end_neo_timing()
-
     client = test_pymongo_connection()
     mongo_results = {}
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_expr_ops
         mongo_collection.delete_many({})
         mongo_collection.insert_one({"_id": 1, "value": 5})
 
+        set_accumulation_mode(True)
         # Test $rand
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [
@@ -95,6 +101,8 @@ def compare_expression_operators():
                     ]
                 )
             )
+            end_mongo_timing()
+
             val = result[0].get("random") if result else None
             mongo_results["$rand"] = (
                 "generated" if val is not None and 0 <= val <= 1 else "invalid"
@@ -106,6 +114,7 @@ def compare_expression_operators():
 
         # Test $let
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [
@@ -123,13 +132,14 @@ def compare_expression_operators():
                     ]
                 )
             )
+            end_mongo_timing()
+
             mongo_results["$let"] = result[0].get("let_val") if result else None
             print(f"Mongo $let: {mongo_results['$let']}")
         except Exception as e:
             mongo_results["$let"] = f"Error: {e}"
             print(f"Mongo $let: Error - {e}")
 
-        end_mongo_timing()
         client.close()
 
     for op_name in neo_results:

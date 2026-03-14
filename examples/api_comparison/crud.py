@@ -10,6 +10,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -28,53 +29,76 @@ def compare_crud_operations():
 
     with neosqlite.Connection(":memory:") as neo_conn:
         neo_collection = neo_conn.test_collection
-        start_neo_timing()
+
+        set_accumulation_mode(True)
 
         # insert_one
+        start_neo_timing()
         result = neo_collection.insert_one({"name": "Alice", "age": 30})
+        end_neo_timing()
         _ = result.inserted_id
 
         # find_one
+        start_neo_timing()
         _ = neo_collection.find_one({"name": "Alice"})
+        end_neo_timing()
 
         # insert_many
+        start_neo_timing()
         result = neo_collection.insert_many(
             [{"name": "Bob", "age": 25}, {"name": "Charlie", "age": 35}]
         )
+        end_neo_timing()
 
         # find with projection
+        start_neo_timing()
         _ = list(neo_collection.find({}, {"name": 1}))
+        end_neo_timing()
 
         # find_one with projection
+        start_neo_timing()
         _ = neo_collection.find_one({"name": "Alice"}, {"age": 1})
+        end_neo_timing()
 
         # update_one
+        start_neo_timing()
         result = neo_collection.update_one(
             {"name": "Alice"}, {"$set": {"age": 31}}
         )
+        end_neo_timing()
 
         # update_many
+        start_neo_timing()
         result = neo_collection.update_many(
             {"age": {"$gt": 30}}, {"$inc": {"age": 1}}
         )
+        end_neo_timing()
 
         # replace_one
+        start_neo_timing()
         result = neo_collection.replace_one(
             {"name": "Alice"}, {"name": "Alice Smith", "age": 32}
         )
+        end_neo_timing()
 
         # delete_one
+        start_neo_timing()
         result = neo_collection.delete_one({"name": "Bob"})
+        end_neo_timing()
 
         # delete_many
+        start_neo_timing()
         result = neo_collection.delete_many({"age": {"$gt": 30}})
+        end_neo_timing()
 
         # count_documents
+        start_neo_timing()
         _ = neo_collection.count_documents({})
+        end_neo_timing()
 
         # estimated_document_count
+        start_neo_timing()
         _ = neo_collection.estimated_document_count()
-
         end_neo_timing()
 
         print(
@@ -93,29 +117,62 @@ def compare_crud_operations():
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
 
-        start_mongo_timing()
+        set_accumulation_mode(True)
 
+        start_mongo_timing()
         result = mongo_collection.insert_one({"name": "Alice", "age": 30})
+        end_mongo_timing()
+
+        start_mongo_timing()
         _ = mongo_collection.find_one({"name": "Alice"})
+        end_mongo_timing()
+
+        start_mongo_timing()
         result = mongo_collection.insert_many(
             [{"name": "Bob", "age": 25}, {"name": "Charlie", "age": 35}]
         )
+        end_mongo_timing()
+
+        start_mongo_timing()
         _ = list(mongo_collection.find({}, {"name": 1}))
+        end_mongo_timing()
+
+        start_mongo_timing()
         _ = mongo_collection.find_one({"name": "Alice"}, {"age": 1})
+        end_mongo_timing()
+
+        start_mongo_timing()
         result = mongo_collection.update_one(
             {"name": "Alice"}, {"$set": {"age": 31}}
         )
+        end_mongo_timing()
+
+        start_mongo_timing()
         result = mongo_collection.update_many(
             {"age": {"$gt": 30}}, {"$inc": {"age": 1}}
         )
+        end_mongo_timing()
+
+        start_mongo_timing()
         result = mongo_collection.replace_one(
             {"name": "Alice"}, {"name": "Alice Smith", "age": 32}
         )
-        result = mongo_collection.delete_one({"name": "Bob"})
-        result = mongo_collection.delete_many({"age": {"$gt": 30}})
-        _ = mongo_collection.count_documents({})
-        _ = mongo_collection.estimated_document_count()
+        end_mongo_timing()
 
+        start_mongo_timing()
+        result = mongo_collection.delete_one({"name": "Bob"})
+        end_mongo_timing()
+
+        start_mongo_timing()
+        result = mongo_collection.delete_many({"age": {"$gt": 30}})
+        end_mongo_timing()
+
+        start_mongo_timing()
+        _ = mongo_collection.count_documents({})
+        end_mongo_timing()
+
+        start_mongo_timing()
+        _ = mongo_collection.estimated_document_count()
         end_mongo_timing()
 
         print("PyMongo CRUD: All operations completed")

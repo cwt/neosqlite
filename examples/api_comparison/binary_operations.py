@@ -12,6 +12,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -25,11 +26,16 @@ def compare_binary_support():
     print("\n=== Binary Data Support Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_collection
+
+        set_accumulation_mode(True)
+
+        start_neo_timing()
         binary_data = Binary(b"test binary data")
         neo_collection.insert_one({"data": binary_data, "name": "test"})
         doc = neo_collection.find_one({"name": "test"})
+        end_neo_timing()
+
         neo_has_binary = isinstance(doc.get("data"), (Binary, bytes))
         print(f"Neo Binary support: {neo_has_binary}")
 
@@ -38,7 +44,11 @@ def compare_binary_support():
         try:
             if hasattr(Binary, "from_uuid"):
                 test_uuid = uuid.uuid4()
+
+                start_neo_timing()
                 binary_from_uuid = Binary.from_uuid(test_uuid)
+                end_neo_timing()
+
                 neo_from_uuid = binary_from_uuid is not None
                 print(
                     f"Neo Binary.from_uuid(): {'OK' if neo_from_uuid else 'FAIL'}"
@@ -55,7 +65,11 @@ def compare_binary_support():
                 # Create a binary from UUID first (sets UUID_SUBTYPE)
                 test_uuid = uuid.uuid4()
                 binary_from_uuid = Binary.from_uuid(test_uuid)
+
+                start_neo_timing()
                 result_uuid = binary_from_uuid.as_uuid()
+                end_neo_timing()
+
                 neo_as_uuid = result_uuid == test_uuid
                 print(
                     f"Neo Binary.as_uuid(): {'OK' if neo_as_uuid else 'FAIL'}"
@@ -69,9 +83,12 @@ def compare_binary_support():
         neo_subtypes = False
         try:
             # Check if Binary supports subtype parameter
+            start_neo_timing()
             binary_with_subtype = Binary(
                 b"test data", subtype=0x80
             )  # User-defined subtype
+            end_neo_timing()
+
             if hasattr(binary_with_subtype, "subtype"):
                 neo_subtypes = binary_with_subtype.subtype == 0x80
                 print(
@@ -82,8 +99,6 @@ def compare_binary_support():
         except Exception as e:
             print(f"Neo Binary subtypes: Error - {e}")
 
-        end_neo_timing()
-
     client = test_pymongo_connection()
     mongo_collection = None
     mongo_db = None
@@ -93,22 +108,30 @@ def compare_binary_support():
     mongo_subtypes = None
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
         from bson import Binary as BsonBinary
 
+        set_accumulation_mode(True)
+
+        start_mongo_timing()
         binary_data = BsonBinary(b"test binary data")
         mongo_collection.insert_one({"data": binary_data, "name": "test"})
         doc = mongo_collection.find_one({"name": "test"})
+        end_mongo_timing()
+
         mongo_has_binary = isinstance(doc.get("data"), (BsonBinary, bytes))
         print(f"Mongo Binary support: {mongo_has_binary}")
 
         # Test from_uuid()
         try:
             test_uuid = uuid.uuid4()
+
+            start_mongo_timing()
             binary_from_uuid = BsonBinary.from_uuid(test_uuid)
+            end_mongo_timing()
+
             mongo_from_uuid = binary_from_uuid is not None
             print(
                 f"Mongo Binary.from_uuid(): {'OK' if mongo_from_uuid else 'FAIL'}"
@@ -121,7 +144,11 @@ def compare_binary_support():
         try:
             test_uuid = uuid.uuid4()
             binary_from_uuid = BsonBinary.from_uuid(test_uuid)
+
+            start_mongo_timing()
             result_uuid = binary_from_uuid.as_uuid()
+            end_mongo_timing()
+
             mongo_as_uuid = result_uuid == test_uuid
             print(
                 f"Mongo Binary.as_uuid(): {'OK' if mongo_as_uuid else 'FAIL'}"
@@ -132,9 +159,12 @@ def compare_binary_support():
 
         # Test Binary subtypes
         try:
+            start_mongo_timing()
             binary_with_subtype = BsonBinary(
                 b"test data", subtype=0x80
             )  # User-defined subtype
+            end_mongo_timing()
+
             mongo_subtypes = binary_with_subtype.subtype == 0x80
             print(
                 f"Mongo Binary subtypes: {'OK' if mongo_subtypes else 'FAIL'}"
@@ -143,7 +173,6 @@ def compare_binary_support():
             mongo_subtypes = False
             print(f"Mongo Binary subtypes: Error - {e}")
 
-        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(

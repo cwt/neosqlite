@@ -10,6 +10,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -23,9 +24,9 @@ def compare_pullall_operator():
     print("\n=== $pullAll Update Operator Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_collection
 
+        set_accumulation_mode(True)
         # Test 1: Basic pullAll
         neo_collection.insert_one(
             {"_id": 1, "name": "test1", "scores": [80, 90, 80, 100, 90, 80]}
@@ -35,10 +36,13 @@ def compare_pullall_operator():
 
         # Test basic pullAll
         try:
+            start_neo_timing()
             result = neo_collection.update_one(
                 {"_id": 1}, {"$pullAll": {"scores": [80, 90]}}
             )
             doc = neo_collection.find_one({"_id": 1})
+            end_neo_timing()
+
             neo_results["basic"] = {
                 "modified": result.modified_count,
                 "result": sorted(doc["scores"]),
@@ -56,10 +60,13 @@ def compare_pullall_operator():
         )
 
         try:
+            start_neo_timing()
             result = neo_collection.update_one(
                 {"_id": 2}, {"$pullAll": {"tags": ["a", "b"]}}
             )
             doc = neo_collection.find_one({"_id": 2})
+            end_neo_timing()
+
             neo_results["strings"] = {
                 "modified": result.modified_count,
                 "result": sorted(doc["tags"]),
@@ -77,10 +84,13 @@ def compare_pullall_operator():
         )
 
         try:
+            start_neo_timing()
             result = neo_collection.update_one(
                 {"_id": 3}, {"$pullAll": {"numbers": [10, 20]}}
             )
             doc = neo_collection.find_one({"_id": 3})
+            end_neo_timing()
+
             neo_results["no_matches"] = {
                 "modified": result.modified_count,
                 "result": sorted(doc["numbers"]),
@@ -98,10 +108,13 @@ def compare_pullall_operator():
         )
 
         try:
+            start_neo_timing()
             result = neo_collection.update_one(
                 {"_id": 4}, {"$pullAll": {"nested": [[1, 2]]}}
             )
             doc = neo_collection.find_one({"_id": 4})
+            end_neo_timing()
+
             neo_results["nested"] = {
                 "modified": result.modified_count,
                 "result": [
@@ -115,28 +128,29 @@ def compare_pullall_operator():
             neo_results["nested"] = f"Error: {e}"
             print(f"Neo nested: Error - {e}")
 
-        end_neo_timing()
-
     client = test_pymongo_connection()
     mongo_collection = None
     mongo_results = {}
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
 
+        set_accumulation_mode(True)
         # Test 1: Basic pullAll
         mongo_collection.insert_one(
             {"_id": 1, "name": "test1", "scores": [80, 90, 80, 100, 90, 80]}
         )
 
         try:
+            start_mongo_timing()
             result = mongo_collection.update_one(
                 {"_id": 1}, {"$pullAll": {"scores": [80, 90]}}
             )
             doc = mongo_collection.find_one({"_id": 1})
+            end_mongo_timing()
+
             mongo_results["basic"] = {
                 "modified": result.modified_count,
                 "result": sorted(doc["scores"]),
@@ -154,10 +168,13 @@ def compare_pullall_operator():
         )
 
         try:
+            start_mongo_timing()
             result = mongo_collection.update_one(
                 {"_id": 2}, {"$pullAll": {"tags": ["a", "b"]}}
             )
             doc = mongo_collection.find_one({"_id": 2})
+            end_mongo_timing()
+
             mongo_results["strings"] = {
                 "modified": result.modified_count,
                 "result": sorted(doc["tags"]),
@@ -175,10 +192,13 @@ def compare_pullall_operator():
         )
 
         try:
+            start_mongo_timing()
             result = mongo_collection.update_one(
                 {"_id": 3}, {"$pullAll": {"numbers": [10, 20]}}
             )
             doc = mongo_collection.find_one({"_id": 3})
+            end_mongo_timing()
+
             mongo_results["no_matches"] = {
                 "modified": result.modified_count,
                 "result": sorted(doc["numbers"]),
@@ -196,10 +216,13 @@ def compare_pullall_operator():
         )
 
         try:
+            start_mongo_timing()
             result = mongo_collection.update_one(
                 {"_id": 4}, {"$pullAll": {"nested": [[1, 2]]}}
             )
             doc = mongo_collection.find_one({"_id": 4})
+            end_mongo_timing()
+
             mongo_results["nested"] = {
                 "modified": result.modified_count,
                 "result": [
@@ -213,30 +236,17 @@ def compare_pullall_operator():
             mongo_results["nested"] = f"Error: {e}"
             print(f"Mongo nested: Error - {e}")
 
-        # Compare results
-        for test_name in neo_results:
-            neo_result = neo_results[test_name]
-            mongo_result = (
-                mongo_results.get(test_name) if mongo_results else None
-            )
-
-            reporter.record_comparison(
-                "Update Operators",
-                f"$pullAll ({test_name})",
-                neo_result,
-                mongo_result,
-                skip_reason="MongoDB not available" if not client else None,
-            )
-
-        end_mongo_timing()
         client.close()
-    else:
-        # MongoDB not available, record NeoSQLite results as skipped
-        for test_name in neo_results:
-            reporter.record_comparison(
-                "Update Operators",
-                f"$pullAll ({test_name})",
-                neo_results[test_name],
-                None,
-                skip_reason="MongoDB not available",
-            )
+
+    # Compare results
+    for test_name in neo_results:
+        neo_res = neo_results[test_name]
+        mongo_res = mongo_results.get(test_name) if mongo_results else None
+
+        reporter.record_comparison(
+            "Update Operators",
+            f"$pullAll ({test_name})",
+            neo_res,
+            mongo_res,
+            skip_reason="MongoDB not available" if not client else None,
+        )

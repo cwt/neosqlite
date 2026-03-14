@@ -10,6 +10,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -23,7 +24,6 @@ def compare_search_index_operations():
     print("\n=== Search Index Operations Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_search_index
         neo_collection.insert_many(
             [
@@ -36,9 +36,12 @@ def compare_search_index_operations():
             ]
         )
 
+        set_accumulation_mode(True)
         # Test create_search_index
         try:
+            start_neo_timing()
             neo_collection.create_search_index("content")
+            end_neo_timing()
             neo_create_search_index = True
             print("Neo create_search_index: OK")
         except Exception as e:
@@ -47,7 +50,9 @@ def compare_search_index_operations():
 
         # Test list_search_indexes
         try:
+            start_neo_timing()
             neo_indexes = neo_collection.list_search_indexes()
+            end_neo_timing()
             neo_list_search_indexes = len(neo_indexes) >= 1
             print(f"Neo list_search_indexes: {len(neo_indexes)} indexes")
         except Exception as e:
@@ -56,7 +61,9 @@ def compare_search_index_operations():
 
         # Test update_search_index
         try:
+            start_neo_timing()
             neo_collection.update_search_index("content", "porter")
+            end_neo_timing()
             neo_update_search_index = True
             print("Neo update_search_index: OK")
         except Exception as e:
@@ -65,34 +72,27 @@ def compare_search_index_operations():
 
         # Test drop_search_index
         try:
+            start_neo_timing()
             neo_collection.drop_search_index("content")
+            end_neo_timing()
             neo_drop_search_index = True
             print("Neo drop_search_index: OK")
         except Exception as e:
             neo_drop_search_index = False
             print(f"Neo drop_search_index: Error - {e}")
 
-        end_neo_timing()
-
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
 
     mongo_collection = None
-
     mongo_create_search_index = None
-
     mongo_db = None
-
     mongo_drop_search_index = None
-
     mongo_indexes = None
-
     mongo_list_search_indexes = None
-
     mongo_update_search_index = None
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_search_index
         mongo_collection.delete_many({})
@@ -107,9 +107,12 @@ def compare_search_index_operations():
             ]
         )
 
+        set_accumulation_mode(True)
         # MongoDB uses create_index with "text" for text search
         try:
+            start_mongo_timing()
             mongo_collection.create_index([("content", "text")])
+            end_mongo_timing()
             mongo_create_search_index = True
             print("Mongo create_index (text): OK")
         except Exception as e:
@@ -118,7 +121,9 @@ def compare_search_index_operations():
 
         # Test list_indexes (MongoDB doesn't have separate search index list)
         try:
+            start_mongo_timing()
             mongo_indexes = list(mongo_collection.list_indexes())
+            end_mongo_timing()
             mongo_list_search_indexes = len(mongo_indexes) >= 1
             print(f"Mongo list_indexes: {len(mongo_indexes)} indexes")
         except Exception as e:
@@ -131,14 +136,15 @@ def compare_search_index_operations():
 
         # Test drop index
         try:
+            start_mongo_timing()
             mongo_collection.drop_index("content_text")
+            end_mongo_timing()
             mongo_drop_search_index = True
             print("Mongo drop_index: OK")
         except Exception as e:
             mongo_drop_search_index = False
             print(f"Mongo drop_index: Error - {e}")
 
-        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(

@@ -10,6 +10,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -23,7 +24,7 @@ def compare_additional_expr_operators_complete():
     print("\n=== Additional $expr Operators (Complete Coverage) ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
+        set_accumulation_mode(True)
         neo_collection = neo_conn.test_expr_complete
         neo_collection.insert_many(
             [
@@ -46,8 +47,10 @@ def compare_additional_expr_operators_complete():
             ]
         )
 
+        start_neo_timing()
         # Test $map
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [
@@ -65,6 +68,7 @@ def compare_additional_expr_operators_complete():
                     ]
                 )
             )
+            end_neo_timing()
             neo_map = len(result) == 2
             print(f"Neo $map: {'OK' if neo_map else 'FAIL'}")
         except Exception as e:
@@ -73,6 +77,7 @@ def compare_additional_expr_operators_complete():
 
         # Test $reduce
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [
@@ -90,6 +95,7 @@ def compare_additional_expr_operators_complete():
                     ]
                 )
             )
+            end_neo_timing()
             neo_reduce = len(result) == 2
             print(f"Neo $reduce: {'OK' if neo_reduce else 'FAIL'}")
         except Exception as e:
@@ -98,11 +104,13 @@ def compare_additional_expr_operators_complete():
 
         # Test $indexOfArray
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [{"$project": {"index": {"$indexOfArray": ["$values", 3]}}}]
                 )
             )
+            end_neo_timing()
             neo_indexofarray = len(result) == 2
             print(f"Neo $indexOfArray: {'OK' if neo_indexofarray else 'FAIL'}")
         except Exception as e:
@@ -648,7 +656,7 @@ def compare_additional_expr_operators_complete():
     mongo_unsetfield = None
 
     if client:
-        start_mongo_timing()
+        set_accumulation_mode(True)
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_expr_complete
         mongo_collection.delete_many({})
@@ -673,6 +681,7 @@ def compare_additional_expr_operators_complete():
             ]
         )
 
+        start_mongo_timing()
         # Test $map
         try:
             result = list(

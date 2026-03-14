@@ -9,6 +9,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -87,39 +88,44 @@ def compare_graph_lookup():
 
     neo_results = {}
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.employees
         neo_collection.insert_many(test_data)
 
+        set_accumulation_mode(True)
         for name, pipeline in pipelines.items():
             try:
-                neo_results[name] = list(neo_collection.aggregate(pipeline))
+                start_neo_timing()
+                result = list(neo_collection.aggregate(pipeline))
+                end_neo_timing()
+
+                neo_results[name] = result
                 print(f"Neo $graphLookup ({name}): OK")
             except Exception as e:
                 neo_results[name] = f"Error: {e}"
                 print(f"Neo $graphLookup ({name}): Error - {e}")
 
-        end_neo_timing()
-
     client = test_pymongo_connection()
     mongo_results = {}
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.employees
         mongo_collection.delete_many({})
         mongo_collection.insert_many(test_data)
 
+        set_accumulation_mode(True)
         for name, pipeline in pipelines.items():
             try:
-                mongo_results[name] = list(mongo_collection.aggregate(pipeline))
+                start_mongo_timing()
+                result = list(mongo_collection.aggregate(pipeline))
+                end_mongo_timing()
+
+                mongo_results[name] = result
                 print(f"Mongo $graphLookup ({name}): OK")
             except Exception as e:
                 mongo_results[name] = f"Error: {e}"
                 print(f"Mongo $graphLookup ({name}): Error - {e}")
 
-        end_mongo_timing()
         client.close()
 
     # Record comparisons

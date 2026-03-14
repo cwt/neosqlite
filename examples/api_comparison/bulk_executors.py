@@ -5,7 +5,7 @@ import warnings
 import neosqlite
 
 from .reporter import reporter
-from .timing import start_neo_timing
+from .timing import start_neo_timing, end_neo_timing, set_accumulation_mode
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -20,7 +20,6 @@ def compare_bulk_operation_executors():
     neo_unordered_ok = False
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_bulk_exec
         neo_collection.insert_many(
             [
@@ -30,8 +29,10 @@ def compare_bulk_operation_executors():
             ]
         )
 
+        set_accumulation_mode(True)
         # Test initialize_ordered_bulk_op with add() method
         try:
+            start_neo_timing()
             neo_ordered = neo_collection.initialize_ordered_bulk_op()
             neo_ordered.add(neosqlite.InsertOne({"name": "D", "value": 4}))
             neo_ordered.add(
@@ -39,6 +40,8 @@ def compare_bulk_operation_executors():
             )
             neo_ordered.add(neosqlite.DeleteOne({"name": "B"}))
             neo_ordered_result = neo_ordered.execute()
+            end_neo_timing()
+
             neo_ordered_ok = neo_ordered_result.matched_count >= 0
             print(
                 f"Neo initialize_ordered_bulk_op: OK (matched={neo_ordered_result.matched_count})"
@@ -48,12 +51,15 @@ def compare_bulk_operation_executors():
 
         # Test initialize_unordered_bulk_op with add() method
         try:
+            start_neo_timing()
             neo_unordered = neo_collection.initialize_unordered_bulk_op()
             neo_unordered.add(neosqlite.InsertOne({"name": "E", "value": 5}))
             neo_unordered.add(
                 neosqlite.UpdateOne({"name": "C"}, {"$set": {"value": 30}})
             )
             neo_unordered_result = neo_unordered.execute()
+            end_neo_timing()
+
             neo_unordered_ok = neo_unordered_result.matched_count >= 0
             print(
                 f"Neo initialize_unordered_bulk_op: OK (matched={neo_unordered_result.matched_count})"

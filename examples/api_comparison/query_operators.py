@@ -1,6 +1,5 @@
 """Module for comparing query operators between NeoSQLite and PyMongo"""
 
-import copy
 import warnings
 
 import neosqlite
@@ -11,12 +10,9 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
-
-warnings.filterwarnings(
-    "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
-)
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -27,6 +23,29 @@ def compare_query_operators():
     """Compare query operators between NeoSQLite and PyMongo"""
     print("\n=== Query Operators Comparison ===")
 
+    operators = [
+        ({"age": {"$eq": 30}}, "$eq"),
+        ({"age": {"$gt": 30}}, "$gt"),
+        ({"age": {"$gte": 30}}, "$gte"),
+        ({"age": {"$lt": 30}}, "$lt"),
+        ({"age": {"$lte": 30}}, "$lte"),
+        ({"age": {"$ne": 30}}, "$ne"),
+        ({"age": {"$in": [25, 30, 35]}}, "$in"),
+        ({"age": {"$nin": [25, 30]}}, "$nin"),
+        ({"age": {"$exists": True}}, "$exists (true)"),
+        ({"age": {"$exists": False}}, "$exists (false)"),
+        ({"age": {"$type": 16}}, "$type (int)"),
+        ({"scores": {"$all": [80, 90]}}, "$all"),
+        ({"scores": {"$size": 3}}, "$size"),
+        ({"name": {"$regex": "A.*"}}, "$regex"),
+        (
+            {"name": {"$regex": "alice", "$options": "i"}},
+            "$regex with $options",
+        ),
+        ({"$nor": [{"age": 30}, {"name": "Alice"}]}, "$nor"),
+    ]
+
+    neo_results = {}
     with neosqlite.Connection(":memory:") as neo_conn:
         neo_collection = neo_conn.test_collection
         neo_collection.insert_many(
@@ -64,60 +83,42 @@ def compare_query_operators():
             ]
         )
 
-        operators = [
-            ({"age": {"$eq": 30}}, "$eq"),
-            ({"age": {"$gt": 30}}, "$gt"),
-            ({"age": {"$gte": 30}}, "$gte"),
-            ({"age": {"$lt": 30}}, "$lt"),
-            ({"age": {"$lte": 30}}, "$lte"),
-            ({"age": {"$ne": 30}}, "$ne"),
-            ({"age": {"$in": [25, 30, 35]}}, "$in"),
-            ({"age": {"$nin": [25, 30]}}, "$nin"),
-            ({"age": {"$exists": True}}, "$exists (true)"),
-            ({"age": {"$exists": False}}, "$exists (false)"),
-            ({"age": {"$type": 16}}, "$type (int)"),
-            ({"scores": {"$all": [80, 90]}}, "$all"),
-            # Note: $elemMatch has known differences
-            ({"scores": {"$size": 3}}, "$size"),
-            ({"name": {"$regex": "A.*"}}, "$regex"),
-            (
-                {"name": {"$regex": "alice", "$options": "i"}},
-                "$regex with $options",
-            ),
-            ({"name": {"$contains": "li"}}, "$contains"),
-            # Additional missing operators
-            ({"$nor": [{"age": 30}, {"name": "Alice"}]}, "$nor"),
-        ]
-
-        neo_results = {}
-        start_neo_timing()
+        set_accumulation_mode(True)
         for query, op_name in operators:
             try:
-                neo_results[op_name] = list(neo_collection.find(query))
+                start_neo_timing()
+                result = list(neo_collection.find(query))
+                end_neo_timing()
+                neo_results[op_name] = result
             except Exception as e:
                 neo_results[op_name] = f"Error: {e}"
+
+        # Test $contains (NeoSQLite extension)
+        try:
+            start_neo_timing()
+            neo_results["$contains"] = list(
+                neo_collection.find({"name": {"$contains": "li"}})
+            )
+            end_neo_timing()
+            print(f"Neo $contains: {len(neo_results['$contains'])} documents")
+        except Exception as e:
+            neo_results["$contains"] = f"Error: {e}"
 
         # Test $text separately as it requires index creation
         try:
             neo_collection.create_index([("name", "text")])
+
+            start_neo_timing()
             neo_results["$text"] = list(
                 neo_collection.find({"$text": {"$search": "Alice"}})
             )
+            end_neo_timing()
             print(f"Neo $text: {len(neo_results['$text'])} documents")
         except Exception as e:
             neo_results["$text"] = f"Error: {e}"
             print(f"Neo $text: Error - {e}")
-        end_neo_timing()
 
     client = test_pymongo_connection()
-    # Initialize MongoDB result variables
-
-    mongo_collection = None
-
-    mongo_db = None
-
-    mongo_query = None
-
     mongo_results = {}
 
     if client:
@@ -159,39 +160,46 @@ def compare_query_operators():
             ]
         )
 
-        start_mongo_timing()
+        set_accumulation_mode(True)
         for query, op_name in operators:
             try:
-                mongo_query = copy.deepcopy(query)
-                if "$contains" in str(query):
-                    field = list(query.keys())[0]
-                    value = list(query[field].values())[0]
-                    mongo_query = {field: {"$regex": value, "$options": "i"}}
-                mongo_results[op_name] = list(
-                    mongo_collection.find(mongo_query)
-                )
+                start_mongo_timing()
+                result = list(mongo_collection.find(query))
+                end_mongo_timing()
+                mongo_results[op_name] = result
             except Exception as e:
                 mongo_results[op_name] = f"Error: {e}"
+
+        # MongoDB doesn't support $contains
+        mongo_results["$contains"] = None
 
         # Test $text separately for MongoDB
         try:
             mongo_collection.create_index([("name", "text")])
+
+            start_mongo_timing()
             mongo_results["$text"] = list(
                 mongo_collection.find({"$text": {"$search": "Alice"}})
             )
+            end_mongo_timing()
             print(f"Mongo $text: {len(mongo_results['$text'])} documents")
         except Exception as e:
             mongo_results["$text"] = f"Error: {e}"
             print(f"Mongo $text: Error - {e}")
-        end_mongo_timing()
 
         for op_name in neo_results:
+            skip_reason = None
+            if not client:
+                skip_reason = "MongoDB not available"
+            elif op_name == "$contains":
+                skip_reason = "NeoSQLite extension not in MongoDB"
+
             reporter.record_comparison(
                 "Query Operators",
                 op_name,
                 neo_results[op_name],
                 mongo_results.get(op_name),
-                skip_reason="MongoDB not available" if not client else None,
+                skip_reason=skip_reason,
             )
         client.close()
     else:

@@ -10,6 +10,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -26,10 +27,33 @@ def compare_additional_expr_success_stories():
     )
     print("All operators below work correctly in both NeoSQLite and MongoDB.\n")
 
-    # Test $elemMatch
-    print("--- $elemMatch ---")
+    # Initialize result variables
+    neo_elemMatch = None
+    neo_not = None
+    neo_concat = None
+    neo_ifnull = None
+    neo_isarray = None
+    neo_round = None
+    neo_exp = None
+    neo_deg2rad = None
+    neo_rad2deg = None
+
+    mongo_elemMatch = None
+    mongo_not = None
+    mongo_concat = None
+    mongo_ifnull = None
+    mongo_isarray = None
+    mongo_round = None
+    mongo_exp = None
+    mongo_deg2rad = None
+    mongo_rad2deg = None
+
     with neosqlite.Connection(":memory:") as neo_conn:
+        set_accumulation_mode(True)
         neo_collection = neo_conn.test_collection
+
+        # Test $elemMatch
+        neo_collection.delete_many({})
         neo_collection.insert_many(
             [
                 {"scores": [80, 90, 100]},
@@ -37,144 +61,38 @@ def compare_additional_expr_success_stories():
                 {"scores": [90, 95]},
             ]
         )
-        start_neo_timing()
         try:
+            start_neo_timing()
             neo_result = list(
                 neo_collection.find({"scores": {"$elemMatch": {"$gte": 90}}})
             )
+            end_neo_timing()
             neo_elemMatch = len(neo_result)
             print(f"Neo $elemMatch: {neo_elemMatch} matches")
         except Exception as e:
             neo_elemMatch = f"Error: {e}"
             print(f"Neo $elemMatch: Error - {e}")
 
-        end_neo_timing()
-
-    client = test_pymongo_connection()
-    # Initialize MongoDB result variables
-
-    mongo_collection = None
-
-    mongo_concat = None
-
-    mongo_db = None
-
-    mongo_deg2rad = None
-
-    mongo_elemMatch = None
-
-    mongo_exp = None
-
-    mongo_ifnull = None
-
-    mongo_isarray = None
-
-    mongo_not = None
-
-    mongo_rad2deg = None
-
-    mongo_result = None
-
-    mongo_result_180 = None
-
-    mongo_result_90 = None
-
-    mongo_result_exact = None
-
-    mongo_result_pi = None
-
-    mongo_result_pi2 = None
-
-    mongo_result_range = None
-
-    mongo_round = None
-
-    if client:
-        mongo_db = client.test_database
-        mongo_collection = mongo_db.test_collection
-        mongo_collection.delete_many({})
-        mongo_collection.insert_many(
-            [
-                {"scores": [80, 90, 100]},
-                {"scores": [70, 80]},
-                {"scores": [90, 95]},
-            ]
-        )
-        start_mongo_timing()
-        try:
-            mongo_result = list(
-                mongo_collection.find({"scores": {"$elemMatch": {"$gte": 90}}})
-            )
-            mongo_elemMatch = len(mongo_result)
-            print(f"Mongo $elemMatch: {mongo_elemMatch} matches")
-        except Exception as e:
-            mongo_elemMatch = f"Error: {e}"
-            print(f"Mongo $elemMatch: Error - {e}")
-        end_mongo_timing()
-        client.close()
-
-    reporter.record_comparison(
-        "Additional $expr Operators",
-        "$elemMatch",
-        neo_elemMatch if not isinstance(neo_elemMatch, str) else neo_elemMatch,
-        mongo_elemMatch if mongo_elemMatch is not None else None,
-        skip_reason="MongoDB not available" if not client else None,
-    )
-
-    # Test $expr $not
-    print("\n--- $expr $not ---")
-    with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
-        neo_collection = neo_conn.test_collection
+        # Test $expr $not
+        neo_collection.delete_many({})
         neo_collection.insert_many([{"age": 25}, {"age": 30}, {"age": 35}])
         try:
+            start_neo_timing()
             neo_result = list(
                 neo_collection.find({"$expr": {"$not": {"$gt": ["$age", 30]}}})
             )
+            end_neo_timing()
             neo_not = len(neo_result)
             print(f"Neo $expr $not: {neo_not} matches")
         except Exception as e:
             neo_not = f"Error: {e}"
             print(f"Neo $expr $not: Error - {e}")
 
-        end_neo_timing()
-
-    client = test_pymongo_connection()
-    if client:
-        start_mongo_timing()
-        mongo_db = client.test_database
-        mongo_collection = mongo_db.test_collection
-        mongo_collection.delete_many({})
-        mongo_collection.insert_many([{"age": 25}, {"age": 30}, {"age": 35}])
-        try:
-            mongo_result = list(
-                mongo_collection.find(
-                    {"$expr": {"$not": {"$gt": ["$age", 30]}}}
-                )
-            )
-            mongo_not = len(mongo_result)
-            print(f"Mongo $expr $not: {mongo_not} matches")
-        except Exception as e:
-            mongo_not = f"Error: {e}"
-            print(f"Mongo $expr $not: Error - {e}")
-        end_mongo_timing()
-        client.close()
-
-    reporter.record_comparison(
-        "Additional $expr Operators",
-        "$expr $not",
-        neo_not if not isinstance(neo_not, str) else neo_not,
-        mongo_not if mongo_not is not None else None,
-        skip_reason="MongoDB not available" if not client else None,
-    )
-
-    # Test $expr $concat
-    print("\n--- $expr $concat ---")
-    with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
-        neo_collection = neo_conn.test_collection
+        # Test $expr $concat
+        neo_collection.delete_many({})
         neo_collection.insert_one({"first": "John", "last": "Doe"})
         try:
+            start_neo_timing()
             neo_result = list(
                 neo_collection.find(
                     {
@@ -187,206 +105,66 @@ def compare_additional_expr_success_stories():
                     }
                 )
             )
+            end_neo_timing()
             neo_concat = len(neo_result)
             print(f"Neo $expr $concat: {neo_concat} matches")
         except Exception as e:
             neo_concat = f"Error: {e}"
             print(f"Neo $expr $concat: Error - {e}")
 
-        end_neo_timing()
-
-    client = test_pymongo_connection()
-    if client:
-        start_mongo_timing()
-        mongo_db = client.test_database
-        mongo_collection = mongo_db.test_collection
-        mongo_collection.delete_many({})
-        mongo_collection.insert_one({"first": "John", "last": "Doe"})
-        try:
-            mongo_result = list(
-                mongo_collection.find(
-                    {
-                        "$expr": {
-                            "$eq": [
-                                {"$concat": ["$first", " ", "$last"]},
-                                "John Doe",
-                            ]
-                        }
-                    }
-                )
-            )
-            mongo_concat = len(mongo_result)
-            print(f"Mongo $expr $concat: {mongo_concat} matches")
-        except Exception as e:
-            mongo_concat = f"Error: {e}"
-            print(f"Mongo $expr $concat: Error - {e}")
-        end_mongo_timing()
-        client.close()
-
-    reporter.record_comparison(
-        "Additional $expr Operators",
-        "$expr $concat",
-        neo_concat if not isinstance(neo_concat, str) else neo_concat,
-        mongo_concat if mongo_concat is not None else None,
-        skip_reason="MongoDB not available" if not client else None,
-    )
-
-    # Test $expr $ifNull
-    print("\n--- $expr $ifNull ---")
-    with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
-        neo_collection = neo_conn.test_collection
+        # Test $expr $ifNull
+        neo_collection.delete_many({})
         neo_collection.insert_many(
             [{"name": "Alice", "middle": None}, {"name": "Bob", "middle": "X"}]
         )
         try:
+            start_neo_timing()
             neo_result = list(
                 neo_collection.find(
                     {"$expr": {"$eq": [{"$ifNull": ["$middle", "N/A"]}, "N/A"]}}
                 )
             )
+            end_neo_timing()
             neo_ifnull = len(neo_result)
             print(f"Neo $expr $ifNull: {neo_ifnull} matches")
         except Exception as e:
             neo_ifnull = f"Error: {e}"
             print(f"Neo $expr $ifNull: Error - {e}")
 
-        end_neo_timing()
-
-    client = test_pymongo_connection()
-    if client:
-        start_mongo_timing()
-        mongo_db = client.test_database
-        mongo_collection = mongo_db.test_collection
-        mongo_collection.delete_many({})
-        mongo_collection.insert_many(
-            [{"name": "Alice", "middle": None}, {"name": "Bob", "middle": "X"}]
-        )
-        try:
-            mongo_result = list(
-                mongo_collection.find(
-                    {"$expr": {"$eq": [{"$ifNull": ["$middle", "N/A"]}, "N/A"]}}
-                )
-            )
-            mongo_ifnull = len(mongo_result)
-            print(f"Mongo $expr $ifNull: {mongo_ifnull} matches")
-        except Exception as e:
-            mongo_ifnull = f"Error: {e}"
-            print(f"Mongo $expr $ifNull: Error - {e}")
-        end_mongo_timing()
-        client.close()
-
-    reporter.record_comparison(
-        "Additional $expr Operators",
-        "$expr $ifNull",
-        neo_ifnull if not isinstance(neo_ifnull, str) else neo_ifnull,
-        mongo_ifnull if mongo_ifnull is not None else None,
-        skip_reason="MongoDB not available" if not client else None,
-    )
-
-    # Test $expr $isArray
-    print("\n--- $expr $isArray ---")
-    with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
-        neo_collection = neo_conn.test_collection
+        # Test $expr $isArray
+        neo_collection.delete_many({})
         neo_collection.insert_many([{"data": [1, 2, 3]}, {"data": "not array"}])
         try:
+            start_neo_timing()
             neo_result = list(
                 neo_collection.find({"$expr": {"$isArray": "$data"}})
             )
+            end_neo_timing()
             neo_isarray = len(neo_result)
             print(f"Neo $expr $isArray: {neo_isarray} matches")
         except Exception as e:
             neo_isarray = f"Error: {e}"
             print(f"Neo $expr $isArray: Error - {e}")
 
-        end_neo_timing()
-
-    client = test_pymongo_connection()
-    if client:
-        start_mongo_timing()
-        mongo_db = client.test_database
-        mongo_collection = mongo_db.test_collection
-        mongo_collection.delete_many({})
-        mongo_collection.insert_many(
-            [{"data": [1, 2, 3]}, {"data": "not array"}]
-        )
-        try:
-            mongo_result = list(
-                mongo_collection.find({"$expr": {"$isArray": "$data"}})
-            )
-            mongo_isarray = len(mongo_result)
-            print(f"Mongo $expr $isArray: {mongo_isarray} matches")
-        except Exception as e:
-            mongo_isarray = f"Error: {e}"
-            print(f"Mongo $expr $isArray: Error - {e}")
-        end_mongo_timing()
-        client.close()
-
-    reporter.record_comparison(
-        "Additional $expr Operators",
-        "$expr $isArray",
-        neo_isarray if not isinstance(neo_isarray, str) else neo_isarray,
-        mongo_isarray if mongo_isarray is not None else None,
-        skip_reason="MongoDB not available" if not client else None,
-    )
-
-    # Test $expr $round
-    print("\n--- $expr $round ---")
-    with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
-        neo_collection = neo_conn.test_collection
+        # Test $expr $round
+        neo_collection.delete_many({})
         neo_collection.insert_one({"value": 3.14159})
         try:
+            start_neo_timing()
             neo_result = list(
                 neo_collection.find(
                     {"$expr": {"$eq": [{"$round": ["$value", 2]}, 3.14]}}
                 )
             )
+            end_neo_timing()
             neo_round = len(neo_result)
             print(f"Neo $expr $round: {neo_round} matches")
         except Exception as e:
             neo_round = f"Error: {e}"
             print(f"Neo $expr $round: Error - {e}")
 
-        end_neo_timing()
-
-    client = test_pymongo_connection()
-    if client:
-        start_mongo_timing()
-        mongo_db = client.test_database
-        mongo_collection = mongo_db.test_collection
-        mongo_collection.delete_many({})
-        mongo_collection.insert_one({"value": 3.14159})
-        try:
-            mongo_result = list(
-                mongo_collection.find(
-                    {"$expr": {"$eq": [{"$round": ["$value", 2]}, 3.14]}}
-                )
-            )
-            mongo_round = len(mongo_result)
-            print(f"Mongo $expr $round: {mongo_round} matches")
-        except Exception as e:
-            mongo_round = f"Error: {e}"
-            print(f"Mongo $expr $round: Error - {e}")
-        end_mongo_timing()
-        client.close()
-
-    reporter.record_comparison(
-        "Additional $expr Operators",
-        "$expr $round",
-        neo_round if not isinstance(neo_round, str) else neo_round,
-        mongo_round if mongo_round is not None else None,
-        skip_reason="MongoDB not available" if not client else None,
-    )
-
-    # Test $expr $exp
-    print("\n--- $expr $exp ---")
-
-    with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
-        neo_collection = neo_conn.test_collection
-        # Insert documents with different values to test exp function
+        # Test $expr $exp
+        neo_collection.delete_many({})
         neo_collection.insert_many(
             [
                 {"x": 0},  # exp(0) = 1
@@ -395,6 +173,7 @@ def compare_additional_expr_success_stories():
             ]
         )
         try:
+            start_neo_timing()
             # Test exp(0) = 1 (exact)
             neo_result_exact = list(
                 neo_collection.find({"$expr": {"$eq": [{"$exp": 0}, 1]}})
@@ -412,6 +191,7 @@ def compare_additional_expr_success_stories():
                     }
                 )
             )
+            end_neo_timing()
             neo_exp = len(neo_result_exact) + len(neo_result_range)
             print(
                 f"Neo $expr $exp: exp(0)=1 ({len(neo_result_exact)}), exp(1)≈2.718 ({len(neo_result_range)})"
@@ -420,13 +200,226 @@ def compare_additional_expr_success_stories():
             neo_exp = f"Error: {e}"
             print(f"Neo $expr $exp: Error - {e}")
 
-        end_neo_timing()
+        # Test $expr $degreesToRadians
+        neo_collection.delete_many({})
+        neo_collection.insert_many(
+            [
+                {"angle": 0},
+                {"angle": 180},  # radians(180°) = π ≈ 3.14159
+                {"angle": 90},  # radians(90°) = π/2 ≈ 1.5708
+            ]
+        )
+        try:
+            start_neo_timing()
+            neo_result_180 = list(
+                neo_collection.find(
+                    {
+                        "$expr": {
+                            "$and": [
+                                {"$gte": [{"$degreesToRadians": 180}, 3.1415]},
+                                {"$lte": [{"$degreesToRadians": 180}, 3.1417]},
+                            ]
+                        }
+                    }
+                )
+            )
+            neo_result_90 = list(
+                neo_collection.find(
+                    {
+                        "$expr": {
+                            "$and": [
+                                {"$gte": [{"$degreesToRadians": 90}, 1.570]},
+                                {"$lte": [{"$degreesToRadians": 90}, 1.571]},
+                            ]
+                        }
+                    }
+                )
+            )
+            end_neo_timing()
+            neo_deg2rad = len(neo_result_180) + len(neo_result_90)
+            print(
+                f"Neo $expr $degreesToRadians: 180°≈π ({len(neo_result_180)}), 90°≈π/2 ({len(neo_result_90)})"
+            )
+        except Exception as e:
+            neo_deg2rad = f"Error: {e}"
+            print(f"Neo $expr $degreesToRadians: Error - {e}")
+
+        # Test $expr $radiansToDegrees
+        neo_collection.delete_many({})
+        neo_collection.insert_many(
+            [
+                {"angle": 0},
+                {"angle": 3.14159},  # degrees(π) = 180°
+                {"angle": 1.5708},  # degrees(π/2) = 90°
+            ]
+        )
+        try:
+            start_neo_timing()
+            neo_result_pi = list(
+                neo_collection.find(
+                    {
+                        "$expr": {
+                            "$and": [
+                                {
+                                    "$gte": [
+                                        {"$radiansToDegrees": 3.14159},
+                                        179.9,
+                                    ]
+                                },
+                                {
+                                    "$lte": [
+                                        {"$radiansToDegrees": 3.14159},
+                                        180.1,
+                                    ]
+                                },
+                            ]
+                        }
+                    }
+                )
+            )
+            neo_result_pi2 = list(
+                neo_collection.find(
+                    {
+                        "$expr": {
+                            "$and": [
+                                {"$gte": [{"$radiansToDegrees": 1.5708}, 89.9]},
+                                {"$lte": [{"$radiansToDegrees": 1.5708}, 90.1]},
+                            ]
+                        }
+                    }
+                )
+            )
+            end_neo_timing()
+            neo_rad2deg = len(neo_result_pi) + len(neo_result_pi2)
+            print(
+                f"Neo $expr $radiansToDegrees: π≈180° ({len(neo_result_pi)}), π/2≈90° ({len(neo_result_pi2)})"
+            )
+        except Exception as e:
+            neo_rad2deg = f"Error: {e}"
+            print(f"Neo $expr $radiansToDegrees: Error - {e}")
 
     client = test_pymongo_connection()
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
+        set_accumulation_mode(True)
+
+        # Test $elemMatch
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many(
+            [
+                {"scores": [80, 90, 100]},
+                {"scores": [70, 80]},
+                {"scores": [90, 95]},
+            ]
+        )
+        try:
+            start_mongo_timing()
+            mongo_result = list(
+                mongo_collection.find({"scores": {"$elemMatch": {"$gte": 90}}})
+            )
+            end_mongo_timing()
+            mongo_elemMatch = len(mongo_result)
+            print(f"Mongo $elemMatch: {mongo_elemMatch} matches")
+        except Exception as e:
+            mongo_elemMatch = f"Error: {e}"
+            print(f"Mongo $elemMatch: Error - {e}")
+
+        # Test $expr $not
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many([{"age": 25}, {"age": 30}, {"age": 35}])
+        try:
+            start_mongo_timing()
+            mongo_result = list(
+                mongo_collection.find(
+                    {"$expr": {"$not": {"$gt": ["$age", 30]}}}
+                )
+            )
+            end_mongo_timing()
+            mongo_not = len(mongo_result)
+            print(f"Mongo $expr $not: {mongo_not} matches")
+        except Exception as e:
+            mongo_not = f"Error: {e}"
+            print(f"Mongo $expr $not: Error - {e}")
+
+        # Test $expr $concat
+        mongo_collection.delete_many({})
+        mongo_collection.insert_one({"first": "John", "last": "Doe"})
+        try:
+            start_mongo_timing()
+            mongo_result = list(
+                mongo_collection.find(
+                    {
+                        "$expr": {
+                            "$eq": [
+                                {"$concat": ["$first", " ", "$last"]},
+                                "John Doe",
+                            ]
+                        }
+                    }
+                )
+            )
+            end_mongo_timing()
+            mongo_concat = len(mongo_result)
+            print(f"Mongo $expr $concat: {mongo_concat} matches")
+        except Exception as e:
+            mongo_concat = f"Error: {e}"
+            print(f"Mongo $expr $concat: Error - {e}")
+
+        # Test $expr $ifNull
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many(
+            [{"name": "Alice", "middle": None}, {"name": "Bob", "middle": "X"}]
+        )
+        try:
+            start_mongo_timing()
+            mongo_result = list(
+                mongo_collection.find(
+                    {"$expr": {"$eq": [{"$ifNull": ["$middle", "N/A"]}, "N/A"]}}
+                )
+            )
+            end_mongo_timing()
+            mongo_ifnull = len(mongo_result)
+            print(f"Mongo $expr $ifNull: {mongo_ifnull} matches")
+        except Exception as e:
+            mongo_ifnull = f"Error: {e}"
+            print(f"Mongo $expr $ifNull: Error - {e}")
+
+        # Test $expr $isArray
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many(
+            [{"data": [1, 2, 3]}, {"data": "not array"}]
+        )
+        try:
+            start_mongo_timing()
+            mongo_result = list(
+                mongo_collection.find({"$expr": {"$isArray": "$data"}})
+            )
+            end_mongo_timing()
+            mongo_isarray = len(mongo_result)
+            print(f"Mongo $expr $isArray: {mongo_isarray} matches")
+        except Exception as e:
+            mongo_isarray = f"Error: {e}"
+            print(f"Mongo $expr $isArray: Error - {e}")
+
+        # Test $expr $round
+        mongo_collection.delete_many({})
+        mongo_collection.insert_one({"value": 3.14159})
+        try:
+            start_mongo_timing()
+            mongo_result = list(
+                mongo_collection.find(
+                    {"$expr": {"$eq": [{"$round": ["$value", 2]}, 3.14]}}
+                )
+            )
+            end_mongo_timing()
+            mongo_round = len(mongo_result)
+            print(f"Mongo $expr $round: {mongo_round} matches")
+        except Exception as e:
+            mongo_round = f"Error: {e}"
+            print(f"Mongo $expr $round: Error - {e}")
+
+        # Test $expr $exp
         mongo_collection.delete_many({})
         mongo_collection.insert_many(
             [
@@ -436,6 +429,7 @@ def compare_additional_expr_success_stories():
             ]
         )
         try:
+            start_mongo_timing()
             mongo_result_exact = list(
                 mongo_collection.find({"$expr": {"$eq": [{"$exp": 0}, 1]}})
             )
@@ -451,6 +445,7 @@ def compare_additional_expr_success_stories():
                     }
                 )
             )
+            end_mongo_timing()
             mongo_exp = len(mongo_result_exact) + len(mongo_result_range)
             print(
                 f"Mongo $expr $exp: exp(0)=1 ({len(mongo_result_exact)}), exp(1)≈2.718 ({len(mongo_result_range)})"
@@ -458,71 +453,8 @@ def compare_additional_expr_success_stories():
         except Exception as e:
             mongo_exp = f"Error: {e}"
             print(f"Mongo $expr $exp: Error - {e}")
-        end_mongo_timing()
-        client.close()
 
-    reporter.record_comparison(
-        "Additional $expr Operators",
-        "$expr $exp",
-        neo_exp if not isinstance(neo_exp, str) else neo_exp,
-        mongo_exp if mongo_exp is not None else None,
-        skip_reason="MongoDB not available" if not client else None,
-    )
-
-    # Test $expr $degreesToRadians
-    print("\n--- $expr $degreesToRadians ---")
-    with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
-        neo_collection = neo_conn.test_collection
-        neo_collection.insert_many(
-            [
-                {"angle": 0},
-                {"angle": 180},  # radians(180°) = π ≈ 3.14159
-                {"angle": 90},  # radians(90°) = π/2 ≈ 1.5708
-            ]
-        )
-        try:
-            # Test radians(180) ≈ 3.14159 (π)
-            neo_result_180 = list(
-                neo_collection.find(
-                    {
-                        "$expr": {
-                            "$and": [
-                                {"$gte": [{"$degreesToRadians": 180}, 3.1415]},
-                                {"$lte": [{"$degreesToRadians": 180}, 3.1417]},
-                            ]
-                        }
-                    }
-                )
-            )
-            # Test radians(90) ≈ 1.5708 (π/2)
-            neo_result_90 = list(
-                neo_collection.find(
-                    {
-                        "$expr": {
-                            "$and": [
-                                {"$gte": [{"$degreesToRadians": 90}, 1.570]},
-                                {"$lte": [{"$degreesToRadians": 90}, 1.571]},
-                            ]
-                        }
-                    }
-                )
-            )
-            neo_deg2rad = len(neo_result_180) + len(neo_result_90)
-            print(
-                f"Neo $expr $degreesToRadians: 180°≈π ({len(neo_result_180)}), 90°≈π/2 ({len(neo_result_90)})"
-            )
-        except Exception as e:
-            neo_deg2rad = f"Error: {e}"
-            print(f"Neo $expr $degreesToRadians: Error - {e}")
-
-        end_neo_timing()
-
-    client = test_pymongo_connection()
-    if client:
-        start_mongo_timing()
-        mongo_db = client.test_database
-        mongo_collection = mongo_db.test_collection
+        # Test $expr $degreesToRadians
         mongo_collection.delete_many({})
         mongo_collection.insert_many(
             [
@@ -532,6 +464,7 @@ def compare_additional_expr_success_stories():
             ]
         )
         try:
+            start_mongo_timing()
             mongo_result_180 = list(
                 mongo_collection.find(
                     {
@@ -556,6 +489,7 @@ def compare_additional_expr_success_stories():
                     }
                 )
             )
+            end_mongo_timing()
             mongo_deg2rad = len(mongo_result_180) + len(mongo_result_90)
             print(
                 f"Mongo $expr $degreesToRadians: 180°≈π ({len(mongo_result_180)}), 90°≈π/2 ({len(mongo_result_90)})"
@@ -563,81 +497,8 @@ def compare_additional_expr_success_stories():
         except Exception as e:
             mongo_deg2rad = f"Error: {e}"
             print(f"Mongo $expr $degreesToRadians: Error - {e}")
-        end_mongo_timing()
-        client.close()
 
-    reporter.record_comparison(
-        "Additional $expr Operators",
-        "$expr $degreesToRadians",
-        neo_deg2rad if not isinstance(neo_deg2rad, str) else neo_deg2rad,
-        mongo_deg2rad if mongo_deg2rad is not None else None,
-        skip_reason="MongoDB not available" if not client else None,
-    )
-
-    # Test $expr $radiansToDegrees
-    print("\n--- $expr $radiansToDegrees ---")
-    with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
-        neo_collection = neo_conn.test_collection
-        neo_collection.insert_many(
-            [
-                {"angle": 0},
-                {"angle": 3.14159},  # degrees(π) = 180°
-                {"angle": 1.5708},  # degrees(π/2) = 90°
-            ]
-        )
-        try:
-            # Test degrees(π) ≈ 180
-            neo_result_pi = list(
-                neo_collection.find(
-                    {
-                        "$expr": {
-                            "$and": [
-                                {
-                                    "$gte": [
-                                        {"$radiansToDegrees": 3.14159},
-                                        179.9,
-                                    ]
-                                },
-                                {
-                                    "$lte": [
-                                        {"$radiansToDegrees": 3.14159},
-                                        180.1,
-                                    ]
-                                },
-                            ]
-                        }
-                    }
-                )
-            )
-            # Test degrees(π/2) ≈ 90
-            neo_result_pi2 = list(
-                neo_collection.find(
-                    {
-                        "$expr": {
-                            "$and": [
-                                {"$gte": [{"$radiansToDegrees": 1.5708}, 89.9]},
-                                {"$lte": [{"$radiansToDegrees": 1.5708}, 90.1]},
-                            ]
-                        }
-                    }
-                )
-            )
-            neo_rad2deg = len(neo_result_pi) + len(neo_result_pi2)
-            print(
-                f"Neo $expr $radiansToDegrees: π≈180° ({len(neo_result_pi)}), π/2≈90° ({len(neo_result_pi2)})"
-            )
-        except Exception as e:
-            neo_rad2deg = f"Error: {e}"
-            print(f"Neo $expr $radiansToDegrees: Error - {e}")
-
-        end_neo_timing()
-
-    client = test_pymongo_connection()
-    if client:
-        start_mongo_timing()
-        mongo_db = client.test_database
-        mongo_collection = mongo_db.test_collection
+        # Test $expr $radiansToDegrees
         mongo_collection.delete_many({})
         mongo_collection.insert_many(
             [
@@ -647,6 +508,7 @@ def compare_additional_expr_success_stories():
             ]
         )
         try:
+            start_mongo_timing()
             mongo_result_pi = list(
                 mongo_collection.find(
                     {
@@ -681,6 +543,7 @@ def compare_additional_expr_success_stories():
                     }
                 )
             )
+            end_mongo_timing()
             mongo_rad2deg = len(mongo_result_pi) + len(mongo_result_pi2)
             print(
                 f"Mongo $expr $radiansToDegrees: π≈180° ({len(mongo_result_pi)}), π/2≈90° ({len(mongo_result_pi2)})"
@@ -688,9 +551,65 @@ def compare_additional_expr_success_stories():
         except Exception as e:
             mongo_rad2deg = f"Error: {e}"
             print(f"Mongo $expr $radiansToDegrees: Error - {e}")
-        end_mongo_timing()
+
         client.close()
 
+    reporter.record_comparison(
+        "Additional $expr Operators",
+        "$elemMatch",
+        neo_elemMatch if not isinstance(neo_elemMatch, str) else neo_elemMatch,
+        mongo_elemMatch if mongo_elemMatch is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Additional $expr Operators",
+        "$expr $not",
+        neo_not if not isinstance(neo_not, str) else neo_not,
+        mongo_not if mongo_not is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Additional $expr Operators",
+        "$expr $concat",
+        neo_concat if not isinstance(neo_concat, str) else neo_concat,
+        mongo_concat if mongo_concat is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Additional $expr Operators",
+        "$expr $ifNull",
+        neo_ifnull if not isinstance(neo_ifnull, str) else neo_ifnull,
+        mongo_ifnull if mongo_ifnull is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Additional $expr Operators",
+        "$expr $isArray",
+        neo_isarray if not isinstance(neo_isarray, str) else neo_isarray,
+        mongo_isarray if mongo_isarray is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Additional $expr Operators",
+        "$expr $round",
+        neo_round if not isinstance(neo_round, str) else neo_round,
+        mongo_round if mongo_round is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Additional $expr Operators",
+        "$expr $exp",
+        neo_exp if not isinstance(neo_exp, str) else neo_exp,
+        mongo_exp if mongo_exp is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Additional $expr Operators",
+        "$expr $degreesToRadians",
+        neo_deg2rad if not isinstance(neo_deg2rad, str) else neo_deg2rad,
+        mongo_deg2rad if mongo_deg2rad is not None else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
     reporter.record_comparison(
         "Additional $expr Operators",
         "$expr $radiansToDegrees",

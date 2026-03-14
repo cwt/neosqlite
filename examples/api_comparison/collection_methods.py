@@ -10,6 +10,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -23,13 +24,16 @@ def compare_collection_methods():
     print("\n=== Collection Methods Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_collection
         neo_collection.insert_one({"name": "test"})
 
+        set_accumulation_mode(True)
         # Test options()
         try:
+            start_neo_timing()
             neo_options = neo_collection.options()
+            end_neo_timing()
+
             neo_options_ok = (
                 isinstance(neo_options, dict) and "name" in neo_options
             )
@@ -40,7 +44,10 @@ def compare_collection_methods():
 
         # Test rename()
         try:
+            start_neo_timing()
             neo_collection.rename("renamed_collection")
+            end_neo_timing()
+
             neo_rename = (
                 "renamed_collection" in neo_conn.list_collection_names()
             )
@@ -51,31 +58,28 @@ def compare_collection_methods():
             neo_rename = False
             print(f"Neo rename(): Error - {e}")
 
-        end_neo_timing()
-
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
 
     mongo_collection = None
-
     mongo_db = None
-
     mongo_options = None
-
     mongo_options_ok = None
-
     mongo_rename = None
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
         mongo_collection.insert_one({"name": "test"})
 
+        set_accumulation_mode(True)
         # Test options()
         try:
+            start_mongo_timing()
             mongo_options = mongo_collection.options()
+            end_mongo_timing()
+
             # MongoDB options() returns a dict with different structure
             mongo_options_ok = isinstance(mongo_options, dict)
             print(
@@ -87,7 +91,10 @@ def compare_collection_methods():
 
         # Test rename()
         try:
+            start_mongo_timing()
             mongo_collection.rename("renamed_collection")
+            end_mongo_timing()
+
             mongo_rename = (
                 "renamed_collection" in mongo_db.list_collection_names()
             )
@@ -98,7 +105,6 @@ def compare_collection_methods():
             mongo_rename = False
             print(f"Mongo rename(): Error - {e}")
 
-        end_mongo_timing()
         client.close()
 
     reporter.record_comparison(

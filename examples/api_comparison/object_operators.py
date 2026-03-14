@@ -10,6 +10,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -23,7 +24,6 @@ def compare_object_operators():
     print("\n=== Object Operators Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_collection
         neo_collection.insert_many(
             [
@@ -40,8 +40,10 @@ def compare_object_operators():
             ]
         )
 
+        set_accumulation_mode(True)
         # Test $mergeObjects
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [
@@ -53,6 +55,8 @@ def compare_object_operators():
                     ]
                 )
             )
+            end_neo_timing()
+
             neo_mergeobjects = len(result) == 2
             print(f"Neo $mergeObjects: {'OK' if neo_mergeobjects else 'FAIL'}")
         except Exception as e:
@@ -61,6 +65,7 @@ def compare_object_operators():
 
         # Test $getField
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [
@@ -77,6 +82,8 @@ def compare_object_operators():
                     ]
                 )
             )
+            end_neo_timing()
+
             neo_getfield = len(result) == 2
             print(f"Neo $getField: {'OK' if neo_getfield else 'FAIL'}")
         except Exception as e:
@@ -85,6 +92,7 @@ def compare_object_operators():
 
         # Test $setField
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [
@@ -102,6 +110,8 @@ def compare_object_operators():
                     ]
                 )
             )
+            end_neo_timing()
+
             neo_setfield = len(result) == 2
             print(f"Neo $setField: {'OK' if neo_setfield else 'FAIL'}")
         except Exception as e:
@@ -110,6 +120,7 @@ def compare_object_operators():
 
         # Test $unsetField
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [
@@ -126,6 +137,8 @@ def compare_object_operators():
                     ]
                 )
             )
+            end_neo_timing()
+
             neo_unsetfield = len(result) == 2
             print(f"Neo $unsetField: {'OK' if neo_unsetfield else 'FAIL'}")
         except Exception as e:
@@ -134,11 +147,14 @@ def compare_object_operators():
 
         # Test $objectToArray
         try:
+            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [{"$project": {"as_array": {"$objectToArray": "$meta"}}}]
                 )
             )
+            end_neo_timing()
+
             neo_objecttoarray = len(result) == 2
             print(
                 f"Neo $objectToArray: {'OK' if neo_objecttoarray else 'FAIL'}"
@@ -146,8 +162,6 @@ def compare_object_operators():
         except Exception as e:
             neo_objecttoarray = False
             print(f"Neo $objectToArray: Error - {e}")
-
-        end_neo_timing()
 
     client = test_pymongo_connection()
     mongo_collection = None
@@ -159,7 +173,6 @@ def compare_object_operators():
     mongo_objecttoarray = None
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
@@ -178,8 +191,10 @@ def compare_object_operators():
             ]
         )
 
+        set_accumulation_mode(True)
         # Test $mergeObjects
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [
@@ -191,6 +206,8 @@ def compare_object_operators():
                     ]
                 )
             )
+            end_mongo_timing()
+
             mongo_mergeobjects = len(result) == 2
             print(
                 f"Mongo $mergeObjects: {'OK' if mongo_mergeobjects else 'FAIL'}"
@@ -201,6 +218,7 @@ def compare_object_operators():
 
         # Test $getField
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [
@@ -217,6 +235,8 @@ def compare_object_operators():
                     ]
                 )
             )
+            end_mongo_timing()
+
             mongo_getfield = len(result) == 2
             print(f"Mongo $getField: {'OK' if mongo_getfield else 'FAIL'}")
         except Exception as e:
@@ -225,6 +245,7 @@ def compare_object_operators():
 
         # Test $setField
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [
@@ -242,6 +263,8 @@ def compare_object_operators():
                     ]
                 )
             )
+            end_mongo_timing()
+
             mongo_setfield = len(result) == 2
             print(f"Mongo $setField: {'OK' if mongo_setfield else 'FAIL'}")
         except Exception as e:
@@ -250,6 +273,7 @@ def compare_object_operators():
 
         # Test $unsetField
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [
@@ -266,6 +290,8 @@ def compare_object_operators():
                     ]
                 )
             )
+            end_mongo_timing()
+
             mongo_unsetfield = len(result) == 2
             print(f"Mongo $unsetField: {'OK' if mongo_unsetfield else 'FAIL'}")
         except Exception as e:
@@ -274,11 +300,14 @@ def compare_object_operators():
 
         # Test $objectToArray
         try:
+            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [{"$project": {"as_array": {"$objectToArray": "$meta"}}}]
                 )
             )
+            end_mongo_timing()
+
             mongo_objecttoarray = len(result) == 2
             print(
                 f"Mongo $objectToArray: {'OK' if mongo_objecttoarray else 'FAIL'}"
@@ -287,41 +316,40 @@ def compare_object_operators():
             mongo_objecttoarray = False
             print(f"Mongo $objectToArray: Error - {e}")
 
-        end_mongo_timing()
         client.close()
 
-        reporter.record_comparison(
-            "Object Operators",
-            "$mergeObjects",
-            neo_mergeobjects if neo_mergeobjects else "FAIL",
-            mongo_mergeobjects if mongo_mergeobjects else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Object Operators",
-            "$getField",
-            neo_getfield if neo_getfield else "FAIL",
-            mongo_getfield if mongo_getfield else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Object Operators",
-            "$setField",
-            neo_setfield if neo_setfield else "FAIL",
-            mongo_setfield if mongo_setfield else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Object Operators",
-            "$unsetField",
-            neo_unsetfield if neo_unsetfield else "FAIL",
-            mongo_unsetfield if mongo_unsetfield else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Object Operators",
-            "$objectToArray",
-            neo_objecttoarray if neo_objecttoarray else "FAIL",
-            mongo_objecttoarray if mongo_objecttoarray else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
+    reporter.record_comparison(
+        "Object Operators",
+        "$mergeObjects",
+        neo_mergeobjects if neo_mergeobjects else "FAIL",
+        mongo_mergeobjects if mongo_mergeobjects else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Object Operators",
+        "$getField",
+        neo_getfield if neo_getfield else "FAIL",
+        mongo_getfield if mongo_getfield else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Object Operators",
+        "$setField",
+        neo_setfield if neo_setfield else "FAIL",
+        mongo_setfield if mongo_setfield else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Object Operators",
+        "$unsetField",
+        neo_unsetfield if neo_unsetfield else "FAIL",
+        mongo_unsetfield if mongo_unsetfield else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Object Operators",
+        "$objectToArray",
+        neo_objecttoarray if neo_objecttoarray else "FAIL",
+        mongo_objecttoarray if mongo_objecttoarray else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )

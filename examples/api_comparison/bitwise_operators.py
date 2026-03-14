@@ -11,6 +11,7 @@ from .timing import (
     end_neo_timing,
     start_mongo_timing,
     end_mongo_timing,
+    set_accumulation_mode,
 )
 from .utils import test_pymongo_connection
 
@@ -24,7 +25,6 @@ def compare_bitwise_operators():
     print("\n=== Bitwise Query Operators Comparison ===")
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_collection
         # Insert test documents with different bit patterns
         neo_collection.insert_many(
@@ -66,24 +66,25 @@ def compare_bitwise_operators():
             ),
         ]
 
+        set_accumulation_mode(True)
         neo_results = {}
         for query, op_name in operators:
             try:
+                start_neo_timing()
                 result = list(neo_collection.find(query))
+                end_neo_timing()
+
                 neo_results[op_name] = result
                 print(f"Neo {op_name}: {len(result)} documents")
             except Exception as e:
                 neo_results[op_name] = f"Error: {e}"
                 print(f"Neo {op_name}: Error - {e}")
 
-        end_neo_timing()
-
     client = test_pymongo_connection()
     mongo_collection = None
     mongo_results = {}
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
@@ -99,10 +100,15 @@ def compare_bitwise_operators():
             ]
         )
 
+        set_accumulation_mode(True)
         for query, op_name in operators:
             try:
                 mongo_query = copy.deepcopy(query)
+
+                start_mongo_timing()
                 result = list(mongo_collection.find(mongo_query))
+                end_mongo_timing()
+
                 mongo_results[op_name] = result
                 print(f"Mongo {op_name}: {len(result)} documents")
             except Exception as e:
@@ -117,7 +123,6 @@ def compare_bitwise_operators():
                 mongo_results.get(op_name),
                 skip_reason="MongoDB not available" if not client else None,
             )
-        end_mongo_timing()
         client.close()
     else:
         # MongoDB not available, record NeoSQLite results as skipped
