@@ -2,7 +2,7 @@
 
 from ...binary import Binary
 from ...exceptions import MalformedQueryException
-from typing import Any
+from typing import Any, Dict, Optional
 
 # Import JSON function helpers from shared module to avoid duplication
 from ..jsonb_support import (
@@ -11,6 +11,51 @@ from ..jsonb_support import (
 
 # Import type checking helpers from shared module to avoid duplication
 from ..type_utils import _is_numeric_value as _is_numeric_value
+
+
+import sqlite3
+
+# Global cache for SQLite features
+_SQLITE_FEATURES: Dict[str, Optional[bool]] = {
+    "relative_indexing": None,
+}
+
+
+def _check_sqlite_version(min_version: str) -> bool:
+    """
+    Check if the current SQLite version meets the minimum requirement.
+
+    Args:
+        min_version (str): Minimum version string (e.g., "3.42.0")
+
+    Returns:
+        bool: True if requirements met, False otherwise
+    """
+    current = [int(x) for x in sqlite3.sqlite_version.split(".")]
+    required = [int(x) for x in min_version.split(".")]
+
+    # Pad versions to same length
+    while len(current) < 3:
+        current.append(0)
+    while len(required) < 3:
+        required.append(0)
+
+    return tuple(current) >= tuple(required)
+
+
+def _supports_relative_json_indexing() -> bool:
+    """
+    Check if current SQLite version supports [#-N] relative indexing in JSON paths.
+    Supported in SQLite 3.42.0 (2023-05-16) and later.
+
+    Returns:
+        bool: True if supported, False otherwise
+    """
+    val = _SQLITE_FEATURES["relative_indexing"]
+    if val is None:
+        val = _check_sqlite_version("3.42.0")
+        _SQLITE_FEATURES["relative_indexing"] = val
+    return val
 
 
 def _get_json_function(name: str, jsonb_supported: bool) -> str:

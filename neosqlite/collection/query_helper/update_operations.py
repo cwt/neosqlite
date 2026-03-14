@@ -26,6 +26,7 @@ from .utils import (
     _convert_bytes_to_binary,
     _get_json_function,
     _validate_inc_mul_field_value,
+    _supports_relative_json_indexing,
 )
 
 # Import positional update functions
@@ -118,8 +119,17 @@ class UpdateOperationsMixin:
                 return updated_doc, updated_doc != original_doc
             except Exception:
                 # If enhanced update fails, fall back to standard SQL update
-                updated_doc = self._perform_sql_update(doc_id, update_spec)
-                return updated_doc, updated_doc != original_doc
+                try:
+                    updated_doc = self._perform_sql_update(doc_id, update_spec)
+                    return updated_doc, updated_doc != original_doc
+                except Exception:
+                    return self._perform_python_update(
+                        doc_id,
+                        update_spec,
+                        original_doc,
+                        array_filters,
+                        query_filter,
+                    )
         else:
             # Fall back to Python-based updates for complex operations
             return self._perform_python_update(
@@ -150,7 +160,6 @@ class UpdateOperationsMixin:
         if _FORCE_FALLBACK:
             return False
 
-        # Only handle operations that can be done purely with SQL
         # Tier 1: Simple operations that can use json_set/json_remove
         # Tier 2: More complex operations that can use SQL with some limitations
         supported_ops = {"$set", "$unset", "$inc", "$mul", "$min", "$max"}
@@ -179,9 +188,8 @@ class UpdateOperationsMixin:
         if has_positional_operators:
             return False
 
-        # Check for complex $push modifiers that require Python
+        # Check for complex $push modifiers
         has_complex_push = False
-        has_simple_push = False
         if "$push" in update_spec:
             push_spec = update_spec["$push"]
             if isinstance(push_spec, dict):
@@ -191,32 +199,38 @@ class UpdateOperationsMixin:
                         or "$position" in value
                         or "$slice" in value
                     ):
-                        has_complex_push = True
-                        break
-                    else:
-                        has_simple_push = True
+                        # SQL optimization supports $each, but not $position or $slice
+                        if "$position" in value or "$slice" in value:
+                            has_complex_push = True
+                            break
+                        # $each is supported in our enhanced SQL path
 
-        # Check for $bit operator (now supported in SQL - Tier 2)
-        has_bit = "$bit" in update_spec
-
-        # Complex $push with modifiers requires Python fallback
-        if has_complex_push:
+        # Check for $pop operator
+        has_pop = "$pop" in update_spec
+        # SQL $pop requires relative indexing [#-1] support
+        if has_pop and not _supports_relative_json_indexing():
             return False
 
-        # Simple $push and $bit are now supported (Tier 2)
-        # Add them to supported ops for this check
-        if has_simple_push or has_bit:
-            # Allow these operations but still check for other constraints
-            all_ops = set(update_spec.keys())
-            other_ops = all_ops - {"$push", "$bit"}
-            if other_ops and not other_ops.issubset(supported_ops):
-                return False
+        # Check for $addToSet operator
+        has_add_to_set = "$addToSet" in update_spec
+        if has_add_to_set:
+            add_to_set_spec = update_spec["$addToSet"]
+            if isinstance(add_to_set_spec, dict):
+                for value in add_to_set_spec.values():
+                    # $each in $addToSet is complex in SQL
+                    if isinstance(value, dict) and "$each" in value:
+                        return False
+
+        # Complex $push with $position/$slice requires Python fallback
+        if has_complex_push:
+            return False
 
         return (
             doc_id != 0
             and not has_binary_values
             and all(
-                op in supported_ops or op in {"$push", "$bit"}
+                op in supported_ops
+                or op in {"$push", "$bit", "$pop", "$addToSet"}
                 for op in update_spec.keys()
             )
         )
@@ -316,15 +330,14 @@ class UpdateOperationsMixin:
         update_spec: Dict[str, Any],
     ) -> Dict[str, Any]:
         """
-        Perform enhanced update operations using SQL JSON functions with json_insert and json_replace.
+        Perform update operations using SQL JSON functions with field-level granularity.
 
-        This method provides enhanced update operations that leverage SQLite's json_insert
-        and json_replace functions for better performance and more precise control over
-        field updates. It determines whether to use json_insert (for new fields only) or
-        json_replace (for existing fields only) based on the document structure.
+        This method optimizes update operations by using specialized JSON functions
+        (json_insert, json_replace, etc.) based on whether fields already exist.
+        It provides field-level updates rather than whole-document rewrites.
 
         Args:
-            doc_id (int): The ID of the document to be updated.
+            doc_id (Any): The ID of the document to be updated.
             update_spec (Dict[str, Any]): A dictionary specifying the update
                                           operations to be performed.
 
@@ -335,6 +348,9 @@ class UpdateOperationsMixin:
             RuntimeError: If no rows are updated or if an error occurs during the
                           update process.
         """
+        # Get integer ID for the document immediately to avoid UnboundLocalError
+        int_doc_id = self._get_integer_id_for_oid(doc_id)
+
         # First, we need to determine which fields exist in the document
         # and which are new to decide between json_insert and json_replace
         existing_fields = self._get_document_fields(doc_id)
@@ -346,187 +362,181 @@ class UpdateOperationsMixin:
         set_clauses = []  # For backward compatibility with json_set
         set_params = []
         unset_clauses = []
-        unset_params: List[Any] = (
-            []
-        )  # json_remove doesn't take parameters, but we need the type for consistency
+        unset_params: List[Any] = []
 
         # Build SQL update clauses for each operation
         for op, value in update_spec.items():
-            if op == "$set":
-                # For $set, we need to determine whether to use json_insert or json_replace
-                for field, field_val in value.items():
-                    # Convert bytes to Binary for proper JSON serialization
-                    converted_val = _convert_bytes_to_binary(field_val)
-                    # If it's a Binary object, serialize it to JSON and use json() function
-                    if isinstance(converted_val, Binary):
-                        param_value = neosqlite_json_dumps(converted_val)
-                        use_json_func = True
-                    # For complex objects (dict, list), serialize them to JSON
-                    elif isinstance(converted_val, (dict, list)):
-                        param_value = neosqlite_json_dumps(converted_val)
-                        use_json_func = True
-                    else:
-                        param_value = converted_val
-                        use_json_func = False
+            match op:
+                case "$set":
+                    # For $set, we need to determine whether to use json_insert or json_replace
+                    for field, field_val in value.items():
+                        # Convert bytes to Binary for proper JSON serialization
+                        converted_val = _convert_bytes_to_binary(field_val)
+                        # If it's a Binary object, serialize it to JSON and use json() function
+                        if isinstance(converted_val, Binary):
+                            param_value = neosqlite_json_dumps(converted_val)
+                            use_json_func = True
+                        # For complex objects (dict, list), serialize them to JSON
+                        elif isinstance(converted_val, (dict, list)):
+                            param_value = neosqlite_json_dumps(converted_val)
+                            use_json_func = True
+                        else:
+                            param_value = converted_val
+                            use_json_func = False
 
-                    # For dotted field names, we should use json_set as it can handle nested paths correctly
-                    # Our insert/replace logic doesn't work well with nested paths
-                    if "." in field and field not in existing_fields:
-                        # Use json_set for dotted field names to handle nested paths correctly
+                        # For dotted field names, we should use json_set
+                        if "." in field and field not in existing_fields:
+                            json_path = f"'{parse_json_path(field)}'"
+                            if use_json_func:
+                                set_clauses.append(f"{json_path}, json(?)")
+                            else:
+                                set_clauses.append(f"{json_path}, ?")
+                            set_params.append(param_value)
+                        else:
+                            # Check if field exists in the document
+                            json_path = f"'{parse_json_path(field)}'"
+                            if field in existing_fields:
+                                # Use json_replace for existing fields
+                                if use_json_func:
+                                    replace_clauses.append(
+                                        f"{json_path}, json(?)"
+                                    )
+                                else:
+                                    replace_clauses.append(f"{json_path}, ?")
+                                replace_params.append(param_value)
+                            else:
+                                # Use json_insert for new fields
+                                if use_json_func:
+                                    insert_clauses.append(
+                                        f"{json_path}, json(?)"
+                                    )
+                                else:
+                                    insert_clauses.append(f"{json_path}, ?")
+                                insert_params.append(param_value)
+                case "$unset":
+                    # For $unset, we use json_remove
+                    for field in value:
                         json_path = f"'{parse_json_path(field)}'"
-                        if use_json_func:
-                            set_clauses.append(f"{json_path}, json(?)")
+                        unset_clauses.append(json_path)
+                case "$push":
+                    # Tier 2: $push (with $each) can use SQL json_set with [#]
+                    for field, push_value in value.items():
+                        # Extract values to push (handle $each)
+                        values_to_push = []
+                        if (
+                            isinstance(push_value, dict)
+                            and "$each" in push_value
+                        ):
+                            values_to_push = push_value["$each"]
+                            if not isinstance(values_to_push, list):
+                                values_to_push = [values_to_push]
                         else:
-                            set_clauses.append(f"{json_path}, ?")
-                        set_params.append(param_value)
-                    else:
-                        # Check if field exists in the document
-                        if field in existing_fields:
-                            # Use json_replace for existing fields
-                            json_path = f"'{parse_json_path(field)}'"
-                            if use_json_func:
-                                replace_clauses.append(f"{json_path}, json(?)")
+                            values_to_push = [push_value]
+
+                        # Append each value using [#]
+                        json_path = f"'{parse_json_path(field)}[#]'"
+                        for val in values_to_push:
+                            converted_val = _convert_bytes_to_binary(val)
+                            if isinstance(converted_val, (dict, list, Binary)):
+                                param_value = neosqlite_json_dumps(
+                                    converted_val
+                                )
+                                set_clauses.append(f"{json_path}, json(?)")
                             else:
-                                replace_clauses.append(f"{json_path}, ?")
-                            replace_params.append(param_value)
+                                param_value = converted_val
+                                set_clauses.append(f"{json_path}, ?")
+                            set_params.append(param_value)
+                case "$pop":
+                    # Tier 2: $pop uses json_remove with [0] or [#-1]
+                    for field, pop_direction in value.items():
+                        index_path = (
+                            "[0]" if int(pop_direction) < 0 else "[#-1]"
+                        )
+                        json_path = f"'{parse_json_path(field)}{index_path}'"
+                        unset_clauses.append(json_path)
+                case "$addToSet":
+                    # Tier 2: $addToSet (without $each) can use conditional SQL
+                    for field, val in value.items():
+                        json_path = f"'{parse_json_path(field)}'"
+                        converted_val = _convert_bytes_to_binary(val)
+                        if isinstance(converted_val, (Binary, dict, list)):
+                            param_value = neosqlite_json_dumps(converted_val)
+                            use_json = True
                         else:
-                            # Use json_insert for new fields
-                            json_path = f"'{parse_json_path(field)}'"
-                            if use_json_func:
-                                insert_clauses.append(f"{json_path}, json(?)")
-                            else:
-                                insert_clauses.append(f"{json_path}, ?")
-                            insert_params.append(param_value)
-            elif op == "$unset":
-                # For $unset, we use json_remove
-                for field in value:
-                    json_path = f"'{parse_json_path(field)}'"
-                    unset_clauses.append(json_path)
-            elif op == "$push":
-                # Tier 2: Simple $push (without modifiers) can use SQL json_set with [#]
-                # Complex $push with $each/$position/$slice requires Python fallback
-                for field, push_value in value.items():
-                    # Check if this is a simple push or has modifiers
-                    if isinstance(push_value, dict) and (
-                        "$each" in push_value
-                        or "$position" in push_value
-                        or "$slice" in push_value
-                    ):
-                        # Complex push - fall back to Python
-                        raise NotImplementedError(
-                            "Complex $push with modifiers requires Python fallback"
+                            param_value = converted_val
+                            use_json = False
+
+                        if not use_json:
+                            insert_func = _get_json_function(
+                                "insert", self._jsonb_supported
+                            )
+                            array_path = json_path
+                            append_path = f"'{parse_json_path(field)}[#]'"
+                            cmd = (
+                                f"UPDATE {quote_table_name(self.collection.name)} "
+                                f"SET data = {insert_func}(data, {append_path}, ?) "
+                                f"WHERE id = ? AND NOT EXISTS ("
+                                f"  SELECT 1 FROM json_each(data, {array_path}) "
+                                f"  WHERE value = ?"
+                                f")"
+                            )
+                            self.collection.db.execute(
+                                cmd, (param_value, int_doc_id, param_value)
+                            )
+                        else:
+                            raise NotImplementedError(
+                                "$addToSet with complex values requires Python fallback"
+                            )
+                case "$bit":
+                    # Tier 2: $bit using bitwise operators
+                    for field, bit_spec in value.items():
+                        json_path = f"'{parse_json_path(field)}'"
+                        extract_func = _get_json_function(
+                            "extract", self._jsonb_supported
                         )
-
-                    # Simple push - use SQL json_set with [#] to append to array
-                    json_path = f"'{parse_json_path(field)}[#]'"
-                    # Convert bytes to Binary for proper JSON serialization
-                    converted_val = _convert_bytes_to_binary(push_value)
-                    if isinstance(converted_val, Binary):
-                        param_value = neosqlite_json_dumps(converted_val)
-                        set_clauses.append(f"{json_path}, json(?)")
-                    elif isinstance(converted_val, (dict, list)):
-                        param_value = neosqlite_json_dumps(converted_val)
-                        set_clauses.append(f"{json_path}, json(?)")
-                    else:
-                        param_value = converted_val
-                        set_clauses.append(f"{json_path}, ?")
-                    set_params.append(param_value)
-            elif op == "$bit":
-                # Tier 2: $bit can use SQL bitwise operators
-                # SQLite supports &, |, ~ for bitwise operations
-                for field, bit_spec in value.items():
-                    if not isinstance(bit_spec, dict):
-                        raise MalformedQueryException(
-                            "$bit operator requires a dict with 'and', 'or', or 'xor'"
+                        current_expr = (
+                            f"COALESCE({extract_func}(data, {json_path}), 0)"
                         )
+                        bit_expr = current_expr
+                        if "and" in bit_spec:
+                            bit_expr = f"({bit_expr} & {int(bit_spec['and'])})"
+                        if "or" in bit_spec:
+                            bit_expr = f"({bit_expr} | {int(bit_spec['or'])})"
+                        if "xor" in bit_spec:
+                            xor_val = int(bit_spec["xor"])
+                            bit_expr = f"(({bit_expr} | {xor_val}) & ~(({bit_expr}) & {xor_val}))"
+                        set_clauses.append(f"{json_path}, {bit_expr}")
+                case _:
+                    # For other operations, use the standard approach
+                    clauses, params = self._build_sql_update_clause(op, value)
+                    if clauses:
+                        set_clauses.extend(clauses)
+                        set_params.extend(params)
 
-                    # Get the current value expression with COALESCE for default 0
-                    json_path = f"'{parse_json_path(field)}'"
-                    current_expr = f"COALESCE({_get_json_function('extract', self._jsonb_supported)}(data, {json_path}), 0)"
-
-                    # Build bitwise expression
-                    bit_expr = current_expr
-                    if "and" in bit_spec:
-                        bit_expr = f"({bit_expr} & {int(bit_spec['and'])})"
-                    if "or" in bit_spec:
-                        bit_expr = f"({bit_expr} | {int(bit_spec['or'])})"
-                    if "xor" in bit_spec:
-                        # SQLite doesn't have XOR, use (a | b) & ~(a & b)
-                        xor_val = int(bit_spec["xor"])
-                        bit_expr = f"(({bit_expr} | {xor_val}) & ~(({bit_expr}) & {xor_val}))"
-
-                    # Use json_set to update the field
-                    set_clauses.append(f"{json_path}, {bit_expr}")
-                    # No params needed for bitwise expressions
-            else:
-                # For other operations, use the standard approach with json_set
-                clauses, params = self._build_sql_update_clause(op, value)
-                if clauses:
-                    set_clauses.extend(clauses)
-                    set_params.extend(params)
-
-        # Get integer ID for the document
-        int_doc_id = self._get_integer_id_for_oid(doc_id)
-
-        # Execute the SQL updates in order: unset, insert, replace, set
-        sql_params = []
-
-        # Handle $unset operations with json_remove
+        # Execute updates in order
         if unset_clauses:
             func_name = _get_json_function("remove", self._jsonb_supported)
-            cmd = (
-                f"UPDATE {quote_table_name(self.collection.name)} "
-                f"SET data = {func_name}(data, {', '.join(unset_clauses)}) "
-                "WHERE id = ?"
-            )
-            sql_params = unset_params + [int_doc_id]
-            self.collection.db.execute(cmd, sql_params)
+            cmd = f"UPDATE {quote_table_name(self.collection.name)} SET data = {func_name}(data, {', '.join(unset_clauses)}) WHERE id = ?"
+            self.collection.db.execute(cmd, unset_params + [int_doc_id])
 
-        # Handle json_insert for new fields
         if insert_clauses:
             func_name = _get_json_function("insert", self._jsonb_supported)
-            cmd = (
-                f"UPDATE {quote_table_name(self.collection.name)} "
-                f"SET data = {func_name}(data, {', '.join(insert_clauses)}) "
-                "WHERE id = ?"
-            )
-            sql_params = insert_params + [int_doc_id]
-            self.collection.db.execute(cmd, sql_params)
+            cmd = f"UPDATE {quote_table_name(self.collection.name)} SET data = {func_name}(data, {', '.join(insert_clauses)}) WHERE id = ?"
+            self.collection.db.execute(cmd, insert_params + [int_doc_id])
 
-        # Handle json_replace for existing fields
         if replace_clauses:
             func_name = _get_json_function("replace", self._jsonb_supported)
-            cmd = (
-                f"UPDATE {quote_table_name(self.collection.name)} "
-                f"SET data = {func_name}(data, {', '.join(replace_clauses)}) "
-                "WHERE id = ?"
-            )
-            sql_params = replace_params + [int_doc_id]
-            self.collection.db.execute(cmd, sql_params)
+            cmd = f"UPDATE {quote_table_name(self.collection.name)} SET data = {func_name}(data, {', '.join(replace_clauses)}) WHERE id = ?"
+            self.collection.db.execute(cmd, replace_params + [int_doc_id])
 
-        # Handle other operations with json_set (backward compatibility and dotted fields)
         if set_clauses:
             func_name = _get_json_function("set", self._jsonb_supported)
-            cmd = (
-                f"UPDATE {quote_table_name(self.collection.name)} "
-                f"SET data = {func_name}(data, {', '.join(set_clauses)}) "
-                "WHERE id = ?"
-            )
-            sql_params = set_params + [int_doc_id]
-            cursor = self.collection.db.execute(cmd, sql_params)
-
-            # Check if any rows were updated
+            cmd = f"UPDATE {quote_table_name(self.collection.name)} SET data = {func_name}(data, {', '.join(set_clauses)}) WHERE id = ?"
+            cursor = self.collection.db.execute(cmd, set_params + [int_doc_id])
             if cursor.rowcount == 0:
                 raise RuntimeError(f"No rows updated for doc_id {doc_id}")
 
-        # If no operations were performed, raise an error
-        if not (
-            unset_clauses or insert_clauses or replace_clauses or set_clauses
-        ):
-            raise RuntimeError("No valid operations to perform")
-
-        # Fetch and return the updated document
-        # Use the instance's JSONB support flag to determine how to select data
+        # Fetch updated document
         if self._jsonb_supported:
             cmd = f"SELECT id, json(data) as data FROM {quote_table_name(self.collection.name)} WHERE id = ?"
         else:
@@ -534,8 +544,6 @@ class UpdateOperationsMixin:
 
         if row := self.collection.db.execute(cmd, (int_doc_id,)).fetchone():
             return self.collection._load(row[0], row[1])
-
-        # This shouldn't happen, but just in case
         raise RuntimeError("Failed to fetch updated document")
 
     def _get_document_fields(self, doc_id: Any) -> Set[str]:
@@ -655,6 +663,54 @@ class UpdateOperationsMixin:
                         set_clauses.append(
                             f"{json_path}, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
                         )
+                case "$pop":
+                    # For $pop, we use json_remove
+                    if not _supports_relative_json_indexing():
+                        return None
+                    for field, pop_direction in value.items():
+                        # 1: remove last, -1: remove first
+                        index_path = (
+                            "[0]" if int(pop_direction) < 0 else "[#-1]"
+                        )
+                        json_path = f"'{parse_json_path(field)}{index_path}'"
+                        set_clauses.append(json_path)
+                    # json_remove has a different syntax
+                    if set_clauses:
+                        func_name = _get_json_function(
+                            "remove", self._jsonb_supported
+                        )
+                        return (
+                            f"data = {func_name}(data, {', '.join(set_clauses)})",
+                            params,
+                        )
+                    else:
+                        return None
+                case "$push":
+                    # Optimized $push (with $each) using [#]
+                    for field, push_value in value.items():
+                        # Handle $each
+                        values_to_push = []
+                        if (
+                            isinstance(push_value, dict)
+                            and "$each" in push_value
+                        ):
+                            # SQL optimization supports $each, but not $position or $slice
+                            if (
+                                "$position" in push_value
+                                or "$slice" in push_value
+                            ):
+                                return None
+                            values_to_push = push_value["$each"]
+                            if not isinstance(values_to_push, list):
+                                values_to_push = [values_to_push]
+                        else:
+                            values_to_push = [push_value]
+
+                        # Append each value
+                        json_path = f"'{parse_json_path(field)}[#]'"
+                        for val in values_to_push:
+                            set_clauses.append(f"{json_path}, ?")
+                            params.append(val)
                 case "$setOnInsert":
                     # $setOnInsert is conditional on upsert, force Python fallback
                     return None
@@ -772,6 +828,80 @@ class UpdateOperationsMixin:
                         params.append(neosqlite_json_dumps(converted_val))
                     else:
                         params.append(converted_val)
+            case "$push":
+                # Optimized $push (with $each) using [#]
+                for field, push_value in value.items():
+                    # Handle $each
+                    values_to_push = []
+                    if isinstance(push_value, dict) and "$each" in push_value:
+                        # SQL optimization supports $each, but not $position or $slice
+                        if "$position" in push_value or "$slice" in push_value:
+                            # This should have been caught by _can_use_sql_updates
+                            # but as a safeguard we return empty to avoid SQL error
+                            return [], []
+                        values_to_push = push_value["$each"]
+                        if not isinstance(values_to_push, list):
+                            values_to_push = [values_to_push]
+                    else:
+                        values_to_push = [push_value]
+
+                    # Append each value
+                    json_path = f"'{parse_json_path(field)}[#]'"
+                    for val in values_to_push:
+                        # Convert bytes to Binary for proper JSON serialization
+                        converted_val = _convert_bytes_to_binary(val)
+                        if isinstance(converted_val, Binary):
+                            clauses.append(f"{json_path}, json(?)")
+                            params.append(neosqlite_json_dumps(converted_val))
+                        elif isinstance(converted_val, (dict, list)):
+                            clauses.append(f"{json_path}, json(?)")
+                            params.append(neosqlite_json_dumps(converted_val))
+                        else:
+                            clauses.append(f"{json_path}, ?")
+                            params.append(converted_val)
+            case "$pop":
+                # Tier 2: $pop uses json_remove with [0] or [#-1]
+                if not _supports_relative_json_indexing():
+                    return [], []
+                for field, pop_direction in value.items():
+                    # 1: remove last, -1: remove first
+                    index_path = "[0]" if int(pop_direction) < 0 else "[#-1]"
+                    json_path = f"'{parse_json_path(field)}{index_path}'"
+                    clauses.append(json_path)
+            case "$addToSet":
+                # Tier 2: $addToSet (without $each) can use conditional SQL
+                for field, val in value.items():
+                    json_path = f"'{parse_json_path(field)}'"
+                    # Convert value for proper parameter handling
+                    converted_val = _convert_bytes_to_binary(val)
+                    if isinstance(converted_val, Binary):
+                        param_value = neosqlite_json_dumps(converted_val)
+                        use_json = True
+                    elif isinstance(converted_val, (dict, list)):
+                        param_value = neosqlite_json_dumps(converted_val)
+                        use_json = True
+                    else:
+                        param_value = converted_val
+                        use_json = False
+
+                    if not use_json:
+                        # Build SQL that only inserts if value not in array
+                        insert_func = _get_json_function(
+                            "insert", self._jsonb_supported
+                        )
+                        array_path = json_path
+                        append_path = f"'{parse_json_path(field)}[#]'"
+
+                        # Use a CASE expression to conditionally call json_insert
+                        exists_subquery = f"EXISTS (SELECT 1 FROM json_each(data, {array_path}) WHERE value = ?)"
+
+                        clauses.append(
+                            f"{array_path}, CASE WHEN {exists_subquery} THEN data ELSE {insert_func}(data, {append_path}, ?) END"
+                        )
+                        params.extend([param_value, param_value])
+                    else:
+                        # Complex values - fall back to Python
+                        return [], []
             case "$unset":
                 # For $unset, we use json_remove
                 for field in value:
