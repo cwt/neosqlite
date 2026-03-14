@@ -755,6 +755,38 @@ class TestSQLTierCorrectness:
         ]
         self._compare_tiers(collection, pipeline, "sort_skip_limit")
 
+    def test_redact_keep_prune(self, collection):
+        """Test $redact with KEEP/PRUNE pattern optimization."""
+        pipeline = [
+            {
+                "$redact": {
+                    "$cond": {
+                        "if": {"$gt": ["$salary", 50000]},
+                        "then": "$$KEEP",
+                        "else": "$$PRUNE",
+                    }
+                }
+            },
+            {"$sort": {"_id": 1}},
+        ]
+        self._compare_tiers(collection, pipeline, "redact_keep_prune")
+
+    def test_redact_prune_keep(self, collection):
+        """Test $redact with PRUNE/KEEP pattern optimization."""
+        pipeline = [
+            {
+                "$redact": {
+                    "$cond": {
+                        "if": {"$lt": ["$salary", 50000]},
+                        "then": "$$PRUNE",
+                        "else": "$$KEEP",
+                    }
+                }
+            },
+            {"$sort": {"_id": 1}},
+        ]
+        self._compare_tiers(collection, pipeline, "redact_prune_keep")
+
     def test_let_sql_tier(self, collection):
         """Test $let with SQL tier optimization."""
         pipeline = [

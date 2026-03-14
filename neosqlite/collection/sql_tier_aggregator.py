@@ -553,28 +553,47 @@ class SQLTierAggregator:
         return sql, union_params
 
     def _build_redact_sql(self, spec, prev_stage, context):
+        """
+        Build SQL for $redact stage.
+        Optimizes KEEP/PRUNE patterns into a WHERE clause.
+        Falls back to Python for DESCEND pattern as it requires recursive JSON modification.
+        """
         if not isinstance(spec, dict):
             return None, []
 
+        # Handle common pattern: {$cond: {if: <expr>, then: "$$KEEP", else: "$$PRUNE"}}
+        # or {$cond: {if: <expr>, then: "$$PRUNE", else: "$$KEEP"}}
         cond = spec.get("$cond")
-        if (
-            not cond
-            or cond.get("then") != "$$KEEP"
-            or cond.get("else") != "$$PRUNE"
-        ):
-            return None, []
+        if cond and isinstance(cond, dict):
+            if_expr = cond.get("if")
+            then_val = cond.get("then")
+            else_val = cond.get("else")
 
-        if_expr = cond.get("if")
-        expr_sql, expr_params = self.evaluator.evaluate_for_aggregation(if_expr)
-        if not expr_sql:
-            return None, []
+            # We can only optimize if it's strictly KEEP/PRUNE at the top level
+            valid_vals = ("$$KEEP", "$$PRUNE")
+            if then_val in valid_vals and else_val in valid_vals:
+                expr_sql, expr_params = self.evaluator.evaluate_for_aggregation(
+                    if_expr
+                )
+                if not expr_sql:
+                    return None, []
 
-        select_parts = ["id", "_id", "data"]
-        if context.has_root:
-            select_parts.append("root_data")
+                # If then is KEEP, it's like WHERE condition.
+                # If then is PRUNE, it's like WHERE NOT condition.
+                if then_val == "$$KEEP":
+                    where_clause = f"WHERE ({expr_sql})"
+                else:
+                    where_clause = f"WHERE NOT ({expr_sql})"
 
-        sql = f"SELECT {', '.join(select_parts)} FROM {prev_stage} WHERE {expr_sql}"
-        return sql, expr_params
+                select_parts = ["id", "_id", "data"]
+                if context.has_root:
+                    select_parts.append("root_data")
+
+                sql = f"SELECT {', '.join(select_parts)} FROM {prev_stage} {where_clause}"
+                return sql, expr_params
+
+        # Fall back to Python for anything else (especially $$DESCEND)
+        return None, []
 
     def _build_lookup_sql(self, spec, prev_stage, context):
         from_coll = spec.get("from")
