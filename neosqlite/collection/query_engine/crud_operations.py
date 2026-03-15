@@ -126,9 +126,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             if row:
                 int_id, stored_id, data = row
                 # Load the document the normal way for the update processing
-                doc = self.collection._load_with_stored_id(
-                    int_id, data, stored_id
-                )
+                doc = self.collection._load_with_stored_id(int_id, data, stored_id)
                 # Use the integer id for internal operations
                 _, was_modified = self.helpers._internal_update(
                     int_id, update, doc, array_filters, filter
@@ -187,12 +185,8 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             if upsert:
                 # For upsert, we would need to create a new file, but that's complex
                 # For now, just return no match
-                return UpdateResult(
-                    matched_count=0, modified_count=0, upserted_id=None
-                )
-            return UpdateResult(
-                matched_count=0, modified_count=0, upserted_id=None
-            )
+                return UpdateResult(matched_count=0, modified_count=0, upserted_id=None)
+            return UpdateResult(matched_count=0, modified_count=0, upserted_id=None)
 
         int_id = row[0]
 
@@ -214,15 +208,11 @@ class CRUDOperationsMixin(QueryEngineProtocol):
                             set_clauses.append(
                                 f"metadata = {func_name}(metadata, '$', json(?))"
                             )
-                            set_params.append(
-                                neosqlite_json_dumps_for_sql(value)
-                            )
+                            set_params.append(neosqlite_json_dumps_for_sql(value))
                         else:
                             # Fallback to json() for non-JSONB databases
                             set_clauses.append("metadata = json(?)")
-                            set_params.append(
-                                neosqlite_json_dumps_for_sql(value)
-                            )
+                            set_params.append(neosqlite_json_dumps_for_sql(value))
                     else:
                         set_clauses.append("metadata = ?")
                         set_params.append(value)
@@ -244,16 +234,12 @@ class CRUDOperationsMixin(QueryEngineProtocol):
                         set_clauses.append(
                             f"metadata = {func_name}(metadata, {json_path}, json(?))"
                         )
-                        set_params.append(
-                            neosqlite_json_dumps_for_sql(converted_val)
-                        )
+                        set_params.append(neosqlite_json_dumps_for_sql(converted_val))
                     elif isinstance(converted_val, Binary):
                         set_clauses.append(
                             f"metadata = {func_name}(metadata, {json_path}, json(?))"
                         )
-                        set_params.append(
-                            neosqlite_json_dumps_for_sql(converted_val)
-                        )
+                        set_params.append(neosqlite_json_dumps_for_sql(converted_val))
                     else:
                         set_clauses.append(
                             f"metadata = {func_name}(metadata, {json_path}, ?)"
@@ -288,9 +274,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         Raises:
             ValueError: If the integer ID for the ObjectId cannot be found.
         """
-        return get_integer_id_for_oid(
-            self.collection.db, self.collection.name, oid
-        )
+        return get_integer_id_for_oid(self.collection.db, self.collection.name, oid)
 
     def _try_fast_update_one(
         self,
@@ -316,7 +300,15 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         if get_force_fallback():
             return None
 
-        simple_ops = {"$set", "$min", "$max", "$unset", "$currentDate"}
+        simple_ops = {
+            "$set",
+            "$min",
+            "$max",
+            "$unset",
+            "$currentDate",
+            "$inc",
+            "$mul",
+        }
         complex_ops = {
             "$push",
             "$pull",
@@ -340,6 +332,32 @@ class CRUDOperationsMixin(QueryEngineProtocol):
                 for field_path in op_value.keys():
                     if "$" in field_path or field_path.startswith("[]"):
                         return None
+
+        if "$inc" in update_keys or "$mul" in update_keys:
+            where_clause, where_params = self.sql_translator.translate_match(filter)
+            if where_clause:
+                if self._jsonb_supported:
+                    cmd = f"SELECT json_type(data) FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
+                else:
+                    cmd = f"SELECT typeof(data) FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
+                try:
+                    cursor = self.collection.db.execute(cmd, where_params)
+                    row = cursor.fetchone()
+                    if row and row[0] not in (None, "null"):
+                        from ..query_helper.update_operations import (
+                            UpdateOperationsMixin,
+                        )
+
+                        if not UpdateOperationsMixin._validate_inc_mul_types_sql(
+                            self.collection.db,
+                            self.collection.name,
+                            filter,
+                            update,
+                            self._jsonb_supported,
+                        ):
+                            return None
+                except Exception:
+                    return None
 
         update_result = self.helpers._build_update_clause(update)
         if update_result is None:
@@ -441,9 +459,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             row = cursor.fetchone()
             if row:
                 int_id, stored_id, data = row
-                doc = self.collection._load_with_stored_id(
-                    int_id, data, stored_id
-                )
+                doc = self.collection._load_with_stored_id(int_id, data, stored_id)
                 self.helpers._internal_update(int_doc_id, update, doc)
                 modified_count += 1
         return UpdateResult(
@@ -577,22 +593,16 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             if row:
                 int_id, stored_id, data = row
                 self.helpers._internal_replace(int_id, replacement)
-                return UpdateResult(
-                    matched_count=1, modified_count=1, upserted_id=None
-                )
+                return UpdateResult(matched_count=1, modified_count=1, upserted_id=None)
         else:
             # Fallback approach
             if doc := self.find_one(filter):
                 int_doc_id = self._get_integer_id_for_oid(doc["_id"])
                 self.helpers._internal_replace(int_doc_id, replacement)
-                return UpdateResult(
-                    matched_count=1, modified_count=1, upserted_id=None
-                )
+                return UpdateResult(matched_count=1, modified_count=1, upserted_id=None)
 
         if upsert:
-            inserted_id = self.insert_one(
-                replacement, session=session
-            ).inserted_id
+            inserted_id = self.insert_one(replacement, session=session).inserted_id
             return UpdateResult(
                 matched_count=0, modified_count=0, upserted_id=inserted_id
             )
