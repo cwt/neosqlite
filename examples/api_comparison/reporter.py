@@ -428,8 +428,12 @@ class BenchmarkReporter:
             timestamp = datetime.now().strftime("%Y%m%d%H%M")
             filename = f"Benchmark-NeoSQLite-{version}-{timestamp}.md"
             # Resolve path relative to project root (parent of examples directory)
-            project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-            filepath = os.path.join(project_root, "documents", "benchmarks", filename)
+            project_root = os.path.dirname(
+                os.path.dirname(os.path.dirname(__file__))
+            )
+            filepath = os.path.join(
+                project_root, "documents", "benchmarks", filename
+            )
 
         lines = []
         lines.append("# NeoSQLite Benchmark Results")
@@ -590,8 +594,12 @@ class BenchmarkReporter:
             timestamp = datetime.now().strftime("%Y%m%d%H%M")
             filename = f"Benchmark-NeoSQLite-{version}-{timestamp}.csv"
             # Resolve path relative to project root (parent of examples directory)
-            project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-            filepath = os.path.join(project_root, "documents", "benchmarks", filename)
+            project_root = os.path.dirname(
+                os.path.dirname(os.path.dirname(__file__))
+            )
+            filepath = os.path.join(
+                project_root, "documents", "benchmarks", filename
+            )
 
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         with open(filepath, "w", newline="") as f:

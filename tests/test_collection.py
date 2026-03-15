@@ -221,6 +221,36 @@ def test_update_with_pull(collection):
     assert doc["items"] == ["x", "z"]
 
 
+def test_update_with_pull_kill_switch_comparison(collection):
+    """Test $pull returns same results with/without kill switch."""
+    from neosqlite.collection.query_helper import (
+        set_force_fallback,
+        get_force_fallback,
+    )
+
+    collection.insert_one({"_id": 1, "values": [1, 2, 3, 1, 2, 1]})
+
+    result_normal = collection.update_one({"_id": 1}, {"$pull": {"values": 1}})
+    doc_normal = collection.find_one({"_id": 1})
+
+    collection.update_one({"_id": 1}, {"$set": {"values": [1, 2, 3, 1, 2, 1]}})
+
+    original_state = get_force_fallback()
+    try:
+        set_force_fallback(True)
+
+        result_fallback = collection.update_one(
+            {"_id": 1}, {"$pull": {"values": 1}}
+        )
+        doc_fallback = collection.find_one({"_id": 1})
+    finally:
+        set_force_fallback(original_state)
+
+    assert result_normal.modified_count == result_fallback.modified_count
+    assert doc_normal["values"] == doc_fallback["values"]
+    assert doc_normal["values"] == [2, 3, 2]
+
+
 def test_update_with_pop_last(collection):
     """Test $pop operator with positive value in updates."""
     collection.insert_one({"a": 1, "items": ["x", "y", "z"]})

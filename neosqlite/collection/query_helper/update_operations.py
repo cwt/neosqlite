@@ -109,7 +109,7 @@ class UpdateOperationsMixin:
                 doc_id, update_spec, original_doc, array_filters, query_filter
             )
 
-        if self._can_use_sql_updates(update_spec, doc_id):
+        if self._can_use_sql_updates(update_spec, doc_id, original_doc):
             # Use enhanced SQL update with json_insert/json_replace when possible
             try:
                 updated_doc = self._perform_enhanced_sql_update(
@@ -140,6 +140,7 @@ class UpdateOperationsMixin:
         self,
         update_spec: Dict[str, Any],
         doc_id: int,
+        original_doc: Dict[str, Any] | None = None,
     ) -> bool:
         """
         Check if all operations in the update spec can be handled with SQL.
@@ -162,7 +163,16 @@ class UpdateOperationsMixin:
 
         # Tier 1: Simple operations that can use json_set/json_remove
         # Tier 2: More complex operations that can use SQL with some limitations
-        supported_ops = {"$set", "$unset", "$inc", "$mul", "$min", "$max"}
+        supported_ops = {
+            "$set",
+            "$unset",
+            "$inc",
+            "$mul",
+            "$min",
+            "$max",
+            "$pull",
+            "$pullAll",
+        }
 
         # Also check that doc_id is not 0 (which indicates an upsert)
         # Disable SQL updates for documents containing Binary objects
@@ -224,6 +234,18 @@ class UpdateOperationsMixin:
         # Complex $push with $position/$slice requires Python fallback
         if has_complex_push:
             return False
+
+        # Check for $pull and $pullAll - require field to exist and be a list in original_doc
+        if original_doc is not None:
+            for op in update_spec:
+                if op in {"$pull", "$pullAll"}:
+                    op_spec = update_spec[op]
+                    if isinstance(op_spec, dict):
+                        for field in op_spec.keys():
+                            if field not in original_doc or not isinstance(
+                                original_doc.get(field), list
+                            ):
+                                return False
 
         return (
             doc_id != 0
@@ -718,6 +740,63 @@ class UpdateOperationsMixin:
                     # $rename is complex to do in SQL,
                     # so we'll fall back to the Python implementation
                     return None
+                case "$pull":
+                    # SQL optimization for $pull: filter array elements using json_each
+                    for field, pull_value in value.items():
+                        json_path = f"'{parse_json_path(field)}'"
+                        converted_val = _convert_bytes_to_binary(pull_value)
+                        if isinstance(converted_val, (dict, list, Binary)):
+                            pull_value_json = neosqlite_json_dumps(
+                                converted_val
+                            )
+                            set_clauses.append(
+                                f"{json_path}, (SELECT json_group_array(json(value)) FROM json_each(json_extract(data, {json_path})) WHERE json(value) != {pull_value_json} OR json(value) IS NULL)"
+                            )
+                        else:
+                            set_clauses.append(
+                                f"{json_path}, (SELECT json_group_array(value) FROM json_each(json_extract(data, {json_path})) WHERE value != ?)"
+                            )
+                            params.append(converted_val)
+                case "$pullAll":
+                    # SQL optimization for $pullAll: filter multiple values from array
+                    for field, pull_values in value.items():
+                        if not isinstance(pull_values, list):
+                            pull_values = [pull_values]
+                        json_path = f"'{parse_json_path(field)}'"
+
+                        has_complex = any(
+                            isinstance(
+                                _convert_bytes_to_binary(v),
+                                (dict, list, Binary),
+                            )
+                            for v in pull_values
+                        )
+
+                        if has_complex:
+                            pull_values_json = [
+                                neosqlite_json_dumps(
+                                    _convert_bytes_to_binary(v)
+                                )
+                                for v in pull_values
+                            ]
+                            conditions = " OR ".join(
+                                [
+                                    f"json(value) != {v}"
+                                    for v in pull_values_json
+                                ]
+                            )
+                            set_clauses.append(
+                                f"{json_path}, (SELECT json_group_array(json(value)) FROM json_each(json_extract(data, {json_path})) WHERE {conditions} OR json(value) IS NULL)"
+                            )
+                        else:
+                            placeholders = ", ".join(["?" for _ in pull_values])
+                            converted_values = [
+                                _convert_bytes_to_binary(v) for v in pull_values
+                            ]
+                            set_clauses.append(
+                                f"{json_path}, (SELECT json_group_array(value) FROM json_each(json_extract(data, {json_path})) WHERE value NOT IN ({placeholders}))"
+                            )
+                            params.extend(converted_values)
                 case _:
                     return None  # Fallback for unsupported operators
 
@@ -907,6 +986,60 @@ class UpdateOperationsMixin:
                 for field in value:
                     json_path = f"'{parse_json_path(field)}'"
                     clauses.append(json_path)
+            case "$pull":
+                # SQL optimization for $pull: filter array elements using json_each
+                for field, pull_value in value.items():
+                    json_path = f"'{parse_json_path(field)}'"
+                    converted_val = _convert_bytes_to_binary(pull_value)
+                    if isinstance(converted_val, (dict, list, Binary)):
+                        # For complex values, serialize to JSON for comparison
+                        pull_value_json = neosqlite_json_dumps(converted_val)
+                        clauses.append(
+                            f"{json_path}, (SELECT json_group_array(json(value)) FROM json_each(json_extract(data, {json_path})) WHERE json(value) != {pull_value_json} OR json(value) IS NULL)"
+                        )
+                    else:
+                        # For simple values, compare directly
+                        clauses.append(
+                            f"{json_path}, (SELECT json_group_array(value) FROM json_each(json_extract(data, {json_path})) WHERE value != ?)"
+                        )
+                        params.append(converted_val)
+            case "$pullAll":
+                # SQL optimization for $pullAll: filter multiple values from array
+                for field, pull_values in value.items():
+                    if not isinstance(pull_values, list):
+                        pull_values = [pull_values]
+                    json_path = f"'{parse_json_path(field)}'"
+
+                    # Check if any values are complex (dict, list, Binary)
+                    has_complex = any(
+                        isinstance(
+                            _convert_bytes_to_binary(v), (dict, list, Binary)
+                        )
+                        for v in pull_values
+                    )
+
+                    if has_complex:
+                        # For complex values, serialize each and build JSON comparison
+                        pull_values_json = [
+                            neosqlite_json_dumps(_convert_bytes_to_binary(v))
+                            for v in pull_values
+                        ]
+                        conditions = " OR ".join(
+                            [f"json(value) != {v}" for v in pull_values_json]
+                        )
+                        clauses.append(
+                            f"{json_path}, (SELECT json_group_array(json(value)) FROM json_each(json_extract(data, {json_path})) WHERE {conditions} OR json(value) IS NULL)"
+                        )
+                    else:
+                        # For simple values, use IN clause
+                        placeholders = ", ".join(["?" for _ in pull_values])
+                        converted_values = [
+                            _convert_bytes_to_binary(v) for v in pull_values
+                        ]
+                        clauses.append(
+                            f"{json_path}, (SELECT json_group_array(value) FROM json_each(json_extract(data, {json_path})) WHERE value NOT IN ({placeholders}))"
+                        )
+                        params.extend(converted_values)
 
         return clauses, params
 
