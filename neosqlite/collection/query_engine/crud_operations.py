@@ -376,13 +376,20 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             return None
 
         try:
-            cmd = f"UPDATE {quote_table_name(self.collection.name)} SET {set_clause} {where_clause}"
+            # For update_one, we MUST only update a single document.
+            # Since standard SQLite doesn't support LIMIT in UPDATE (without a compile flag),
+            # we use a subquery with LIMIT 1 to identify the specific row.
+            cmd = (
+                f"UPDATE {quote_table_name(self.collection.name)} "
+                f"SET {set_clause} "
+                f"WHERE id IN (SELECT id FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1)"
+            )
             cursor = self.collection.db.execute(cmd, set_params + where_params)
 
             if cursor.rowcount > 0:
                 return UpdateResult(
-                    matched_count=cursor.rowcount,
-                    modified_count=cursor.rowcount,
+                    matched_count=1,
+                    modified_count=1,
                     upserted_id=None,
                 )
             elif cursor.rowcount == 0:

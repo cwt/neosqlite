@@ -139,6 +139,23 @@ def test_update_many(collection):
     assert collection.count_documents({"foo": "baz"}) == 2
 
 
+def test_update_one_multi_match(collection):
+    """Test that update_one only updates one document even if multiple match."""
+    collection.insert_many([{"a": 1, "b": 10}, {"a": 1, "b": 20}])
+    result = collection.update_one({"a": 1}, {"$set": {"b": 99}})
+    assert result.matched_count == 1
+    assert result.modified_count == 1
+
+    # Check that only one was updated
+    docs = list(collection.find({"a": 1}))
+    updated_count = sum(1 for doc in docs if doc["b"] == 99)
+    assert updated_count == 1
+
+    # One should still be original
+    original_count = sum(1 for doc in docs if doc["b"] in (10, 20))
+    assert original_count == 1
+
+
 def test_update_many_fast_path(collection):
     """Test fast path for updating multiple documents."""
     collection.insert_many(
