@@ -513,10 +513,10 @@ class TemporaryTableAggregationProcessor:
                         i += 1
 
                     case "$densify":
-                        # $densify requires Python fallback for full functionality
-                        raise NotImplementedError(
-                            "$densify requires Python fallback - use force_fallback or simplify pipeline"
+                        current_table = self._process_densify_stage(
+                            create_temp, current_table, stage["$densify"]
                         )
+                        i += 1
 
                     case "$merge":
                         # $merge requires Python fallback for full functionality
@@ -822,6 +822,8 @@ class TemporaryTableAggregationProcessor:
         current_table: str,
         lookup_spec: Dict[str, Any],
     ) -> str:
+        import uuid
+
         """
         Process a $lookup stage using temporary tables.
 
@@ -847,29 +849,111 @@ class TemporaryTableAggregationProcessor:
                 - "localField": The field from the input documents
                 - "foreignField": The field from the documents of the "from" collection
                 - "as": The name of the new array field to add to the matching documents
+                - "pipeline": Optional pipeline to run on foreign collection
 
         Returns:
             str: Name of the newly created temporary table with lookup results added
         """
         from_collection = lookup_spec["from"]
-        local_field = lookup_spec["localField"]
-        foreign_field = lookup_spec["foreignField"]
+        local_field = lookup_spec.get("localField")
+        foreign_field = lookup_spec.get("foreignField")
         as_field = lookup_spec["as"]
-
-        # Build the optimized SQL query for $lookup
-        if foreign_field == "_id":
-            # For real collections, _id column is the source of truth for _id field
-            foreign_extract = "related._id"
-        else:
-            foreign_extract = f"{self._json_function_prefix}_extract(related.data, '{parse_json_path(foreign_field)}')"
-
-        if local_field == "_id":
-            # In temporary tables, we should use the injected JSON _id or the id column
-            local_extract = f"COALESCE({self._json_function_prefix}_extract(main_table.data, '$._id'), main_table.id)"
-        else:
-            local_extract = f"{self._json_function_prefix}_extract(main_table.data, '{parse_json_path(local_field)}')"
+        pipeline = lookup_spec.get("pipeline", [])
 
         json_set_func = f"{self._json_function_prefix}_set"
+
+        if pipeline:
+            if not local_field or not foreign_field:
+                raise NotImplementedError(
+                    "$lookup with pipeline requires localField and foreignField"
+                )
+
+            from .temporary_table_aggregation import (
+                TemporaryTableAggregationProcessor,
+            )
+
+            target_coll = self.collection.database.get_collection(
+                from_collection
+            )
+            processor = TemporaryTableAggregationProcessor(target_coll, None)
+
+            pipeline_result_table = f"_lookup_pipeline_{uuid.uuid4().hex[:8]}"
+            try:
+                pipeline_result = processor.process_pipeline(pipeline)
+                if not pipeline_result:
+                    self.collection.db.execute(
+                        f"CREATE TEMP TABLE {pipeline_result_table} (id INTEGER PRIMARY KEY, _id INTEGER, data TEXT)"
+                    )
+                else:
+                    from .json_helpers import neosqlite_json_dumps
+
+                    self.collection.db.execute(
+                        f"CREATE TEMP TABLE {pipeline_result_table} (id INTEGER PRIMARY KEY, _id INTEGER, data TEXT)"
+                    )
+                    for doc in pipeline_result:
+                        self.collection.db.execute(
+                            f"INSERT INTO {pipeline_result_table} (id, _id, data) VALUES (?, ?, ?)",
+                            (
+                                doc.get("id", 0),
+                                doc.get("_id"),
+                                neosqlite_json_dumps(doc),
+                            ),
+                        )
+
+                if foreign_field == "_id":
+                    foreign_extract = "related._id"
+                else:
+                    foreign_extract = f"{self._json_function_prefix}_extract(related.data, '{parse_json_path(foreign_field)}')"
+
+                if local_field == "_id":
+                    local_extract = f"COALESCE({self._json_function_prefix}_extract(main_table.data, '$._id'), main_table.id)"
+                else:
+                    local_extract = f"{self._json_function_prefix}_extract(main_table.data, '{parse_json_path(local_field)}')"
+
+                select_clause = (
+                    f"SELECT main_table.id, "
+                    f"json({json_set_func}({json_set_func}(main_table.data, '$._id', main_table.id), '{parse_json_path(as_field)}', "
+                    f"coalesCE(( "
+                    f"  SELECT {self.json_group_array_function}(json(related.data)) "
+                    f"  FROM {pipeline_result_table} as related "
+                    f"  WHERE {foreign_extract} = "
+                    f"        {local_extract} "
+                    f"), '[]'))) as data"
+                )
+
+                from_clause = f"FROM {current_table} as main_table"
+
+                lookup_stage = {"$lookup": lookup_spec}
+                new_table = create_temp(
+                    lookup_stage, f"{select_clause} {from_clause}"
+                )
+                return new_table
+            finally:
+                try:
+                    self.collection.db.execute(
+                        f"DROP TABLE IF EXISTS {pipeline_result_table}"
+                    )
+                except Exception:
+                    pass
+
+        if not all([from_collection, local_field, foreign_field, as_field]):
+            raise ValueError(
+                "$lookup requires from, localField, foreignField, and as"
+            )
+
+        local_field_str: str = local_field  # type: ignore[assignment]
+        foreign_field_str: str = foreign_field  # type: ignore[assignment]
+
+        if foreign_field_str == "_id":
+            foreign_extract = "related._id"
+        else:
+            foreign_extract = f"{self._json_function_prefix}_extract(related.data, '{parse_json_path(foreign_field_str)}')"
+
+        if local_field_str == "_id":
+            local_extract = f"COALESCE({self._json_function_prefix}_extract(main_table.data, '$._id'), main_table.id)"
+        else:
+            local_extract = f"{self._json_function_prefix}_extract(main_table.data, '{parse_json_path(local_field_str)}')"
+
         select_clause = (
             f"SELECT main_table.id, "
             f"json({json_set_func}({json_set_func}(main_table.data, '$._id', main_table.id), '{parse_json_path(as_field)}', "
@@ -884,7 +968,6 @@ class TemporaryTableAggregationProcessor:
         from_clause = f"FROM {current_table} as main_table"
 
         lookup_stage = {"$lookup": lookup_spec}
-        # Create lookup temporary table
         new_table = create_temp(lookup_stage, f"{select_clause} {from_clause}")
         return new_table
 
@@ -1930,6 +2013,136 @@ class TemporaryTableAggregationProcessor:
 
         return new_table
 
+    def _process_densify_stage(self, create_temp, current_table, densify_spec):
+        import uuid
+
+        """
+        Process $densify stage - fills in missing values in a sequence.
+
+        MongoDB syntax:
+        {
+          $densify: {
+            field: <field_name>,
+            range: {
+              step: <number>,
+              bounds: [<lower>, <upper>]
+            },
+            partitionBy: <expression>  // optional
+          }
+        }
+        """
+        field = densify_spec.get("field")
+        range_spec = densify_spec.get("range")
+        partition_by = densify_spec.get("partitionBy") or densify_spec.get(
+            "partitionByFields"
+        )
+
+        if not field or not range_spec:
+            raise NotImplementedError(
+                "$densify requires field and range - use force_fallback or simplify pipeline"
+            )
+
+        if partition_by:
+            raise NotImplementedError(
+                "$densify with partitionBy not supported - use force_fallback"
+            )
+
+        print(
+            f"DEBUG DENSIFY: field={field}, range_spec={range_spec}, partition_by={partition_by}"
+        )
+
+        if not field or not range_spec:
+            raise NotImplementedError(
+                "$densify requires field and range - use force_fallback or simplify pipeline"
+            )
+
+        if partition_by:
+            print(
+                "DEBUG DENSIFY: partition_by is truthy, raising NotImplementedError"
+            )
+            raise NotImplementedError(
+                "$densify with partitionBy not supported - use force_fallback"
+            )
+
+        step = range_spec.get("step")
+        bounds = range_spec.get("bounds")
+
+        if not step or not bounds:
+            raise NotImplementedError(
+                "$densify requires step and bounds - use force_fallback or simplify pipeline"
+            )
+
+        if not isinstance(bounds, list) or len(bounds) != 2:
+            raise NotImplementedError(
+                "$densify with non-array bounds not supported - use force_fallback"
+            )
+
+        lower_bound = bounds[0]
+        upper_bound = bounds[1]
+
+        if not isinstance(step, (int, float)):
+            raise NotImplementedError(
+                "$densify with non-numeric step not supported - use force_fallback"
+            )
+
+        if not isinstance(lower_bound, (int, float)) or not isinstance(
+            upper_bound, (int, float)
+        ):
+            raise NotImplementedError(
+                "$densify with non-numeric bounds not supported - use force_fallback"
+            )
+
+        json_extract = f"{self._json_function_prefix}_extract"
+
+        step_series = []
+        current = lower_bound
+        while current <= upper_bound:
+            step_series.append(current)
+            current += step
+            if len(step_series) > 1000:
+                break
+
+        if not step_series:
+            return current_table
+
+        ",".join([str(v) for v in step_series])
+        series_table = f"_densify_series_{uuid.uuid4().hex[:8]}"
+
+        try:
+            self.collection.db.execute(
+                f"CREATE TEMP TABLE {series_table} (val REAL)"
+            )
+            self.collection.db.execute(
+                f"INSERT INTO {series_table} (val) VALUES "
+                + "("
+                + "),((".join([str(v) for v in step_series])
+                + ")"
+            )
+
+            json_set_func = f"{self._json_function_prefix}_set"
+
+            select_clause = f"""
+                SELECT id, _id,
+                json({json_set_func}(data, '{field}', s.val)) as data
+                FROM {current_table}, {series_table} s
+                WHERE s.val >= {lower_bound} AND s.val <= {upper_bound}
+                AND NOT EXISTS (
+                    SELECT 1 FROM {current_table} c
+                    WHERE {json_extract}(c.data, '{field}') = s.val
+                )
+            """
+
+            new_table = create_temp({"$densify": densify_spec}, select_clause)
+
+            return new_table
+        finally:
+            try:
+                self.collection.db.execute(
+                    f"DROP TABLE IF EXISTS {series_table}"
+                )
+            except Exception:
+                pass
+
     def _process_union_with_stage(self, create_temp, current_table, union_spec):
         """
         Process $unionWith stage - combines documents from another collection.
@@ -1984,7 +2197,9 @@ class TemporaryTableAggregationProcessor:
         """
         into = merge_spec.get("into")
         if isinstance(into, dict):
-            into = into.get("db") + "." + into.get("coll")
+            db_name = into.get("db") or ""
+            coll_name = into.get("coll") or ""
+            into = db_name + "." + coll_name
 
         if not into:
             return current_table
@@ -2433,44 +2648,11 @@ class TemporaryTableAggregationProcessor:
         stage_sql = f"""
             SELECT id, _id, {data_expr} AS data
             FROM (
-                SELECT {', '.join(block_id_selects)}
+                SELECT {", ".join(block_id_selects)}
                 FROM {current_table}
             ) {subquery_alias}
         """
         return create_temp({"$fill": spec}, stage_sql, all_params)
-
-    def _process_densify_stage(self, create_temp, current_table, densify_spec):
-        """
-        Process $densify stage - fills gaps in data.
-
-        MongoDB syntax:
-        {
-          $densify: {
-            field: <field_name>,
-            range: {
-              bounds: [<lower>, <upper>] | "full",
-              step: <number>,
-              unit: <time_unit>  // for dates
-            },
-            partitionByFields: [<fields>],  // optional
-            output: { <field>: <expr> }  // optional
-          }
-        }
-        """
-        field = densify_spec.get("field")
-
-        if not field:
-            return current_table
-
-        # This is a complex stage that requires generating missing values
-        # For now, return current table unchanged
-        # Full implementation would need to:
-        # 1. Determine the range of values
-        # 2. Generate all values in the range
-        # 3. Left join with existing data
-        # 4. Fill in missing values
-
-        return current_table
 
 
 def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
@@ -2494,11 +2676,12 @@ def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
               with temporary tables, False otherwise
     """
     # Check if all stages are supported
-    # Note: $merge, $redact, and $densify require Python fallback for full functionality
+    # Note: $merge and $redact require Python fallback for full functionality
     supported_stages = {
         "$addFields",
         "$bucket",
         "$bucketAuto",
+        "$densify",
         "$facet",
         "$fill",
         "$graphLookup",

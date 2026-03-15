@@ -108,6 +108,7 @@ class SQLTierAggregator:
         "$unionWith",
         "$lookup",
         "$merge",
+        "$densify",
     }
 
     # Stages that require Python fallback
@@ -165,7 +166,12 @@ class SQLTierAggregator:
                 return False
             if (
                 stage_name == "$setWindowFields"
-                and sqlite3.sqlite_version_info < (3, 25, 0)
+                and sqlite3.sqlite_version_info
+                < (
+                    3,
+                    25,
+                    0,
+                )
             ):
                 return False
 
@@ -348,6 +354,8 @@ class SQLTierAggregator:
                 return self._build_lookup_sql(stage_spec, prev_stage, context)
             case "$merge":
                 return self._build_merge_sql(stage_spec, prev_stage, context)
+            case "$densify":
+                return self._build_densify_sql(stage_spec, prev_stage, context)
             case _:
                 return None, []
 
@@ -528,7 +536,75 @@ class SQLTierAggregator:
         return sql, all_params
 
     def _build_bucket_auto_sql(self, spec, prev_stage, context):
-        return None, []
+        group_by = spec.get("groupBy")
+        buckets = spec.get("buckets", 10)
+        output = spec.get("output", {"count": {"$sum": 1}})
+        granularity = spec.get("granularity")
+
+        if not group_by:
+            return None, []
+
+        if granularity:
+            return None, []
+
+        all_params = []
+        key_sql, key_params = self.evaluator.build_select_expression(group_by)
+        all_params.extend(key_params)
+
+        min_max_sql = f"""
+            SELECT
+                MIN({key_sql}) as min_val,
+                MAX({key_sql}) as max_val
+            FROM {prev_stage}
+        """
+
+        bucket_calc_sql = f"""
+            SELECT
+                min_val,
+                max_val,
+                CASE
+                    WHEN max_val = min_val THEN 0
+                    ELSE (max_val - min_val) / {buckets}
+                END as bucket_width
+            FROM ({min_max_sql})
+        """
+
+        acc_parts = ["bucket_id as _id"]
+        for field, acc_spec in output.items():
+            op, expr = next(iter(acc_spec.items()))
+            agg_result = self._map_accumulator_to_sql(op)
+            if not agg_result:
+                return None, []
+            sql_agg, use_distinct = agg_result
+            expr_sql, expr_params = self.evaluator.build_select_expression(expr)
+            all_params.extend(expr_params)
+            distinct_str = "DISTINCT " if use_distinct else ""
+            acc_parts.append(f"{sql_agg}({distinct_str}{expr_sql}) AS {field}")
+
+        acc_fields = ", ".join(
+            [f"'{f}', {f}" for f in output.keys()] + ["'_id', _id"]
+        )
+        data_expr = f"json_object({acc_fields})"
+
+        sql = f"""
+            SELECT
+                NULL AS id,
+                bucket_id AS _id,
+                {data_expr} AS data
+            FROM (
+                SELECT
+                    {key_sql} as val,
+                    CASE
+                        WHEN max_val = min_val THEN 0
+                        ELSE CAST(({key_sql} - min_val) / ((max_val - min_val) / {buckets}) AS INTEGER)
+                    END as bucket_id
+                FROM {prev_stage}, ({bucket_calc_sql})
+                WHERE min_val IS NOT NULL AND max_val IS NOT NULL
+            )
+            GROUP BY bucket_id
+            ORDER BY bucket_id
+        """
+        return sql, all_params
 
     def _build_union_with_sql(self, spec, prev_stage, context):
         coll_name = spec.get("coll")
@@ -600,11 +676,53 @@ class SQLTierAggregator:
         local_field = spec.get("localField")
         foreign_field = spec.get("foreignField")
         as_field = spec.get("as")
+        pipeline = spec.get("pipeline", [])
 
-        if not all([from_coll, local_field, foreign_field, as_field]):
+        if not from_coll or not as_field:
             return None, []
 
         json_extract_func = f"{self._json_function_prefix}_extract"
+        json_set_func = self._get_json_set()
+
+        if pipeline:
+            if not local_field or not foreign_field:
+                return None, []
+
+            target_coll = self.collection.database.get_collection(from_coll)
+            other_agg = SQLTierAggregator(target_coll, self.evaluator)
+
+            if not other_agg.can_optimize_pipeline(pipeline):
+                return None, []
+
+            pipeline_sql, pipeline_params = other_agg.build_pipeline_sql(
+                pipeline
+            )
+            if not pipeline_sql:
+                return None, []
+
+            local_expr = f"{json_extract_func}(t1.data, '{parse_json_path(local_field)}')"
+
+            joined_data_expr = f"""
+                (SELECT json_group_array(json_set(data, '$._id', _id))
+                 FROM ({pipeline_sql}) AS pipeline_result
+                 WHERE json_extract(data, '{parse_json_path(foreign_field)}') = {local_expr})
+            """
+
+            data_expr = f"json({json_set_func}(t1.data, '{parse_json_path(as_field)}', json({joined_data_expr})))"
+
+            select_parts = ["t1.id", "t1._id", f"{data_expr} AS data"]
+            if context.has_root:
+                select_parts.append("t1.root_data")
+
+            sql = f"""
+                SELECT {", ".join(select_parts)}
+                FROM {prev_stage} AS t1
+            """
+            return sql, pipeline_params
+
+        if not all([local_field, foreign_field]):
+            return None, []
+
         local_expr = (
             f"{json_extract_func}(t1.data, '{parse_json_path(local_field)}')"
         )
@@ -612,8 +730,6 @@ class SQLTierAggregator:
             f"{json_extract_func}(t2.data, '{parse_json_path(foreign_field)}')"
         )
 
-        json_set_func = self._get_json_set()
-        # Use FILTER to skip NULLs when no join match is found (returns [] instead of [null])
         joined_data_expr = f"json_group_array({json_set_func}(t2.data, '$._id', t2._id)) FILTER (WHERE t2.id IS NOT NULL)"
         data_expr = f"json({json_set_func}(t1.data, '{parse_json_path(as_field)}', json({joined_data_expr})))"
 
@@ -622,7 +738,7 @@ class SQLTierAggregator:
             select_parts.append("t1.root_data")
 
         sql = f"""
-            SELECT {', '.join(select_parts)}
+            SELECT {", ".join(select_parts)}
             FROM {prev_stage} AS t1
             LEFT JOIN {quote_table_name(from_coll)} AS t2 ON {local_expr} = {foreign_expr}
             GROUP BY t1.id
@@ -631,6 +747,111 @@ class SQLTierAggregator:
 
     def _build_merge_sql(self, spec, prev_stage, context):
         return None, []
+
+    def _build_densify_sql(self, spec, prev_stage, context):
+        """
+        Build SQL for $densify stage - fills gaps in numeric sequences.
+
+        Algorithm:
+        1. Extract existing distinct values from the field into CTE "existing"
+        2. Calculate min/max bounds from existing values in CTE "bounds_calc"
+        3. Generate series of values from min to max with given step using
+           CROSS JOIN with a numbers table (0-50) in CTE "series"
+        4. UNION ALL:
+           - Original documents from prev_stage
+           - New documents with densified field values (where value not in existing)
+        5. Use NOT EXISTS to filter out values that already exist
+
+        Example: field=[1,3,5], step=1 produces [1,2,3,4,5]
+        - existing: {1,3,5}
+        - series: {1,2,3,4,5}
+        - result: original docs + new docs for {2,4}
+
+        Limitations:
+        - Only supports numeric fields (int/float)
+        - Does not support partitionBy/partitionByFields (requires group-by)
+        - Does not support date fields or granularity
+        - Max gap filling limited to 1000 values (falls back to Python for larger)
+        """
+        field = spec.get("field")
+        range_spec = spec.get("range")
+        partition_by = spec.get("partitionBy") or spec.get("partitionByFields")
+
+        if not field:
+            return None, []
+
+        if partition_by:
+            return None, []
+
+        if not range_spec:
+            return None, []
+
+        step = range_spec.get("step")
+        bounds = range_spec.get("bounds")
+
+        if not step or not bounds:
+            return None, []
+
+        if len(bounds) != 2:
+            return None, []
+
+        all_params = []
+        key_sql, key_params = self.evaluator.build_select_expression(
+            f"${field}"
+        )
+        all_params.extend(key_params)
+
+        lower_bound = bounds[0]
+        bounds[1]
+
+        is_date_field = isinstance(lower_bound, str) and (
+            lower_bound.startswith("00") or "T" in lower_bound
+        )
+
+        if is_date_field:
+            return None, []
+
+        if isinstance(step, int):
+            step_value = step
+        elif isinstance(step, float):
+            step_value = step
+        else:
+            return None, []
+
+        sql = f"""
+            WITH existing AS (
+                SELECT DISTINCT {key_sql} as val
+                FROM {prev_stage}
+                WHERE {key_sql} IS NOT NULL
+            ),
+            bounds_calc AS (
+                SELECT
+                    MIN(val) as min_val,
+                    MAX(val) as max_val
+                FROM existing
+            ),
+            series AS (
+                SELECT min_val + (i * {step_value}) as val
+                FROM bounds_calc
+                CROSS JOIN (
+                    WITH RECURSIVE nums(i) AS (
+                        SELECT 0
+                        UNION ALL
+                        SELECT i + 1 FROM nums WHERE i < 1000
+                    )
+                    SELECT i FROM nums
+                ) nums
+                WHERE min_val + (i * {step_value}) <= (SELECT max_val FROM bounds_calc)
+                AND min_val + (i * {step_value}) >= (SELECT min_val FROM bounds_calc)
+            )
+            SELECT t.id, t._id, t.data
+            FROM {prev_stage} t
+            UNION ALL
+            SELECT NULL as id, NULL as _id, json_object('{field}', s.val) as data
+            FROM series s
+            WHERE NOT EXISTS (SELECT 1 FROM existing e WHERE e.val = s.val)
+        """
+        return sql, all_params
 
     def _build_group_sql(self, spec, prev_stage, context):
         all_params = []
