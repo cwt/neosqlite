@@ -132,6 +132,46 @@ def compare_additional_aggregation_stages():
             neo_lookup = f"Error: {e}"
             print(f"Neo $lookup: Error - {e}")
 
+        # Test $lookup with pipeline
+        try:
+            start_neo_timing()
+            neo_lookup_pipeline_raw = list(
+                neo_collection.aggregate(
+                    [
+                        {
+                            "$lookup": {
+                                "from": "orders",
+                                "localField": "item",
+                                "foreignField": "item",
+                                "pipeline": [
+                                    {"$match": {"qty": {"$gte": 2}}},
+                                    {"$sort": {"order_id": 1}},
+                                ],
+                                "as": "matched_orders",
+                            }
+                        },
+                        {"$sort": {"item": 1}},
+                    ]
+                )
+            )
+            end_neo_timing()
+
+            def clean_lookup_pipeline(docs):
+                for doc in docs:
+                    doc.pop("_id", None)
+                    doc.pop("id", None)
+                    if "matched_orders" in doc:
+                        for o in doc["matched_orders"]:
+                            o.pop("_id", None)
+                            o.pop("id", None)
+                return docs
+
+            neo_lookup_pipeline = clean_lookup_pipeline(neo_lookup_pipeline_raw)
+            print("Neo $lookup with pipeline: OK")
+        except Exception as e:
+            neo_lookup_pipeline = f"Error: {e}"
+            print(f"Neo $lookup with pipeline: Error - {e}")
+
         # Test $bucket
         try:
             start_neo_timing()
@@ -330,6 +370,7 @@ def compare_additional_aggregation_stages():
     mongo_db = None
     mongo_facet = None
     mongo_lookup = None
+    mongo_lookup_pipeline = None
     mongo_sample = None
     mongo_bucket = None
     mongo_bucketauto = None
@@ -445,6 +486,46 @@ def compare_additional_aggregation_stages():
         except Exception as e:
             mongo_lookup = f"Error: {e}"
             print(f"Mongo $lookup: Error - {e}")
+
+        # Test $lookup with pipeline
+        try:
+            start_mongo_timing()
+            mongo_lookup_pipeline_raw = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$lookup": {
+                                "from": "orders",
+                                "localField": "item",
+                                "foreignField": "item",
+                                "pipeline": [
+                                    {"$match": {"qty": {"$gte": 2}}},
+                                    {"$sort": {"order_id": 1}},
+                                ],
+                                "as": "matched_orders",
+                            }
+                        },
+                        {"$sort": {"item": 1}},
+                    ]
+                )
+            )
+            end_mongo_timing()
+
+            def clean_mongo_lookup_pipeline(docs):
+                for doc in docs:
+                    doc.pop("_id", None)
+                    if "matched_orders" in doc:
+                        for o in doc["matched_orders"]:
+                            o.pop("_id", None)
+                return docs
+
+            mongo_lookup_pipeline = clean_mongo_lookup_pipeline(
+                mongo_lookup_pipeline_raw
+            )
+            print("Mongo $lookup with pipeline: OK")
+        except Exception as e:
+            mongo_lookup_pipeline = f"Error: {e}"
+            print(f"Mongo $lookup with pipeline: Error - {e}")
 
         # Test $bucket
         try:
@@ -603,6 +684,13 @@ def compare_additional_aggregation_stages():
         "$lookup",
         neo_lookup,
         mongo_lookup,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Aggregation Stages",
+        "$lookup with pipeline",
+        neo_lookup_pipeline,
+        mongo_lookup_pipeline,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
