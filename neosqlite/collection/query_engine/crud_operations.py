@@ -101,6 +101,15 @@ class CRUDOperationsMixin(QueryEngineProtocol):
 
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         filter = self.helpers._normalize_id_query(filter)
+
+        # Try fast path: use simple SQL UPDATE without fetching document first
+        # This only works for simple operations that don't need to read the document
+        if not array_filters and not upsert:
+            fast_result = self._try_fast_update_one(filter, update)
+            if fast_result is not None:
+                return fast_result
+
+        # Fall back to the original implementation that fetches the document first
         # Find the document using the filter, but we need to work with integer IDs internally
         # For internal operations, we need to retrieve the document differently to get the integer id
         # We'll use a direct SQL query to get both the integer id and the stored _id
@@ -282,6 +291,86 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         return get_integer_id_for_oid(
             self.collection.db, self.collection.name, oid
         )
+
+    def _try_fast_update_one(
+        self,
+        filter: Dict[str, Any],
+        update: Dict[str, Any],
+    ) -> UpdateResult | None:
+        """
+        Try to use a fast SQL UPDATE without fetching the document first.
+
+        This method attempts to execute a simple UPDATE in a single SQL statement
+        without needing to first SELECT the document. This is much faster for
+        simple field updates.
+
+        Args:
+            filter: The query filter
+            update: The update operations
+
+        Returns:
+            UpdateResult if fast path was successful, None otherwise
+        """
+        from ..query_helper.utils import get_force_fallback
+
+        if get_force_fallback():
+            return None
+
+        simple_ops = {"$set", "$min", "$max", "$unset", "$currentDate"}
+        complex_ops = {
+            "$push",
+            "$pull",
+            "$pullAll",
+            "$pop",
+            "$addToSet",
+            "$rename",
+            "$setOnInsert",
+        }
+
+        update_keys = set(update.keys())
+        if update_keys & complex_ops:
+            return None
+
+        if not update_keys.issubset(simple_ops):
+            return None
+
+        for op_key in update_keys:
+            op_value = update[op_key]
+            if isinstance(op_value, dict):
+                for field_path in op_value.keys():
+                    if "$" in field_path or field_path.startswith("[]"):
+                        return None
+
+        update_result = self.helpers._build_update_clause(update)
+        if update_result is None:
+            return None
+
+        set_clause, set_params = update_result
+
+        where_clause, where_params = self.sql_translator.translate_match(filter)
+        if where_clause is None:
+            return None
+
+        try:
+            cmd = f"UPDATE {quote_table_name(self.collection.name)} SET {set_clause} {where_clause}"
+            cursor = self.collection.db.execute(cmd, set_params + where_params)
+
+            if cursor.rowcount > 0:
+                return UpdateResult(
+                    matched_count=cursor.rowcount,
+                    modified_count=cursor.rowcount,
+                    upserted_id=None,
+                )
+            elif cursor.rowcount == 0:
+                return UpdateResult(
+                    matched_count=0,
+                    modified_count=0,
+                    upserted_id=None,
+                )
+        except Exception:
+            return None
+
+        return None
 
     def update_many(
         self,
