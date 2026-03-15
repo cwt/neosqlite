@@ -90,7 +90,9 @@ class UpdateOperationsMixin:
                     if field_name in original_doc:
                         field_value = original_doc[field_name]
                         # Validate the field value
-                        _validate_inc_mul_field_value(field_name, field_value, op)
+                        _validate_inc_mul_field_value(
+                            field_name, field_value, op
+                        )
                     # If field doesn't exist, it will be treated as 0, which is valid
                     # (no validation needed for missing fields)
 
@@ -110,7 +112,9 @@ class UpdateOperationsMixin:
         if self._can_use_sql_updates(update_spec, doc_id, original_doc):
             # Use enhanced SQL update with json_insert/json_replace when possible
             try:
-                updated_doc = self._perform_enhanced_sql_update(doc_id, update_spec)
+                updated_doc = self._perform_enhanced_sql_update(
+                    doc_id, update_spec
+                )
                 # For SQL updates, assume modified if we got a result
                 return updated_doc, updated_doc != original_doc
             except Exception:
@@ -226,7 +230,8 @@ class UpdateOperationsMixin:
             doc_id != 0
             and not has_binary_values
             and all(
-                op in supported_ops or op in {"$push", "$bit", "$pop", "$addToSet"}
+                op in supported_ops
+                or op in {"$push", "$bit", "$pop", "$addToSet"}
                 for op in update_spec.keys()
             )
         )
@@ -394,14 +399,18 @@ class UpdateOperationsMixin:
                             if field in existing_fields:
                                 # Use json_replace for existing fields
                                 if use_json_func:
-                                    replace_clauses.append(f"{json_path}, json(?)")
+                                    replace_clauses.append(
+                                        f"{json_path}, json(?)"
+                                    )
                                 else:
                                     replace_clauses.append(f"{json_path}, ?")
                                 replace_params.append(param_value)
                             else:
                                 # Use json_insert for new fields
                                 if use_json_func:
-                                    insert_clauses.append(f"{json_path}, json(?)")
+                                    insert_clauses.append(
+                                        f"{json_path}, json(?)"
+                                    )
                                 else:
                                     insert_clauses.append(f"{json_path}, ?")
                                 insert_params.append(param_value)
@@ -417,7 +426,10 @@ class UpdateOperationsMixin:
                         values_to_push = []
                         slice_value = None
                         position_value = None
-                        if isinstance(push_value, dict) and "$each" in push_value:
+                        if (
+                            isinstance(push_value, dict)
+                            and "$each" in push_value
+                        ):
                             # Check for $slice and $position
                             if "$slice" in push_value:
                                 slice_value = push_value["$slice"]
@@ -495,9 +507,15 @@ class UpdateOperationsMixin:
                             append_path = f"'{parse_json_path(field)}[#]'"
                             for val in values_to_push:
                                 converted_val = _convert_bytes_to_binary(val)
-                                if isinstance(converted_val, (dict, list, Binary)):
-                                    param_value = neosqlite_json_dumps(converted_val)
-                                    set_clauses.append(f"{append_path}, json(?)")
+                                if isinstance(
+                                    converted_val, (dict, list, Binary)
+                                ):
+                                    param_value = neosqlite_json_dumps(
+                                        converted_val
+                                    )
+                                    set_clauses.append(
+                                        f"{append_path}, json(?)"
+                                    )
                                 else:
                                     param_value = converted_val
                                     set_clauses.append(f"{append_path}, ?")
@@ -505,12 +523,16 @@ class UpdateOperationsMixin:
                 case "$pop":
                     # Tier 2: $pop uses json_remove with [0] or [#-1]
                     for field, pop_direction in value.items():
-                        index_path = "[0]" if int(pop_direction) < 0 else "[#-1]"
+                        index_path = (
+                            "[0]" if int(pop_direction) < 0 else "[#-1]"
+                        )
                         json_path = f"'{parse_json_path(field)}{index_path}'"
                         unset_clauses.append(json_path)
                 case "$addToSet":
                     # Tier 2: $addToSet (with or without $each) can use conditional SQL
-                    insert_func = _get_json_function("insert", self._jsonb_supported)
+                    insert_func = _get_json_function(
+                        "insert", self._jsonb_supported
+                    )
                     for field, val in value.items():
                         json_path = f"'{parse_json_path(field)}'"
 
@@ -528,7 +550,9 @@ class UpdateOperationsMixin:
                         for each_val in values_to_add:
                             converted_val = _convert_bytes_to_binary(each_val)
                             if isinstance(converted_val, (Binary, dict, list)):
-                                param_value = neosqlite_json_dumps(converted_val)
+                                param_value = neosqlite_json_dumps(
+                                    converted_val
+                                )
                                 use_json = True
                             else:
                                 param_value = converted_val
@@ -569,7 +593,9 @@ class UpdateOperationsMixin:
                         extract_func = _get_json_function(
                             "extract", self._jsonb_supported
                         )
-                        current_expr = f"COALESCE({extract_func}(data, {json_path}), 0)"
+                        current_expr = (
+                            f"COALESCE({extract_func}(data, {json_path}), 0)"
+                        )
                         bit_expr = current_expr
                         if "and" in bit_spec:
                             bit_expr = f"({bit_expr} & {int(bit_spec['and'])})"
@@ -683,7 +709,9 @@ class UpdateOperationsMixin:
 
         # Parse the JSON to get field names
         try:
-            doc_data = neosqlite_json_loads(row[0] if self._jsonb_supported else row[0])
+            doc_data = neosqlite_json_loads(
+                row[0] if self._jsonb_supported else row[0]
+            )
             if isinstance(doc_data, dict):
                 return set(doc_data.keys())
             else:
@@ -752,7 +780,9 @@ class UpdateOperationsMixin:
                         set_clauses.append(json_path)
                     # json_remove has a different syntax
                     if set_clauses:
-                        func_name = _get_json_function("remove", self._jsonb_supported)
+                        func_name = _get_json_function(
+                            "remove", self._jsonb_supported
+                        )
                         return (
                             f"data = {func_name}(data, {', '.join(set_clauses)})",
                             params,
@@ -787,12 +817,16 @@ class UpdateOperationsMixin:
                         return None
                     for field, pop_direction in value.items():
                         # 1: remove last, -1: remove first
-                        index_path = "[0]" if int(pop_direction) < 0 else "[#-1]"
+                        index_path = (
+                            "[0]" if int(pop_direction) < 0 else "[#-1]"
+                        )
                         json_path = f"'{parse_json_path(field)}{index_path}'"
                         set_clauses.append(json_path)
                     # json_remove has a different syntax
                     if set_clauses:
-                        func_name = _get_json_function("remove", self._jsonb_supported)
+                        func_name = _get_json_function(
+                            "remove", self._jsonb_supported
+                        )
                         return (
                             f"data = {func_name}(data, {', '.join(set_clauses)})",
                             params,
@@ -806,7 +840,10 @@ class UpdateOperationsMixin:
                         values_to_push = []
                         slice_value = None
                         position_value = None
-                        if isinstance(push_value, dict) and "$each" in push_value:
+                        if (
+                            isinstance(push_value, dict)
+                            and "$each" in push_value
+                        ):
                             # Check for $slice and $position
                             if "$slice" in push_value:
                                 slice_value = push_value["$slice"]
@@ -838,10 +875,14 @@ class UpdateOperationsMixin:
                         json_path = f"'{parse_json_path(field)}'"
 
                         # Handle $position or $slice: need to reconstruct array
-                        if position_value is not None or slice_value is not None:
+                        if (
+                            position_value is not None
+                            or slice_value is not None
+                        ):
                             # Convert values to add
                             converted_values = [
-                                _convert_bytes_to_binary(v) for v in values_to_push
+                                _convert_bytes_to_binary(v)
+                                for v in values_to_push
                             ]
                             # Check if any values are complex
                             has_complex = any(
@@ -850,7 +891,9 @@ class UpdateOperationsMixin:
                             )
 
                             # Build JSON array of new values
-                            new_values_json = neosqlite_json_dumps(converted_values)
+                            new_values_json = neosqlite_json_dumps(
+                                converted_values
+                            )
 
                             # Handle $position: insert at specific position
                             if position_value is not None:
@@ -860,11 +903,15 @@ class UpdateOperationsMixin:
 
                                 if slice_value is not None and slice_value == 0:
                                     # Slice 0 means empty array
-                                    set_clauses.append(f"{json_path}, json('[]')")
+                                    set_clauses.append(
+                                        f"{json_path}, json('[]')"
+                                    )
                                 elif slice_value is not None:
                                     # Both $position and $slice
                                     slice_limit = (
-                                        slice_value if slice_value > 0 else 1000000
+                                        slice_value
+                                        if slice_value > 0
+                                        else 1000000
                                     )
                                     set_clauses.append(
                                         f"{json_path}, (SELECT json_group_array(value) FROM (SELECT value FROM json_each(json_extract(data, {json_path})) LIMIT {position} UNION ALL SELECT value FROM json_each({new_values_json}) UNION ALL SELECT value FROM json_each(json_extract(data, {json_path})) LIMIT {slice_limit} OFFSET {position}))"
@@ -878,7 +925,9 @@ class UpdateOperationsMixin:
                                 # Handle $slice only
                                 if slice_value == 0:
                                     # Slice 0 means empty array
-                                    set_clauses.append(f"{json_path}, json('[]')")
+                                    set_clauses.append(
+                                        f"{json_path}, json('[]')"
+                                    )
                                 else:
                                     # Get existing array, concatenate with new values, then slice
                                     set_clauses.append(
@@ -906,7 +955,9 @@ class UpdateOperationsMixin:
                         json_path = f"'{parse_json_path(field)}'"
                         converted_val = _convert_bytes_to_binary(pull_value)
                         if isinstance(converted_val, (dict, list, Binary)):
-                            pull_value_json = neosqlite_json_dumps(converted_val)
+                            pull_value_json = neosqlite_json_dumps(
+                                converted_val
+                            )
                             set_clauses.append(
                                 f"{json_path}, (SELECT json_group_array(json(value)) FROM json_each(json_extract(data, {json_path})) WHERE json(value) != {pull_value_json} OR json(value) IS NULL)"
                             )
@@ -932,11 +983,16 @@ class UpdateOperationsMixin:
 
                         if has_complex:
                             pull_values_json = [
-                                neosqlite_json_dumps(_convert_bytes_to_binary(v))
+                                neosqlite_json_dumps(
+                                    _convert_bytes_to_binary(v)
+                                )
                                 for v in pull_values
                             ]
                             conditions = " OR ".join(
-                                [f"json(value) != {v}" for v in pull_values_json]
+                                [
+                                    f"json(value) != {v}"
+                                    for v in pull_values_json
+                                ]
                             )
                             set_clauses.append(
                                 f"{json_path}, (SELECT json_group_array(json(value)) FROM json_each(json_extract(data, {json_path})) WHERE {conditions} OR json(value) IS NULL)"
@@ -1147,10 +1203,14 @@ class UpdateOperationsMixin:
                             converted_val = _convert_bytes_to_binary(val)
                             if isinstance(converted_val, Binary):
                                 clauses.append(f"{append_path}, json(?)")
-                                params.append(neosqlite_json_dumps(converted_val))
+                                params.append(
+                                    neosqlite_json_dumps(converted_val)
+                                )
                             elif isinstance(converted_val, (dict, list)):
                                 clauses.append(f"{append_path}, json(?)")
-                                params.append(neosqlite_json_dumps(converted_val))
+                                params.append(
+                                    neosqlite_json_dumps(converted_val)
+                                )
                             else:
                                 clauses.append(f"{append_path}, ?")
                                 params.append(converted_val)
@@ -1228,7 +1288,9 @@ class UpdateOperationsMixin:
 
                     # Check if any values are complex (dict, list, Binary)
                     has_complex = any(
-                        isinstance(_convert_bytes_to_binary(v), (dict, list, Binary))
+                        isinstance(
+                            _convert_bytes_to_binary(v), (dict, list, Binary)
+                        )
                         for v in pull_values
                     )
 
@@ -1442,7 +1504,9 @@ class UpdateOperationsMixin:
                     for k, v in value.items():
                         # Validate that the field value is numeric before performing operation
                         if k in doc_to_update:
-                            _validate_inc_mul_field_value(k, doc_to_update[k], "$mul")
+                            _validate_inc_mul_field_value(
+                                k, doc_to_update[k], "$mul"
+                            )
                             doc_to_update[k] *= v
                 case "$min":
                     for k, v in value.items():
@@ -1484,7 +1548,8 @@ class UpdateOperationsMixin:
     def _validate_inc_mul_types_sql(
         db: Any,
         collection_name: str,
-        filter: Dict[str, Any],
+        where_clause: str | None,
+        where_params: List[Any],
         update: Dict[str, Any],
         jsonb_supported: bool,
     ) -> bool:
@@ -1497,14 +1562,14 @@ class UpdateOperationsMixin:
         Args:
             db: Database connection
             collection_name: Name of the collection
-            filter: The query filter
+            where_clause: The translated WHERE clause
+            where_params: Parameters for the WHERE clause
             update: The update operations
             jsonb_supported: Whether JSONB is supported
 
         Returns:
             True if all fields are numeric or don't exist, False if any field is non-numeric
         """
-        from .query_builder import QueryBuilder
         from .utils import _get_json_function
 
         fields_to_check = []
@@ -1517,32 +1582,38 @@ class UpdateOperationsMixin:
 
         json_func = _get_json_function("type", jsonb_supported)
 
+        # Build a single query to check all fields
+        select_expressions = []
         for field in fields_to_check:
-            json_path = f"'$.{field}'"
-            if jsonb_supported:
-                type_check_sql = f"{json_func}(data, '{json_path}')"
-            else:
-                type_check_sql = f"{json_func}(data)"
+            # json_type(data, '$.field') or jsonb_type(data, '$.field')
+            json_path = f"$.{field}"
+            select_expressions.append(f"{json_func}(data, '{json_path}')")
 
-            where_clause, params = QueryBuilder.build_match_clause(
-                db, collection_name, filter, jsonb_supported
-            )
-            if not where_clause:
-                where_clause = "1=1"
+        if not where_clause:
+            where_clause = "WHERE 1=1"
 
-            cmd = f"SELECT {type_check_sql} FROM {quote_table_name(collection_name)} WHERE {where_clause} LIMIT 1"
-            try:
-                cursor = db.execute(cmd, params)
-                row = cursor.fetchone()
-                if row and row[0] is not None:
-                    field_type = row[0]
-                    if jsonb_supported:
-                        if field_type not in ("number", "null", "integer", "real"):
-                            return False
-                    else:
-                        if field_type not in ("null", "integer", "real"):
-                            return False
-            except Exception:
-                return False
-
-        return True
+        cmd = f"SELECT {', '.join(select_expressions)} FROM {quote_table_name(collection_name)} {where_clause} LIMIT 1"
+        try:
+            cursor = db.execute(cmd, where_params)
+            row = cursor.fetchone()
+            if row:
+                for field_type in row:
+                    if field_type is not None:
+                        if jsonb_supported:
+                            # JSONB type returns 'number' for both int and float
+                            if field_type not in (
+                                "number",
+                                "null",
+                                "integer",
+                                "real",
+                            ):
+                                return False
+                        else:
+                            # Standard JSON type returns 'integer' or 'real'
+                            if field_type not in ("null", "integer", "real"):
+                                return False
+            # If no row matches, the update will be a no-op anyway, so it's safe to use fast path
+            return True
+        except Exception:
+            # Fallback to slow path on any SQL error
+            return False
