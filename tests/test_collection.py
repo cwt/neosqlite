@@ -474,6 +474,68 @@ def test_update_with_max_kill_switch_comparison(collection):
     assert doc_normal["value"] == 10
 
 
+def test_update_with_setOnInsert_kill_switch_comparison(collection):
+    """Test $setOnInsert returns same results with/without kill switch."""
+    from neosqlite.collection.query_helper import (
+        set_force_fallback,
+        get_force_fallback,
+    )
+
+    collection.insert_one({"_id": 1, "name": "test"})
+
+    collection.update_one({"_id": 1}, {"$setOnInsert": {"created": True}})
+    doc_normal = collection.find_one({"_id": 1})
+
+    collection.update_one({"_id": 1}, {"$set": {"name": "test"}})
+
+    original_state = get_force_fallback()
+    try:
+        set_force_fallback(True)
+
+        collection.update_one({"_id": 1}, {"$setOnInsert": {"created": True}})
+        doc_fallback = collection.find_one({"_id": 1})
+    finally:
+        set_force_fallback(original_state)
+
+    # $setOnInsert should NOT apply to existing documents
+    assert "created" not in doc_normal
+    assert "created" not in doc_fallback
+    assert doc_normal == doc_fallback
+
+
+def test_update_with_push_slice_kill_switch_comparison(collection):
+    """Test $push with $slice returns same results with/without kill switch."""
+    from neosqlite.collection.query_helper import (
+        set_force_fallback,
+        get_force_fallback,
+    )
+
+    collection.insert_one({"_id": 1, "tags": ["a", "b"]})
+
+    result_normal = collection.update_one(
+        {"_id": 1}, {"$push": {"tags": {"$each": ["c", "d", "e"], "$slice": 3}}}
+    )
+    doc_normal = collection.find_one({"_id": 1})
+
+    collection.update_one({"_id": 1}, {"$set": {"tags": ["a", "b"]}})
+
+    original_state = get_force_fallback()
+    try:
+        set_force_fallback(True)
+
+        result_fallback = collection.update_one(
+            {"_id": 1},
+            {"$push": {"tags": {"$each": ["c", "d", "e"], "$slice": 3}}},
+        )
+        doc_fallback = collection.find_one({"_id": 1})
+    finally:
+        set_force_fallback(original_state)
+
+    assert result_normal.modified_count == result_fallback.modified_count
+    assert doc_normal["tags"] == doc_fallback["tags"]
+    assert doc_normal["tags"] == ["a", "b", "c"]
+
+
 def test_update_with_pop_last(collection):
     """Test $pop operator with positive value in updates."""
     collection.insert_one({"a": 1, "items": ["x", "y", "z"]})

@@ -174,6 +174,7 @@ class UpdateOperationsMixin:
             "$pullAll",
             "$currentDate",
             "$rename",
+            "$setOnInsert",
         }
 
         # Also check that doc_id is not 0 (which indicates an upsert)
@@ -211,11 +212,11 @@ class UpdateOperationsMixin:
                         or "$position" in value
                         or "$slice" in value
                     ):
-                        # SQL optimization supports $each, but not $position or $slice
-                        if "$position" in value or "$slice" in value:
+                        # SQL optimization supports $each and $slice, but not $position
+                        if "$position" in value:
                             has_complex_push = True
                             break
-                        # $each is supported in our enhanced SQL path
+                        # $each and $slice are supported in our enhanced SQL path
 
         # Check for $pop operator
         has_pop = "$pop" in update_spec
@@ -436,33 +437,71 @@ class UpdateOperationsMixin:
                         json_path = f"'{parse_json_path(field)}'"
                         unset_clauses.append(json_path)
                 case "$push":
-                    # Tier 2: $push (with $each) can use SQL json_set with [#]
+                    # Tier 2: $push (with $each, optionally with $slice) can use SQL json_set with [#]
                     for field, push_value in value.items():
                         # Extract values to push (handle $each)
                         values_to_push = []
+                        slice_value = None
                         if (
                             isinstance(push_value, dict)
                             and "$each" in push_value
                         ):
+                            # Check for $slice
+                            if "$slice" in push_value:
+                                slice_value = push_value["$slice"]
                             values_to_push = push_value["$each"]
                             if not isinstance(values_to_push, list):
                                 values_to_push = [values_to_push]
                         else:
                             values_to_push = [push_value]
 
-                        # Append each value using [#]
-                        json_path = f"'{parse_json_path(field)}[#]'"
-                        for val in values_to_push:
-                            converted_val = _convert_bytes_to_binary(val)
-                            if isinstance(converted_val, (dict, list, Binary)):
-                                param_value = neosqlite_json_dumps(
-                                    converted_val
-                                )
-                                set_clauses.append(f"{json_path}, json(?)")
+                        # Check for $slice without $each
+                        if (
+                            isinstance(push_value, dict)
+                            and "$slice" in push_value
+                            and "$each" not in push_value
+                        ):
+                            slice_value = push_value["$slice"]
+
+                        json_path = f"'{parse_json_path(field)}'"
+
+                        # Handle $slice: need to reconstruct array with limit
+                        if slice_value is not None:
+                            # Convert values to add
+                            converted_values = [
+                                _convert_bytes_to_binary(v)
+                                for v in values_to_push
+                            ]
+                            # Build JSON array of new values
+                            new_values_json = neosqlite_json_dumps(
+                                converted_values
+                            )
+                            if slice_value == 0:
+                                # Slice 0 means empty array
+                                set_clauses.append(f"{json_path}, json('[]')")
                             else:
-                                param_value = converted_val
-                                set_clauses.append(f"{json_path}, ?")
-                            set_params.append(param_value)
+                                # Get existing array, concatenate with new values, then slice
+                                set_clauses.append(
+                                    f"{json_path}, (SELECT json_group_array(value) FROM (SELECT value FROM json_each(json_extract(data, {json_path})) UNION ALL SELECT value FROM json_each({new_values_json}) LIMIT {slice_value if slice_value > 0 else 1000000}))"
+                                )
+                        else:
+                            # No $slice - just append values using [#]
+                            append_path = f"'{parse_json_path(field)}[#]'"
+                            for val in values_to_push:
+                                converted_val = _convert_bytes_to_binary(val)
+                                if isinstance(
+                                    converted_val, (dict, list, Binary)
+                                ):
+                                    param_value = neosqlite_json_dumps(
+                                        converted_val
+                                    )
+                                    set_clauses.append(
+                                        f"{append_path}, json(?)"
+                                    )
+                                else:
+                                    param_value = converted_val
+                                    set_clauses.append(f"{append_path}, ?")
+                                set_params.append(param_value)
                 case "$pop":
                     # Tier 2: $pop uses json_remove with [0] or [#-1]
                     for field, pop_direction in value.items():
@@ -777,19 +816,20 @@ class UpdateOperationsMixin:
                     else:
                         return None
                 case "$push":
-                    # Optimized $push (with $each) using [#]
+                    # Optimized $push (with $each, optionally with $slice) using [#]
                     for field, push_value in value.items():
-                        # Handle $each
+                        # Handle $each and $slice
                         values_to_push = []
+                        slice_value = None
                         if (
                             isinstance(push_value, dict)
                             and "$each" in push_value
                         ):
-                            # SQL optimization supports $each, but not $position or $slice
-                            if (
-                                "$position" in push_value
-                                or "$slice" in push_value
-                            ):
+                            # Check for $slice
+                            if "$slice" in push_value:
+                                slice_value = push_value["$slice"]
+                            # SQL optimization supports $each and $slice, but not $position
+                            if "$position" in push_value:
                                 return None
                             values_to_push = push_value["$each"]
                             if not isinstance(values_to_push, list):
@@ -797,14 +837,53 @@ class UpdateOperationsMixin:
                         else:
                             values_to_push = [push_value]
 
-                        # Append each value
-                        json_path = f"'{parse_json_path(field)}[#]'"
-                        for val in values_to_push:
-                            set_clauses.append(f"{json_path}, ?")
-                            params.append(val)
+                        # Check for $slice without $each
+                        if (
+                            isinstance(push_value, dict)
+                            and "$slice" in push_value
+                            and "$each" not in push_value
+                        ):
+                            slice_value = push_value["$slice"]
+
+                        json_path = f"'{parse_json_path(field)}'"
+
+                        # Handle $slice: need to reconstruct array with limit
+                        if slice_value is not None:
+                            # Convert values to add
+                            converted_values = [
+                                _convert_bytes_to_binary(v)
+                                for v in values_to_push
+                            ]
+                            # Check if any values are complex
+                            has_complex = any(
+                                isinstance(v, (dict, list, Binary))
+                                for v in converted_values
+                            )
+
+                            # Build JSON array of new values
+                            new_values_json = neosqlite_json_dumps(
+                                converted_values
+                            )
+                            if slice_value == 0:
+                                # Slice 0 means empty array
+                                set_clauses.append(f"{json_path}, json('[]')")
+                            else:
+                                # Get existing array, concatenate with new values, then slice
+                                set_clauses.append(
+                                    f"{json_path}, (SELECT json_group_array(value) FROM (SELECT value FROM json_each(json_extract(data, {json_path})) UNION ALL SELECT value FROM json_each({new_values_json}) LIMIT {slice_value if slice_value > 0 else 1000000}))"
+                                )
+                        else:
+                            # No $slice - just append values
+                            append_path = f"'{parse_json_path(field)}[#]'"
+                            for val in values_to_push:
+                                converted_val = _convert_bytes_to_binary(val)
+                                set_clauses.append(f"{append_path}, ?")
+                                params.append(converted_val)
                 case "$setOnInsert":
-                    # $setOnInsert is conditional on upsert, force Python fallback
-                    return None
+                    # $setOnInsert only applies on upsert (doc_id == 0)
+                    # For existing documents (doc_id != 0), this is a no-op
+                    # We can safely skip it in the SQL path
+                    pass
                 case "$rename":
                     # $rename is handled in _perform_enhanced_sql_update for proper
                     # set + unset ordering. Return None here to use enhanced path.
@@ -977,13 +1056,17 @@ class UpdateOperationsMixin:
                     else:
                         params.append(converted_val)
             case "$push":
-                # Optimized $push (with $each) using [#]
+                # Optimized $push (with $each, optionally with $slice) using [#]
                 for field, push_value in value.items():
-                    # Handle $each
+                    # Handle $each and $slice
                     values_to_push = []
+                    slice_value = None
                     if isinstance(push_value, dict) and "$each" in push_value:
-                        # SQL optimization supports $each, but not $position or $slice
-                        if "$position" in push_value or "$slice" in push_value:
+                        # Check for $slice
+                        if "$slice" in push_value:
+                            slice_value = push_value["$slice"]
+                        # SQL optimization supports $each and $slice, but not $position
+                        if "$position" in push_value:
                             # This should have been caught by _can_use_sql_updates
                             # but as a safeguard we return empty to avoid SQL error
                             return [], []
@@ -993,20 +1076,51 @@ class UpdateOperationsMixin:
                     else:
                         values_to_push = [push_value]
 
-                    # Append each value
-                    json_path = f"'{parse_json_path(field)}[#]'"
-                    for val in values_to_push:
-                        # Convert bytes to Binary for proper JSON serialization
-                        converted_val = _convert_bytes_to_binary(val)
-                        if isinstance(converted_val, Binary):
-                            clauses.append(f"{json_path}, json(?)")
-                            params.append(neosqlite_json_dumps(converted_val))
-                        elif isinstance(converted_val, (dict, list)):
-                            clauses.append(f"{json_path}, json(?)")
-                            params.append(neosqlite_json_dumps(converted_val))
+                    # Check for $slice without $each
+                    if (
+                        isinstance(push_value, dict)
+                        and "$slice" in push_value
+                        and "$each" not in push_value
+                    ):
+                        slice_value = push_value["$slice"]
+
+                    json_path = f"'{parse_json_path(field)}'"
+
+                    # Handle $slice: need to reconstruct array with limit
+                    if slice_value is not None:
+                        # Convert values to add
+                        converted_values = [
+                            _convert_bytes_to_binary(v) for v in values_to_push
+                        ]
+                        # Build JSON array of new values
+                        new_values_json = neosqlite_json_dumps(converted_values)
+                        if slice_value == 0:
+                            # Slice 0 means empty array
+                            clauses.append(f"{json_path}, json('[]')")
                         else:
-                            clauses.append(f"{json_path}, ?")
-                            params.append(converted_val)
+                            # Get existing array, concatenate with new values, then slice
+                            clauses.append(
+                                f"{json_path}, (SELECT json_group_array(value) FROM (SELECT value FROM json_each(json_extract(data, {json_path})) UNION ALL SELECT value FROM json_each({new_values_json}) LIMIT {slice_value if slice_value > 0 else 1000000}))"
+                            )
+                    else:
+                        # No $slice - just append values
+                        append_path = f"'{parse_json_path(field)}[#]'"
+                        for val in values_to_push:
+                            # Convert bytes to Binary for proper JSON serialization
+                            converted_val = _convert_bytes_to_binary(val)
+                            if isinstance(converted_val, Binary):
+                                clauses.append(f"{append_path}, json(?)")
+                                params.append(
+                                    neosqlite_json_dumps(converted_val)
+                                )
+                            elif isinstance(converted_val, (dict, list)):
+                                clauses.append(f"{append_path}, json(?)")
+                                params.append(
+                                    neosqlite_json_dumps(converted_val)
+                                )
+                            else:
+                                clauses.append(f"{append_path}, ?")
+                                params.append(converted_val)
             case "$pop":
                 # Tier 2: $pop uses json_remove with [0] or [#-1]
                 if not _supports_relative_json_indexing():
@@ -1130,6 +1244,11 @@ class UpdateOperationsMixin:
                         clauses.append(
                             f"{json_path}, strftime('%Y-%m-%dT%H:%M:%f', 'now')"
                         )
+            case "$setOnInsert":
+                # $setOnInsert only applies on upsert (doc_id == 0)
+                # For existing documents (doc_id != 0), this is a no-op
+                # We can safely skip it - return empty clauses
+                pass
             case "$rename":
                 # SQL implementation for $rename
                 # $rename requires: get value, set at new path, remove old path
