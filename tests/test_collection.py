@@ -251,6 +251,109 @@ def test_update_with_pull_kill_switch_comparison(collection):
     assert doc_normal["values"] == [2, 3, 2]
 
 
+def test_update_with_currentDate_kill_switch_comparison(collection):
+    """Test $currentDate returns same results with/without kill switch."""
+    from neosqlite.collection.query_helper import (
+        set_force_fallback,
+        get_force_fallback,
+    )
+
+    collection.insert_one({"_id": 1, "name": "test"})
+
+    result_normal = collection.update_one(
+        {"_id": 1}, {"$currentDate": {"lastModified": True}}
+    )
+    doc_normal = collection.find_one({"_id": 1})
+
+    collection.update_one({"_id": 1}, {"$set": {"name": "test"}})
+
+    original_state = get_force_fallback()
+    try:
+        set_force_fallback(True)
+
+        result_fallback = collection.update_one(
+            {"_id": 1}, {"$currentDate": {"lastModified": True}}
+        )
+        doc_fallback = collection.find_one({"_id": 1})
+    finally:
+        set_force_fallback(original_state)
+
+    assert result_normal.modified_count == result_fallback.modified_count
+    assert "lastModified" in doc_normal
+    assert "lastModified" in doc_fallback
+    # Both should be datetime objects (or strings) - just verify they exist
+    # Using isinstance to check type to satisfy lint
+    assert isinstance(
+        doc_normal["lastModified"], type(doc_fallback["lastModified"])
+    )
+
+
+def test_update_with_rename_kill_switch_comparison(collection):
+    """Test $rename returns same results with/without kill switch."""
+    from neosqlite.collection.query_helper import (
+        set_force_fallback,
+        get_force_fallback,
+    )
+
+    collection.insert_one({"_id": 1, "foo": "bar", "a": 1})
+
+    result_normal = collection.update_one(
+        {"_id": 1}, {"$rename": {"foo": "baz"}}
+    )
+    doc_normal = collection.find_one({"_id": 1})
+
+    collection.update_one({"_id": 1}, {"$set": {"foo": "bar"}})
+
+    original_state = get_force_fallback()
+    try:
+        set_force_fallback(True)
+
+        result_fallback = collection.update_one(
+            {"_id": 1}, {"$rename": {"foo": "baz"}}
+        )
+        doc_fallback = collection.find_one({"_id": 1})
+    finally:
+        set_force_fallback(original_state)
+
+    assert result_normal.modified_count == result_fallback.modified_count
+    assert doc_normal == doc_fallback
+    assert "foo" not in doc_normal
+    assert "baz" in doc_normal
+    assert doc_normal["baz"] == "bar"
+
+
+def test_update_with_addToSet_each_kill_switch_comparison(collection):
+    """Test $addToSet with $each returns same results with/without kill switch."""
+    from neosqlite.collection.query_helper import (
+        set_force_fallback,
+        get_force_fallback,
+    )
+
+    collection.insert_one({"_id": 1, "tags": ["existing"]})
+
+    result_normal = collection.update_one(
+        {"_id": 1}, {"$addToSet": {"tags": {"$each": ["a", "b", "c"]}}}
+    )
+    doc_normal = collection.find_one({"_id": 1})
+
+    collection.update_one({"_id": 1}, {"$set": {"tags": ["existing"]}})
+
+    original_state = get_force_fallback()
+    try:
+        set_force_fallback(True)
+
+        result_fallback = collection.update_one(
+            {"_id": 1}, {"$addToSet": {"tags": {"$each": ["a", "b", "c"]}}}
+        )
+        doc_fallback = collection.find_one({"_id": 1})
+    finally:
+        set_force_fallback(original_state)
+
+    assert result_normal.modified_count == result_fallback.modified_count
+    assert doc_normal["tags"] == doc_fallback["tags"]
+    assert set(doc_normal["tags"]) == {"existing", "a", "b", "c"}
+
+
 def test_update_with_pop_last(collection):
     """Test $pop operator with positive value in updates."""
     collection.insert_one({"a": 1, "items": ["x", "y", "z"]})

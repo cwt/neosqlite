@@ -493,9 +493,9 @@ def test_query_helper_can_use_sql_updates_edge_cases():
         result = helper._can_use_sql_updates({"$set": {"field": "value"}}, 0)
         assert not result
 
-        # Test case: unsupported operation
+        # Test case: $rename is now supported in SQL
         result = helper._can_use_sql_updates({"$rename": {"old": "new"}}, 1)
-        assert not result
+        assert result  # $rename is now supported in SQL
 
         # Test case: Binary object in update spec
         result = helper._can_use_sql_updates(
@@ -1862,7 +1862,7 @@ def test_benchmark_simple_operations():
         print(f"Optimized time: {optimized_time:.6f}s")
         print(f"Fallback time: {fallback_time:.6f}s")
         if optimized_time > 0:
-            print(f"Performance ratio: {fallback_time/optimized_time:.2f}x")
+            print(f"Performance ratio: {fallback_time / optimized_time:.2f}x")
 
 
 def test_force_fallback_kill_switch():

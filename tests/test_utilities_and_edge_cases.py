@@ -969,11 +969,11 @@ def test_can_use_sql_updates_with_binary_values():
         # Should return True for supported operations
         assert result
 
-        # Test with unsupported operations (should return False)
+        # Test with $rename (now supported in SQL)
         update_spec = {"$rename": {"old": "new"}}
         result = helper._can_use_sql_updates(update_spec, 1)
-        # Should return False for unsupported operations
-        assert not result
+        # Should return True now that $rename is supported in SQL
+        assert result
 
         # Test with upsert (doc_id = 0, should return False)
         update_spec = {"$set": {"data": "regular_data"}}

@@ -22,11 +22,11 @@ from ..json_path_utils import (
 
 # Import utility functions
 from .utils import (
-    _FORCE_FALLBACK,
     _convert_bytes_to_binary,
     _get_json_function,
     _validate_inc_mul_field_value,
     _supports_relative_json_indexing,
+    get_force_fallback,
 )
 
 # Import positional update functions
@@ -97,7 +97,7 @@ class UpdateOperationsMixin:
                     # (no validation needed for missing fields)
 
         # Respect the kill switch - force Python fallback if enabled
-        if _FORCE_FALLBACK:
+        if get_force_fallback():
             return self._perform_python_update(
                 doc_id, update_spec, original_doc, array_filters, query_filter
             )
@@ -158,7 +158,7 @@ class UpdateOperationsMixin:
             bool: True if all operations can be handled with SQL, False otherwise.
         """
         # Respect the kill switch - force fallback if enabled
-        if _FORCE_FALLBACK:
+        if get_force_fallback():
             return False
 
         # Tier 1: Simple operations that can use json_set/json_remove
@@ -172,6 +172,8 @@ class UpdateOperationsMixin:
             "$max",
             "$pull",
             "$pullAll",
+            "$currentDate",
+            "$rename",
         }
 
         # Also check that doc_id is not 0 (which indicates an upsert)
@@ -221,15 +223,8 @@ class UpdateOperationsMixin:
         if has_pop and not _supports_relative_json_indexing():
             return False
 
-        # Check for $addToSet operator
-        has_add_to_set = "$addToSet" in update_spec
-        if has_add_to_set:
-            add_to_set_spec = update_spec["$addToSet"]
-            if isinstance(add_to_set_spec, dict):
-                for value in add_to_set_spec.values():
-                    # $each in $addToSet is complex in SQL
-                    if isinstance(value, dict) and "$each" in value:
-                        return False
+        # Check for $addToSet operator - now supports $each in SQL
+        # Note: We no longer return False for $each since we have SQL implementation
 
         # Complex $push with $position/$slice requires Python fallback
         if has_complex_push:
@@ -477,38 +472,63 @@ class UpdateOperationsMixin:
                         json_path = f"'{parse_json_path(field)}{index_path}'"
                         unset_clauses.append(json_path)
                 case "$addToSet":
-                    # Tier 2: $addToSet (without $each) can use conditional SQL
+                    # Tier 2: $addToSet (with or without $each) can use conditional SQL
+                    insert_func = _get_json_function(
+                        "insert", self._jsonb_supported
+                    )
                     for field, val in value.items():
                         json_path = f"'{parse_json_path(field)}'"
-                        converted_val = _convert_bytes_to_binary(val)
-                        if isinstance(converted_val, (Binary, dict, list)):
-                            param_value = neosqlite_json_dumps(converted_val)
-                            use_json = True
-                        else:
-                            param_value = converted_val
-                            use_json = False
 
-                        if not use_json:
-                            insert_func = _get_json_function(
-                                "insert", self._jsonb_supported
-                            )
+                        # Handle $each modifier
+                        values_to_add = []
+                        if isinstance(val, dict) and "$each" in val:
+                            each_values = val["$each"]
+                            if not isinstance(each_values, list):
+                                each_values = [each_values]
+                            values_to_add = each_values
+                        else:
+                            values_to_add = [val]
+
+                        # Process each value
+                        for each_val in values_to_add:
+                            converted_val = _convert_bytes_to_binary(each_val)
+                            if isinstance(converted_val, (Binary, dict, list)):
+                                param_value = neosqlite_json_dumps(
+                                    converted_val
+                                )
+                                use_json = True
+                            else:
+                                param_value = converted_val
+                                use_json = False
+
                             array_path = json_path
                             append_path = f"'{parse_json_path(field)}[#]'"
-                            cmd = (
-                                f"UPDATE {quote_table_name(self.collection.name)} "
-                                f"SET data = {insert_func}(data, {append_path}, ?) "
-                                f"WHERE id = ? AND NOT EXISTS ("
-                                f"  SELECT 1 FROM json_each(data, {array_path}) "
-                                f"  WHERE value = ?"
-                                f")"
-                            )
-                            self.collection.db.execute(
-                                cmd, (param_value, int_doc_id, param_value)
-                            )
-                        else:
-                            raise NotImplementedError(
-                                "$addToSet with complex values requires Python fallback"
-                            )
+                            if not use_json:
+                                cmd = (
+                                    f"UPDATE {quote_table_name(self.collection.name)} "
+                                    f"SET data = {insert_func}(data, {append_path}, ?) "
+                                    f"WHERE id = ? AND NOT EXISTS ("
+                                    f"  SELECT 1 FROM json_each(data, {array_path}) "
+                                    f"  WHERE value = ?"
+                                    f")"
+                                )
+                                self.collection.db.execute(
+                                    cmd, (param_value, int_doc_id, param_value)
+                                )
+                            else:
+                                # For complex values (dict, list, Binary), use a more complex SQL
+                                # We need to check if the JSON value already exists
+                                cmd = (
+                                    f"UPDATE {quote_table_name(self.collection.name)} "
+                                    f"SET data = {insert_func}(data, {append_path}, json(?)) "
+                                    f"WHERE id = ? AND NOT EXISTS ("
+                                    f"  SELECT 1 FROM json_each(data, {array_path}) "
+                                    f"  WHERE json(value) = json(?)"
+                                    f")"
+                                )
+                                self.collection.db.execute(
+                                    cmd, (param_value, int_doc_id, param_value)
+                                )
                 case "$bit":
                     # Tier 2: $bit using bitwise operators
                     for field, bit_spec in value.items():
@@ -528,6 +548,41 @@ class UpdateOperationsMixin:
                             xor_val = int(bit_spec["xor"])
                             bit_expr = f"(({bit_expr} | {xor_val}) & ~(({bit_expr}) & {xor_val}))"
                         set_clauses.append(f"{json_path}, {bit_expr}")
+                case "$currentDate":
+                    # SQL implementation for $currentDate
+                    for field, type_spec in value.items():
+                        json_path = f"'{parse_json_path(field)}'"
+                        # Determine type: true defaults to date, { $type: "timestamp" } or { $type: "date" }
+                        if isinstance(type_spec, dict) and "$type" in type_spec:
+                            type_value = type_spec["$type"]
+                        elif type_spec is True:
+                            type_value = "date"
+                        else:
+                            type_value = "date"
+                        # Set to current datetime ISO string
+                        if type_value == "timestamp":
+                            set_clauses.append(
+                                f"{json_path}, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+                            )
+                        else:
+                            # For date type, match Python's datetime.now().isoformat() format
+                            set_clauses.append(
+                                f"{json_path}, strftime('%Y-%m-%dT%H:%M:%f', 'now')"
+                            )
+                case "$rename":
+                    # SQL implementation for $rename
+                    for old_field, new_field in value.items():
+                        old_json_path = f"'{parse_json_path(old_field)}'"
+                        new_field_key = f"'{new_field}'"
+                        extract_func = _get_json_function(
+                            "extract", self._jsonb_supported
+                        )
+                        # Set new field with value from old field
+                        set_clauses.append(
+                            f"{new_field_key}, {extract_func}(data, {old_json_path})"
+                        )
+                        # Remove old field
+                        unset_clauses.append(old_json_path)
                 case _:
                     # For other operations, use the standard approach
                     clauses, params = self._build_sql_update_clause(op, value)
@@ -681,10 +736,24 @@ class UpdateOperationsMixin:
                 case "$currentDate":
                     for field, type_spec in value.items():
                         json_path = f"'{parse_json_path(field)}'"
-                        # Set to current datetime ISO string
-                        set_clauses.append(
-                            f"{json_path}, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
-                        )
+                        # Determine type: true defaults to date, { $type: "timestamp" } or { $type: "date" }
+                        if isinstance(type_spec, dict) and "$type" in type_spec:
+                            type_value = type_spec["$type"]
+                        elif type_spec is True:
+                            type_value = "date"
+                        else:
+                            type_value = "date"
+                        # Set to current datetime ISO string to match Python implementation
+                        # Use strftime for consistent ISO format (Python uses isoformat() like '2026-03-15T12:34:56.789012')
+                        if type_value == "timestamp":
+                            set_clauses.append(
+                                f"{json_path}, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+                            )
+                        else:
+                            # For date type, match Python's datetime.now().isoformat() format
+                            set_clauses.append(
+                                f"{json_path}, strftime('%Y-%m-%dT%H:%M:%f', 'now')"
+                            )
                 case "$pop":
                     # For $pop, we use json_remove
                     if not _supports_relative_json_indexing():
@@ -737,8 +806,8 @@ class UpdateOperationsMixin:
                     # $setOnInsert is conditional on upsert, force Python fallback
                     return None
                 case "$rename":
-                    # $rename is complex to do in SQL,
-                    # so we'll fall back to the Python implementation
+                    # $rename is handled in _perform_enhanced_sql_update for proper
+                    # set + unset ordering. Return None here to use enhanced path.
                     return None
                 case "$pull":
                     # SQL optimization for $pull: filter array elements using json_each
@@ -1040,6 +1109,33 @@ class UpdateOperationsMixin:
                             f"{json_path}, (SELECT json_group_array(value) FROM json_each(json_extract(data, {json_path})) WHERE value NOT IN ({placeholders}))"
                         )
                         params.extend(converted_values)
+            case "$currentDate":
+                # SQL implementation for $currentDate
+                for field, type_spec in value.items():
+                    json_path = f"'{parse_json_path(field)}'"
+                    # Determine type: true defaults to date, { $type: "timestamp" } or { $type: "date" }
+                    if isinstance(type_spec, dict) and "$type" in type_spec:
+                        type_value = type_spec["$type"]
+                    elif type_spec is True:
+                        type_value = "date"
+                    else:
+                        type_value = "date"
+                    # Set to current datetime ISO string to match Python implementation
+                    if type_value == "timestamp":
+                        clauses.append(
+                            f"{json_path}, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+                        )
+                    else:
+                        # For date type, match Python's datetime.now().isoformat() format
+                        clauses.append(
+                            f"{json_path}, strftime('%Y-%m-%dT%H:%M:%f', 'now')"
+                        )
+            case "$rename":
+                # SQL implementation for $rename
+                # $rename requires: get value, set at new path, remove old path
+                # This is handled in _perform_enhanced_sql_update specially
+                # Return empty to trigger fallback for complex cases
+                return [], []
 
         return clauses, params
 
@@ -1128,8 +1224,19 @@ class UpdateOperationsMixin:
                 case "$addToSet":
                     for k, v in value.items():
                         current_list = doc_to_update.setdefault(k, [])
-                        if v not in current_list:
-                            current_list.append(v)
+                        # Handle $each modifier
+                        values_to_add = []
+                        if isinstance(v, dict) and "$each" in v:
+                            each_values = v["$each"]
+                            if not isinstance(each_values, list):
+                                each_values = [each_values]
+                            values_to_add = each_values
+                        else:
+                            values_to_add = [v]
+                        # Add each value if not already present
+                        for val in values_to_add:
+                            if val not in current_list:
+                                current_list.append(val)
                 case "$pull":
                     for k, v in value.items():
                         if k in doc_to_update:
