@@ -1,8 +1,8 @@
 # PyMongo API Comparison
 
-**Last Updated**: March 12, 2026
-**NeoSQLite Version**: v1.8.0+
-**PyMongo Compatibility**: 100% (370 tests: 359 passed, 11 skipped by design, 0 failed)
+**Last Updated**: March 16, 2026
+**NeoSQLite Version**: v1.9.2
+**PyMongo Compatibility**: 100% (372 API tests: 360 passed, 12 skipped by design, 0 failed)
 
 ---
 
@@ -117,7 +117,7 @@ The following APIs have been implemented and tested:
 - ✅ `to_list(length)` - Convert cursor to list efficiently (7 tests)
 - ✅ `clone()` - Create unevaluated cursor copy (7 tests)
 - ✅ `explain(verbosity)` - Return query execution plan via SQLite EXPLAIN QUERY PLAN (8 tests)
-- ⚠️ `AggregationCursor` currently lacks `explain()`, `alive()`, and `to_list(length)` (Planned)
+- ✅ `AggregationCursor` - Now has `explain()`, `alive()`, and `to_list(length)` support
 
 #### Collection Methods
 - ✅ `validate()` - Validate collection integrity via SQLite PRAGMA (5 tests, NeoSQLite extension)
@@ -129,8 +129,8 @@ The following APIs have been implemented and tested:
 - ✅ `with_options()` - Return database clone with different options (Now correctly returns a clone)
 - ✅ `command()` - Issue database commands (ping, serverStatus, listCollections, etc.) (11 tests)
 
-**Test Coverage**: 230+ unit tests, all passing
-**API Compatibility**: 100% (370 tests total)
+**Test Coverage**: 372 API comparison tests, all passing
+**API Compatibility**: 100% (360 passed, 12 skipped by design)
 **Kill Switch Verified**: All APIs work identically with/without kill switch (Tier-3 Python implementation)
 **Deprecated APIs**: `initialize_ordered_bulk_op()` and `initialize_unordered_bulk_op()` are now deprecated to match PyMongo 4.x behavior.
 
@@ -632,9 +632,9 @@ The following APIs have been implemented and tested:
 
 | Metric | Count | Percentage |
 |--------|-------|------------|
-| **Total PyMongo Compatibility Tests** | 370 | 100% |
-| **Passed** | 359 | 97.0% |
-| **Skipped** (by design) | 11 | 3.0% |
+| **Total API Tests** | 372 | 100% |
+| **Passed** | 360 | 96.8% |
+| **Skipped** (by design) | 12 | 3.2% |
 | **Failed** | 0 | 0% |
 | **Compatibility** (comparable features) | **100%** | |
 
@@ -712,8 +712,8 @@ The following APIs have been implemented and tested:
 - [x] `cursor_command()` - Commands returning cursors ✅ **Implemented**
 
 **Impact**: Improved developer experience and API completeness
-**Test Coverage**: 83 new unit tests total, all passing
-**API Compatibility**: 100% (282 tests)
+**Test Coverage**: 372 API comparison tests, all passing
+**API Compatibility**: 100% (360 passed, 12 skipped by design)
 
 ### Phase 2: Medium Priority (COMPLETED) ✅
 
@@ -747,8 +747,8 @@ The following APIs have been implemented and tested:
 - [x] Other operators (`$mergeObjects`, `$getField`, `$let`, `$literal`, `$rand`, `$objectToArray`) ✅ **Implemented**
 
 **Impact**: Comprehensive aggregation framework with 100% PyMongo compatibility for all comparable features
-**Test Coverage**: 230+ unit tests, all passing
-**API Compatibility**: 100% (370 tests total)
+**Test Coverage**: 372 API comparison tests, all passing
+**API Compatibility**: 100% (360 passed, 12 skipped by design)
 
 ### Phase 3: Low Priority (Remaining - 12+ months)
 
@@ -826,8 +826,7 @@ GridFS automatically migrates from older conventions:
 ### Testing Infrastructure
 
 NeoSQLite maintains comprehensive PyMongo compatibility tests:
-- **304 automated tests** comparing NeoSQLite against live MongoDB (↑ from 264)
-- **52 test modules** organized by category (↑ from 42)
+- **372 API comparison tests** (360 passed, 12 skipped by design)
 - **100% compatibility** for all comparable features
 - **Automated reporting** with detailed compatibility metrics
 - **Kill switch verification** - All APIs tested with/without Python fallback
@@ -882,6 +881,6 @@ The `ClientSession` class is fully implemented and provides PyMongo-compatible t
 
 ---
 
-**Last Updated**: March 12, 2026
+**Last Updated**: March 16, 2026
 **Maintained By**: NeoSQLite Development Team
 **License**: MIT
