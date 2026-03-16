@@ -1,5 +1,6 @@
 """Module for comparing graph lookup between NeoSQLite and PyMongo"""
 
+import operator
 import warnings
 
 import neosqlite
@@ -142,9 +143,13 @@ def compare_graph_lookup():
             and mongo_res
         ):
             if "managementChain" in neo_res[0]:
-                neo_res[0]["managementChain"].sort(key=lambda x: x["_id"])
+                neo_res[0]["managementChain"].sort(
+                    key=operator.itemgetter("_id")
+                )
             if "managementChain" in mongo_res[0]:
-                mongo_res[0]["managementChain"].sort(key=lambda x: x["_id"])
+                mongo_res[0]["managementChain"].sort(
+                    key=operator.itemgetter("_id")
+                )
 
         reporter.record_comparison(
             "Graph Lookup",

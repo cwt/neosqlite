@@ -1,5 +1,6 @@
 """Module for comparing additional aggregation pipeline stages between NeoSQLite and PyMongo"""
 
+import operator
 import warnings
 
 import neosqlite
@@ -355,7 +356,9 @@ def compare_additional_aggregation_stages():
                 for d in neo_merge_raw:
                     d.pop("_id", None)
                     d.pop("id", None)
-                neo_merge = sorted(neo_merge_raw, key=lambda x: x["item"])
+                neo_merge = sorted(
+                    neo_merge_raw, key=operator.itemgetter("item")
+                )
 
             cleanup_merge_db()
             print("Neo $merge: OK")
@@ -657,7 +660,9 @@ def compare_additional_aggregation_stages():
             mongo_merge_raw = list(mongo_db[target_name].find({}))
             for d in mongo_merge_raw:
                 d.pop("_id", None)
-            mongo_merge = sorted(mongo_merge_raw, key=lambda x: x["item"])
+            mongo_merge = sorted(
+                mongo_merge_raw, key=operator.itemgetter("item")
+            )
             print("Mongo $merge: OK")
         except Exception as e:
             mongo_merge = f"Error: {e}"

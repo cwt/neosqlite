@@ -6,6 +6,8 @@ This example shows how to use text search on unwound array elements,
 as specified in roadmap item #13.
 """
 
+import operator
+
 import neosqlite
 
 
@@ -80,7 +82,7 @@ def main():
     print(
         f"   Found {len(results2)} authors with performance-related comments:"
     )
-    for doc in sorted(results2, key=lambda x: x["_id"]):
+    for doc in sorted(results2, key=operator.itemgetter("_id")):
         print(f"   • {doc['_id']}: {doc['commentCount']} comments")
 
     # Example 3: With sorting and limiting

@@ -43,7 +43,7 @@ def process_set_window_fields(
     # 2. Process each partition
     all_processed_docs = []
     # Sort partitions keys for deterministic output
-    for partition_key in sorted(partitions.keys(), key=lambda x: str(x)):
+    for partition_key in sorted(partitions.keys(), key=str):
         indices = partitions[partition_key]
         partition_docs = [docs_with_context[i] for i in indices]
 

@@ -2,6 +2,8 @@
 """
 Simple test to verify the AggregationCursor implementation
 """
+import operator
+
 import neosqlite
 
 
@@ -127,7 +129,7 @@ def test_aggregation_cursor():
         print(f"   Total results: {len(results4)}")
 
         # Test sort method
-        cursor4.sort(key=lambda x: x["name"])
+        cursor4.sort(key=operator.itemgetter("name"))
         sorted_results = list(cursor4)
         print(f"   Sorted by name: {[doc['name'] for doc in sorted_results]}")
         print()

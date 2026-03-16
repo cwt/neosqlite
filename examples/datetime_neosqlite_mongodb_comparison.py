@@ -6,6 +6,7 @@ This script runs identical datetime queries on both NeoSQLite and MongoDB
 to verify complete compatibility and compare results.
 """
 
+import operator
 import time
 from neosqlite import Connection
 from pymongo import MongoClient
@@ -241,8 +242,8 @@ def compare_results(neosqlite_results, mongodb_results):
             all_match = False
         else:
             # Sort documents for comparison (since order might differ)
-            neo_sorted = sorted(neo_docs, key=lambda x: x[0])
-            mongo_sorted = sorted(mongo_docs, key=lambda x: x[0])
+            neo_sorted = sorted(neo_docs, key=operator.itemgetter(0))
+            mongo_sorted = sorted(mongo_docs, key=operator.itemgetter(0))
 
             if neo_sorted != mongo_sorted:
                 print(f"❌ Test case {i+1}: Different document contents")
