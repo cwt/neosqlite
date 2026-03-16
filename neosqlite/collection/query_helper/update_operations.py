@@ -113,7 +113,7 @@ class UpdateOperationsMixin:
             # Use enhanced SQL update with json_insert/json_replace when possible
             try:
                 updated_doc = self._perform_enhanced_sql_update(
-                    doc_id, update_spec
+                    doc_id, update_spec, original_doc
                 )
                 # For SQL updates, assume modified if we got a result
                 return updated_doc, updated_doc != original_doc
@@ -329,6 +329,7 @@ class UpdateOperationsMixin:
         self,
         doc_id: Any,
         update_spec: Dict[str, Any],
+        original_doc: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         """
         Perform update operations using SQL JSON functions with field-level granularity.
@@ -341,6 +342,9 @@ class UpdateOperationsMixin:
             doc_id (Any): The ID of the document to be updated.
             update_spec (Dict[str, Any]): A dictionary specifying the update
                                           operations to be performed.
+            original_doc (Dict[str, Any], optional): The original document before the update.
+                                                     If provided, used to determine existing fields
+                                                     instead of fetching again.
 
         Returns:
             Dict[str, Any]: The updated document.
@@ -354,7 +358,15 @@ class UpdateOperationsMixin:
 
         # First, we need to determine which fields exist in the document
         # and which are new to decide between json_insert and json_replace
-        existing_fields = self._get_document_fields(doc_id)
+        # Use original_doc if provided to avoid extra fetch
+        if original_doc is not None:
+            existing_fields = (
+                set(original_doc.keys())
+                if isinstance(original_doc, dict)
+                else set()
+            )
+        else:
+            existing_fields = self._get_document_fields(doc_id)
 
         insert_clauses = []
         insert_params = []
