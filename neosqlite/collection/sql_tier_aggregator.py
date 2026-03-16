@@ -13,6 +13,7 @@ from .._sqlite import sqlite3
 from ..sql_utils import quote_table_name
 from .json_path_utils import parse_json_path
 from typing import Any, Dict, List, Tuple, Set
+from typing import cast
 from .expr_evaluator import (
     ExprEvaluator,
     AggregationContext,
@@ -23,6 +24,7 @@ from .jsonb_support import (
     supports_jsonb,
 )
 from .query_helper.utils import _get_json_function
+from .query_helper.pipeline_cache import PipelineCache
 
 
 class PipelineContext:
@@ -126,7 +128,12 @@ class SQLTierAggregator:
         "$jsonSchema",  # Complex validation logic in Python
     }
 
-    def __init__(self, collection, expr_evaluator: ExprEvaluator | None = None):
+    def __init__(
+        self,
+        collection,
+        expr_evaluator: ExprEvaluator | None = None,
+        pipeline_cache_size: int | None = 100,
+    ):
         """Initialize the SQL tier aggregator."""
         self.collection = collection
         self.evaluator = expr_evaluator or ExprEvaluator(
@@ -136,6 +143,10 @@ class SQLTierAggregator:
         self._json_function_prefix = (
             "jsonb" if self._jsonb_supported else "json"
         )
+        # pipeline_cache_size: None = use default, 0 = disable, positive = custom size
+        if pipeline_cache_size is None:
+            pipeline_cache_size = 100
+        self._pipeline_cache = PipelineCache(max_size=pipeline_cache_size)
 
     def _get_json_extract(self, path: str | None = None) -> str:
         """Get JSON extract function with correct prefix."""
@@ -216,9 +227,38 @@ class SQLTierAggregator:
         if not pipeline or not self.can_optimize_pipeline(pipeline):
             return None, []
 
+        # Try to get from cache
+        cache_key = self._pipeline_cache.make_key(pipeline)
+        cached = self._pipeline_cache.get(cache_key)
+
+        if cached is not None:
+            sql_template, param_names = cached
+            # Extract actual parameter values from pipeline based on cached names
+            params = self._extract_param_values(pipeline, param_names)
+            return sql_template, params
+
+        # Build SQL (cache miss)
+        sql_result = self._build_sql_template(pipeline)
+        if sql_result is None or sql_result[0] is None:
+            return None, []
+
+        # Use cast to help type checker
+        sql_template, all_params = cast(Tuple[str, List[Any]], sql_result)
+
+        # Cache the template
+        param_names = tuple(
+            self._extract_param_names_from_template(sql_template)
+        )
+        self._pipeline_cache.put(cache_key, sql_template, param_names)
+
+        return sql_template, all_params
+
+    def _build_sql_template(
+        self, pipeline: List[Dict[str, Any]]
+    ) -> Tuple[str | None, List[Any]]:
+        """Build SQL template and return (template, params)."""
         cte_parts: List[str] = []
         all_params: List[Any] = []
-        # Initial stage selects from table
         prev_stage = f"(SELECT id, _id, data FROM {quote_table_name(self.collection.name)})"
         context = PipelineContext()
 
@@ -258,6 +298,135 @@ class SQLTierAggregator:
 
         final_sql = f"{with_keyword} {', '.join(cte_parts)} SELECT {select_cols} FROM {prev_stage}"
         return final_sql, all_params
+
+    def _extract_param_values(
+        self, pipeline: List[Dict[str, Any]], param_names: tuple[str, ...]
+    ) -> List[Any]:
+        """Extract actual parameter values from pipeline for given field paths."""
+        # Map placeholder names to their values in pipeline
+        placeholder_values = self._get_placeholder_values(pipeline)
+
+        params = []
+        for field_path in param_names:
+            if field_path.startswith("__placeholder_"):
+                # It's a placeholder - get value from pipeline
+                value = placeholder_values.get(field_path)
+                if value is not None:
+                    params.append(value)
+            else:
+                # Original field path extraction
+                value = self._get_value_at_path(pipeline, field_path)
+                if value is not None:
+                    params.append(value)
+        return params
+
+    def _get_placeholder_values(
+        self, pipeline: List[Dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Extract values for placeholder parameters from pipeline."""
+        values = {}
+        placeholder_idx = 0
+
+        for stage in pipeline:
+            stage_name = next(iter(stage.keys()))
+            spec = stage[stage_name]
+
+            if stage_name == "$sample" and isinstance(spec, dict):
+                if "size" in spec:
+                    values[f"__placeholder_{placeholder_idx}__"] = spec["size"]
+                    placeholder_idx += 1
+
+            elif stage_name == "$limit" and isinstance(spec, dict):
+                if "limit" in spec:
+                    values[f"__placeholder_{placeholder_idx}__"] = spec["limit"]
+                    placeholder_idx += 1
+
+            elif stage_name == "$skip" and isinstance(spec, dict):
+                if "skip" in spec:
+                    values[f"__placeholder_{placeholder_idx}__"] = spec["skip"]
+                    placeholder_idx += 1
+
+        return values
+
+    def _get_value_at_path(
+        self, pipeline: List[Dict[str, Any]], field_path: str
+    ) -> Any:
+        """Get value from pipeline at given field path."""
+        for stage in pipeline:
+            stage_name = next(iter(stage.keys()))
+            spec = stage[stage_name]
+            if isinstance(spec, dict):
+                value = self._find_value_in_dict(spec, field_path)
+                if value is not None:
+                    return value
+        return None
+
+    def _find_value_in_dict(self, d: dict, field_path: str) -> Any:
+        """Recursively find value in dict matching field path."""
+        target_field = field_path.lstrip("$")
+        for key, value in d.items():
+            if key == target_field:
+                return value
+            if isinstance(value, dict):
+                result = self._find_value_in_dict(value, field_path)
+                if result is not None:
+                    return result
+        return None
+
+    def _extract_param_names_from_template(
+        self, sql_template: str
+    ) -> list[str]:
+        """Extract parameter placeholder positions from SQL template."""
+        import re
+
+        params = []
+        for match in re.finditer(
+            r"json_extract\([^,]+,\s*\'(\$[^\']+)\'\)", sql_template
+        ):
+            params.append(match.group(1))
+
+        # Extract ? placeholders with positional index: LIMIT ?, SKIP ?
+        placeholder_count = sql_template.count("?") - len(params)
+        for i in range(placeholder_count):
+            params.append(f"__placeholder_{i}__")
+
+        return params
+
+    def get_cache_stats(self) -> dict[str, Any]:
+        """Get pipeline cache statistics."""
+        stats = self._pipeline_cache.get_stats()
+        stats["enabled"] = self._pipeline_cache.is_enabled()
+        return stats
+
+    def clear_cache(self) -> None:
+        """Clear the pipeline cache."""
+        self._pipeline_cache.clear()
+
+    def dump_cache(self) -> list[dict]:
+        """Dump all cache entries for debugging."""
+        return self._pipeline_cache.dump()
+
+    def cache_contains(self, pipeline: list[dict]) -> bool:
+        """Check if pipeline is in cache."""
+        key = self._pipeline_cache.make_key(pipeline)
+        return self._pipeline_cache.contains(key)
+
+    def evict_from_cache(self, pipeline: list[dict]) -> bool:
+        """Evict a specific pipeline from cache."""
+        key = self._pipeline_cache.make_key(pipeline)
+        return self._pipeline_cache.evict(key)
+
+    def cache_size(self) -> int:
+        """Get current cache size."""
+        return len(self._pipeline_cache)
+
+    def is_cache_enabled(self) -> bool:
+        """Check if cache is enabled."""
+        return self._pipeline_cache.is_enabled()
+
+    def resize_cache(self, new_size: int) -> None:
+        """Resize the cache."""
+        self._pipeline_cache.resize(new_size)
 
     def _pipeline_needs_root(self, pipeline: List[Dict[str, Any]]) -> bool:
         """Check if pipeline uses $$ROOT variable."""
@@ -483,8 +652,8 @@ class SQLTierAggregator:
         select_parts = ["id", "_id", "data"]
         if context.has_root:
             select_parts.append("root_data")
-        sql = f"SELECT {', '.join(select_parts)} FROM {prev_stage} ORDER BY RANDOM() LIMIT {int(size)}"
-        return sql, []
+        sql = f"SELECT {', '.join(select_parts)} FROM {prev_stage} ORDER BY RANDOM() LIMIT ?"
+        return sql, [size]
 
     def _build_bucket_sql(self, spec, prev_stage, context):
         group_by = spec.get("groupBy")

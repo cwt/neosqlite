@@ -35,6 +35,7 @@ from .update_operations import UpdateOperationsMixin
 from .query_builder import QueryBuilderMixin
 from .aggregation import AggregationMixin
 from .query_optimizer import QueryOptimizerMixin
+from .pipeline_cache import PipelineCache  # noqa: F401
 
 
 class QueryHelper(
