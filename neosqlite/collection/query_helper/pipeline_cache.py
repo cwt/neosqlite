@@ -2,10 +2,11 @@
 Pipeline Translation Cache for SQL Tier Aggregation.
 
 This module provides caching for translated pipeline-to-SQL queries,
-with hit-rate-based eviction for optimal memory usage.
+with O(1) LRU (Least Recently Used) eviction using OrderedDict.
 """
 
 from __future__ import annotations
+from collections import OrderedDict
 from typing import Any
 
 
@@ -23,21 +24,19 @@ class CacheEntry:
 
 class PipelineCache:
     """
-    LFU-inspired cache with hit rate tracking and automatic eviction.
+    LRU cache for SQL pipeline templates with O(1) get/put operations.
 
-    When cache is full, entries with lowest hit rate are evicted.
-    Hit rate = hit_count / (last_hit_time - creation_time), normalized.
+    Uses OrderedDict for efficient LRU eviction: most recently used entries
+    are moved to the end, least recently used are evicted from the front.
     """
 
     DEFAULT_MAX_SIZE = 100
-    MIN_HITS_TO_EVICT = 5  # Minimum hits before considering for eviction
 
     def __init__(self, max_size: int = DEFAULT_MAX_SIZE):
-        self._cache: dict[str, CacheEntry] = {}
+        self._cache: OrderedDict[str, CacheEntry] = OrderedDict()
         self._max_size = max_size
         self._miss_count = 0
         self._hit_count = 0
-        self._access_counter = 0  # For tie-breaking in eviction
 
     def get(self, key: str) -> tuple[str, tuple[str, ...]] | None:
         """Get cached SQL template by key. Returns (sql, param_names) or None."""
@@ -49,10 +48,9 @@ class PipelineCache:
             self._miss_count += 1
             return None
 
-        # Update hit statistics
-        self._access_counter += 1
+        # Move to end (most recently used) for LRU
+        self._cache.move_to_end(key)
         entry.hit_count += 1
-        entry.last_hit = self._access_counter
         self._hit_count += 1
         return entry.sql_template, entry.param_names
 
@@ -63,49 +61,19 @@ class PipelineCache:
         if self._max_size == 0:
             return  # Cache disabled
         if key in self._cache:
-            # Already exists, update
+            # Already exists, update and move to end (most recently used)
             entry = self._cache[key]
             entry.sql_template = sql_template
             entry.param_names = param_names
+            self._cache.move_to_end(key)
             return
 
-        # Evict if full
+        # Evict if full (O(1) LRU: remove least recently used from front)
         if len(self._cache) >= self._max_size:
-            self._evict_lowest_hit_rate()
+            self._cache.popitem(last=False)
 
-        # Add new entry
+        # Add new entry at end (most recent)
         self._cache[key] = CacheEntry(sql_template, param_names)
-
-    def _evict_lowest_hit_rate(self) -> None:
-        """Evict entry with lowest hit rate."""
-        if not self._cache:
-            return
-
-        # Find entry with lowest hit rate (hit_count / age)
-        # Use raw hit_count for entries with fewer than MIN_HITS_TO_EVICT
-        worst_key = None
-        worst_score = float("inf")
-
-        current_time = self._access_counter
-
-        for key, entry in self._cache.items():
-            if entry.hit_count < self.MIN_HITS_TO_EVICT:
-                # Prefer to keep entries with few hits (might become popular)
-                score = (
-                    entry.hit_count / (current_time - entry.last_hit + 1) * 0.5
-                )
-            else:
-                # Higher hit count = higher score (keep)
-                # More recent = higher score (temporal locality)
-                age = current_time - entry.last_hit
-                score = entry.hit_count / (age + 1)
-
-            if score < worst_score:
-                worst_score = score
-                worst_key = key
-
-        if worst_key is not None:
-            del self._cache[worst_key]
 
     def make_key(self, pipeline: list[dict[str, Any]]) -> str:
         """
@@ -129,38 +97,30 @@ class PipelineCache:
                 # $unset: ["field1", "field2"] or $project: ["field1", "field2"]
                 key_parts.append(f"{stage_name}:{tuple(sorted(spec))}")
             elif isinstance(spec, dict):
-                # For dict specs, we need to extract nested operator names too
-                # especially for $setWindowFields where output contains operators
-                nested_ops = self._extract_nested_operators(spec)
-                if nested_ops:
-                    key_parts.append(f"{stage_name}:{nested_ops}")
-                else:
-                    key_parts.append(
-                        f"{stage_name}:{tuple(sorted(spec.keys()))}"
-                    )
+                # Use deep structural hashing: preserves field names but replaces
+                # values with "?" placeholder to avoid cache collisions on different
+                # field queries that happen to use the same operators (e.g., age.$gt vs score.$gt)
+                nested_struct = self._extract_structure(spec)
+                key_parts.append(f"{stage_name}:{nested_struct}")
             else:
                 key_parts.append(stage_name)
         return "|".join(key_parts)
 
-    def _extract_nested_operators(self, d: dict) -> tuple | None:
-        """Recursively extract operator names from nested dict structure."""
-        operators = []
-
-        def recurse(obj):
-            if isinstance(obj, dict):
-                for key, value in obj.items():
-                    if key.startswith("$"):
-                        operators.append(key)
-                    recurse(value)
-            elif isinstance(obj, list):
-                for item in obj:
-                    recurse(item)
-
-        recurse(d)
-
-        if operators:
-            return tuple(sorted(operators))
-        return None
+    def _extract_structure(self, obj: Any) -> Any:
+        """
+        Recursively convert pipeline dict into a hashable nested tuple.
+        Replaces all terminal values with '?' placeholder to parameterize the key.
+        Preserves field names, operators, and structure.
+        """
+        if isinstance(obj, dict):
+            return tuple(
+                (k, self._extract_structure(v)) for k, v in sorted(obj.items())
+            )
+        elif isinstance(obj, list):
+            return tuple(self._extract_structure(item) for item in obj)
+        else:
+            # Replace actual values (ints, strings, booleans) with placeholder
+            return "?"
 
     def get_stats(self) -> dict[str, Any]:
         """Get cache statistics."""
@@ -202,13 +162,12 @@ class PipelineCache:
         self._cache.clear()
         self._miss_count = 0
         self._hit_count = 0
-        self._access_counter = 0
 
     def resize(self, new_size: int) -> None:
         """Resize cache, evicting entries if needed."""
         self._max_size = new_size
         while len(self._cache) > new_size:
-            self._evict_lowest_hit_rate()
+            self._cache.popitem(last=False)
 
     def evict(self, key: str) -> bool:
         """Evict a specific entry by key. Returns True if evicted."""
