@@ -1,13 +1,13 @@
 """
-Tests for pipeline translation caching.
+Tests for SQL translation caching.
 """
 
 import pytest
 import neosqlite
 
 
-class TestPipelineCache:
-    """Tests for pipeline caching functionality."""
+class TestTranslationCache:
+    """Tests for translation caching functionality."""
 
     def test_cache_default_enabled(self, connection):
         """Test that cache is enabled by default."""
@@ -19,7 +19,7 @@ class TestPipelineCache:
 
     def test_cache_disabled(self):
         """Test that cache can be disabled."""
-        conn = neosqlite.Connection(":memory:", pipeline_cache=0)
+        conn = neosqlite.Connection(":memory:", translation_cache=0)
         users = conn.users
         users.insert_one({"a": 1})
         qe = users.query_engine.sql_tier_aggregator
@@ -27,7 +27,7 @@ class TestPipelineCache:
 
     def test_cache_custom_size(self):
         """Test that custom cache size works."""
-        conn = neosqlite.Connection(":memory:", pipeline_cache=50)
+        conn = neosqlite.Connection(":memory:", translation_cache=50)
         users = conn.users
         users.insert_one({"a": 1})
         qe = users.query_engine.sql_tier_aggregator
@@ -192,9 +192,9 @@ class TestPipelineCache:
         qe = users.query_engine.sql_tier_aggregator
         qe.clear_cache()
 
-        assert len(qe._pipeline_cache) == 0
+        assert len(qe._translation_cache) == 0
         list(users.aggregate([{"$match": {"a": 1}}]))
-        assert len(qe._pipeline_cache) == 1
+        assert len(qe._translation_cache) == 1
 
 
 @pytest.fixture

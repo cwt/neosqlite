@@ -1,10 +1,10 @@
-# Pipeline Translation Caching
+# SQL Translation Caching
 
-This document describes the pipeline translation caching mechanism in NeoSQLite, which provides significant performance improvements for repeated aggregation queries.
+This document describes the translation caching mechanism in NeoSQLite, which provides significant performance improvements for repeated aggregation queries.
 
 ## Overview
 
-The pipeline caching system stores translated SQL templates for aggregation pipelines, avoiding repeated translation overhead for identical or similar query patterns.
+The translation cache stores translated SQL templates for aggregation pipelines, avoiding repeated translation overhead for identical or similar query patterns.
 
 ### Problem
 
@@ -172,10 +172,10 @@ import neosqlite
 conn = neosqlite.Connection('mydb.db')
 
 # Custom cache size
-conn = neosqlite.Connection('mydb.db', pipeline_cache=50)
+conn = neosqlite.Connection('mydb.db', translation_cache=50)
 
 # Disable cache (useful for development/debugging)
-conn = neosqlite.Connection('mydb.db', pipeline_cache=0)
+conn = neosqlite.Connection('mydb.db', translation_cache=0)
 ```
 
 ### Debug API
@@ -253,7 +253,7 @@ for _ in range(1000):
 cached_time = time.perf_counter() - start
 
 # Disable cache and benchmark
-conn2 = neosqlite.Connection(':memory:', pipeline_cache=0)
+conn2 = neosqlite.Connection(':memory:', translation_cache=0)
 users2 = conn2.users
 users2.insert_many([{'status': 'active', 'name': f'user_{i}'} for i in range(1000)])
 
@@ -296,10 +296,10 @@ print(f"Speedup: {uncached_time/cached_time:.2f}x")
 
 ### Files
 
-- `neosqlite/collection/query_helper/pipeline_cache.py` - Cache implementation
+- `neosqlite/collection/query_helper/translation_cache.py` - Cache implementation
 - `neosqlite/collection/sql_tier_aggregator.py` - Cache integration
 - `neosqlite/connection.py` - Configuration options
-- `tests/test_pipeline_cache.py` - Unit tests
+- `tests/test_translation_cache.py` - Unit tests
 
 ### Cache Flow
 
@@ -345,7 +345,7 @@ If hit rate is low (< 30%):
 
 If cached queries return wrong results:
 
-1. Disable cache: `conn = neosqlite.Connection(..., pipeline_cache=0)`
+1. Disable cache: `conn = neosqlite.Connection(..., translation_cache=0)`
 2. Test without cache
 3. Report issue if reproducible
 

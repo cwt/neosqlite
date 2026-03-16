@@ -51,17 +51,17 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         self.sql_translator = SQLTranslator(
             collection.name, "data", "id", self._jsonb_supported
         )
-        # Get pipeline cache size from connection (default: 100, 0 to disable)
+        # Get translation cache size from connection (default: 100, 0 to disable)
         # collection._database is the NeoSQLite Connection, collection.db is sqlite3
         neosqlite_conn = collection._database
-        cache_size = getattr(neosqlite_conn, "_pipeline_cache_size", 100)
+        cache_size = getattr(neosqlite_conn, "_translation_cache_size", 100)
         # Initialize SQL tier aggregator for optimized aggregation pipelines
         self.sql_tier_aggregator = SQLTierAggregator(
             collection,
             expr_evaluator=ExprEvaluator(
                 data_column="data", db_connection=collection.db
             ),
-            pipeline_cache_size=cache_size,
+            translation_cache_size=cache_size,
         )
 
     def aggregate(

@@ -20,7 +20,7 @@ class Connection:
     and handling database lifecycle events. Supports PyMongo-like API.
     """
 
-    DEFAULT_PIPELINE_CACHE_SIZE = 100
+    DEFAULT_TRANSLATION_CACHE_SIZE = 100
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         """
@@ -35,7 +35,7 @@ class Connection:
                      - name: Optional name for the database (for PyMongo API compatibility)
                      - _is_clone: Internal flag for cloning (not for public use)
                      - journal_mode: Optional journal mode (default: "WAL")
-                     - pipeline_cache: Pipeline translation cache size (default: 100, 0 to disable)
+                     - translation_cache: SQL translation cache size (default: 100, 0 to disable)
         """
         self._collections: Dict[str, Collection] = {}
         self._tokenizers: List[Tuple[str, str]] = kwargs.pop("tokenizers", [])
@@ -54,10 +54,10 @@ class Connection:
             kwargs.pop("journal_mode", "WAL")
         )
 
-        # Pipeline translation cache configuration
+        # Translation cache configuration for SQL pipeline templates
         # None = use default size, 0 = disable, positive int = custom size
-        self._pipeline_cache_size: int | None = kwargs.pop(
-            "pipeline_cache", self.DEFAULT_PIPELINE_CACHE_SIZE
+        self._translation_cache_size: int | None = kwargs.pop(
+            "translation_cache", self.DEFAULT_TRANSLATION_CACHE_SIZE
         )
 
         # Extract database name from args or kwargs for PyMongo API compatibility

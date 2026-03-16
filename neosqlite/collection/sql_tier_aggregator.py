@@ -24,7 +24,7 @@ from .jsonb_support import (
     supports_jsonb,
 )
 from .query_helper.utils import _get_json_function
-from .query_helper.pipeline_cache import PipelineCache
+from .query_helper.translation_cache import TranslationCache
 
 
 class PipelineContext:
@@ -132,7 +132,7 @@ class SQLTierAggregator:
         self,
         collection,
         expr_evaluator: ExprEvaluator | None = None,
-        pipeline_cache_size: int | None = 100,
+        translation_cache_size: int | None = 100,
     ):
         """Initialize the SQL tier aggregator."""
         self.collection = collection
@@ -143,10 +143,12 @@ class SQLTierAggregator:
         self._json_function_prefix = (
             "jsonb" if self._jsonb_supported else "json"
         )
-        # pipeline_cache_size: None = use default, 0 = disable, positive = custom size
-        if pipeline_cache_size is None:
-            pipeline_cache_size = 100
-        self._pipeline_cache = PipelineCache(max_size=pipeline_cache_size)
+        # translation_cache_size: None = use default, 0 = disable, positive = custom size
+        if translation_cache_size is None:
+            translation_cache_size = 100
+        self._translation_cache = TranslationCache(
+            max_size=translation_cache_size
+        )
 
     def _get_json_extract(self, path: str | None = None) -> str:
         """Get JSON extract function with correct prefix."""
@@ -228,8 +230,8 @@ class SQLTierAggregator:
             return None, []
 
         # Try to get from cache
-        cache_key = self._pipeline_cache.make_key(pipeline)
-        cached = self._pipeline_cache.get(cache_key)
+        cache_key = self._translation_cache.make_key(pipeline)
+        cached = self._translation_cache.get(cache_key)
 
         if cached is not None:
             sql_template, param_names = cached
@@ -249,7 +251,7 @@ class SQLTierAggregator:
         param_names = tuple(
             self._extract_param_names_from_template(sql_template)
         )
-        self._pipeline_cache.put(cache_key, sql_template, param_names)
+        self._translation_cache.put(cache_key, sql_template, param_names)
 
         return sql_template, all_params
 
@@ -394,39 +396,39 @@ class SQLTierAggregator:
 
     def get_cache_stats(self) -> dict[str, Any]:
         """Get pipeline cache statistics."""
-        stats = self._pipeline_cache.get_stats()
-        stats["enabled"] = self._pipeline_cache.is_enabled()
+        stats = self._translation_cache.get_stats()
+        stats["enabled"] = self._translation_cache.is_enabled()
         return stats
 
     def clear_cache(self) -> None:
         """Clear the pipeline cache."""
-        self._pipeline_cache.clear()
+        self._translation_cache.clear()
 
     def dump_cache(self) -> list[dict]:
         """Dump all cache entries for debugging."""
-        return self._pipeline_cache.dump()
+        return self._translation_cache.dump()
 
     def cache_contains(self, pipeline: list[dict]) -> bool:
         """Check if pipeline is in cache."""
-        key = self._pipeline_cache.make_key(pipeline)
-        return self._pipeline_cache.contains(key)
+        key = self._translation_cache.make_key(pipeline)
+        return self._translation_cache.contains(key)
 
     def evict_from_cache(self, pipeline: list[dict]) -> bool:
         """Evict a specific pipeline from cache."""
-        key = self._pipeline_cache.make_key(pipeline)
-        return self._pipeline_cache.evict(key)
+        key = self._translation_cache.make_key(pipeline)
+        return self._translation_cache.evict(key)
 
     def cache_size(self) -> int:
         """Get current cache size."""
-        return len(self._pipeline_cache)
+        return len(self._translation_cache)
 
     def is_cache_enabled(self) -> bool:
         """Check if cache is enabled."""
-        return self._pipeline_cache.is_enabled()
+        return self._translation_cache.is_enabled()
 
     def resize_cache(self, new_size: int) -> None:
         """Resize the cache."""
-        self._pipeline_cache.resize(new_size)
+        self._translation_cache.resize(new_size)
 
     def _pipeline_needs_root(self, pipeline: List[Dict[str, Any]]) -> bool:
         """Check if pipeline uses $$ROOT variable."""

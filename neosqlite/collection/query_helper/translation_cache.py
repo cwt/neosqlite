@@ -1,8 +1,11 @@
 """
-Pipeline Translation Cache for SQL Tier Aggregation.
+Translation Cache for SQL Tier Aggregation.
 
 This module provides caching for translated pipeline-to-SQL queries,
 with O(1) LRU (Least Recently Used) eviction using OrderedDict.
+
+The cache stores SQL templates (not results), allowing the same translated
+SQL to be reused across multiple query executions with different parameters.
 """
 
 from __future__ import annotations
@@ -22,9 +25,9 @@ class CacheEntry:
         self.last_hit = 0
 
 
-class PipelineCache:
+class TranslationCache:
     """
-    LRU cache for SQL pipeline templates with O(1) get/put operations.
+    LRU cache for SQL translation templates with O(1) get/put operations.
 
     Uses OrderedDict for efficient LRU eviction: most recently used entries
     are moved to the end, least recently used are evicted from the front.
