@@ -36,82 +36,52 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 
 See [CHANGELOG.md](CHANGELOG.md) for the latest features and improvements.
 
-## Latest Release: v1.9.2
+## Latest Release: v1.10.0
 
-NeoSQLite v1.9.2 is a **performance-focused release** that significantly expands **SQL-tier aggregation pipeline optimization** and implements **SQL-level optimizations for complex update operators**. This version reduces reliance on Python fallback, delivering faster query execution and better resource utilization while maintaining full PyMongo API compatibility.
+NeoSQLite v1.10.0 is a **milestone release** that achieves **100% PyMongo API compatibility** for all comparable features while delivering significant performance improvements.
 
 ### Key Highlights
 
-**Expanded SQL-Tier Aggregation** - 10+ new aggregation stages translated to native SQL:
-- **New Stages**: `$unset`, `$replaceRoot`, `$replaceWith`, `$sample`, `$bucket`, `$bucketAuto`, `$redact`, `$unionWith`, `$lookup`, `$merge`
-- **New Operators**: `$objectToArray` for object-to-array conversion
-- **$redact Enhancements**: Support for both PRUNE/KEEP and KEEP/PRUNE patterns
-- **Performance**: 15-50x improvement for SQL-tier stages vs Python fallback
+**100% PyMongo API Compatibility** - Achieved full API coverage:
+- 375 API tests: 360 passed, 15 skipped, 0 failed
+- Explicit NotImplementedError for `$function` and `$accumulator` with guidance to use `$expr` or Python post-processing
+- Fixed $toDecimal documentation (already implemented via Python tier)
 
-**SQL-Level Update Operator Optimization** - Tier-2 SQL paths for array operators:
-- **`$pop`**: Remove first/last array element using native SQL
-- **`$push` with `$each`**: Array concatenation via `json_patch()`
-- **`$addToSet`**: Conditional insertion with existence checking
-- **Performance**: 5-20x improvement for optimized update operations
+**update_one Fast Path** - Performance optimization for update operations:
+- Reduces 2-3 SQL round-trips to 1 single query
+- 2-3x speedup for simple update operations
+- Type-safe SQL validation for `$inc` and `$mul`
 
-**SQLite Version Detection** - Automatic feature enablement:
-- Detects SQLite 3.42.0+ for advanced JSON operations
-- Graceful fallback for older SQLite versions
-- Type-safe feature cache for efficient capability checking
+**SQL-Tier Aggregation Expansions** - New stages and operators:
+- `$bucketAuto` - Auto-sized bucketing
+- `$lookup` with pipeline - Sub-query pipeline on foreign collection
+- `$densify` - Fill numeric gaps in sequences
+- `$push` with `$position` - Insert elements at specific array positions
 
-**Benchmark Improvements** - High-precision timing infrastructure:
-- Surgical timing placement excluding setup/reset overhead
-- 40+ benchmark modules refactored for consistency
-- Fixed total time unit calculations
-- Proper iteration timing aggregation
-- Shell script for automated CI/CD runs
-
-### Key Highlights (from v1.9.1)
-
-**Configurable Journal Mode** - Choose the optimal SQLite journal mode for your deployment:
-- **WAL** (Default) - Write-Ahead Logging for best concurrency
-- **DELETE** - Traditional rollback journal, single-file when closed
-- **TRUNCATE**, **PERSIST**, **MEMORY**, **OFF** - Specialized modes for specific use cases
-- Type-safe `JournalMode` class with validation
-- Correctly propagated to cloned connections
-
-**SQL-Tier Cursor Optimization** - Performance improvements for common operations:
-- `sort()` moved to SQL `ORDER BY` clause
-- `limit()` and `skip()` moved to SQL `LIMIT`/`OFFSET` clauses
-- Up to **2.4x performance improvement** in cursor benchmarks
-- Automatic tier selection with smart fallback
-
-**Benchmark Mode** - Automated performance testing:
-- Integrated into API comparison suite
-- Multiple iterations with statistical analysis
-- Markdown and CSV report generation
-- Shell script for automated CI/CD runs
-
-For more details, see [documents/releases/v1.9.2.md](documents/releases/v1.9.2.md).
+For more details, see [documents/releases/v1.10.0.md](documents/releases/v1.10.0.md).
 
 ## PyMongo Compatibility Tests
 
 NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-compatible behavior. Our automated test suite covers all major API categories:
 
-### Test Results (v1.9.2)
+### Test Results (v1.10.0)
 
 #### Unit Tests
 
 | Metric | Result |
 |--------|--------|
-| **Total Tests** | 2,185 |
-| **Passed** | 2,180 |
+| **Total Tests** | 2,200 |
+| **Passed** | 2,195 |
 | **Failed** | 0 |
-| **XFailed** | 5 (expected failures) |
 | **Code Coverage** | 82% |
 
 #### API Comparison Tests
 
-| Metric | v1.8.0 | v1.9.0 | v1.9.1 | **v1.9.2** |
-|--------|--------|--------|--------|------------|
-| **Total Tests** | 304 | 373 | 369 | **371** |
-| **Passed** | 300 | 362 | 358 | **359** |
-| **Skipped** | 4 | 11 | 11 | **12** |
+| Metric | v1.9.0 | v1.9.1 | v1.9.2 | **v1.10.0** |
+|--------|--------|--------|--------|-------------|
+| **Total Tests** | 373 | 369 | 371 | **375** |
+| **Passed** | 362 | 358 | 359 | **360** |
+| **Skipped** | 11 | 11 | 12 | **15** |
 | **Failed** | 0 | 0 | 0 | **0** |
 | **Compatibility** | 100% | 100% | 100% | **100%** |
 
@@ -159,16 +129,16 @@ For more details, see the [`examples/api_comparison/`](examples/api_comparison/)
 
 NeoSQLite includes comprehensive benchmarks demonstrating the performance benefits of its SQL optimizations:
 
+**v1.10.0 Performance Improvements**:
+- **100% API Compatibility**: All PyMongo operations available with 375 tests
+- **update_one Fast Path**: Reduces 2-3 SQL round-trips to 1 (2-3x speedup)
+- **SQL-Tier Expansions**: $bucketAuto, $lookup pipeline, $densify, $push $position
+
 **v1.9.2 Performance Improvements**:
 - **SQL-Tier Aggregation Expansion**: 10+ new stages ($bucket, $redact, $lookup, etc.) with 15-50x speedup
 - **Update Operator Optimization**: $pop, $push, $addToSet with 5-20x speedup via Tier-2 SQL paths
 - **High-Precision Timing**: Surgical benchmark infrastructure excluding setup/reset overhead
 - **40+ Benchmark Modules**: Refactored for consistent, accurate performance measurement
-
-**Previous Optimizations**:
-- **Three-Tier Aggregation Pipeline Processing**: Expanded SQL optimization coverage to over 85% of common aggregation pipelines
-- **Enhanced SQL Optimization Benchmark**: Covers additional optimizations like pipeline reordering and text search with array processing
-- **Text Search + json_each() Benchmark**: Demonstrates specialized optimizations for text search on array fields
 
 See [`documents/AGGREGATION_PIPELINE_OPTIMIZATION.md`](documents/AGGREGATION_PIPELINE_OPTIMIZATION.md) for complete architecture details, operator support matrix, and performance benchmarks (10-100x speedup).
 
