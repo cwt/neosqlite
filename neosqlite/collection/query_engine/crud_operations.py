@@ -327,7 +327,6 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             "$setOnInsert",
         }
         complex_ops = {
-            "$push",
             "$pull",
             "$pullAll",
             "$pop",
@@ -339,12 +338,21 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         if update_keys & complex_ops:
             return None
 
-        if not update_keys.issubset(simple_ops):
+        if not update_keys.issubset(simple_ops | {"$push"}):
             return None
 
         for op_key in update_keys:
             op_value = update[op_key]
-            if isinstance(op_value, dict):
+            if op_key == "$push":
+                if not isinstance(op_value, dict):
+                    return None
+                for field_path, push_spec in op_value.items():
+                    if not isinstance(push_spec, dict):
+                        return None
+                    has_modifiers = {"$position", "$slice"} & push_spec.keys()
+                    if has_modifiers:
+                        return None
+            elif isinstance(op_value, dict):
                 for field_path in op_value.keys():
                     if "$" in field_path or field_path.startswith("[]"):
                         return None
