@@ -324,6 +324,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             "$currentDate",
             "$inc",
             "$mul",
+            "$setOnInsert",
         }
         complex_ops = {
             "$push",
@@ -332,7 +333,6 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             "$pop",
             "$addToSet",
             "$rename",
-            "$setOnInsert",
         }
 
         update_keys = set(update.keys())
