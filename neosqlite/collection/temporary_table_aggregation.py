@@ -1308,6 +1308,14 @@ class TemporaryTableAggregationProcessor:
 
             op, expr = next(iter(accumulator.items()))
 
+            # Check for unsupported operators
+            if op == "$accumulator":
+                raise NotImplementedError(
+                    "The '$accumulator' operator is not supported in NeoSQLite. "
+                    "Please use built-in accumulators ($sum, $avg, $min, $max, $count, $push, $addToSet, $first, $last), "
+                    "or post-process results in Python."
+                )
+
             # Extract field name from expression
             if isinstance(expr, str) and expr.startswith("$"):
                 expr_field = expr[1:]

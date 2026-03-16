@@ -175,6 +175,25 @@ class CompatibilityReporter:
             ignore_order: If True, sort results before comparison
             skip_reason: Reason for skipping test (if MongoDB not available)
         """
+        # Check if NeoSQLite raised an error (formatted as "Error: ...") - skip comparison
+        # These are intentional NotImplementedError raised for unsupported features
+        if isinstance(neo_results, str) and neo_results.startswith("Error:"):
+            # Check if it's a NotImplementedError (our explicit error for unsupported features)
+            if (
+                "not supported in NeoSQLite" in neo_results
+                or "is not supported" in neo_results
+            ):
+                self.total_tests += 1
+                self.skipped_tests.append(
+                    {
+                        "category": category,
+                        "api": api_name,
+                        "reason": skip_reason
+                        or "Not supported in NeoSQLite (raises NotImplementedError)",
+                    }
+                )
+                return
+
         if mongo_results is None and skip_reason:
             self.total_tests += 1
             self.skipped_tests.append(

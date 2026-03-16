@@ -560,6 +560,19 @@ class SQLClauseBuilder:
                     "which is fully compatible with MongoDB and highly optimized in NeoSQLite."
                 )
 
+            if field == "$function":
+                raise NotImplementedError(
+                    "The '$function' operator is not supported in NeoSQLite. "
+                    "Please use '$expr' with Python expressions, or post-process results in Python."
+                )
+
+            if field == "$accumulator":
+                raise NotImplementedError(
+                    "The '$accumulator' operator is not supported in NeoSQLite. "
+                    "Please use built-in accumulators ($sum, $avg, $min, $max, $count, $push, $addToSet, $first, $last), "
+                    "or post-process results in Python."
+                )
+
             if field in ("$and", "$or", "$nor"):
                 # Handle logical operators directly
                 sql, clause_params = self._build_logical_condition(

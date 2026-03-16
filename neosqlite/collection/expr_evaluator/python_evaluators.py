@@ -247,6 +247,17 @@ class PythonEvaluatorsMixin:
                 )
             case "$literal":
                 return self._evaluate_literal_python(operands, document)
+            case "$function":
+                raise NotImplementedError(
+                    "The '$function' operator is not supported in NeoSQLite. "
+                    "Please use '$expr' with Python expressions, or post-process results in Python."
+                )
+            case "$accumulator":
+                raise NotImplementedError(
+                    "The '$accumulator' operator is not supported in NeoSQLite. "
+                    "Please use built-in accumulators ($sum, $avg, $min, $max, $count, $push, $addToSet, $first, $last), "
+                    "or post-process results in Python."
+                )
             case _:
                 raise NotImplementedError(
                     f"Operator {operator} not supported in Python evaluation"

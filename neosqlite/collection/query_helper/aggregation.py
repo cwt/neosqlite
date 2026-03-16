@@ -806,6 +806,14 @@ class AggregationMixin:
 
                 op, key = next(iter(accumulator.items()))
 
+                # Check for unsupported operators
+                if op == "$accumulator":
+                    raise NotImplementedError(
+                        "The '$accumulator' operator is not supported in NeoSQLite. "
+                        "Please use built-in accumulators ($sum, $avg, $min, $max, $count, $push, $addToSet, $first, $last), "
+                        "or post-process results in Python."
+                    )
+
                 if op == "$count":
                     group[field] = group.get(field, 0) + 1
                     continue

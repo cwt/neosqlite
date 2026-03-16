@@ -1768,6 +1768,35 @@ class TestCursorWhere:
         ):
             list(collection.find({"$where": "this.value > 10"}))
 
+    def test_function_operator_raises_not_implemented(self, collection):
+        """Test that the $function operator in a query raises NotImplementedError."""
+        with pytest.raises(
+            NotImplementedError,
+            match=r"The '\$function' operator is not supported",
+        ):
+            list(
+                collection.find({"$function": "function(x) { return x > 10; }"})
+            )
+
+    def test_accumulator_operator_raises_not_implemented(self, collection):
+        """Test that the $accumulator operator in a query raises NotImplementedError."""
+        with pytest.raises(
+            NotImplementedError,
+            match=r"The '\$accumulator' operator is not supported",
+        ):
+            list(
+                collection.find(
+                    {
+                        "$accumulator": {
+                            "init": "function() { return 0; }",
+                            "accumulate": "function(state, val) { return state + val; }",
+                            "merge": "function(state1, state2) { return state1 + state2; }",
+                            "finalize": "function(state) { return state; }",
+                        }
+                    }
+                )
+            )
+
 
 def test_cursor_new_properties_and_methods():
     """Test newly added Cursor properties and methods."""

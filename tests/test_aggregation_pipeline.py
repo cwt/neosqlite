@@ -3402,3 +3402,58 @@ def test_aggregate_pymongo_compatibility_params(collection):
     ).allow_disk_use(True)
     results = list(cursor)
     assert len(results) == 5
+
+
+def test_function_operator_raises_not_implemented(collection):
+    """Test that the $function operator in aggregation raises NotImplementedError."""
+    collection.insert_many([{"value": i} for i in range(10)])
+    with pytest.raises(
+        NotImplementedError,
+        match=r"The '\$function' operator is not supported",
+    ):
+        list(
+            collection.aggregate(
+                [
+                    {
+                        "$project": {
+                            "result": {
+                                "$function": {
+                                    "body": "function(x) { return x + 1; }",
+                                    "args": ["$value"],
+                                    "lang": "js",
+                                }
+                            }
+                        }
+                    }
+                ]
+            )
+        )
+
+
+def test_accumulator_operator_raises_not_implemented(collection):
+    """Test that the $accumulator operator in aggregation raises NotImplementedError."""
+    collection.insert_many([{"value": i} for i in range(10)])
+    with pytest.raises(
+        NotImplementedError,
+        match=r"The '\$accumulator' operator is not supported",
+    ):
+        list(
+            collection.aggregate(
+                [
+                    {
+                        "$group": {
+                            "_id": None,
+                            "custom_accumulator": {
+                                "$accumulator": {
+                                    "init": "function() { return 0; }",
+                                    "accumulate": "function(state, val) { return state + val; }",
+                                    "accumulateArgs": ["$value"],
+                                    "merge": "function(state1, state2) { return state1 + state2; }",
+                                    "finalize": "function(state) { return state; }",
+                                }
+                            },
+                        }
+                    }
+                ]
+            )
+        )

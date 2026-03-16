@@ -43,6 +43,15 @@ def compare_query_operators():
             "$regex with $options",
         ),
         ({"$nor": [{"age": 30}, {"name": "Alice"}]}, "$nor"),
+        ({"$where": "this.age > 30"}, "$where (NotImplementedError)"),
+        (
+            {"$function": "function(x) { return x > 30; }"},
+            "$function (NotImplementedError)",
+        ),
+        (
+            {"$accumulator": {"init": "function() { return 0; }"}},
+            "$accumulator (NotImplementedError)",
+        ),
     ]
 
     neo_results = {}
@@ -193,6 +202,10 @@ def compare_query_operators():
                 skip_reason = "MongoDB not available"
             elif op_name == "$contains":
                 skip_reason = "NeoSQLite extension not in MongoDB"
+            elif "(NotImplementedError)" in op_name:
+                skip_reason = (
+                    "Not supported in NeoSQLite (raises NotImplementedError)"
+                )
 
             reporter.record_comparison(
                 "Query Operators",

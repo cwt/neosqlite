@@ -266,6 +266,19 @@ class QueryBuilderMixin:
                 "which is fully compatible with MongoDB and highly optimized in NeoSQLite."
             )
 
+        if "$function" in query:
+            raise NotImplementedError(
+                "The '$function' operator is not supported in NeoSQLite. "
+                "Please use '$expr' with Python expressions, or post-process results in Python."
+            )
+
+        if "$accumulator" in query:
+            raise NotImplementedError(
+                "The '$accumulator' operator is not supported in NeoSQLite. "
+                "Please use built-in accumulators ($sum, $avg, $min, $max, $count, $push, $addToSet, $first, $last), "
+                "or post-process results in Python."
+            )
+
         clauses: List[str] = []
         params: List[Any] = []
 

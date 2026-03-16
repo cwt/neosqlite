@@ -129,6 +129,13 @@ The following APIs have been implemented and tested:
 - ✅ `with_options()` - Return database clone with different options (Now correctly returns a clone)
 - ✅ `command()` - Issue database commands (ping, serverStatus, listCollections, etc.) (11 tests)
 
+#### Explicit Error Handling for JavaScript-Based Operators (NEW)
+- ✅ `$where` - Raises NotImplementedError with guidance to use `$expr` (4 tests)
+- ✅ `$function` - Raises NotImplementedError with guidance to use `$expr` or Python post-processing (2 tests)
+- ✅ `$accumulator` - Raises NotImplementedError with guidance to use built-in accumulators or Python post-processing (2 tests)
+
+These operators now provide clear error messages suggesting alternatives, matching PyMongo behavior for unsupported features.
+
 **Test Coverage**: 372 API comparison tests, all passing
 **API Compatibility**: 100% (360 passed, 12 skipped by design)
 **Kill Switch Verified**: All APIs work identically with/without kill switch (Tier-3 Python implementation)
@@ -464,6 +471,8 @@ The following APIs have been implemented and tested:
 | Operator | Description | Priority | Status | Notes |
 |----------|-------------|----------|--------|-------|
 | `$where` | JavaScript expression | Medium | ❌ Not Supported | Raises NotImplementedError; use `$expr` |
+| `$function` | Custom JavaScript function | Medium | ❌ Not Supported | Raises NotImplementedError; use `$expr` or Python post-processing |
+| `$accumulator` | Custom accumulator | Medium | ❌ Not Supported | Raises NotImplementedError; use built-in accumulators or Python post-processing |
 | `$jsonSchema` | JSON Schema validation | Medium | ✅ **Implemented** | Query filtering and native SQL write validation |
 | `$vectorSearch` | Vector search | Medium | ❌ Missing | MongoDB Atlas feature |
 
@@ -599,7 +608,7 @@ The following APIs have been implemented and tested:
 | Literal | `$literal` | Low | ✅ **Implemented** |
 | Misc | `$getField`, `$rand`, `$sampleRate` | Low | ✅ **Implemented** |
 | Timestamp | `$tsIncrement`, `$tsSecond` | Low | ❌ Missing (MongoDB-specific) |
-| Custom | `$function`, `$accumulator` | Low | ❌ Missing (JavaScript-based) |
+| Custom | `$function`, `$accumulator` | Low | ❌ Not Supported | Raises NotImplementedError; use `$expr` or Python post-processing |
 
 ### 2.5 LOW PRIORITY - Specialized Features
 

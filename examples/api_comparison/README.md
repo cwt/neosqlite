@@ -28,6 +28,8 @@ This package tests NeoSQLite's MongoDB API compatibility by running the same ope
 5. `db_path` (Collection & Database) - **NeoSQLite extension** providing the underlying SQLite database file path. No MongoDB equivalent.
 6. `initialize_ordered_bulk_op()` / `initialize_unordered_bulk_op()` - **Deprecated in NeoSQLite** to match PyMongo 4.x behavior.
 7. `where()` - **NeoSQLite implementation** using Python function filter. MongoDB uses JavaScript `$where` which requires a JS engine.
+8. `$function` - **Not supported in NeoSQLite**. Raises `NotImplementedError` with guidance to use `$expr` or Python post-processing.
+9. `$accumulator` - **Not supported in NeoSQLite**. Raises `NotImplementedError` with guidance to use built-in accumulators or Python post-processing.
 
 All comparable MongoDB APIs are tested with 100% compatibility.
 
