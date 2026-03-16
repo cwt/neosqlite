@@ -247,10 +247,8 @@ class SQLTierAggregator:
         # Use cast to help type checker
         sql_template, all_params = cast(Tuple[str, List[Any]], sql_result)
 
-        # Cache the template
-        param_names = tuple(
-            self._extract_param_names_from_template(sql_template)
-        )
+        # Cache the template - extract param names from pipeline for robustness
+        param_names = tuple(self._extract_param_names_from_pipeline(pipeline))
         self._translation_cache.put(cache_key, sql_template, param_names)
 
         return sql_template, all_params
@@ -338,17 +336,93 @@ class SQLTierAggregator:
                     values[f"__placeholder_{placeholder_idx}__"] = spec["size"]
                     placeholder_idx += 1
 
-            elif stage_name == "$limit" and isinstance(spec, dict):
-                if "limit" in spec:
-                    values[f"__placeholder_{placeholder_idx}__"] = spec["limit"]
-                    placeholder_idx += 1
+            elif stage_name == "$limit" and isinstance(spec, int):
+                values[f"__placeholder_{placeholder_idx}__"] = spec
+                placeholder_idx += 1
 
-            elif stage_name == "$skip" and isinstance(spec, dict):
-                if "skip" in spec:
-                    values[f"__placeholder_{placeholder_idx}__"] = spec["skip"]
-                    placeholder_idx += 1
+            elif stage_name == "$skip" and isinstance(spec, int):
+                values[f"__placeholder_{placeholder_idx}__"] = spec
+                placeholder_idx += 1
 
         return values
+
+    def _extract_param_names_from_pipeline(
+        self, pipeline: List[Dict[str, Any]]
+    ) -> list[str]:
+        """Extract parameter names from pipeline structure directly.
+
+        This is more robust than parsing SQL template since it works directly
+        with the MongoDB pipeline specification.
+        """
+        params: list[str] = []
+        placeholder_idx = 0
+
+        for stage in pipeline:
+            stage_name = next(iter(stage.keys()))
+            spec = stage[stage_name]
+
+            if stage_name == "$match" and isinstance(spec, dict):
+                # Extract all field paths from $match spec
+                field_paths = self._extract_field_paths_from_dict(spec)
+                params.extend(field_paths)
+
+            elif stage_name == "$sample" and isinstance(spec, dict):
+                if "size" in spec:
+                    params.append(f"__placeholder_{placeholder_idx}__")
+                    placeholder_idx += 1
+
+            elif stage_name == "$limit" and isinstance(spec, int):
+                params.append(f"__placeholder_{placeholder_idx}__")
+                placeholder_idx += 1
+
+            elif stage_name == "$skip" and isinstance(spec, int):
+                params.append(f"__placeholder_{placeholder_idx}__")
+                placeholder_idx += 1
+
+            elif stage_name == "$count":
+                params.append(f"__placeholder_{placeholder_idx}__")
+                placeholder_idx += 1
+
+            elif stage_name == "$group" and isinstance(spec, dict):
+                # _id field and accumulator fields are parameters
+                if "_id" in spec:
+                    params.append("$._id")
+                for key in spec:
+                    if key.startswith("$"):
+                        params.append(f"$.{key}")
+
+        return params
+
+    def _extract_field_paths_from_dict(
+        self, d: dict, prefix: str = "$"
+    ) -> list[str]:
+        """Recursively extract all field paths from a dict."""
+        paths = []
+        for key, value in d.items():
+            if key.startswith("$"):
+                # This is an operator, not a field path
+                if isinstance(value, dict):
+                    # The actual field path is the key before this operator
+                    continue
+                elif isinstance(value, list):
+                    for item in value:
+                        if isinstance(item, dict):
+                            paths.extend(
+                                self._extract_field_paths_from_dict(
+                                    item, prefix
+                                )
+                            )
+            else:
+                # This is a field path
+                if isinstance(value, dict):
+                    # Has operators, need to recurse to find nested fields
+                    for op_key in value:
+                        if op_key.startswith("$"):
+                            paths.append(f"{prefix}{key}")
+                else:
+                    # Direct value
+                    paths.append(f"{prefix}{key}")
+        return paths
 
     def _get_value_at_path(
         self, pipeline: List[Dict[str, Any]], field_path: str
@@ -374,25 +448,6 @@ class SQLTierAggregator:
                 if result is not None:
                     return result
         return None
-
-    def _extract_param_names_from_template(
-        self, sql_template: str
-    ) -> list[str]:
-        """Extract parameter placeholder positions from SQL template."""
-        import re
-
-        params = []
-        for match in re.finditer(
-            r"json_extract\([^,]+,\s*\'(\$[^\']+)\'\)", sql_template
-        ):
-            params.append(match.group(1))
-
-        # Extract ? placeholders with positional index: LIMIT ?, SKIP ?
-        placeholder_count = sql_template.count("?") - len(params)
-        for i in range(placeholder_count):
-            params.append(f"__placeholder_{i}__")
-
-        return params
 
     def get_cache_stats(self) -> dict[str, Any]:
         """Get pipeline cache statistics."""

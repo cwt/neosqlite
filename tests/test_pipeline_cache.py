@@ -196,6 +196,76 @@ class TestTranslationCache:
         list(users.aggregate([{"$match": {"a": 1}}]))
         assert len(qe._translation_cache) == 1
 
+    def test_cache_no_collision_different_fields_same_operator(self):
+        """Regression test: different fields with same operator must not collide.
+
+        Previously, age.$gt and score.$gt would generate the same cache key
+        because the key builder only captured the operator ($gt), not the field name.
+        """
+        from neosqlite.collection.query_helper.translation_cache import (
+            TranslationCache,
+        )
+
+        cache = TranslationCache()
+
+        # Different fields using same operator must have different keys
+        key1 = cache.make_key([{"$match": {"age": {"$gt": 25}}}])
+        key2 = cache.make_key([{"$match": {"score": {"$gt": 90}}}])
+
+        assert (
+            key1 != key2
+        ), "Cache key collision: age.$gt and score.$gt should differ"
+
+        # Same query with different values should have same key (parameterized)
+        key3 = cache.make_key([{"$match": {"age": {"$gt": 25}}}])
+        key4 = cache.make_key([{"$match": {"age": {"$gt": 999}}}])
+        assert key3 == key4, "Same query structure should have same key"
+
+    def test_cache_multiple_parameterized_operators_different_order(self):
+        """Test cache key is stable regardless of operator order in query.
+
+        The key builder sorts dict keys, so {$gt: 1, $lt: 10} and {$lt: 10, $gt: 1}
+        should produce the same cache key.
+        """
+        from neosqlite.collection.query_helper.translation_cache import (
+            TranslationCache,
+        )
+
+        cache = TranslationCache()
+
+        # Different order of same operators should produce same key
+        key1 = cache.make_key([{"$match": {"field": {"$gt": 1, "$lt": 10}}}])
+        key2 = cache.make_key([{"$match": {"field": {"$lt": 10, "$gt": 1}}}])
+        assert key1 == key2, "Different operator order should produce same key"
+
+        # Different fields should have different keys
+        key3 = cache.make_key([{"$match": {"a": {"$gt": 1, "$lt": 10}}}])
+        key4 = cache.make_key([{"$match": {"b": {"$gt": 1, "$lt": 10}}}])
+        assert key3 != key4, "Different fields should have different keys"
+
+    def test_cache_parameterized_limit_skip_sample(self):
+        """Test parameterization works for $limit, $skip, $sample."""
+        from neosqlite.collection.query_helper.translation_cache import (
+            TranslationCache,
+        )
+
+        cache = TranslationCache()
+
+        # $limit with different values should have same key
+        key1 = cache.make_key([{"$limit": 10}])
+        key2 = cache.make_key([{"$limit": 100}])
+        assert key1 == key2, "$limit values should be parameterized"
+
+        # $skip with different values should have same key
+        key3 = cache.make_key([{"$skip": 5}])
+        key4 = cache.make_key([{"$skip": 50}])
+        assert key3 == key4, "$skip values should be parameterized"
+
+        # $sample.size with different values should have same key
+        key5 = cache.make_key([{"$sample": {"size": 20}}])
+        key6 = cache.make_key([{"$sample": {"size": 100}}])
+        assert key5 == key6, "$sample.size values should be parameterized"
+
 
 @pytest.fixture
 def connection():

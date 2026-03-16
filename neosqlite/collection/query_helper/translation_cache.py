@@ -16,13 +16,12 @@ from typing import Any
 class CacheEntry:
     """Single cache entry with hit statistics."""
 
-    __slots__ = ("sql_template", "param_names", "hit_count", "last_hit")
+    __slots__ = ("sql_template", "param_names", "hit_count")
 
     def __init__(self, sql_template: str, param_names: tuple[str, ...]):
         self.sql_template = sql_template
         self.param_names = param_names
         self.hit_count = 0
-        self.last_hit = 0
 
 
 class TranslationCache:
@@ -193,7 +192,6 @@ class TranslationCache:
             "sql_template": entry.sql_template,
             "param_names": entry.param_names,
             "hit_count": entry.hit_count,
-            "last_hit": entry.last_hit,
         }
 
     def dump(self) -> list[dict]:
@@ -204,7 +202,6 @@ class TranslationCache:
                 "sql_preview": entry.sql_template[:100].replace("\n", " "),
                 "param_names": entry.param_names,
                 "hit_count": entry.hit_count,
-                "last_hit": entry.last_hit,
             }
             for key, entry in sorted(
                 self._cache.items(), key=lambda x: x[1].hit_count, reverse=True
