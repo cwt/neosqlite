@@ -8,6 +8,7 @@ and provide a single source of truth for type operations.
 
 from __future__ import annotations
 from typing import Any
+import re
 
 
 # =============================================================================
@@ -76,15 +77,11 @@ def _convert_to_bsonbindata(value: Any) -> Any:
 
 def _convert_to_regex(value: Any) -> Any:
     """Convert value to regex pattern."""
-    import re
-
     return re.compile(str(value)) if value else None
 
 
 def _convert_to_bsonregex(value: Any) -> Any:
     """Convert value to regex pattern (bsonRegex)."""
-    import re
-
     return re.compile(str(value)) if value else None
 
 

@@ -7,6 +7,7 @@ to avoid code duplication across multiple modules.
 
 from typing import Any
 import re
+import datetime
 
 
 # Define common datetime patterns as constants
@@ -51,8 +52,6 @@ def is_datetime_value(value: Any) -> bool:
     Returns:
         True if value is datetime-related, False otherwise
     """
-    import datetime
-
     if isinstance(value, (datetime.datetime, datetime.date)):
         return True
 

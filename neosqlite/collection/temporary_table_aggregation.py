@@ -19,6 +19,8 @@ from .expr_evaluator import ExprEvaluator
 from contextlib import contextmanager
 from typing import Any, Dict, List, Callable, Tuple
 import hashlib
+import uuid
+import sqlite3
 
 
 class DeterministicTempTableManager:
@@ -133,8 +135,6 @@ def aggregation_pipeline_context(db_connection, pipeline_id: str | None = None):
 
     # Generate a default pipeline ID if none provided (for backward compatibility)
     if pipeline_id is None:
-        import uuid
-
         pipeline_id = f"default_{uuid.uuid4().hex[:8]}"
 
     savepoint_name = f"agg_pipeline_{pipeline_id}"
@@ -196,7 +196,6 @@ def aggregation_pipeline_context(db_connection, pipeline_id: str | None = None):
                 suffix = stage_or_suffix
             else:
                 suffix = "unknown"
-            import uuid
 
             table_name = f"temp_{suffix}_{uuid.uuid4().hex}"
 
@@ -822,8 +821,6 @@ class TemporaryTableAggregationProcessor:
         current_table: str,
         lookup_spec: Dict[str, Any],
     ) -> str:
-        import uuid
-
         """
         Process a $lookup stage using temporary tables.
 
@@ -2014,8 +2011,6 @@ class TemporaryTableAggregationProcessor:
         return new_table
 
     def _process_densify_stage(self, create_temp, current_table, densify_spec):
-        import uuid
-
         """
         Process $densify stage - fills in missing values in a sequence.
 
@@ -2715,8 +2710,6 @@ def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
                 return False
 
         if stage_name in ("$setWindowFields", "$fill"):
-            import sqlite3
-
             if sqlite3.sqlite_version_info < (3, 25, 0):
                 return False
 

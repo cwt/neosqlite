@@ -2,6 +2,13 @@ from neosqlite.binary import Binary
 from typing import Any, Dict
 import json
 from datetime import datetime
+import re
+
+
+# Pre-compile ISO date pattern for performance
+ISO_DATE_PATTERN = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$"
+)
 
 
 class NeoSQLiteJSONEncoder(json.JSONEncoder):
@@ -83,12 +90,6 @@ def neosqlite_json_loads(s: str, **kwargs) -> Any:
     Returns:
         Deserialized object
     """
-    import re
-
-    # ISO 8601 date pattern
-    ISO_DATE_PATTERN = re.compile(
-        r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$"
-    )
 
     def object_hook(dct: Dict[str, Any]) -> Any:
         """

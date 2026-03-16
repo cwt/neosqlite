@@ -1,5 +1,7 @@
 from __future__ import annotations
+from copy import deepcopy
 from functools import partial
+import time
 from typing import Any, Callable, Dict, List, Iterator, Iterable, TYPE_CHECKING
 from .json_path_utils import parse_json_path
 from .type_utils import validate_session
@@ -375,8 +377,6 @@ class Cursor:
             >>> results1 = list(cursor)
             >>> results2 = list(clone)
         """
-        from copy import deepcopy
-
         cloned = Cursor(
             self._collection,
             filter=deepcopy(self._filter),
@@ -589,8 +589,6 @@ class Cursor:
             # Add execution stats if requested
             if verbosity == "executionStats":
                 # Actually execute the query to get stats
-                import time
-
                 start_time = time.time()
                 results = list(self)
                 execution_time_ms: float = (time.time() - start_time) * 1000

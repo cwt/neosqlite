@@ -20,6 +20,8 @@ from .temporary_table_aggregation import (
     aggregation_pipeline_context,
 )
 from typing import Any, Dict, List
+import hashlib
+import uuid
 
 
 class DateTimeQueryProcessor:
@@ -299,9 +301,6 @@ class DateTimeQueryProcessor:
         # Use a more robust approach with temporary table for complex datetime queries
         try:
             # Create a unique pipeline ID for this operation
-            import hashlib
-            import uuid
-
             query_str = str(sorted(query.items()))
             pipeline_id = f"datetime_{hashlib.sha256(query_str.encode()).hexdigest()[:8]}_{uuid.uuid4().hex[:4]}"
 
