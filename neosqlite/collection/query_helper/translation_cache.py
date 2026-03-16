@@ -111,8 +111,15 @@ class TranslationCache:
     def _extract_structure(self, obj: Any) -> Any:
         """
         Recursively convert pipeline dict into a hashable nested tuple.
-        Replaces all terminal values with '?' placeholder to parameterize the key.
-        Preserves field names, operators, and structure.
+
+        Replaces literal values (numbers, strings, booleans) with '?' placeholder,
+        but PRESERVES field references (strings starting with $) to prevent
+        cache collisions between queries grouping/filtering on different fields.
+
+        Examples:
+        - {"$gt": 25} -> ("$gt", "?")
+        - {"_id": "$dept"} -> ("_id", "$dept")  # Preserved!
+        - {"status": "active"} -> ("status", "?")
         """
         if isinstance(obj, dict):
             return tuple(
@@ -120,8 +127,13 @@ class TranslationCache:
             )
         elif isinstance(obj, list):
             return tuple(self._extract_structure(item) for item in obj)
+        elif isinstance(obj, str) and obj.startswith("$"):
+            # Field reference - preserve in key to avoid collisions
+            return obj
+        elif isinstance(obj, (int, float, str, bool)):
+            # Literal value - parameterize in key
+            return "?"
         else:
-            # Replace actual values (ints, strings, booleans) with placeholder
             return "?"
 
     def get_stats(self) -> dict[str, Any]:

@@ -380,16 +380,29 @@ class SQLTierAggregator:
                 placeholder_idx += 1
 
             elif stage_name == "$count":
-                params.append(f"__placeholder_{placeholder_idx}__")
-                placeholder_idx += 1
+                # $count doesn't have parameters - it's just {"$count": "output_field_name"}
+                # No placeholder needed
+                pass
 
             elif stage_name == "$group" and isinstance(spec, dict):
-                # _id field and accumulator fields are parameters
-                if "_id" in spec:
-                    params.append("$._id")
-                for key in spec:
-                    if key.startswith("$"):
-                        params.append(f"$.{key}")
+                # _id field and accumulator fields may need parameter extraction
+                # Only track actual field references (values starting with $)
+                if (
+                    "_id" in spec
+                    and isinstance(spec["_id"], str)
+                    and spec["_id"].startswith("$")
+                ):
+                    params.append(spec["_id"])  # e.g., "$dept"
+                for key, value in spec.items():
+                    if key != "_id" and isinstance(value, dict):
+                        # Accumulator like {"$sum": "$field"} - extract the field
+                        for op, field in value.items():
+                            if (
+                                op.startswith("$")
+                                and isinstance(field, str)
+                                and field.startswith("$")
+                            ):
+                                params.append(field)
 
         return params
 
