@@ -538,15 +538,14 @@ These operators now provide clear error messages suggesting alternatives, matchi
 
 #### Type Conversion Operators (ALL IMPLEMENTED)
 
-| Operator | Priority | Status |
-|----------|----------|--------|
-| `$convert` | Medium | ✅ **Implemented** |
-| `$toBool`, `$toDate`, `$toString` | Medium | ✅ **Implemented** |
-| `$toInt`, `$toLong`, `$toDouble` | Medium | ✅ **Implemented** |
-| `$toDecimal` | Medium | ❌ Missing (MongoDB-specific) |
-| `$toObjectId`, `$toUUID` | Medium | ✅ **Implemented** |
-| `$isNumber` | Medium | ✅ **Implemented** |
-| `$type` | Medium | ✅ **Implemented** |
+| Operator | Priority | Status | Notes |
+|----------|----------|--------|-------|
+| `$convert` | Medium | ✅ **Implemented** | |
+| `$toBool`, `$toDate`, `$toString` | Medium | ✅ **Implemented** | |
+| `$toInt`, `$toLong`, `$toDouble`, `$toDecimal` | Medium | ✅ **Implemented** | Python tier (SQLite lacks Decimal128) |
+| `$toObjectId`, `$toUUID` | Medium | ✅ **Implemented** | |
+| `$isNumber` | Medium | ✅ **Implemented** | |
+| `$type` | Medium | ✅ **Implemented** | |
 
 #### Date Operators (2 Missing)
 
@@ -600,14 +599,14 @@ These operators now provide clear error messages suggesting alternatives, matchi
 
 #### Other Missing Operators
 
-| Category | Operators | Priority | Status |
-|----------|-----------|----------|--------|
-| Data Size | `$binarySize`, `$bsonSize` | Low | ✅ **Implemented** |
-| Object | `$mergeObjects`, `$setField` | Low | ✅ **Implemented** |
-| Variable | `$let` | Low | ✅ **Implemented** |
-| Literal | `$literal` | Low | ✅ **Implemented** |
-| Misc | `$getField`, `$rand`, `$sampleRate` | Low | ✅ **Implemented** |
-| Timestamp | `$tsIncrement`, `$tsSecond` | Low | ❌ Missing (MongoDB-specific) |
+| Category | Operators | Priority | Status | Notes |
+|----------|-----------|----------|--------|-------|
+| Data Size | `$binarySize`, `$bsonSize` | Low | ✅ **Implemented** | |
+| Object | `$mergeObjects`, `$setField` | Low | ✅ **Implemented** | |
+| Variable | `$let` | Low | ✅ **Implemented** | |
+| Literal | `$literal` | Low | ✅ **Implemented** | |
+| Misc | `$getField`, `$rand`, `$sampleRate` | Low | ✅ **Implemented** | |
+| Timestamp | `$tsIncrement`, `$tsSecond` | Low | ❌ Missing (MongoDB-specific) | |
 | Custom | `$function`, `$accumulator` | Low | ❌ Not Supported | Raises NotImplementedError; use `$expr` or Python post-processing |
 
 ### 2.5 LOW PRIORITY - Specialized Features
