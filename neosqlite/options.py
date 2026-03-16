@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict
 
 
 class WriteConcern:
@@ -10,10 +10,10 @@ class WriteConcern:
 
     def __init__(
         self,
-        w: Optional[Union[int, str]] = None,
-        wtimeout: Optional[int] = None,
-        j: Optional[bool] = None,
-        fsync: Optional[bool] = None,
+        w: int | str | None = None,
+        wtimeout: int | None = None,
+        j: bool | None = None,
+        fsync: bool | None = None,
     ):
         self._document = {}
         if w is not None:
@@ -57,9 +57,9 @@ class ReadPreference:
     def __init__(
         self,
         mode: int,
-        tag_sets: Optional[list] = None,
-        max_staleness_ms: Optional[int] = None,
-        hedge: Optional[dict] = None,
+        tag_sets: list | None = None,
+        max_staleness_ms: int | None = None,
+        hedge: dict | None = None,
     ):
         self._mode = mode
         self._tag_sets = tag_sets
@@ -91,11 +91,11 @@ class ReadConcern:
     Represents a read concern for MongoDB compatibility.
     """
 
-    def __init__(self, level: Optional[str] = None):
+    def __init__(self, level: str | None = None):
         self._level = level
 
     @property
-    def level(self) -> Optional[str]:
+    def level(self) -> str | None:
         return self._level
 
     @property

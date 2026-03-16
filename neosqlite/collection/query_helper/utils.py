@@ -91,20 +91,20 @@ def _convert_bytes_to_binary(obj: Any) -> Any:
     Returns:
         The processed object with bytes converted to Binary objects
     """
-    # Check for Binary first, since Binary inherits from bytes
-    if isinstance(obj, Binary):
-        # Leave Binary objects unchanged to preserve subtype information
-        return obj
-    elif isinstance(obj, bytes):
-        return Binary(obj)
-    elif isinstance(obj, dict):
-        return {
-            key: _convert_bytes_to_binary(value) for key, value in obj.items()
-        }
-    elif isinstance(obj, list):
-        return [_convert_bytes_to_binary(item) for item in obj]
-    else:
-        return obj
+    match obj:
+        case Binary():
+            return obj
+        case bytes():
+            return Binary(obj)
+        case dict():
+            return {
+                key: _convert_bytes_to_binary(value)
+                for key, value in obj.items()
+            }
+        case list():
+            return [_convert_bytes_to_binary(item) for item in obj]
+        case _:
+            return obj
 
 
 def set_force_fallback(force: bool = True) -> None:
