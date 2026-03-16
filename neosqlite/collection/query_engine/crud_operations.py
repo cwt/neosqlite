@@ -349,10 +349,17 @@ class CRUDOperationsMixin(QueryEngineProtocol):
                     if "$" in field_path or field_path.startswith("[]"):
                         return None
 
+        update_result = self.helpers._build_update_clause(update)
+        if update_result is None:
+            return None
+
+        set_clause, set_params = update_result
+
+        where_clause, where_params = self.sql_translator.translate_match(filter)
+        if where_clause is None:
+            return None
+
         if "$inc" in update_keys or "$mul" in update_keys:
-            where_clause, where_params = self.sql_translator.translate_match(
-                filter
-            )
             from ..query_helper.update_operations import UpdateOperationsMixin
 
             if not UpdateOperationsMixin._validate_inc_mul_types_sql(
@@ -364,16 +371,6 @@ class CRUDOperationsMixin(QueryEngineProtocol):
                 self._jsonb_supported,
             ):
                 return None
-
-        update_result = self.helpers._build_update_clause(update)
-        if update_result is None:
-            return None
-
-        set_clause, set_params = update_result
-
-        where_clause, where_params = self.sql_translator.translate_match(filter)
-        if where_clause is None:
-            return None
 
         try:
             # For update_one, we MUST only update a single document.
