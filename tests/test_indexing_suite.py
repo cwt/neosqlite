@@ -397,7 +397,7 @@ def test_index_usage_with_explain(collection):
 
     # Verify that we can build a SQL query for this filter
     assert where_result is not None
-    where_clause, params = where_result
+    where_clause, params, _ = where_result
 
     # Construct the full SQL query that would be used by the Collection
     sql_query = f"SELECT id, data FROM {collection.name} {where_clause}"

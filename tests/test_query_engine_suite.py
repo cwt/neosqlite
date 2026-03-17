@@ -686,18 +686,18 @@ def test_query_helper_aggregation_and_query_building():
         helper = QueryHelper(collection)
 
         # Test _build_simple_where_clause with simple query
-        clause, params = helper._build_simple_where_clause({"name": "test"})
+        clause, params, _ = helper._build_simple_where_clause({"name": "test"})
         # Check for either json_extract or jsonb_extract depending on support
         assert "json_extract" in clause or "jsonb_extract" in clause
         assert params == ["test"]
 
         # Test _build_simple_where_clause with _id field
-        clause, params = helper._build_simple_where_clause({"_id": 1})
+        clause, params, _ = helper._build_simple_where_clause({"_id": 1})
         assert "id = ?" in clause
         assert params == [1]
 
         # Test _build_simple_where_clause with operators
-        clause, params = helper._build_simple_where_clause(
+        clause, params, _ = helper._build_simple_where_clause(
             {"value": {"$gt": 10}}
         )
         # Check for either json_extract or jsonb_extract depending on support

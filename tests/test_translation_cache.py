@@ -1703,16 +1703,24 @@ class TestTier2TranslationCacheIntegration:
         expr = {
             "$cond": {
                 "if": {"$eq": ["$status", "active"]},
-                "then": "yes",
-                "else": "no",
+                "then": 1,
+                "else": 0,
             }
         }
 
+        # First call (miss)
         result1 = evaluator.evaluate(expr, "users", None)
         assert result1 is not None
+        sql1, params1, tables1 = result1
+        res1 = conn.db.execute(sql1, params1).fetchall()
+        assert len(res1) == 2  # Only active users
 
+        # Second call (hit)
         result2 = evaluator.evaluate(expr, "users", None)
         assert result2 is not None
+        sql2, params2, tables2 = result2
+        res2 = conn.db.execute(sql2, params2).fetchall()
+        assert len(res2) == 2  # Only active users
 
         assert evaluator.get_cache_stats()["hits"] >= 1
 
@@ -1724,7 +1732,7 @@ class TestTier2TranslationCacheIntegration:
         users = conn.users
         users.insert_many([{"value": i} for i in range(20)])
 
-        expr = {"$gte": ["$value", 10]}
+        expr = {"$cond": {"if": {"$gte": ["$value", 10]}, "then": 1, "else": 0}}
 
         evaluator_cached = TempTableExprEvaluator(
             conn.db, translation_cache_size=100
@@ -1735,11 +1743,29 @@ class TestTier2TranslationCacheIntegration:
             conn.db, translation_cache_size=0
         )
 
-        result_cached = evaluator_cached.evaluate(expr, "users", None)
-        result_uncached = evaluator_uncached.evaluate(expr, "users", None)
+        # First call (miss)
+        result_cached1 = evaluator_cached.evaluate(expr, "users", None)
+        assert result_cached1 is not None
+        sql1, params1, tables1 = result_cached1
+        res_cached1 = conn.db.execute(sql1, params1).fetchall()
 
-        assert result_cached is not None
+        # Second call (hit)
+        result_cached2 = evaluator_cached.evaluate(expr, "users", None)
+        assert result_cached2 is not None
+        sql2, params2, tables2 = result_cached2
+        res_cached2 = conn.db.execute(sql2, params2).fetchall()
+
+        # Non-cached
+        result_uncached = evaluator_uncached.evaluate(expr, "users", None)
         assert result_uncached is not None
+        sql_u, params_u, tables_u = result_uncached
+        res_uncached = conn.db.execute(sql_u, params_u).fetchall()
+
+        assert len(res_cached1) == 10  # Only values 10-19
+        assert len(res_cached2) == 10
+        assert len(res_uncached) == 10
+        assert res_cached1 == res_uncached
+        assert res_cached2 == res_uncached
 
 
 @pytest.fixture

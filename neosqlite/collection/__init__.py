@@ -68,6 +68,11 @@ class Collection:
         if create:
             self.create(**kwargs)
 
+    def cleanup(self) -> None:
+        """Clean up resources used by the collection."""
+        if hasattr(self, "query_engine"):
+            self.query_engine.cleanup()
+
     # --- Collection helper methods ---
     def _load(
         self, id: int, data: str | bytes, stored_id: Any = None

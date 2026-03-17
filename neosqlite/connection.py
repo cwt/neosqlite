@@ -109,6 +109,12 @@ class Connection:
             for name, path in self._tokenizers:
                 self.db.execute(f"SELECT load_extension('{path}')")
 
+    def cleanup(self) -> None:
+        """Clean up all collection resources associated with this connection."""
+        if hasattr(self, "_collections"):
+            for collection in self._collections.values():
+                collection.cleanup()
+
     def close(self) -> None:
         """
         Close the database connection.
@@ -119,6 +125,9 @@ class Connection:
         """
         if getattr(self, "_is_clone", False) or getattr(self, "_closed", False):
             return
+
+        # Clean up collections before closing the database
+        self.cleanup()
 
         if self.db is not None:
             try:

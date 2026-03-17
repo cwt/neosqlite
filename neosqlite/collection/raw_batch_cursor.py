@@ -44,6 +44,7 @@ class RawBatchCursor:
         self._sort: Dict[str, int] | None = None
         self._pipeline = pipeline
         self._session = session
+        self._tables_to_cleanup: List[str] = []
 
     def batch_size(self, batch_size: int) -> RawBatchCursor:
         """
@@ -87,7 +88,11 @@ class RawBatchCursor:
 
         if where_result is not None:
             # Use SQL-based filtering
-            where_clause, params = where_result
+            where_clause, params, tables = where_result
+
+            # Track tables for cleanup
+            if tables:
+                self._tables_to_cleanup.extend(tables)
 
             # Build ORDER BY clause if sorting is specified
             order_by = ""
@@ -179,3 +184,18 @@ class RawBatchCursor:
                     neosqlite_json_dumps(doc) for doc in batch
                 )
                 yield batch_json.encode("utf-8")
+
+    def __del__(self) -> None:
+        """Clean up resources on garbage collection."""
+        self._cleanup()
+
+    def _cleanup(self) -> None:
+        """Clean up temporary tables."""
+        if not self._tables_to_cleanup:
+            return
+        for table in self._tables_to_cleanup:
+            try:
+                self._collection.db.execute(f"DROP TABLE IF EXISTS {table}")
+            except Exception:
+                pass
+        self._tables_to_cleanup = []

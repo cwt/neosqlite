@@ -124,7 +124,7 @@ class AggregationMixin:
                     where_result = self._build_simple_where_clause(query)
                     if where_result is None:
                         return None  # Fallback for complex queries
-                    where_clause, params = where_result
+                    where_clause, params, tables = where_result
                 case "$sort":
                     sort_spec = stage["$sort"]
                     sort_clauses = []

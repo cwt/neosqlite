@@ -51,7 +51,7 @@ class QueryBuilderMixin:
 
     def _build_text_search_query(
         self, query: Dict[str, Any]
-    ) -> tuple[str, List[Any]] | None:
+    ) -> tuple[str, List[Any], List[str]] | None:
         """
         Builds a SQL query for text search using FTS5.
 
@@ -59,9 +59,9 @@ class QueryBuilderMixin:
             query: A dictionary representing the text search query with $text operator.
 
         Returns:
-            tuple[str, List[Any]] | None: A tuple containing the SQL WHERE clause
-                                          and a list of parameters, or None if the
-                                          query is invalid or FTS index doesn't exist.
+            tuple[str, List[Any], List[str]] | None: A tuple containing the SQL WHERE clause,
+                                                      a list of parameters, and an empty list of
+                                                      tables to clean up, or None.
         """
         if "$text" not in query:
             return None
@@ -107,7 +107,7 @@ class QueryBuilderMixin:
         where_clause = f"""
         WHERE id IN ({union_query})
         """
-        return where_clause, params
+        return where_clause, params, []
 
     def _build_other_fields_clause(
         self, query: Dict[str, Any], expr: Dict[str, Any]
@@ -219,7 +219,7 @@ class QueryBuilderMixin:
     def _build_simple_where_clause(
         self,
         query: Dict[str, Any],
-    ) -> tuple[str, List[Any]] | None:
+    ) -> tuple[str, List[Any], List[str]] | None:
         """
         Builds a SQL WHERE clause for simple queries that can be handled with json_extract.
 
@@ -235,9 +235,9 @@ class QueryBuilderMixin:
             query (Dict[str, Any]): A dictionary representing the query criteria.
 
         Returns:
-            tuple[str, List[Any]] | None: A tuple containing the SQL WHERE clause
-                                          and a list of parameters, or None if the
-                                          query is too complex or force fallback is enabled.
+            tuple[str, List[Any], List[str]] | None: A tuple containing the SQL WHERE clause,
+                                                      a list of parameters, and a list of
+                                                      temporary tables to clean up, or None.
         """
         # Apply type correction to handle cases where users query 'id' with ObjectId
         # or other common type mismatches
@@ -352,8 +352,8 @@ class QueryBuilderMixin:
                     params.extend(field_params)
 
         if clauses:
-            return "WHERE " + " AND ".join(clauses), params
-        return "", params
+            return "WHERE " + " AND ".join(clauses), params, []
+        return "", params, []
 
     def _build_sort_clause(
         self,

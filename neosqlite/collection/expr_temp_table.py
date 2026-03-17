@@ -99,7 +99,7 @@ class TempTableExprEvaluator:
         expr: Dict[str, Any],
         collection_name: str,
         filter_expr: Dict[str, Any] | None = None,
-    ) -> Tuple[str | None, List[Any]]:
+    ) -> Tuple[str | None, List[Any], List[str]]:
         """
         Evaluate a $expr expression using temporary tables.
 
@@ -109,7 +109,7 @@ class TempTableExprEvaluator:
             filter_expr: Optional additional filter to apply
 
         Returns:
-            Tuple of (SELECT query with temp tables, parameters) or (None, []) for Python fallback
+            Tuple of (SQL query, parameters, table_names) or (None, [], []) for Python fallback
         """
         try:
             # Analyze expression complexity
@@ -117,11 +117,11 @@ class TempTableExprEvaluator:
 
             # If too simple for Tier 2, let Tier 1 handle it
             if complexity < 2:
-                return None, []
+                return None, [], []
 
             # If too complex for Tier 2, fall back to Tier 3 (Python)
             if complexity > 10:
-                return None, []
+                return None, [], []
 
             # Try cache first
             cache_key = self._make_expr_key(expr)
@@ -134,13 +134,14 @@ class TempTableExprEvaluator:
             result = self._build_tier2_query(expr, collection_name, filter_expr)
             if result[0] is not None:
                 # Cache the translation: WHERE clause template and fields to extract
-                sql_query, params = result
+                sql_query, params, temp_tables = result
                 fields = self._extract_field_references(expr)
                 # Extract WHERE clause from the full query for caching
                 where_clause = self._extract_where_clause(sql_query)
                 # Store with temp_table placeholder for substitution on cache hit
+                # FIX: self._temp_tables[-1] already includes the prefix
                 where_clause_template = where_clause.replace(
-                    f"temp_expr_{self._temp_tables[-1]}", "{temp_table}"
+                    temp_tables[-1], "{temp_table}"
                 )
                 self._translation_cache.put(
                     cache_key, where_clause_template, tuple(fields)
@@ -149,10 +150,8 @@ class TempTableExprEvaluator:
 
         except (NotImplementedError, ValueError):
             # Fall back to Python evaluation
-            return None, []
-        finally:
-            # Clean up temporary tables after use
-            self._cleanup_temp_tables()
+            return None, [], []
+        # Cleanup handled by Cursor
 
     def _analyze_complexity(self, expr: Dict[str, Any]) -> int:
         """
@@ -223,7 +222,7 @@ class TempTableExprEvaluator:
         expr: Dict[str, Any],
         collection_name: str,
         cached: tuple[str, tuple[str, ...]],
-    ) -> Tuple[str, List[Any]]:
+    ) -> Tuple[str, List[Any], List[str]]:
         """
         Build query from cached translation.
 
@@ -233,7 +232,7 @@ class TempTableExprEvaluator:
             cached: Tuple of (where_clause_template, field_list)
 
         Returns:
-            Tuple of (SQL query, parameters)
+            Tuple of (SQL query, parameters, table_names)
         """
         where_clause_template, field_list = cached
 
@@ -252,9 +251,9 @@ class TempTableExprEvaluator:
 
         # Build SELECT with json() conversion for Python-space data
         if self._jsonb_supported:
-            select_data = f"json({temp_table}.{self.data_column}) as data"
+            select_data = f"json({collection_name}.{self.data_column}) as data"
         else:
-            select_data = f"{temp_table}.data as data"
+            select_data = f"{collection_name}.data as data"
 
         # Build the final query
         query = f"""
@@ -264,42 +263,70 @@ class TempTableExprEvaluator:
             WHERE {where_clause}
         """
 
-        return query.strip(), params
+        return query.strip(), params, [temp_table]
 
     def _extract_where_clause(self, full_query: str) -> str:
         """Extract WHERE clause from a full query string."""
         if "WHERE" in full_query:
-            parts = full_query.split("WHERE", 1)
+            # In our generated queries, WHERE is always at the end of the main SELECT
+            parts = full_query.rsplit("WHERE", 1)
             return parts[1].strip()
         return ""
 
     def _extract_param_values_from_expr(
         self, expr: Dict[str, Any]
     ) -> List[Any]:
-        """Extract actual parameter values from expression for cached query."""
+        """
+        Extract actual parameter values from expression for cached query.
+        Must follow the exact same traversal order as _convert_expr_to_temp_sql.
+        """
         values = []
 
-        def extract_values(obj: Any) -> None:
-            match obj:
-                case dict() as d:
-                    for key, value in d.items():
-                        if key.startswith("$") and key not in (
-                            "$and",
-                            "$or",
-                            "$nor",
-                            "$not",
-                        ):
-                            continue
-                        extract_values(value)
-                case list() as lst:
-                    for item in lst:
-                        extract_values(item)
-                case int() | float() | str():
-                    values.append(obj)
-                case bool():
-                    values.append(obj)
+        def extract_from_expr(e: Any) -> None:
+            if not isinstance(e, dict) or len(e) != 1:
+                return
 
-        extract_values(expr)
+            operator, operands = next(iter(e.items()))
+            match operator:
+                case "$and" | "$or" | "$nor":
+                    if isinstance(operands, list):
+                        for op in operands:
+                            extract_from_expr(op)
+                case "$not":
+                    if isinstance(operands, list) and len(operands) > 0:
+                        extract_from_expr(operands[0])
+                case "$gt" | "$gte" | "$lt" | "$lte" | "$eq" | "$ne" | "$cmp":
+                    if isinstance(operands, list):
+                        for op in operands:
+                            extract_from_operand(op)
+                case "$add" | "$subtract" | "$multiply" | "$divide" | "$mod":
+                    if isinstance(operands, list):
+                        for op in operands:
+                            extract_from_operand(op)
+                case "$cond":
+                    if isinstance(operands, dict):
+                        if "if" in operands:
+                            extract_from_expr(operands["if"])
+                        if "then" in operands:
+                            extract_from_operand(operands["then"])
+                        if "else" in operands:
+                            extract_from_operand(operands["else"])
+                case "$abs" | "$ceil" | "$floor" | "$round":
+                    if isinstance(operands, list) and len(operands) > 0:
+                        extract_from_operand(operands[0])
+
+        def extract_from_operand(op: Any) -> None:
+            if isinstance(op, str) and op.startswith("$"):
+                # Field reference - no parameter
+                pass
+            elif isinstance(op, dict):
+                # Nested expression
+                extract_from_expr(op)
+            else:
+                # Literal value - parameter!
+                values.append(op)
+
+        extract_from_expr(expr)
         return values
 
     def _build_tier2_query(
@@ -307,7 +334,7 @@ class TempTableExprEvaluator:
         expr: Dict[str, Any],
         collection_name: str,
         filter_expr: Dict[str, Any] | None = None,
-    ) -> Tuple[str, List[Any]]:
+    ) -> Tuple[str, List[Any], List[str]]:
         """
         Build a Tier 2 query using temporary tables.
 
@@ -322,7 +349,7 @@ class TempTableExprEvaluator:
             filter_expr: Optional additional filter
 
         Returns:
-            Tuple of (SQL query, parameters)
+            Tuple of (SQL query, parameters, table_names)
         """
         # Generate unique temp table name
         temp_table = f"temp_expr_{uuid.uuid4().hex[:8]}"
@@ -335,9 +362,10 @@ class TempTableExprEvaluator:
         self._create_temp_table(temp_table, collection_name, fields)
 
         # Build the main query
-        return self._build_main_query(
+        sql, params = self._build_main_query(
             expr, collection_name, temp_table, filter_expr
         )
+        return sql, params, [temp_table]
 
     def _create_temp_table(
         self, temp_table: str, collection_name: str, fields: List[str]
@@ -415,9 +443,9 @@ class TempTableExprEvaluator:
         # Build SELECT with json() conversion for Python-space data
         if self._jsonb_supported:
             # Use json() to convert jsonb to regular JSON for Python space
-            select_data = f"json({temp_table}.{self.data_column}) as data"
+            select_data = f"json({collection_name}.{self.data_column}) as data"
         else:
-            select_data = f"{temp_table}.data as data"
+            select_data = f"{collection_name}.data as data"
 
         # Build the final query
         query = f"""
@@ -688,13 +716,13 @@ class TempTableExprEvaluator:
 
     def _extract_field_references(self, expr: Dict[str, Any]) -> List[str]:
         """
-        Extract all field references from an expression.
+        Extract all unique field references from an expression.
 
         Args:
             expr: The $expr expression
 
         Returns:
-            List of field paths
+            List of unique field paths
         """
         fields = []
 
@@ -705,7 +733,14 @@ class TempTableExprEvaluator:
                         self._extract_field_references_from_operand(operands)
                     )
 
-        return fields
+        # Return unique fields while preserving order
+        unique_fields = []
+        seen = set()
+        for f in fields:
+            if f not in seen:
+                unique_fields.append(f)
+                seen.add(f)
+        return unique_fields
 
     def _extract_field_references_from_operand(self, operand: Any) -> List[str]:
         """Extract field references from an operand."""
@@ -741,8 +776,8 @@ class TempTableExprEvaluator:
             col_name = "f_" + col_name
         return col_name
 
-    def _cleanup_temp_tables(self) -> None:
-        """Clean up all temporary tables."""
+    def cleanup_temp_tables(self) -> None:
+        """Clean up all temporary tables created by this evaluator."""
         for table_name in self._temp_tables:
             try:
                 self.db.execute(f"DROP TABLE IF EXISTS {table_name}")

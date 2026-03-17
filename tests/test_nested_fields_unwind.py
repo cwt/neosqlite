@@ -27,7 +27,7 @@ def test_nested_field_queries_now_use_sql(collection):
         {"profile.age": 25}
     )
     assert where_result is not None  # Now handled by SQL
-    where_clause, params = where_result
+    where_clause, params, _ = where_result
     # Check for either json_extract or jsonb_extract depending on support
     assert (
         "json_extract(data, '$.profile.age') = ?" in where_clause
@@ -64,7 +64,7 @@ def test_nested_field_with_operators_now_use_sql(collection):
         {"profile.age": {"$gt": 28}}
     )
     assert where_result is not None  # Now handled by SQL
-    where_clause, params = where_result
+    where_clause, params, _ = where_result
     # Check for either json_extract or jsonb_extract depending on support
     assert (
         "json_extract(data, '$.profile.age') > ?" in where_clause
@@ -108,7 +108,7 @@ def test_nested_field_performance_improvement(collection):
         {"profile.age": 25}
     )
     assert where_result is not None
-    where_clause, params = where_result
+    where_clause, params, _ = where_result
     # Check for either json_extract or jsonb_extract depending on support
     assert (
         "json_extract(data, '$.profile.age') = ?" in where_clause

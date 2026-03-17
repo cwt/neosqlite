@@ -25,7 +25,7 @@ def test_contains_operator_sql_generation():
             {"name": {"$contains": "alice"}}
         )
         assert result is not None
-        sql, params = result
+        sql, params, _ = result
         # Check for either json_extract or jsonb_extract depending on support
         assert (
             "lower(json_extract(data, '$.name')) LIKE ?" in sql

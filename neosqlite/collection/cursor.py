@@ -27,6 +27,7 @@ class Cursor:
         projection: Dict[str, Any] | None = None,
         hint: str | None = None,
         session: ClientSession | None = None,
+        tables_to_cleanup: List[str] | None = None,
     ):
         """
         Initialize a new cursor instance.
@@ -37,6 +38,7 @@ class Cursor:
             projection (Dict[str, Any], optional): Projection criteria to specify which fields to include.
             hint (str, optional): Hint for the database to improve query performance.
             session (ClientSession, optional): A ClientSession for transactions.
+            tables_to_cleanup (List[str], optional): List of temporary tables to drop when closed.
         """
         self._collection = collection
         self._query_helpers = collection.query_engine.helpers
@@ -54,6 +56,8 @@ class Cursor:
         self._retrieved: int = 0
         self._batch_size = 101  # MongoDB-compatible default
         self._session = session
+        self._tables_to_cleanup = tables_to_cleanup or []
+        self._closed = False
 
         # Validate session
         validate_session(session, collection._database)
@@ -545,7 +549,7 @@ class Cursor:
         )
 
         if where_result is not None:
-            where_clause, params = where_result
+            where_clause, params, tables = where_result
             if self._collection.query_engine._jsonb_supported:
                 sql = f"SELECT id, _id, json(data) as data FROM {self._collection.name} {where_clause}{sort_clause}{pagination_clause}"
             else:
@@ -681,7 +685,11 @@ class Cursor:
         docs: Iterable[Dict[str, Any]]
         if where_result is not None:
             # Use SQL-based filtering
-            where_clause, params = where_result
+            where_clause, params, tables = where_result
+
+            # Track tables for cleanup
+            if tables:
+                self._tables_to_cleanup.extend(tables)
 
             # Add min/max bounds if specified
             if self._min or self._max:
@@ -819,43 +827,59 @@ class Cursor:
         Handle $expr queries with SQL evaluation when possible, Python fallback otherwise.
 
         This method uses the query helper's _build_expr_where_clause to attempt SQL
-        evaluation, and falls back to Python evaluation if needed.
+        evaluation (Tiers 1 and 2), and falls back to Python evaluation (Tier 3) if needed.
         """
         from .expr_evaluator import ExprEvaluator
 
-        # Try to build SQL WHERE clause with query helper
-        where_result = self._query_helpers._build_simple_where_clause(
-            self._filter
-        )
+        # Try to build SQL query/WHERE clause with query helper
+        # This handles Tier 1 (WHERE) and Tier 2 (Full SELECT with temp tables)
+        expr_result = self._query_helpers._build_expr_where_clause(self._filter)
 
-        if where_result is not None:
-            # Use SQL-based filtering
-            where_clause, params = where_result
+        if expr_result is not None:
+            # Use SQL-based evaluation
+            sql_or_where, params, tables = expr_result
 
-            # Build sorting and pagination clauses for SQL
-            sort_clause = self._query_helpers._build_sort_clause(
-                self._sort, self._collation
-            )
-            # If we have a where predicate (Python filter), we CANNOT do SQL pagination
-            if self._where_predicate:
+            # Track tables for cleanup
+            if tables:
+                self._tables_to_cleanup.extend(tables)
+
+            if sql_or_where.strip().upper().startswith("SELECT"):
+                # Tier 2: full SELECT query with temp tables
+                cmd = sql_or_where
                 pagination_clause = ""
+                # SQL sorting and pagination handled in the Tier 2 query itself
+                # (currently Tier 2 doesn't handle them yet, but we mark them
+                # as NOT handled to let the Python Cursor handle them)
+                self._sql_handled_sort = False
+                self._sql_handled_pagination = False
             else:
-                pagination_clause = (
-                    self._query_helpers._build_pagination_clause(
-                        self._limit, self._skip
-                    )
+                # Tier 1: WHERE clause only
+                where_clause = sql_or_where
+
+                # Build sorting and pagination clauses for SQL
+                sort_clause = self._query_helpers._build_sort_clause(
+                    self._sort, self._collation
                 )
+                # If we have a where predicate (Python filter), we CANNOT do SQL pagination
+                if self._where_predicate:
+                    pagination_clause = ""
+                else:
+                    pagination_clause = (
+                        self._query_helpers._build_pagination_clause(
+                            self._limit, self._skip
+                        )
+                    )
 
-            if self._collection.query_engine._jsonb_supported:
-                cmd = f"SELECT id, _id, json(data) as data FROM {self._collection.name} {where_clause}{sort_clause}{pagination_clause}"
-            else:
-                cmd = f"SELECT id, _id, data FROM {self._collection.name} {where_clause}{sort_clause}{pagination_clause}"
+                if self._collection.query_engine._jsonb_supported:
+                    cmd = f"SELECT id, _id, json(data) as data FROM {self._collection.name} {where_clause}{sort_clause}{pagination_clause}"
+                else:
+                    cmd = f"SELECT id, _id, data FROM {self._collection.name} {where_clause}{sort_clause}{pagination_clause}"
 
-            # Track which parts were handled by SQL
-            if sort_clause:
-                self._sql_handled_sort = True
-            if pagination_clause:
-                self._sql_handled_pagination = True
+                # Track which parts were handled by SQL
+                if sort_clause:
+                    self._sql_handled_sort = True
+                if pagination_clause:
+                    self._sql_handled_pagination = True
 
             # Add comment if specified
             if self._comment:
@@ -1217,3 +1241,36 @@ class Cursor:
             self._query_helpers._apply_projection, self._projection
         )
         return list(map(project, docs))
+
+    def close(self) -> None:
+        """
+        Close the cursor and release any resources.
+        """
+        if self._closed:
+            return
+        self._cleanup_tables()
+        self._closed = True
+
+    def __del__(self) -> None:
+        """
+        Ensure resources are cleaned up when the cursor is garbage collected.
+        """
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def _cleanup_tables(self) -> None:
+        """
+        Drop any temporary tables created for this cursor.
+        """
+        if not self._tables_to_cleanup:
+            return
+
+        for table in self._tables_to_cleanup:
+            try:
+                # Use a new connection or the shared connection to drop tables
+                self._collection.db.execute(f"DROP TABLE IF EXISTS {table}")
+            except Exception:
+                pass
+        self._tables_to_cleanup = []

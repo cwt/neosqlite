@@ -2449,7 +2449,7 @@ class TemporaryTableAggregationProcessor:
             helper = QueryHelper(target_coll)
             query_result = helper._build_simple_where_clause(restrict_search)
             if query_result:
-                r_sql, r_params = query_result
+                r_sql, r_params, _ = query_result
                 r_sql = r_sql.replace(
                     "json_extract(data", "json_extract(t.data"
                 )

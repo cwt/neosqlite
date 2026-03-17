@@ -64,6 +64,11 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
             translation_cache_size=cache_size,
         )
 
+    def cleanup(self) -> None:
+        """Clean up resources used by the QueryEngine."""
+        if hasattr(self, "helpers"):
+            self.helpers.cleanup()
+
     def aggregate(
         self,
         pipeline: List[Dict[str, Any]],

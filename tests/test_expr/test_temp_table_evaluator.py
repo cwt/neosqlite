@@ -151,7 +151,7 @@ class TestEvaluate:
             evaluator = TempTableExprEvaluator(conn.db)
             # Simple comparison should fall back to Tier 1
             expr = {"$eq": ["$a", 1]}
-            result, params = evaluator.evaluate(expr, "test_collection")
+            result, params, _ = evaluator.evaluate(expr, "test_collection")
             assert result is None
             assert params == []
 
@@ -174,7 +174,7 @@ class TestEvaluate:
                     {"$concat": ["$x", "$y"]},
                 ]
             }
-            result, params = evaluator.evaluate(expr, "test_collection")
+            result, params, _ = evaluator.evaluate(expr, "test_collection")
             # May return None if too complex
             assert result is None or isinstance(result, str)
 
@@ -183,7 +183,7 @@ class TestEvaluate:
         with neosqlite.Connection(":memory:") as conn:
             evaluator = TempTableExprEvaluator(conn.db)
             expr = {"$regexFind": {"input": "$text", "regex": "test"}}
-            result, params = evaluator.evaluate(expr, "test_collection")
+            result, params, _ = evaluator.evaluate(expr, "test_collection")
             assert result is None  # Falls back to Python
 
     def test_evaluate_invalid_expression(self):
@@ -191,15 +191,16 @@ class TestEvaluate:
         with neosqlite.Connection(":memory:") as conn:
             evaluator = TempTableExprEvaluator(conn.db)
             expr = "invalid"
-            result, params = evaluator.evaluate(expr, "test_collection")
+            result, params, _ = evaluator.evaluate(expr, "test_collection")
             assert result is None
 
     def test_evaluate_cleanup_temp_tables(self):
-        """Test that temporary tables are cleaned up after evaluation."""
+        """Test that temporary tables are cleaned up manually."""
         with neosqlite.Connection(":memory:") as conn:
             evaluator = TempTableExprEvaluator(conn.db)
             expr = {"$eq": ["$a", 1]}
             evaluator.evaluate(expr, "test_collection")
+            evaluator.cleanup_temp_tables()
             # Temp tables should be cleaned up
             assert evaluator._temp_tables == []
 
@@ -648,7 +649,7 @@ class TestCleanupTempTables:
         with neosqlite.Connection(":memory:") as conn:
             evaluator = TempTableExprEvaluator(conn.db)
             evaluator._temp_tables = ["temp1", "temp2", "temp3"]
-            evaluator._cleanup_temp_tables()
+            evaluator.cleanup_temp_tables()
             assert evaluator._temp_tables == []
 
     def test_cleanup_with_errors(self):
@@ -657,7 +658,7 @@ class TestCleanupTempTables:
             evaluator = TempTableExprEvaluator(conn.db)
             evaluator._temp_tables = ["nonexistent_table"]
             # Should not raise exception
-            evaluator._cleanup_temp_tables()
+            evaluator.cleanup_temp_tables()
             assert evaluator._temp_tables == []
 
 
@@ -684,7 +685,7 @@ class TestIntegration:
                     {"$lt": ["$c", 10]},
                 ]
             }
-            result, params = evaluator.evaluate(expr, "test")
+            result, params, _ = evaluator.evaluate(expr, "test")
             # Should return a query or None for fallback
             assert result is None or isinstance(result, str)
 

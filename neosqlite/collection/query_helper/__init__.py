@@ -88,6 +88,31 @@ class QueryHelper(
         self._json_each_function = _get_json_each_function(
             self._jsonb_supported, self._jsonb_each_supported
         )
+        # Initialize Tier-2 evaluator for complex $expr queries
+        # Import here to avoid circular imports
+        from ..expr_temp_table import TempTableExprEvaluator
+
+        # Get cache size from database connection (defaults to 100)
+        cache_size = (
+            getattr(collection.database, "_translation_cache_size", 100)
+            if hasattr(collection, "database")
+            else 100
+        )
+        self.tier2_evaluator = TempTableExprEvaluator(
+            collection.db,
+            data_column=(
+                collection.query_engine._data_column
+                if hasattr(collection, "query_engine")
+                and hasattr(collection.query_engine, "_data_column")
+                else "data"
+            ),
+            translation_cache_size=cache_size,
+        )
+
+    def cleanup(self) -> None:
+        """Clean up resources used by the QueryHelper."""
+        if hasattr(self, "tier2_evaluator"):
+            self.tier2_evaluator.cleanup_temp_tables()
 
     def _normalize_id_query(self, query: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -142,7 +167,7 @@ class QueryHelper(
 
     def _build_expr_where_clause(
         self, query: Dict[str, Any]
-    ) -> tuple[str, List[Any]] | None:
+    ) -> tuple[str, List[Any], List[str]] | None:
         """
         Build a SQL WHERE clause for $expr queries using the 3-tier approach.
         Also handles other query fields combined with $expr.
@@ -156,7 +181,7 @@ class QueryHelper(
             query: Query dictionary containing $expr and potentially other fields
 
         Returns:
-            Tuple of (SQL WHERE clause, parameters) or None for Python fallback
+            Tuple of (SQL WHERE clause, parameters, tables) or None for Python fallback
         """
         if "$expr" not in query:
             return None
@@ -167,15 +192,16 @@ class QueryHelper(
 
         # Import here to avoid circular imports
         from ..expr_evaluator import ExprEvaluator
-        from ..expr_temp_table import TempTableExprEvaluator
 
-        # Create evaluator instances with database connection for JSONB support detection
-        data_column = (
-            self.collection.query_engine._data_column
-            if hasattr(self.collection.query_engine, "_data_column")
-            else "data"
+        # Create evaluator instance for Tier 1
+        tier1_evaluator = ExprEvaluator(
+            (
+                self.collection.query_engine._data_column
+                if hasattr(self.collection.query_engine, "_data_column")
+                else "data"
+            ),
+            self.collection.db,
         )
-        tier1_evaluator = ExprEvaluator(data_column, self.collection.db)
 
         # Determine complexity tier based on expression analysis
         tier = self._analyze_expr_complexity(expr)
@@ -190,43 +216,15 @@ class QueryHelper(
 
         elif tier == 2:
             # Tier 2: Try temporary tables approach
-            tier2_evaluator = TempTableExprEvaluator(
-                self.collection.db,
-                (
-                    self.collection.query_engine._data_column
-                    if hasattr(self.collection.query_engine, "_data_column")
-                    else "data"
-                ),
-            )
-
-            # Build full query with temp tables
-            other_fields_result = self._build_other_fields_clause(query, expr)
-            if other_fields_result is None:
-                # Can't handle other fields in SQL, fall back to Python
-                return None
-            other_fields_clause, other_params = other_fields_result
-
-            if other_fields_clause is None:
-                # Can't handle other fields in SQL, fall back to Python
-                return None
-
             # Get the main query from Tier 2 evaluator
-            tier2_result = tier2_evaluator.evaluate(
+            tier2_result = self.tier2_evaluator.evaluate(
                 expr,
                 self.collection.name,
                 None,  # Filter expr not used yet
             )
-            if tier2_result[0] is None:
-                # Tier 2 failed, fall back to Tier 1
-                pass
-            else:
-                main_query, params = tier2_result
-                # Success - return the full query
-                # Note: Tier 2 returns a full SELECT query, not just WHERE clause
-                # This needs special handling in the cursor
-                # For now, fall back to returning None to use Python evaluation
-                # TODO: Implement proper cursor support for Tier 2 queries
-                pass
+            if tier2_result[0] is not None:
+                # Success - return the full query with cleanup tables
+                return tier2_result
 
             # If Tier 2 fails, fall back to Tier 1
             sql_expr, params = tier1_evaluator.evaluate(
@@ -254,6 +252,28 @@ class QueryHelper(
             return self._combine_expr_with_other_fields(
                 sql_expr, params, query, expr
             )
+
+    def _build_other_fields_clause(
+        self, query: Dict[str, Any], expr: Dict[str, Any]
+    ) -> tuple[str, List[Any]] | None:
+        """Helper to build WHERE clause for non-$expr fields."""
+        where_parts = []
+        all_params = []
+        for field, value in query.items():
+            if field == "$expr":
+                continue
+            if field in ("$and", "$or", "$nor", "$not"):
+                return None
+            field_result = self._build_field_clause(field, value)
+            if field_result is None:
+                return None
+            field_clause, field_params = field_result
+            where_parts.append(field_clause)
+            all_params.extend(field_params)
+
+        if not where_parts:
+            return "", []
+        return " AND ".join(where_parts), all_params
 
     def _analyze_expr_complexity(self, expr: Dict[str, Any]) -> int:
         """
@@ -327,7 +347,7 @@ class QueryHelper(
         params: List[Any],
         query: Dict[str, Any],
         expr: Dict[str, Any],
-    ) -> tuple[str, List[Any]] | None:
+    ) -> tuple[str, List[Any], List[str]] | None:
         """
         Combine $expr SQL with other query fields.
 
@@ -338,7 +358,7 @@ class QueryHelper(
             expr: The $expr expression
 
         Returns:
-            Tuple of (WHERE clause, parameters) or None for Python fallback
+            Tuple of (WHERE clause, parameters, tables) or None for Python fallback
         """
         # Build WHERE clause starting with $expr
         where_parts = [f"({sql_expr})"]
@@ -362,4 +382,4 @@ class QueryHelper(
             where_parts.append(field_clause)
             all_params.extend(field_params)
 
-        return f"WHERE {' AND '.join(where_parts)}", all_params
+        return f"WHERE {' AND '.join(where_parts)}", all_params, []
