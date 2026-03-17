@@ -721,6 +721,628 @@ class TestTranslationCacheIntegration:
         assert len(result2) == 2
 
 
+class TestTranslationCacheEdgeCases:
+    """Edge case tests for translation caching."""
+
+    def test_cached_addFields_returns_correct_results(self):
+        """Test that cached $addFields queries return correct data."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_many(
+            [
+                {"name": "Alice", "salary": 50000},
+                {"name": "Bob", "salary": 60000},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        pipeline = [{"$addFields": {"bonus": {"$multiply": ["$salary", 0.1]}}}]
+
+        result1 = list(users.aggregate(pipeline))
+        assert len(result1) == 2
+        assert "bonus" in result1[0]
+        assert result1[0]["bonus"] == 5000
+
+        result2 = list(users.aggregate(pipeline))
+        assert len(result2) == 2
+        assert result2[0]["bonus"] == 5000
+
+        assert qe.get_cache_stats()["hits"] >= 1
+
+    def test_cached_unwind_returns_correct_results(self):
+        """Test that cached $unwind queries return correct data.
+
+        Note: $unwind might not use SQL tier cache in all cases.
+        This test verifies correct results regardless of cache usage.
+        """
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_many(
+            [
+                {"name": "Alice", "tags": ["a", "b"]},
+                {"name": "Bob", "tags": ["c"]},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        pipeline = [{"$unwind": "$tags"}]
+
+        result1 = list(users.aggregate(pipeline))
+        assert len(result1) == 3
+
+        result2 = list(users.aggregate(pipeline))
+        assert len(result2) == 3
+
+    def test_cached_bucket_returns_correct_results(self):
+        """Test that cached $bucket queries return correct data."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_many(
+            [
+                {"score": 20},
+                {"score": 40},
+                {"score": 60},
+                {"score": 80},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        pipeline = [
+            {
+                "$bucket": {
+                    "groupBy": "$score",
+                    "boundaries": [0, 40, 70, 100],
+                    "default": "Other",
+                    "output": {"count": {"$sum": 1}},
+                }
+            }
+        ]
+
+        result1 = list(users.aggregate(pipeline))
+        assert len(result1) == 3
+
+        result2 = list(users.aggregate(pipeline))
+        assert len(result2) == 3
+
+        assert qe.get_cache_stats()["hits"] >= 1
+
+    def test_cached_bucketAuto_returns_correct_results(self):
+        """Test that cached $bucketAuto queries return correct data."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_many(
+            [
+                {"value": 10},
+                {"value": 20},
+                {"value": 30},
+                {"value": 40},
+                {"value": 50},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        pipeline = [{"$bucketAuto": {"groupBy": "$value", "buckets": 2}}]
+
+        result1 = list(users.aggregate(pipeline))
+        assert len(result1) == 2
+
+        result2 = list(users.aggregate(pipeline))
+        assert len(result2) == 2
+
+        assert qe.get_cache_stats()["hits"] >= 1
+
+    def test_cached_lookup_returns_correct_results(self):
+        """Test that cached $lookup queries return correct data."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        orders = conn.orders
+
+        users.insert_many(
+            [
+                {"_id": 1, "name": "Alice"},
+                {"_id": 2, "name": "Bob"},
+            ]
+        )
+        orders.insert_many(
+            [
+                {"user_id": 1, "amount": 100},
+                {"user_id": 2, "amount": 200},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        pipeline = [
+            {
+                "$lookup": {
+                    "from": "orders",
+                    "localField": "_id",
+                    "foreignField": "user_id",
+                    "as": "user_orders",
+                }
+            }
+        ]
+
+        result1 = list(users.aggregate(pipeline))
+        assert len(result1) == 2
+        assert len(result1[0].get("user_orders", [])) >= 1
+
+        result2 = list(users.aggregate(pipeline))
+        assert len(result2) == 2
+
+        assert qe.get_cache_stats()["hits"] >= 1
+
+    def test_cached_unset_returns_correct_results(self):
+        """Test that cached $unset queries return correct data."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_many(
+            [
+                {"name": "Alice", "age": 30, "secret": "hidden"},
+                {"name": "Bob", "age": 25, "secret": "hidden"},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        pipeline = [{"$unset": ["secret"]}]
+
+        result1 = list(users.aggregate(pipeline))
+        assert len(result1) == 2
+        assert "secret" not in result1[0]
+
+        result2 = list(users.aggregate(pipeline))
+        assert len(result2) == 2
+        assert "secret" not in result2[0]
+
+    def test_cached_replaceRoot_returns_correct_results(self):
+        """Test that cached $replaceRoot queries return correct data."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_many(
+            [
+                {"name": "Alice", "data": {"age": 30, "city": "NYC"}},
+                {"name": "Bob", "data": {"age": 25, "city": "LA"}},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        pipeline = [{"$replaceRoot": {"newRoot": "$data"}}]
+
+        result1 = list(users.aggregate(pipeline))
+        assert len(result1) == 2
+        assert "age" in result1[0]
+        assert "name" not in result1[0]
+
+        result2 = list(users.aggregate(pipeline))
+        assert len(result2) == 2
+
+    def test_cached_count_followed_by_limit_no_collision(self):
+        """Regression test: $count followed by $limit should not collide.
+
+        Previously, $count would create placeholder parameters causing
+        parameter index desync with subsequent $limit.
+        """
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        # Use different data to avoid duplicate key issues
+        users.insert_one({"status": "active"})
+        users.insert_one({"status": "active"})
+        users.insert_one({"status": "active"})
+        users.insert_one({"status": "inactive"})
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        pipeline1 = [{"$match": {"status": "active"}}, {"$count": "total"}]
+        pipeline2 = [{"$match": {"status": "active"}}, {"$limit": 5}]
+
+        list(users.aggregate(pipeline1))
+        list(users.aggregate(pipeline1))
+
+        # These two pipelines should have separate cache entries
+        list(users.aggregate(pipeline2))
+        list(users.aggregate(pipeline2))
+
+        stats = qe.get_cache_stats()
+        # Should have 2 separate cache entries
+        assert stats["size"] == 2
+
+    def test_cached_group_followed_by_limit_no_collision(self):
+        """Regression test: $group followed by $limit should work correctly."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_many(
+            [
+                {"dept": "A", "value": 10},
+                {"dept": "A", "value": 20},
+                {"dept": "B", "value": 30},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        pipeline1 = [
+            {"$group": {"_id": "$dept", "total": {"$sum": "$value"}}},
+            {"$limit": 2},
+        ]
+        pipeline2 = [{"$group": {"_id": "$dept", "total": {"$sum": "$value"}}}]
+
+        result1 = list(users.aggregate(pipeline1))
+        assert len(result1) <= 2
+
+        result2 = list(users.aggregate(pipeline2))
+        assert len(result2) == 2
+
+    def test_cached_match_with_nested_field_paths(self):
+        """Test cache with nested field paths in $match."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_many(
+            [
+                {"profile": {"age": 25, "city": "NYC"}},
+                {"profile": {"age": 30, "city": "LA"}},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        pipeline = [{"$match": {"profile.age": {"$gte": 25}}}]
+
+        result1 = list(users.aggregate(pipeline))
+        assert len(result1) == 2
+
+        result2 = list(users.aggregate(pipeline))
+        assert len(result2) == 2
+
+    def test_cached_complex_multistage_pipeline(self):
+        """Test cache with complex multi-stage pipeline."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_many(
+            [
+                {"dept": "Engineering", "salary": 100000, "active": True},
+                {"dept": "Engineering", "salary": 80000, "active": True},
+                {"dept": "Sales", "salary": 90000, "active": False},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        pipeline = [
+            {"$match": {"active": True}},
+            {"$group": {"_id": "$dept", "avg_salary": {"$avg": "$salary"}}},
+            {"$sort": {"avg_salary": -1}},
+            {"$limit": 10},
+        ]
+
+        result1 = list(users.aggregate(pipeline))
+        assert len(result1) == 1
+        assert result1[0]["_id"] == "Engineering"
+
+        result2 = list(users.aggregate(pipeline))
+        assert len(result2) == 1
+        assert result2[0]["_id"] == "Engineering"
+
+        stats = qe.get_cache_stats()
+        assert stats["hits"] >= 1
+
+    def test_cached_sample_followed_by_match(self):
+        """Test cache with $sample followed by $match."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_many([{"value": i} for i in range(100)])
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        pipeline = [
+            {"$sample": {"size": 10}},
+            {"$match": {"value": {"$gte": 0}}},
+        ]
+
+        result1 = list(users.aggregate(pipeline))
+        assert len(result1) <= 10
+
+        result2 = list(users.aggregate(pipeline))
+        assert len(result2) <= 10
+
+    def test_cached_match_with_or_operator(self):
+        """Test that $or operator queries return consistent results."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_many(
+            [
+                {"status": "active", "type": "A"},
+                {"status": "inactive", "type": "B"},
+                {"status": "active", "type": "C"},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        pipeline = [{"$match": {"$or": [{"status": "active"}, {"type": "B"}]}}]
+
+        result1 = list(users.aggregate(pipeline))
+        result2 = list(users.aggregate(pipeline))
+
+        # Verify both results are consistent
+        assert len(result1) == len(result2)
+
+    def test_cached_match_with_in_operator(self):
+        """Test cache with $in operator in $match."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_many(
+            [
+                {"status": "a"},
+                {"status": "b"},
+                {"status": "c"},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        pipeline = [{"$match": {"status": {"$in": ["a", "b"]}}}]
+
+        result1 = list(users.aggregate(pipeline))
+        assert len(result1) == 2
+
+        result2 = list(users.aggregate(pipeline))
+        assert len(result2) == 2
+
+    def test_cached_match_with_and_operator(self):
+        """Test cache with $and operator in $match."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_many(
+            [
+                {"status": "active", "score": 90},
+                {"status": "active", "score": 50},
+                {"status": "inactive", "score": 80},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        pipeline = [
+            {
+                "$match": {
+                    "$and": [{"status": "active"}, {"score": {"$gte": 70}}]
+                }
+            }
+        ]
+
+        result1 = list(users.aggregate(pipeline))
+        assert len(result1) == 1
+
+        result2 = list(users.aggregate(pipeline))
+        assert len(result2) == 1
+
+    def test_cached_match_with_exists_operator(self):
+        """Test cache with $exists operator in $match."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_many(
+            [
+                {"name": "Alice", "age": 30},
+                {"name": "Bob"},
+                {"name": "Charlie", "age": 25},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        pipeline = [{"$match": {"age": {"$exists": True}}}]
+
+        result1 = list(users.aggregate(pipeline))
+        assert len(result1) == 2
+
+        result2 = list(users.aggregate(pipeline))
+        assert len(result2) == 2
+
+    def test_cached_match_with_type_operator(self):
+        """Test that $type operator queries return consistent results."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_many(
+            [
+                {"value": 1},
+                {"value": "string"},
+                {"value": 2.5},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        pipeline = [{"$match": {"value": {"$type": "number"}}}]
+
+        result1 = list(users.aggregate(pipeline))
+        result2 = list(users.aggregate(pipeline))
+
+        # Verify both results are consistent
+        assert len(result1) == len(result2)
+
+    def test_cached_group_with_multiple_accumulators(self):
+        """Test cache with $group using multiple accumulators."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_many(
+            [
+                {"dept": "A", "salary": 100, "bonus": 10},
+                {"dept": "A", "salary": 200, "bonus": 20},
+                {"dept": "B", "salary": 150, "bonus": 15},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        pipeline = [
+            {
+                "$group": {
+                    "_id": "$dept",
+                    "total_salary": {"$sum": "$salary"},
+                    "total_bonus": {"$sum": "$bonus"},
+                    "avg_salary": {"$avg": "$salary"},
+                }
+            }
+        ]
+
+        result1 = list(users.aggregate(pipeline))
+        assert len(result1) == 2
+
+        result2 = list(users.aggregate(pipeline))
+        assert len(result2) == 2
+
+        dept_a = next(r for r in result2 if r["_id"] == "A")
+        assert dept_a["total_salary"] == 300
+        assert dept_a["total_bonus"] == 30
+        assert dept_a["avg_salary"] == 150
+
+    def test_cached_project_with_exclusions(self):
+        """Test cache with $project using exclusions."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_many(
+            [
+                {"name": "Alice", "age": 30, "secret": "hidden", "temp": "x"},
+                {"name": "Bob", "age": 25, "secret": "hidden", "temp": "y"},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        pipeline = [{"$project": {"name": 1, "age": 1, "secret": 0}}]
+
+        result1 = list(users.aggregate(pipeline))
+        assert len(result1) == 2
+        assert "name" in result1[0]
+        assert "age" in result1[0]
+        assert "secret" not in result1[0]
+        assert "temp" not in result1[0]
+
+        result2 = list(users.aggregate(pipeline))
+        assert len(result2) == 2
+
+    def test_cached_sort_descending_and_ascending(self):
+        """Test that $sort queries return consistent results in different directions."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_many(
+            [
+                {"name": "Charlie", "score": 50},
+                {"name": "Alice", "score": 100},
+                {"name": "Bob", "score": 75},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        pipeline_asc = [{"$sort": {"score": 1}}]
+        pipeline_desc = [{"$sort": {"score": -1}}]
+
+        result_asc1 = list(users.aggregate(pipeline_asc))
+        result_desc1 = list(users.aggregate(pipeline_desc))
+        result_asc2 = list(users.aggregate(pipeline_asc))
+        result_desc2 = list(users.aggregate(pipeline_desc))
+
+        # Verify both results are consistent
+        assert result_asc1[0]["name"] == result_asc2[0]["name"]
+        assert result_desc1[0]["name"] == result_desc2[0]["name"]
+
+    def test_cached_match_with_regex(self):
+        """Test that $regex operator queries return consistent results."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_many(
+            [
+                {"name": "Alice"},
+                {"name": "Bob"},
+                {"name": "Amanda"},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        pipeline = [{"$match": {"name": {"$regex": "^A"}}}]
+
+        result1 = list(users.aggregate(pipeline))
+        result2 = list(users.aggregate(pipeline))
+
+        # Verify both results are consistent
+        assert len(result1) == len(result2)
+
+    def test_cached_match_with_size_operator(self):
+        """Test cache with $size operator in $match."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_many(
+            [
+                {"tags": ["a", "b"]},
+                {"tags": ["c"]},
+                {"tags": ["d", "e", "f"]},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        pipeline = [{"$match": {"tags": {"$size": 2}}}]
+
+        result1 = list(users.aggregate(pipeline))
+        assert len(result1) == 1
+
+        result2 = list(users.aggregate(pipeline))
+        assert len(result2) == 1
+
+    def test_cached_match_with_elemMatch_operator(self):
+        """Test that $elemMatch operator queries return consistent results."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_many(
+            [
+                {"scores": [80, 90, 95]},
+                {"scores": [70, 60]},
+                {"scores": [85, 88]},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        pipeline = [{"$match": {"scores": {"$elemMatch": {"$gte": 90}}}}]
+
+        result1 = list(users.aggregate(pipeline))
+        result2 = list(users.aggregate(pipeline))
+
+        # Verify both results are consistent
+        assert len(result1) == len(result2)
+
+
 @pytest.fixture
 def connection():
     """Fixture to provide a clean connection for each test."""

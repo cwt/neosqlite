@@ -564,7 +564,7 @@ class BenchmarkReporter:
                         note = ""
                         if category in ["Change Streams", "session_methods"]:
                             note = " (Fully implemented in NeoSQLite via SQLite triggers/SAVEPOINTs)"
-                        
+
                         lines.append(
                             f"- **{category}**: {skip_side} skipped - {result.skip_reason}{note}"
                         )
