@@ -73,7 +73,7 @@ Certain operators like `$setWindowFields` have **nested operators** that complet
 
 Our cache key includes **nested `$` operators** to distinguish them:
 
-```json
+```text
 Pipeline: [{"$setWindowFields": {"output": {"rank": {"$rank": {}}}}]
 Key:      "$setWindowFields:('$rank',)"
 
@@ -122,7 +122,7 @@ Without this, different window functions would incorrectly share the same cache 
 
 The cache key is based on **pipeline structure** (operator names + field names), with special handling for parameterized operators:
 
-```json
+```text
 Pipeline: [{"$match": {"status": "active"}}]
 Key:      "$match:('status',)"
 
