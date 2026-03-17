@@ -32,16 +32,16 @@ A key innovation in NeoSQLite's caching is **parameterized SQL templates**. Inst
 
 Consider `$sample` with different sizes:
 
-```textpython
+```python
 # Naive approach: Each size = different cache key
 {"$sample": {"size": 3}}   → LIMIT 3   → Key: "$sample:('size',):(('size',3),)"
 {"$sample": {"size": 20}}  → LIMIT 20  → Key: "$sample:('size',):(('size',20),)"
 # Result: Cache miss every time - no benefit!
-```text
+```
 
 **Parameterized approach:**
 
-```textpython
+```python
 # Single cache key for all sizes
 {"$sample": {"size": 3}}   → SQL: "LIMIT ?" + params: [3]
 {"$sample": {"size": 20}}  → SQL: "LIMIT ?" + params: [20]
@@ -49,7 +49,7 @@ Consider `$sample` with different sizes:
 # Both use same cache entry!
 # Key: "$sample:('size',)"
 # SQL: "LIMIT ?"
-```text
+```
 
 ### Supported Parameterized Operators
 
@@ -65,21 +65,21 @@ These operators' values are passed as SQL parameters rather than embedded in the
 
 Certain operators like `$setWindowFields` have **nested operators** that completely change the SQL generated:
 
-```textpython
+```python
 # These have DIFFERENT SQL but same top-level structure!
 {"$setWindowFields": {"output": {"rank": {"$rank": {}}}}
 {"$setWindowFields": {"output": {"runningSum": {"$sum": "$score"}}}
-```text
+```
 
 Our cache key includes **nested `$` operators** to distinguish them:
 
-```text
+```json
 Pipeline: [{"$setWindowFields": {"output": {"rank": {"$rank": {}}}}]
 Key:      "$setWindowFields:('$rank',)"
 
 Pipeline: [{"$setWindowFields": {"output": {"runningSum": {"$sum": "$score"}}}}]
 Key:      "$setWindowFields:('$sum',)"
-```text
+```
 
 Without this, different window functions would incorrectly share the same cache entry and return wrong results.
 
@@ -87,28 +87,28 @@ Without this, different window functions would incorrectly share the same cache 
 
 1. **SQL Generation**: Use `?` placeholder instead of embedding values
 
-   ```textpython
+   ```python
    # Instead of: LIMIT {int(size)}
    # Generate:    LIMIT ?
    sql = f"LIMIT ?"
    return sql, [size]
-   ```text
+   ```
 
 2. **Parameter Extraction**: Detect `?` placeholders in SQL template
 
-   ```textpython
+   ```python
    def _extract_param_names_from_template(sql):
        # Count ? placeholders beyond json_extract
        ...
-   ```text
+   ```
 
 3. **Value Mapping**: Extract values from pipeline at runtime
 
-   ```textpython
+   ```python
    def _get_placeholder_values(pipeline):
        # Extract $sample.size, $limit, $skip from pipeline
        return {"__placeholder_0__": pipeline[0]["$sample"]["size"]}
-   ```text
+   ```
 
 ### Benefits
 
@@ -122,7 +122,7 @@ Without this, different window functions would incorrectly share the same cache 
 
 The cache key is based on **pipeline structure** (operator names + field names), with special handling for parameterized operators:
 
-```text
+```json
 Pipeline: [{"$match": {"status": "active"}}]
 Key:      "$match:('status',)"
 
@@ -136,7 +136,7 @@ Key:      "$match:('status',)|$sort:('name',)"
 Pipeline: [{"$sample": {"size": 3}}]
 Pipeline: [{"$sample": {"size": 20}}]
 Key:      "$sample:('size',)"  ← Same key for both!
-```text
+```
 
 **Why exclude parameterized values?**
 
@@ -165,7 +165,7 @@ The cache uses **LRU (Least Recently Used)** eviction with `OrderedDict` for O(1
 
 ### Configuration
 
-```textpython
+```python
 import neosqlite
 
 # Default: cache enabled with 100 entries
@@ -176,13 +176,13 @@ conn = neosqlite.Connection('mydb.db', translation_cache=50)
 
 # Disable cache (useful for development/debugging)
 conn = neosqlite.Connection('mydb.db', translation_cache=0)
-```text
+```
 
 ### Debug API
 
 Access cache through the SQL tier aggregator (for pipelines) or directly (for $expr):
 
-```textpython
+```python
 users = conn.users
 
 # Pipeline cache (Tier-1)
@@ -223,7 +223,7 @@ qe.cache_contains([{"$match": {"status": "active"}}])
 qe.clear_cache()                # Clear pipeline cache
 tier2.clear_cache()             # Clear $expr cache
 qe.resize_cache(200)           # Change max size at runtime
-```text
+```
 
 ## Performance Impact
 
@@ -241,7 +241,7 @@ For workloads with repeated query patterns:
 
 Run benchmarks to measure impact:
 
-```textpython
+```python
 import time
 import neosqlite
 
@@ -272,7 +272,7 @@ uncached_time = time.perf_counter() - start
 print(f"Cached: {cached_time:.3f}s")
 print(f"Uncached: {uncached_time:.3f}s")
 print(f"Speedup: {uncached_time/cached_time:.2f}x")
-```text
+```
 
 ## Configuration Recommendations
 
@@ -320,7 +320,7 @@ Each component has its own independent cache instance, both configurable via the
 
 ### Cache Flow
 
-```text
+```python
 aggregate(pipeline)
     ↓
 can_optimize_pipeline()  [O(n) stage check]
@@ -338,7 +338,7 @@ else:
     sql, params = build_pipeline_sql()
     cache.put(cache_key, sql, param_names)
     execute(sql, params)
-```text
+```
 
 ### Limitations
 
