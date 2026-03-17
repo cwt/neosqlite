@@ -344,12 +344,15 @@ class SQLTierAggregator:
                     placeholder_idx += 1
 
                 case (
-                    "$addFields"
-                    | "$project"
-                    | "$set"
-                    | "$replaceRoot"
-                    | "$replaceWith"
-                ), dict() as expr_spec if isinstance(spec, dict):
+                    (
+                        "$addFields"
+                        | "$project"
+                        | "$set"
+                        | "$replaceRoot"
+                        | "$replaceWith"
+                    ),
+                    dict() as expr_spec,
+                ) if isinstance(spec, dict):
                     for field, expr in expr_spec.items():
                         if isinstance(expr, dict):
                             placeholder_idx = (
@@ -490,12 +493,15 @@ class SQLTierAggregator:
                                     params.append(field)
 
                 case (
-                    "$addFields"
-                    | "$project"
-                    | "$set"
-                    | "$replaceRoot"
-                    | "$replaceWith"
-                ), dict() as expr_spec:
+                    (
+                        "$addFields"
+                        | "$project"
+                        | "$set"
+                        | "$replaceRoot"
+                        | "$replaceWith"
+                    ),
+                    dict() as expr_spec,
+                ):
                     for field, expr in expr_spec.items():
                         if isinstance(expr, dict):
                             placeholder_idx = (
@@ -644,16 +650,58 @@ class SQLTierAggregator:
         return None
 
     def _find_value_in_dict(self, d: dict, field_path: str) -> Any:
-        """Recursively find value in dict matching field path."""
+        """Recursively find value in dict matching field path.
+
+        Also handles comparison operators by extracting the actual operand.
+        """
         target_field = field_path.lstrip("$")
         for key, value in d.items():
             if key == target_field:
+                if isinstance(value, dict):
+                    return self._extract_comparison_value(value)
                 return value
             if isinstance(value, dict):
                 result = self._find_value_in_dict(value, field_path)
                 if result is not None:
                     return result
         return None
+
+    def _extract_comparison_value(self, d: dict) -> Any:
+        """Extract actual value from comparison operator dict.
+
+        Handles operators like {"$gt": 25}, {"$gte": 10}, {"$in": [1,2,3]}, etc.
+        Returns the actual operand value, not the operator dict.
+        """
+        if not d or len(d) != 1:
+            return d
+
+        op, value = next(iter(d.items()))
+        if not op.startswith("$"):
+            return d
+
+        COMPARISON_OPS = {
+            "$eq",
+            "$ne",
+            "$gt",
+            "$gte",
+            "$lt",
+            "$lte",
+            "$in",
+            "$nin",
+            "$exists",
+            "$type",
+            "$all",
+            "$elemMatch",
+            "$not",
+            "$regex",
+            "$options",
+            "$mod",
+            "$text",
+        }
+
+        if op in COMPARISON_OPS:
+            return value
+        return d
 
     def get_cache_stats(self) -> dict[str, Any]:
         """Get pipeline cache statistics."""

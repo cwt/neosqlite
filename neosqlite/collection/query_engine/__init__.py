@@ -13,7 +13,7 @@ from ..sql_tier_aggregator import SQLTierAggregator
 from ..type_utils import validate_session
 from copy import deepcopy
 from neosqlite.collection.jsonb_support import supports_jsonb
-from typing import Any, Dict, List, TYPE_CHECKING
+from typing import Any, Callable, Dict, List, TYPE_CHECKING
 import importlib.util
 
 from .crud_operations import CRUDOperationsMixin
@@ -23,6 +23,8 @@ from .query_methods import QueryMethodsMixin
 if TYPE_CHECKING:
     from quez import CompressedQueue
     from ..client_session import ClientSession
+
+TierChangeCallback = Callable[[str | None, str, list], None]
 
 # Check if quez is available
 _HAS_QUEZ = importlib.util.find_spec("quez") is not None
@@ -63,6 +65,49 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
             ),
             translation_cache_size=cache_size,
         )
+        self._tier_callbacks: list = []  # type: ignore[annotation-unchecked]
+        self._last_tier: str | None = None  # type: ignore[annotation-unchecked]
+
+    def add_tier_change_callback(self, callback: "TierChangeCallback") -> None:
+        """Add a callback to be notified when query tier changes.
+
+        Callback receives: (previous_tier: str | None, new_tier: str, pipeline: list)
+        where tier is one of:
+        - "tier1" (SQL CTE - new aggregation optimizer)
+        - "tier1_legacy" (legacy SQL aggregation)
+        - "tier2" (temp table for complex $expr)
+        - "tier3" (Python fallback)
+        - None (before any query)
+        """
+        self._tier_callbacks.append(callback)
+
+    def remove_tier_change_callback(
+        self, callback: "TierChangeCallback"
+    ) -> bool:
+        """Remove a tier change callback. Returns True if found."""
+        try:
+            self._tier_callbacks.remove(callback)
+            return True
+        except ValueError:
+            return False
+
+    def get_last_tier(self) -> str | None:
+        """Get the last tier that was used for query execution."""
+        return self._last_tier
+
+    def clear_tier_callbacks(self) -> None:
+        """Clear all tier change callbacks."""
+        self._tier_callbacks.clear()
+
+    def _notify_tier_change(self, new_tier: str, pipeline: list) -> None:
+        """Notify all callbacks of a tier change."""
+        if self._last_tier != new_tier:
+            for callback in self._tier_callbacks:
+                try:
+                    callback(self._last_tier, new_tier, pipeline)
+                except Exception:
+                    pass  # Don't let callback errors affect query execution
+            self._last_tier = new_tier
 
     def cleanup(self) -> None:
         """Clean up resources used by the QueryEngine."""
@@ -172,6 +217,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                                         doc_id, doc_data, stored_id=stored_id
                                     )
                                 )
+                    self._notify_tier_change("tier1", pipeline)
                     return results
         except Exception:
             # If SQL tier optimization fails, continue to next approach
@@ -217,6 +263,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                             results.append(
                                 dict(zip(output_fields, processed_row))
                             )
+                    self._notify_tier_change("tier1_legacy", pipeline)
                     return results
                 else:
                     # Handle results from a regular find query
@@ -238,6 +285,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                                 results.append(
                                     self.collection._load(row[0], row[1])
                                 )
+                    self._notify_tier_change("tier1_legacy", pipeline)
                     return results
         except Exception:
             # If SQL optimization fails, continue to next approach
@@ -252,9 +300,12 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
 
             # Use the temporary table aggregation which provides enhanced
             # SQL processing for complex pipelines
-            return execute_2nd_tier_aggregation(
+            result = execute_2nd_tier_aggregation(
                 self, pipeline, batch_size=batch_size
             )
+            if result is not None:
+                self._notify_tier_change("tier2", pipeline)
+                return result
         except NotImplementedError:
             # If temporary table approach indicates it needs Python fallback,
             # continue to fallback below
@@ -1310,6 +1361,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                     raise MalformedQueryException(
                         f"Aggregation stage '{stage_name}' not supported"
                     )
+        self._notify_tier_change("tier3", pipeline)
         return [dc["__doc__"] for dc in docs_with_context]
 
     def explain_aggregation(

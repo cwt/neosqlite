@@ -396,7 +396,16 @@ If cached queries return wrong results:
 2. **Disable cache**: `conn = neosqlite.Connection(..., translation_cache=0)`
 3. **Test without cache**: Verify the query works correctly
 4. **Clear cache**: `qe.clear_cache()` to force fresh translation
-5. **Report issue**: If reproducible with matching query/document structure
+5. **Use tier callbacks**: Add a callback to detect tier fallback:
+
+   ```python
+   def tier_callback(prev, new, pipeline):
+       if prev and prev != new:
+           print(f"WARNING: Fallback {prev} -> {new}")
+   qe.add_tier_change_callback(tier_callback)
+   ```
+
+6. **Report issue**: If reproducible with matching query/document structure
 
 ### Memory Issues
 
@@ -415,3 +424,133 @@ Potential improvements:
 3. **Persistent cache**: Save/load cache between connection restarts
 4. **Distributed stats**: Aggregate cache stats across multiple connections
 5. **Query plan hints**: Allow users to provide optimization hints for specific query patterns
+
+## Tier Change Callbacks
+
+NeoSQLite provides a callback system to notify when query execution tier changes during aggregation. This is useful for debugging and performance monitoring.
+
+### Why Use Tier Callbacks?
+
+When the translation cache has a bug (like the comparison operator bug fixed in v1.x.x), queries may silently fall back to a slower tier. The tier callback helps you detect this:
+
+- **Normal operation**: Queries should consistently use `tier1` or `tier1_legacy`
+- **Problem detected**: If you see `tier1` → `tier1_legacy` or `tier1` → `tier2` → `tier3` changes unexpectedly, something is wrong
+
+### Debugging Cache Bugs
+
+Use tier callbacks to detect when cache bugs cause fallback:
+
+```python
+import neosqlite
+
+tier_changes = []
+
+def tier_callback(prev_tier, new_tier, pipeline):
+    tier_changes.append((prev_tier, new_tier))
+    if prev_tier and prev_tier != new_tier:
+        print(f"WARNING: Tier fallback detected!")
+        print(f"  {prev_tier} -> {new_tier}")
+        print(f"  Pipeline: {pipeline}")
+
+conn = neosqlite.Connection(':memory:', translation_cache=100)
+users = conn.users
+users.insert_many([{'age': i} for i in range(100)])
+
+qe = users.query_engine
+qe.add_tier_change_callback(tier_callback)
+
+# Run queries
+list(users.aggregate([{'$match': {'age': {'$gt': 50}}}]))
+list(users.aggregate([{'$match': {'age': {'$gt': 25}}}]))  # Different value
+
+# Check if any fallback happened
+print(f"Tier changes: {tier_changes}")
+# Expected: [(None, 'tier1')] - no fallback!
+```
+
+### Usage
+
+```python
+import neosqlite
+
+def tier_callback(previous_tier, new_tier, pipeline):
+    print(f"Tier changed: {previous_tier} -> {new_tier}")
+
+conn = neosqlite.Connection(':memory:')
+users = conn.users
+users.insert_many([{'age': i} for i in range(100)])
+
+qe = users.query_engine
+qe.add_tier_change_callback(tier_callback)
+
+# Run queries - callback will be notified of tier changes
+list(users.aggregate([{'$match': {'age': {'$gt': 50}}}]))
+# Output: Tier changed: None -> tier1
+```
+
+### API
+
+- `add_tier_change_callback(callback)`: Register a callback to be notified of tier changes
+- `remove_tier_change_callback(callback)`: Remove a registered callback
+- `get_last_tier()`: Get the last tier that was used
+- `clear_tier_callbacks()`: Remove all registered callbacks
+
+### Callback Signature
+
+The callback receives three arguments:
+- `previous_tier`: The tier used in the previous query (or `None` for first query)
+- `new_tier`: The tier used for the current query
+- `pipeline`: The aggregation pipeline that was executed
+
+### Tier Types
+
+| Tier | Description |
+|------|-------------|
+| `tier1` | SQL CTE-based aggregation (new optimizer) |
+| `tier1_legacy` | Legacy SQL aggregation |
+| `tier2` | Temporary table for complex $expr queries |
+| `tier3` | Python fallback for unsupported operations |
+
+## Bug Fixes
+
+### Fixed: Comparison Operator Parameter Extraction (v1.x.x)
+
+Previously, when using comparison operators like `$gt`, `$lt`, `$gte`, `$lte`, `$ne` in cached queries, the cache hit would fail with an error like "Error binding parameter: type 'dict' is not supported".
+
+**Root Cause**: The parameter extraction was returning the entire operator dict (e.g., `{"$gt": 35}`) instead of just the value (`35`).
+
+**Fix**: Added `_extract_comparison_value()` method that properly extracts the actual value from comparison operator dicts.
+
+**How to Detect This Bug (Historical)**:
+
+Before the fix, running these queries would show tier fallback:
+
+```python
+list(users.aggregate([{'$match': {'age': {'$gt': 25}}}]))  # tier1
+list(users.aggregate([{'$match': {'age': {'$gt': 35}}}]))  # Falls back to tier1_legacy!
+```
+
+With tier callbacks enabled, you would see:
+
+```text
+Tier changed: None -> tier1
+Tier changed: tier1 -> tier1_legacy  # BUG: Should stay on tier1!
+```
+
+**After the fix**: Both queries use `tier1` with cache hits:
+
+```text
+Tier changed: None -> tier1
+```
+
+**Example**:
+
+```python
+# Before fix: Second query would fail
+list(users.aggregate([{'$match': {'age': {'$gt': 25}}}))  # Cache miss
+list(users.aggregate([{'$match': {'age': {'$gt': 35}}}))  # Cache hit - ERROR!
+
+# After fix: Works correctly
+list(users.aggregate([{'$match': {'age': {'$gt': 25}}}))  # Cache miss
+list(users.aggregate([{'$match': {'age': {'$gt': 35}}}))  # Cache hit - SUCCESS!
+```

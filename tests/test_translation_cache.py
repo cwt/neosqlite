@@ -1768,6 +1768,249 @@ class TestTier2TranslationCacheIntegration:
         assert res_cached2 == res_uncached
 
 
+class TestBugFixComparisonOperators:
+    """Tests for the bug fix in parameter extraction for comparison operators.
+
+    Previously, when using comparison operators like $gt, $lt, $gte, etc.,
+    the cached query would fail because the entire operator dict was passed
+    as a SQL parameter instead of the actual value.
+    """
+
+    def test_cache_hit_with_gt_operator(self):
+        """Test cache hit works correctly with $gt operator."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_many(
+            [
+                {"age": 20, "name": "Alice"},
+                {"age": 30, "name": "Bob"},
+                {"age": 40, "name": "Charlie"},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        # First query - cache miss
+        result1 = list(users.aggregate([{"$match": {"age": {"$gt": 25}}}]))
+        assert len(result1) == 2
+        assert "Bob" in [r["name"] for r in result1]
+        assert "Charlie" in [r["name"] for r in result1]
+
+        stats = qe.get_cache_stats()
+        assert stats["misses"] == 1
+        assert stats["hits"] == 0
+
+        # Second query with different value - cache hit should work now
+        result2 = list(users.aggregate([{"$match": {"age": {"$gt": 35}}}]))
+        assert len(result2) == 1
+        assert result2[0]["name"] == "Charlie"
+
+        stats = qe.get_cache_stats()
+        assert stats["hits"] == 1
+
+    def test_cache_hit_with_lt_operator(self):
+        """Test cache hit works correctly with $lt operator."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_many(
+            [
+                {"age": 20, "name": "Alice"},
+                {"age": 30, "name": "Bob"},
+                {"age": 40, "name": "Charlie"},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        list(users.aggregate([{"$match": {"age": {"$lt": 35}}}]))
+        stats = qe.get_cache_stats()
+        assert stats["misses"] == 1
+
+        # Cache hit with different value
+        result2 = list(users.aggregate([{"$match": {"age": {"$lt": 25}}}]))
+        assert len(result2) == 1
+        assert result2[0]["name"] == "Alice"
+
+        stats = qe.get_cache_stats()
+        assert stats["hits"] == 1
+
+    def test_cache_hit_with_gte_operator(self):
+        """Test cache hit works correctly with $gte operator."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_many(
+            [
+                {"age": 20, "name": "Alice"},
+                {"age": 30, "name": "Bob"},
+                {"age": 40, "name": "Charlie"},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        list(users.aggregate([{"$match": {"age": {"$gte": 30}}}]))
+
+        result2 = list(users.aggregate([{"$match": {"age": {"$gte": 35}}}]))
+        assert len(result2) == 1
+
+        stats = qe.get_cache_stats()
+        assert stats["hits"] == 1
+
+    def test_cache_hit_with_lte_operator(self):
+        """Test cache hit works correctly with $lte operator."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_many(
+            [
+                {"age": 20, "name": "Alice"},
+                {"age": 30, "name": "Bob"},
+                {"age": 40, "name": "Charlie"},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        list(users.aggregate([{"$match": {"age": {"$lte": 30}}}]))
+
+        result2 = list(users.aggregate([{"$match": {"age": {"$lte": 25}}}]))
+        assert len(result2) == 1
+
+        stats = qe.get_cache_stats()
+        assert stats["hits"] == 1
+
+    def test_cache_hit_with_ne_operator(self):
+        """Test cache hit works correctly with $ne operator."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_many(
+            [
+                {"age": 20, "name": "Alice"},
+                {"age": 30, "name": "Bob"},
+                {"age": 40, "name": "Charlie"},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        list(users.aggregate([{"$match": {"age": {"$ne": 30}}}]))
+
+        result2 = list(users.aggregate([{"$match": {"age": {"$ne": 20}}}]))
+        assert len(result2) == 2
+
+        stats = qe.get_cache_stats()
+        assert stats["hits"] == 1
+
+
+class TestTierChangeCallback:
+    """Tests for tier change callback functionality."""
+
+    def test_add_tier_change_callback(self):
+        """Test adding a tier change callback."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_one({"a": 1})
+
+        qe = users.query_engine
+        callback_calls = []
+
+        def callback(prev, new, pipeline):
+            callback_calls.append((prev, new))
+
+        qe.add_tier_change_callback(callback)
+
+        list(users.aggregate([{"$match": {"a": 1}}]))
+
+        assert len(callback_calls) == 1
+        assert callback_calls[0] == (None, "tier1")
+
+    def test_remove_tier_change_callback(self):
+        """Test removing a tier change callback."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_one({"a": 1})
+
+        qe = users.query_engine
+        callback_calls = []
+
+        def callback(prev, new, pipeline):
+            callback_calls.append((prev, new))
+
+        qe.add_tier_change_callback(callback)
+        qe.remove_tier_change_callback(callback)
+
+        list(users.aggregate([{"$match": {"a": 1}}]))
+
+        assert len(callback_calls) == 0
+
+    def test_get_last_tier(self):
+        """Test getting the last used tier."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_one({"a": 1})
+
+        qe = users.query_engine
+        assert qe.get_last_tier() is None
+
+        list(users.aggregate([{"$match": {"a": 1}}]))
+
+        assert qe.get_last_tier() == "tier1"
+
+    def test_clear_tier_callbacks(self):
+        """Test clearing all tier change callbacks."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_one({"a": 1})
+
+        qe = users.query_engine
+
+        def callback1(prev, new, pipeline):
+            pass
+
+        def callback2(prev, new, pipeline):
+            pass
+
+        qe.add_tier_change_callback(callback1)
+        qe.add_tier_change_callback(callback2)
+        qe.clear_tier_callbacks()
+
+        list(users.aggregate([{"$match": {"a": 1}}]))
+
+        assert qe.get_last_tier() == "tier1"
+
+    def test_tier_change_notified_on_fallback(self):
+        """Test that tier change is notified when falling back to Python."""
+        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        users = conn.users
+        users.insert_many(
+            [
+                {"tags": ["a", "b"], "name": "Alice"},
+                {"tags": ["c"], "name": "Bob"},
+            ]
+        )
+
+        qe = users.query_engine
+        callback_calls = []
+
+        def callback(prev, new, pipeline):
+            callback_calls.append((prev, new))
+
+        qe.add_tier_change_callback(callback)
+
+        list(
+            users.aggregate(
+                [{"$match": {"name": "Alice"}}, {"$unwind": "$tags"}]
+            )
+        )
+
+        assert len(callback_calls) >= 1
+        assert callback_calls[-1][1] in ("tier2", "tier3")
+
+
 @pytest.fixture
 def connection():
     """Fixture to provide a clean connection for each test."""
