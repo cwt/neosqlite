@@ -165,7 +165,6 @@ class SQLTierAggregator:
         from .query_helper import get_force_fallback
 
         if get_force_fallback():
-            print("DEBUG: Force fallback is active")
             return False
 
         if not pipeline:
