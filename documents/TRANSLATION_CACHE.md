@@ -26,7 +26,7 @@ Cache the translated SQL template using the query structure as the key. On cache
 
 ## Parameterized SQL Caching
 
-A key innovation in NeoSQLite's caching is **parameterized SQL templates**. Instead of embedding literal values in SQL, we use `?` placeholders that get filled at runtime.
+NeoSQLite's translation cache uses **parameterized SQL templates**. Instead of embedding literal values in SQL, we use `?` placeholders that get filled at runtime.
 
 ### Why Parameterized?
 
@@ -81,6 +81,8 @@ Pipeline: [{"$setWindowFields": {"output": {"runningSum": {"$sum": "$score"}}}}]
 Key:      "$setWindowFields:('$sum',)"
 ```
 
+**How it works:** The `_extract_structure()` method recursively traverses the pipeline spec, preserving operator names (strings starting with `$`) while replacing literal values with `?` placeholders. This ensures different window functions produce different cache keys.
+
 Without this, different window functions would incorrectly share the same cache entry and return wrong results.
 
 ### Implementation
@@ -94,20 +96,27 @@ Without this, different window functions would incorrectly share the same cache 
    return sql, [size]
    ```
 
-2. **Parameter Extraction**: Detect `?` placeholders in SQL template
+2. **Parameter Name Extraction**: Extract parameter names directly from pipeline structure (not by parsing SQL)
 
    ```python
-   def _extract_param_names_from_template(sql):
-       # Count ? placeholders beyond json_extract
-       ...
+   def _extract_param_names_from_pipeline(pipeline):
+       # Directly analyze pipeline dict structure
+       # For $sample, $limit, $skip: add placeholder names
+       # For $match, $group, etc.: extract field paths (e.g., "$.status")
+       params = []
+       for stage in pipeline:
+           # ... analyze stage structure ...
+       return params  # e.g., ["__placeholder_0__", "$.status"]
    ```
 
-3. **Value Mapping**: Extract values from pipeline at runtime
+3. **Value Extraction**: At runtime, extract actual values from pipeline using cached parameter names
 
    ```python
-   def _get_placeholder_values(pipeline):
-       # Extract $sample.size, $limit, $skip from pipeline
-       return {"__placeholder_0__": pipeline[0]["$sample"]["size"]}
+   def _extract_param_values(pipeline, param_names):
+       # For each param_name in cached list, get value from pipeline
+       # "__placeholder_0__" → pipeline[0]["$sample"]["size"]
+       # "$.status" → extract from $match stage
+       return [3, "active"]  # Values for SQL execution
    ```
 
 ### Benefits
@@ -151,8 +160,8 @@ This allows queries with the same structure but different parameter values to sh
 
 Each cache entry stores:
 - **SQL template**: The translated SQL with `?` placeholders
-- **Parameter names**: Field paths used in the query
-- **Hit count**: Number of cache hits
+- **Parameter names**: List of field paths (e.g., `$.status`, `$.age`) and placeholder names (e.g., `__placeholder_0__`) that correspond to `?` positions in the SQL template
+- **Hit count**: Number of cache hits for this entry
 
 ### LRU Eviction
 
@@ -245,6 +254,7 @@ Run benchmarks to measure impact:
 import time
 import neosqlite
 
+# Setup: single connection with data
 conn = neosqlite.Connection(':memory:')
 users = conn.users
 users.insert_many([{'status': 'active', 'name': f'user_{i}'} for i in range(1000)])
@@ -259,19 +269,22 @@ for _ in range(1000):
     list(users.aggregate([{'$match': {'status': 'active'}}]))
 cached_time = time.perf_counter() - start
 
-# Disable cache and benchmark
-conn2 = neosqlite.Connection(':memory:', translation_cache=0)
-users2 = conn2.users
-users2.insert_many([{'status': 'active', 'name': f'user_{i}'} for i in range(1000)])
+# Disable cache and benchmark (same connection, same data)
+users.query_engine.sql_tier_aggregator._translation_cache.clear()
+users.query_engine.sql_tier_aggregator._translation_cache._max_size = 0
 
 start = time.perf_counter()
 for _ in range(1000):
-    list(users2.aggregate([{'$match': {'status': 'active'}}]))
+    list(users.aggregate([{'$match': {'status': 'active'}}]))
 uncached_time = time.perf_counter() - start
 
 print(f"Cached: {cached_time:.3f}s")
 print(f"Uncached: {uncached_time:.3f}s")
 print(f"Speedup: {uncached_time/cached_time:.2f}x")
+
+# Alternative: Compare two connections (ensure identical data)
+# conn_cached = neosqlite.Connection(':memory:', translation_cache=100)
+# conn_uncached = neosqlite.Connection(':memory:', translation_cache=0)
 ```
 
 ## Configuration Recommendations
@@ -340,12 +353,20 @@ else:
     execute(sql, params)
 ```
 
-### Limitations
+### Design Characteristics
 
-1. **Structure-based keys**: Different field order = different key
-2. **No schema awareness**: Schema changes don't invalidate cache
-3. **Memory usage**: Each entry stores full SQL template
-4. **Two independent caches**: Pipeline and $expr caches are separate
+1. **Structure-based keys**: Cache keys are derived solely from query structure (operator names, field names, nested operators). This is intentional for a schemaless document database.
+
+2. **Query-centric caching**: The cache is built entirely from user queries, not database schema. This is correct behavior because:
+   - NeoSQLite is a **schemaless document database** (MongoDB-style)
+   - Document structure changes are the **application's responsibility**
+   - When users change document fields (e.g., `status` → `state`), they must update their queries accordingly
+   - Updated queries produce different cache keys → cache miss → fresh SQL generation
+   - No stale data risk since query structure drives cache invalidation
+
+3. **Memory usage**: Each entry stores a full SQL template. For most applications, 100 entries (default max size) uses negligible memory.
+
+4. **Two independent caches**: Pipeline (Tier-1) and `$expr` (Tier-2) caches operate independently, each configurable via the `translation_cache` connection parameter.
 
 ## Temp Table Cleanup
 
@@ -371,9 +392,11 @@ If hit rate is low (< 30%):
 
 If cached queries return wrong results:
 
-1. Disable cache: `conn = neosqlite.Connection(..., translation_cache=0)`
-2. Test without cache
-3. Report issue if reproducible
+1. **Check query-document alignment**: Ensure your query field names match current document structure (e.g., `status` vs `state`)
+2. **Disable cache**: `conn = neosqlite.Connection(..., translation_cache=0)`
+3. **Test without cache**: Verify the query works correctly
+4. **Clear cache**: `qe.clear_cache()` to force fresh translation
+5. **Report issue**: If reproducible with matching query/document structure
 
 ### Memory Issues
 
@@ -387,8 +410,8 @@ If cache uses too much memory:
 
 Potential improvements:
 
-1. **Schema-aware invalidation**: Auto-evict on table schema changes
-2. **Time-based eviction**: Expire entries after TTL
-3. **Weighted scoring**: Consider query cost in eviction
-4. **Persistent cache**: Save/load cache between restarts
-5. **Distributed stats**: Aggregate cache stats across connections
+1. **Time-based eviction**: Expire entries after TTL (useful for long-running applications with evolving query patterns)
+2. **Weighted scoring**: Consider query cost or SQL template size in eviction decisions
+3. **Persistent cache**: Save/load cache between connection restarts
+4. **Distributed stats**: Aggregate cache stats across multiple connections
+5. **Query plan hints**: Allow users to provide optimization hints for specific query patterns
