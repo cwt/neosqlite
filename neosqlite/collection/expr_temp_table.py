@@ -14,6 +14,7 @@ Tier 2 is used when:
 
 from __future__ import annotations
 from .json_path_utils import parse_json_path
+from .query_helper.translation_cache import TranslationCache
 import sqlite3
 import uuid
 from typing import Any, Dict, List, Tuple
@@ -30,23 +31,68 @@ class TempTableExprEvaluator:
     3. Converts to JSON format when exporting to Python space
     """
 
-    def __init__(self, db_connection, data_column: str = "data"):
+    def __init__(
+        self,
+        db_connection,
+        data_column: str = "data",
+        translation_cache_size: int | None = 100,
+    ):
         """
         Initialize the temporary table evaluator.
 
         Args:
             db_connection: SQLite database connection
             data_column: Name of the column containing JSON data (default: "data")
+            translation_cache_size: Size of translation cache (None=default, 0=disabled)
         """
         self.db = db_connection
         self.data_column = data_column
         self._jsonb_supported = supports_jsonb(db_connection)
         self._temp_tables: List[str] = []
+        if translation_cache_size is None:
+            translation_cache_size = 100
+        self._translation_cache = TranslationCache(
+            max_size=translation_cache_size
+        )
 
     @property
     def json_function_prefix(self) -> str:
         """Get the appropriate JSON function prefix (json or jsonb)."""
         return "jsonb" if self._jsonb_supported else "json"
+
+    def is_cache_enabled(self) -> bool:
+        """Check if translation cache is enabled."""
+        return self._translation_cache.is_enabled()
+
+    def get_cache_stats(self) -> dict:
+        """Get cache statistics."""
+        return self._translation_cache.get_stats()
+
+    def clear_cache(self) -> None:
+        """Clear the translation cache."""
+        self._translation_cache.clear()
+
+    def cache_size(self) -> int:
+        """Get current cache size."""
+        return len(self._translation_cache)
+
+    def cache_contains(self, expr: dict) -> bool:
+        """Check if expression is in cache."""
+        key = self._make_expr_key(expr)
+        return self._translation_cache.contains(key)
+
+    def evict_from_cache(self, expr: dict) -> bool:
+        """Evict expression from cache."""
+        key = self._make_expr_key(expr)
+        return self._translation_cache.evict(key)
+
+    def resize_cache(self, new_size: int) -> None:
+        """Resize the cache."""
+        self._translation_cache.resize(new_size)
+
+    def dump_cache(self) -> list:
+        """Dump cache contents for debugging."""
+        return self._translation_cache.dump()
 
     def evaluate(
         self,
@@ -77,8 +123,29 @@ class TempTableExprEvaluator:
             if complexity > 10:
                 return None, []
 
+            # Try cache first
+            cache_key = self._make_expr_key(expr)
+            cached = self._translation_cache.get(cache_key)
+            if cached is not None:
+                # Build query with cached translation
+                return self._build_from_cache(expr, collection_name, cached)
+
             # Build the evaluation query
-            return self._build_tier2_query(expr, collection_name, filter_expr)
+            result = self._build_tier2_query(expr, collection_name, filter_expr)
+            if result[0] is not None:
+                # Cache the translation: WHERE clause template and fields to extract
+                sql_query, params = result
+                fields = self._extract_field_references(expr)
+                # Extract WHERE clause from the full query for caching
+                where_clause = self._extract_where_clause(sql_query)
+                # Store with temp_table placeholder for substitution on cache hit
+                where_clause_template = where_clause.replace(
+                    f"temp_expr_{self._temp_tables[-1]}", "{temp_table}"
+                )
+                self._translation_cache.put(
+                    cache_key, where_clause_template, tuple(fields)
+                )
+            return result
 
         except (NotImplementedError, ValueError):
             # Fall back to Python evaluation
@@ -140,6 +207,100 @@ class TempTableExprEvaluator:
                     score += 1
 
         return score
+
+    def _make_expr_key(self, expr: Dict[str, Any]) -> str:
+        """
+        Create a cache key from expression structure.
+
+        Uses TranslationCache._extract_structure to create a hashable key
+        that preserves field references ($field) but parameterizes literal values.
+        """
+        structure = self._translation_cache._extract_structure(expr)
+        return str(structure)
+
+    def _build_from_cache(
+        self,
+        expr: Dict[str, Any],
+        collection_name: str,
+        cached: tuple[str, tuple[str, ...]],
+    ) -> Tuple[str, List[Any]]:
+        """
+        Build query from cached translation.
+
+        Args:
+            expr: The original expression (for extracting actual parameter values)
+            collection_name: Collection table name
+            cached: Tuple of (where_clause_template, field_list)
+
+        Returns:
+            Tuple of (SQL query, parameters)
+        """
+        where_clause_template, field_list = cached
+
+        # Generate unique temp table name
+        temp_table = f"temp_expr_{uuid.uuid4().hex[:8]}"
+        self._temp_tables.append(temp_table)
+
+        # Create temp table with cached fields
+        self._create_temp_table(temp_table, collection_name, list(field_list))
+
+        # Build WHERE clause by substituting temp table name into template
+        where_clause = where_clause_template.replace("{temp_table}", temp_table)
+
+        # Extract parameter values from expression
+        params = self._extract_param_values_from_expr(expr)
+
+        # Build SELECT with json() conversion for Python-space data
+        if self._jsonb_supported:
+            select_data = f"json({temp_table}.{self.data_column}) as data"
+        else:
+            select_data = f"{temp_table}.data as data"
+
+        # Build the final query
+        query = f"""
+            SELECT {temp_table}.id, {temp_table}._id, {select_data}
+            FROM {collection_name}
+            JOIN {temp_table} ON {collection_name}.id = {temp_table}.id
+            WHERE {where_clause}
+        """
+
+        return query.strip(), params
+
+    def _extract_where_clause(self, full_query: str) -> str:
+        """Extract WHERE clause from a full query string."""
+        if "WHERE" in full_query:
+            parts = full_query.split("WHERE", 1)
+            return parts[1].strip()
+        return ""
+
+    def _extract_param_values_from_expr(
+        self, expr: Dict[str, Any]
+    ) -> List[Any]:
+        """Extract actual parameter values from expression for cached query."""
+        values = []
+
+        def extract_values(obj: Any) -> None:
+            match obj:
+                case dict() as d:
+                    for key, value in d.items():
+                        if key.startswith("$") and key not in (
+                            "$and",
+                            "$or",
+                            "$nor",
+                            "$not",
+                        ):
+                            continue
+                        extract_values(value)
+                case list() as lst:
+                    for item in lst:
+                        extract_values(item)
+                case int() | float() | str():
+                    values.append(obj)
+                case bool():
+                    values.append(obj)
+
+        extract_values(expr)
+        return values
 
     def _build_tier2_query(
         self,

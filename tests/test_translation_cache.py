@@ -1343,6 +1343,405 @@ class TestTranslationCacheEdgeCases:
         assert len(result1) == len(result2)
 
 
+class TestTier2TranslationCache:
+    """Tests for Tier-2 ($expr with temporary tables) translation caching."""
+
+    def test_tier2_cache_default_enabled(self):
+        """Test that Tier-2 cache is enabled by default."""
+        from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
+
+        conn = neosqlite.Connection(":memory:")
+        evaluator = TempTableExprEvaluator(conn.db)
+        assert evaluator.is_cache_enabled() is True
+
+    def test_tier2_cache_disabled(self):
+        """Test that Tier-2 cache can be disabled."""
+        from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
+
+        conn = neosqlite.Connection(":memory:")
+        evaluator = TempTableExprEvaluator(conn.db, translation_cache_size=0)
+        assert evaluator.is_cache_enabled() is False
+
+    def test_tier2_cache_custom_size(self):
+        """Test that custom cache size works for Tier-2."""
+        from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
+
+        conn = neosqlite.Connection(":memory:")
+        evaluator = TempTableExprEvaluator(conn.db, translation_cache_size=50)
+        assert evaluator.get_cache_stats()["max_size"] == 50
+
+    def test_tier2_cache_miss_then_hit(self):
+        """Test Tier-2 cache miss then hit pattern."""
+        from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
+
+        conn = neosqlite.Connection(":memory:")
+        users = conn.users
+        users.insert_many(
+            [
+                {"status": "active", "name": "Alice"},
+                {"status": "inactive", "name": "Bob"},
+            ]
+        )
+
+        evaluator = TempTableExprEvaluator(conn.db)
+        evaluator.clear_cache()
+
+        expr1 = {
+            "$cond": {
+                "if": {"$eq": ["$status", "active"]},
+                "then": "yes",
+                "else": "no",
+            }
+        }
+        evaluator.evaluate(expr1, "users", None)
+        stats = evaluator.get_cache_stats()
+        assert stats["misses"] == 1
+        assert stats["hits"] == 0
+
+        evaluator.evaluate(expr1, "users", None)
+        stats = evaluator.get_cache_stats()
+        assert stats["misses"] == 1
+        assert stats["hits"] == 1
+
+    def test_tier2_cache_different_expressions(self):
+        """Test Tier-2 cache with different expression structures."""
+        from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
+
+        conn = neosqlite.Connection(":memory:")
+        users = conn.users
+        users.insert_many(
+            [
+                {"status": "active", "name": "Alice"},
+                {"age": 25, "name": "Bob"},
+            ]
+        )
+
+        evaluator = TempTableExprEvaluator(conn.db)
+        evaluator.clear_cache()
+
+        expr1 = {
+            "$cond": {
+                "if": {"$eq": ["$status", "active"]},
+                "then": "yes",
+                "else": "no",
+            }
+        }
+        expr2 = {
+            "$cond": {"if": {"$gt": ["$age", 20]}, "then": "yes", "else": "no"}
+        }
+        expr3 = {
+            "$cond": {
+                "if": {"$eq": ["$status", "inactive"]},
+                "then": "yes",
+                "else": "no",
+            }
+        }
+
+        evaluator.evaluate(expr1, "users", None)
+        evaluator.evaluate(expr2, "users", None)
+        evaluator.evaluate(expr3, "users", None)
+
+        stats = evaluator.get_cache_stats()
+        assert stats["size"] == 2
+
+    def test_tier2_cache_clear(self):
+        """Test clearing Tier-2 cache."""
+        from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
+
+        conn = neosqlite.Connection(":memory:")
+        users = conn.users
+        users.insert_one({"a": 1})
+
+        evaluator = TempTableExprEvaluator(conn.db)
+        expr = {
+            "$cond": {"if": {"$eq": ["$a", 1]}, "then": "yes", "else": "no"}
+        }
+        evaluator.evaluate(expr, "users", None)
+
+        assert evaluator.cache_size() == 1
+        evaluator.clear_cache()
+        assert evaluator.cache_size() == 0
+
+    def test_tier2_cache_contains(self):
+        """Test checking if expression is in Tier-2 cache."""
+        from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
+
+        conn = neosqlite.Connection(":memory:")
+        users = conn.users
+        users.insert_one({"a": 1})
+
+        evaluator = TempTableExprEvaluator(conn.db)
+        evaluator.clear_cache()
+
+        expr = {
+            "$cond": {"if": {"$eq": ["$a", 1]}, "then": "yes", "else": "no"}
+        }
+
+        assert evaluator.cache_contains(expr) is False
+        evaluator.evaluate(expr, "users", None)
+        assert evaluator.cache_contains(expr) is True
+
+    def test_tier2_cache_evict(self):
+        """Test evicting specific expression from Tier-2 cache."""
+        from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
+
+        conn = neosqlite.Connection(":memory:")
+        users = conn.users
+        users.insert_one({"a": 1})
+
+        evaluator = TempTableExprEvaluator(conn.db)
+        expr = {
+            "$cond": {"if": {"$eq": ["$a", 1]}, "then": "yes", "else": "no"}
+        }
+
+        evaluator.evaluate(expr, "users", None)
+        assert evaluator.cache_size() == 1
+
+        result = evaluator.evict_from_cache(expr)
+        assert result is True
+        assert evaluator.cache_size() == 0
+
+    def test_tier2_cache_resize(self):
+        """Test resizing Tier-2 cache at runtime."""
+        from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
+
+        conn = neosqlite.Connection(":memory:")
+        evaluator = TempTableExprEvaluator(conn.db)
+        assert evaluator.get_cache_stats()["max_size"] == 100
+
+        evaluator.resize_cache(10)
+        assert evaluator.get_cache_stats()["max_size"] == 10
+
+    def test_tier2_cache_stats(self):
+        """Test Tier-2 cache statistics."""
+        from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
+
+        conn = neosqlite.Connection(":memory:")
+        users = conn.users
+        users.insert_many(
+            [
+                {"status": "active", "name": "Alice"},
+                {"status": "inactive", "name": "Bob"},
+            ]
+        )
+
+        evaluator = TempTableExprEvaluator(conn.db)
+        evaluator.clear_cache()
+
+        expr = {
+            "$cond": {
+                "if": {"$eq": ["$status", "active"]},
+                "then": "yes",
+                "else": "no",
+            }
+        }
+        evaluator.evaluate(expr, "users", None)
+        evaluator.evaluate(expr, "users", None)
+        evaluator.evaluate(expr, "users", None)
+
+        stats = evaluator.get_cache_stats()
+        assert evaluator.is_cache_enabled() is True
+        assert stats["hits"] == 2
+        assert stats["misses"] == 1
+        assert stats["hit_rate"] == pytest.approx(2 / 3)
+
+    def test_tier2_cache_dump(self):
+        """Test dumping Tier-2 cache contents."""
+        from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
+
+        conn = neosqlite.Connection(":memory:")
+        users = conn.users
+        users.insert_many(
+            [
+                {"status": "active"},
+                {"name": "Bob"},
+            ]
+        )
+
+        evaluator = TempTableExprEvaluator(conn.db)
+        evaluator.clear_cache()
+
+        expr = {
+            "$cond": {
+                "if": {"$eq": ["$status", "active"]},
+                "then": "yes",
+                "else": "no",
+            }
+        }
+        evaluator.evaluate(expr, "users", None)
+        evaluator.evaluate(expr, "users", None)
+
+        dump = evaluator.dump_cache()
+        assert len(dump) == 1
+        assert dump[0]["hit_count"] == 1
+
+    def test_tier2_cache_len(self):
+        """Test __len__ method for Tier-2 cache."""
+        from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
+
+        conn = neosqlite.Connection(":memory:")
+        users = conn.users
+        users.insert_one({"a": 1})
+
+        evaluator = TempTableExprEvaluator(conn.db)
+        evaluator.clear_cache()
+
+        assert len(evaluator._translation_cache) == 0
+        expr = {
+            "$cond": {"if": {"$eq": ["$a", 1]}, "then": "yes", "else": "no"}
+        }
+        evaluator.evaluate(expr, "users", None)
+        assert len(evaluator._translation_cache) == 1
+
+    def test_tier2_cache_no_collision_different_fields(self):
+        """Regression test: different fields with same operator must not collide."""
+        from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
+
+        conn = neosqlite.Connection(":memory:")
+        evaluator = TempTableExprEvaluator(conn.db)
+
+        expr1 = {"$gt": ["$age", 25]}
+        expr2 = {"$gt": ["$score", 90]}
+
+        key1 = evaluator._make_expr_key(expr1)
+        key2 = evaluator._make_expr_key(expr2)
+
+        assert key1 != key2, "Different fields should have different cache keys"
+
+        expr3 = {"$gt": ["$age", 25]}
+        expr4 = {"$gt": ["$age", 999]}
+        key3 = evaluator._make_expr_key(expr3)
+        key4 = evaluator._make_expr_key(expr4)
+        assert key3 == key4, "Same query structure should have same key"
+
+    def test_tier2_cache_preserves_field_references(self):
+        """Test that field references ($field) are preserved in cache key."""
+        from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
+
+        conn = neosqlite.Connection(":memory:")
+        evaluator = TempTableExprEvaluator(conn.db)
+
+        expr1 = {"$add": ["$salary", 100]}
+        expr2 = {"$add": ["$bonus", 100]}
+
+        key1 = evaluator._make_expr_key(expr1)
+        key2 = evaluator._make_expr_key(expr2)
+
+        assert (
+            key1 != key2
+        ), "Different field references should have different keys"
+
+    def test_tier2_cache_parameterizes_literals(self):
+        """Test that literal values are parameterized in cache key."""
+        from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
+
+        conn = neosqlite.Connection(":memory:")
+        evaluator = TempTableExprEvaluator(conn.db)
+
+        expr1 = {"$gt": ["$age", 25]}
+        expr2 = {"$gt": ["$age", 999]}
+
+        key1 = evaluator._make_expr_key(expr1)
+        key2 = evaluator._make_expr_key(expr2)
+
+        assert key1 == key2, "Different literal values should have same key"
+
+    def test_tier2_cache_with_complex_expression(self):
+        """Test Tier-2 cache with complex expressions."""
+        from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
+
+        conn = neosqlite.Connection(":memory:")
+        users = conn.users
+        users.insert_many(
+            [
+                {"salary": 100000, "bonus": 10000},
+                {"salary": 80000, "bonus": 5000},
+            ]
+        )
+
+        evaluator = TempTableExprEvaluator(conn.db)
+        evaluator.clear_cache()
+
+        expr = {
+            "$cond": {
+                "if": {"$gte": ["$salary", 90000]},
+                "then": {"$add": ["$salary", "$bonus"]},
+                "else": "$salary",
+            }
+        }
+
+        result1 = evaluator.evaluate(expr, "users", None)
+        assert result1 is not None
+
+        result2 = evaluator.evaluate(expr, "users", None)
+        assert result2 is not None
+
+        stats = evaluator.get_cache_stats()
+        assert stats["hits"] >= 1
+
+
+class TestTier2TranslationCacheIntegration:
+    """Integration tests for Tier-2 translation caching."""
+
+    def test_tier2_cached_expr_returns_correct_results(self):
+        """Test that cached Tier-2 expressions return correct data."""
+        from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
+
+        conn = neosqlite.Connection(":memory:")
+        users = conn.users
+        users.insert_many(
+            [
+                {"status": "active", "score": 90},
+                {"status": "inactive", "score": 50},
+                {"status": "active", "score": 75},
+            ]
+        )
+
+        evaluator = TempTableExprEvaluator(conn.db)
+        evaluator.clear_cache()
+
+        expr = {
+            "$cond": {
+                "if": {"$eq": ["$status", "active"]},
+                "then": "yes",
+                "else": "no",
+            }
+        }
+
+        result1 = evaluator.evaluate(expr, "users", None)
+        assert result1 is not None
+
+        result2 = evaluator.evaluate(expr, "users", None)
+        assert result2 is not None
+
+        assert evaluator.get_cache_stats()["hits"] >= 1
+
+    def test_tier2_cache_produces_same_results_as_no_cache(self):
+        """Verify cached Tier-2 queries produce identical results to non-cached."""
+        from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
+
+        conn = neosqlite.Connection(":memory:")
+        users = conn.users
+        users.insert_many([{"value": i} for i in range(20)])
+
+        expr = {"$gte": ["$value", 10]}
+
+        evaluator_cached = TempTableExprEvaluator(
+            conn.db, translation_cache_size=100
+        )
+        evaluator_cached.clear_cache()
+
+        evaluator_uncached = TempTableExprEvaluator(
+            conn.db, translation_cache_size=0
+        )
+
+        result_cached = evaluator_cached.evaluate(expr, "users", None)
+        result_uncached = evaluator_uncached.evaluate(expr, "users", None)
+
+        assert result_cached is not None
+        assert result_uncached is not None
+
+
 @pytest.fixture
 def connection():
     """Fixture to provide a clean connection for each test."""
