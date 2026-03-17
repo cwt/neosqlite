@@ -331,29 +331,27 @@ class SQLTierAggregator:
             stage_name = next(iter(stage.keys()))
             spec = stage[stage_name]
 
-            if stage_name == "$sample" and isinstance(spec, dict):
-                if "size" in spec:
-                    values[f"__placeholder_{placeholder_idx}__"] = spec["size"]
+            match stage_name, spec:
+                case "$sample", {"size": size}:
+                    values[f"__placeholder_{placeholder_idx}__"] = size
                     placeholder_idx += 1
 
-            elif stage_name == "$limit" and isinstance(spec, int):
-                values[f"__placeholder_{placeholder_idx}__"] = spec
-                placeholder_idx += 1
+                case "$limit", int() as limit_val if isinstance(spec, int):
+                    values[f"__placeholder_{placeholder_idx}__"] = limit_val
+                    placeholder_idx += 1
 
-            elif stage_name == "$skip" and isinstance(spec, int):
-                values[f"__placeholder_{placeholder_idx}__"] = spec
-                placeholder_idx += 1
+                case "$skip", int() as skip_val if isinstance(spec, int):
+                    values[f"__placeholder_{placeholder_idx}__"] = skip_val
+                    placeholder_idx += 1
 
-            elif stage_name in (
-                "$addFields",
-                "$project",
-                "$set",
-                "$replaceRoot",
-                "$replaceWith",
-            ):
-                # Extract literal values from expression operators
-                if isinstance(spec, dict):
-                    for field, expr in spec.items():
+                case (
+                    "$addFields"
+                    | "$project"
+                    | "$set"
+                    | "$replaceRoot"
+                    | "$replaceWith"
+                ), dict() as expr_spec if isinstance(spec, dict):
+                    for field, expr in expr_spec.items():
                         if isinstance(expr, dict):
                             placeholder_idx = (
                                 self._extract_literal_values_from_expression(
@@ -361,32 +359,28 @@ class SQLTierAggregator:
                                 )
                             )
 
-            elif stage_name == "$bucket":
-                # $bucket has boundaries that are literal values
-                if isinstance(spec, dict):
-                    if "boundaries" in spec:
-                        for bound in spec["boundaries"]:
+                case "$bucket", dict() as bucket_spec if isinstance(spec, dict):
+                    if "boundaries" in bucket_spec:
+                        for bound in bucket_spec["boundaries"]:
                             values[f"__placeholder_{placeholder_idx}__"] = bound
                             placeholder_idx += 1
-                    if "default" in spec and spec["default"] is not None:
-                        values[f"__placeholder_{placeholder_idx}__"] = spec[
-                            "default"
-                        ]
+                    if (default := bucket_spec.get("default")) is not None:
+                        values[f"__placeholder_{placeholder_idx}__"] = default
                         placeholder_idx += 1
 
-            elif stage_name == "$bucketAuto":
-                # $bucketAuto may have granularity which is a string
-                if isinstance(spec, dict):
-                    if "granularity" in spec:
-                        values[f"__placeholder_{placeholder_idx}__"] = spec[
-                            "granularity"
-                        ]
+                case "$bucketAuto", dict() as bucket_auto_spec if isinstance(
+                    spec, dict
+                ):
+                    if (
+                        granularity := bucket_auto_spec.get("granularity")
+                    ) is not None:
+                        values[f"__placeholder_{placeholder_idx}__"] = (
+                            granularity
+                        )
                         placeholder_idx += 1
 
-            elif stage_name == "$fill":
-                # $fill has value expressions that may have literals
-                if isinstance(spec, dict):
-                    for field, fill_expr in spec.items():
+                case "$fill", dict() as fill_spec if isinstance(spec, dict):
+                    for field, fill_expr in fill_spec.items():
                         if isinstance(fill_expr, dict):
                             for op, value in fill_expr.items():
                                 if op.startswith("$") and op != "$meta":
@@ -403,41 +397,43 @@ class SQLTierAggregator:
         placeholder_idx: int,
     ) -> int:
         """Extract literal values from an expression and store them in values dict."""
-        if isinstance(expr, dict):
-            for op, value in expr.items():
-                if op.startswith("$"):
-                    # This is an aggregation operator
-                    if isinstance(value, list):
-                        for item in value:
-                            placeholder_idx = (
-                                self._extract_literal_values_from_expression(
-                                    item, values, placeholder_idx
+        match expr:
+            case dict() as d:
+                for op, value in d.items():
+                    if op.startswith("$"):
+                        match value:
+                            case list() as lst:
+                                for item in lst:
+                                    placeholder_idx = self._extract_literal_values_from_expression(
+                                        item, values, placeholder_idx
+                                    )
+                            case dict() as nested:
+                                placeholder_idx = self._extract_literal_values_from_expression(
+                                    nested, values, placeholder_idx
                                 )
-                            )
-                    elif isinstance(value, dict):
-                        placeholder_idx = (
-                            self._extract_literal_values_from_expression(
-                                value, values, placeholder_idx
-                            )
+                            case str() as s if not s.startswith("$"):
+                                values[f"__placeholder_{placeholder_idx}__"] = s
+                                placeholder_idx += 1
+                            case _ if value is not None:
+                                values[f"__placeholder_{placeholder_idx}__"] = (
+                                    value
+                                )
+                                placeholder_idx += 1
+
+            case list() as lst:
+                for item in lst:
+                    placeholder_idx = (
+                        self._extract_literal_values_from_expression(
+                            item, values, placeholder_idx
                         )
-                    elif isinstance(value, str):
-                        if not value.startswith("$"):
-                            # String literal
-                            values[f"__placeholder_{placeholder_idx}__"] = value
-                            placeholder_idx += 1
-                    elif value is not None:
-                        # Numeric or other literal
-                        values[f"__placeholder_{placeholder_idx}__"] = value
-                        placeholder_idx += 1
-        elif isinstance(expr, list):
-            for item in expr:
-                placeholder_idx = self._extract_literal_values_from_expression(
-                    item, values, placeholder_idx
-                )
-        elif expr is not None and not isinstance(expr, (dict, list, str)):
-            # Primitive literal (int, float, bool) - add placeholder
-            values[f"__placeholder_{placeholder_idx}__"] = expr
-            placeholder_idx += 1
+                    )
+
+            case _ if expr is not None and not isinstance(
+                expr, (dict, list, str)
+            ):
+                values[f"__placeholder_{placeholder_idx}__"] = expr
+                placeholder_idx += 1
+
         return placeholder_idx
 
     def _extract_param_names_from_pipeline(
@@ -455,60 +451,53 @@ class SQLTierAggregator:
             stage_name = next(iter(stage.keys()))
             spec = stage[stage_name]
 
-            if stage_name == "$match" and isinstance(spec, dict):
-                # Extract all field paths from $match spec
-                field_paths = self._extract_field_paths_from_dict(spec)
-                params.extend(field_paths)
+            match stage_name, spec:
+                case "$match", dict() as match_spec:
+                    field_paths = self._extract_field_paths_from_dict(
+                        match_spec
+                    )
+                    params.extend(field_paths)
 
-            elif stage_name == "$sample" and isinstance(spec, dict):
-                if "size" in spec:
+                case "$sample", {"size": _}:
                     params.append(f"__placeholder_{placeholder_idx}__")
                     placeholder_idx += 1
 
-            elif stage_name == "$limit" and isinstance(spec, int):
-                params.append(f"__placeholder_{placeholder_idx}__")
-                placeholder_idx += 1
+                case "$limit", int():
+                    params.append(f"__placeholder_{placeholder_idx}__")
+                    placeholder_idx += 1
 
-            elif stage_name == "$skip" and isinstance(spec, int):
-                params.append(f"__placeholder_{placeholder_idx}__")
-                placeholder_idx += 1
+                case "$skip", int():
+                    params.append(f"__placeholder_{placeholder_idx}__")
+                    placeholder_idx += 1
 
-            elif stage_name == "$count":
-                # $count doesn't have parameters - it's just {"$count": "output_field_name"}
-                # No placeholder needed
-                pass
+                case "$count", _:
+                    pass
 
-            elif stage_name == "$group" and isinstance(spec, dict):
-                # _id field and accumulator fields may need parameter extraction
-                # Only track actual field references (values starting with $)
-                if (
-                    "_id" in spec
-                    and isinstance(spec["_id"], str)
-                    and spec["_id"].startswith("$")
-                ):
-                    params.append(spec["_id"])  # e.g., "$dept"
-                for key, value in spec.items():
-                    if key != "_id" and isinstance(value, dict):
-                        # Accumulator like {"$sum": "$field"} - extract the field
-                        for op, field in value.items():
-                            if (
-                                op.startswith("$")
-                                and isinstance(field, str)
-                                and field.startswith("$")
-                            ):
-                                params.append(field)
+                case "$group", dict() as group_spec:
+                    if (
+                        "_id" in group_spec
+                        and isinstance(group_spec["_id"], str)
+                        and group_spec["_id"].startswith("$")
+                    ):
+                        params.append(group_spec["_id"])
+                    for key, value in group_spec.items():
+                        if key != "_id" and isinstance(value, dict):
+                            for op, field in value.items():
+                                if (
+                                    op.startswith("$")
+                                    and isinstance(field, str)
+                                    and field.startswith("$")
+                                ):
+                                    params.append(field)
 
-            elif stage_name in (
-                "$addFields",
-                "$project",
-                "$set",
-                "$replaceRoot",
-                "$replaceWith",
-            ):
-                # Handle stages with expression operators that may have literal values
-                # Extract both field references ($field) and literal values
-                if isinstance(spec, dict):
-                    for field, expr in spec.items():
+                case (
+                    "$addFields"
+                    | "$project"
+                    | "$set"
+                    | "$replaceRoot"
+                    | "$replaceWith"
+                ), dict() as expr_spec:
+                    for field, expr in expr_spec.items():
                         if isinstance(expr, dict):
                             placeholder_idx = (
                                 self._extract_params_from_expression(
@@ -516,44 +505,35 @@ class SQLTierAggregator:
                                 )
                             )
 
-            elif stage_name == "$unset":
-                # $unset can have field paths or arrays of field paths
-                if isinstance(spec, list):
-                    for item in spec:
+                case "$unset", list() as unset_list:
+                    for item in unset_list:
                         if isinstance(item, str) and item.startswith("$"):
                             params.append(item)
                         elif isinstance(item, dict):
-                            # Could be {field: 0} style
                             for k in item.keys():
                                 if k.startswith("$"):
                                     params.append(k)
-                elif isinstance(spec, str):
-                    if spec.startswith("$"):
-                        params.append(spec)
 
-            elif stage_name == "$bucket":
-                # $bucket has boundaries that are literal values
-                if isinstance(spec, dict):
-                    if "boundaries" in spec:
-                        for bound in spec["boundaries"]:
+                case "$unset", str() as unset_str if isinstance(spec, str):
+                    if unset_str.startswith("$"):
+                        params.append(unset_str)
+
+                case "$bucket", dict() as bucket_spec:
+                    if "boundaries" in bucket_spec:
+                        for _ in bucket_spec["boundaries"]:
                             params.append(f"__placeholder_{placeholder_idx}__")
                             placeholder_idx += 1
-                    if "default" in spec and spec["default"] is not None:
+                    if bucket_spec.get("default") is not None:
                         params.append(f"__placeholder_{placeholder_idx}__")
                         placeholder_idx += 1
 
-            elif stage_name == "$bucketAuto":
-                # $bucketAuto may have granularity which is a string
-                if isinstance(spec, dict):
-                    if "granularity" in spec:
-                        # Granularity is a string parameter
+                case "$bucketAuto", dict() as bucket_auto_spec:
+                    if "granularity" in bucket_auto_spec:
                         params.append(f"__placeholder_{placeholder_idx}__")
                         placeholder_idx += 1
 
-            elif stage_name == "$fill":
-                # $fill has value expressions that may have literals
-                if isinstance(spec, dict):
-                    for field, fill_expr in spec.items():
+                case "$fill", dict() as fill_spec:
+                    for field, fill_expr in fill_spec.items():
                         if isinstance(fill_expr, dict):
                             for op, value in fill_expr.items():
                                 if op.startswith("$") and op != "$meta":
@@ -579,45 +559,45 @@ class SQLTierAggregator:
 
         Returns the updated placeholder_idx.
         """
-        if isinstance(expr, dict):
-            for op, value in expr.items():
-                if op.startswith("$"):
-                    # This is an aggregation operator
-                    if isinstance(value, list):
-                        for item in value:
-                            placeholder_idx = (
-                                self._extract_params_from_expression(
-                                    item, params, placeholder_idx
+        match expr:
+            case dict() as d:
+                for op, value in d.items():
+                    if op.startswith("$"):
+                        match value:
+                            case list() as lst:
+                                for item in lst:
+                                    placeholder_idx = (
+                                        self._extract_params_from_expression(
+                                            item, params, placeholder_idx
+                                        )
+                                    )
+                            case dict() as nested:
+                                placeholder_idx = (
+                                    self._extract_params_from_expression(
+                                        nested, params, placeholder_idx
+                                    )
                                 )
-                            )
-                    elif isinstance(value, dict):
-                        # Nested expression like {$cond: {if: ..., then: ..., else: ...}}
-                        placeholder_idx = self._extract_params_from_expression(
-                            value, params, placeholder_idx
-                        )
-                    elif isinstance(value, str):
-                        if value.startswith("$"):
-                            # Field reference - add directly to params
-                            params.append(value)
-                        # String literals don't need placeholders
-                    elif value is not None:
-                        # Literal value (int, float, bool) - add placeholder
-                        params.append(f"__placeholder_{placeholder_idx}__")
-                        placeholder_idx += 1
-        elif isinstance(expr, list):
-            for item in expr:
-                placeholder_idx = self._extract_params_from_expression(
-                    item, params, placeholder_idx
-                )
-        elif isinstance(expr, str):
-            if expr.startswith("$"):
-                # Field reference - preserve in params
-                params.append(expr)
-            # String literals don't need placeholders
-        elif expr is not None and not isinstance(expr, (dict, list)):
-            # Primitive literal (int, float, bool) - add placeholder
-            params.append(f"__placeholder_{placeholder_idx}__")
-            placeholder_idx += 1
+                            case str() as s if s.startswith("$"):
+                                params.append(s)
+                            case _ if value is not None:
+                                params.append(
+                                    f"__placeholder_{placeholder_idx}__"
+                                )
+                                placeholder_idx += 1
+
+            case list() as lst:
+                for item in lst:
+                    placeholder_idx = self._extract_params_from_expression(
+                        item, params, placeholder_idx
+                    )
+
+            case str() as s if s.startswith("$"):
+                params.append(s)
+
+            case _ if expr is not None and not isinstance(expr, (dict, list)):
+                params.append(f"__placeholder_{placeholder_idx}__")
+                placeholder_idx += 1
+
         return placeholder_idx
 
     def _extract_field_paths_from_dict(

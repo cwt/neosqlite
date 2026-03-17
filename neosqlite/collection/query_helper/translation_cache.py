@@ -10,6 +10,7 @@ SQL to be reused across multiple query executions with different parameters.
 
 from __future__ import annotations
 from collections import OrderedDict
+from operator import itemgetter
 from typing import Any
 
 
@@ -92,20 +93,16 @@ class TranslationCache:
             stage_name = next(iter(stage.keys()))
             spec = stage[stage_name]
 
-            if isinstance(spec, str):
-                # $unset: "field" or $project: "field"
-                key_parts.append(f"{stage_name}:{spec}")
-            elif isinstance(spec, list):
-                # $unset: ["field1", "field2"] or $project: ["field1", "field2"]
-                key_parts.append(f"{stage_name}:{tuple(sorted(spec))}")
-            elif isinstance(spec, dict):
-                # Use deep structural hashing: preserves field names but replaces
-                # values with "?" placeholder to avoid cache collisions on different
-                # field queries that happen to use the same operators (e.g., age.$gt vs score.$gt)
-                nested_struct = self._extract_structure(spec)
-                key_parts.append(f"{stage_name}:{nested_struct}")
-            else:
-                key_parts.append(stage_name)
+            match spec:
+                case str() as s:
+                    key_parts.append(f"{stage_name}:{s}")
+                case list() as lst:
+                    key_parts.append(f"{stage_name}:{tuple(sorted(lst))}")
+                case dict() as d:
+                    nested_struct = self._extract_structure(d)
+                    key_parts.append(f"{stage_name}:{nested_struct}")
+                case _:
+                    key_parts.append(stage_name)
         return "|".join(key_parts)
 
     def _extract_structure(self, obj: Any) -> Any:
@@ -121,20 +118,20 @@ class TranslationCache:
         - {"_id": "$dept"} -> ("_id", "$dept")  # Preserved!
         - {"status": "active"} -> ("status", "?")
         """
-        if isinstance(obj, dict):
-            return tuple(
-                (k, self._extract_structure(v)) for k, v in sorted(obj.items())
-            )
-        elif isinstance(obj, list):
-            return tuple(self._extract_structure(item) for item in obj)
-        elif isinstance(obj, str) and obj.startswith("$"):
-            # Field reference - preserve in key to avoid collisions
-            return obj
-        elif isinstance(obj, (int, float, str, bool)):
-            # Literal value - parameterize in key
-            return "?"
-        else:
-            return "?"
+        match obj:
+            case dict() as d:
+                return tuple(
+                    (k, self._extract_structure(v))
+                    for k, v in sorted(d.items())
+                )
+            case list() as lst:
+                return tuple(self._extract_structure(item) for item in lst)
+            case str() as s if s.startswith("$"):
+                return s
+            case int() | float() | bool() | str():
+                return "?"
+            case _:
+                return "?"
 
     def get_stats(self) -> dict[str, Any]:
         """Get cache statistics."""
@@ -155,11 +152,7 @@ class TranslationCache:
                 }
             )
 
-        # Sort by hit count descending
-        def get_hit_count(x: dict[str, Any]) -> int:
-            return int(x["hit_count"])
-
-        entries.sort(key=get_hit_count, reverse=True)
+        entries.sort(key=itemgetter("hit_count"), reverse=True)
 
         return {
             "size": len(self._cache),
@@ -206,8 +199,15 @@ class TranslationCache:
             "hit_count": entry.hit_count,
         }
 
+    def _get_entry_hit_count(self, item: tuple[str, CacheEntry]) -> int:
+        """Helper to extract hit_count from cache entry for sorting."""
+        return item[1].hit_count
+
     def dump(self) -> list[dict]:
         """Dump all cache entries for debugging."""
+        sorted_items = sorted(
+            self._cache.items(), key=self._get_entry_hit_count, reverse=True
+        )
         return [
             {
                 "key": key,
@@ -215,9 +215,7 @@ class TranslationCache:
                 "param_names": entry.param_names,
                 "hit_count": entry.hit_count,
             }
-            for key, entry in sorted(
-                self._cache.items(), key=lambda x: x[1].hit_count, reverse=True
-            )
+            for key, entry in sorted_items
         ]
 
     def is_enabled(self) -> bool:
