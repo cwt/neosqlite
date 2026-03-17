@@ -1,5 +1,20 @@
 # CHANGELOG
 
+## 1.10.1
+
+### Documentation & Benchmark Improvements
+
+- **watch() Support Clarification**: Added Change Streams (`watch()`) to the main Features list in `README.md` to prevent misunderstandings from automated summary tools.
+- **Enhanced Benchmark Reports**: Updated the benchmark Markdown report generator to explicitly state that Change Streams and Transactions are fully implemented in NeoSQLite when they are skipped during MongoDB comparisons.
+- **Prominent Disclaimers**: Added a highlighted callout in `README.md` to clarify why certain features (Change Streams, Transactions) are skipped during automated comparison tests.
+- **Latest Version Update**: Updated documentation to reflect v1.10.1 as the current version.
+
+### Compatibility
+- **Backward Compatible**: Zero breaking changes — all existing code continues to work
+- **PyMongo API Parity**: 100% compatibility maintained
+
+---
+
 ## 1.10.0
 
 ### Major Achievement: 100% PyMongo API Compatibility

@@ -560,8 +560,13 @@ class BenchmarkReporter:
                         skip_side = (
                             "MongoDB" if result.mongo_skipped else "NeoSQLite"
                         )
+                        # Add more prominent note for Change Streams and Transactions
+                        note = ""
+                        if category in ["Change Streams", "session_methods"]:
+                            note = " (Fully implemented in NeoSQLite via SQLite triggers/SAVEPOINTs)"
+                        
                         lines.append(
-                            f"- **{category}**: {skip_side} skipped - {result.skip_reason}"
+                            f"- **{category}**: {skip_side} skipped - {result.skip_reason}{note}"
                         )
                 lines.append("")
 

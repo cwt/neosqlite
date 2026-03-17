@@ -20,6 +20,7 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 - **Text Search**: Full-text search capabilities using SQLite's FTS5 extension with the `$text` operator.
 - **Modern API**: Aligned with modern `pymongo` practices (using methods like `insert_one`, `update_one`, `delete_many`, etc.)
 - **ACID Transactions**: Full `ClientSession` API support for multi-document transactions with PyMongo 4.x parity.
+- **Change Streams**: Full support for the 'watch()' method to monitor collection changes using native SQLite triggers.
 - **Advanced Aggregation**: Support for complex stages like `$setWindowFields`, `$graphLookup`, `$fill`, and streaming `$facet`.
 - **Tier-1 SQL Optimization**: Expanded SQL-level performance for dozens of operators including Set operators, `$split`, `$let`, and `$addToSet`.
 - **Native `$jsonSchema`**: Robust validation for queries and write-time schema enforcement using SQLite CHECK constraints.
@@ -36,13 +37,18 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 
 See [CHANGELOG.md](CHANGELOG.md) for the latest features and improvements.
 
-## Latest Release: v1.10.0
+## Latest Release: v1.10.1
 
-NeoSQLite v1.10.0 is a **milestone release** that achieves **100% PyMongo API compatibility** for all comparable features while delivering significant performance improvements.
+NeoSQLite v1.10.1 explicitly clarifies support for Change Streams and multi-document transactions, while maintaining the **100% PyMongo API compatibility** milestone achieved in v1.10.0.
 
 ### Key Highlights
 
-**100% PyMongo API Compatibility** - Achieved full API coverage:
+**Clarified Support for `watch()` and Transactions**:
+- **Change Streams**: Explicitly documented that `watch()` is fully implemented via SQLite triggers.
+- **Transactions**: Confirmed `ClientSession` multi-document transactions are fully supported via SQLite SAVEPOINTs.
+- **Benchmark Notes**: Updated report generator to clearly state why these features are skipped during MongoDB comparison (requires MongoDB replica set).
+
+**100% PyMongo API Compatibility** - Maintains full API coverage:
 - 375 API tests: 360 passed, 15 skipped, 0 failed
 - Explicit NotImplementedError for `$function` and `$accumulator` with guidance to use `$expr` or Python post-processing
 - Fixed $toDecimal documentation (already implemented via Python tier)
@@ -58,7 +64,7 @@ NeoSQLite v1.10.0 is a **milestone release** that achieves **100% PyMongo API co
 - `$densify` - Fill numeric gaps in sequences
 - `$push` with `$position` - Insert elements at specific array positions
 
-For more details, see [documents/releases/v1.10.0.md](documents/releases/v1.10.0.md).
+For more details, see [documents/releases/v1.10.1.md](documents/releases/v1.10.1.md).
 
 ## PyMongo Compatibility Tests
 
@@ -86,6 +92,9 @@ NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-
 | **Compatibility** | 100% | 100% | 100% | **100%** |
 
 **Skipped Tests Note**: The 11 skipped tests are due to architectural differences or environment limitations, not missing implementations:
+
+> **Important Note on Change Streams & Transactions**:
+> The `watch()` method and multi-document transactions are **fully implemented** in NeoSQLite using native SQLite triggers and `ClientSession`. They are only skipped in the automated comparison tests because MongoDB requires a replica set for these features, which is not available in the single-node test environment.
 
 **Collection/Database Methods:**
 
