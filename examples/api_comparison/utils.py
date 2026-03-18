@@ -3,12 +3,12 @@ Utility functions for API comparison tests
 """
 
 from datetime import timezone
-from typing import Any, Optional
+from typing import Any, Callable
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
 
 
-def test_pymongo_connection() -> Optional[MongoClient]:
+def test_pymongo_connection() -> MongoClient | None:
     """Test connection to MongoDB"""
     try:
         client: MongoClient = MongoClient(
@@ -72,7 +72,7 @@ def compare_results(
     mongo_results: list,
     tolerance: float = 1e-9,
     ignore_order: bool = True,
-) -> tuple[bool, Optional[str]]:
+) -> tuple[bool, str | None]:
     """
     Compare NeoSQLite and MongoDB aggregation results.
 
@@ -83,7 +83,7 @@ def compare_results(
         ignore_order: If True, sort results before comparison (for set-like comparison)
 
     Returns:
-        Tuple of (passed: bool, error_message: Optional[str])
+        Tuple of (passed: bool, error_message: str | None)
     """
     # Normalize results (remove _id, convert ObjectId to string)
     neo_normalized = [_normalize_id(doc) for doc in neo_results]
@@ -130,7 +130,7 @@ def _compare_documents(
     neo_doc: Any,
     mongo_doc: Any,
     tolerance: float = 1e-9,
-) -> tuple[bool, Optional[str]]:
+) -> tuple[bool, str | None]:
     """
     Compare two documents for equality.
 
@@ -140,7 +140,7 @@ def _compare_documents(
         tolerance: Tolerance for floating point comparisons
 
     Returns:
-        Tuple of (passed: bool, error_message: Optional[str])
+        Tuple of (passed: bool, error_message: str | None)
     """
     # Handle None
     if neo_doc is None and mongo_doc is None:
@@ -215,20 +215,20 @@ def _compare_documents(
 class TierChangeTracker:
     """Tracks tier changes during API comparison tests."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.enabled = False
         self.changes: list[tuple[str | None, str, list]] = []
-        self._callback = None
+        self._callback: Callable | None = None
         self._connections: list = []
 
     def _on_tier_change(
         self, prev_tier: str | None, new_tier: str, pipeline: list
-    ):
+    ) -> None:
         """Callback for tier changes."""
         if self.enabled:
             self.changes.append((prev_tier, new_tier, pipeline))
 
-    def register_connection(self, connection):
+    def register_connection(self, connection) -> None:
         """Register a connection for tier change tracking."""
         if not self.enabled:
             return
@@ -239,11 +239,11 @@ class TierChangeTracker:
         except Exception:
             pass
 
-    def enable(self):
+    def enable(self) -> None:
         """Enable tier change tracking."""
         self.enabled = True
 
-    def disable(self):
+    def disable(self) -> None:
         """Disable tier change tracking."""
         for conn, callback in self._connections:
             try:

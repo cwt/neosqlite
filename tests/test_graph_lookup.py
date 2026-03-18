@@ -34,11 +34,12 @@ def collection(tmp_path):
                 },
             ]
         )
-        yield coll
+        yield coll, conn
 
 
 def test_graph_lookup_basic(collection):
-    """Test basic recursive lookup across tiers."""
+    """Test basic $graphLookup."""
+    collection, conn = collection
     pipeline = [
         {"$match": {"_id": 4}},
         {
@@ -73,7 +74,8 @@ def test_graph_lookup_basic(collection):
 
 
 def test_graph_lookup_max_depth(collection):
-    """Test maxDepth parameter."""
+    """Test $graphLookup with maxDepth option."""
+    collection, conn = collection
     pipeline = [
         {"$match": {"_id": 4}},
         {
@@ -96,7 +98,8 @@ def test_graph_lookup_max_depth(collection):
 
 
 def test_graph_lookup_depth_field(collection):
-    """Test depthField parameter."""
+    """Test $graphLookup with depthField option."""
+    collection, conn = collection
     pipeline = [
         {"$match": {"_id": 4}},
         {
@@ -123,7 +126,8 @@ def test_graph_lookup_depth_field(collection):
 
 
 def test_graph_lookup_restrict_search(collection):
-    """Test restrictSearchWithMatch parameter."""
+    """Test $graphLookup with restrictSearchWithMatch option."""
+    collection, conn = collection
     pipeline = [
         {"$match": {"_id": 4}},
         {
@@ -147,13 +151,8 @@ def test_graph_lookup_restrict_search(collection):
 
 
 def test_graph_lookup_tier2(collection):
-    """Test $graphLookup in a Tier-2 complex pipeline."""
-    # Force Tier 2 by using $lookup before $graphLookup
-    # Ensure 'other' collection exists and has data in the SAME database
-    db = collection.database
-    other = db.other
-    other.insert_one({"_id": 4, "note": "Target"})
-
+    """Test $graphLookup explain plan for Tier 2."""
+    collection, conn = collection
     pipeline = [
         {"$match": {"_id": 4}},
         {
@@ -175,7 +174,9 @@ def test_graph_lookup_tier2(collection):
         },
     ]
 
-    explanation = collection.aggregate(pipeline).explain()
+    explanation = conn.command(
+        "aggregate", "collection", pipeline=pipeline, explain=True
+    )
     assert explanation["tier"] == 2
 
     results = list(collection.aggregate(pipeline))

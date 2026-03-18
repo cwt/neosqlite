@@ -605,6 +605,32 @@ class Connection:
                     "storageSize": 0,
                 }
 
+            elif cmd_name == "aggregate":
+                # MongoDB-compatible aggregate command with explain support
+                # Usage: db.command("aggregate", "collection", pipeline=[...], explain=True)
+                collection_name = kwargs.get("aggregate")
+                if not collection_name and isinstance(command, dict):
+                    collection_name = command.get("aggregate")
+                if not collection_name:
+                    raise ValueError("aggregate requires 'aggregate' parameter")
+
+                pipeline = kwargs.get("pipeline", [])
+                explain = kwargs.get("explain", False)
+                cursor = kwargs.get("cursor", {})
+                kwargs.get("allowDiskUse", False)
+
+                if explain:
+                    # Return the explain plan
+                    collection = self[collection_name]
+                    return collection.query_engine.explain_aggregation(
+                        pipeline, session=None
+                    )
+                else:
+                    # Execute the aggregation and return results
+                    collection = self[collection_name]
+                    cursor_result = collection.aggregate(pipeline)
+                    return {"ok": 1.0, "result": list(cursor_result)}
+
             else:
                 # Try to execute as a PRAGMA command
                 try:

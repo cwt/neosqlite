@@ -37,11 +37,12 @@ def collection(tmp_path):
                 {"_id": 6, "name": "F", "score": 110, "dept": "Eng", "date": 6},
             ]
         )
-        yield coll
+        yield coll, conn
 
 
 def test_window_basic_rank(collection):
-    """Test $rank, $denseRank, and $documentNumber across tiers."""
+    """Test $rank, $denseRank, and documentNumber across tiers."""
+    collection, conn = collection
     pipeline = [
         {
             "$setWindowFields": {
@@ -86,7 +87,8 @@ def test_window_basic_rank(collection):
 
 
 def test_window_shift(collection):
-    """Test $shift operator (Lead/Lag)."""
+    """Test $shift window function."""
+    collection, conn = collection
     pipeline = [
         {
             "$setWindowFields": {
@@ -118,7 +120,8 @@ def test_window_shift(collection):
 
 
 def test_window_accumulators(collection):
-    """Test $sum, $avg, $min, $max with various frames."""
+    """Test window accumulators like $avg, $sum, $min, $max, $stdDevPop, $stdDevSamp."""
+    collection, conn = collection
     pipeline = [
         {
             "$setWindowFields": {
@@ -161,7 +164,8 @@ def test_window_accumulators(collection):
 
 
 def test_window_complex_partition(collection):
-    """Test partitionBy with a complex expression."""
+    """Test window functions with complex partition expressions."""
+    collection, conn = collection
     pipeline = [
         {
             "$setWindowFields": {
@@ -178,10 +182,12 @@ def test_window_complex_partition(collection):
 
 
 def test_window_explain(collection):
-    """Test the new explain() method on AggregationCursor."""
+    """Test the explain command on aggregation."""
+    collection, conn = collection
     pipeline = [{"$setWindowFields": {"output": {"rank": {"$rank": {}}}}}]
-    cursor = collection.aggregate(pipeline)
-    explanation = cursor.explain()
+    explanation = conn.command(
+        "aggregate", "collection", pipeline=pipeline, explain=True
+    )
 
     assert "tier" in explanation
     assert "type" in explanation
@@ -192,6 +198,7 @@ def test_window_explain(collection):
 
 def test_window_tier2_fallback(collection):
     """Test that $setWindowFields works when combined with Tier-2 only stages."""
+    collection, conn = collection
     # $lookup usually forces Tier 2 or 3.
     # We'll create a second collection for lookup.
     collection.database.lookup_coll.insert_one(
@@ -217,7 +224,9 @@ def test_window_tier2_fallback(collection):
     ]
 
     cursor = collection.aggregate(pipeline)
-    explanation = cursor.explain()
+    explanation = conn.command(
+        "aggregate", "collection", pipeline=pipeline, explain=True
+    )
 
     # With $lookup now supported in Tier 1 SQL, this should be Tier 1
     assert explanation["tier"] == 1
@@ -230,6 +239,7 @@ def test_window_tier2_fallback(collection):
 
 def test_window_unsupported_operator_fallback(collection):
     """Test fallback when an operator is not supported by SQL but is by Python."""
+    collection, conn = collection
     # We don't have many of these yet since we implemented most in SQL,
     # but we can check if it raises NotImplementedError in SQL builder and falls back.
 
@@ -257,6 +267,7 @@ def test_window_unsupported_operator_fallback(collection):
 
 def test_window_first_last(collection):
     """Test $first and $last operators in window fields."""
+    collection, conn = collection
     pipeline = [
         {
             "$setWindowFields": {
@@ -273,7 +284,9 @@ def test_window_first_last(collection):
 
     # These should use Tier 1 SQL (FIRST_VALUE / LAST_VALUE)
     cursor = collection.aggregate(pipeline)
-    explanation = cursor.explain()
+    explanation = conn.command(
+        "aggregate", "collection", pipeline=pipeline, explain=True
+    )
     assert explanation["tier"] == 1
 
     results = list(cursor)
@@ -286,7 +299,8 @@ def test_window_first_last(collection):
 
 
 def test_window_firstN_lastN(collection):
-    """Test $firstN and $lastN operators in window fields (Python fallback)."""
+    """Test $firstN and $lastN operators in window fields."""
+    collection, conn = collection
     pipeline = [
         {
             "$setWindowFields": {
@@ -314,7 +328,8 @@ def test_window_firstN_lastN(collection):
 
 
 def test_window_minN_maxN(collection):
-    """Test $minN and $maxN operators in window fields (Python fallback)."""
+    """Test $minN and $maxN operators in window fields."""
+    collection, conn = collection
     pipeline = [
         {
             "$setWindowFields": {
@@ -340,10 +355,8 @@ def test_window_minN_maxN(collection):
 
 
 def test_window_n_as_expression(collection):
-    """Test using an expression for 'n' in N-operators."""
-    collection.insert_one({"_id": 7, "score": 100, "dept": "C", "count": 1})
-    collection.insert_one({"_id": 8, "score": 200, "dept": "C", "count": 1})
-
+    """Test using $number as expression in $firstN/$lastN."""
+    collection, conn = collection
     pipeline = [
         {"$match": {"dept": "C"}},
         {
@@ -366,7 +379,8 @@ def test_window_n_as_expression(collection):
 
 
 def test_window_top_bottom(collection):
-    """Test $top and $bottom window operators (SQL and Python)."""
+    """Test $top and $bottom operators in window fields."""
+    collection, conn = collection
     pipeline = [
         {
             "$setWindowFields": {
@@ -401,7 +415,8 @@ def test_window_top_bottom(collection):
 
 
 def test_window_topN_bottomN(collection):
-    """Test $topN and $bottomN window operators (Python fallback)."""
+    """Test $topN and $bottomN operators in window fields."""
+    collection, conn = collection
     pipeline = [
         {
             "$setWindowFields": {
@@ -446,7 +461,8 @@ def test_window_topN_bottomN(collection):
 
 
 def test_window_addToSet(collection):
-    """Test $addToSet window operator."""
+    """Test $addToSet operator in window fields."""
+    collection, conn = collection
     pipeline = [
         {
             "$setWindowFields": {

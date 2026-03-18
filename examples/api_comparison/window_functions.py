@@ -182,10 +182,15 @@ def compare_window_functions():
                 neo_results[name] = f"Error: {e}"
                 print(f"Neo $setWindowFields ({name}): Error - {e}")
 
-        # Test explain()
+        # Test explain() - NeoSQLite uses db.command() like MongoDB
         try:
             start_neo_timing()
-            explanation = neo_collection.aggregate(pipelines["rank"]).explain()
+            explanation = neo_conn.command(
+                "aggregate",
+                "test_window",
+                pipeline=pipelines["rank"],
+                explain=True,
+            )
             end_neo_timing()
 
             neo_explain_ok = explanation.get("tier") == 1
@@ -220,11 +225,16 @@ def compare_window_functions():
                 print(f"Mongo $setWindowFields ({name}): Error - {e}")
 
         # Test explain() on MongoDB
+        # Note: MongoDB aggregation explain requires using db.command() approach
+        # This is a NeoSQLite extension beyond MongoDB's standard cursor API
         try:
             start_mongo_timing()
-            explanation = mongo_collection.aggregate(
-                pipelines["rank"]
-            ).explain()
+            explanation = mongo_db.command(
+                "aggregate",
+                "test_window",
+                pipeline=pipelines["rank"],
+                explain=True,
+            )
             end_mongo_timing()
 
             mongo_explain_ok = isinstance(explanation, dict)
