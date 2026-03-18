@@ -3,7 +3,13 @@ Test Runner - Orchestrates running all comparison tests
 """
 
 import time
-from .utils import test_pymongo_connection
+from .utils import (
+    test_pymongo_connection,
+    enable_tier_tracking,
+    disable_tier_tracking,
+    get_tier_changes,
+    clear_tier_changes,
+)
 
 # Import all comparison functions
 from .crud import compare_crud_operations
@@ -482,31 +488,79 @@ def run_category(category: str) -> bool:
 
 def run_all_comparisons():
     """Run all comparison tests and return exit code"""
+    import neosqlite
+    from .utils import (
+        register_connection_for_tier_tracking,
+    )
+
     print("NeoSQLite vs PyMongo - Comprehensive API Comparison")
     print("=" * 80)
 
     # Clean up any leftover test collections first
     cleanup_test_collections()
 
-    # Run all comparison functions
-    for category, func in COMPARISON_FUNCTIONS:
-        print(f"\n{'=' * 80}")
-        print(f"Running: {category}")
-        print("=" * 80)
+    # Patch Connection to track tier changes
+    _tracker_connections = []
+    original_init = neosqlite.Connection.__init__
+
+    def patched_init(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        # Register this connection for tier tracking
         try:
-            func()
-        except Exception as e:
-            print(f"Error in {category}: {e}")
-            import traceback
+            register_connection_for_tier_tracking(self)
+            _tracker_connections.append(self)
+        except Exception:
+            pass
 
-            traceback.print_exc()
+    neosqlite.Connection.__init__ = patched_init
 
-    # Print final report - this should be the last output
-    from . import reporter as global_reporter
+    # Enable tier tracking
+    enable_tier_tracking()
 
-    print("\n")
-    global_reporter.print_report(show_passed_results=True)
+    try:
+        # Run all comparison functions
+        for category, func in COMPARISON_FUNCTIONS:
+            print(f"\n{'=' * 80}")
+            print(f"Running: {category}")
+            print("=" * 80)
 
-    if len(global_reporter.failed_tests) > 0:
-        return 1
-    return 0
+            # Clear tier changes before each category
+            clear_tier_changes()
+
+            try:
+                func()
+            except Exception as e:
+                print(f"Error in {category}: {e}")
+                import traceback
+
+                traceback.print_exc()
+
+            # Check for tier changes after each category
+            tier_changes = get_tier_changes()
+            if tier_changes:
+                print(
+                    f"\n  [TIER TRACKING] Tier changes detected: {len(tier_changes)}"
+                )
+                for prev, new, pipeline in tier_changes:
+                    prev_str = prev if prev else "None"
+                    # Show simplified pipeline
+                    pipeline_summary = (
+                        str(pipeline)[:60] + "..."
+                        if len(str(pipeline)) > 60
+                        else str(pipeline)
+                    )
+                    print(f"    {prev_str} -> {new}: {pipeline_summary}")
+
+        # Print final report - this should be the last output
+        from . import reporter as global_reporter
+
+        print("\n")
+        global_reporter.print_report(show_passed_results=True)
+
+        if len(global_reporter.failed_tests) > 0:
+            return 1
+        return 0
+    finally:
+        # Restore original init and cleanup
+        neosqlite.Connection.__init__ = original_init
+        disable_tier_tracking()

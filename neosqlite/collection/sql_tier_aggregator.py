@@ -361,14 +361,44 @@ class SQLTierAggregator:
                                 )
                             )
 
+                case "$count", str() as field_name if isinstance(spec, str):
+                    values[f"__placeholder_{placeholder_idx}__"] = field_name
+                    placeholder_idx += 1
+
                 case "$bucket", dict() as bucket_spec if isinstance(spec, dict):
+                    # Extract from groupBy
+                    if "groupBy" in bucket_spec:
+                        placeholder_idx = (
+                            self._extract_literal_values_from_expression(
+                                bucket_spec["groupBy"], values, placeholder_idx
+                            )
+                        )
+                    # Extract from boundaries - 3 params per range
                     if "boundaries" in bucket_spec:
-                        for bound in bucket_spec["boundaries"]:
-                            values[f"__placeholder_{placeholder_idx}__"] = bound
+                        boundaries = bucket_spec["boundaries"]
+                        for i in range(len(boundaries) - 1):
+                            lower = boundaries[i]
+                            upper = boundaries[i + 1]
+                            # _build_bucket_sql uses: [lower, upper, lower]
+                            values[f"__placeholder_{placeholder_idx}__"] = lower
                             placeholder_idx += 1
+                            values[f"__placeholder_{placeholder_idx}__"] = upper
+                            placeholder_idx += 1
+                            values[f"__placeholder_{placeholder_idx}__"] = lower
+                            placeholder_idx += 1
+                    # Extract from default
                     if (default := bucket_spec.get("default")) is not None:
                         values[f"__placeholder_{placeholder_idx}__"] = default
                         placeholder_idx += 1
+                    # Extract from output accumulators
+                    if "output" in bucket_spec:
+                        for field, accumulator in bucket_spec["output"].items():
+                            if isinstance(accumulator, dict):
+                                for op, expr in accumulator.items():
+                                    if op.startswith("$") and op != "$meta":
+                                        placeholder_idx = self._extract_literal_values_from_expression(
+                                            expr, values, placeholder_idx
+                                        )
 
                 case "$bucketAuto", dict() as bucket_auto_spec if isinstance(
                     spec, dict
@@ -472,8 +502,9 @@ class SQLTierAggregator:
                     params.append(f"__placeholder_{placeholder_idx}__")
                     placeholder_idx += 1
 
-                case "$count", _:
-                    pass
+                case "$count", str():
+                    params.append(f"__placeholder_{placeholder_idx}__")
+                    placeholder_idx += 1
 
                 case "$group", dict() as group_spec:
                     if (
@@ -524,13 +555,34 @@ class SQLTierAggregator:
                         params.append(unset_str)
 
                 case "$bucket", dict() as bucket_spec:
+                    # Extract from groupBy
+                    if "groupBy" in bucket_spec:
+                        placeholder_idx = self._extract_params_from_expression(
+                            bucket_spec["groupBy"], params, placeholder_idx
+                        )
+                    # Extract from boundaries - 3 params per range
                     if "boundaries" in bucket_spec:
-                        for _ in bucket_spec["boundaries"]:
-                            params.append(f"__placeholder_{placeholder_idx}__")
-                            placeholder_idx += 1
+                        boundaries = bucket_spec["boundaries"]
+                        for i in range(len(boundaries) - 1):
+                            # _build_bucket_sql uses: [lower, upper, lower]
+                            for _ in range(3):
+                                params.append(
+                                    f"__placeholder_{placeholder_idx}__"
+                                )
+                                placeholder_idx += 1
+                    # Extract from default
                     if bucket_spec.get("default") is not None:
                         params.append(f"__placeholder_{placeholder_idx}__")
                         placeholder_idx += 1
+                    # Extract from output accumulators
+                    if "output" in bucket_spec:
+                        for field, accumulator in bucket_spec["output"].items():
+                            if isinstance(accumulator, dict):
+                                for op, expr in accumulator.items():
+                                    if op.startswith("$") and op != "$meta":
+                                        placeholder_idx = self._extract_params_from_expression(
+                                            expr, params, placeholder_idx
+                                        )
 
                 case "$bucketAuto", dict() as bucket_auto_spec:
                     if "granularity" in bucket_auto_spec:
@@ -626,8 +678,19 @@ class SQLTierAggregator:
                 if isinstance(value, dict):
                     has_operator = any(k.startswith("$") for k in value.keys())
                     if has_operator:
+                        # This field has operators like $gt, $eq, etc.
+                        # Add the field path
                         paths.append(f"{prefix}{key}")
+                        # Also recurse into nested dicts to find deeply nested fields
+                        for op_key, op_value in value.items():
+                            if isinstance(op_value, dict):
+                                paths.extend(
+                                    self._extract_field_paths_from_dict(
+                                        op_value, f"{prefix}{key}."
+                                    )
+                                )
                     else:
+                        # No operators, this is a nested structure
                         paths.append(f"{prefix}{key}")
                         paths.extend(
                             self._extract_field_paths_from_dict(
@@ -635,6 +698,7 @@ class SQLTierAggregator:
                             )
                         )
                 else:
+                    # Direct value
                     paths.append(f"{prefix}{key}")
         return paths
 
@@ -838,6 +902,8 @@ class SQLTierAggregator:
                 return self._build_merge_sql(stage_spec, prev_stage, context)
             case "$densify":
                 return self._build_densify_sql(stage_spec, prev_stage, context)
+            case "$facet":
+                return None, []  # $facet not supported in SQL tier
             case _:
                 return None, []
 

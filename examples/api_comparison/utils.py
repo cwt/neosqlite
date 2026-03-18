@@ -205,3 +205,126 @@ def _compare_documents(
         return False, f"Value mismatch: {neo_doc} vs {mongo_doc}"
 
     return True, None
+
+
+# ============================================================================
+# Tier Change Tracking for detecting unexpected tier fallsbacks
+# ============================================================================
+
+
+class TierChangeTracker:
+    """Tracks tier changes during API comparison tests."""
+
+    def __init__(self):
+        self.enabled = False
+        self.changes: list[tuple[str | None, str, list]] = []
+        self._callback = None
+        self._connections: list = []
+
+    def _on_tier_change(
+        self, prev_tier: str | None, new_tier: str, pipeline: list
+    ):
+        """Callback for tier changes."""
+        if self.enabled:
+            self.changes.append((prev_tier, new_tier, pipeline))
+
+    def register_connection(self, connection):
+        """Register a connection for tier change tracking."""
+        if not self.enabled:
+            return
+        try:
+            qe = connection.test_collection.query_engine
+            qe.add_tier_change_callback(self._on_tier_change)
+            self._connections.append((connection, self._on_tier_change))
+        except Exception:
+            pass
+
+    def enable(self):
+        """Enable tier change tracking."""
+        self.enabled = True
+
+    def disable(self):
+        """Disable tier change tracking."""
+        for conn, callback in self._connections:
+            try:
+                qe = conn.test_collection.query_engine
+                qe.remove_tier_change_callback(callback)
+            except Exception:
+                pass
+        self.enabled = False
+        self._connections = []
+
+    def get_changes(self) -> list[tuple[str | None, str, list]]:
+        """Get all recorded tier changes."""
+        return self.changes
+
+    def has_fallback(self) -> bool:
+        """Check if any tier fallback occurred (tier3 is involved)."""
+        return any(
+            new == "tier3" or prev == "tier3" for prev, new, _ in self.changes
+        )
+
+    def clear(self):
+        """Clear recorded changes."""
+        self.changes = []
+
+
+# Global tier change tracker instance
+_tier_tracker = TierChangeTracker()
+
+
+def enable_tier_tracking(_connection=None):
+    """Enable tier change tracking for comparison tests.
+
+    Call this before running tests to track unexpected tier changes.
+    """
+    _tier_tracker.enable()
+
+
+def disable_tier_tracking():
+    """Disable tier change tracking."""
+    _tier_tracker.disable()
+
+
+def register_connection_for_tier_tracking(connection):
+    """Register a connection for tier tracking.
+
+    Call this after creating a new connection to enable tier tracking on it.
+    """
+    _tier_tracker.register_connection(connection)
+
+
+def get_tier_changes() -> list[tuple[str | None, str, list]]:
+    """Get recorded tier changes."""
+    return _tier_tracker.get_changes()
+
+
+def has_tier_fallback() -> bool:
+    """Check if any tier fallback occurred."""
+    return _tier_tracker.has_fallback()
+
+
+def clear_tier_changes():
+    """Clear recorded tier changes."""
+    _tier_tracker.clear()
+
+
+def get_tier_change_report() -> str:
+    """Generate a report of tier changes."""
+    changes = _tier_tracker.get_changes()
+    if not changes:
+        return "No tier changes recorded."
+
+    lines = ["Tier Changes Detected:"]
+    for prev, new, pipeline in changes:
+        prev_str = prev if prev else "None"
+        lines.append(f"  {prev_str} -> {new}")
+        # Truncate pipeline for display
+        pipeline_str = (
+            str(pipeline)[:80] + "..."
+            if len(str(pipeline)) > 80
+            else str(pipeline)
+        )
+        lines.append(f"    Pipeline: {pipeline_str}")
+
+    return "\n".join(lines)
