@@ -433,8 +433,10 @@ NeoSQLite provides a callback system to notify when query execution tier changes
 
 When the translation cache has a bug (like the comparison operator bug fixed in v1.x.x), queries may silently fall back to a slower tier. The tier callback helps you detect this:
 
-- **Normal operation**: Queries should consistently use `tier1` or `tier1_legacy`
-- **Problem detected**: If you see `tier1` → `tier1_legacy` or `tier1` → `tier2` → `tier3` changes unexpectedly, something is wrong
+- **Normal operation**: Queries should consistently use `tier1` or `tier1_standard` (both are SQL)
+- **Problem detected**: If you see `tier1` → `tier1_standard` or `tier1` → `tier2` → `tier3` changes unexpectedly, something is wrong
+
+**Note:** "tier1_standard" was previously called "tier1_legacy" - it's the non-CTE SQL path. Both tier1 and tier1_standard are in the "SQL" category of the 3-tier model.
 
 ### Debugging Cache Bugs
 
@@ -507,9 +509,11 @@ The callback receives three arguments:
 | Tier | Description |
 |------|-------------|
 | `tier1` | SQL CTE-based aggregation (new optimizer) |
-| `tier1_legacy` | Legacy SQL aggregation |
-| `tier2` | Temporary table for complex $expr queries |
+| `tier1_standard` | SQL non-CTE aggregation (older SQL builder) |
+| `tier2` | Temporary table for complex queries |
 | `tier3` | Python fallback for unsupported operations |
+
+Note: `tier1_standard` was previously called `tier1_legacy`. Both tier1 and tier1_standard use single SQL execution, categorized as "SQL" in the 3-tier model.
 
 ## Bug Fixes
 
@@ -527,14 +531,16 @@ Before the fix, running these queries would show tier fallback:
 
 ```python
 list(users.aggregate([{'$match': {'age': {'$gt': 25}}}]))  # tier1
-list(users.aggregate([{'$match': {'age': {'$gt': 35}}}]))  # Falls back to tier1_legacy!
+list(users.aggregate([{'$match': {'age': {'$gt': 35}}}]))  # Falls back to tier1_standard!
 ```
+
+**Fix verification**: After fix, both queries should use tier1 consistently.
 
 With tier callbacks enabled, you would see:
 
 ```text
 Tier changed: None -> tier1
-Tier changed: tier1 -> tier1_legacy  # BUG: Should stay on tier1!
+Tier changed: tier1 -> tier1_standard  # BUG: Should stay on tier1!
 ```
 
 **After the fix**: Both queries use `tier1` with cache hits:

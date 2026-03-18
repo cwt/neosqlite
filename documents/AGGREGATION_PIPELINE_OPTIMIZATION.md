@@ -22,34 +22,48 @@ NeoSQLite implements a **sophisticated three-tier execution engine** for MongoDB
 
 ### The Three-Tier Architecture
 
+**Note:** While the system now has 4 execution paths (Tier 1, Tier 1.5, Tier 2, Tier 3), we still call it "3-tier" because:
+
+- **Tier 1 + Tier 1.5** = Both use a **single SQL command** (SQL category)
+- **Tier 2** = Uses **temporary tables** (Temp Table category)
+- **Tier 3** = Uses **Python** (Python fallback category)
+
+So "3-tier" refers to the 3 processing **categories**, not the 4 specific implementations.
+
 **Execution Flow:** Tries tiers in order (fastest first), uses the **first successful tier**:
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
-│              Aggregation Pipeline Execution                  │
+│              Aggregation Pipeline Execution                 │
 ├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  1. Try Tier 1: SQL Tier (CTE-based)                        │
-│     ├─ can_optimize_pipeline() == True?                     │
-│     ├─ YES → Execute SQL → RETURN results ✅                │
-│     └─ NO → Continue to step 2                              │
-│                                                              │
-│  2. Try Legacy SQL Optimization                             │
-│     ├─ _build_aggregation_query() succeeds?                 │
-│     ├─ YES → Execute SQL → RETURN results ✅                │
-│     └─ NO → Continue to step 3                              │
-│                                                              │
-│  3. Try Tier 2: Temporary Tables                            │
-│     ├─ can_process_with_temporary_tables() == True?         │
-│     ├─ YES → Execute SQL → RETURN results ✅                │
-│     └─ NO → Continue to step 4                              │
-│                                                              │
-│  4. Fall back to Tier 3: Python (100% Correctness)          │
-│     ├─ Load all documents into memory                       │
-│     ├─ Process each stage in Python                         │
-│     ├─ Performance: 1x (baseline)                           │
-│     └─ ALWAYS WORKS - Full MongoDB compatibility ✅         │
-│                                                              │
+│                                                             │
+│  Category 1: SQL (Tier 1 or Tier 1.5)                       │
+│                                                             │
+│  1a. Try Tier 1: SQL (CTE-based)                            │
+│      ├─ can_optimize_pipeline() == True?                    │
+│      ├─ YES → Execute SQL → RETURN results ✅               │
+│      └─ NO → Continue to step 1b                            │
+│                                                             │
+│  1b. Try Tier 1.5: SQL (Non-CTE-based)                      │
+│      ├─ _build_aggregation_query() succeeds?                │
+│      ├─ YES → Execute SQL → RETURN results ✅               │
+│      └─ NO → Continue to step 2                             │
+│                                                             │
+│  Category 2: Temporary Tables (Tier 2)                      │
+│                                                             │
+│  2. Try Tier 2: Temporary Tables                            │
+│      ├─ can_process_with_temporary_tables() == True?        │
+│      ├─ YES → Execute SQL → RETURN results ✅               │
+│      └─ NO → Continue to step 3                             │
+│                                                             │
+│  Category 3: Python Fallback (Tier 3)                       │
+│                                                             │
+│  3. Fall back to Tier 3: Python (100% Correctness)          │
+│      ├─ Load all documents into memory                      │
+│      ├─ Process each stage in Python                        │
+│      ├─ Performance: 1x (baseline)                          │
+│      └─ ALWAYS WORKS - Full MongoDB compatibility ✅        │
+│                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -471,13 +485,13 @@ class SQLTierAggregator:
 ```text
 Pipeline Received
     │
-    ├─ 1. Try Tier 1: SQLTierAggregator
+    ├─ 1. Try Tier 1: SQLTierAggregator (CTE-based)
     │   ├─ can_optimize_pipeline() == True?
     │   │   ├─ YES → build_pipeline_sql() → Execute → RETURN ✅
     │   │   └─ NO → Continue to step 2
     │   └─ Exception during build/execute? → Continue to step 2
     │
-    ├─ 2. Try Legacy SQL Optimization
+    ├─ 2. Try Tier 1.5: Legacy SQL Optimization (Non-CTE)
     │   ├─ _build_aggregation_query() succeeds?
     │   │   ├─ YES → Execute → RETURN ✅
     │   │   └─ NO → Continue to step 3
@@ -492,6 +506,8 @@ Pipeline Received
     └─ 4. Fall back to Tier 3: Python
         └─ Process in memory → RETURN ✅ (always works)
 ```
+
+Note: "Legacy SQL Optimization" is now called Tier 1.5 (Non-CTE-based SQL). Both Tier 1 and Tier 1.5 use single SQL execution, so they fall under the "SQL" category in the 3-tier model.
 
 **Important:** Only **ONE** tier executes per pipeline - the first one that succeeds.
 

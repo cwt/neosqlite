@@ -785,9 +785,13 @@ These operators now provide clear error messages suggesting alternatives, matchi
 
 NeoSQLite's unique three-tier approach provides **10-100x performance improvements** for common pipelines:
 
+**Note:** While there are 4 implementations (Tier 1/CTE, Tier 1.5/Non-CTE, Tier 2/Temp Tables, Tier 3/Python), we call it "3-tier" because Tier 1 and 1.5 both use single SQL execution - they fall into the same category.
+
 1. **SQL Optimization** (fastest) - Single SQL query execution
-2. **Temporary Table Aggregation** (intermediate) - Multi-stage SQL processing
-3. **Python Fallback** (most flexible) - Full flexibility when SQL isn't sufficient
+   - Tier 1: Uses CTE optimization
+   - Tier 1.5: Non-CTE SQL (still single command)
+2. **Temporary Table Aggregation** (intermediate) - Multi-stage SQL processing (Tier 2)
+3. **Python Fallback** (most flexible) - Full flexibility when SQL isn't sufficient (Tier 3)
 
 **Coverage**: 85%+ of common pipelines optimized at SQL level
 

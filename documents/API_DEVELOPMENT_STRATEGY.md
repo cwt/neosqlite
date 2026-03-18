@@ -8,6 +8,7 @@ Based on the feasibility analysis, this document outlines the strategic approach
 
 ### 1. Performance-First Priority
 - Maintain the three-tier optimization approach (SQL → Temporary Tables → Python)
+  - Note: "3-tier" refers to 3 categories - SQL has 2 implementations (Tier 1/CTE, Tier 1.5/Non-CTE)
 - Never implement features that significantly compromise performance
 - Prioritize APIs that can leverage SQL optimization
 

@@ -120,6 +120,7 @@ This document provides a comprehensive analysis of implementing missing PyMongo 
 - **Status**: ✅ COMPLETED
 - **Feasibility**: 85%
 - **Justification**: Leverages existing three-tier architecture effectively
+  - Note: "3-tier" refers to 3 processing categories (SQL, Temp Tables, Python); SQL has 2 implementations (Tier 1/CTE, Tier 1.5/Non-CTE)
 - **Implementation**: Temporary table aggregation approach
 - **Alignment**: Perfect fit - extends existing architecture
 - **Performance Impact**: Optimized with temporary tables and SQL

@@ -153,6 +153,12 @@ def test_graph_lookup_restrict_search(collection):
 def test_graph_lookup_tier2(collection):
     """Test $graphLookup explain plan for Tier 2."""
     collection, conn = collection
+    # Force Tier 2 by using $lookup before $graphLookup
+    # Ensure 'other' collection exists and has data in the SAME database
+    db = collection.database
+    other = db.other
+    other.insert_one({"_id": 4, "note": "Target"})
+
     pipeline = [
         {"$match": {"_id": 4}},
         {

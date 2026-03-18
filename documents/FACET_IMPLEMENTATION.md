@@ -8,10 +8,13 @@ The `$facet` aggregation stage in NeoSQLite enables running multiple independent
 
 ### Architecture
 
-NeoSQLite's aggregation pipeline uses a three-tier processing model:
-1. **SQL Optimization**: Direct SQL queries for simple operations
-2. **Temporary Table Aggregation**: Complex pipelines using SQLite temp tables
-3. **Python Fallback**: Full Python implementation for unsupported operations
+NeoSQLite's aggregation pipeline uses a three-tier processing model (with 4 implementations):
+1. **Tier 1 (SQL CTE)**: Direct SQL queries with CTE optimization
+2. **Tier 1.5 (SQL Non-CTE)**: Direct SQL queries without CTE
+3. **Tier 2 (Temp Tables)**: Complex pipelines using SQLite temp tables
+4. **Tier 3 (Python Fallback)**: Full Python implementation for unsupported operations
+
+The term "3-tier" refers to the 3 processing categories: SQL (Tier 1 + 1.5), Temp Tables (Tier 2), Python (Tier 3).
 
 The `$facet` implementation integrates into the Python fallback tier, leveraging the existing `aggregate_with_constraints` method.
 

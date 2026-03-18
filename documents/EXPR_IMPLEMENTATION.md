@@ -8,23 +8,28 @@ This document describes the implementation of the MongoDB `$expr` operator in Ne
 
 NeoSQLite employs a sophisticated three-tier approach for `$expr` evaluation:
 
-1. **Tier 1: Single SQL Query (Fastest)** - Uses SQLite JSON/JSONB functions for direct SQL evaluation
-2. **Tier 2: Temporary Tables (Prototype)** - Pre-extracts fields into temporary tables for complex expressions (currently defaults to Python fallback)
-3. **Tier 3: Python Fallback (Slowest but complete)** - Full Python evaluation for unsupported operations
+**Note:** While the system has 4 implementations (Tier 1, Tier 1.5, Tier 2, Tier 3), we use "3-tier" to describe the 3 processing categories: SQL (Tier 1 + 1.5), Temp Tables (Tier 2), Python (Tier 3).
+
+1. **Tier 1: SQL (CTE)** - Uses SQLite JSON/JSONB functions with CTE optimization for direct SQL evaluation
+2. **Tier 1.5: SQL (Non-CTE)** - Uses SQLite JSON/JSONB functions without CTE optimization
+3. **Tier 2: Temporary Tables** - Pre-extracts fields into temporary tables for complex expressions (currently defaults to Python fallback)
+4. **Tier 3: Python Fallback** - Full Python evaluation for unsupported operations
 
 ```mermaid
 graph TD
     A["$expr Query"] --> B{Tier Selection};
-    B -->|Complexity 1-2| C["Tier 1: SQL WHERE"];
-    B -->|Complexity 3-8| D["Tier 2: Temp Tables"];
-    B -->|Complexity 9+| E["Tier 3: Python"];
-    C --> F{SQL Supported?};
-    D --> F;
-    F -- Yes --> G["Execute SQL"];
-    F -- No --> E;
-    E --> H["Python Evaluation"];
-    G --> I[Results];
-    H --> I;
+    B -->|Complexity 1-2| C["Tier 1: SQL CTE"];
+    B -->|Complexity 3-5| D["Tier 1.5: SQL Non-CTE"];
+    B -->|Complexity 6-8| E["Tier 2: Temp Tables"];
+    B -->|Complexity 9+| F["Tier 3: Python"];
+    C --> G{SQL Supported?};
+    D --> G;
+    E --> G;
+    G -- Yes --> H["Execute SQL"];
+    G -- No --> F;
+    F --> I["Python Evaluation"];
+    H --> J[Results];
+    I --> J;
 ```
 
 ### Tier Selection Logic
@@ -897,7 +902,7 @@ See `FORCE_FALLBACK_KILL_SWITCH.md` for details.
 
 Tests are organized in `tests/test_expr/` by operator category:
 
-```
+```text
 tests/test_expr/
 ├── test_comparison_operators.py
 ├── test_logical_operators.py

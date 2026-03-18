@@ -357,6 +357,10 @@ def test_window_minN_maxN(collection):
 def test_window_n_as_expression(collection):
     """Test using $number as expression in $firstN/$lastN."""
     collection, conn = collection
+    # Add test data for dept "C"
+    collection.insert_one({"_id": 7, "score": 100, "dept": "C", "count": 1})
+    collection.insert_one({"_id": 8, "score": 200, "dept": "C", "count": 1})
+
     pipeline = [
         {"$match": {"dept": "C"}},
         {

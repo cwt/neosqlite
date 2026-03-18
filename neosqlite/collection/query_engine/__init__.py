@@ -74,7 +74,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         Callback receives: (previous_tier: str | None, new_tier: str, pipeline: list)
         where tier is one of:
         - "tier1" (SQL CTE - new aggregation optimizer)
-        - "tier1_legacy" (legacy SQL aggregation)
+        - "tier1_standard" (non-CTE SQL aggregation)
         - "tier2" (temp table for complex $expr)
         - "tier3" (Python fallback)
         - None (before any query)
@@ -263,7 +263,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                             results.append(
                                 dict(zip(output_fields, processed_row))
                             )
-                    self._notify_tier_change("tier1_legacy", pipeline)
+                    self._notify_tier_change("tier1_standard", pipeline)
                     return results
                 else:
                     # Handle results from a regular find query
@@ -285,7 +285,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                                 results.append(
                                     self.collection._load(row[0], row[1])
                                 )
-                    self._notify_tier_change("tier1_legacy", pipeline)
+                    self._notify_tier_change("tier1_standard", pipeline)
                     return results
         except Exception:
             # If SQL optimization fails, continue to next approach
@@ -1404,7 +1404,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
             plan = db_cursor.fetchall()
             return {
                 "tier": 1,
-                "type": "SQL Tier (Legacy)",
+                "type": "SQL Tier 1.5 (Non-CTE-based)",
                 "sql": cmd,
                 "params": params,
                 "sqlite_plan": plan,
