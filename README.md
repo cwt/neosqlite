@@ -34,37 +34,49 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 - **Full GridFS Support**: Complete PyMongo-compatible GridFS with modern GridFSBucket API and legacy API support.
 - **Python 3.10+ Modernization**: Leveraging modern Python features like walrus operators and union type hints.
 - **Benchmark Infrastructure**: High-precision timing with Markdown/CSV report generation for performance analysis.
+- **SQL Translation Caching**: Intelligent caching for aggregation pipelines and `$expr` queries with 10-30% performance gains for repeated queries.
+- **Tier Change Tracking**: Debugging API to detect unexpected SQL-to-Python fallbacks during query execution.
 
 See [CHANGELOG.md](CHANGELOG.md) for the latest features and improvements.
 
-## Latest Release: v1.10.1
+## Latest Release: v1.11.0
 
-NeoSQLite v1.10.1 explicitly clarifies support for Change Streams and multi-document transactions, while maintaining the **100% PyMongo API compatibility** milestone achieved in v1.10.0.
+NeoSQLite v1.11.0 introduces **SQL Translation Caching** for aggregation pipelines and `$expr` queries, delivering **10-30% performance improvements** for repeated query patterns such as dashboard refreshes, API endpoints, and periodic reports.
 
 ### Key Highlights
 
-**Clarified Support for `watch()` and Transactions**:
-- **Change Streams**: Explicitly documented that `watch()` is fully implemented via SQLite triggers.
-- **Transactions**: Confirmed `ClientSession` multi-document transactions are fully supported via SQLite SAVEPOINTs.
-- **Benchmark Notes**: Updated report generator to clearly state why these features are skipped during MongoDB comparison (requires MongoDB replica set).
+**SQL Translation Caching**:
+- **Parameterized SQL Templates**: Cache SQL with `?` placeholders, reuse for different values (e.g., `$sample`, `$limit`, `$skip`).
+- **Configuration**: Enabled by default (100 entries), configurable via `Connection(translation_cache=...)`, set to `0` to disable.
+- **Debug API**: `get_cache_stats()`, `dump_cache()`, `clear_cache()` for performance monitoring.
+- **Performance**: 10-30% faster for repeated queries, up to 50-60% for dashboards and periodic reports.
+
+**Tier Change Tracking Callbacks**:
+- **Debugging Tool**: Monitor query execution tiers and detect unexpected SQL-to-Python fallbacks.
+- **Callback API**: `add_tier_change_callback(callback)` to track tier changes during aggregation.
+- **Use Case**: Identify performance issues and cache bugs in production workloads.
+
+**Temp Table Cleanup**:
+- **Automatic Resource Management**: Cursor `close()` and `__del__()` ensure temp tables are dropped after Tier-2 `$expr` queries.
+- **Prevents Leaks**: Cleanup chain from Connection to TempTableExprEvaluator.
+
+**MongoDB-Compatible Aggregate Command**:
+- **New API**: `conn.command("aggregate", "collection", pipeline=[...], explain=True)` matches MongoDB's command style.
+- **Removed**: `AggregationCursor.explain()` (use `command()` API for 100% MongoDB compatibility).
 
 **100% PyMongo API Compatibility** - Maintains full API coverage:
 - 375 API tests: 360 passed, 15 skipped, 0 failed
-- Explicit NotImplementedError for `$function` and `$accumulator` with guidance to use `$expr` or Python post-processing
-- Fixed $toDecimal documentation (already implemented via Python tier)
+- 2,323 unit tests (2,318 passed, 5 xfailed, 0 failed) with 82% code coverage
 
-**update_one Fast Path** - Performance optimization for update operations:
-- Reduces 2-3 SQL round-trips to 1 single query
-- 2-3x speedup for simple update operations
-- Type-safe SQL validation for `$inc` and `$mul`
+**Bug Fixes** (performance only, not correctness):
+- Nested field path extraction for `$profile.age` queries
+- `$bucket` boundary parameter extraction
+- `$count` parameter handling
+- `$facet` type error handling
 
-**SQL-Tier Aggregation Expansions** - New stages and operators:
-- `$bucketAuto` - Auto-sized bucketing
-- `$lookup` with pipeline - Sub-query pipeline on foreign collection
-- `$densify` - Fill numeric gaps in sequences
-- `$push` with `$position` - Insert elements at specific array positions
+**Important**: v1.10.1 users always received **100% accurate results** — bugs caused slower execution (Python fallback), not incorrect data.
 
-For more details, see [documents/releases/v1.10.1.md](documents/releases/v1.10.1.md).
+For more details, see [documents/releases/v1.11.0.md](documents/releases/v1.11.0.md) and [documents/TRANSLATION_CACHE.md](documents/TRANSLATION_CACHE.md).
 
 ## PyMongo Compatibility Tests
 
@@ -76,20 +88,21 @@ NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-
 
 | Metric | Result |
 |--------|--------|
-| **Total Tests** | 2,200 |
-| **Passed** | 2,195 |
+| **Total Tests** | 2,323 |
+| **Passed** | 2,318 |
+| **XFailed** | 5 |
 | **Failed** | 0 |
 | **Code Coverage** | 82% |
 
 #### API Comparison Tests
 
-| Metric | v1.9.0 | v1.9.1 | v1.9.2 | **v1.10.0** |
-|--------|--------|--------|--------|-------------|
-| **Total Tests** | 373 | 369 | 371 | **375** |
-| **Passed** | 362 | 358 | 359 | **360** |
-| **Skipped** | 11 | 11 | 12 | **15** |
-| **Failed** | 0 | 0 | 0 | **0** |
-| **Compatibility** | 100% | 100% | 100% | **100%** |
+| Metric | v1.9.0 | v1.9.1 | v1.9.2 | v1.10.0 | **v1.11.0** |
+|--------|--------|--------|--------|---------|-------------|
+| **Total Tests** | 373 | 369 | 371 | 375 | **375** |
+| **Passed** | 362 | 358 | 359 | 360 | **360** |
+| **Skipped** | 11 | 11 | 12 | 15 | **15** |
+| **Failed** | 0 | 0 | 0 | 0 | **0** |
+| **Compatibility** | 100% | 100% | 100% | 100% | **100%** |
 
 **Skipped Tests Note**: The 11 skipped tests are due to architectural differences or environment limitations, not missing implementations:
 
@@ -138,7 +151,13 @@ For more details, see the [`examples/api_comparison/`](examples/api_comparison/)
 
 NeoSQLite includes comprehensive benchmarks demonstrating the performance benefits of its SQL optimizations:
 
-**v1.10.0 Performance Improvements**:
+**v1.11.0 Performance Improvements**:
+- **SQL Translation Caching**: 10-30% faster for repeated queries, up to 50-60% for dashboards and periodic reports.
+- **Parameterized SQL Templates**: Cache SQL with `?` placeholders for `$sample`, `$limit`, `$skip` operators.
+- **Tier Change Tracking**: Debugging API to detect unexpected SQL-to-Python fallbacks.
+- **Temp Table Cleanup**: Automatic resource management prevents leaks in Tier-2 queries.
+
+**v1.10.0/v1.10.1 Performance Improvements**:
 - **100% API Compatibility**: All PyMongo operations available with 375 tests
 - **update_one Fast Path**: Reduces 2-3 SQL round-trips to 1 (2-3x speedup)
 - **SQL-Tier Expansions**: $bucketAuto, $lookup pipeline, $densify, $push $position
