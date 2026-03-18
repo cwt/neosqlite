@@ -704,3 +704,165 @@ class TestIntegration:
             assert "b" in fields
             assert "c" in fields
             assert "d" in fields
+
+
+class TestExprTempTableComparisonOperators:
+    """Tests for Tier-2 ($expr) queries with comparison operators."""
+
+    def test_expr_gt_in_find(self, connection):
+        """Test $expr with $gt in find."""
+        users = connection.users
+        users.insert_many(
+            [
+                {"age": 25, "name": "Alice"},
+                {"age": 35, "name": "Bob"},
+                {"age": 45, "name": "Charlie"},
+            ]
+        )
+
+        result = list(users.find({"$expr": {"$gt": ["$age", 30]}}))
+        assert len(result) == 2
+        names = [r["name"] for r in result]
+        assert "Bob" in names
+        assert "Charlie" in names
+
+    def test_expr_lt_in_find(self, connection):
+        """Test $expr with $lt in find."""
+        users = connection.users
+        users.insert_many(
+            [
+                {"age": 25, "name": "Alice"},
+                {"age": 35, "name": "Bob"},
+                {"age": 45, "name": "Charlie"},
+            ]
+        )
+
+        result = list(users.find({"$expr": {"$lt": ["$age", 30]}}))
+        assert len(result) == 1
+        assert result[0]["name"] == "Alice"
+
+    def test_expr_gte_in_find(self, connection):
+        """Test $expr with $gte in find."""
+        users = connection.users
+        users.insert_many(
+            [
+                {"age": 25, "name": "Alice"},
+                {"age": 30, "name": "Bob"},
+                {"age": 35, "name": "Charlie"},
+            ]
+        )
+
+        result = list(users.find({"$expr": {"$gte": ["$age", 30]}}))
+        assert len(result) == 2
+
+    def test_expr_lte_in_find(self, connection):
+        """Test $expr with $lte in find."""
+        users = connection.users
+        users.insert_many(
+            [
+                {"age": 25, "name": "Alice"},
+                {"age": 30, "name": "Bob"},
+                {"age": 35, "name": "Charlie"},
+            ]
+        )
+
+        result = list(users.find({"$expr": {"$lte": ["$age", 30]}}))
+        assert len(result) == 2
+
+    def test_expr_gt_with_aggregation(self, connection):
+        """Test $expr with $gt in aggregation pipeline."""
+        users = connection.users
+        users.insert_many(
+            [
+                {"name": "Alice", "age": 25},
+                {"name": "Bob", "age": 35},
+                {"name": "Charlie", "age": 45},
+            ]
+        )
+
+        result = list(
+            users.aggregate(
+                [
+                    {"$match": {"$expr": {"$gt": ["$age", 30]}}},
+                    {"$project": {"name": 1, "age": 1}},
+                ]
+            )
+        )
+
+        assert len(result) == 2
+        names = [r["name"] for r in result]
+        assert "Bob" in names
+        assert "Charlie" in names
+
+    def test_expr_lt_with_aggregation(self, connection):
+        """Test $expr with $lt in aggregation pipeline."""
+        users = connection.users
+        users.insert_many(
+            [
+                {"name": "Alice", "age": 25},
+                {"name": "Bob", "age": 35},
+                {"name": "Charlie", "age": 45},
+            ]
+        )
+
+        result = list(
+            users.aggregate(
+                [
+                    {"$match": {"$expr": {"$lt": ["$age", 40]}}},
+                    {"$project": {"name": 1}},
+                ]
+            )
+        )
+
+        assert len(result) == 2
+        names = [r["name"] for r in result]
+        assert "Alice" in names
+        assert "Bob" in names
+
+    def test_expr_eq_with_aggregation(self, connection):
+        """Test $expr with $eq in aggregation pipeline."""
+        users = connection.users
+        users.insert_many(
+            [
+                {"name": "Alice", "status": "active"},
+                {"name": "Bob", "status": "inactive"},
+                {"name": "Charlie", "status": "active"},
+            ]
+        )
+
+        result = list(
+            users.aggregate(
+                [
+                    {"$match": {"$expr": {"$eq": ["$status", "active"]}}},
+                    {"$project": {"name": 1}},
+                ]
+            )
+        )
+
+        assert len(result) == 2
+        names = [r["name"] for r in result]
+        assert "Alice" in names
+        assert "Charlie" in names
+
+    def test_expr_ne_with_aggregation(self, connection):
+        """Test $expr with $ne in aggregation pipeline."""
+        users = connection.users
+        users.insert_many(
+            [
+                {"name": "Alice", "status": "active"},
+                {"name": "Bob", "status": "inactive"},
+                {"name": "Charlie", "status": "active"},
+            ]
+        )
+
+        result = list(
+            users.aggregate(
+                [
+                    {"$match": {"$expr": {"$ne": ["$status", "active"]}}},
+                    {"$project": {"name": 1}},
+                ]
+            )
+        )
+
+        assert len(result) == 1
+        assert result[0]["name"] == "Bob"

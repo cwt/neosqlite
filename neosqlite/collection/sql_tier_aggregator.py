@@ -612,9 +612,7 @@ class SQLTierAggregator:
         paths = []
         for key, value in d.items():
             if key.startswith("$"):
-                # This is an operator, not a field path
                 if isinstance(value, dict):
-                    # The actual field path is the key before this operator
                     continue
                 elif isinstance(value, list):
                     for item in value:
@@ -625,14 +623,18 @@ class SQLTierAggregator:
                                 )
                             )
             else:
-                # This is a field path
                 if isinstance(value, dict):
-                    # Has operators, need to recurse to find nested fields
-                    for op_key in value:
-                        if op_key.startswith("$"):
-                            paths.append(f"{prefix}{key}")
+                    has_operator = any(k.startswith("$") for k in value.keys())
+                    if has_operator:
+                        paths.append(f"{prefix}{key}")
+                    else:
+                        paths.append(f"{prefix}{key}")
+                        paths.extend(
+                            self._extract_field_paths_from_dict(
+                                value, f"{prefix}{key}."
+                            )
+                        )
                 else:
-                    # Direct value
                     paths.append(f"{prefix}{key}")
         return paths
 

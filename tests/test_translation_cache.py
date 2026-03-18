@@ -2011,6 +2011,316 @@ class TestTierChangeCallback:
         assert callback_calls[-1][1] in ("tier2", "tier3")
 
 
+class TestExtractComparisonValue:
+    """Tests for _extract_comparison_value in SQLTierAggregator."""
+
+    @pytest.fixture
+    def aggregator(self, connection):
+        """Create a SQLTierAggregator instance."""
+        users = connection.users
+        users.insert_one({"a": 1})
+        return users.query_engine.sql_tier_aggregator
+
+    def test_extract_comparison_value_gt(self, aggregator):
+        """Test extracting value from $gt operator."""
+        result = aggregator._extract_comparison_value({"$gt": 25})
+        assert result == 25
+
+    def test_extract_comparison_value_lt(self, aggregator):
+        """Test extracting value from $lt operator."""
+        result = aggregator._extract_comparison_value({"$lt": 10})
+        assert result == 10
+
+    def test_extract_comparison_value_gte(self, aggregator):
+        """Test extracting value from $gte operator."""
+        result = aggregator._extract_comparison_value({"$gte": 5})
+        assert result == 5
+
+    def test_extract_comparison_value_lte(self, aggregator):
+        """Test extracting value from $lte operator."""
+        result = aggregator._extract_comparison_value({"$lte": 100})
+        assert result == 100
+
+    def test_extract_comparison_value_ne(self, aggregator):
+        """Test extracting value from $ne operator."""
+        result = aggregator._extract_comparison_value({"$ne": "active"})
+        assert result == "active"
+
+    def test_extract_comparison_value_eq(self, aggregator):
+        """Test extracting value from $eq operator."""
+        result = aggregator._extract_comparison_value({"$eq": True})
+        assert result is True
+
+    def test_extract_comparison_value_in(self, aggregator):
+        """Test extracting value from $in operator."""
+        result = aggregator._extract_comparison_value({"$in": [1, 2, 3]})
+        assert result == [1, 2, 3]
+
+    def test_extract_comparison_value_nin(self, aggregator):
+        """Test extracting value from $nin operator."""
+        result = aggregator._extract_comparison_value({"$nin": ["a", "b"]})
+        assert result == ["a", "b"]
+
+    def test_extract_comparison_value_empty_dict(self, aggregator):
+        """Test extracting value from empty dict."""
+        result = aggregator._extract_comparison_value({})
+        assert result == {}
+
+    def test_extract_comparison_value_multiple_keys(self, aggregator):
+        """Test extracting value from dict with multiple keys - should return as-is."""
+        result = aggregator._extract_comparison_value({"$gt": 25, "$lt": 50})
+        assert result == {"$gt": 25, "$lt": 50}
+
+    def test_extract_comparison_value_non_operator(self, aggregator):
+        """Test extracting value from non-operator dict."""
+        result = aggregator._extract_comparison_value({"field": "value"})
+        assert result == {"field": "value"}
+
+
+class TestFindValueInDict:
+    """Tests for _find_value_in_dict in SQLTierAggregator."""
+
+    @pytest.fixture
+    def aggregator(self, connection):
+        """Create a SQLTierAggregator instance."""
+        users = connection.users
+        users.insert_one({"a": 1})
+        return users.query_engine.sql_tier_aggregator
+
+    def test_find_value_with_gt_operator(self, aggregator):
+        """Test finding value that has $gt operator."""
+        d = {"age": {"$gt": 25}}
+        result = aggregator._find_value_in_dict(d, "$age")
+        assert result == 25
+
+    def test_find_value_with_lt_operator(self, aggregator):
+        """Test finding value that has $lt operator."""
+        d = {"score": {"$lt": 100}}
+        result = aggregator._find_value_in_dict(d, "$score")
+        assert result == 100
+
+    def test_find_value_with_gte_operator(self, aggregator):
+        """Test finding value that has $gte operator."""
+        d = {"count": {"$gte": 5}}
+        result = aggregator._find_value_in_dict(d, "$count")
+        assert result == 5
+
+    def test_find_value_with_lte_operator(self, aggregator):
+        """Test finding value that has $lte operator."""
+        d = {"amount": {"$lte": 50}}
+        result = aggregator._find_value_in_dict(d, "$amount")
+        assert result == 50
+
+    def test_find_value_with_ne_operator(self, aggregator):
+        """Test finding value that has $ne operator."""
+        d = {"status": {"$ne": "inactive"}}
+        result = aggregator._find_value_in_dict(d, "$status")
+        assert result == "inactive"
+
+    def test_find_value_with_in_operator(self, aggregator):
+        """Test finding value that has $in operator."""
+        d = {"type": {"$in": ["a", "b", "c"]}}
+        result = aggregator._find_value_in_dict(d, "$type")
+        assert result == ["a", "b", "c"]
+
+    def test_find_value_nested(self, aggregator):
+        """Test finding value in nested dict."""
+        d = {"profile": {"age": {"$gt": 30}}}
+        result = aggregator._find_value_in_dict(d, "$age")
+        assert result == 30
+
+
+class TestExtractFieldPathsFromDict:
+    """Tests for _extract_field_paths_from_dict in SQLTierAggregator."""
+
+    @pytest.fixture
+    def aggregator(self, connection):
+        """Create a SQLTierAggregator instance."""
+        users = connection.users
+        users.insert_one({"a": 1})
+        return users.query_engine.sql_tier_aggregator
+
+    def test_extract_simple_field(self, aggregator):
+        """Test extracting simple field path."""
+        d = {"name": "value"}
+        result = aggregator._extract_field_paths_from_dict(d)
+        assert "$name" in result
+
+    def test_extract_field_with_gt_operator(self, aggregator):
+        """Test extracting field with $gt operator."""
+        d = {"age": {"$gt": 25}}
+        result = aggregator._extract_field_paths_from_dict(d)
+        assert "$age" in result
+
+    def test_extract_field_with_multiple_operators(self, aggregator):
+        """Test extracting field with multiple operators."""
+        d = {"age": {"$gt": 25}, "status": {"$eq": "active"}}
+        result = aggregator._extract_field_paths_from_dict(d)
+        assert "$age" in result
+        assert "$status" in result
+
+    def test_extract_nested_field(self, aggregator):
+        """Test extracting nested field."""
+        d = {"profile": {"age": {"$gt": 25}}}
+        result = aggregator._extract_field_paths_from_dict(d)
+        assert "$profile" in result
+        assert "$profile.age" in result
+
+    def test_extract_with_regex_operator(self, aggregator):
+        """Test extracting field with $regex operator."""
+        d = {"name": {"$regex": "^A"}}
+        result = aggregator._extract_field_paths_from_dict(d)
+        assert "$name" in result
+
+    def test_extract_with_exists_operator(self, aggregator):
+        """Test extracting field with $exists operator."""
+        d = {"email": {"$exists": True}}
+        result = aggregator._extract_field_paths_from_dict(d)
+        assert "$email" in result
+
+    def test_extract_with_type_operator(self, aggregator):
+        """Test extracting field with $type operator."""
+        d = {"count": {"$type": "number"}}
+        result = aggregator._extract_field_paths_from_dict(d)
+        assert "$count" in result
+
+    def test_extract_with_elemMatch(self, aggregator):
+        """Test extracting field with $elemMatch operator."""
+        d = {"tags": {"$elemMatch": {"$eq": "urgent"}}}
+        result = aggregator._extract_field_paths_from_dict(d)
+        assert "$tags" in result
+
+
+class TestCacheWithComparisonOperators:
+    """Tests for translation cache with comparison operators."""
+
+    def test_cache_with_gt_operator_different_values(self, connection):
+        """Test cache key includes $gt field name, not just operator."""
+        users = connection.users
+        users.insert_many(
+            [
+                {"age": 25, "score": 80},
+                {"age": 35, "score": 90},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        result1 = list(users.aggregate([{"$match": {"age": {"$gt": 20}}}]))
+
+        stats1 = qe.get_cache_stats()
+        assert stats1["misses"] == 1
+
+        result2 = list(users.aggregate([{"$match": {"score": {"$gt": 85}}}]))
+
+        stats2 = qe.get_cache_stats()
+        assert stats2["misses"] == 2
+
+        assert len(result1) == 2
+        assert len(result2) == 1
+
+    def test_cache_with_lt_operator_different_values(self, connection):
+        """Test cache key includes $lt field name."""
+        users = connection.users
+        users.insert_many(
+            [
+                {"price": 100, "quantity": 50},
+                {"price": 200, "quantity": 30},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        result1 = list(users.aggregate([{"$match": {"price": {"$lt": 150}}}]))
+
+        result2 = list(users.aggregate([{"$match": {"quantity": {"$lt": 40}}}]))
+
+        assert len(result1) == 1
+        assert len(result2) == 1
+
+    def test_cache_preserves_field_reference(self, connection):
+        """Test that field references are preserved in cache keys."""
+        users = connection.users
+        users.insert_many(
+            [
+                {"amount": 100},
+                {"amount": 200},
+            ]
+        )
+
+        qe = users.query_engine.sql_tier_aggregator
+        qe.clear_cache()
+
+        result = list(
+            users.aggregate([{"$match": {"$expr": {"$gt": ["$amount", 150]}}}])
+        )
+
+        assert len(result) == 1
+        assert result[0]["amount"] == 200
+
+
+class TestComparisonOperatorsInMatch:
+    """Tests for comparison operators in $match stage with caching."""
+
+    def test_match_with_ne_operator(self, connection):
+        """Test $match with $ne operator."""
+        users = connection.users
+        users.insert_many(
+            [
+                {"name": "Alice", "status": "active"},
+                {"name": "Bob", "status": "inactive"},
+                {"name": "Charlie", "status": "active"},
+            ]
+        )
+
+        result = list(
+            users.aggregate([{"$match": {"status": {"$ne": "inactive"}}}])
+        )
+
+        assert len(result) == 2
+        names = [r["name"] for r in result]
+        assert "Alice" in names
+        assert "Charlie" in names
+
+    def test_match_with_in_operator(self, connection):
+        """Test $match with $in operator."""
+        users = connection.users
+        users.insert_many(
+            [
+                {"name": "Alice", "role": "admin"},
+                {"name": "Bob", "role": "user"},
+                {"name": "Charlie", "role": "admin"},
+                {"name": "Dave", "role": "guest"},
+            ]
+        )
+
+        result = list(
+            users.aggregate([{"$match": {"role": {"$in": ["admin", "user"]}}}])
+        )
+
+        assert len(result) == 3
+
+    def test_match_with_nin_operator(self, connection):
+        """Test $match with $nin operator."""
+        users = connection.users
+        users.insert_many(
+            [
+                {"name": "Alice", "role": "admin"},
+                {"name": "Bob", "role": "user"},
+                {"name": "Charlie", "role": "guest"},
+            ]
+        )
+
+        result = list(
+            users.aggregate([{"$match": {"role": {"$nin": ["admin", "user"]}}}])
+        )
+
+        assert len(result) == 1
+        assert result[0]["name"] == "Charlie"
+
+
 @pytest.fixture
 def connection():
     """Fixture to provide a clean connection for each test."""
