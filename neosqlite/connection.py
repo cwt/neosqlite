@@ -5,7 +5,8 @@ from .collection import Collection
 from .collection.aggregation_cursor import AggregationCursor
 from .exceptions import CollectionInvalid
 from .client_session import ClientSession
-from .options import WriteConcern, JournalMode
+from .migration import migrate_autovacuum, needs_migration, should_migrate
+from .options import WriteConcern, JournalMode, AutoVacuumMode
 from .sql_utils import quote_table_name
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Tuple
@@ -29,42 +30,42 @@ class Connection:
         Args:
             *args: Positional arguments passed to sqlite3.connect().
             **kwargs: Keyword arguments passed to sqlite3.connect().
-                     Special kwargs:
-                     - tokenizers: List of tuples (name, path) for FTS5 tokenizers to load
-                     - debug: Boolean flag to enable debug printing
-                     - name: Optional name for the database (for PyMongo API compatibility)
-                     - _is_clone: Internal flag for cloning (not for public use)
-                     - journal_mode: Optional journal mode (default: "WAL")
-                     - translation_cache: SQL translation cache size (default: 100, 0 to disable)
+                      Special kwargs:
+                      - tokenizers: List of tuples (name, path) for FTS5 tokenizers to load
+                      - debug: Boolean flag to enable debug printing
+                      - name: Optional name for the database (for PyMongo API compatibility)
+                      - _is_clone: Internal flag for cloning (not for public use)
+                      - journal_mode: Optional journal mode (default: "WAL")
+                      - auto_vacuum: Auto vacuum mode (default: INCREMENTAL).
+                        Can be 0/NONE, 1/FULL, 2/INCREMENTAL, or "NONE"/"FULL"/"INCREMENTAL".
+                        If database has different auto_vacuum setting, migration may be triggered.
+                      - translation_cache: SQL translation cache size (default: 100, 0 to disable)
         """
         self._collections: Dict[str, Collection] = {}
         self._tokenizers: List[Tuple[str, str]] = kwargs.pop("tokenizers", [])
         self.debug: bool = kwargs.pop("debug", False)
-        # Internal flag for cloning
         self._is_clone = kwargs.pop("_is_clone", False)
 
-        # PyMongo compatibility attributes
         self._codec_options = kwargs.pop("codec_options", None)
         self._read_preference = kwargs.pop("read_preference", None)
         self._write_concern = kwargs.pop("write_concern", None)
         self._read_concern = kwargs.pop("read_concern", None)
 
-        # Journal mode configuration (default: WAL)
         self.journal_mode = JournalMode.validate(
             kwargs.pop("journal_mode", "WAL")
         )
 
-        # Translation cache configuration for SQL pipeline templates
-        # None = use default size, 0 = disable, positive int = custom size
+        self.auto_vacuum = AutoVacuumMode.validate(
+            kwargs.pop("auto_vacuum", AutoVacuumMode.INCREMENTAL)
+        )
+
         self._translation_cache_size: int | None = kwargs.pop(
             "translation_cache", self.DEFAULT_TRANSLATION_CACHE_SIZE
         )
 
-        # Extract database name from args or kwargs for PyMongo API compatibility
         self.name: str = kwargs.pop("name", None)
         self._db_path = args[0] if args else ":memory:"
         if self.name is None:
-            # Use the database file path as the name
             self.name = (
                 self._db_path if self._db_path != ":memory:" else "memory"
             )
@@ -96,14 +97,74 @@ class Connection:
             **kwargs: Keyword arguments passed to sqlite3.connect().
         """
         self.db = sqlite3.connect(*args, **kwargs)
+        self.db.execute(f"PRAGMA auto_vacuum={self.auto_vacuum}")
         self.db.isolation_level = None
         self.db.execute(f"PRAGMA journal_mode={self.journal_mode}")
 
-        # Apply initial write concern if set
         if hasattr(self, "_write_concern") and self._write_concern:
             self._apply_write_concern(self._write_concern)
 
-        # Enable extension loading and load custom FTS5 tokenizers if provided
+        if self._tokenizers:
+            self.db.enable_load_extension(True)
+            for name, path in self._tokenizers:
+                self.db.execute(f"SELECT load_extension('{path}')")
+
+        self._check_and_migrate_autovacuum(*args, **kwargs)
+
+    def _check_and_migrate_autovacuum(self, *args: Any, **kwargs: Any) -> None:
+        """
+        Check auto_vacuum setting and migrate if needed.
+        Called after initial connection is established.
+        """
+        if self._is_clone or self._db_path == ":memory:":
+            return
+
+        if not needs_migration(self.db, self.auto_vacuum):
+            return
+
+        if not should_migrate():
+            return
+
+        self._migrate_to_autovacuum(*args, **kwargs)
+
+    def _migrate_to_autovacuum(self, *args: Any, **kwargs: Any) -> None:
+        """
+        Migrate database to a new auto_vacuum mode.
+
+        Delegates to migration.migrate_autovacuum() and then reconnects.
+        """
+        old_path = self._db_path
+
+        try:
+            self.db.execute("PRAGMA wal_checkpoint(FULL)")
+        except Exception:
+            pass
+
+        try:
+            self.db.execute("COMMIT")
+        except Exception:
+            pass
+
+        try:
+            self.db.close()
+        except Exception:
+            pass
+
+        migrate_autovacuum(
+            db_path=old_path,
+            target_autovacuum=self.auto_vacuum,
+            target_journal_mode=self.journal_mode,
+            extra_conn_kwargs=kwargs,
+        )
+
+        self.db = sqlite3.connect(*args, **kwargs)
+        self.db.execute(f"PRAGMA auto_vacuum={self.auto_vacuum}")
+        self.db.isolation_level = None
+        self.db.execute(f"PRAGMA journal_mode={self.journal_mode}")
+
+        if hasattr(self, "_write_concern") and self._write_concern:
+            self._apply_write_concern(self._write_concern)
+
         if self._tokenizers:
             self.db.enable_load_extension(True)
             for name, path in self._tokenizers:

@@ -191,3 +191,56 @@ class JournalMode:
             )
 
         return normalized
+
+
+class AutoVacuumMode:
+    """
+    Represents SQLite auto_vacuum modes.
+    Controls how SQLite reclaims space after deleting data.
+    """
+
+    NONE = 0
+    FULL = 1
+    INCREMENTAL = 2
+
+    @classmethod
+    def validate(cls, mode: int | str) -> int:
+        """
+        Validate and normalize an auto_vacuum mode.
+
+        Args:
+            mode: The auto_vacuum mode (0, 1, 2) or string ("NONE", "FULL", "INCREMENTAL").
+
+        Returns:
+            int: The normalized auto_vacuum mode value.
+
+        Raises:
+            ValueError: If the auto_vacuum mode is not valid.
+        """
+        if isinstance(mode, str):
+            normalized = mode.upper()
+            if normalized == "NONE":
+                return cls.NONE
+            elif normalized == "FULL":
+                return cls.FULL
+            elif normalized == "INCREMENTAL":
+                return cls.INCREMENTAL
+            else:
+                raise ValueError(
+                    f"Invalid auto_vacuum mode: '{mode}'. Must be one of: NONE, FULL, INCREMENTAL"
+                )
+
+        if mode not in (cls.NONE, cls.FULL, cls.INCREMENTAL):
+            raise ValueError(
+                f"Invalid auto_vacuum mode: {mode}. Must be 0 (NONE), 1 (FULL), or 2 (INCREMENTAL)"
+            )
+        return mode
+
+    @classmethod
+    def to_string(cls, mode: int) -> str:
+        """Convert numeric mode to string representation."""
+        return {
+            cls.NONE: "NONE",
+            cls.FULL: "FULL",
+            cls.INCREMENTAL: "INCREMENTAL",
+        }.get(mode, "NONE")

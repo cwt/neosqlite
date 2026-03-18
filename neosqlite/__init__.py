@@ -22,6 +22,7 @@ from .options import (
     ReadPreference,
     ReadConcern,
     CodecOptions,
+    AutoVacuumMode,
 )
 
 # Import cursor classes from collection module
@@ -44,6 +45,7 @@ else:
 __all__ = [
     "ASCENDING",
     "AggregationCursor",
+    "AutoVacuumMode",
     "Binary",
     "BulkOperationExecutor",
     "BulkWriteResult",
