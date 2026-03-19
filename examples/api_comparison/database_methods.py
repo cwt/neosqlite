@@ -18,6 +18,9 @@ warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
 )
 
+# Track if compact test has run (for benchmark - only run once per benchmark session)
+_compact_test_run = False
+
 
 def compare_database_methods():
     """Compare database/connection methods"""
@@ -195,9 +198,15 @@ def compare_database_methods():
             print(
                 f"Neo command('dbStats'): {'OK' if neo_db_stats_ok else 'FAIL'}"
             )
+
+            # Note: compact command is tested in unit tests (test_connection.py)
+            # Skipped in API comparison because vacuum/compact are too slow
+            neo_compact_ok = None
         except Exception as e:
             neo_ping_ok = False
             neo_server_status_ok = False
+            neo_db_stats_ok = False
+            neo_compact_ok = False
             print(f"Neo command(): Error - {e}")
 
         # Test cursor_command()
@@ -456,11 +465,8 @@ def compare_database_methods():
                 f"Mongo command('dbStats'): {'OK' if mongo_db_stats_ok else 'FAIL'}"
             )
 
-            # Clean up
-            try:
-                mongo_db.drop_collection("stats_test_coll_mongo")
-            except Exception:
-                pass
+            # Note: compact command is tested in unit tests (test_connection.py)
+            # Skipped in API comparison because vacuum/compact are too slow
         except Exception as e:
             mongo_ping_ok = False
             mongo_server_status_ok = False
@@ -602,6 +608,7 @@ def compare_database_methods():
         mongo_db_stats_ok if mongo_db_stats_ok else None,
         skip_reason="MongoDB not available" if not client else None,
     )
+    # Note: compact command tested in unit tests (test_connection.py)
     reporter.record_comparison(
         "Database Methods",
         "cursor_command",

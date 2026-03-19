@@ -465,7 +465,7 @@ class Connection:
             Dict[str, Any]: Command response
 
         Supported Commands:
-            - "ping" or {"ping": 1} - Returns {"ok": 1.0}
+            - "ping" or {"ping": 1} - Returns {"ok": 1}
             - "serverStatus" - Returns SQLite version info
             - "listCollections" - Returns collection list
             - "table_info" - Returns table schema (PRAGMA table_info)
@@ -474,8 +474,29 @@ class Connection:
             - "reIndex" - Rebuilds indexes for a collection
             - "foreign_key_check" - Returns foreign key check results
             - "index_list" - Returns index list for a table
-            - "vacuum" - Runs VACUUM command
+            - "vacuum" - Runs full VACUUM command
+            - "compact" - MongoDB-compatible compact (see below)
             - "analyze" - Runs ANALYZE command
+
+        compact Command:
+            MongoDB-compatible compact implementation with NeoSQLite extensions.
+
+            Args:
+                collection: Collection name (ignored, operates on entire database)
+                dryRun: If true, returns estimate without actually compacting
+                freeSpaceTargetMB: Threshold in MB (default: 20). Only compacts if
+                    free space >= threshold. When provided, uses incremental
+                    vacuum in batches of this size (NeoSQLite extension).
+                comment: Optional comment (ignored, for MongoDB compatibility)
+
+            Returns:
+                dryRun: {"estimatedBytesFreed": <bytes>, "ok": 1}
+                compact: {"bytesFreed": <bytes>, "ok": 1}
+
+            Examples:
+                >>> db.command("compact", "collection")  # Full vacuum
+                >>> db.command("compact", "collection", dryRun=True)  # Estimate only
+                >>> db.command("compact", "collection", freeSpaceTargetMB=1)  # Threshold 1MB + incremental
 
         Example:
             >>> db = Connection("test.db")
@@ -499,13 +520,13 @@ class Connection:
         try:
             match cmd_name:
                 case "ping":
-                    return {"ok": 1.0}
+                    return {"ok": 1}
 
                 case "serverstatus":
                     import sqlite3
 
                     return {
-                        "ok": 1.0,
+                        "ok": 1,
                         "version": sqlite3.sqlite_version,
                         "python_sqlite_version": getattr(
                             sqlite3, "version", "unknown"
@@ -517,7 +538,7 @@ class Connection:
                 case "listcollections":
                     collections = self.list_collection_names()
                     return {
-                        "ok": 1.0,
+                        "ok": 1,
                         "collections": [{"name": name} for name in collections],
                     }
 
@@ -543,12 +564,12 @@ class Connection:
                         }
                         for row in cursor.fetchall()
                     ]
-                    return {"ok": 1.0, "columns": columns}
+                    return {"ok": 1, "columns": columns}
 
                 case "integrity_check":
                     cursor = self.db.execute("PRAGMA integrity_check")
                     result = cursor.fetchall()
-                    return {"ok": 1.0, "result": [row[0] for row in result]}
+                    return {"ok": 1, "result": [row[0] for row in result]}
 
                 case "validate":
                     collection_name = kwargs.get("validate")
@@ -566,7 +587,7 @@ class Connection:
                     errors = [row[0] for row in result if row[0] != "ok"]
 
                     return {
-                        "ok": 1.0 if not errors else 0.0,
+                        "ok": 1 if not errors else 0,
                         "result": [row[0] for row in result],
                         "errors": errors,
                         "valid": len(errors) == 0,
@@ -582,7 +603,7 @@ class Connection:
                         cursor = self.db.execute("PRAGMA foreign_key_check")
                     result = cursor.fetchall()
                     return {
-                        "ok": 1.0,
+                        "ok": 1,
                         "violations": [
                             {
                                 "table": row[0],
@@ -615,15 +636,65 @@ class Connection:
                         }
                         for row in cursor.fetchall()
                     ]
-                    return {"ok": 1.0, "indexes": indexes}
+                    return {"ok": 1, "indexes": indexes}
 
                 case "vacuum":
                     self.db.execute("VACUUM")
-                    return {"ok": 1.0, "message": "VACUUM completed"}
+                    return {"ok": 1, "message": "VACUUM completed"}
+
+                case "compact":
+                    _ = kwargs.get("compact")
+                    _ = kwargs.get("comment")
+                    dry_run = kwargs.get("dryRun", False)
+                    free_space_target_mb = kwargs.get("freeSpaceTargetMB")
+
+                    free_pages = self.db.execute(
+                        "PRAGMA freelist_count"
+                    ).fetchone()[0]
+                    page_size = self.db.execute("PRAGMA page_size").fetchone()[
+                        0
+                    ]
+                    free_bytes = free_pages * page_size
+
+                    if dry_run:
+                        return {
+                            "estimatedBytesFreed": free_bytes,
+                            "ok": 1,
+                        }
+
+                    if free_space_target_mb is None:
+                        self.db.execute("VACUUM")
+                        return {"bytesFreed": free_bytes, "ok": 1}
+
+                    target_bytes = free_space_target_mb * 1024 * 1024
+                    if free_bytes < target_bytes:
+                        return {"bytesFreed": 0, "ok": 1}
+
+                    page_count_before = self.db.execute(
+                        "PRAGMA page_count"
+                    ).fetchone()[0]
+
+                    target_pages = max(1, target_bytes // page_size)
+
+                    while free_pages > 0:
+                        reclaim = min(target_pages, free_pages)
+                        self.db.execute(f"PRAGMA incremental_vacuum({reclaim})")
+                        free_pages = self.db.execute(
+                            "PRAGMA freelist_count"
+                        ).fetchone()[0]
+
+                    page_count_after = self.db.execute(
+                        "PRAGMA page_count"
+                    ).fetchone()[0]
+
+                    bytes_freed = (
+                        page_count_before - page_count_after
+                    ) * page_size
+                    return {"bytesFreed": bytes_freed, "ok": 1}
 
                 case "analyze":
                     self.db.execute("ANALYZE")
-                    return {"ok": 1.0, "message": "ANALYZE completed"}
+                    return {"ok": 1, "message": "ANALYZE completed"}
 
                 case "reindex":
                     collection_name = kwargs.get("reIndex")
@@ -637,7 +708,7 @@ class Connection:
                     else:
                         self.db.execute("REINDEX")
 
-                    return {"ok": 1.0, "message": "REINDEX completed"}
+                    return {"ok": 1, "message": "REINDEX completed"}
 
                 case "collstats":
                     collection_name = kwargs.get("collection")
@@ -652,7 +723,7 @@ class Connection:
                     )
                     count = cursor.fetchone()[0]
                     return {
-                        "ok": 1.0,
+                        "ok": 1,
                         "ns": collection_name,
                         "count": count,
                         "size": 0,
@@ -683,8 +754,19 @@ class Connection:
                         total_indexes += len(indexes)
 
                     storage_size = page_count * page_size
-                    index_size_estimate = int(storage_size * 0.2)
-                    data_size = storage_size - index_size_estimate
+
+                    try:
+                        self.db.execute(
+                            "CREATE VIRTUAL TABLE IF NOT EXISTS temp.dbstat USING dbstat(main)"
+                        )
+                        cursor = self.db.execute(
+                            "SELECT SUM(pgsize) FROM dbstat WHERE name LIKE 'idx_%' OR name LIKE 'sqlite_autoindex%'"
+                        )
+                        index_size = cursor.fetchone()[0] or 0
+                    except Exception:
+                        index_size = int(storage_size * 0.2)
+
+                    data_size = storage_size - index_size
 
                     views_count = self.db.execute(
                         "SELECT COUNT(*) FROM sqlite_master WHERE type='view'"
@@ -714,7 +796,7 @@ class Connection:
                             pass
 
                     return {
-                        "ok": 1.0,
+                        "ok": 1,
                         "db": self.name,
                         "collections": len(collections),
                         "views": views_count,
@@ -725,8 +807,8 @@ class Connection:
                         "dataSize": data_size,
                         "storageSize": storage_size,
                         "indexes": total_indexes,
-                        "indexSize": index_size_estimate,
-                        "totalSize": data_size + index_size_estimate,
+                        "indexSize": index_size,
+                        "totalSize": data_size + index_size,
                         "fsTotalSize": fs_total,
                         "fsUsedSize": fs_used,
                         "scaleFactor": 1,
@@ -753,14 +835,14 @@ class Connection:
                     else:
                         collection = self[collection_name]
                         cursor_result = collection.aggregate(pipeline)
-                        return {"ok": 1.0, "result": list(cursor_result)}
+                        return {"ok": 1, "result": list(cursor_result)}
 
                 case _:
                     try:
                         cursor = self.db.execute(f"PRAGMA {cmd_name}")
                         result = cursor.fetchall()
                         return {
-                            "ok": 1.0,
+                            "ok": 1,
                             "result": [
                                 dict(
                                     zip([d[0] for d in cursor.description], row)

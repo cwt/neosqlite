@@ -1,4 +1,4 @@
-# AutoVacuum and Migration Guide
+# AutoVacuum and Database Maintenance Guide
 
 > **NeoSQLite 1.11+**
 
@@ -6,25 +6,29 @@
 
 ## Table of Contents
 
-- [What is AutoVacuum?](#what-is-autovacuum)
-- [Why Should You Care?](#why-should-you-care)
+- [AutoVacuum Basics](#autovacuum-basics)
 - [AutoVacuum Modes Explained](#autovacuum-modes-explained)
 - [Using AutoVacuum in NeoSQLite](#using-autovacuum-in-neosqlite)
 - [Migration: Changing AutoVacuum on Existing Databases](#migration-changing-autovacuum-on-existing-databases)
+- [Manual Vacuum Operations](#manual-vacuum-operations)
+- [MongoDB compact Command](#mongodb-compact-command)
+- [freeSpaceTargetMB Explained](#freespacetargetmb-explained)
 - [Best Practices](#best-practices)
 - [Troubleshooting](#troubleshooting)
 
 ---
 
-## What is AutoVacuum?
+## AutoVacuum Basics
 
 **AutoVacuum** is a SQLite setting that controls how the database reclaims disk space after you delete data.
 
 Think of it like cleaning up after a party:
 
-- **NONE**: You never clean up. Empty bottles and plates pile up. The room stays big forever.
-- **FULL**: You clean up immediately after every guest leaves. Tidy, but you're constantly cleaning.
-- **INCREMENTAL**: You note where the mess is, and clean up when it makes sense. Balanced approach.
+| Mode | Analogy |
+|------|---------|
+| **NONE** | You never clean up. Empty bottles and plates pile up. The room stays big forever. |
+| **FULL** | You clean up immediately after every guest leaves. Tidy, but you're constantly cleaning. |
+| **INCREMENTAL** | You note where the mess is, and clean up when it makes sense. Balanced approach. |
 
 When you delete documents from a NeoSQLite collection, the underlying SQLite database has free space. AutoVacuum determines what happens to that space.
 
@@ -66,21 +70,6 @@ conn = neosqlite.Connection("mydb.db", auto_vacuum=neosqlite.AutoVacuumMode.NONE
 - ✅ No vacuum overhead
 - ❌ Database file never shrinks
 - ❌ Can waste significant disk space over time
-
-#### Manual Vacuum (for NONE mode)
-
-If you're using NONE mode and need to reclaim disk space, you can manually trigger a vacuum:
-
-```python
-# Using db.command() (PyMongo-compatible)
-result = conn.command("vacuum")
-print(result)  # {'ok': 1.0, 'message': 'VACUUM completed'}
-
-# Or using raw SQLite
-conn.db.execute("VACUUM")
-```
-
-This gives you full control over when vacuuming happens - useful for scheduled maintenance windows.
 
 ### FULL Mode
 
@@ -199,7 +188,7 @@ When you open an existing database with a different auto_vacuum setting:
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  4. Open backup, set new auto_vacuum, VACUUM INTO new file  │
+│  4. Open backup, set new auto_vacuum, VACUUM INTO new file   │
 └─────────────────────────────────────────────────────────────┘
                             │
                             ▼
@@ -254,46 +243,128 @@ conn = neosqlite.Connection("existing.db", auto_vacuum=neosqlite.AutoVacuumMode.
 
 ---
 
-### Example: Migrating an Existing Database
+## Manual Vacuum Operations
 
-You have an existing database created with `auto_vacuum=NONE`:
+### Full VACUUM
+
+If you're using NONE mode and need to reclaim disk space, you can manually trigger a full vacuum:
 
 ```python
-# Step 1: Create database with NONE mode (simulating existing DB)
-import sqlite3
-db = sqlite3.connect("myapp.db")
-db.execute("PRAGMA auto_vacuum=0")  # NONE
-db.execute("CREATE TABLE users (id INTEGER, name TEXT)")
-db.execute("INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob')")
-db.commit()
-db.close()
+# Using db.command() (PyMongo-compatible)
+result = conn.command("vacuum")
+print(result)  # {'ok': 1, 'message': 'VACUUM completed'}
 
-# Step 2: Enable migration and open with NeoSQLite
-import os
-os.environ["AUTOVACUUM_MIGRATION"] = "1"
+# Or using raw SQLite
+conn.db.execute("VACUUM")
+```
 
-import neosqlite
-conn = neosqlite.Connection("myapp.db", auto_vacuum=neosqlite.AutoVacuumMode.INCREMENTAL)
+This rewrites the entire database to a new file, copies data back, and deletes the old one. Can temporarily require 2x disk space.
 
-# Database is now migrated to INCREMENTAL mode with all data preserved!
-print(conn.db.execute("SELECT * FROM users").fetchall())
-# [(1, 'Alice'), (2, 'Bob')]
+---
+
+### Incremental Vacuum
+
+SQLite's **incremental vacuum** allows reclaiming free pages in small chunks rather than one large operation. This is useful when:
+
+- You want to vacuum in batches (scheduled maintenance)
+- You want to avoid long database locks
+- You don't want temporary 2x disk space requirement
+
+```python
+# Vacuum 100 pages at a time
+conn.db.execute("PRAGMA incremental_vacuum(100)")
+conn.db.commit()
+```
+
+How it works:
+- **Full VACUUM**: Rewrites entire DB, requires 2x space, all-or-nothing
+- **Incremental vacuum(N)**: Reclaims N pages at a time, constant memory, can be done in batches
+
+> **Note:** SQLite's incremental vacuum can only reclaim pages from the *end* of the database file. It doesn't compact fragmented free space in the middle. For complete reclamation, use full VACUUM.
+
+---
+
+## MongoDB compact Command
+
+NeoSQLite implements the MongoDB `compact` command for API compatibility:
+
+```python
+# Compact without options (MongoDB default behavior)
+result = conn.command("compact", "collection_name")
+# Returns: {'bytesFreed': 12345, 'ok': 1}
+
+# Dry run - estimate without actually compacting
+result = conn.command("compact", "collection_name", dryRun=True)
+# Returns: {'estimatedBytesFreed': 12345, 'ok': 1}
+
+# With threshold (NeoSQLite extension)
+result = conn.command("compact", "collection_name", freeSpaceTargetMB=1)
+# Only runs if free space >= 1MB
+```
+
+### MongoDB → SQLite Mapping
+
+| MongoDB Option | NeoSQLite Behavior |
+|----------------|-------------------|
+| `compact` (collection name) | Ignored - SQLite operates on entire database |
+| `dryRun` | Returns estimate without running |
+| `force` | Ignored - always available in SQLite |
+| `freeSpaceTargetMB` | See section below |
+| `comment` | Ignored |
+
+### Output Format
+
+```python
+# Full compact
+{'bytesFreed': 27859, 'ok': 1}
+
+# Dry run
+{'estimatedBytesFreed': 27859, 'ok': 1}
 ```
 
 ---
 
-### Migration Performance
+## freeSpaceTargetMB Explained
 
-Migration time depends on database size:
+NeoSQLite extends MongoDB's `freeSpaceTargetMB` parameter to serve **two purposes**:
 
-| Database Size | Approximate Migration Time |
-|---------------|---------------------------|
-| 1 MB | < 1 second |
-| 100 MB | 1-3 seconds |
-| 1 GB | 10-30 seconds |
-| 10 GB | 2-5 minutes |
+### 1. Threshold (MongoDB behavior)
 
-**Note:** Migration is a one-time operation per database when changing modes.
+Only run compaction if free space >= `freeSpaceTargetMB`:
+
+```python
+# Only compact if free space >= 20MB (MongoDB default)
+result = conn.command("compact", "collection", freeSpaceTargetMB=20)
+# If free space < 20MB: {'bytesFreed': 0, 'ok': 1}
+```
+
+### 2. Batch Size (NeoSQLite extension)
+
+When running incremental vacuum, use this as the batch size:
+
+```python
+# freeSpaceTargetMB=1 means:
+#   - Threshold: only run if free >= 1MB
+#   - Batch: vacuum 1MB worth of pages per iteration
+
+result = conn.command("compact", "collection", freeSpaceTargetMB=1)
+# Internally: loops incremental_vacuum(256) until all free pages reclaimed
+```
+
+### Behavior Matrix
+
+| Scenario | Behavior |
+|----------|----------|
+| No `freeSpaceTargetMB` | Full VACUUM (all-or-nothing, like MongoDB) |
+| `freeSpaceTargetMB=20` (default) | Only runs if free >= 20MB |
+| `freeSpaceTargetMB=1` | Runs if free >= 1MB, uses incremental vacuum in 1MB batches |
+| `freeSpaceTargetMB=0` | Always runs (threshold is 0) |
+
+### Why Extend?
+
+- **MongoDB compat**: Default 20MB threshold matches MongoDB behavior
+- **Flexibility**: Users can choose threshold + batch size in one parameter
+- **Performance**: Incremental vacuum avoids long locks and 2x disk space
 
 ---
 
@@ -324,9 +395,21 @@ This provides the best balance for most workloads.
 
 3. **Schedule migration during maintenance windows** for large databases.
 
+### For Scheduled Maintenance
+
+Use `compact` with `freeSpaceTargetMB` for periodic maintenance:
+
+```python
+# Daily maintenance - compact if at least 100MB can be reclaimed
+conn.command("compact", "my_collection", freeSpaceTargetMB=100)
+
+# Or with smaller batches for more control
+conn.command("compact", "my_collection", freeSpaceTargetMB=10)
+```
+
 ### For Manual Vacuum Control
 
-If you prefer manual control over automatic vacuum (using NONE mode), you can manually trigger vacuum when needed:
+If you prefer manual control over automatic vacuum (using NONE mode):
 
 ```python
 # Connect with NONE mode
@@ -342,28 +425,6 @@ This approach gives you:
 - Full control over when vacuuming happens
 - Predictable I/O patterns (vacuum during scheduled maintenance)
 
-### For Development
-
-**Enable migration in development to catch issues early:**
-
-```bash
-# In your .env or development config
-AUTOVACUUM_MIGRATION=1
-```
-
-### For Production
-
-**Be explicit about your auto_vacuum setting:**
-
-```python
-# Document your choice
-conn = neosqlite.Connection(
-    "production.db",
-    auto_vacuum=neosqlite.AutoVacuumMode.INCREMENTAL,  # Balanced space/performance
-    journal_mode="WAL"  # Recommended for concurrent workloads
-)
-```
-
 ### Monitoring
 
 Check your current auto_vacuum mode:
@@ -373,6 +434,14 @@ conn = neosqlite.Connection("myapp.db")
 mode_value = conn.db.execute("PRAGMA auto_vacuum").fetchone()[0]
 mode_name = neosqlite.AutoVacuumMode.to_string(mode_value)
 print(f"AutoVacuum mode: {mode_name}")
+```
+
+Check free pages (space available for reclamation):
+
+```python
+free_pages = conn.db.execute("PRAGMA freelist_count").fetchone()[0]
+page_size = conn.db.execute("PRAGMA page_size").fetchone()[0]
+print(f"Free space: {free_pages * page_size / 1024 / 1024:.2f} MB")
 ```
 
 ---
@@ -440,6 +509,25 @@ print(f"AutoVacuum mode: {mode_name}")
 
 ---
 
+### Compact returns 0 bytes freed but I know there's free space
+
+**Cause:** `freeSpaceTargetMB` threshold not met.
+
+**Solution:**
+
+```python
+# Check free space
+free_pages = conn.db.execute("PRAGMA freelist_count").fetchone()[0]
+page_size = conn.db.execute("PRAGMA page_size").fetchone()[0]
+free_mb = free_pages * page_size / 1024 / 1024
+print(f"Free: {free_mb:.2f} MB")
+
+# Run with lower threshold
+conn.command("compact", "collection", freeSpaceTargetMB=0)
+```
+
+---
+
 ## API Reference
 
 ### AutoVacuumMode Class
@@ -474,6 +562,30 @@ neosqlite.Connection(
 )
 ```
 
+### Command: vacuum
+
+```python
+# Full vacuum
+result = conn.command("vacuum")
+# Returns: {'ok': 1, 'message': 'VACUUM completed'}
+```
+
+### Command: compact
+
+```python
+# Full compact
+result = conn.command("compact", "collection_name")
+# Returns: {'bytesFreed': <bytes>, 'ok': 1}
+
+# Dry run
+result = conn.command("compact", "collection_name", dryRun=True)
+# Returns: {'estimatedBytesFreed': <bytes>, 'ok': 1}
+
+# With threshold and incremental
+result = conn.command("compact", "collection_name", freeSpaceTargetMB=1)
+# Returns: {'bytesFreed': <bytes>, 'ok': 1}
+```
+
 ### Environment Variable
 
 ```bash
@@ -487,6 +599,7 @@ AUTOVACUUM_MIGRATION=0   # Disable (default)
 
 - [SQLite AutoVacuum Documentation](https://www.sqlite.org/pragma.html#pragma_auto_vacuum)
 - [SQLite VACUUM Command](https://www.sqlite.org/lang_vacuum.html)
+- [MongoDB compact Command](https://www.mongodb.com/docs/manual/reference/command/compact/)
 - [NeoSQLite Journal Mode Guide](./JOURNAL_MODE.md) (if available)
 
 ---

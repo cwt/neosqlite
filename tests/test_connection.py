@@ -483,9 +483,138 @@ class TestDatabaseCommand:
         """Test command('vacuum')."""
         result = connection.command("vacuum")
 
-        assert result["ok"] == 1.0
+        assert result["ok"] == 1
         assert "message" in result
         assert "VACUUM" in result["message"]
+
+    def test_command_compact_full_vacuum(self, tmp_path):
+        """Test command('compact') without freeSpaceTargetMB does full vacuum."""
+        db_path = tmp_path / "test.db"
+        conn = neosqlite.Connection(str(db_path))
+
+        conn.db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT)")
+        for i in range(1000):
+            conn.db.execute("INSERT INTO test (data) VALUES (?)", ("x" * 100,))
+        conn.db.execute("DELETE FROM test WHERE id <= 500")
+        conn.db.commit()
+
+        free_pages_before = conn.db.execute("PRAGMA freelist_count").fetchone()[
+            0
+        ]
+        assert free_pages_before > 0
+
+        result = conn.command("compact", "test")
+
+        assert result["ok"] == 1
+        assert "bytesFreed" in result
+        assert result["bytesFreed"] > 0
+
+        free_pages_after = conn.db.execute("PRAGMA freelist_count").fetchone()[
+            0
+        ]
+        assert free_pages_after == 0
+
+        conn.close()
+
+    def test_command_compact_dry_run(self, tmp_path):
+        """Test command('compact') with dryRun returns estimate."""
+        db_path = tmp_path / "test.db"
+        conn = neosqlite.Connection(str(db_path))
+
+        conn.db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT)")
+        for i in range(1000):
+            conn.db.execute("INSERT INTO test (data) VALUES (?)", ("x" * 100,))
+        conn.db.execute("DELETE FROM test WHERE id <= 500")
+        conn.db.commit()
+
+        free_pages = conn.db.execute("PRAGMA freelist_count").fetchone()[0]
+        page_size = conn.db.execute("PRAGMA page_size").fetchone()[0]
+        expected_estimate = free_pages * page_size
+
+        result = conn.command("compact", "test", dryRun=True)
+
+        assert result["ok"] == 1
+        assert "estimatedBytesFreed" in result
+        assert result["estimatedBytesFreed"] == expected_estimate
+
+        free_pages_after = conn.db.execute("PRAGMA freelist_count").fetchone()[
+            0
+        ]
+        assert free_pages_after == free_pages  # Should not change
+
+        conn.close()
+
+    def test_command_compact_free_space_target_threshold(self, tmp_path):
+        """Test command('compact') with freeSpaceTargetMB threshold."""
+        db_path = tmp_path / "test.db"
+        conn = neosqlite.Connection(str(db_path))
+
+        conn.db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT)")
+        for i in range(100):
+            conn.db.execute("INSERT INTO test (data) VALUES (?)", ("x" * 50,))
+        conn.db.execute("DELETE FROM test WHERE id <= 50")
+        conn.db.commit()
+
+        free_pages = conn.db.execute("PRAGMA freelist_count").fetchone()[0]
+        page_size = conn.db.execute("PRAGMA page_size").fetchone()[0]
+        free_mb = (free_pages * page_size) / (1024 * 1024)
+        assert free_mb < 1
+
+        result = conn.command("compact", "test", freeSpaceTargetMB=1)
+
+        assert result["ok"] == 1
+        assert result["bytesFreed"] == 0
+
+        conn.close()
+
+    def test_command_compact_with_free_space_target(self, tmp_path):
+        """Test command('compact') with freeSpaceTargetMB runs incremental vacuum."""
+        db_path = tmp_path / "test.db"
+        conn = neosqlite.Connection(str(db_path))
+
+        conn.db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT)")
+        for batch in range(10):
+            for i in range(2000):
+                conn.db.execute(
+                    "INSERT INTO test (data) VALUES (?)", ("x" * 100,)
+                )
+        conn.db.execute("DELETE FROM test WHERE id <= 10000")
+        conn.db.commit()
+
+        free_pages = conn.db.execute("PRAGMA freelist_count").fetchone()[0]
+        page_size = conn.db.execute("PRAGMA page_size").fetchone()[0]
+        free_mb = (free_pages * page_size) / (1024 * 1024)
+        assert free_mb > 1, f"Free space: {free_mb} MB"
+
+        result = conn.command("compact", "test", freeSpaceTargetMB=1)
+
+        assert result["ok"] == 1
+        assert result["bytesFreed"] > 0
+
+        free_pages_after = conn.db.execute("PRAGMA freelist_count").fetchone()[
+            0
+        ]
+        assert free_pages_after == 0
+
+        conn.close()
+
+    def test_command_compact_with_comment(self, tmp_path):
+        """Test command('compact') accepts comment parameter (ignored)."""
+        db_path = tmp_path / "test.db"
+        conn = neosqlite.Connection(str(db_path))
+
+        conn.db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT)")
+        for i in range(100):
+            conn.db.execute("INSERT INTO test (data) VALUES (?)", ("x" * 50,))
+        conn.db.execute("DELETE FROM test WHERE id <= 50")
+        conn.db.commit()
+
+        result = conn.command("compact", "test", comment="test comment")
+
+        assert result["ok"] == 1
+        assert "bytesFreed" in result
+
+        conn.close()
 
     def test_command_analyze(self, connection):
         """Test command('analyze')."""
