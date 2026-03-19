@@ -20,7 +20,7 @@ from contextlib import contextmanager
 from typing import Any, Dict, List, Callable, Tuple
 import hashlib
 import uuid
-import sqlite3
+from .._sqlite import sqlite3
 
 
 class DeterministicTempTableManager:

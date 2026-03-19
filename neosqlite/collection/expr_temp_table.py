@@ -15,7 +15,7 @@ Tier 2 is used when:
 from __future__ import annotations
 from .json_path_utils import parse_json_path
 from .query_helper.translation_cache import TranslationCache
-import sqlite3
+from .._sqlite import sqlite3
 import uuid
 from typing import Any, Dict, List, Tuple
 from .jsonb_support import supports_jsonb
