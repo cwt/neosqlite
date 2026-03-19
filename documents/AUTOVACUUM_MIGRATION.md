@@ -67,6 +67,21 @@ conn = neosqlite.Connection("mydb.db", auto_vacuum=neosqlite.AutoVacuumMode.NONE
 - ❌ Database file never shrinks
 - ❌ Can waste significant disk space over time
 
+#### Manual Vacuum (for NONE mode)
+
+If you're using NONE mode and need to reclaim disk space, you can manually trigger a vacuum:
+
+```python
+# Using db.command() (PyMongo-compatible)
+result = conn.command("vacuum")
+print(result)  # {'ok': 1.0, 'message': 'VACUUM completed'}
+
+# Or using raw SQLite
+conn.db.execute("VACUUM")
+```
+
+This gives you full control over when vacuuming happens - useful for scheduled maintenance windows.
+
 ### FULL Mode
 
 ```python
@@ -308,6 +323,24 @@ This provides the best balance for most workloads.
    ```
 
 3. **Schedule migration during maintenance windows** for large databases.
+
+### For Manual Vacuum Control
+
+If you prefer manual control over automatic vacuum (using NONE mode), you can manually trigger vacuum when needed:
+
+```python
+# Connect with NONE mode
+conn = neosqlite.Connection("myapp.db", auto_vacuum=neosqlite.AutoVacuumMode.NONE)
+
+# Manual vacuum when needed (e.g., during maintenance)
+conn.command("vacuum")
+# Or: conn.db.execute("VACUUM")
+```
+
+This approach gives you:
+- Maximum write performance (no automatic vacuum overhead)
+- Full control over when vacuuming happens
+- Predictable I/O patterns (vacuum during scheduled maintenance)
 
 ### For Development
 
