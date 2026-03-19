@@ -217,19 +217,22 @@ class Collection:
             # If there's any error retrieving the _id, return None
             return None
 
-    def _get_val(self, item: Dict[str, Any], key: str) -> Any:
+    def _get_val(self, item: Dict[str, Any], key: Any) -> Any:
         """
         Retrieves a value from a dictionary using a key, handling nested keys and
         optional prefixes.
 
         Args:
             item (Dict[str, Any]): The dictionary to search.
-            key (str): The key to retrieve, may include nested keys separated by
-                       dots or may be prefixed with '$'.
+            key (Any): The key to retrieve. If a string, may include nested keys
+                       separated by dots or be prefixed with '$'. If non-string,
+                       returns the key itself (for literal values like $group _id).
 
         Returns:
             Any: The value associated with the key, or None if the key is not found.
         """
+        if not isinstance(key, str):
+            return key
         if key.startswith("$"):
             key = key[1:]
         val: Any = item
