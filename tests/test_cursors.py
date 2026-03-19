@@ -1457,7 +1457,7 @@ class TestCursorMinMax:
         docs = [{"value": i} for i in range(20)]
         collection.insert_many(docs)
 
-        cursor = collection.find({}).min({"value": 10})
+        cursor = collection.find({}).hint([("value", 1)]).min([("value", 10)])
         results = list(cursor)
 
         assert len(results) == 10  # values 10-19
@@ -1468,7 +1468,7 @@ class TestCursorMinMax:
         docs = [{"value": i} for i in range(20)]
         collection.insert_many(docs)
 
-        cursor = collection.find({}).max({"value": 10})
+        cursor = collection.find({}).hint([("value", 1)]).max([("value", 10)])
         results = list(cursor)
 
         assert len(results) == 10  # values 0-9
@@ -1479,7 +1479,12 @@ class TestCursorMinMax:
         docs = [{"value": i} for i in range(20)]
         collection.insert_many(docs)
 
-        cursor = collection.find({}).min({"value": 5}).max({"value": 15})
+        cursor = (
+            collection.find({})
+            .hint([("value", 1)])
+            .min([("value", 5)])
+            .max([("value", 15)])
+        )
         results = list(cursor)
 
         assert len(results) == 10  # values 5-14
@@ -1495,8 +1500,9 @@ class TestCursorMinMax:
 
         cursor = (
             collection.find({"category": "A"})
-            .min({"value": 5})
-            .max({"value": 15})
+            .hint([("value", 1)])
+            .min([("value", 5)])
+            .max([("value", 15)])
         )
         results = list(cursor)
 
@@ -1509,7 +1515,11 @@ class TestCursorMinMax:
         collection.insert_many(docs)
 
         cursor = (
-            collection.find({}).min({"value": 2}).max({"value": 8}).limit(3)
+            collection.find({})
+            .hint([("value", 1)])
+            .min([("value", 2)])
+            .max([("value", 8)])
+            .limit(3)
         )
         results = list(cursor)
 
@@ -1523,8 +1533,9 @@ class TestCursorMinMax:
 
         cursor = (
             collection.find({"value": {"$gte": 0}})
-            .min({"value": 5})
-            .max({"value": 15})
+            .hint([("value", 1)])
+            .min([("value", 5)])
+            .max([("value", 15)])
         )
 
         assert cursor._min == {"value": 5}

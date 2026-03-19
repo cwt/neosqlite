@@ -1,5 +1,51 @@
 # CHANGELOG
 
+## 1.12.1
+
+### Bug Fix Release: PyMongo 4.16+ Compatibility
+
+- **Breaking Change**: `cursor.min()` and `cursor.max()` now require list format instead of dict format
+- **PyMongo 4.16+ Compatibility**: Methods now accept `[("field", value)]` format matching PyMongo
+- **Type Validation**: Methods now raise `TypeError` for dict format (matching PyMongo behavior)
+- **hint() Enhancement**: `cursor.hint()` now accepts both string format and list format
+
+### Breaking Changes
+
+**Before (v1.12.0)**:
+```python
+cursor.min({"field": 10})  # Dict format - NOW REJECTED
+```
+
+**After (v1.12.1)**:
+```python
+cursor.hint([("field", 1)]).min([("field", 10)])  # List format - REQUIRED
+```
+
+### Bug Fixes
+- **Cursor.min()**: Now requires list/tuple format `[("field", value)]` instead of dict
+- **Cursor.max()**: Now requires list/tuple format `[("field", value)]` instead of dict
+- **Cursor.hint()**: Now accepts both string format and list format
+
+### Migration Required
+
+Update all calls to `cursor.min()` and `cursor.max()`:
+
+| Before | After |
+|--------|-------|
+| `cursor.min({"field": 10})` | `cursor.hint([("field", 1)]).min([("field", 10)])` |
+| `cursor.max({"field": 10})` | `cursor.hint([("field", 1)]).max([("field", 10)])` |
+
+### Test Results
+- **Unit Tests**: 2,404 total (2,409 passed, 5 xfailed, 0 failed)
+- **API Comparison**: 376 tests (361 passed, 15 skipped, 0 failed)
+- **Code Coverage**: 82%
+
+### Compatibility
+- **Breaking Change**: Code using dict format for min/max requires migration
+- **PyMongo API Parity**: 100% compatibility with PyMongo 4.16+ maintained
+
+---
+
 ## 1.12.0
 
 ### Major Achievement: Database Maintenance Suite

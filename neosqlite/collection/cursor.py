@@ -46,7 +46,7 @@ class Cursor:
         self._query_helpers = collection.query_engine.helpers
         self._filter = filter or {}
         self._projection = projection or {}
-        self._hint = hint
+        self._hint: str | list[tuple[str, int]] | None = hint
         self._comment: str | None = None
         self._min: Dict[str, Any] | None = None
         self._max: Dict[str, Any] | None = None
@@ -206,20 +206,20 @@ class Cursor:
         self._batch_size = size
         return self
 
-    def hint(self, index: str) -> Cursor:
+    def hint(self, hint: str | list[tuple[str, int]]) -> Cursor:
         """
         Set the index hint for the cursor.
 
         Args:
-            index (str): The index name to hint
+            hint: The index name (str) or list of (field, direction) tuples
 
         Returns:
             Cursor: The cursor object with the hint applied
         """
-        self._hint = index
+        self._hint = hint  # type: ignore[assignment]
         return self
 
-    def min(self, min_spec: Dict[str, Any]) -> Cursor:
+    def min(self, min_spec: list[tuple[str, Any]] | tuple[str, Any]) -> Cursor:
         """
         Set the minimum bound for index queries.
 
@@ -228,19 +228,26 @@ class Cursor:
         specified minimum will be returned.
 
         Args:
-            min_spec (Dict[str, Any]): A dictionary specifying the minimum
-                                       index values, e.g., {"field": value}
+            min_spec: A list of (field, value) tuples specifying the
+                      inclusive lower bound, e.g., [("age", 18)]
 
         Returns:
             Cursor: The cursor object with the minimum bound applied
 
+        Raises:
+            TypeError: If min_spec is not a list or tuple
+
         Example:
-            >>> cursor = collection.find({"age": {"$gte": 18}}).min({"age": 18})
+            >>> cursor = collection.find({"age": {"$gte": 18}}).min([("age", 18)])
         """
-        self._min = min_spec
+        if not isinstance(min_spec, (list, tuple)):
+            raise TypeError(
+                f"spec must be an instance of list or tuple, not {type(min_spec)}"
+            )
+        self._min = dict(min_spec)  # type: ignore[arg-type]
         return self
 
-    def max(self, max_spec: Dict[str, Any]) -> Cursor:
+    def max(self, max_spec: list[tuple[str, Any]] | tuple[str, Any]) -> Cursor:
         """
         Set the maximum bound for index queries.
 
@@ -249,16 +256,23 @@ class Cursor:
         will be returned.
 
         Args:
-            max_spec (Dict[str, Any]): A dictionary specifying the maximum
-                                       index values, e.g., {"field": value}
+            max_spec: A list of (field, value) tuples specifying the
+                      exclusive upper bound, e.g., [("age", 65)]
 
         Returns:
             Cursor: The cursor object with the maximum bound applied
 
+        Raises:
+            TypeError: If max_spec is not a list or tuple
+
         Example:
-            >>> cursor = collection.find({"age": {"$lte": 65}}).max({"age": 65})
+            >>> cursor = collection.find({"age": {"$lte": 65}}).max([("age", 65)])
         """
-        self._max = max_spec
+        if not isinstance(max_spec, (list, tuple)):
+            raise TypeError(
+                f"spec must be an instance of list or tuple, not {type(max_spec)}"
+            )
+        self._max = dict(max_spec)  # type: ignore[arg-type]
         return self
 
     def collation(self, collation: Dict[str, Any]) -> Cursor:
@@ -387,7 +401,7 @@ class Cursor:
             self._collection,
             filter=deepcopy(self._filter),
             projection=self._projection,
-            hint=self._hint,
+            hint=self._hint,  # type: ignore[arg-type]
         )
         cloned._skip = self._skip
         cloned._limit = self._limit
@@ -696,10 +710,10 @@ class Cursor:
             # Add min/max bounds if specified
             if self._min or self._max:
                 minmax_clause, minmax_params = self._build_minmax_clause(
-                    where_clause, params, self._min, self._max
+                    where_clause, tuple(params), self._min, self._max
                 )
                 where_clause = minmax_clause
-                params = minmax_params
+                params = minmax_params  # type: ignore[assignment]
 
             # Build sorting and pagination clauses for SQL
             sort_clause = self._query_helpers._build_sort_clause(
