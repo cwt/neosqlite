@@ -43,46 +43,37 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 
 See [CHANGELOG.md](CHANGELOG.md) for the latest features and improvements.
 
-## Latest Release: v1.12.0
+## Latest Release: v1.12.1
 
-NeoSQLite v1.12.0 introduces **comprehensive database maintenance capabilities** including AutoVacuum support with safe migration, MongoDB-compatible `compact` and `dbStats` commands, and additional SQLite-specific maintenance commands.
+NeoSQLite v1.12.1 is a **bug fix release** that addresses PyMongo 4.16+ compatibility for `Cursor.min()`, `Cursor.max()`, and `Cursor.hint()` methods.
 
-### Key Highlights
+### Breaking Change ⚠️
 
-**AutoVacuum with Safe Migration**:
-- **AutoVacuumMode Class**: Configure NONE, FULL, or INCREMENTAL modes at connection time
-- **Opt-in Migration**: Change auto_vacuum on existing databases via `AUTOVACUUM_MIGRATION=1`
-- **Safety First**: Full backup, atomic replacement, and rollback on error
+`cursor.min()` and `cursor.max()` now require **list format** instead of dict format:
 
-**MongoDB compact Command**:
-- **Default Behavior**: 20MB threshold with incremental vacuum (MongoDB-compatible)
-- **Custom Threshold**: `freeSpaceTargetMB=N` for configurable threshold and batch size
-- **Full VACUUM**: `freeSpaceTargetMB=0` runs full VACUUM instead of incremental
+```python
+# Before (v1.12.0)
+cursor.min({"field": 10})  # Dict format
 
-**dbStats Command**:
-- **MongoDB-Compatible**: Returns collections, objects, dataSize, storageSize, indexSize, totalSize, etc.
-- **Accurate Index Sizes**: Uses SQLite's `dbstat` virtual table instead of estimates
+# After (v1.12.1)
+cursor.hint([("field", 1)]).min([("field", 10)])  # List format required
+```
 
-**Maintenance Commands**:
-- **`wal_checkpoint`**: WAL checkpoint control (PASSIVE, FULL, TRUNCATE modes)
-- **`cache_size`**: Get/set SQLite page cache size
-- **`busy_timeout`**: Configure lock wait duration in milliseconds
+**Migration Required**: Update all calls to `cursor.min()` and `cursor.max()` to use list format with `hint()`.
 
-**100% PyMongo API Compatibility** - Maintains full API coverage:
-- 376 API tests: 361 passed, 15 skipped, 0 failed
-- 2,409 unit tests (2,404 passed, 5 xfailed, 0 failed) with 82% code coverage
+### Key Fixes
 
-**Bug Fixes**:
-- ok return values changed from `1.0` (float) to `1` (int) for MongoDB compatibility
-- dbStats now uses dbstat virtual table for accurate index sizes
+- **PyMongo 4.16+ Compatibility**: `min()`/`max()`/`hint()` now accept list format `[("field", value)]`
+- **Type Validation**: Methods now raise `TypeError` for dict format (matching PyMongo 4.16+ behavior)
+- **100% API Compatibility**: All 2,404 unit tests passing
 
-For more details, see [documents/releases/v1.12.0.md](documents/releases/v1.12.0.md) and [documents/DATABASE_MAINTENANCE.md](documents/DATABASE_MAINTENANCE.md).
+For more details, see [documents/releases/v1.12.1.md](documents/releases/v1.12.1.md).
 
 ## PyMongo Compatibility Tests
 
 NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-compatible behavior. Our automated test suite covers all major API categories:
 
-### Test Results (v1.12.0)
+### Test Results (v1.12.1)
 
 #### Unit Tests
 
@@ -93,16 +84,16 @@ NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-
 | **XFailed** | 5 |
 | **Failed** | 0 |
 | **Code Coverage** | 82% |
-
+ 
 #### API Comparison Tests
 
-| Metric | v1.10.0 | v1.11.0 | **v1.12.0** |
-|--------|---------|---------|-------------|
-| **Total Tests** | 375 | 375 | **376** |
-| **Passed** | 360 | 360 | **361** |
-| **Skipped** | 15 | 15 | **15** |
-| **Failed** | 0 | 0 | **0** |
-| **Compatibility** | 100% | 100% | **100%** |
+| Metric | v1.10.0 | v1.11.0 | v1.12.0 | **v1.12.1** |
+|--------|---------|---------|---------|-------------|
+| **Total Tests** | 375 | 375 | 376 | **376** |
+| **Passed** | 360 | 360 | 361 | **361** |
+| **Skipped** | 15 | 15 | 15 | **15** |
+| **Failed** | 0 | 0 | 0 | **0** |
+| **Compatibility** | 100% | 100% | 100% | **100%** |
 
 **Skipped Tests Note**: The 15 skipped tests are due to architectural differences or environment limitations, not missing implementations:
 

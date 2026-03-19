@@ -62,9 +62,7 @@ def compare_cursor_methods():
         # Test hint
         try:
             start_neo_timing()
-            cursor = neo_collection.find({"value": 5}).hint(
-                "idx_test_cursor_value"
-            )
+            cursor = neo_collection.find({"value": 5}).hint([("value", 1)])
             results = list(cursor)
             end_neo_timing()
             neo_hint = len(results) >= 0
@@ -213,7 +211,11 @@ def compare_cursor_methods():
             neo_collection.insert_many([{"value": i} for i in range(20)])
 
             start_neo_timing()
-            cursor = neo_collection.find({}).min({"value": 10})
+            cursor = (
+                neo_collection.find({})
+                .hint([("value", 1)])
+                .min([("value", 10)])
+            )
             results = list(cursor)
             end_neo_timing()
 
@@ -230,7 +232,11 @@ def compare_cursor_methods():
         # Test max() method
         try:
             start_neo_timing()
-            cursor = neo_collection.find({}).max({"value": 10})
+            cursor = (
+                neo_collection.find({})
+                .hint([("value", 1)])
+                .max([("value", 10)])
+            )
             results = list(cursor)
             end_neo_timing()
 

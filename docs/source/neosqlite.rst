@@ -22,6 +22,7 @@ Submodules
    neosqlite.client_session
    neosqlite.connection
    neosqlite.exceptions
+   neosqlite.migration
    neosqlite.objectid
    neosqlite.options
    neosqlite.query_operators
