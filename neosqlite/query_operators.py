@@ -1,6 +1,7 @@
-from .exceptions import MalformedQueryException
-from typing import Any, Dict, List
 import re
+from typing import Any, Dict, List
+
+from .exceptions import MalformedQueryException
 
 
 def _get_nested_field(field: str, document: Dict[str, Any]) -> Any:

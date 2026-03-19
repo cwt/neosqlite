@@ -3,8 +3,9 @@
 Performance comparison between $contains and $regex operators.
 """
 
-import neosqlite
 import time
+
+import neosqlite
 
 
 def main():

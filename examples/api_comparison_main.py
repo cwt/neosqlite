@@ -13,8 +13,8 @@ Usage:
     python3 api_comparison_main.py -b 100       # Run with 100 iterations
 """
 
-import sys
 import argparse
+import sys
 
 # Add parent directory to path for imports
 sys.path.insert(0, "..")

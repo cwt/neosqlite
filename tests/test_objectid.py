@@ -2,8 +2,9 @@
 Test suite for ObjectId functionality in NeoSQLite.
 """
 
-from neosqlite.objectid import ObjectId
 import time
+
+from neosqlite.objectid import ObjectId
 
 
 def test_objectid_creation():
@@ -121,9 +122,10 @@ def test_objectid_json_serialization():
 
 def test_objectid_storage_integration():
     """Test ObjectId storage and retrieval in a NeoSQLite collection."""
-    from neosqlite import Connection
-    import tempfile
     import os
+    import tempfile
+
+    from neosqlite import Connection
 
     # Create a temporary database for testing
     with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp:
@@ -203,9 +205,10 @@ def test_objectid_storage_integration():
 
 def test_objectid_backward_compatibility():
     """Test that ObjectId works with existing collections without _id column."""
-    from neosqlite import Connection
-    import tempfile
     import os
+    import tempfile
+
+    from neosqlite import Connection
 
     # Create a temporary database for testing
     with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as tmp:

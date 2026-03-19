@@ -8,8 +8,9 @@ It showcases both traditional JSON indexing and the new enhanced datetime indexi
 """
 
 import time
+from random import choice, randint
+
 from neosqlite import Connection
-from random import randint, choice
 
 
 def test_indexed_vs_unindexed_performance():

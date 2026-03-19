@@ -6,8 +6,9 @@ This example shows more complex usage patterns including multiple lookups,
 grouping with lookup results, and performance considerations.
 """
 
-import neosqlite
 import time
+
+import neosqlite
 
 
 def main():

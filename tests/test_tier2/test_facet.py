@@ -6,6 +6,7 @@ falling back to Tier-3 Python only when necessary.
 """
 
 import pytest
+
 from neosqlite.collection.query_helper.utils import (
     set_force_fallback,
 )

@@ -9,22 +9,23 @@ using CTEs (Common Table Expressions) for multi-stage pipelines.
 """
 
 from __future__ import annotations
+
+from typing import Any, Dict, List, Set, Tuple, cast
+
 from .._sqlite import sqlite3
 from ..sql_utils import quote_table_name
-from .json_path_utils import parse_json_path
-from typing import Any, Dict, List, Tuple, Set
-from typing import cast
 from .expr_evaluator import (
-    ExprEvaluator,
     AggregationContext,
-    _is_expression,
+    ExprEvaluator,
     _is_aggregation_variable,
+    _is_expression,
 )
+from .json_path_utils import parse_json_path
 from .jsonb_support import (
     supports_jsonb,
 )
-from .query_helper.utils import _get_json_function
 from .query_helper.translation_cache import TranslationCache
+from .query_helper.utils import _get_json_function
 
 
 class PipelineContext:

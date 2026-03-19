@@ -5,6 +5,7 @@ Covers: $regexFind, $regexFindAll
 """
 
 import pytest
+
 import neosqlite
 from neosqlite.collection.expr_evaluator import ExprEvaluator
 

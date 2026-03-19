@@ -6,8 +6,8 @@ Covers: Basic $pullAll functionality, edge cases, and kill switch compatibility.
 
 import neosqlite
 from neosqlite.collection.query_helper import (
-    set_force_fallback,
     get_force_fallback,
+    set_force_fallback,
 )
 
 

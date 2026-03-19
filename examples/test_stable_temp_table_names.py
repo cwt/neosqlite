@@ -3,8 +3,9 @@
 Test cases for stable, predictable, and repeatable temporary table naming system.
 """
 
-import neosqlite
 import hashlib
+
+import neosqlite
 
 
 def test_deterministic_temp_table_names():

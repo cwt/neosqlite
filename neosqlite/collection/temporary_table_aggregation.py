@@ -5,22 +5,24 @@ that the current implementation can't optimize with a single SQL query.
 """
 
 from __future__ import annotations
-from ..sql_utils import quote_table_name
-from .json_path_utils import parse_json_path
-from .jsonb_support import (
-    supports_jsonb,
-    supports_jsonb_each,
-    _get_json_function_prefix,
-    _get_json_each_function,
-    _get_json_group_array_function,
-)
-from .sql_translator_unified import SQLTranslator
-from .expr_evaluator import ExprEvaluator
-from contextlib import contextmanager
-from typing import Any, Dict, List, Callable, Tuple
+
 import hashlib
 import uuid
+from contextlib import contextmanager
+from typing import Any, Callable, Dict, List, Tuple
+
 from .._sqlite import sqlite3
+from ..sql_utils import quote_table_name
+from .expr_evaluator import ExprEvaluator
+from .json_path_utils import parse_json_path
+from .jsonb_support import (
+    _get_json_each_function,
+    _get_json_function_prefix,
+    _get_json_group_array_function,
+    supports_jsonb,
+    supports_jsonb_each,
+)
+from .sql_translator_unified import SQLTranslator
 
 
 class DeterministicTempTableManager:

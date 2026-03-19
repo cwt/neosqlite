@@ -9,8 +9,10 @@ This module tests the $addFields aggregation stage with various expression types
 - Field references and literals (backward compatibility)
 """
 
-import pytest
 import math
+
+import pytest
+
 import neosqlite
 from neosqlite.collection.query_helper import set_force_fallback
 

@@ -2,8 +2,9 @@
 """
 Performance demonstration for $unwind + $group SQL optimization
 """
-import neosqlite
 import time
+
+import neosqlite
 
 
 def main():

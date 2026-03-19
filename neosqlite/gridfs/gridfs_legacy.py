@@ -1,12 +1,13 @@
-from .errors import NoFile
-from .grid_file import GridIn, GridOut, GridOutCursor
-from .gridfs_bucket import GridFSBucket
-from .._sqlite import sqlite3
-from typing import Any, Dict
 import io
+from typing import Any, Dict
+
+from .._sqlite import sqlite3
 
 # Import ObjectId for GridFS
 from ..objectid import ObjectId
+from .errors import NoFile
+from .grid_file import GridIn, GridOut, GridOutCursor
+from .gridfs_bucket import GridFSBucket
 
 
 class GridFS:

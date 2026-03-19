@@ -12,16 +12,18 @@ This extends the existing text search functionality to also use only json_* func
 """
 
 from __future__ import annotations
+
+import hashlib
+import uuid
+from typing import Any, Dict, List
+
 from ..sql_utils import quote_table_name
 from .jsonb_support import supports_jsonb
 from .query_helper import QueryHelper
-from .sql_translator_unified import SQLTranslator, SQLFieldAccessor
+from .sql_translator_unified import SQLFieldAccessor, SQLTranslator
 from .temporary_table_aggregation import (
     aggregation_pipeline_context,
 )
-from typing import Any, Dict, List
-import hashlib
-import uuid
 
 
 class DateTimeQueryProcessor:
@@ -252,8 +254,8 @@ class DateTimeQueryProcessor:
 
         # Create a custom translator with the field accessor that uses json_* functions
         from .sql_translator_unified import (
-            SQLOperatorTranslator,
             SQLClauseBuilder,
+            SQLOperatorTranslator,
         )
 
         operator_translator = SQLOperatorTranslator(field_accessor)
@@ -317,9 +319,9 @@ class DateTimeQueryProcessor:
                 # To ensure we use json_* functions for datetime queries,
                 # we need to create a custom clause builder that forces json_* usage
                 from .sql_translator_unified import (
+                    SQLClauseBuilder,
                     SQLFieldAccessor,
                     SQLOperatorTranslator,
-                    SQLClauseBuilder,
                 )
 
                 field_accessor = SQLFieldAccessor(

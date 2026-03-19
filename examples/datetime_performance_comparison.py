@@ -6,9 +6,11 @@ This script compares the performance of datetime queries between NeoSQLite and M
 """
 
 import time
-from neosqlite import Connection
+
 from pymongo import MongoClient
-from pymongo.errors import ServerSelectionTimeoutError, ConnectionFailure
+from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
+
+from neosqlite import Connection
 
 
 def performance_comparison():

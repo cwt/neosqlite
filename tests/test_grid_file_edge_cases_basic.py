@@ -2,8 +2,10 @@
 Test cases to improve coverage for grid_file.py - basic version to avoid hangs
 """
 
+from unittest.mock import MagicMock, Mock
+
 import pytest
-from unittest.mock import Mock, MagicMock
+
 from neosqlite.gridfs.grid_file import GridIn, GridOut
 
 

@@ -2,19 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
 if TYPE_CHECKING:
     from ..client_session import ClientSession
 
-from .base import QueryEngineProtocol
 from ...sql_utils import quote_table_name
 from ..cursor import Cursor
-from ..raw_batch_cursor import RawBatchCursor
 from ..json_path_utils import parse_json_path
-
-
+from ..raw_batch_cursor import RawBatchCursor
 from ..type_utils import validate_session
+from .base import QueryEngineProtocol
 
 
 class FindOperationsMixin(QueryEngineProtocol):

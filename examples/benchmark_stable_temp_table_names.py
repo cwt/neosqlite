@@ -5,9 +5,9 @@ and repeatable temporary table naming system with query parameters.
 """
 
 import hashlib
-import time
 import statistics
-from typing import List, Dict, Any
+import time
+from typing import Any, Dict, List
 
 
 class DeterministicTempTableManager:

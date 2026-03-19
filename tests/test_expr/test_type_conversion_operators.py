@@ -4,13 +4,15 @@ Tests for $expr type conversion operators.
 Covers: $toLong, $toDecimal, $toObjectId, $convert
 """
 
-import pytest
 import re
+
+import pytest
+
 import neosqlite
-from neosqlite.objectid import ObjectId
 from neosqlite.binary import Binary
 from neosqlite.collection.expr_evaluator import ExprEvaluator
 from neosqlite.collection.query_helper import set_force_fallback
+from neosqlite.objectid import ObjectId
 
 
 class TestTypeConversionOperators:

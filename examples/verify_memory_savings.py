@@ -3,9 +3,10 @@
 Focused test to verify actual memory savings with quez
 """
 
-import neosqlite
 import gc
 import sys
+
+import neosqlite
 
 
 def get_memory_usage():

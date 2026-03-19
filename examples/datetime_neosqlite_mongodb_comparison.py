@@ -8,9 +8,11 @@ to verify complete compatibility and compare results.
 
 import operator
 import time
-from neosqlite import Connection
+
 from pymongo import MongoClient
-from pymongo.errors import ServerSelectionTimeoutError, ConnectionFailure
+from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
+
+from neosqlite import Connection
 
 
 def setup_mongodb():

@@ -6,11 +6,12 @@ This benchmark tests all major SQL-optimized features with moderate datasets (50
 to demonstrate the performance benefits of SQL optimization without taking too long.
 """
 
-import neosqlite
-import time
 import statistics
+import time
+from typing import Any, Dict, List
+
+import neosqlite
 from neosqlite.collection import query_helper
-from typing import List, Dict, Any
 
 
 def _get_speedup(item):

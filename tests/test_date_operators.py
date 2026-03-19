@@ -4,11 +4,12 @@ Tests for date operators in $expr.
 Covers: $dateFromString, $dateToString, $dateFromParts, $dateToParts, $dateTrunc, $dateDiff
 """
 
-import neosqlite
 from datetime import datetime
+
+import neosqlite
 from neosqlite.collection.query_helper import (
-    set_force_fallback,
     get_force_fallback,
+    set_force_fallback,
 )
 
 

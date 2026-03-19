@@ -10,13 +10,18 @@ They are re-exported here for backward compatibility.
 """
 
 from __future__ import annotations
+
 from typing import Any, Dict
 
 # Import type checking helpers from shared module
 # These are re-exported for backward compatibility
 from ..type_utils import (
     _is_expression as _is_expression,
+)
+from ..type_utils import (
     _is_field_reference as _is_field_reference,
+)
+from ..type_utils import (
     _is_literal as _is_literal,
 )
 

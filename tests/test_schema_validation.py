@@ -1,5 +1,7 @@
-import pytest
 import os
+
+import pytest
+
 from neosqlite import Connection
 from neosqlite._sqlite import sqlite3
 

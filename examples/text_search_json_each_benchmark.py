@@ -6,11 +6,12 @@ This benchmark specifically tests the text search integration with json_each() o
 which combines full-text search with array operations for improved performance.
 """
 
-import neosqlite
-import time
 import statistics
+import time
+from typing import Any, Dict, List
+
+import neosqlite
 from neosqlite.collection import query_helper
-from typing import List, Dict, Any
 
 
 def _get_speedup(item):

@@ -7,30 +7,31 @@ in Python as a fallback when SQL evaluation is not possible.
 """
 
 from __future__ import annotations
-from typing import Any, Dict, List, TYPE_CHECKING
-import math
-import warnings
-import re
-import random
-from datetime import datetime, timedelta
+
 import calendar
+import math
+import random
+import re
+import warnings
+from datetime import datetime, timedelta
+from typing import TYPE_CHECKING, Any, Dict, List
 
 # Import from sibling modules
 from .constants import REMOVE_SENTINEL
 from .type_utils import (
-    _convert_to_int,
-    _convert_to_long,
-    _convert_to_double,
-    _convert_to_decimal,
-    _convert_to_string,
-    _convert_to_bool,
-    _convert_to_objectid,
     _convert_to_bindata,
+    _convert_to_bool,
     _convert_to_bsonbindata,
-    _convert_to_regex,
     _convert_to_bsonregex,
     _convert_to_date,
+    _convert_to_decimal,
+    _convert_to_double,
+    _convert_to_int,
+    _convert_to_long,
     _convert_to_null,
+    _convert_to_objectid,
+    _convert_to_regex,
+    _convert_to_string,
     get_bson_type,
 )
 

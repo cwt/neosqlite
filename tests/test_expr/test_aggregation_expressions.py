@@ -8,12 +8,13 @@ This module tests the new aggregation expression support features:
 """
 
 import pytest
+
 from neosqlite.collection.expr_evaluator import (
-    ExprEvaluator,
     AggregationContext,
+    ExprEvaluator,
+    _is_aggregation_variable,
     _is_expression,
     _is_field_reference,
-    _is_aggregation_variable,
     _is_literal,
 )
 
@@ -376,8 +377,9 @@ class TestIntegrationWithRealData:
 
     def test_trig_expression_in_aggregation(self, tmp_path):
         """Test trigonometric expression in aggregation context."""
-        from neosqlite import Connection
         import math
+
+        from neosqlite import Connection
 
         with Connection(":memory:") as conn:
             collection = conn["test_collection"]

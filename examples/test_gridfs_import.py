@@ -1,7 +1,5 @@
-from neosqlite import Connection
-
 # Test that we can import GridFS directly from neosqlite
-from neosqlite import GridFS
+from neosqlite import Connection, GridFS
 
 
 def test_gridfs_import():

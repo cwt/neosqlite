@@ -1,5 +1,7 @@
-import pytest
 import os
+
+import pytest
+
 from neosqlite import Connection
 
 DB_PATH = "test_journal.db"

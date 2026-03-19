@@ -3,8 +3,8 @@
 from typing import TYPE_CHECKING, Any, Dict
 
 from ..._sqlite import sqlite3
-from ...sql_utils import quote_table_name
 from ...objectid import ObjectId
+from ...sql_utils import quote_table_name
 from ..json_helpers import neosqlite_json_dumps
 
 if TYPE_CHECKING:
@@ -39,10 +39,11 @@ class CRUDOperationsMixin:
             ValueError: If the document contains invalid JSON
             sqlite3.Error: If database operations fail
         """
+        from copy import deepcopy
+
         from ...exceptions import MalformedDocument
         from ..json_helpers import neosqlite_json_dumps
         from .utils import _convert_bytes_to_binary
-        from copy import deepcopy
 
         if not isinstance(document, dict):
             raise MalformedDocument(

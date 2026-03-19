@@ -5,23 +5,23 @@ This module contains the AggregationMixin class, which provides methods for
 building and executing MongoDB-like aggregation pipelines using SQL.
 """
 
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Dict, List
 
 from ...sql_utils import quote_table_name
 from ..cursor import DESCENDING
-from copy import deepcopy
-
-# Import utility functions
-from .utils import (
-    get_force_fallback,
-)
 from ..expr_evaluator import (
-    ExprEvaluator,
     AggregationContext,
+    ExprEvaluator,
     _is_expression,
 )
 from ..json_path_utils import (
     parse_json_path,
+)
+
+# Import utility functions
+from .utils import (
+    get_force_fallback,
 )
 
 if TYPE_CHECKING:
@@ -1055,8 +1055,9 @@ class AggregationMixin:
         """
         # Create a temporary in-memory collection to run the sub-pipeline
         # This allows each sub-pipeline to use Tier-1/Tier-2 optimization
-        from .. import Collection
         import uuid
+
+        from .. import Collection
 
         # Create temp collection for processing this batch
         temp_collection_name = f"_facet_batch_{uuid.uuid4().hex[:12]}"

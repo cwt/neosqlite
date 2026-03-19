@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+from typing import Any, Dict, Iterator, List, Tuple
+
+from typing_extensions import Literal
+
 from ._sqlite import sqlite3
+from .client_session import ClientSession
 from .collection import Collection
 from .collection.aggregation_cursor import AggregationCursor
 from .exceptions import CollectionInvalid
-from .client_session import ClientSession
 from .migration import migrate_autovacuum, needs_migration, should_migrate
-from .options import WriteConcern, JournalMode, AutoVacuumMode
+from .options import AutoVacuumMode, JournalMode, WriteConcern
 from .sql_utils import quote_table_name
-from contextlib import contextmanager
-from typing import Any, Dict, Iterator, List, Tuple
-from typing_extensions import Literal
 
 
 class Connection:

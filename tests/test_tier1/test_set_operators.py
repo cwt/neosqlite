@@ -17,6 +17,7 @@ All tests follow the tier comparison pattern:
 """
 
 import pytest
+
 import neosqlite
 from neosqlite.collection.query_helper.utils import (
     set_force_fallback,

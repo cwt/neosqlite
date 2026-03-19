@@ -1,9 +1,11 @@
 """Comprehensive unit tests for PythonEvaluatorsMixin."""
 
-import pytest
 import math
-from decimal import Decimal
 from datetime import datetime, timedelta
+from decimal import Decimal
+
+import pytest
+
 from neosqlite.collection.expr_evaluator import ExprEvaluator
 from neosqlite.collection.expr_evaluator.constants import REMOVE_SENTINEL
 from neosqlite.objectid import ObjectId

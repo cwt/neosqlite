@@ -9,16 +9,16 @@ import uuid
 from unittest.mock import patch
 
 import pytest
+
 import neosqlite
-from neosqlite import Connection, Binary
+from neosqlite import Binary, Connection
 from neosqlite.collection.query_helper import (
-    _convert_bytes_to_binary,
-    set_force_fallback,
-    get_force_fallback,
     QueryHelper,
+    _convert_bytes_to_binary,
+    get_force_fallback,
+    set_force_fallback,
 )
 from neosqlite.exceptions import MalformedDocument, MalformedQueryException
-
 
 # ================================
 # Connection Tests

@@ -1,4 +1,4 @@
-from neosqlite import Connection, Binary
+from neosqlite import Binary, Connection
 
 
 def example_binary_usage():

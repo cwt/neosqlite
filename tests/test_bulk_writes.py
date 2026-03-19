@@ -2,11 +2,13 @@
 Tests for bulk write operations.
 """
 
-from pytest import raises
 from typing import Tuple, Type
+
+from pytest import raises
+
 import neosqlite
+from neosqlite import DeleteOne, InsertOne, UpdateOne
 from neosqlite.collection import sqlite3
-from neosqlite import InsertOne, UpdateOne, DeleteOne
 
 # Handle both standard sqlite3 and pysqlite3 exceptions
 try:

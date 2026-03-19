@@ -8,11 +8,12 @@ to demonstrate the performance benefits of SQL optimization without taking too l
 Enhanced with temporary table aggregation pipeline tests to showcase benefits of complex pipeline processing.
 """
 
-import neosqlite
-import time
 import statistics
+import time
+from typing import Any, Dict, List
+
+import neosqlite
 from neosqlite.collection import query_helper
-from typing import List, Dict, Any
 
 
 def _get_speedup(item):

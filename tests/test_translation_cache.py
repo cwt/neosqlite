@@ -3,6 +3,7 @@ Tests for SQL translation caching.
 """
 
 import pytest
+
 import neosqlite
 
 

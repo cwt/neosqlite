@@ -1,14 +1,16 @@
 from __future__ import annotations
+
+import time
 from copy import deepcopy
 from functools import partial
-import time
-from typing import Any, Callable, Dict, List, Iterator, Iterable, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, Iterator, List
+
 from .json_path_utils import parse_json_path
 from .type_utils import validate_session
 
 if TYPE_CHECKING:
-    from . import Collection
     from ..client_session import ClientSession
+    from . import Collection
 
 ASCENDING = 1
 DESCENDING = -1

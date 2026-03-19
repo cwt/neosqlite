@@ -9,6 +9,7 @@ This module tests the Tier 2 implementation of:
 """
 
 import pytest
+
 import neosqlite
 from neosqlite.collection.temporary_table_aggregation import (
     can_process_with_temporary_tables,

@@ -3,7 +3,9 @@ Tests for $inc and $mul operation validation functions and behavior.
 """
 
 import math
+
 import pytest
+
 from neosqlite.collection.query_helper import (
     _is_numeric_value,
     _validate_inc_mul_field_value,

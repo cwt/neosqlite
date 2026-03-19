@@ -1,9 +1,9 @@
-from neosqlite.binary import Binary
-from typing import Any, Dict
 import json
-from datetime import datetime
 import re
+from datetime import datetime
+from typing import Any, Dict
 
+from neosqlite.binary import Binary
 
 # Pre-compile ISO date pattern for performance
 ISO_DATE_PATTERN = re.compile(

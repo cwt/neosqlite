@@ -2,8 +2,9 @@
 """
 Demonstration of the performance improvement with the new $unwind implementation
 """
-import neosqlite
 import time
+
+import neosqlite
 
 
 def main():

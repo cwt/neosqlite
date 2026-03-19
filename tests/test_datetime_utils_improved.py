@@ -3,8 +3,8 @@ Test for datetime utilities to improve coverage.
 """
 
 from neosqlite.collection.datetime_utils import (
-    is_datetime_value,
     is_datetime_regex,
+    is_datetime_value,
 )
 
 

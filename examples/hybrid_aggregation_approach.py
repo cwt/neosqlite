@@ -4,8 +4,8 @@ Integration example showing how temporary table aggregation can work alongside
 the existing NeoSQLite aggregation pipeline processing.
 """
 
-import sys
 import os
+import sys
 
 # Add the neosqlite package to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

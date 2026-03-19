@@ -6,6 +6,7 @@ produces identical results to the Python fallback.
 """
 
 import pytest
+
 from neosqlite.collection.query_helper.utils import set_force_fallback
 
 

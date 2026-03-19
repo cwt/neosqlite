@@ -1,7 +1,8 @@
 import pytest
+
 import neosqlite
+from neosqlite import DeleteOne, InsertOne, UpdateOne
 from neosqlite.client_session import ClientSession
-from neosqlite import InsertOne, UpdateOne, DeleteOne
 from neosqlite.gridfs import GridFSBucket
 
 

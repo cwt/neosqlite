@@ -1,5 +1,6 @@
-from neosqlite import Connection, Binary
 import uuid
+
+from neosqlite import Binary, Connection
 
 
 def test_binary_implementation():

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List
 
 if TYPE_CHECKING:
     from ..client_session import ClientSession
 
-from .base import QueryEngineProtocol
+from neosqlite.binary import Binary
+from neosqlite.collection.json_helpers import neosqlite_json_dumps_for_sql
+
 from ...results import (
     DeleteResult,
     InsertManyResult,
@@ -15,14 +17,11 @@ from ...results import (
     UpdateResult,
 )
 from ...sql_utils import quote_table_name
-from ..query_helper import _convert_bytes_to_binary, _get_json_function
 from ..json_path_utils import parse_json_path
+from ..query_helper import _convert_bytes_to_binary, _get_json_function
 from ..type_correction import get_integer_id_for_oid
-from neosqlite.binary import Binary
-from neosqlite.collection.json_helpers import neosqlite_json_dumps_for_sql
-
-
 from ..type_utils import validate_session
+from .base import QueryEngineProtocol
 
 
 class CRUDOperationsMixin(QueryEngineProtocol):

@@ -1,32 +1,34 @@
 """Unit tests for query operators."""
 
-import pytest
 from unittest.mock import patch
+
+import pytest
+
+from neosqlite.exceptions import MalformedQueryException
 from neosqlite.query_operators import (
-    _get_nested_field,
-    _eq,
-    _gt,
-    _lt,
-    _gte,
-    _lte,
     _all,
-    _in,
-    _ne,
-    _nin,
-    _mod,
-    _exists,
-    _regex,
-    _elemMatch,
     _apply_query_operators,
-    _size,
-    _contains,
-    _type,
     _bits_all_clear,
     _bits_all_set,
     _bits_any_clear,
     _bits_any_set,
+    _contains,
+    _elemMatch,
+    _eq,
+    _exists,
+    _get_nested_field,
+    _gt,
+    _gte,
+    _in,
+    _lt,
+    _lte,
+    _mod,
+    _ne,
+    _nin,
+    _regex,
+    _size,
+    _type,
 )
-from neosqlite.exceptions import MalformedQueryException
 
 
 def test_get_nested_field():

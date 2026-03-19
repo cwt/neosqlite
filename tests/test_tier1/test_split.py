@@ -14,10 +14,11 @@ Returns an array of substrings split by the delimiter.
 """
 
 import pytest
+
 import neosqlite
 from neosqlite.collection.query_helper.utils import (
-    set_force_fallback,
     get_force_fallback,
+    set_force_fallback,
 )
 
 

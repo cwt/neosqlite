@@ -1,31 +1,30 @@
-from .errors import NoFile, FileExists
-from .grid_file import GridIn, GridOut, GridOutCursor
-from .utils import (
-    force_sync_if_needed,
-    serialize_metadata,
-    deserialize_metadata,
-)
-from .._sqlite import sqlite3
-from ..collection.schema_utils import column_exists
-from typing import Any, Dict
 import datetime
 import hashlib
 import io
+from typing import Any, Dict
 
-# Import ObjectId for MongoDB-compatible ID support
-from ..objectid import ObjectId
+from .._sqlite import sqlite3
 
 # Import JSONB support utilities to reuse existing implementation
 from ..collection.jsonb_support import supports_jsonb
+from ..collection.schema_utils import column_exists
 
 # Import the centralized ID normalization and lookup functions
 from ..collection.type_correction import (
     get_integer_id_for_table,
     normalize_id_query_for_db,
 )
-
-
 from ..collection.type_utils import validate_session
+
+# Import ObjectId for MongoDB-compatible ID support
+from ..objectid import ObjectId
+from .errors import FileExists, NoFile
+from .grid_file import GridIn, GridOut, GridOutCursor
+from .utils import (
+    deserialize_metadata,
+    force_sync_if_needed,
+    serialize_metadata,
+)
 
 
 class GridFSBucket:

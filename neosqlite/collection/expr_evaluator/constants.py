@@ -7,7 +7,6 @@ the expression evaluator.
 
 from __future__ import annotations
 
-
 # Reserved field names that are NOT operators
 RESERVED_FIELDS = {
     "$field",

@@ -1,6 +1,7 @@
-import time
-import threading
 import os
+import threading
+import time
+
 from neosqlite import Connection
 
 DB_PATH = "heavy_benchmark.db"

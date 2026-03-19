@@ -3,20 +3,21 @@ Consolidated tests for aggregation pipeline functionality.
 """
 
 import math
-import pytest
-import neosqlite
 from operator import itemgetter
+
+import pytest
+
+import neosqlite
 from neosqlite import Connection
 from neosqlite.collection.aggregation_cursor import (
-    AggregationCursor,
     QUEZ_AVAILABLE,
+    AggregationCursor,
 )
 from neosqlite.collection.temporary_table_aggregation import (
-    execute_2nd_tier_aggregation,
-    can_process_with_temporary_tables,
     TemporaryTableAggregationProcessor,
+    can_process_with_temporary_tables,
+    execute_2nd_tier_aggregation,
 )
-
 
 # ================================
 # Core Aggregation Tests

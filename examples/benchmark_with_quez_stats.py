@@ -3,8 +3,9 @@
 Simple benchmark showing real quez statistics from AggregationCursor
 """
 
-import neosqlite
 import time
+
+import neosqlite
 
 
 def simple_benchmark_with_quez_stats():

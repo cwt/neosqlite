@@ -4,8 +4,9 @@ Performance test script demonstrating the behavior of the $contains operator
 and how it interacts with indexes.
 """
 
-import neosqlite
 import time
+
+import neosqlite
 
 
 def main():

@@ -5,12 +5,12 @@ Tests for JSONB support utilities to improve coverage.
 from unittest.mock import Mock
 
 from neosqlite.collection.jsonb_support import (
-    supports_jsonb,
-    _get_json_function_prefix,
-    should_use_json_functions,
     _contains_text_operator,
+    _get_json_function_prefix,
     clear_jsonb_cache,
+    should_use_json_functions,
     sqlite3,  # Import the same sqlite3 that the module uses
+    supports_jsonb,
 )
 
 

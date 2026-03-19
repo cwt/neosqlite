@@ -6,10 +6,11 @@ This script tests the same unwind operations with 5,000 documents to see if
 performance characteristics change with larger datasets.
 """
 
-import neosqlite
 import time
+from typing import Any, Dict, List
+
+import neosqlite
 from neosqlite.collection import query_helper
-from typing import List, Dict, Any
 
 
 def test_unwind_execution(

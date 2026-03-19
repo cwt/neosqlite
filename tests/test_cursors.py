@@ -3,11 +3,13 @@ Tests for find_one, find_raw_batches, and RawBatchCursor.
 """
 
 import json
+
 import pytest
+
 import neosqlite
 from neosqlite.collection.query_helper import (
-    set_force_fallback,
     get_force_fallback,
+    set_force_fallback,
 )
 
 
@@ -1424,8 +1426,8 @@ class TestCursorAddress:
 
     def test_address_with_file_database(self):
         """Test address with file-based database."""
-        import tempfile
         import os
+        import tempfile
 
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
             db_path = f.name

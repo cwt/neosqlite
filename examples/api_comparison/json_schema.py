@@ -4,13 +4,14 @@ import warnings
 
 import neosqlite
 from neosqlite.objectid import ObjectId
+
 from .reporter import reporter
 from .timing import (
-    start_neo_timing,
-    end_neo_timing,
-    start_mongo_timing,
     end_mongo_timing,
+    end_neo_timing,
     set_accumulation_mode,
+    start_mongo_timing,
+    start_neo_timing,
 )
 from .utils import test_pymongo_connection
 

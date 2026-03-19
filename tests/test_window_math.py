@@ -1,4 +1,5 @@
 import pytest
+
 from neosqlite import Connection
 
 

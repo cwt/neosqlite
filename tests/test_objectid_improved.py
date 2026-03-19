@@ -3,7 +3,9 @@ Test for ObjectId to improve coverage.
 """
 
 import time
+
 import pytest
+
 from neosqlite.objectid import ObjectId
 
 

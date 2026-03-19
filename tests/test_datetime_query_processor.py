@@ -2,14 +2,15 @@
 Test suite for datetime query processor with three-tier fallback mechanism.
 """
 
-import pytest
 import datetime
-import tempfile
-import os
-from unittest.mock import Mock
-from neosqlite.collection import sqlite3
 import json
+import os
+import tempfile
+from unittest.mock import Mock
 
+import pytest
+
+from neosqlite.collection import sqlite3
 from neosqlite.collection.datetime_query_processor import (
     DateTimeQueryProcessor,
     EnhancedDateTimeQueryProcessor,
@@ -752,8 +753,8 @@ def test_datetime_index_usage_verification(setup_test_db):
         # First, let's build the WHERE clause that would be used
         from neosqlite.collection.sql_translator_unified import (
             SQLClauseBuilder,
-            SQLOperatorTranslator,
             SQLFieldAccessor,
+            SQLOperatorTranslator,
         )
 
         field_accessor = SQLFieldAccessor(

@@ -6,6 +6,7 @@ results to Tier-3 Python fallback.
 """
 
 import pytest
+
 from neosqlite.collection.query_helper.utils import set_force_fallback
 
 

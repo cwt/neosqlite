@@ -7,8 +7,8 @@ Covers: Set operators ($setEquals, $setIntersection, etc.) and
 
 import neosqlite
 from neosqlite.collection.query_helper import (
-    set_force_fallback,
     get_force_fallback,
+    set_force_fallback,
 )
 
 

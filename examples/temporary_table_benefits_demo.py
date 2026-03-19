@@ -3,8 +3,9 @@
 Focused demonstration of temporary table aggregation benefits for complex pipelines.
 """
 
-import neosqlite
 import time
+
+import neosqlite
 
 
 def demonstrate_temporary_table_benefits():

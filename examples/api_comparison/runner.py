@@ -3,75 +3,75 @@ Test Runner - Orchestrates running all comparison tests
 """
 
 import time
-from .utils import (
-    test_pymongo_connection,
-    enable_tier_tracking,
-    disable_tier_tracking,
-    get_tier_changes,
-    clear_tier_changes,
-)
 
-# Import all comparison functions
-from .crud import compare_crud_operations
-from .query_operators import compare_query_operators
-from .expr_operators import compare_expr_operator
-from .update_operators import compare_update_operators
-from .aggregation_stages import compare_aggregation_stages
-from .index_operations import compare_index_operations
-from .find_modify import compare_find_and_modify
-from .bulk_operations import compare_bulk_operations
-from .distinct import compare_distinct
-from .binary_operations import compare_binary_support
-from .nested_queries import compare_nested_field_queries
-from .raw_batches import compare_raw_batch_operations
-from .change_streams import compare_change_streams
-from .text_search import compare_text_search
-from .gridfs_operations import compare_gridfs_operations
-from .objectid_ops import compare_objectid_operations
-from .type_operator import compare_type_operator
 from .aggregation_additional import compare_additional_aggregation
-from .cursor_operations import compare_cursor_operations
-from .mod_operator import compare_mod_operator
-from .update_additional import compare_additional_update_operators
+from .aggregation_bucket import compare_bucket_aggregation
+from .aggregation_cursor import compare_aggregation_cursor_methods
+from .aggregation_stages import compare_aggregation_stages
 from .aggregation_stages_additional import compare_additional_aggregation_stages
-from .expr_additional import compare_additional_expr_operators
-from .collection_methods import compare_collection_methods
-from .date_operators import compare_date_expr_operators
-from .math_operators import compare_math_operators
-from .string_operators import compare_string_operators
-from .array_operators import compare_array_operators
-from .object_operators import compare_object_operators
-from .collection_methods_additional import compare_additional_collection_methods
-from .search_index import compare_search_index_operations
-from .bulk_executors import compare_bulk_operation_executors
-from .reindex import compare_reindex_operation
-from .elemmatch import compare_elemmatch_operator
-from .update_modifiers import compare_update_modifiers
 from .aggregation_stages_extended import (
     compare_additional_aggregation_stages_extended,
 )
-from .expr_extended import compare_additional_expr_operators_extended
-from .cursor_methods import compare_cursor_methods
-from .session_methods import compare_session_methods
-from .aggregation_cursor import compare_aggregation_cursor_methods
-from .database_methods import compare_database_methods
-from .expr_complete import compare_additional_expr_operators_complete
-from .expr_success import compare_additional_expr_success_stories
-from .bitwise_operators import compare_bitwise_operators
-from .pullall_operator import compare_pullall_operator
-from .window_functions import compare_window_functions
-from .graph_lookup import compare_graph_lookup
-from .fill_stage import compare_fill_stage
-from .json_schema import compare_json_schema
-from .window_math import compare_window_math
-from .options_classes import compare_options_classes
-from .aggregation_bucket import compare_bucket_aggregation
-from .type_operators import compare_type_operators
-from .expression_operators import compare_expression_operators
-from .object_operators_extended import compare_object_operators_extended
+from .array_operators import compare_array_operators
 from .array_operators_extended import compare_array_operators_extended
+from .binary_operations import compare_binary_support
 from .binary_operators import compare_binary_operators
+from .bitwise_operators import compare_bitwise_operators
+from .bulk_executors import compare_bulk_operation_executors
+from .bulk_operations import compare_bulk_operations
+from .change_streams import compare_change_streams
+from .collection_methods import compare_collection_methods
+from .collection_methods_additional import compare_additional_collection_methods
 
+# Import all comparison functions
+from .crud import compare_crud_operations
+from .cursor_methods import compare_cursor_methods
+from .cursor_operations import compare_cursor_operations
+from .database_methods import compare_database_methods
+from .date_operators import compare_date_expr_operators
+from .distinct import compare_distinct
+from .elemmatch import compare_elemmatch_operator
+from .expr_additional import compare_additional_expr_operators
+from .expr_complete import compare_additional_expr_operators_complete
+from .expr_extended import compare_additional_expr_operators_extended
+from .expr_operators import compare_expr_operator
+from .expr_success import compare_additional_expr_success_stories
+from .expression_operators import compare_expression_operators
+from .fill_stage import compare_fill_stage
+from .find_modify import compare_find_and_modify
+from .graph_lookup import compare_graph_lookup
+from .gridfs_operations import compare_gridfs_operations
+from .index_operations import compare_index_operations
+from .json_schema import compare_json_schema
+from .math_operators import compare_math_operators
+from .mod_operator import compare_mod_operator
+from .nested_queries import compare_nested_field_queries
+from .object_operators import compare_object_operators
+from .object_operators_extended import compare_object_operators_extended
+from .objectid_ops import compare_objectid_operations
+from .options_classes import compare_options_classes
+from .pullall_operator import compare_pullall_operator
+from .query_operators import compare_query_operators
+from .raw_batches import compare_raw_batch_operations
+from .reindex import compare_reindex_operation
+from .search_index import compare_search_index_operations
+from .session_methods import compare_session_methods
+from .string_operators import compare_string_operators
+from .text_search import compare_text_search
+from .type_operator import compare_type_operator
+from .type_operators import compare_type_operators
+from .update_additional import compare_additional_update_operators
+from .update_modifiers import compare_update_modifiers
+from .update_operators import compare_update_operators
+from .utils import (
+    clear_tier_changes,
+    disable_tier_tracking,
+    enable_tier_tracking,
+    get_tier_changes,
+    test_pymongo_connection,
+)
+from .window_functions import compare_window_functions
+from .window_math import compare_window_math
 
 # Ordered list of all comparison functions with their category names
 # Format: (display_name, function)
@@ -176,11 +176,13 @@ class TimingContext:
 
 def run_benchmark(iterations: int = 10, silent: bool = False):
     """Run all comparison tests as benchmark and return results"""
-    import sys
     import os
+    import sys
     from io import StringIO
-    from .reporter import BenchmarkReporter
+
     import neosqlite
+
+    from .reporter import BenchmarkReporter
 
     # Patch neosqlite.Connection to use a disk database instead of :memory:
     # This allows us to benchmark disk I/O performance without changing every test file.
@@ -258,7 +260,7 @@ def run_benchmark(iterations: int = 10, silent: bool = False):
                     print(f"  Iteration {i + 1} error: {e}")
                     continue
 
-                from .timing import get_last_neo_timing, get_last_mongo_timing
+                from .timing import get_last_mongo_timing, get_last_neo_timing
 
                 neo_timing = get_last_neo_timing()
                 mongo_timing = get_last_mongo_timing()
@@ -489,6 +491,7 @@ def run_category(category: str) -> bool:
 def run_all_comparisons():
     """Run all comparison tests and return exit code"""
     import neosqlite
+
     from .utils import (
         register_connection_for_tier_tracking,
     )

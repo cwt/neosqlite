@@ -2,9 +2,10 @@
 """
 Tests for the watch() method and ChangeStream functionality
 """
-import pytest
 import json
 import time
+
+import pytest
 
 
 def test_watch_basic_functionality(collection):

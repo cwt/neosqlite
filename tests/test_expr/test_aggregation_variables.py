@@ -8,6 +8,7 @@ This module tests variable scoping in aggregation pipelines:
 """
 
 import pytest
+
 import neosqlite
 from neosqlite.collection.query_helper import set_force_fallback
 

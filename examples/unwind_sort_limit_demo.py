@@ -7,8 +7,9 @@ $unwind, $sort, and $limit operations by pushing them down to SQLite's native
 JSON processing capabilities.
 """
 
-import neosqlite
 import time
+
+import neosqlite
 
 
 def demonstrate_unwind_sort_limit():

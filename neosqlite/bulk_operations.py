@@ -1,11 +1,13 @@
 # coding: utf-8
 from __future__ import annotations
+
 from abc import ABC
 from dataclasses import dataclass
-from typing import Dict, Any, List, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List
 
 if TYPE_CHECKING:
     import neosqlite
+
     from .client_session import ClientSession
 
 from .results import BulkWriteResult

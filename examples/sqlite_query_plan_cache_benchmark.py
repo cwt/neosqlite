@@ -4,10 +4,10 @@ Benchmark to measure SQLite's query plan cache utilization with
 deterministic vs random temporary table names.
 """
 
-import sqlite3
 import hashlib
-import time
+import sqlite3
 import statistics
+import time
 import uuid
 
 

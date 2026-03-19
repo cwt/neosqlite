@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 import warnings
+from typing import TYPE_CHECKING, Any, Dict, List, Tuple, overload
+
+from typing_extensions import Literal
+
+from neosqlite.collection.json_helpers import neosqlite_json_loads
+
 from .._sqlite import sqlite3
 from ..bulk_operations import BulkOperationExecutor
 from ..changestream import ChangeStream
@@ -12,6 +18,7 @@ from ..results import (
     InsertOneResult,
     UpdateResult,
 )
+from ..sql_utils import quote_table_name
 from .aggregation_cursor import AggregationCursor
 from .cursor import Cursor
 from .index_manager import IndexManager
@@ -22,14 +29,10 @@ from .schema_utils import (
     get_table_info,
 )
 from .type_utils import validate_session
-from neosqlite.collection.json_helpers import neosqlite_json_loads
-from ..sql_utils import quote_table_name
-from typing import Any, Dict, List, Tuple, overload, TYPE_CHECKING
-from typing_extensions import Literal
 
 if TYPE_CHECKING:
-    from ..connection import Connection
     from ..client_session import ClientSession
+    from ..connection import Connection
 
 
 class Collection:

@@ -1,9 +1,10 @@
 """Utility functions for query helper operations."""
 
+from typing import Any, Dict
+
+from ..._sqlite import sqlite3
 from ...binary import Binary
 from ...exceptions import MalformedQueryException
-from typing import Any, Dict
-from ..._sqlite import sqlite3
 
 # Import JSON function helpers from shared module to avoid duplication
 from ..jsonb_support import (

@@ -2,8 +2,9 @@
 Tests for JSONB features and fallback behavior.
 """
 
-import neosqlite
 import pytest
+
+import neosqlite
 
 # Try to import pysqlite3 for consistent JSON/JSONB support
 try:

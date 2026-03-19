@@ -1,8 +1,8 @@
 """Unit tests for positional array update operations."""
 
 from neosqlite.collection.query_helper.positional_update import (
-    _apply_positional_update,
     _apply_positional_recursive,
+    _apply_positional_update,
     _matches_filter,
     _matches_query_operators,
     _set_nested_field,

@@ -5,9 +5,9 @@ Provides efficient detection of JSONB capabilities with automatic caching
 to avoid redundant database queries.
 """
 
-from .._sqlite import sqlite3
 from typing import Dict
 
+from .._sqlite import sqlite3
 
 # Module-level cache for JSONB support detection results
 # Key: connection id (int), Value: dict with support flags

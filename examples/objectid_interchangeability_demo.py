@@ -14,7 +14,9 @@ Key features demonstrated:
 """
 
 import time
+
 from bson import ObjectId as BsonObjectId
+
 from neosqlite.objectid import ObjectId
 
 

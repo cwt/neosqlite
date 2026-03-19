@@ -5,6 +5,7 @@ Covers: $setEquals, $setIntersection, $setUnion, $setDifference, $setIsSubset, $
 """
 
 import pytest
+
 import neosqlite
 
 

@@ -1,4 +1,5 @@
 import pytest
+
 from neosqlite import Connection
 from neosqlite.collection.query_helper.utils import set_force_fallback
 

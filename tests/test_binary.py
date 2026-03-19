@@ -3,9 +3,11 @@ Tests for Binary class and binary data handling.
 """
 
 import base64
-import pytest
 import uuid
-from neosqlite import Connection, Binary
+
+import pytest
+
+from neosqlite import Binary, Connection
 
 
 def test_binary_creation():

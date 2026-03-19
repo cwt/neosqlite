@@ -20,73 +20,73 @@ Usage:
     run_benchmark(iterations=10)
 """
 
+# Import all comparison modules to register them
+# Additional operator modules (split from new_operators)
+from . import (
+    aggregation_additional,
+    aggregation_bucket,
+    aggregation_cursor,
+    aggregation_stages,
+    aggregation_stages_additional,
+    aggregation_stages_extended,
+    array_operators,
+    array_operators_extended,
+    binary_operations,
+    binary_operators,
+    bitwise_operators,
+    bulk_executors,
+    bulk_operations,
+    change_streams,
+    collection_methods,
+    collection_methods_additional,
+    crud,
+    cursor_methods,
+    cursor_operations,
+    database_methods,
+    date_operators,
+    distinct,
+    elemmatch,
+    expr_additional,
+    expr_complete,
+    expr_extended,
+    expr_operators,
+    expr_success,
+    expression_operators,
+    fill_stage,
+    find_modify,
+    graph_lookup,
+    gridfs_operations,
+    index_operations,
+    json_schema,
+    math_operators,
+    mod_operator,
+    nested_queries,
+    object_operators,
+    object_operators_extended,
+    objectid_ops,
+    pullall_operator,
+    query_operators,
+    raw_batches,
+    reindex,
+    search_index,
+    session_methods,
+    string_operators,
+    text_search,
+    type_operator,
+    type_operators,
+    update_additional,
+    update_modifiers,
+    update_operators,
+    window_functions,
+    window_math,
+)
 from .reporter import CompatibilityReporter, reporter
 from .runner import (
-    run_all_comparisons,
-    run_category,
     cleanup_test_collections,
+    run_all_comparisons,
     run_benchmark,
+    run_category,
 )
-
-# Import all comparison modules to register them
-from . import crud
-from . import query_operators
-from . import expr_operators
-from . import update_operators
-from . import aggregation_stages
-from . import aggregation_additional
-from . import aggregation_stages_additional
-from . import aggregation_stages_extended
-from . import aggregation_cursor
-from . import index_operations
-from . import find_modify
-from . import bulk_operations
-from . import bulk_executors
-from . import distinct
-from . import binary_operations
-from . import nested_queries
-from . import raw_batches
-from . import change_streams
-from . import text_search
-from . import gridfs_operations
-from . import objectid_ops
-from . import type_operator
-from . import cursor_operations
-from . import cursor_methods
-from . import session_methods
-from . import collection_methods
-from . import collection_methods_additional
-from . import database_methods
-from . import mod_operator
-from . import update_additional
-from . import update_modifiers
-from . import expr_additional
-from . import expr_extended
-from . import expr_complete
-from . import expr_success
-from . import date_operators
-from . import math_operators
-from . import string_operators
-from . import array_operators
-from . import object_operators
-from . import search_index
-from . import reindex
-from . import elemmatch
-from . import bitwise_operators
-from . import pullall_operator
-from . import window_functions
-from . import graph_lookup
-from . import fill_stage
-from . import json_schema
-from . import window_math
-
-# Additional operator modules (split from new_operators)
-from . import aggregation_bucket
-from . import type_operators
-from . import expression_operators
-from . import object_operators_extended
-from . import array_operators_extended
-from . import binary_operators
 
 __all__ = [
     "CompatibilityReporter",

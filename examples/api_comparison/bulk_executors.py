@@ -5,7 +5,7 @@ import warnings
 import neosqlite
 
 from .reporter import reporter
-from .timing import start_neo_timing, end_neo_timing, set_accumulation_mode
+from .timing import end_neo_timing, set_accumulation_mode, start_neo_timing
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"

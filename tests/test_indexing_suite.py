@@ -2,13 +2,15 @@
 Consolidated tests for indexing functionality.
 """
 
-from pytest import raises
+import time
 from operator import itemgetter
 from typing import Tuple, Type
-from neosqlite.collection import sqlite3
-import neosqlite
+
 import pytest
-import time
+from pytest import raises
+
+import neosqlite
+from neosqlite.collection import sqlite3
 
 # Handle both standard sqlite3 and pysqlite3 exceptions
 try:

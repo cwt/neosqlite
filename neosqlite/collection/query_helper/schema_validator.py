@@ -5,6 +5,7 @@ Provides MongoDB-compatible $jsonSchema evaluation.
 
 import re
 from typing import Any, Dict
+
 from ...binary import Binary
 from ...objectid import ObjectId
 

@@ -6,10 +6,11 @@ which handles automatic conversion between integer IDs and ObjectIds in queries.
 """
 
 import pytest
+
 from neosqlite.collection.type_correction import (
     normalize_id_query,
-    normalize_objectid_for_db_query,
     normalize_id_query_for_db,
+    normalize_objectid_for_db_query,
 )
 
 

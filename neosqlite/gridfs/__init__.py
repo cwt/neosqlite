@@ -1,4 +1,4 @@
-from .errors import NoFile, FileExists, CorruptGridFile
+from .errors import CorruptGridFile, FileExists, NoFile
 from .gridfs_bucket import GridFSBucket
 from .gridfs_legacy import GridFS
 

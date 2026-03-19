@@ -6,10 +6,10 @@ import neosqlite
 
 from .reporter import reporter
 from .timing import (
-    start_neo_timing,
+    end_mongo_timing,
     end_neo_timing,
     start_mongo_timing,
-    end_mongo_timing,
+    start_neo_timing,
 )
 from .utils import test_pymongo_connection
 
@@ -25,7 +25,7 @@ def compare_bulk_operations():
     with neosqlite.Connection(":memory:") as neo_conn:
         start_neo_timing()
         neo_collection = neo_conn.test_collection
-        from neosqlite import InsertOne, UpdateOne, DeleteOne
+        from neosqlite import DeleteOne, InsertOne, UpdateOne
 
         requests = [
             InsertOne({"name": "Alice", "age": 30}),
@@ -52,7 +52,7 @@ def compare_bulk_operations():
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
-        from pymongo import InsertOne, UpdateOne, DeleteOne
+        from pymongo import DeleteOne, InsertOne, UpdateOne
 
         requests = [
             InsertOne({"name": "Alice", "age": 30}),

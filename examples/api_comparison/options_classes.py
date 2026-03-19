@@ -1,15 +1,16 @@
 """Module for comparing options classes (WriteConcern, etc.) between NeoSQLite and PyMongo"""
 
 import warnings
+
 import neosqlite
-from neosqlite import WriteConcern, ReadPreference, ReadConcern, CodecOptions
+from neosqlite import CodecOptions, ReadConcern, ReadPreference, WriteConcern
 
 from .reporter import reporter
 from .timing import (
-    start_neo_timing,
+    end_mongo_timing,
     end_neo_timing,
     start_mongo_timing,
-    end_mongo_timing,
+    start_neo_timing,
 )
 from .utils import test_pymongo_connection
 

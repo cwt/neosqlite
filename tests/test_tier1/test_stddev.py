@@ -5,6 +5,7 @@ Verifies that the SQL implementation produces identical results to the Python fa
 """
 
 import pytest
+
 from neosqlite.collection.query_helper.utils import set_force_fallback
 
 

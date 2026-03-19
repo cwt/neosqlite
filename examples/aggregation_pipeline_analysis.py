@@ -4,8 +4,8 @@ Analysis of current NeoSQLite aggregation pipeline implementation
 and how temporary tables can enhance it.
 """
 
-import sys
 import os
+import sys
 
 # Add the neosqlite package to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

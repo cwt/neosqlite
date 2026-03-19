@@ -38,10 +38,10 @@ def demonstrate_quez_stats_during_processing():
         # Show quez stats with different compressors
         try:
             from quez import (
-                CompressedQueue,
-                ZlibCompressor,
                 Bz2Compressor,
+                CompressedQueue,
                 LzmaCompressor,
+                ZlibCompressor,
             )
 
             print("2. Quez compression statistics with different algorithms:")

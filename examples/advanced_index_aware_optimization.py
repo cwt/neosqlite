@@ -6,8 +6,9 @@ This example shows how NeoSQLite leverages existing indexes to optimize query pe
 by estimating query costs and selecting optimal execution paths.
 """
 
-import neosqlite
 import time
+
+import neosqlite
 
 
 def main():

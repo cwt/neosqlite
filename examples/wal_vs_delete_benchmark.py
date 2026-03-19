@@ -1,7 +1,8 @@
-import time
-import threading
 import os
 import sqlite3
+import threading
+import time
+
 from neosqlite import Connection
 
 DB_PATH = "benchmark_concurrency.db"

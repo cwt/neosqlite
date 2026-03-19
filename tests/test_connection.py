@@ -2,12 +2,14 @@
 Tests for neosqlite connection functionality and context manager error handling.
 """
 
-import pytest
 from unittest.mock import patch
+
+import pytest
+
 import neosqlite
 from neosqlite.collection.query_helper import (
-    set_force_fallback,
     get_force_fallback,
+    set_force_fallback,
 )
 
 

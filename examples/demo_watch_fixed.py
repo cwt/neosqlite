@@ -2,8 +2,9 @@
 """
 Demonstration of the watch() feature in neosqlite
 """
-from neosqlite import Connection
 import time
+
+from neosqlite import Connection
 
 
 def demonstrate_watch_feature():

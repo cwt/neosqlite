@@ -3,8 +3,9 @@ Python implementation of MongoDB $setWindowFields operators.
 """
 
 from __future__ import annotations
-from typing import Any, Dict, List, Tuple, TYPE_CHECKING
+
 from copy import deepcopy
+from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
 if TYPE_CHECKING:
     from .. import Collection

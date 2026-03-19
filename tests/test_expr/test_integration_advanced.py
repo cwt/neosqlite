@@ -6,6 +6,7 @@ multiple expression features across different stages.
 """
 
 import pytest
+
 import neosqlite
 from neosqlite.collection.query_helper import set_force_fallback
 

@@ -8,9 +8,10 @@ This example demonstrates:
 3. Performing text searches with improved language support
 """
 
-import neosqlite
-import tempfile
 import os
+import tempfile
+
+import neosqlite
 
 
 def example_with_custom_tokenizer():

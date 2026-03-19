@@ -6,8 +6,9 @@ This example shows how to use the AggregationCursor with quez for memory-efficie
 processing of large result sets.
 """
 
-import neosqlite
 import time
+
+import neosqlite
 
 
 def demonstrate_memory_constrained_processing():

@@ -4,8 +4,8 @@ Example showing how temporary table aggregation can handle complex pipelines
 that the current implementation cannot optimize.
 """
 
-import sys
 import os
+import sys
 
 # Add the neosqlite package to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

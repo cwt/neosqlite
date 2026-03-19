@@ -8,12 +8,14 @@ This module tests the new SQL tier optimization for aggregation pipelines:
 - Performance comparisons with Python fallback
 """
 
-import pytest
 import time
+
+import pytest
+
 from neosqlite.collection.query_helper import set_force_fallback
 from neosqlite.collection.sql_tier_aggregator import (
-    SQLTierAggregator,
     PipelineContext,
+    SQLTierAggregator,
 )
 
 
@@ -233,8 +235,8 @@ class TestSQLTierAggregator:
 
     def test_build_sort_sql(self, aggregator):
         """Test building SQL for $sort stage."""
-        from neosqlite.collection.sql_tier_aggregator import PipelineContext
         from neosqlite.collection.cursor import DESCENDING
+        from neosqlite.collection.sql_tier_aggregator import PipelineContext
 
         spec = {"salary": DESCENDING, "name": 1}
         context = PipelineContext()

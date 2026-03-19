@@ -1,15 +1,30 @@
 from __future__ import annotations
+
+import importlib.util
+
 from .binary import Binary
 from .bulk_operations import BulkOperationExecutor
 from .changestream import ChangeStream
 from .collection import Collection
+
+# Import cursor classes from collection module
+from .collection.aggregation_cursor import AggregationCursor
+from .collection.cursor import ASCENDING, DESCENDING, Cursor
+from .collection.raw_batch_cursor import RawBatchCursor
 from .connection import Connection
 from .exceptions import (
     CollectionInvalid,
     MalformedDocument,
     MalformedQueryException,
 )
-from .requests import InsertOne, UpdateOne, DeleteOne
+from .options import (
+    AutoVacuumMode,
+    CodecOptions,
+    ReadConcern,
+    ReadPreference,
+    WriteConcern,
+)
+from .requests import DeleteOne, InsertOne, UpdateOne
 from .results import (
     BulkWriteResult,
     DeleteResult,
@@ -17,26 +32,12 @@ from .results import (
     InsertOneResult,
     UpdateResult,
 )
-from .options import (
-    WriteConcern,
-    ReadPreference,
-    ReadConcern,
-    CodecOptions,
-    AutoVacuumMode,
-)
-
-# Import cursor classes from collection module
-from .collection.aggregation_cursor import AggregationCursor
-from .collection.cursor import Cursor, ASCENDING, DESCENDING
-from .collection.raw_batch_cursor import RawBatchCursor
-
-import importlib.util
 
 # GridFS support
 # Use importlib.util.find_spec to test for availability without triggering ruff F401
 gridfs_spec = importlib.util.find_spec(".gridfs", package=__package__)
 if gridfs_spec is not None:
-    from .gridfs import GridFSBucket, GridFS  # noqa: F401
+    from .gridfs import GridFS, GridFSBucket  # noqa: F401
 
     _HAS_GRIDFS = True
 else:

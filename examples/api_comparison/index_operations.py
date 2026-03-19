@@ -2,20 +2,23 @@
 
 import warnings
 
-from neosqlite import ASCENDING, DESCENDING
 from pymongo import (
     ASCENDING as MONGO_ASCENDING,
+)
+from pymongo import (
     DESCENDING as MONGO_DESCENDING,
 )
 from pymongo import IndexModel
+
 import neosqlite
+from neosqlite import ASCENDING, DESCENDING
 
 from .reporter import reporter
 from .timing import (
-    start_neo_timing,
+    end_mongo_timing,
     end_neo_timing,
     start_mongo_timing,
-    end_mongo_timing,
+    start_neo_timing,
 )
 from .utils import test_pymongo_connection
 

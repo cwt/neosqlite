@@ -3,8 +3,9 @@
 Simple test to check for potential deadlocks in quez integration
 """
 
-import neosqlite
 import time
+
+import neosqlite
 
 
 def test_for_deadlock():

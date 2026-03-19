@@ -3,9 +3,10 @@ Type correction utilities for NeoSQLite to handle automatic conversion
 between integer IDs and ObjectIds in queries.
 """
 
+from typing import Any, Dict
+
 from ..objectid import ObjectId
 from ..sql_utils import quote_table_name
-from typing import Any, Dict
 
 
 def normalize_id_query(query: Dict[str, Any]) -> Dict[str, Any]:

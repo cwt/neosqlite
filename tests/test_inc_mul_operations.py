@@ -3,6 +3,7 @@ Integration tests for $inc and $mul operations to ensure MongoDB-compatible beha
 """
 
 import pytest
+
 from neosqlite import Connection
 from neosqlite.exceptions import MalformedQueryException
 

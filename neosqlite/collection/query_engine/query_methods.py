@@ -2,23 +2,22 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List
 
 if TYPE_CHECKING:
     from ..client_session import ClientSession
 
 import json
 
-from .base import QueryEngineProtocol
-from ...sql_utils import quote_table_name
-from ..json_path_utils import parse_json_path
 from neosqlite.collection.json_helpers import (
     neosqlite_json_dumps,
     neosqlite_json_loads,
 )
 
-
+from ...sql_utils import quote_table_name
+from ..json_path_utils import parse_json_path
 from ..type_utils import validate_session
+from .base import QueryEngineProtocol
 
 
 class QueryMethodsMixin(QueryEngineProtocol):

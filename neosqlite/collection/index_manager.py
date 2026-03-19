@@ -1,14 +1,16 @@
+from typing import Any, Dict, List, Tuple, overload
+
+from typing_extensions import Literal
+
 from .._sqlite import sqlite3
-from ..sql_utils import quote_table_name, quote_identifier
+from ..sql_utils import quote_identifier, quote_table_name
 from .json_path_utils import parse_json_path
 from .jsonb_support import (
-    supports_jsonb,
-    supports_jsonb_each,
     _get_json_function_prefix,
     _get_json_tree_function,
+    supports_jsonb,
+    supports_jsonb_each,
 )
-from typing import Any, Dict, List, Tuple, overload
-from typing_extensions import Literal
 
 
 class IndexManager:

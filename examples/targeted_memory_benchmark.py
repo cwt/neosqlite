@@ -6,10 +6,11 @@ This benchmark focuses specifically on measuring the memory usage
 of aggregation result sets with and without quez.
 """
 
-import neosqlite
-import time
-import sys
 import gc
+import sys
+import time
+
+import neosqlite
 
 
 def get_size(obj, seen=None):

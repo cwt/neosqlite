@@ -7,9 +7,9 @@ and provide a single source of truth for type operations.
 """
 
 from __future__ import annotations
-from typing import Any
-import re
 
+import re
+from typing import Any
 
 # =============================================================================
 # Type Conversion Functions

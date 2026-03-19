@@ -1,9 +1,10 @@
 from __future__ import annotations
-from typing import Any, Dict, List, Iterator, TYPE_CHECKING
+
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List
 
 if TYPE_CHECKING:
-    from . import Collection
     from ..client_session import ClientSession
+    from . import Collection
 
 # Try to import quez, but make it optional
 try:

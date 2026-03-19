@@ -11,11 +11,12 @@ while being optimized for NeoSQLite's local-only architecture.
 """
 
 from __future__ import annotations
-from typing import Any, TYPE_CHECKING
+
 import os
 import random
 import threading
 import time
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     pass

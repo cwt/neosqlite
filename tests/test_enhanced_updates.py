@@ -3,10 +3,11 @@ Test cases for enhanced update operations with json_insert and json_replace supp
 """
 
 import pytest
+
 from neosqlite import Connection
 from neosqlite.collection.query_helper import (
-    set_force_fallback,
     get_force_fallback,
+    set_force_fallback,
 )
 
 

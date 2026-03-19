@@ -5,9 +5,9 @@ These tests aim to improve code coverage for the json_path_utils module.
 """
 
 from neosqlite.collection.json_path_utils import (
-    parse_json_path,
     build_json_extract_expression,
     build_jsonb_extract_expression,
+    parse_json_path,
 )
 
 

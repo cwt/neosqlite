@@ -4,9 +4,11 @@ Tests for $expr advanced math operators.
 Covers: $log, $log10, $exp
 """
 
-import pytest
 import math
 import warnings
+
+import pytest
+
 import neosqlite
 from neosqlite.collection.expr_evaluator import ExprEvaluator
 from neosqlite.collection.query_helper import set_force_fallback

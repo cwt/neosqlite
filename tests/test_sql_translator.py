@@ -2,16 +2,16 @@
 Tests for the SQL translator unified module.
 """
 
+from neosqlite.collection import sqlite3
+from neosqlite.collection.jsonb_support import supports_jsonb
 from neosqlite.collection.sql_translator_unified import (
-    _empty_result,
-    _text_search_fallback,
+    SQLClauseBuilder,
     SQLFieldAccessor,
     SQLOperatorTranslator,
-    SQLClauseBuilder,
     SQLTranslator,
+    _empty_result,
+    _text_search_fallback,
 )
-from neosqlite.collection.jsonb_support import supports_jsonb
-from neosqlite.collection import sqlite3
 
 
 def _get_expected_function_name():

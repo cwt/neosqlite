@@ -1,11 +1,13 @@
 from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List
+
 from .json_helpers import neosqlite_json_dumps
 from .json_path_utils import parse_json_path
-from typing import Any, Dict, Iterator, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from . import Collection
     from ..client_session import ClientSession
+    from . import Collection
 
 
 class RawBatchCursor:

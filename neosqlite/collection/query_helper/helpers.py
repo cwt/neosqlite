@@ -1,7 +1,8 @@
 """Helper functions for QueryHelper operations."""
 
-from ..type_correction import get_integer_id_for_oid
 from typing import Any
+
+from ..type_correction import get_integer_id_for_oid
 
 
 def _get_integer_id_for_oid(collection: Any, oid: Any) -> int:

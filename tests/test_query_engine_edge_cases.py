@@ -3,8 +3,9 @@ Test cases to improve coverage for query_engine.py
 """
 
 import pytest
+
 import neosqlite
-from neosqlite.requests import InsertOne, UpdateOne, DeleteOne
+from neosqlite.requests import DeleteOne, InsertOne, UpdateOne
 
 
 def test_query_engine_bulk_write_ordered():

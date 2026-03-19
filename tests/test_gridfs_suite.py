@@ -2,22 +2,27 @@
 Consolidated tests for GridFS functionality.
 """
 
-from neosqlite.gridfs import GridFS, GridFSBucket, NoFile, FileExists
-from neosqlite.gridfs.grid_file import GridIn, GridOut
-from neosqlite.gridfs.errors import (
-    CorruptGridFile,
-    FileExists as FileExistsError,
-    GridFSError,
-    NeoSQLiteError,
-    NoFile as NoFileError,
-    PyMongoError,
-)
+import hashlib
 import io
 import json
-import pytest
-import hashlib
 import time
 
+import pytest
+
+from neosqlite.gridfs import FileExists, GridFS, GridFSBucket, NoFile
+from neosqlite.gridfs.errors import (
+    CorruptGridFile,
+    GridFSError,
+    NeoSQLiteError,
+    PyMongoError,
+)
+from neosqlite.gridfs.errors import (
+    FileExists as FileExistsError,
+)
+from neosqlite.gridfs.errors import (
+    NoFile as NoFileError,
+)
+from neosqlite.gridfs.grid_file import GridIn, GridOut
 
 # ================================
 # Fixtures

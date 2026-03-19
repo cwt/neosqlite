@@ -2,8 +2,8 @@
 Python implementation of MongoDB $graphLookup aggregation stage.
 """
 
-from typing import Any, Dict, List, Set
 from copy import deepcopy
+from typing import Any, Dict, List, Set
 
 
 def process_graph_lookup(

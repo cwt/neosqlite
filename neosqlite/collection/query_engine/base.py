@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, TYPE_CHECKING, Protocol, List
+from typing import TYPE_CHECKING, Any, Dict, List, Protocol
 
 if TYPE_CHECKING:
+    from ..client_session import ClientSession
     from ..cursor import Cursor
     from ..query_helper import QueryHelper
     from ..sql_translator_unified import SQLTranslator
-    from ..client_session import ClientSession
 
 
 class QueryEngineProtocol(Protocol):

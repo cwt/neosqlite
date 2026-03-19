@@ -8,10 +8,11 @@ This is designed as a mixin class to be composed into ExprEvaluator.
 """
 
 from __future__ import annotations
-from typing import TYPE_CHECKING, Any, Dict, List, Tuple
-import warnings
 
-from ..json_path_utils import parse_json_path, build_json_extract_expression
+import warnings
+from typing import TYPE_CHECKING, Any, Dict, List, Tuple
+
+from ..json_path_utils import build_json_extract_expression, parse_json_path
 
 if TYPE_CHECKING:
     # Avoid circular import by using TYPE_CHECKING

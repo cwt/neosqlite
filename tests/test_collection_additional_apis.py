@@ -11,6 +11,7 @@ This module tests the following Collection methods:
 """
 
 from pytest import raises
+
 import neosqlite
 
 
@@ -247,7 +248,7 @@ class TestInitializeOrderedBulkOp:
 
     def test_ordered_bulk_operation_execution(self, collection):
         """Test executing an ordered bulk operation."""
-        from neosqlite import InsertOne, UpdateOne, DeleteOne
+        from neosqlite import DeleteOne, InsertOne, UpdateOne
 
         bulk = collection.initialize_ordered_bulk_op()
 
@@ -325,7 +326,7 @@ class TestInitializeUnorderedBulkOp:
 
     def test_unordered_bulk_operation_execution(self, collection):
         """Test executing an unordered bulk operation."""
-        from neosqlite import InsertOne, UpdateOne, DeleteOne
+        from neosqlite import DeleteOne, InsertOne, UpdateOne
 
         bulk = collection.initialize_unordered_bulk_op()
 
@@ -377,7 +378,7 @@ class TestInitializeUnorderedBulkOp:
 
     def test_unordered_bulk_with_mixed_operations(self, collection):
         """Test unordered bulk with mixed operation types."""
-        from neosqlite import InsertOne, UpdateOne, DeleteOne
+        from neosqlite import DeleteOne, InsertOne, UpdateOne
 
         collection.insert_many(
             [
@@ -647,8 +648,9 @@ class TestApiIntegration:
 
     def test_bulk_then_aggregate(self, collection):
         """Test bulk operations followed by aggregation."""
-        from neosqlite import InsertOne
         import json
+
+        from neosqlite import InsertOne
 
         # Use bulk to insert data
         bulk = collection.initialize_ordered_bulk_op()

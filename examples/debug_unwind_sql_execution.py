@@ -6,10 +6,11 @@ This script adds debugging information to track which execution path is being us
 for the three cases with performance gain less than 1.5x.
 """
 
-import neosqlite
 import time
+from typing import Any, Callable, Dict, List
+
+import neosqlite
 from neosqlite.collection import query_helper
-from typing import List, Dict, Any, Callable
 
 # Add debugging to track SQL execution
 original_build_unwind_query: Callable | None = None

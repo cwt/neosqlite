@@ -15,13 +15,14 @@ All tests follow the tier comparison pattern:
 """
 
 import pytest
+
 import neosqlite
+from neosqlite.collection.query_helper.utils import (
+    get_force_fallback,
+    set_force_fallback,
+)
 from neosqlite.collection.temporary_table_aggregation import (
     can_process_with_temporary_tables,
-)
-from neosqlite.collection.query_helper.utils import (
-    set_force_fallback,
-    get_force_fallback,
 )
 
 

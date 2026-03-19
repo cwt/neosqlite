@@ -4,8 +4,10 @@ Tests for $expr trigonometric and angle conversion operators.
 Covers: $sin, $cos, $tan, $asin, $acos, $atan, $atan2, $degreesToRadians, $radiansToDegrees
 """
 
-import pytest
 import math
+
+import pytest
+
 import neosqlite
 from neosqlite.collection.query_helper import set_force_fallback
 

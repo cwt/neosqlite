@@ -3,10 +3,11 @@ Test cases for enhanced aggregation with json_group_array and json_group_object.
 """
 
 import pytest
+
 from neosqlite import Connection
 from neosqlite.collection.query_helper import (
-    set_force_fallback,
     get_force_fallback,
+    set_force_fallback,
 )
 
 

@@ -8,14 +8,14 @@ building SQL queries from MongoDB-like query specifications.
 import re
 from typing import TYPE_CHECKING, Any, Dict, List
 
-from ...sql_utils import quote_table_name
 from ... import query_operators
 from ...exceptions import MalformedQueryException
-from ..type_correction import normalize_id_query_for_db
+from ...sql_utils import quote_table_name
+from ..expr_evaluator import ExprEvaluator
 from ..json_helpers import neosqlite_json_dumps_for_sql
 from ..json_path_utils import parse_json_path
 from ..text_search import unified_text_search
-from ..expr_evaluator import ExprEvaluator
+from ..type_correction import normalize_id_query_for_db
 
 if TYPE_CHECKING:
     from .. import Collection

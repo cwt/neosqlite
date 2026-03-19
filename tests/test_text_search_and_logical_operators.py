@@ -2,13 +2,14 @@
 Consolidated tests for text search and logical operators functionality.
 """
 
-from unittest.mock import patch, MagicMock
-import pytest
 import warnings
+from unittest.mock import MagicMock, patch
+
+import pytest
+
 import neosqlite
 from neosqlite import Connection
 from neosqlite.query_operators import _contains
-
 
 # ================================
 # Text Search Tests

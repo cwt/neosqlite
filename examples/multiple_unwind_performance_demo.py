@@ -2,8 +2,9 @@
 """
 Performance comparison for enhanced multiple $unwind stages
 """
-import neosqlite
 import time
+
+import neosqlite
 
 
 def main():

@@ -6,10 +6,11 @@ This benchmark compares memory usage between normal aggregation processing
 and quez-enabled memory-constrained processing.
 """
 
-import neosqlite
+import gc
 import time
 import tracemalloc
-import gc
+
+import neosqlite
 
 
 def create_large_dataset(collection, num_docs=10000):

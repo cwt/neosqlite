@@ -1,12 +1,19 @@
-from ..jsonb_support import (
-    supports_jsonb,
-    supports_jsonb_each,
-    _get_json_each_function,
-)
 from typing import Any, Dict, List
 
 # Import sqlite3 for type hints and potential direct usage
 from ..._sqlite import sqlite3 as sqlite3  # noqa: F401
+from ..jsonb_support import (
+    _get_json_each_function,
+    supports_jsonb,
+    supports_jsonb_each,
+)
+
+# Import the centralized ID normalization function
+from ..type_correction import normalize_id_query_for_db
+from .aggregation import AggregationMixin
+
+# Import mixin modules
+from .crud_operations import CRUDOperationsMixin
 
 # Import helper functions
 from .helpers import (
@@ -14,28 +21,33 @@ from .helpers import (
     _get_json_error_position,
     _validate_json_document,
 )
-
-# Import the centralized ID normalization function
-from ..type_correction import normalize_id_query_for_db
+from .query_builder import QueryBuilderMixin
+from .query_optimizer import QueryOptimizerMixin
+from .translation_cache import TranslationCache  # noqa: F401
+from .update_operations import UpdateOperationsMixin
 
 # Import utility functions
 from .utils import (
     _convert_bytes_to_binary as _convert_bytes_to_binary,
+)
+from .utils import (
     _get_json_function as _get_json_function,
+)
+from .utils import (
     _get_json_function_prefix,
+)
+from .utils import (
     _is_numeric_value as _is_numeric_value,
+)
+from .utils import (
     _validate_inc_mul_field_value as _validate_inc_mul_field_value,
+)
+from .utils import (
     get_force_fallback as get_force_fallback,
+)
+from .utils import (
     set_force_fallback as set_force_fallback,
 )
-
-# Import mixin modules
-from .crud_operations import CRUDOperationsMixin
-from .update_operations import UpdateOperationsMixin
-from .query_builder import QueryBuilderMixin
-from .aggregation import AggregationMixin
-from .query_optimizer import QueryOptimizerMixin
-from .translation_cache import TranslationCache  # noqa: F401
 
 
 class QueryHelper(

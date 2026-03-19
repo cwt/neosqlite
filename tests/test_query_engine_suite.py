@@ -2,41 +2,42 @@
 Consolidated tests for query engine functionality and fallback mechanisms.
 """
 
-import pytest
-import neosqlite
-import time
 import json
+import time
 from operator import itemgetter
 from unittest.mock import MagicMock
+
+import pytest
+
+import neosqlite
 from neosqlite import Connection
-from neosqlite.query_operators import (
-    _eq,
-    _gt,
-    _lt,
-    _gte,
-    _lte,
-    _all,
-    _in,
-    _ne,
-    _nin,
-    _mod,
-    _exists,
-    _regex,
-    _elemMatch,
-    _size,
-    _contains,
-)
-from neosqlite.exceptions import MalformedQueryException
-from neosqlite.collection.query_helper import QueryHelper
-from neosqlite.collection.query_helper import (
-    set_force_fallback,
-    get_force_fallback,
-)
 from neosqlite.collection.jsonb_support import supports_jsonb
+from neosqlite.collection.query_helper import (
+    QueryHelper,
+    get_force_fallback,
+    set_force_fallback,
+)
 from neosqlite.collection.temporary_table_aggregation import (
     execute_2nd_tier_aggregation,
 )
-
+from neosqlite.exceptions import MalformedQueryException
+from neosqlite.query_operators import (
+    _all,
+    _contains,
+    _elemMatch,
+    _eq,
+    _exists,
+    _gt,
+    _gte,
+    _in,
+    _lt,
+    _lte,
+    _mod,
+    _ne,
+    _nin,
+    _regex,
+    _size,
+)
 
 # ================================
 # Mock Classes for Testing
@@ -512,8 +513,8 @@ def test_query_helper_can_use_sql_updates_edge_cases():
 
 def test_convert_bytes_to_binary():
     """Test the _convert_bytes_to_binary function"""
-    from neosqlite.collection.query_helper import _convert_bytes_to_binary
     from neosqlite import Binary
+    from neosqlite.collection.query_helper import _convert_bytes_to_binary
 
     # Test with bytes object
     result = _convert_bytes_to_binary(b"test data")
@@ -2825,8 +2826,8 @@ def test_three_tier_json_error_position_architecture():
 def test_force_fallback_mechanism():
     """Test the force fallback mechanism for benchmarking."""
     from neosqlite.collection.query_helper import (
-        set_force_fallback,
         get_force_fallback,
+        set_force_fallback,
     )
 
     # Test that we can set and get the force fallback flag

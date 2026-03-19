@@ -5,13 +5,13 @@ This module contains the UpdateOperationsMixin class which provides
 SQL-based and Python-based update operations for NeoSQLite collections.
 """
 
-from typing import TYPE_CHECKING, Any, Dict, List, Set, Tuple
-
-from ...sql_utils import quote_table_name
-from ...binary import Binary
-from ...exceptions import MalformedQueryException
 from copy import deepcopy
 from datetime import datetime
+from typing import TYPE_CHECKING, Any, Dict, List, Set, Tuple
+
+from ...binary import Binary
+from ...exceptions import MalformedQueryException
+from ...sql_utils import quote_table_name
 from ..json_helpers import (
     neosqlite_json_dumps,
     neosqlite_json_loads,
@@ -20,19 +20,19 @@ from ..json_path_utils import (
     parse_json_path,
 )
 
-# Import utility functions
-from .utils import (
-    _convert_bytes_to_binary,
-    _get_json_function,
-    _validate_inc_mul_field_value,
-    _supports_relative_json_indexing,
-    get_force_fallback,
-)
-
 # Import positional update functions
 from .positional_update import (
     _apply_positional_update,
     _set_nested_field,
+)
+
+# Import utility functions
+from .utils import (
+    _convert_bytes_to_binary,
+    _get_json_function,
+    _supports_relative_json_indexing,
+    _validate_inc_mul_field_value,
+    get_force_fallback,
 )
 
 # Import helper functions

@@ -3,8 +3,8 @@ Integration example showing how temporary table aggregation can be integrated
 into the existing NeoSQLite QueryEngine.
 """
 
-import sys
 import os
+import sys
 
 # Add the neosqlite package to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

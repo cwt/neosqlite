@@ -6,6 +6,7 @@ using aggregation expressions.
 """
 
 import pytest
+
 import neosqlite
 from neosqlite.collection.query_helper import set_force_fallback
 

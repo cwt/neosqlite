@@ -5,6 +5,7 @@ Verifies that invalid expressions are handled gracefully with proper fallback to
 """
 
 import pytest
+
 from neosqlite.collection.expr_evaluator import ExprEvaluator
 
 

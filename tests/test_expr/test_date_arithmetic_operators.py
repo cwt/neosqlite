@@ -4,8 +4,10 @@ Tests for $expr date arithmetic operators.
 Covers: $dateAdd, $dateSubtract, $dateDiff
 """
 
-import pytest
 from datetime import datetime, timezone
+
+import pytest
+
 import neosqlite
 from neosqlite.collection.expr_evaluator import ExprEvaluator
 

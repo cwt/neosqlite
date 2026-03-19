@@ -2,10 +2,10 @@
 Enhanced text search functionality for NeoSQLite with international character support.
 """
 
-from functools import lru_cache
-from typing import Any, Dict
 import re
 import unicodedata
+from functools import lru_cache
+from typing import Any, Dict
 
 
 class TextSearchOptimizer:

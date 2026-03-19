@@ -6,8 +6,9 @@ This benchmark demonstrates the actual compression statistics from quez
 by accessing the queue.stats property directly.
 """
 
-import neosqlite
 import time
+
+import neosqlite
 
 
 def create_large_dataset(collection, num_docs=5000):
@@ -56,10 +57,10 @@ def demonstrate_quez_compression_stats(collection):
     # First, let's manually create a quez queue to show compression
     try:
         from quez import (
-            CompressedQueue,
-            ZlibCompressor,
             Bz2Compressor,
+            CompressedQueue,
             LzmaCompressor,
+            ZlibCompressor,
         )
 
         print("1. Manual quez compression demonstration:")

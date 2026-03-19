@@ -2,10 +2,12 @@
 Tests for collection operations.
 """
 
-import pytest
-from pytest import raises
 from typing import Tuple, Type
 from unittest.mock import MagicMock
+
+import pytest
+from pytest import raises
+
 import neosqlite
 from neosqlite.collection import sqlite3
 
@@ -32,9 +34,8 @@ except ImportError:
     OperationalError = (sqlite3.OperationalError,)
     Error = (sqlite3.Error,)
 
-from neosqlite import InsertOne, UpdateOne, DeleteOne
-from neosqlite import MalformedDocument
-from neosqlite.query_operators import _eq, _gt, _lt, _lte, _in
+from neosqlite import DeleteOne, InsertOne, MalformedDocument, UpdateOne
+from neosqlite.query_operators import _eq, _gt, _in, _lt, _lte
 
 
 def test_rename_collection_already_exists():
@@ -241,8 +242,8 @@ def test_update_with_pull(collection):
 def test_update_with_pull_kill_switch_comparison(collection):
     """Test $pull returns same results with/without kill switch."""
     from neosqlite.collection.query_helper import (
-        set_force_fallback,
         get_force_fallback,
+        set_force_fallback,
     )
 
     collection.insert_one({"_id": 1, "values": [1, 2, 3, 1, 2, 1]})
@@ -271,8 +272,8 @@ def test_update_with_pull_kill_switch_comparison(collection):
 def test_update_with_currentDate_kill_switch_comparison(collection):
     """Test $currentDate returns same results with/without kill switch."""
     from neosqlite.collection.query_helper import (
-        set_force_fallback,
         get_force_fallback,
+        set_force_fallback,
     )
 
     collection.insert_one({"_id": 1, "name": "test"})
@@ -308,8 +309,8 @@ def test_update_with_currentDate_kill_switch_comparison(collection):
 def test_update_with_rename_kill_switch_comparison(collection):
     """Test $rename returns same results with/without kill switch."""
     from neosqlite.collection.query_helper import (
-        set_force_fallback,
         get_force_fallback,
+        set_force_fallback,
     )
 
     collection.insert_one({"_id": 1, "foo": "bar", "a": 1})
@@ -342,8 +343,8 @@ def test_update_with_rename_kill_switch_comparison(collection):
 def test_update_with_addToSet_each_kill_switch_comparison(collection):
     """Test $addToSet with $each returns same results with/without kill switch."""
     from neosqlite.collection.query_helper import (
-        set_force_fallback,
         get_force_fallback,
+        set_force_fallback,
     )
 
     collection.insert_one({"_id": 1, "tags": ["existing"]})
@@ -374,8 +375,8 @@ def test_update_with_addToSet_each_kill_switch_comparison(collection):
 def test_update_with_inc_kill_switch_comparison(collection):
     """Test $inc returns same results with/without kill switch."""
     from neosqlite.collection.query_helper import (
-        set_force_fallback,
         get_force_fallback,
+        set_force_fallback,
     )
 
     collection.insert_one({"_id": 1, "value": 10})
@@ -404,8 +405,8 @@ def test_update_with_inc_kill_switch_comparison(collection):
 def test_update_with_mul_kill_switch_comparison(collection):
     """Test $mul returns same results with/without kill switch."""
     from neosqlite.collection.query_helper import (
-        set_force_fallback,
         get_force_fallback,
+        set_force_fallback,
     )
 
     collection.insert_one({"_id": 1, "value": 5})
@@ -434,8 +435,8 @@ def test_update_with_mul_kill_switch_comparison(collection):
 def test_update_with_min_kill_switch_comparison(collection):
     """Test $min returns same results with/without kill switch."""
     from neosqlite.collection.query_helper import (
-        set_force_fallback,
         get_force_fallback,
+        set_force_fallback,
     )
 
     collection.insert_one({"_id": 1, "value": 10})
@@ -464,8 +465,8 @@ def test_update_with_min_kill_switch_comparison(collection):
 def test_update_with_max_kill_switch_comparison(collection):
     """Test $max returns same results with/without kill switch."""
     from neosqlite.collection.query_helper import (
-        set_force_fallback,
         get_force_fallback,
+        set_force_fallback,
     )
 
     collection.insert_one({"_id": 1, "value": 5})
@@ -494,8 +495,8 @@ def test_update_with_max_kill_switch_comparison(collection):
 def test_update_with_setOnInsert_kill_switch_comparison(collection):
     """Test $setOnInsert returns same results with/without kill switch."""
     from neosqlite.collection.query_helper import (
-        set_force_fallback,
         get_force_fallback,
+        set_force_fallback,
     )
 
     collection.insert_one({"_id": 1, "name": "test"})
@@ -523,8 +524,8 @@ def test_update_with_setOnInsert_kill_switch_comparison(collection):
 def test_update_with_push_slice_kill_switch_comparison(collection):
     """Test $push with $slice returns same results with/without kill switch."""
     from neosqlite.collection.query_helper import (
-        set_force_fallback,
         get_force_fallback,
+        set_force_fallback,
     )
 
     collection.insert_one({"_id": 1, "tags": ["a", "b"]})

@@ -3,8 +3,9 @@
 Test the specific scenario that might have caused the freeze
 """
 
-import neosqlite
 import time
+
+import neosqlite
 
 
 def test_large_processing_scenario():

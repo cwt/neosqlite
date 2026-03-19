@@ -4,8 +4,8 @@ Debug/test file for temporary table aggregation pipeline approach.
 This file tests the concept of using temporary tables to process complex aggregation pipelines.
 """
 
-import sys
 import os
+import sys
 import uuid
 from contextlib import contextmanager
 

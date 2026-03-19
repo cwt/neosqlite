@@ -9,6 +9,7 @@ SQL to be reused across multiple query executions with different parameters.
 """
 
 from __future__ import annotations
+
 from collections import OrderedDict
 from operator import itemgetter
 from typing import Any

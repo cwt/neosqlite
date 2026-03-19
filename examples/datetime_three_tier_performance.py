@@ -7,6 +7,7 @@ optimal execution tier based on query complexity.
 """
 
 import time
+
 from neosqlite import Connection
 from neosqlite.collection.query_helper import (
     set_force_fallback,

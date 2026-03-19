@@ -1,10 +1,11 @@
 from __future__ import annotations
-from typing import Any, Dict, List, TYPE_CHECKING
+
 import time
+from typing import TYPE_CHECKING, Any, Dict, List
 
 if TYPE_CHECKING:
-    from .collection import Collection
     from .client_session import ClientSession
+    from .collection import Collection
 
 
 class ChangeStream:

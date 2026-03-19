@@ -5,6 +5,7 @@ Covers: TempTableExprEvaluator class in expr_temp_table.py
 """
 
 import pytest
+
 import neosqlite
 from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
 
