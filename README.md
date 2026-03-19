@@ -36,75 +36,75 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 - **Benchmark Infrastructure**: High-precision timing with Markdown/CSV report generation for performance analysis.
 - **SQL Translation Caching**: Intelligent caching for aggregation pipelines and `$expr` queries with 10-30% performance gains for repeated queries.
 - **Tier Change Tracking**: Debugging API to detect unexpected SQL-to-Python fallbacks during query execution.
+- **AutoVacuum Support**: Configure database auto-vacuum modes (NONE, FULL, INCREMENTAL) with safe migration for existing databases.
+- **MongoDB compact Command**: Reclaim disk space with threshold-based incremental vacuum or full VACUUM.
+- **dbStats Command**: MongoDB-compatible database statistics with accurate index sizes.
+- **Maintenance Commands**: WAL checkpoint, cache size, and busy timeout control.
 
 See [CHANGELOG.md](CHANGELOG.md) for the latest features and improvements.
 
-## Latest Release: v1.11.0
+## Latest Release: v1.12.0
 
-NeoSQLite v1.11.0 introduces **SQL Translation Caching** for aggregation pipelines and `$expr` queries, delivering **10-30% performance improvements** for repeated query patterns such as dashboard refreshes, API endpoints, and periodic reports.
+NeoSQLite v1.12.0 introduces **comprehensive database maintenance capabilities** including AutoVacuum support with safe migration, MongoDB-compatible `compact` and `dbStats` commands, and additional SQLite-specific maintenance commands.
 
 ### Key Highlights
 
-**SQL Translation Caching**:
-- **Parameterized SQL Templates**: Cache SQL with `?` placeholders, reuse for different values (e.g., `$sample`, `$limit`, `$skip`).
-- **Configuration**: Enabled by default (100 entries), configurable via `Connection(translation_cache=...)`, set to `0` to disable.
-- **Debug API**: `get_cache_stats()`, `dump_cache()`, `clear_cache()` for performance monitoring.
-- **Performance**: 10-30% faster for repeated queries, up to 50-60% for dashboards and periodic reports.
+**AutoVacuum with Safe Migration**:
+- **AutoVacuumMode Class**: Configure NONE, FULL, or INCREMENTAL modes at connection time
+- **Opt-in Migration**: Change auto_vacuum on existing databases via `AUTOVACUUM_MIGRATION=1`
+- **Safety First**: Full backup, atomic replacement, and rollback on error
 
-**Tier Change Tracking Callbacks**:
-- **Debugging Tool**: Monitor query execution tiers and detect unexpected SQL-to-Python fallbacks.
-- **Callback API**: `add_tier_change_callback(callback)` to track tier changes during aggregation.
-- **Use Case**: Identify performance issues and cache bugs in production workloads.
+**MongoDB compact Command**:
+- **Default Behavior**: 20MB threshold with incremental vacuum (MongoDB-compatible)
+- **Custom Threshold**: `freeSpaceTargetMB=N` for configurable threshold and batch size
+- **Full VACUUM**: `freeSpaceTargetMB=0` runs full VACUUM instead of incremental
 
-**Temp Table Cleanup**:
-- **Automatic Resource Management**: Cursor `close()` and `__del__()` ensure temp tables are dropped after Tier-2 `$expr` queries.
-- **Prevents Leaks**: Cleanup chain from Connection to TempTableExprEvaluator.
+**dbStats Command**:
+- **MongoDB-Compatible**: Returns collections, objects, dataSize, storageSize, indexSize, totalSize, etc.
+- **Accurate Index Sizes**: Uses SQLite's `dbstat` virtual table instead of estimates
 
-**MongoDB-Compatible Aggregate Command**:
-- **New API**: `conn.command("aggregate", "collection", pipeline=[...], explain=True)` matches MongoDB's command style.
-- **Removed**: `AggregationCursor.explain()` (use `command()` API for 100% MongoDB compatibility).
+**Maintenance Commands**:
+- **`wal_checkpoint`**: WAL checkpoint control (PASSIVE, FULL, TRUNCATE modes)
+- **`cache_size`**: Get/set SQLite page cache size
+- **`busy_timeout`**: Configure lock wait duration in milliseconds
 
 **100% PyMongo API Compatibility** - Maintains full API coverage:
-- 375 API tests: 360 passed, 15 skipped, 0 failed
-- 2,323 unit tests (2,318 passed, 5 xfailed, 0 failed) with 82% code coverage
+- 376 API tests: 361 passed, 15 skipped, 0 failed
+- 2,409 unit tests (2,404 passed, 5 xfailed, 0 failed) with 82% code coverage
 
-**Bug Fixes** (performance only, not correctness):
-- Nested field path extraction for `$profile.age` queries
-- `$bucket` boundary parameter extraction
-- `$count` parameter handling
-- `$facet` type error handling
+**Bug Fixes**:
+- ok return values changed from `1.0` (float) to `1` (int) for MongoDB compatibility
+- dbStats now uses dbstat virtual table for accurate index sizes
 
-**Important**: v1.10.1 users always received **100% accurate results** — bugs caused slower execution (Python fallback), not incorrect data.
-
-For more details, see [documents/releases/v1.11.0.md](documents/releases/v1.11.0.md) and [documents/TRANSLATION_CACHE.md](documents/TRANSLATION_CACHE.md).
+For more details, see [documents/releases/v1.12.0.md](documents/releases/v1.12.0.md) and [documents/DATABASE_MAINTENANCE.md](documents/DATABASE_MAINTENANCE.md).
 
 ## PyMongo Compatibility Tests
 
 NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-compatible behavior. Our automated test suite covers all major API categories:
 
-### Test Results (v1.10.0)
+### Test Results (v1.12.0)
 
 #### Unit Tests
 
 | Metric | Result |
 |--------|--------|
-| **Total Tests** | 2,323 |
-| **Passed** | 2,318 |
+| **Total Tests** | 2,409 |
+| **Passed** | 2,404 |
 | **XFailed** | 5 |
 | **Failed** | 0 |
 | **Code Coverage** | 82% |
 
 #### API Comparison Tests
 
-| Metric | v1.9.0 | v1.9.1 | v1.9.2 | v1.10.0 | **v1.11.0** |
-|--------|--------|--------|--------|---------|-------------|
-| **Total Tests** | 373 | 369 | 371 | 375 | **375** |
-| **Passed** | 362 | 358 | 359 | 360 | **360** |
-| **Skipped** | 11 | 11 | 12 | 15 | **15** |
-| **Failed** | 0 | 0 | 0 | 0 | **0** |
-| **Compatibility** | 100% | 100% | 100% | 100% | **100%** |
+| Metric | v1.10.0 | v1.11.0 | **v1.12.0** |
+|--------|---------|---------|-------------|
+| **Total Tests** | 375 | 375 | **376** |
+| **Passed** | 360 | 360 | **361** |
+| **Skipped** | 15 | 15 | **15** |
+| **Failed** | 0 | 0 | **0** |
+| **Compatibility** | 100% | 100% | **100%** |
 
-**Skipped Tests Note**: The 11 skipped tests are due to architectural differences or environment limitations, not missing implementations:
+**Skipped Tests Note**: The 15 skipped tests are due to architectural differences or environment limitations, not missing implementations:
 
 > **Important Note on Change Streams & Transactions**:
 > The `watch()` method and multi-document transactions are **fully implemented** in NeoSQLite using native SQLite triggers and `ClientSession`. They are only skipped in the automated comparison tests because MongoDB requires a replica set for these features, which is not available in the single-node test environment.
@@ -147,9 +147,14 @@ To run the PyMongo compatibility tests, install PyMongo first and ensure that ei
 
 For more details, see the [`examples/api_comparison/`](examples/api_comparison/) package and [`examples/api_comparison/README.md`](examples/api_comparison/README.md).
 
-## Performance Benchmarks
+## Improvements
 
-NeoSQLite includes comprehensive benchmarks demonstrating the performance benefits of its SQL optimizations:
+NeoSQLite includes comprehensive benchmarks demonstrating how its progressive optimizations improve both runtime performance and database maintenance.
+
+**v1.12.0 Maintenance Improvements**:
+- **Incremental VACUUM**: Non-blocking vacuum operations via `compact` command with configurable batch sizes
+- **Accurate Statistics**: dbStats uses dbstat virtual table for precise index sizing
+- **SQLite Tuning**: `cache_size` and `busy_timeout` commands for performance tuning
 
 **v1.11.0 Performance Improvements**:
 - **SQL Translation Caching**: 10-30% faster for repeated queries, up to 50-60% for dashboards and periodic reports.
@@ -161,12 +166,6 @@ NeoSQLite includes comprehensive benchmarks demonstrating the performance benefi
 - **100% API Compatibility**: All PyMongo operations available with 375 tests
 - **update_one Fast Path**: Reduces 2-3 SQL round-trips to 1 (2-3x speedup)
 - **SQL-Tier Expansions**: $bucketAuto, $lookup pipeline, $densify, $push $position
-
-**v1.9.2 Performance Improvements**:
-- **SQL-Tier Aggregation Expansion**: 10+ new stages ($bucket, $redact, $lookup, etc.) with 15-50x speedup
-- **Update Operator Optimization**: $pop, $push, $addToSet with 5-20x speedup via Tier-2 SQL paths
-- **High-Precision Timing**: Surgical benchmark infrastructure excluding setup/reset overhead
-- **40+ Benchmark Modules**: Refactored for consistent, accurate performance measurement
 
 See [`documents/AGGREGATION_PIPELINE_OPTIMIZATION.md`](documents/AGGREGATION_PIPELINE_OPTIMIZATION.md) for complete architecture details, operator support matrix, and performance benchmarks (10-100x speedup).
 

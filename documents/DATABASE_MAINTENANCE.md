@@ -290,7 +290,7 @@ How it works:
 NeoSQLite implements the MongoDB `compact` command for API compatibility:
 
 ```python
-# Compact without options (MongoDB default behavior)
+# Compact with default threshold (20MB) - uses incremental vacuum
 result = conn.command("compact", "collection_name")
 # Returns: {'bytesFreed': 12345, 'ok': 1}
 
@@ -298,9 +298,13 @@ result = conn.command("compact", "collection_name")
 result = conn.command("compact", "collection_name", dryRun=True)
 # Returns: {'estimatedBytesFreed': 12345, 'ok': 1}
 
-# With threshold (NeoSQLite extension)
-result = conn.command("compact", "collection_name", freeSpaceTargetMB=1)
-# Only runs if free space >= 1MB
+# With custom threshold - uses incremental vacuum in batches
+result = conn.command("compact", "collection_name", freeSpaceTargetMB=10)
+# Only runs if free space >= 10MB, uses incremental vacuum with 10MB batches
+
+# Full vacuum (no incremental)
+result = conn.command("compact", "collection_name", freeSpaceTargetMB=0)
+# Runs full VACUUM
 ```
 
 ### MongoDB → SQLite Mapping
@@ -327,7 +331,7 @@ result = conn.command("compact", "collection_name", freeSpaceTargetMB=1)
 
 ## freeSpaceTargetMB Explained
 
-NeoSQLite extends MongoDB's `freeSpaceTargetMB` parameter to serve **two purposes**:
+NeoSQLite extends MongoDB's `freeSpaceTargetMB` parameter to serve **three purposes**:
 
 ### 1. Threshold (MongoDB behavior)
 
@@ -339,33 +343,42 @@ result = conn.command("compact", "collection", freeSpaceTargetMB=20)
 # If free space < 20MB: {'bytesFreed': 0, 'ok': 1}
 ```
 
+This is incremental VACUUM.
+
 ### 2. Batch Size (NeoSQLite extension)
 
-When running incremental vacuum, use this as the batch size:
+This value also used as the batch size:
 
 ```python
 # freeSpaceTargetMB=1 means:
 #   - Threshold: only run if free >= 1MB
 #   - Batch: vacuum 1MB worth of pages per iteration
 
-result = conn.command("compact", "collection", freeSpaceTargetMB=1)
-# Internally: loops incremental_vacuum(256) until all free pages reclaimed
+result = conn.command("compact", "collection", freeSpaceTargetMB=10)
+# Internally: loops incremental_vacuum() with 10MB batches until all free pages reclaimed
+```
+
+### 3. Full VACUUM
+
+If set `freeSpaceTargetMB=0`, VACUUM runs in full mode.
+
+```python
+result = conn.command("compact", "collection", freeSpaceTargetMB=0)
+# Internally: db.execute("VACUUM")
 ```
 
 ### Behavior Matrix
 
-| Scenario | Behavior |
-|----------|----------|
-| No `freeSpaceTargetMB` | Full VACUUM (all-or-nothing, like MongoDB) |
-| `freeSpaceTargetMB=20` (default) | Only runs if free >= 20MB |
-| `freeSpaceTargetMB=1` | Runs if free >= 1MB, uses incremental vacuum in 1MB batches |
-| `freeSpaceTargetMB=0` | Always runs (threshold is 0) |
+| Value | Behavior |
+|-------|----------|
+| Not specified | Incremental vacuum with 20MB threshold and batch size (MongoDB default) |
+| `freeSpaceTargetMB=10` | Incremental vacuum with 10MB threshold and batch size |
+| `freeSpaceTargetMB=0` | Full VACUUM |
 
 ### Why Extend?
 
-- **MongoDB compat**: Default 20MB threshold matches MongoDB behavior
-- **Flexibility**: Users can choose threshold + batch size in one parameter
-- **Performance**: Incremental vacuum avoids long locks and 2x disk space
+- **MongoDB compatibility**: Default 20MB threshold matches MongoDB behavior
+- **SQLite performance**: SQLite incremental VACUUM is lightweight and non-blocking
 
 ---
 
@@ -643,7 +656,7 @@ result = conn.command("vacuum")
 ### Command: compact
 
 ```python
-# Full compact
+# Default threshold (20MB) with incremental vacuum
 result = conn.command("compact", "collection_name")
 # Returns: {'bytesFreed': <bytes>, 'ok': 1}
 
@@ -651,8 +664,12 @@ result = conn.command("compact", "collection_name")
 result = conn.command("compact", "collection_name", dryRun=True)
 # Returns: {'estimatedBytesFreed': <bytes>, 'ok': 1}
 
-# With threshold and incremental
-result = conn.command("compact", "collection_name", freeSpaceTargetMB=1)
+# Custom threshold with incremental vacuum
+result = conn.command("compact", "collection_name", freeSpaceTargetMB=10)
+# Returns: {'bytesFreed': <bytes>, 'ok': 1}
+
+# Full vacuum
+result = conn.command("compact", "collection_name", freeSpaceTargetMB=0)
 # Returns: {'bytesFreed': <bytes>, 'ok': 1}
 ```
 
@@ -710,4 +727,4 @@ AUTOVACUUM_MIGRATION=0   # Disable (default)
 ---
 
 **Last Updated:** March 2026  
-**NeoSQLite Version:** 1.11+
+**NeoSQLite Version:** 1.12+

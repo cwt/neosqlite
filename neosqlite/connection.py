@@ -487,9 +487,9 @@ class Connection:
             Args:
                 collection: Collection name (ignored, operates on entire database)
                 dryRun: If true, returns estimate without actually compacting
-                freeSpaceTargetMB: Threshold in MB (default: 20). Only compacts if
-                    free space >= threshold. When provided, uses incremental
-                    vacuum in batches of this size (NeoSQLite extension).
+                freeSpaceTargetMB: Target in MB (default: 20). Only compacts if
+                    free space >= threshold. Uses incremental vacuum in batches.
+                    Set to 0 for full VACUUM instead of incremental.
                 comment: Optional comment (ignored, for MongoDB compatibility)
 
             Returns:
@@ -497,9 +497,10 @@ class Connection:
                 compact: {"bytesFreed": <bytes>, "ok": 1}
 
             Examples:
-                >>> db.command("compact", "collection")  # Full vacuum
+                >>> db.command("compact", "collection")  # 20MB threshold + incremental
                 >>> db.command("compact", "collection", dryRun=True)  # Estimate only
-                >>> db.command("compact", "collection", freeSpaceTargetMB=1)  # Threshold 1MB + incremental
+                >>> db.command("compact", "collection", freeSpaceTargetMB=10)  # 10MB threshold + incremental
+                >>> db.command("compact", "collection", freeSpaceTargetMB=0)  # Full vacuum
 
         Example:
             >>> db = Connection("test.db")
@@ -665,9 +666,12 @@ class Connection:
                             "ok": 1,
                         }
 
-                    if free_space_target_mb is None:
+                    if free_space_target_mb == 0:
                         self.db.execute("VACUUM")
                         return {"bytesFreed": free_bytes, "ok": 1}
+
+                    if free_space_target_mb is None:
+                        free_space_target_mb = 20
 
                     target_bytes = free_space_target_mb * 1024 * 1024
                     if free_bytes < target_bytes:
