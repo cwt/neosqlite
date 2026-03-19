@@ -397,6 +397,50 @@ class TestDatabaseCommand:
         assert "process" in result
         assert result["process"] == "neosqlite"
 
+    def test_command_db_stats(self, connection):
+        """Test command('dbStats')."""
+        conn = connection
+        coll = conn.test_db_stats
+        coll.insert_one({"name": "test", "value": 42})
+        coll.insert_one({"name": "another", "value": 100})
+        coll.create_index("value")
+
+        result = conn.command("dbStats")
+
+        assert result["ok"] == 1.0
+        assert "db" in result
+        assert "collections" in result
+        assert "views" in result
+        assert "objects" in result
+        assert "dataSize" in result
+        assert "storageSize" in result
+        assert "indexes" in result
+        assert "indexSize" in result
+        assert "avgObjSize" in result
+        assert "totalSize" in result
+        assert "fsTotalSize" in result
+        assert "fsUsedSize" in result
+        assert "scaleFactor" in result
+        # Check values make sense
+        assert result["collections"] >= 1
+        assert result["objects"] >= 2
+        assert result["indexes"] >= 1
+        assert result["scaleFactor"] == 1
+
+    def test_command_db_stats_with_view(self, tmp_path):
+        """Test command('dbStats') with SQLite views."""
+        db_path = tmp_path / "test.db"
+        conn = neosqlite.Connection(str(db_path))
+        conn.db.execute("CREATE TABLE users (id INT, name TEXT)")
+        conn.db.execute("INSERT INTO users VALUES (1, 'Alice')")
+        conn.db.execute("CREATE VIEW user_names AS SELECT name FROM users")
+
+        result = conn.command("dbStats")
+
+        assert result["ok"] == 1.0
+        assert result["views"] == 1
+        conn.close()
+
     def test_command_list_collections(self, connection):
         """Test command('listCollections')."""
         conn = connection

@@ -657,6 +657,79 @@ class Connection:
                         "storageSize": 0,
                     }
 
+                case "dbstats":
+                    page_count = self.db.execute(
+                        "PRAGMA page_count"
+                    ).fetchone()[0]
+                    page_size = self.db.execute("PRAGMA page_size").fetchone()[
+                        0
+                    ]
+
+                    collections = self.list_collection_names()
+                    total_objects = 0
+                    total_indexes = 0
+
+                    for coll_name in collections:
+                        count = self.db.execute(
+                            f"SELECT COUNT(*) FROM {quote_table_name(coll_name)}"
+                        ).fetchone()[0]
+                        total_objects += count
+
+                        indexes = self.db.execute(
+                            f"PRAGMA index_list({quote_table_name(coll_name)})"
+                        ).fetchall()
+                        total_indexes += len(indexes)
+
+                    storage_size = page_count * page_size
+                    index_size_estimate = int(storage_size * 0.2)
+                    data_size = storage_size - index_size_estimate
+
+                    views_count = self.db.execute(
+                        "SELECT COUNT(*) FROM sqlite_master WHERE type='view'"
+                    ).fetchone()[0]
+
+                    import os
+                    import shutil
+
+                    fs_total = 0
+                    fs_used = 0
+                    db_file_size = 0
+
+                    if self._db_path and self._db_path != ":memory:":
+                        try:
+                            db_dir = os.path.dirname(self._db_path) or "."
+                            fs_usage = shutil.disk_usage(db_dir)
+                            fs_total = fs_usage.total
+                            fs_used = fs_usage.used
+                            db_file_size = os.path.getsize(self._db_path)
+                            wal_path = self._db_path + "-wal"
+                            if os.path.exists(wal_path):
+                                db_file_size += os.path.getsize(wal_path)
+                            shm_path = self._db_path + "-shm"
+                            if os.path.exists(shm_path):
+                                db_file_size += os.path.getsize(shm_path)
+                        except OSError:
+                            pass
+
+                    return {
+                        "ok": 1.0,
+                        "db": self.name,
+                        "collections": len(collections),
+                        "views": views_count,
+                        "objects": total_objects,
+                        "avgObjSize": total_objects
+                        and int(data_size / total_objects)
+                        or 0,
+                        "dataSize": data_size,
+                        "storageSize": storage_size,
+                        "indexes": total_indexes,
+                        "indexSize": index_size_estimate,
+                        "totalSize": data_size + index_size_estimate,
+                        "fsTotalSize": fs_total,
+                        "fsUsedSize": fs_used,
+                        "scaleFactor": 1,
+                    }
+
                 case "aggregate":
                     collection_name = kwargs.get("aggregate")
                     if not collection_name and isinstance(command, dict):

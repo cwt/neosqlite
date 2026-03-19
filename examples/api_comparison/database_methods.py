@@ -133,6 +133,68 @@ def compare_database_methods():
             print(
                 f"Neo command('serverStatus'): {'OK' if neo_server_status_ok else 'FAIL'}"
             )
+
+            # Test dbStats command - check keys and value types
+            neo_coll_for_stats = neo_conn.create_collection("stats_test_coll")
+            neo_coll_for_stats.insert_one({"name": "test", "value": 123})
+            neo_coll_for_stats.create_index("value")
+
+            start_neo_timing()
+            neo_db_stats = neo_conn.command("dbStats")
+            end_neo_timing()
+
+            neo_db_stats_type_ok = isinstance(neo_db_stats, dict)
+            expected_dbstats_keys = {
+                "ok",
+                "db",
+                "collections",
+                "views",
+                "objects",
+                "avgObjSize",
+                "dataSize",
+                "storageSize",
+                "indexes",
+                "indexSize",
+                "totalSize",
+                "fsTotalSize",
+                "fsUsedSize",
+                "scaleFactor",
+            }
+            neo_db_stats_keys_ok = expected_dbstats_keys.issubset(
+                set(neo_db_stats.keys())
+            )
+
+            type_checks = {
+                "ok": (float, int),
+                "db": str,
+                "collections": int,
+                "views": int,
+                "objects": int,
+                "avgObjSize": int,
+                "dataSize": int,
+                "storageSize": int,
+                "indexes": int,
+                "indexSize": int,
+                "totalSize": int,
+                "fsTotalSize": int,
+                "fsUsedSize": int,
+                "scaleFactor": int,
+            }
+            neo_db_stats_types_ok = True
+            for key, expected_type in type_checks.items():
+                value = neo_db_stats.get(key)
+                if value is not None and not isinstance(value, expected_type):
+                    neo_db_stats_types_ok = False
+                    break
+
+            neo_db_stats_ok = (
+                neo_db_stats_type_ok
+                and neo_db_stats_keys_ok
+                and neo_db_stats_types_ok
+            )
+            print(
+                f"Neo command('dbStats'): {'OK' if neo_db_stats_ok else 'FAIL'}"
+            )
         except Exception as e:
             neo_ping_ok = False
             neo_server_status_ok = False
@@ -210,6 +272,7 @@ def compare_database_methods():
     mongo_cursor_command = None
     mongo_deref = None
     mongo_with_options = None
+    mongo_db_stats_ok = None
 
     if client:
         set_accumulation_mode(True)
@@ -326,6 +389,78 @@ def compare_database_methods():
             print(
                 f"Mongo command('serverStatus'): {'OK' if mongo_server_status_ok else 'FAIL'}"
             )
+
+            # Test dbStats command
+            mongo_coll_for_stats = mongo_db["stats_test_coll_mongo"]
+            mongo_coll_for_stats.insert_one({"name": "test", "value": 123})
+            mongo_coll_for_stats.create_index("value")
+
+            start_mongo_timing()
+            mongo_db_stats = mongo_db.command("dbStats")
+            end_mongo_timing()
+
+            mongo_db_stats_type_ok = isinstance(mongo_db_stats, dict)
+            expected_dbstats_keys = {
+                "ok",
+                "db",
+                "collections",
+                "views",
+                "objects",
+                "avgObjSize",
+                "dataSize",
+                "storageSize",
+                "indexes",
+                "indexSize",
+                "totalSize",
+                "fsTotalSize",
+                "fsUsedSize",
+                "scaleFactor",
+            }
+            mongo_db_stats_keys_ok = expected_dbstats_keys.issubset(
+                set(mongo_db_stats.keys())
+            )
+
+            type_checks = {
+                "ok": (float, int),
+                "db": str,
+                "collections": int,
+                "views": int,
+                "objects": int,
+                "avgObjSize": (int, float),
+                "dataSize": (int, float),
+                "storageSize": (int, float),
+                "indexes": int,
+                "indexSize": (int, float),
+                "totalSize": (int, float),
+                "fsTotalSize": (int, float),
+                "fsUsedSize": (int, float),
+                "scaleFactor": int,
+            }
+            mongo_db_stats_types_ok = True
+            for key, expected_type in type_checks.items():
+                value = mongo_db_stats.get(key)
+                if value is None:
+                    continue
+                if hasattr(value, "__class__") and "Int64" in str(type(value)):
+                    continue
+                if not isinstance(value, expected_type):
+                    mongo_db_stats_types_ok = False
+                    break
+
+            mongo_db_stats_ok = (
+                mongo_db_stats_type_ok
+                and mongo_db_stats_keys_ok
+                and mongo_db_stats_types_ok
+            )
+            print(
+                f"Mongo command('dbStats'): {'OK' if mongo_db_stats_ok else 'FAIL'}"
+            )
+
+            # Clean up
+            try:
+                mongo_db.drop_collection("stats_test_coll_mongo")
+            except Exception:
+                pass
         except Exception as e:
             mongo_ping_ok = False
             mongo_server_status_ok = False
@@ -458,6 +593,13 @@ def compare_database_methods():
         "command_server_status",
         neo_server_status_ok if neo_server_status_ok else "FAIL",
         mongo_server_status_ok if mongo_server_status_ok else None,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "Database Methods",
+        "command_db_stats",
+        neo_db_stats_ok if neo_db_stats_ok else "FAIL",
+        mongo_db_stats_ok if mongo_db_stats_ok else None,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
