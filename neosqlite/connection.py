@@ -495,42 +495,42 @@ class Connection:
             raise TypeError("command must be a string or dict")
 
         try:
-            # Handle specific commands
-            if cmd_name == "ping":
-                return {"ok": 1.0}
+            match cmd_name:
+                case "ping":
+                    return {"ok": 1.0}
 
-            elif cmd_name == "serverstatus":
-                import sqlite3
+                case "serverstatus":
+                    import sqlite3
 
-                return {
-                    "ok": 1.0,
-                    "version": sqlite3.sqlite_version,
-                    "python_sqlite_version": getattr(
-                        sqlite3, "version", "unknown"
-                    ),
-                    "process": "neosqlite",
-                    "pid": 1,  # SQLite is embedded, no separate process
-                }
+                    return {
+                        "ok": 1.0,
+                        "version": sqlite3.sqlite_version,
+                        "python_sqlite_version": getattr(
+                            sqlite3, "version", "unknown"
+                        ),
+                        "process": "neosqlite",
+                        "pid": 1,
+                    }
 
-            elif cmd_name == "listcollections":
-                collections = self.list_collection_names()
-                return {
-                    "ok": 1.0,
-                    "collections": [{"name": name} for name in collections],
-                }
+                case "listcollections":
+                    collections = self.list_collection_names()
+                    return {
+                        "ok": 1.0,
+                        "collections": [{"name": name} for name in collections],
+                    }
 
-            elif cmd_name == "table_info":
-                table_name = kwargs.get("table")
-                if not table_name and isinstance(command, dict):
-                    table_name = command.get("table_info")
-                if not table_name:
-                    raise ValueError("table_info requires 'table' parameter")
-                cursor = self.db.execute(
-                    f"PRAGMA table_info({quote_table_name(table_name)})"
-                )
-                columns = []
-                for row in cursor.fetchall():
-                    columns.append(
+                case "table_info":
+                    table_name = kwargs.get("table")
+                    if not table_name and isinstance(command, dict):
+                        table_name = command.get("table_info")
+                    if not table_name:
+                        raise ValueError(
+                            "table_info requires 'table' parameter"
+                        )
+                    cursor = self.db.execute(
+                        f"PRAGMA table_info({quote_table_name(table_name)})"
+                    )
+                    columns = [
                         {
                             "cid": row[0],
                             "name": row[1],
@@ -539,75 +539,71 @@ class Connection:
                             "default": row[4],
                             "pk": bool(row[5]),
                         }
-                    )
-                return {"ok": 1.0, "columns": columns}
+                        for row in cursor.fetchall()
+                    ]
+                    return {"ok": 1.0, "columns": columns}
 
-            elif cmd_name == "integrity_check":
-                cursor = self.db.execute("PRAGMA integrity_check")
-                result = cursor.fetchall()
-                return {"ok": 1.0, "result": [row[0] for row in result]}
-
-            elif cmd_name == "validate":
-                # MongoDB-compatible validate command
-                # In MongoDB: db.runCommand({validate: "collectionName"})
-                # For NeoSQLite: Use SQLite PRAGMA integrity_check
-                collection_name = kwargs.get("validate")
-                if not collection_name and isinstance(command, dict):
-                    collection_name = command.get("validate")
-
-                if collection_name:
-                    # Validate specific collection (table)
-                    cursor = self.db.execute(
-                        f"PRAGMA integrity_check({quote_table_name(collection_name)})"
-                    )
-                else:
-                    # Validate entire database
+                case "integrity_check":
                     cursor = self.db.execute("PRAGMA integrity_check")
+                    result = cursor.fetchall()
+                    return {"ok": 1.0, "result": [row[0] for row in result]}
 
-                result = cursor.fetchall()
-                errors = [row[0] for row in result if row[0] != "ok"]
+                case "validate":
+                    collection_name = kwargs.get("validate")
+                    if not collection_name and isinstance(command, dict):
+                        collection_name = command.get("validate")
 
-                return {
-                    "ok": 1.0 if not errors else 0.0,
-                    "result": [row[0] for row in result],
-                    "errors": errors,
-                    "valid": len(errors) == 0,
-                }
+                    if collection_name:
+                        cursor = self.db.execute(
+                            f"PRAGMA integrity_check({quote_table_name(collection_name)})"
+                        )
+                    else:
+                        cursor = self.db.execute("PRAGMA integrity_check")
 
-            elif cmd_name == "foreign_key_check":
-                table_name = kwargs.get("table")
-                if table_name:
+                    result = cursor.fetchall()
+                    errors = [row[0] for row in result if row[0] != "ok"]
+
+                    return {
+                        "ok": 1.0 if not errors else 0.0,
+                        "result": [row[0] for row in result],
+                        "errors": errors,
+                        "valid": len(errors) == 0,
+                    }
+
+                case "foreign_key_check":
+                    table_name = kwargs.get("table")
+                    if table_name:
+                        cursor = self.db.execute(
+                            f"PRAGMA foreign_key_check({quote_table_name(table_name)})"
+                        )
+                    else:
+                        cursor = self.db.execute("PRAGMA foreign_key_check")
+                    result = cursor.fetchall()
+                    return {
+                        "ok": 1.0,
+                        "violations": [
+                            {
+                                "table": row[0],
+                                "rowid": row[1],
+                                "parent": row[2],
+                                "fkid": row[3],
+                            }
+                            for row in result
+                        ],
+                    }
+
+                case "index_list":
+                    table_name = kwargs.get("table")
+                    if not table_name and isinstance(command, dict):
+                        table_name = command.get("index_list")
+                    if not table_name:
+                        raise ValueError(
+                            "index_list requires 'table' parameter"
+                        )
                     cursor = self.db.execute(
-                        f"PRAGMA foreign_key_check({quote_table_name(table_name)})"
+                        f"PRAGMA index_list({quote_table_name(table_name)})"
                     )
-                else:
-                    cursor = self.db.execute("PRAGMA foreign_key_check")
-                result = cursor.fetchall()
-                return {
-                    "ok": 1.0,
-                    "violations": [
-                        {
-                            "table": row[0],
-                            "rowid": row[1],
-                            "parent": row[2],
-                            "fkid": row[3],
-                        }
-                        for row in result
-                    ],
-                }
-
-            elif cmd_name == "index_list":
-                table_name = kwargs.get("table")
-                if not table_name and isinstance(command, dict):
-                    table_name = command.get("index_list")
-                if not table_name:
-                    raise ValueError("index_list requires 'table' parameter")
-                cursor = self.db.execute(
-                    f"PRAGMA index_list({quote_table_name(table_name)})"
-                )
-                indexes = []
-                for row in cursor.fetchall():
-                    indexes.append(
+                    indexes = [
                         {
                             "seq": row[0],
                             "name": row[1],
@@ -615,101 +611,94 @@ class Connection:
                             "origin": row[3] if len(row) > 3 else "c",
                             "partial": bool(row[4]) if len(row) > 4 else False,
                         }
+                        for row in cursor.fetchall()
+                    ]
+                    return {"ok": 1.0, "indexes": indexes}
+
+                case "vacuum":
+                    self.db.execute("VACUUM")
+                    return {"ok": 1.0, "message": "VACUUM completed"}
+
+                case "analyze":
+                    self.db.execute("ANALYZE")
+                    return {"ok": 1.0, "message": "ANALYZE completed"}
+
+                case "reindex":
+                    collection_name = kwargs.get("reIndex")
+                    if not collection_name and isinstance(command, dict):
+                        collection_name = command.get("reindex")
+
+                    if collection_name:
+                        self.db.execute(
+                            f"REINDEX {quote_table_name(collection_name)}"
+                        )
+                    else:
+                        self.db.execute("REINDEX")
+
+                    return {"ok": 1.0, "message": "REINDEX completed"}
+
+                case "collstats":
+                    collection_name = kwargs.get("collection")
+                    if not collection_name and isinstance(command, dict):
+                        collection_name = command.get("collstats")
+                    if not collection_name:
+                        raise ValueError(
+                            "collstats requires 'collection' parameter"
+                        )
+                    cursor = self.db.execute(
+                        f"SELECT COUNT(*) FROM {quote_table_name(collection_name)}"
                     )
-                return {"ok": 1.0, "indexes": indexes}
-
-            elif cmd_name == "vacuum":
-                self.db.execute("VACUUM")
-                return {"ok": 1.0, "message": "VACUUM completed"}
-
-            elif cmd_name == "analyze":
-                self.db.execute("ANALYZE")
-                return {"ok": 1.0, "message": "ANALYZE completed"}
-
-            elif cmd_name == "reindex":
-                # MongoDB-compatible reIndex command
-                # In MongoDB: db.runCommand({reIndex: "collectionName"})
-                # Or db.command("reIndex", "collectionName")
-                collection_name = kwargs.get("reIndex")
-                if not collection_name and isinstance(command, dict):
-                    collection_name = command.get("reindex")
-                if not collection_name and isinstance(command, dict):
-                    collection_name = command.get("reIndex")
-
-                if collection_name:
-                    self.db.execute(
-                        f"REINDEX {quote_table_name(collection_name)}"
-                    )
-                else:
-                    self.db.execute("REINDEX")
-
-                return {"ok": 1.0, "message": "REINDEX completed"}
-
-            elif cmd_name == "collstats":
-                # Collection statistics
-                collection_name = kwargs.get("collection")
-                if not collection_name and isinstance(command, dict):
-                    collection_name = command.get("collstats")
-                if not collection_name:
-                    raise ValueError(
-                        "collstats requires 'collection' parameter"
-                    )
-                cursor = self.db.execute(
-                    f"SELECT COUNT(*) FROM {quote_table_name(collection_name)}"
-                )
-                count = cursor.fetchone()[0]
-                return {
-                    "ok": 1.0,
-                    "ns": collection_name,
-                    "count": count,
-                    "size": 0,  # SQLite doesn't track this easily
-                    "storageSize": 0,
-                }
-
-            elif cmd_name == "aggregate":
-                # MongoDB-compatible aggregate command with explain support
-                # Usage: db.command("aggregate", "collection", pipeline=[...], explain=True)
-                collection_name = kwargs.get("aggregate")
-                if not collection_name and isinstance(command, dict):
-                    collection_name = command.get("aggregate")
-                if not collection_name:
-                    raise ValueError("aggregate requires 'aggregate' parameter")
-
-                pipeline = kwargs.get("pipeline", [])
-                explain = kwargs.get("explain", False)
-                cursor = kwargs.get("cursor", {})
-                kwargs.get("allowDiskUse", False)
-
-                if explain:
-                    # Return the explain plan
-                    collection = self[collection_name]
-                    return collection.query_engine.explain_aggregation(
-                        pipeline, session=None
-                    )
-                else:
-                    # Execute the aggregation and return results
-                    collection = self[collection_name]
-                    cursor_result = collection.aggregate(pipeline)
-                    return {"ok": 1.0, "result": list(cursor_result)}
-
-            else:
-                # Try to execute as a PRAGMA command
-                try:
-                    cursor = self.db.execute(f"PRAGMA {cmd_name}")
-                    result = cursor.fetchall()
+                    count = cursor.fetchone()[0]
                     return {
                         "ok": 1.0,
-                        "result": [
-                            dict(zip([d[0] for d in cursor.description], row))
-                            for row in result
-                        ],
+                        "ns": collection_name,
+                        "count": count,
+                        "size": 0,
+                        "storageSize": 0,
                     }
-                except Exception as e:
-                    return {
-                        "ok": 0,
-                        "errmsg": f"Unknown command: {cmd_name}",
-                        "error": str(e),
-                    }
+
+                case "aggregate":
+                    collection_name = kwargs.get("aggregate")
+                    if not collection_name and isinstance(command, dict):
+                        collection_name = command.get("aggregate")
+                    if not collection_name:
+                        raise ValueError(
+                            "aggregate requires 'aggregate' parameter"
+                        )
+
+                    pipeline = kwargs.get("pipeline", [])
+                    explain = kwargs.get("explain", False)
+                    kwargs.get("allowDiskUse", False)
+
+                    if explain:
+                        collection = self[collection_name]
+                        return collection.query_engine.explain_aggregation(
+                            pipeline, session=None
+                        )
+                    else:
+                        collection = self[collection_name]
+                        cursor_result = collection.aggregate(pipeline)
+                        return {"ok": 1.0, "result": list(cursor_result)}
+
+                case _:
+                    try:
+                        cursor = self.db.execute(f"PRAGMA {cmd_name}")
+                        result = cursor.fetchall()
+                        return {
+                            "ok": 1.0,
+                            "result": [
+                                dict(
+                                    zip([d[0] for d in cursor.description], row)
+                                )
+                                for row in result
+                            ],
+                        }
+                    except Exception as e:
+                        return {
+                            "ok": 0,
+                            "errmsg": f"Unknown command: {cmd_name}",
+                            "error": str(e),
+                        }
 
         except Exception as e:
             return {"ok": 0, "errmsg": str(e), "code": 1}
@@ -734,25 +723,19 @@ class Connection:
         """
         result = self.command(command, value=value, **kwargs)
 
-        # Determine the results to iterate over
-        if isinstance(result, dict) and "collections" in result:
-            items = result["collections"]
-        elif isinstance(result, dict) and "columns" in result:
-            items = result["columns"]
-        elif isinstance(result, dict) and "result" in result:
-            items = result["result"]
-            if not isinstance(items, list):
-                items = [items]
-        elif (
-            isinstance(result, dict)
-            and "cursor" in result
-            and isinstance(result["cursor"], dict)
-            and "firstBatch" in result["cursor"]
-        ):
-            items = result["cursor"]["firstBatch"]
-        else:
-            # Wrap the entire result in a list
-            items = [result]
+        match result:
+            case {"collections": _}:
+                items = result["collections"]
+            case {"columns": _}:
+                items = result["columns"]
+            case {"result": _} as r:
+                items = r["result"]
+                if not isinstance(items, list):
+                    items = [items]
+            case {"cursor": {"firstBatch": _}}:
+                items = result["cursor"]["firstBatch"]
+            case _:
+                items = [result]
 
         # Use a safe dummy collection name for AggregationCursor
         # We don't want to use existing collection names because some might be reserved (e.g. sqlite_sequence)

@@ -891,7 +891,7 @@ class AggregationMixin:
                         if field not in group:
                             group[field] = {}
                         if isinstance(value, dict):
-                            group[field].update(value)
+                            group[field] |= value
                     case "$stdDevPop":
                         # Track sum, sum of squares, and count for population standard deviation
                         if field not in group:

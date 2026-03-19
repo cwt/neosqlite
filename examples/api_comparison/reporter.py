@@ -6,7 +6,7 @@ import csv
 import json
 import os
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 from .utils import compare_results
 
 
@@ -52,10 +52,7 @@ def _sort_for_display(value: Any) -> Any:
                 _sort_for_display(item) for item in sorted(value, key=sort_key)
             ]
         # Otherwise sort by string representation and recurse
-        return [
-            _sort_for_display(item)
-            for item in sorted(value, key=lambda x: str(x))
-        ]
+        return [_sort_for_display(item) for item in sorted(value, key=str)]
     elif isinstance(value, dict):
         # Return dict with sorted keys for consistent display, and recurse on values
         return {k: _sort_for_display(v) for k, v in sorted(value.items())}
@@ -101,8 +98,8 @@ class CompatibilityReporter:
         passed: bool,
         neo_result: Any = None,
         mongo_result: Any = None,
-        error: Optional[str] = None,
-        skip_reason: Optional[str] = None,
+        error: str | None = None,
+        skip_reason: str | None = None,
         show_results: bool = False,
     ):
         """
@@ -161,7 +158,7 @@ class CompatibilityReporter:
         mongo_results: Any,
         tolerance: float = 1e-9,
         ignore_order: bool = True,
-        skip_reason: Optional[str] = None,
+        skip_reason: str | None = None,
     ):
         """
         Record a test result by comparing actual values between NeoSQLite and MongoDB.
@@ -329,7 +326,7 @@ class BenchmarkResult:
         self.mongo_timings: list[float] = []
         self.neo_skipped = False
         self.mongo_skipped = False
-        self.skip_reason: Optional[str] = None
+        self.skip_reason: str | None = None
 
     def add_neo_timing(self, timing_ms: float):
         self.neo_timings.append(timing_ms)
@@ -399,8 +396,8 @@ class BenchmarkReporter:
     def __init__(self, iterations: int = 10):
         self.iterations = iterations
         self.results: dict[str, BenchmarkResult] = {}
-        self.start_time: Optional[float] = None
-        self.end_time: Optional[float] = None
+        self.start_time: float | None = None
+        self.end_time: float | None = None
 
     def start_category(self, category: str):
         if category not in self.results:
@@ -440,7 +437,7 @@ class BenchmarkReporter:
             total += sum(result.mongo_timings)
         return total
 
-    def export_markdown(self, filepath: Optional[str] = None) -> str:
+    def export_markdown(self, filepath: str | None = None) -> str:
         """Export benchmark results to markdown file"""
         if filepath is None:
             version = get_neosqlite_version()
@@ -471,7 +468,7 @@ class BenchmarkReporter:
         total_mongo: float = 0
         valid_categories = 0
         partial_categories = 0
-        skipped_categories: list[tuple[str, Optional[str]]] = []
+        skipped_categories: list[tuple[str, str | None]] = []
 
         for result in self.results.values():
             if result.is_fully_skipped():
@@ -611,7 +608,7 @@ class BenchmarkReporter:
 
         return filepath
 
-    def export_csv(self, filepath: Optional[str] = None) -> str:
+    def export_csv(self, filepath: str | None = None) -> str:
         """Export benchmark results to CSV file"""
         if filepath is None:
             version = get_neosqlite_version()

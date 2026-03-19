@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, Callable, Dict, TYPE_CHECKING, Optional
+from typing import Any, Callable, Dict, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .connection import Connection
@@ -14,7 +14,7 @@ class ClientSession:
     """
 
     def __init__(
-        self, client: Connection, options: Optional[Dict[str, Any]] = None
+        self, client: Connection, options: Dict[str, Any] | None = None
     ):
         """
         Initialize a new ClientSession.
@@ -37,7 +37,7 @@ class ClientSession:
         """
         return self._in_transaction
 
-    def start_transaction(self, write_concern: Optional[Dict[str, Any]] = None):
+    def start_transaction(self, write_concern: Dict[str, Any] | None = None):
         """
         Start a new transaction.
 

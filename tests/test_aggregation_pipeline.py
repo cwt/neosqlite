@@ -5,6 +5,7 @@ Consolidated tests for aggregation pipeline functionality.
 import math
 import pytest
 import neosqlite
+from operator import itemgetter
 from neosqlite import Connection
 from neosqlite.collection.aggregation_cursor import (
     AggregationCursor,
@@ -337,7 +338,7 @@ def test_aggregation_cursor_api():
 
         # Test sort method
         cursor2 = collection.aggregate(pipeline)
-        cursor2.sort(key=lambda x: x["name"], reverse=True)
+        cursor2.sort(key=itemgetter("name"), reverse=True)
         docs3 = list(cursor2)
         assert len(docs3) == 2
         assert docs3[0]["name"] == "Charlie"
@@ -431,12 +432,12 @@ class TestAggregationCursor:
         cursor = AggregationCursor(collection, pipeline)
 
         # Should be able to sort results
-        cursor.sort(key=lambda doc: doc["a"])
+        cursor.sort(key=itemgetter("a"))
         results = list(cursor)
         assert [doc["a"] for doc in results] == [1, 2, 3]
 
         # Should return self for chaining
-        result = cursor.sort(key=lambda doc: doc["a"])
+        result = cursor.sort(key=itemgetter("a"))
         assert result is cursor
 
     def test_to_list(self, collection):
@@ -879,7 +880,7 @@ def test_aggregation_unwind_advanced_options_comprehensive(collection):
     # Verify Alice's scores with indices
     alice_scores = [doc for doc in result_list if doc["name"] == "Alice"]
     assert len(alice_scores) == 3
-    alice_scores.sort(key=lambda x: x["scoreIndex"])
+    alice_scores.sort(key=itemgetter("scoreIndex"))
     assert (
         alice_scores[0]["scores"] == 85 and alice_scores[0]["scoreIndex"] == 0
     )
@@ -1115,7 +1116,7 @@ def test_aggregation_cursor_sort_with_quez_raises_error(collection):
     with pytest.raises(
         NotImplementedError, match="Sorting not supported with quez"
     ):
-        cursor.sort(key=lambda x: x["a"])
+        cursor.sort(key=itemgetter("a"))
 
 
 def test_aggregation_cursor_getitem_with_quez_raises_error(collection):
@@ -2033,7 +2034,7 @@ def test_group_stage_with_push_accumulator_alt():
         assert {"_id": "B", "items": [20, 40]} in result
 
         # Sort by category for consistent ordering
-        result.sort(key=lambda x: x["_id"])
+        result.sort(key=itemgetter("_id"))
         categories = [doc["_id"] for doc in result]
         assert categories == ["A", "B"]
 
@@ -2076,7 +2077,7 @@ def test_group_stage_with_add_to_set_accumulator_alt():
                 assert set(doc["items"]) == {"java", "python"}
 
         # Sort by category for consistent ordering
-        result.sort(key=lambda x: x["_id"])
+        result.sort(key=itemgetter("_id"))
         categories = [doc["_id"] for doc in result]
         assert categories == ["A", "B"]
 
@@ -2127,7 +2128,7 @@ def test_group_stage_with_push_and_other_accumulators():
         } in result
 
         # Sort by category for consistent ordering
-        result.sort(key=lambda x: x["_id"])
+        result.sort(key=itemgetter("_id"))
         categories = [doc["_id"] for doc in result]
         assert categories == ["A", "B"]
 
@@ -2176,7 +2177,7 @@ def test_group_stage_with_add_to_set_and_other_accumulators():
                 assert doc["total"] == 60  # 20 + 40
 
         # Sort by category for consistent ordering
-        result.sort(key=lambda x: x["_id"])
+        result.sort(key=itemgetter("_id"))
         categories = [doc["_id"] for doc in result]
         assert categories == ["A", "B"]
 
@@ -2210,7 +2211,7 @@ def test_group_stage_with_push_null_values():
         assert {"_id": "B", "items": [20]} in result
 
         # Sort by category for consistent ordering
-        result.sort(key=lambda x: x["_id"])
+        result.sort(key=itemgetter("_id"))
         categories = [doc["_id"] for doc in result]
         assert categories == ["A", "B"]
 
@@ -2251,7 +2252,7 @@ def test_group_stage_with_add_to_set_null_values():
                 assert doc["items"] == [20]
 
         # Sort by category for consistent ordering
-        result.sort(key=lambda x: x["_id"])
+        result.sort(key=itemgetter("_id"))
         categories = [doc["_id"] for doc in result]
         assert categories == ["A", "B"]
 

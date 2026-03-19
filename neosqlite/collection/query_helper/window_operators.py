@@ -3,7 +3,7 @@ Python implementation of MongoDB $setWindowFields operators.
 """
 
 from __future__ import annotations
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, Tuple, TYPE_CHECKING
 from copy import deepcopy
 
 if TYPE_CHECKING:
@@ -61,8 +61,8 @@ def process_set_window_fields(
                 partition_docs.sort(key=get_sort_val, reverse=is_desc)
 
         # Pre-calculate ranks if needed
-        ranks: Optional[List[int]] = None
-        dense_ranks: Optional[List[int]] = None
+        ranks: List[int] | None = None
+        dense_ranks: List[int] | None = None
 
         # 3. Apply window operators
         for i, dc in enumerate(partition_docs):
@@ -110,7 +110,7 @@ def process_set_window_fields(
 def _get_window_frame(
     current_idx: int,
     partition_docs: List[Dict[str, Any]],
-    window_spec: Optional[Dict[str, Any]],
+    window_spec: Dict[str, Any] | None,
 ) -> List[int]:
     if not window_spec:
         return list(range(len(partition_docs)))

@@ -8,6 +8,13 @@ from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
 
 
+def _sort_key(value: Any) -> str:
+    """Sort key for comparing documents regardless of field order."""
+    if isinstance(value, dict):
+        return str(sorted(value.items()))
+    return str(value)
+
+
 def test_pymongo_connection() -> MongoClient | None:
     """Test connection to MongoDB"""
     try:
@@ -92,18 +99,8 @@ def compare_results(
     # Sort if order doesn't matter
     if ignore_order:
         try:
-            neo_normalized = sorted(
-                neo_normalized,
-                key=lambda x: (
-                    str(sorted(x.items())) if isinstance(x, dict) else str(x)
-                ),
-            )
-            mongo_normalized = sorted(
-                mongo_normalized,
-                key=lambda x: (
-                    str(sorted(x.items())) if isinstance(x, dict) else str(x)
-                ),
-            )
+            neo_normalized = sorted(neo_normalized, key=_sort_key)
+            mongo_normalized = sorted(mongo_normalized, key=_sort_key)
         except (TypeError, AttributeError):
             # If sorting fails, compare as-is
             pass

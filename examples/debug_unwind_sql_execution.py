@@ -9,10 +9,10 @@ for the three cases with performance gain less than 1.5x.
 import neosqlite
 import time
 from neosqlite.collection import query_helper
-from typing import List, Dict, Any, Callable, Optional
+from typing import List, Dict, Any, Callable
 
 # Add debugging to track SQL execution
-original_build_unwind_query: Optional[Callable] = None
+original_build_unwind_query: Callable | None = None
 
 
 def debug_build_unwind_query(

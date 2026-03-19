@@ -1,4 +1,5 @@
 import pytest
+from operator import itemgetter
 from neosqlite import Connection
 from neosqlite.collection.query_helper.utils import set_force_fallback
 
@@ -68,8 +69,8 @@ def test_graph_lookup_basic(collection):
     set_force_fallback(False)
 
     # Sort for comparison as order is not guaranteed
-    results[0]["hierarchy"].sort(key=lambda x: x["_id"])
-    results_py[0]["hierarchy"].sort(key=lambda x: x["_id"])
+    results[0]["hierarchy"].sort(key=itemgetter("_id"))
+    results_py[0]["hierarchy"].sort(key=itemgetter("_id"))
     assert results == results_py
 
 

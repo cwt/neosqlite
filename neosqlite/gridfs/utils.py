@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import ast
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 
-def serialize_metadata(metadata: Optional[Dict[str, Any]]) -> Optional[str]:
+def serialize_metadata(metadata: Dict[str, Any] | None) -> str | None:
     """
     Serialize metadata dictionary to JSON string for storage.
 
@@ -34,8 +34,8 @@ def serialize_metadata(metadata: Optional[Dict[str, Any]]) -> Optional[str]:
 
 
 def deserialize_metadata(
-    metadata_str: Optional[str],
-) -> Optional[Dict[str, Any]]:
+    metadata_str: str | None,
+) -> Dict[str, Any] | None:
     """
     Deserialize metadata JSON string back to dictionary.
 
@@ -63,7 +63,7 @@ def deserialize_metadata(
         return {"_metadata": metadata_str}
 
 
-def serialize_aliases(aliases: Optional[list[str]]) -> Optional[str]:
+def serialize_aliases(aliases: list[str] | None) -> str | None:
     """
     Serialize aliases list to JSON string.
 
@@ -84,7 +84,7 @@ def serialize_aliases(aliases: Optional[list[str]]) -> Optional[str]:
         return str(aliases)
 
 
-def deserialize_aliases(aliases_str: Optional[str]) -> Optional[list[str]]:
+def deserialize_aliases(aliases_str: str | None) -> list[str] | None:
     """
     Deserialize aliases JSON string back to list.
 
@@ -123,7 +123,9 @@ def force_sync_if_needed(
         db_connection: SQLite database connection
         write_concern: Write concern dictionary with 'j' and 'w' keys
     """
-    if write_concern.get("j") is True or write_concern.get("w") == "majority":
+    j = write_concern.get("j")
+    w = write_concern.get("w")
+    if j is True or w == "majority":
         db_connection.execute("PRAGMA wal_checkpoint(PASSIVE)")
 
 

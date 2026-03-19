@@ -13,6 +13,10 @@ from neosqlite.collection import query_helper
 from typing import List, Dict, Any
 
 
+def _get_speedup(item):
+    return item[1]["speedup"]
+
+
 def benchmark_feature(
     name: str, collection, pipeline: List[Dict[str, Any]], num_runs: int = 3
 ) -> Dict[str, float]:
@@ -328,7 +332,7 @@ def main():
                 for k, v in results.items()
                 if v["speedup"] != float("inf")
             ],
-            key=lambda x: x[1]["speedup"],
+            key=_get_speedup,
             reverse=True,
         )
         for feature, data in sorted_results:

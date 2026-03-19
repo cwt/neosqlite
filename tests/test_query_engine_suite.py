@@ -6,6 +6,7 @@ import pytest
 import neosqlite
 import time
 import json
+from operator import itemgetter
 from unittest.mock import MagicMock
 from neosqlite import Connection
 from neosqlite.query_operators import (
@@ -399,7 +400,7 @@ def test_fill_operator(collection):
     assert len(results) == 6
     # Check A partition
     docs_a = [d for d in results if d["cat"] == "A"]
-    docs_a.sort(key=lambda x: x["time"])
+    docs_a.sort(key=itemgetter("time"))
     assert docs_a[0]["val"] == 10
     assert docs_a[1]["val"] == 10
     assert docs_a[2]["val"] == 10
@@ -1429,7 +1430,7 @@ def test_unwind_include_array_index():
         # Check Alice's scores with indices
         alice_docs = sorted(
             [doc for doc in result if doc["name"] == "Alice"],
-            key=lambda x: x["idx"],
+            key=itemgetter("idx"),
         )
         assert len(alice_docs) == 3
         assert alice_docs[0]["scores"] == 10
@@ -1478,7 +1479,7 @@ def test_unwind_combined_options():
         # Check Alice's items with indices
         alice_docs = sorted(
             [doc for doc in result if doc["name"] == "Alice"],
-            key=lambda x: x["index"],
+            key=itemgetter("index"),
         )
         assert len(alice_docs) == 2
         assert alice_docs[0]["items"] == "x"
@@ -1603,7 +1604,7 @@ def test_group_push_addtoset_consistency():
 
         # Verify optimized results
         assert len(result_optimized) == 2
-        result_optimized.sort(key=lambda x: x["_id"])
+        result_optimized.sort(key=itemgetter("_id"))
 
         # Check category A
         assert result_optimized[0]["_id"] == "A"
@@ -1816,8 +1817,8 @@ def test_force_fallback_with_lookup():
         assert len(result_normal) == len(result_fallback)
 
         # Check that both have the same user orders
-        result_normal.sort(key=lambda x: x["_id"])
-        result_fallback.sort(key=lambda x: x["_id"])
+        result_normal.sort(key=itemgetter("_id"))
+        result_fallback.sort(key=itemgetter("_id"))
 
         for normal_doc, fallback_doc in zip(result_normal, result_fallback):
             assert normal_doc["_id"] == fallback_doc["_id"]

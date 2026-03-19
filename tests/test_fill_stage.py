@@ -1,4 +1,5 @@
 import pytest
+from operator import itemgetter
 from neosqlite import Connection
 from neosqlite.collection.query_helper.utils import set_force_fallback
 
@@ -79,7 +80,7 @@ def test_fill_linear(collection):
     # Linear is not supported in Tier 1, so it will fall back to Tier 3
     results = list(collection.aggregate(pipeline))
     results_a = [r for r in results if r["cat"] == "A"]
-    results_a.sort(key=lambda x: x["time"])
+    results_a.sort(key=itemgetter("time"))
     # A: 1->10, 4->40. Step = 10.
     assert results_a[1]["val"] == 20
     assert results_a[2]["val"] == 30

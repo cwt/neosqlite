@@ -2044,11 +2044,11 @@ class PythonEvaluatorsMixin:
             case "$mergeObjects":
                 if not isinstance(operands, list):
                     raise ValueError("$mergeObjects requires a list of objects")
-                result = {}
+                result: dict[str, Any] = {}
                 for obj in operands:
                     obj_val = self._evaluate_operand_python(obj, document)
                     if isinstance(obj_val, dict):
-                        result.update(obj_val)
+                        result |= obj_val
                 return result
             case "$getField":
                 if not isinstance(operands, dict) or "field" not in operands:

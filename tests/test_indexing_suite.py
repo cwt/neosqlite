@@ -3,6 +3,7 @@ Consolidated tests for indexing functionality.
 """
 
 from pytest import raises
+from operator import itemgetter
 from typing import Tuple, Type
 from neosqlite.collection import sqlite3
 import neosqlite
@@ -654,7 +655,7 @@ def test_unwind_group_with_indexed_field_optimization():
         assert all(count == 10 for count in counts)
 
         # Sort by tag name for consistent ordering
-        result.sort(key=lambda x: x["_id"])
+        result.sort(key=itemgetter("_id"))
         tags = [doc["_id"] for doc in result]
         assert tags == ["tag0", "tag1", "tag2"]
 

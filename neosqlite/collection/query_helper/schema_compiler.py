@@ -3,7 +3,7 @@ SQL Compiler for JSON Schema validation.
 Translates MongoDB $jsonSchema rules into native SQLite SQL expressions.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 
 def compile_schema_to_sql(
@@ -76,7 +76,7 @@ def _compile_node(
 
 def _compile_type_check(
     data_column: str, path: str, target_type: Any, json_func: str
-) -> Optional[str]:
+) -> str | None:
     """Compile type checks into SQL using json_type."""
     # json_type(data, path)
     type_expr = f"json_type({data_column}, '{path}')"

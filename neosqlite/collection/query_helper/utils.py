@@ -2,7 +2,7 @@
 
 from ...binary import Binary
 from ...exceptions import MalformedQueryException
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 # Import JSON function helpers from shared module to avoid duplication
 from ..jsonb_support import (
@@ -16,7 +16,7 @@ from ..type_utils import _is_numeric_value as _is_numeric_value
 import sqlite3
 
 # Global cache for SQLite features
-_SQLITE_FEATURES: Dict[str, Optional[bool]] = {
+_SQLITE_FEATURES: Dict[str, bool | None] = {
     "relative_indexing": None,
 }
 

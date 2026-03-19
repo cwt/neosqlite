@@ -134,10 +134,10 @@ def test_temporary_table_approach():
                 # Get final results
                 print("   Getting final results...")
                 cursor = users.db.execute(f"SELECT * FROM {unwind_table}")
-                results = []
-                for row in cursor.fetchall():
-                    doc = users._load_with_stored_id(row[0], row[2], row[1])
-                    results.append(doc)
+                results = [
+                    users._load_with_stored_id(row[0], row[2], row[1])
+                    for row in cursor.fetchall()
+                ]
 
                 print(f"   Final results count: {len(results)}")
                 for doc in results:
@@ -201,10 +201,10 @@ def test_temporary_table_approach():
 
                 # Get final results
                 cursor = users.db.execute(f"SELECT * FROM {final_table}")
-                results = []
-                for row in cursor.fetchall():
-                    doc = users._load_with_stored_id(row[0], row[2], row[1])
-                    results.append(doc)
+                results = [
+                    users._load_with_stored_id(row[0], row[2], row[1])
+                    for row in cursor.fetchall()
+                ]
 
                 print(f"   Complex pipeline results count: {len(results)}")
                 for doc in results:

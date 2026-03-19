@@ -273,10 +273,10 @@ class DateTimeQueryProcessor:
 
         try:
             cursor = self.db.execute(cmd, params)
-            results = []
-            for row in cursor.fetchall():
-                doc = self.collection._load(row[0], row[1])
-                results.append(doc)
+            results = [
+                self.collection._load(row[0], row[1])
+                for row in cursor.fetchall()
+            ]
             return results
         except Exception:
             # If SQL execution fails, return None to trigger fallback
@@ -351,10 +351,10 @@ class DateTimeQueryProcessor:
 
                 # Retrieve results from the filtered table
                 cursor = self.db.execute(f"SELECT id, data FROM {result_table}")
-                results = []
-                for row in cursor.fetchall():
-                    doc = self.collection._load(row[0], row[1])
-                    results.append(doc)
+                results = [
+                    self.collection._load(row[0], row[1])
+                    for row in cursor.fetchall()
+                ]
                 return results
 
         except Exception:
