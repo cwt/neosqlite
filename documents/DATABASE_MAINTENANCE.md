@@ -1,6 +1,6 @@
-# AutoVacuum and Database Maintenance Guide
+# Database Maintenance Guide
 
-> **NeoSQLite 1.11+**
+> **NeoSQLite 1.12+**
 
 ---
 
@@ -13,6 +13,7 @@
 - [Manual Vacuum Operations](#manual-vacuum-operations)
 - [MongoDB compact Command](#mongodb-compact-command)
 - [freeSpaceTargetMB Explained](#freespacetargetmb-explained)
+- [Additional Maintenance Commands](#additional-maintenance-commands)
 - [Best Practices](#best-practices)
 - [Troubleshooting](#troubleshooting)
 
@@ -188,7 +189,7 @@ When you open an existing database with a different auto_vacuum setting:
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  4. Open backup, set new auto_vacuum, VACUUM INTO new file   │
+│  4. Open backup, set new auto_vacuum, VACUUM INTO new file  │
 └─────────────────────────────────────────────────────────────┘
                             │
                             ▼
@@ -365,6 +366,75 @@ result = conn.command("compact", "collection", freeSpaceTargetMB=1)
 - **MongoDB compat**: Default 20MB threshold matches MongoDB behavior
 - **Flexibility**: Users can choose threshold + batch size in one parameter
 - **Performance**: Incremental vacuum avoids long locks and 2x disk space
+
+---
+
+## Additional Maintenance Commands
+
+NeoSQLite provides additional SQLite-specific commands for database maintenance:
+
+### WAL Checkpoint
+
+The Write-Ahead Log (WAL) checkpoint command forces SQLite to checkpoint the WAL file:
+
+```python
+# Default PASSIVE mode - checkpoints if possible but doesn't block
+result = conn.command("wal_checkpoint")
+# Returns: {'ok': 1, 'mode': 'PASSIVE', 'busy': 0, 'log': 100, 'checkpointed': 50}
+
+# PASSIVE - checkpoint if possible, don't block writers
+result = conn.command("wal_checkpoint", mode="PASSIVE")
+
+# FULL - checkpoint and block until complete
+result = conn.command("wal_checkpoint", mode="FULL")
+
+# TRUNCATE - checkpoint and truncate WAL file
+result = conn.command("wal_checkpoint", mode="TRUNCATE")
+```
+
+**Response fields:**
+- `busy`: 1 if checkpoint was blocked by another connection
+- `log`: Number of pages in WAL file before checkpoint
+- `checkpointed`: Number of pages checkpointed
+
+### Cache Size
+
+Control the size of the in-memory page cache:
+
+```python
+# Get current cache size (in pages)
+result = conn.command("cache_size")
+# Returns: {'ok': 1, 'cache_size': -2000}
+
+# Set cache size (negative value = KB, positive = pages)
+result = conn.command("cache_size", pages=1000)
+# Sets cache to 1000 pages (or use negative for KB: -1000 = 1000KB)
+
+# Common values:
+# -2000 (default) = 2MB cache
+# -4000 = 4MB cache
+# -8000 = 8MB cache
+```
+
+### Busy Timeout
+
+Configure how long SQLite waits when the database is locked:
+
+```python
+# Get current busy timeout (in milliseconds)
+result = conn.command("busy_timeout")
+# Returns: {'ok': 1, 'busy_timeout': 5000}
+
+# Set busy timeout (in milliseconds)
+result = conn.command("busy_timeout", milliseconds=5000)
+# Returns: {'ok': 1, 'message': 'busy_timeout set to 5000ms'}
+
+# Common values:
+# 0 = return immediately (SQLITE_BUSY error)
+# 1000 = 1 second
+# 5000 = 5 seconds (default)
+# 30000 = 30 seconds
+```
 
 ---
 
@@ -584,6 +654,41 @@ result = conn.command("compact", "collection_name", dryRun=True)
 # With threshold and incremental
 result = conn.command("compact", "collection_name", freeSpaceTargetMB=1)
 # Returns: {'bytesFreed': <bytes>, 'ok': 1}
+```
+
+### Command: wal_checkpoint
+
+```python
+# Default (PASSIVE)
+result = conn.command("wal_checkpoint")
+# Returns: {'ok': 1, 'mode': 'PASSIVE', 'busy': 0, 'log': 100, 'checkpointed': 50}
+
+# With mode
+result = conn.command("wal_checkpoint", mode="TRUNCATE")
+```
+
+### Command: cache_size
+
+```python
+# Get current value
+result = conn.command("cache_size")
+# Returns: {'ok': 1, 'cache_size': -2000}
+
+# Set value
+result = conn.command("cache_size", pages=1000)
+# Returns: {'ok': 1, 'message': 'cache_size set to 1000'}
+```
+
+### Command: busy_timeout
+
+```python
+# Get current value
+result = conn.command("busy_timeout")
+# Returns: {'ok': 1, 'busy_timeout': 5000}
+
+# Set value
+result = conn.command("busy_timeout", milliseconds=5000)
+# Returns: {'ok': 1, 'message': 'busy_timeout set to 5000ms'}
 ```
 
 ### Environment Variable

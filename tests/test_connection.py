@@ -620,8 +620,93 @@ class TestDatabaseCommand:
         """Test command('analyze')."""
         result = connection.command("analyze")
 
-        assert result["ok"] == 1.0
+        assert result["ok"] == 1
         assert "message" in result
+
+    def test_command_wal_checkpoint(self, tmp_path):
+        """Test command('wal_checkpoint')."""
+        db_path = tmp_path / "test.db"
+        conn = neosqlite.Connection(str(db_path))
+
+        conn["test"].insert_one({"a": 1})
+
+        result = conn.command("wal_checkpoint")
+
+        assert result["ok"] == 1
+        assert "mode" in result
+        assert "busy" in result
+        assert "log" in result
+        assert "checkpointed" in result
+
+        conn.close()
+
+    def test_command_wal_checkpoint_passive(self, tmp_path):
+        """Test command('wal_checkpoint') with PASSIVE mode."""
+        db_path = tmp_path / "test.db"
+        conn = neosqlite.Connection(str(db_path))
+
+        conn["test"].insert_one({"a": 1})
+
+        result = conn.command("wal_checkpoint", mode="PASSIVE")
+
+        assert result["ok"] == 1
+        assert result["mode"] == "PASSIVE"
+
+        conn.close()
+
+    def test_command_cache_size_get(self, tmp_path):
+        """Test command('cache_size') without value returns current."""
+        db_path = tmp_path / "test.db"
+        conn = neosqlite.Connection(str(db_path))
+
+        result = conn.command("cache_size")
+
+        assert result["ok"] == 1
+        assert "cache_size" in result
+
+        conn.close()
+
+    def test_command_cache_size_set(self, tmp_path):
+        """Test command('cache_size') with pages value sets cache."""
+        db_path = tmp_path / "test.db"
+        conn = neosqlite.Connection(str(db_path))
+
+        result = conn.command("cache_size", pages=1000)
+
+        assert result["ok"] == 1
+        assert "message" in result
+
+        current = conn.db.execute("PRAGMA cache_size").fetchone()[0]
+        assert abs(current) == 1000
+
+        conn.close()
+
+    def test_command_busy_timeout_get(self, tmp_path):
+        """Test command('busy_timeout') without value returns current."""
+        db_path = tmp_path / "test.db"
+        conn = neosqlite.Connection(str(db_path))
+
+        result = conn.command("busy_timeout")
+
+        assert result["ok"] == 1
+        assert "busy_timeout" in result
+
+        conn.close()
+
+    def test_command_busy_timeout_set(self, tmp_path):
+        """Test command('busy_timeout') with milliseconds sets timeout."""
+        db_path = tmp_path / "test.db"
+        conn = neosqlite.Connection(str(db_path))
+
+        result = conn.command("busy_timeout", milliseconds=5000)
+
+        assert result["ok"] == 1
+        assert "message" in result
+
+        current = conn.db.execute("PRAGMA busy_timeout").fetchone()[0]
+        assert current == 5000
+
+        conn.close()
 
     def test_command_unknown(self, connection):
         """Test command with unknown command."""

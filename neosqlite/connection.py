@@ -476,6 +476,9 @@ class Connection:
             - "index_list" - Returns index list for a table
             - "vacuum" - Runs full VACUUM command
             - "compact" - MongoDB-compatible compact (see below)
+            - "wal_checkpoint" - WAL checkpoint control (NeoSQLite extension)
+            - "cache_size" - Get/set cache size (NeoSQLite extension)
+            - "busy_timeout" - Get/set busy timeout (NeoSQLite extension)
             - "analyze" - Runs ANALYZE command
 
         compact Command:
@@ -691,6 +694,47 @@ class Connection:
                         page_count_before - page_count_after
                     ) * page_size
                     return {"bytesFreed": bytes_freed, "ok": 1}
+
+                case "wal_checkpoint":
+                    mode = kwargs.get("mode", "PASSIVE")
+                    result = self.db.execute(
+                        f"PRAGMA wal_checkpoint({mode})"
+                    ).fetchone()
+                    return {
+                        "ok": 1,
+                        "mode": mode,
+                        "busy": result[0],
+                        "log": result[1],
+                        "checkpointed": result[2],
+                    }
+
+                case "cache_size":
+                    pages = kwargs.get("pages")
+                    if pages is not None:
+                        self.db.execute(f"PRAGMA cache_size = {pages}")
+                        return {
+                            "ok": 1,
+                            "message": f"cache_size set to {pages}",
+                        }
+                    else:
+                        current = self.db.execute(
+                            "PRAGMA cache_size"
+                        ).fetchone()[0]
+                        return {"ok": 1, "cache_size": current}
+
+                case "busy_timeout":
+                    ms = kwargs.get("milliseconds")
+                    if ms is not None:
+                        self.db.execute(f"PRAGMA busy_timeout = {ms}")
+                        return {
+                            "ok": 1,
+                            "message": f"busy_timeout set to {ms}ms",
+                        }
+                    else:
+                        current = self.db.execute(
+                            "PRAGMA busy_timeout"
+                        ).fetchone()[0]
+                        return {"ok": 1, "busy_timeout": current}
 
                 case "analyze":
                     self.db.execute("ANALYZE")
