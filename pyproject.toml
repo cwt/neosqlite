@@ -34,8 +34,8 @@ quez = { version = "^1.1.1", optional = true }
 jsonb = ["pysqlite3-binary"]
 docs = ["sphinx", "furo"]
 memory-constrained = ["quez"]
-nx-27017 = ["pymongo>=4.16.0"]
-nx-27017-speed = ["pymongo>=4.16.0", "uvloop"]
+nx27017 = ["pymongo"]
+nx27017_speed = ["pymongo", "uvloop"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0"
