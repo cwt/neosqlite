@@ -503,12 +503,22 @@ class CRUDOperationsMixin(QueryEngineProtocol):
                           successful or not.
         """
         validate_session(session, self.collection._database)
+
+        # Check if the table exists - if not, return 0 deleted
+        table_name = quote_table_name(self.collection.name)
+        cursor = self.collection.db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (self.collection.name,),
+        )
+        if cursor.fetchone() is None:
+            return DeleteResult(deleted_count=0)
+
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         filter = self.helpers._normalize_id_query(filter)
         # Use direct query to get integer ID for the delete operation
         where_clause, params = self.sql_translator.translate_match(filter)
         if where_clause:
-            cmd = f"SELECT id FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
+            cmd = f"SELECT id FROM {table_name} {where_clause} LIMIT 1"
             cursor = self.collection.db.execute(cmd, params)
             row = cursor.fetchone()
             if row:
@@ -538,12 +548,22 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             DeleteResult: A result object indicating whether the deletion was successful or not.
         """
         validate_session(session, self.collection._database)
+
+        # Check if the table exists - if not, return 0 deleted
+        table_name = quote_table_name(self.collection.name)
+        cursor = self.collection.db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (self.collection.name,),
+        )
+        if cursor.fetchone() is None:
+            return DeleteResult(deleted_count=0)
+
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         filter = self.helpers._normalize_id_query(filter)
         # Try to use SQLTranslator for the WHERE clause
         where_clause, params = self.sql_translator.translate_match(filter)
         if where_clause is not None:
-            cmd = f"DELETE FROM {quote_table_name(self.collection.name)} {where_clause}"
+            cmd = f"DELETE FROM {table_name} {where_clause}"
             cursor = self.collection.db.execute(cmd, params)
             return DeleteResult(deleted_count=cursor.rowcount)
 

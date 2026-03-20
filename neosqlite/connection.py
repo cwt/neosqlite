@@ -422,10 +422,11 @@ class Connection:
         List all collection names in the database.
 
         Returns:
-            List[str]: A list of all collection names in the database.
+            List[str]: A list of all collection names in the database,
+            excluding internal SQLite tables (sqlite_sequence, sqlite_stat*, etc.)
         """
         cursor = self.db.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
         )
         return [row[0] for row in cursor.fetchall()]
 
@@ -438,7 +439,7 @@ class Connection:
                                 Each dictionary has 'name' and 'options' keys.
         """
         cursor = self.db.execute(
-            "SELECT name, sql FROM sqlite_master WHERE type='table'"
+            "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
         )
         return [
             {"name": row[0], "options": row[1]} for row in cursor.fetchall()
