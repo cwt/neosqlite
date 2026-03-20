@@ -451,10 +451,17 @@ class NeoSQLiteHandler:
         sections = msg["sections"]
 
         command_doc = None
+        payload_updates = []
+        payload_deletes = []
         for section_type, doc in sections:
             if section_type == "body":
                 command_doc = doc
-                break
+            elif section_type == "payload":
+                if isinstance(doc, dict):
+                    if "updates" in doc:
+                        payload_updates = doc["updates"]
+                    if "deletes" in doc:
+                        payload_deletes = doc["deletes"]
 
         if not command_doc:
             return request_id, {"ok": 0, "errmsg": "No command document"}
@@ -531,7 +538,7 @@ class NeoSQLiteHandler:
         # Handle delete via NeoSQLite collection method
         if "delete" in cmd_copy:
             coll_name = cmd_copy.pop("delete")
-            deletes = cmd_copy.pop("deletes", [])
+            deletes = cmd_copy.pop("deletes", []) or payload_deletes
             coll = db[coll_name]
             removed = 0
             for delete in deletes:
@@ -584,7 +591,7 @@ class NeoSQLiteHandler:
         # Handle update via NeoSQLite collection method
         if "update" in cmd_copy:
             coll_name = cmd_copy.pop("update")
-            updates = cmd_copy.pop("updates", [])
+            updates = cmd_copy.pop("updates", []) or payload_updates
             coll = db[coll_name]
             modified = 0
             for update in updates:
@@ -593,11 +600,12 @@ class NeoSQLiteHandler:
                 q = self._convert_objectids(q)
                 u = self._convert_objectids(u)
                 multi = update.get("multi", False)
+                upsert = update.get("upsert", False)
                 if multi:
-                    upd_result = coll.update_many(q, u)
+                    upd_result = coll.update_many(q, u, upsert=upsert)
                     modified += upd_result.modified_count
                 else:
-                    upd_result = coll.update_one(q, u)
+                    upd_result = coll.update_one(q, u, upsert=upsert)
                     modified += upd_result.modified_count
             return request_id, {"ok": 1, "n": modified, "nModified": modified}
 
