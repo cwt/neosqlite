@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, Any, Dict, List, Tuple, overload
-
-from typing_extensions import Literal
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Tuple, overload
 
 from neosqlite.collection.json_helpers import neosqlite_json_loads
 

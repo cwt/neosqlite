@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import Any, Dict, Iterator, List, Tuple
-
-from typing_extensions import Literal
+from typing import Any, Dict, Iterator, List, Literal, Tuple
 
 from ._sqlite import sqlite3
 from .client_session import ClientSession

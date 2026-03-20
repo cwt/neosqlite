@@ -1,6 +1,4 @@
-from typing import Any, Dict, List, Tuple, overload
-
-from typing_extensions import Literal
+from typing import Any, Dict, List, Literal, Tuple, overload
 
 from .._sqlite import sqlite3
 from ..sql_utils import quote_identifier, quote_table_name
