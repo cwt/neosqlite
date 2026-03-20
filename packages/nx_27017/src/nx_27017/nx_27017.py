@@ -1618,6 +1618,11 @@ def run_as_daemon(args: argparse.Namespace):
     if args.db_path != "memory" and not os.path.isabs(args.db_path):
         args.db_path = os.path.abspath(args.db_path)
 
+    if args.fts5_tokenizers:
+        args.fts5_tokenizers = [
+            (name, os.path.abspath(path)) for name, path in args.fts5_tokenizers
+        ]
+
     daemonize()
 
     with open(args.log_file, "a") as log_fh:
