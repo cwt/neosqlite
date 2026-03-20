@@ -1,6 +1,6 @@
 # NX-27017
 
-**NeoSQLite Experimental Project 27017** - *"To Boldy Go Where No SQLite Has Gone Before!"*
+*"To Boldy Go Where No SQLite Has Gone Before!"*
 
 A MongoDB Wire Protocol Server backed by SQLite. In plain English: we turned a simple SQLite file into a MongoDB server. Yes, this is exactly as crazy as it sounds.
 
@@ -10,7 +10,7 @@ You know how SQLite is that tiny database that just... works? And you wish you c
 
 That's NX-27017. It speaks MongoDB's wire protocol, stores everything in SQLite, and pretends nothing is wrong.
 
-> **Note:** The `NX` stands for "NeoSQLite Experimental" - our little Starship Enterprise of database adapters. 🚀
+> **Note:** The `NX` stands for "NeoSQLite Experimental" - our little NX-class starship of database adapters. 🚀
 
 ## Requirements
 
@@ -102,4 +102,4 @@ Part of the NeoSQLite project. Use freely, modify liberally, blame no one.
 
 ---
 
-> "NX-27017: Not The Final Frontier of SQLite Possibility."*
+> **NX-27017**: Not The Final Frontier of SQLite Possibility.
