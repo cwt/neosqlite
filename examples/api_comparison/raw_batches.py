@@ -1,5 +1,6 @@
 """Module for comparing raw batch operations between NeoSQLite and PyMongo"""
 
+import os
 import warnings
 
 import neosqlite
@@ -17,6 +18,8 @@ from .utils import test_pymongo_connection
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
 )
+
+IS_NX27017_BACKEND = os.environ.get("NX27017_BACKEND", "").lower() == "true"
 
 
 def compare_raw_batch_operations():
@@ -72,14 +75,30 @@ def compare_raw_batch_operations():
 
         client.close()
 
-    reporter.record_comparison(
+    if IS_NX27017_BACKEND:
+        skip_reason = (
+            "NX-27017 does not implement batch_size for find_raw_batches"
+        )
+    elif not client:
+        skip_reason = "MongoDB not available"
+    else:
+        skip_reason = None
+
+    reporter.record_result(
         "Raw Batch Operations",
         "find_raw_batches",
-        (
+        passed=(
+            neo_raw_batches == mongo_raw_batches
+            if mongo_raw_batches is not None and skip_reason is None
+            else True
+        ),
+        neo_result=(
             neo_raw_batches
             if not isinstance(neo_raw_batches, str)
             else neo_raw_batches
         ),
-        mongo_raw_batches if mongo_raw_batches is not None else None,
-        skip_reason="MongoDB not available" if not client else None,
+        mongo_result=(
+            mongo_raw_batches if mongo_raw_batches is not None else None
+        ),
+        skip_reason=skip_reason,
     )

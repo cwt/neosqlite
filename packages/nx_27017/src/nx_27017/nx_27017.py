@@ -506,6 +506,11 @@ class NeoSQLiteHandler:
         # Handle collection deletion via NeoSQLite method
         if "drop" in cmd_copy:
             coll_name = cmd_copy.pop("drop")
+            if coll_name.startswith("sqlite_"):
+                return request_id, {
+                    "ok": 0,
+                    "errmsg": f"Cannot drop internal table: {coll_name}",
+                }
             db[coll_name].drop()
             return request_id, {"ok": 1}
 

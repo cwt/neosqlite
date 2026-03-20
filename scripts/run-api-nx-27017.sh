@@ -27,7 +27,7 @@ NX27017_PORT=27017
 NX27017_HOST="127.0.0.1"
 NX27017_CMD="/home/cwt/Env/neosqlite/bin/nx-27017"
 NX27017_DB_DIR="/tmp/nx27017_data"
-NX27017_DB="memory"  # Use 'memory' for in-memory (converted to :memory: by nx-27017)
+NX27017_DB="/tmp/nx27017_data/neosqlite"  # Use file-based database for persistence
 COMPARISON_SCRIPT="$(dirname "$0")/../examples/api_comparison_main.py"
 
 # Track if we started the server (for cleanup)
