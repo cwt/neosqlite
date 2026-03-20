@@ -1,6 +1,6 @@
 # NX-27017
 
-*"To Boldy Go Where No SQLite Has Gone Before!"*
+> "To Boldy Go Where No SQLite Has Gone Before!"
 
 A MongoDB Wire Protocol Server backed by SQLite. In plain English: we turned a simple SQLite file into a MongoDB server. Yes, this is exactly as crazy as it sounds.
 
