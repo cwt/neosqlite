@@ -468,10 +468,6 @@ class NeoSQLiteHandler:
                     "maxWireVersion": 21,
                 }
 
-        # Handle ping specially (MongoDB expects simple {"ok": 1})
-        if "ping" in command_doc:
-            return request_id, {"ok": 1}
-
         # Translate MongoDB commands to NeoSQLite API
         cmd_copy = dict(command_doc)
 
@@ -671,18 +667,20 @@ class NeoSQLiteHandler:
         if "listCollections" in cmd_copy:
             return self._handle_list_collections(request_id, db)
 
-        # Handle serverStatus
+        # Handle serverStatus - needs special handling for proper MongoDB format
         if "serverStatus" in cmd_copy or "buildInfo" in cmd_copy:
             return self._handle_server_status(request_id, db)
 
-        # Handle dbStats
+        # Handle dbStats - delegate to NeoSQLite (returns MongoDB format)
         if "dbStats" in cmd_copy or "dbstats" in cmd_copy:
-            return self._handle_db_stats(request_id, db)
+            db_stats_result = db.command({"dbStats": 1})
+            return request_id, db_stats_result
 
-        # Handle collStats
+        # Handle collStats - delegate to NeoSQLite (returns MongoDB format)
         if "collStats" in cmd_copy or "collstats" in cmd_copy:
             coll_name = cmd_copy.get("collStats") or cmd_copy.get("collstats")
-            return self._handle_coll_stats(request_id, db, coll_name)
+            coll_stats_result = db.command({"collstats": coll_name})
+            return request_id, coll_stats_result
 
         # Handle listDatabases
         if "listDatabases" in cmd_copy or "listdatabases" in cmd_copy:
@@ -1033,62 +1031,6 @@ class NeoSQLiteHandler:
             "connections": {"current": 1, "available": 1000},
             "mem": {"bits": 64, "resident": 0, "virtual": 0},
             "globalLock": {"totalTime": 0},
-        }
-
-    def _handle_db_stats(
-        self, request_id: int, db: Connection
-    ) -> tuple[int, dict[str, Any]]:
-        """Handle dbStats command."""
-        # Get collection count
-        coll_names = db.list_collection_names()
-        num_collections = len(coll_names)
-
-        # Get total document count
-        num_objects = 0
-        for coll_name in coll_names:
-            try:
-                num_objects += db[coll_name].count_documents({})
-            except Exception:
-                pass
-
-        return request_id, {
-            "ok": 1,
-            "db": db.name,
-            "collections": num_collections,
-            "views": 0,
-            "objects": num_objects,
-            "avgObjSize": 0,
-            "dataSize": 0,
-            "storageSize": 0,
-            "indexes": num_collections,
-            "indexSize": 0,
-            "totalSize": 0,
-            "scaleFactor": 1,
-            "fsTotalSize": 0,
-            "fsUsedSize": 0,
-        }
-
-    def _handle_coll_stats(
-        self, request_id: int, db: Connection, coll_name: str | None
-    ) -> tuple[int, dict[str, Any]]:
-        """Handle collStats command."""
-        if not coll_name:
-            return request_id, {"ok": 0, "errmsg": "No collection specified"}
-
-        coll = db[coll_name]
-        count = coll.count_documents({})
-
-        return request_id, {
-            "ok": 1,
-            "ns": f"{db.name}.{coll_name}",
-            "count": count,
-            "size": 0,
-            "storageSize": 0,
-            "totalIndexSize": 0,
-            "totalSize": 0,
-            "scaleFactor": 1,
-            "avgObjSize": 0,
-            "nindexes": 1,
         }
 
     def _handle_list_indexes(
