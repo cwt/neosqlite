@@ -44,7 +44,18 @@ nx-27017 -d --db ./myapp.db
 | `-d` | Run as daemon |
 | `--stop` | Stop daemon |
 | `--status` | Check if running |
+| `--fts5-tokenizer NAME=PATH` | Load FTS5 tokenizer (can be repeated for multiple tokenizers) |
 | `-v` | Verbose logging |
+
+### FTS5 Tokenizer
+
+For databases with FTS5 custom tokenizers (e.g., ICU tokenizer):
+
+```bash
+nx-27017 --db myapp.db --fts5-tokenizer icu=/path/to/libfts5_icu.so
+# Multiple tokenizers:
+nx-27017 --db myapp.db --fts5-tokenizer icu=/path.so --fts5-tokenizer other=/other.so
+```
 
 ## Try It Out
 
