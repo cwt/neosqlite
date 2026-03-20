@@ -13,23 +13,21 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Programming Language :: Python :: 3.14",
     "Topic :: Database",
 ]
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = "^3.10, <3.15"
 neosqlite = { path = "../../", develop = true }
-pymongo = "^4.0.0"
+pymongo = "^4.16.0"
+
+[tool.poetry.extras]
+speed = ["uvloop"]
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^7.0.0"
+pytest = "^9.0"
 pytest-asyncio = "^0.21.0"
-pytest-cov = "^4.0.0"
+pytest-cov = "^7.0"
 mypy = "^1.17"
 ruff = "^0.11"
 

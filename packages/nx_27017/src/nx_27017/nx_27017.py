@@ -18,6 +18,15 @@ import signal
 import socket
 import struct
 import sys
+
+# Try to use uvloop for better async performance
+try:
+    import uvloop
+
+    ASYNC_LIBRARY = "uvloop"
+except ImportError:
+    uvloop = None  # type: ignore
+    ASYNC_LIBRARY = "asyncio"
 import threading
 import time
 from datetime import datetime, timezone
@@ -1532,8 +1541,11 @@ def run_server_threaded(
 ):
     """Run the MongoDB wire protocol server (threaded or async)."""
     if not use_threading:
-        # Use async version
-        return asyncio.run(run_server(host, port, handler))
+        # Use async version with uvloop for better performance if available
+        if uvloop is not None:
+            uvloop.install()
+        asyncio.run(run_server(host, port, handler))
+        return
 
     # Create server socket
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -1753,12 +1765,14 @@ def run_server_sync(args: argparse.Namespace):
 
     tokenizers = args.fts5_tokenizers
 
+    async_lib = "uvloop" if uvloop is not None else "asyncio"
     logger.info(
-        "Starting NX-27017 with db_path=%s, host=%s, port=%s, tokenizers=%s (threaded=%s)",
+        "Starting NX-27017 with db_path=%s, host=%s, port=%s, tokenizers=%s (async=%s, threaded=%s)",
         db_path,
         args.host,
         args.port,
         tokenizers,
+        async_lib,
         args.threaded,
     )
 

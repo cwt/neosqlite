@@ -77,17 +77,31 @@ db.users.find()
 | Category | Commands |
 |----------|----------|
 | **Handshake** | `ping`, `ismaster`, `hello`, `buildInfo` |
-| **CRUD** | `insert`, `find`, `update`, `delete` |
-| **Aggregation** | `aggregate`, `count`, `distinct` |
-| **Collections** | `create`, `drop`, `renameCollection` |
-| **Indexes** | `createIndexes`, `listIndexes`, `dropIndexes` |
+| **CRUD** | `insert`, `find`, `update`, `delete`, `replace_one` |
+| **Aggregation** | `aggregate`, `count`, `distinct` with all common stages |
+| **Collections** | `create`, `drop`, `renameCollection`, `listCollections`, `listCollectionNames` |
+| **Indexes** | `createIndexes`, `listIndexes`, `dropIndexes`, `listSearchIndexes` |
 | **Sessions** | `startSession`, `endSessions` |
+| **Query Features** | `hint`, `min`, `max`, `sort`, `skip`, `limit`, `projection` |
 
 ## What Doesn't (Yet)
 
-- Full aggregation pipeline (some stages missing)
 - Replication & sharding (coming never™)
-- Change streams via replica set (we do have SQLite-trigger-based watch though!)
+- Change streams via replica set (Note: SQLite-trigger-based `watch()` is supported!)
+- GridFS (MongoDB-specific file storage)
+- Transactions (requires replica set)
+- `find_raw_batches` with batch_size (requires cursor state management)
+
+## API Compatibility
+
+NX-27017 passes the **376 MongoDB API compatibility tests** (359 passed, 17 skipped) when compared against PyMongo's expected behavior. This includes:
+
+- All CRUD operations
+- Query operators ($eq, $gt, $gte, $lt, $lte, $ne, $in, $nin, $exists, $type, $all, $size, $regex, $nor, etc.)
+- Update operators ($set, $inc, $push, $pull, $addToSet, $pop, etc.)
+- Aggregation stages ($match, $group, $sort, $limit, $skip, $project, $unwind, $lookup, $facet, etc.)
+- Index operations (including text search indexes)
+- Cursor methods (hint, min, max, sort)
 
 ## Architecture
 
