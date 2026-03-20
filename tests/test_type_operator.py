@@ -125,3 +125,48 @@ def test_type_operator_with_nested_field(collection):
     # Should match only the first document
     assert len(result) == 1
     assert result[0]["profile"]["age"] == 30
+
+
+def test_mod_operator_with_mixed_types(collection):
+    """Test $mod operator excludes string values that look like numbers.
+
+    This is a regression test for a bug where SQLite's loose type coercion
+    would cause $mod to match string values like "25" because SQLite
+    silently converts "25" to 25 for numeric operations.
+    """
+    # Insert test documents with different types for age
+    collection.insert_one({"name": "Alice", "age": 30})  # int 30 % 5 = 0
+    collection.insert_one(
+        {"name": "Bob", "age": "25"}
+    )  # string "25" - should NOT match
+    collection.insert_one(
+        {"name": "Charlie", "age": 35.0}
+    )  # float 35.0 % 5 = 0
+    collection.insert_one({"name": "David", "age": 25})  # int 25 % 5 = 0
+
+    # Query: age % 5 == 0
+    # Should match Alice (30), Charlie (35.0), David (25) - but NOT Bob ("25")
+    result = list(collection.find({"age": {"$mod": [5, 0]}}))
+
+    # Verify correct count and values
+    assert len(result) == 3
+    names = [doc["name"] for doc in result]
+    assert "Alice" in names
+    assert "Bob" not in names  # String "25" should NOT match
+    assert "Charlie" in names
+    assert "David" in names
+
+
+def test_mod_operator_with_string_value(collection):
+    """Test $mod operator with string value returns no matches."""
+    collection.insert_one({"value": "10"})
+    collection.insert_one({"value": 10})
+
+    # String "10" should not match $mod: [3, 1] because 10 % 3 = 1
+    # But this is a string, not a number, so it shouldn't match at all
+    result = list(collection.find({"value": {"$mod": [3, 1]}}))
+
+    # Only the numeric 10 should potentially match (10 % 3 = 1)
+    # The string "10" should not be considered
+    assert len(result) == 1
+    assert result[0]["value"] == 10
