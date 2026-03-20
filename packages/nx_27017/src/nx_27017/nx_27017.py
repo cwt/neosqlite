@@ -47,26 +47,31 @@ def _convert_objectids(doc):
     """Convert NeoSQLite ObjectIds to BSON ObjectIds, and Decimal to float."""
     from decimal import Decimal as PyDecimal
 
+    def _convert_value(value):
+        if isinstance(value, NeoObjectId):
+            return BsonObjectId(value.binary)
+        elif isinstance(value, PyDecimal):
+            return float(value)
+        elif isinstance(value, list):
+            return [_convert_value(item) for item in value]
+        elif isinstance(value, dict):
+            return _convert_objectids(value)
+        return value
+
     if isinstance(doc, dict):
         result = {}
         for key, value in doc.items():
             if key == "id" and value == 0:
                 result[key] = Int64(0)
-            elif isinstance(value, NeoObjectId):
-                result[key] = BsonObjectId(value.binary)
-            elif isinstance(value, PyDecimal):
-                result[key] = float(value)
-            elif isinstance(value, list):
-                result[key] = [_convert_objectids(item) for item in value]
-            elif isinstance(value, dict):
-                result[key] = _convert_objectids(value)
             else:
-                result[key] = value
+                result[key] = _convert_value(value)
         return result
     elif isinstance(doc, list):
-        return [_convert_objectids(item) for item in doc]
+        return [_convert_value(item) for item in doc]
     elif isinstance(doc, PyDecimal):
         return float(doc)
+    elif isinstance(doc, NeoObjectId):
+        return BsonObjectId(doc.binary)
     return doc
 
 
@@ -309,22 +314,49 @@ class NeoSQLiteHandler:
 
     def __init__(self, db_path: str = ":memory:"):
         self.db_path = db_path
-        self.conn = Connection(db_path, check_same_thread=False)
+        if db_path == ":memory:":
+            self.conn = Connection(
+                "file::memory:?cache=shared", check_same_thread=False, uri=True
+            )
+        else:
+            self.conn = Connection(db_path, check_same_thread=False)
         self.databases: dict[str, Connection] = {"admin": self.conn}
 
     def get_database(self, db_name: str) -> Connection:
         if db_name not in self.databases:
-            # Use :memory: or create file-based db
             if self.db_path == ":memory:":
-                db_path = f"{db_name}.db"
+                self.databases[db_name] = Connection(
+                    "file::memory:?cache=shared",
+                    check_same_thread=False,
+                    uri=True,
+                )
             else:
-                # Use base path with db name prefix
                 base_path = self.db_path.replace(".db", "")
                 db_path = f"{base_path}_{db_name}.db"
-            self.databases[db_name] = Connection(
-                db_path, check_same_thread=False
-            )
+                self.databases[db_name] = Connection(
+                    db_path, check_same_thread=False
+                )
         return self.databases[db_name]
+
+    def _convert_objectids(self, doc: dict) -> dict:
+        """Convert PyMongo ObjectIds to NeoSQLite ObjectIds recursively."""
+
+        def convert_value(value):
+            if isinstance(value, dict):
+                return self._convert_objectids(value)
+            elif isinstance(value, list):
+                return [convert_value(item) for item in value]
+            elif isinstance(value, BsonObjectId):
+                return NeoObjectId(value.binary)
+            return value
+
+        if not isinstance(doc, dict):
+            return doc
+
+        result = {}
+        for key, value in doc.items():
+            result[key] = convert_value(value)
+        return result
 
     def handle_insert(self, msg: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         request_id = msg["request_id"]
@@ -369,7 +401,11 @@ class NeoSQLiteHandler:
         if not coll_name:
             return request_id, {"ok": 0, "errmsg": "No collection specified"}
 
-        coll = db[coll_name]
+        if coll_name not in db._collections:
+            coll = db.create_collection(coll_name)
+        else:
+            coll = db[coll_name]
+            coll.create()
 
         docs_to_insert = payload_docs.copy() if payload_docs else []
         for key, value in command_doc.items():
@@ -381,6 +417,10 @@ class NeoSQLiteHandler:
                 and isinstance(value, dict)
             ):
                 docs_to_insert.append(value)
+
+        docs_to_insert = [
+            self._convert_objectids(doc) for doc in docs_to_insert
+        ]
 
         if docs_to_insert:
             result = coll.insert_many(docs_to_insert)
@@ -442,7 +482,11 @@ class NeoSQLiteHandler:
         # Handle collection creation via NeoSQLite method
         if "create" in cmd_copy:
             coll_name = cmd_copy.pop("create")
-            db.create_collection(coll_name)
+            try:
+                db.create_collection(coll_name)
+            except Exception as e:
+                if "already exists" not in str(e).lower():
+                    raise
             return request_id, {"ok": 1}
 
         # Handle collection deletion via NeoSQLite method
@@ -485,6 +529,7 @@ class NeoSQLiteHandler:
             removed = 0
             for delete in deletes:
                 q = delete.get("q", {})
+                q = self._convert_objectids(q)
                 limit = delete.get("limit", 0)
                 if limit == 0:
                     del_result = coll.delete_many(q)
@@ -493,6 +538,41 @@ class NeoSQLiteHandler:
                     del_result = coll.delete_one(q)
                     removed += del_result.deleted_count
             return request_id, {"ok": 1, "n": removed}
+
+        # Handle findAndModify via NeoSQLite collection method
+        # IMPORTANT: This must be checked BEFORE "update" because findAndModify
+        # commands contain an 'update' or 'remove' field
+        if "findAndModify" in cmd_copy:
+            coll_name = cmd_copy.pop("findAndModify")
+            query = cmd_copy.pop("query", {})
+            query = self._convert_objectids(query)
+            update_doc = cmd_copy.pop("update", None)
+            remove = cmd_copy.pop("remove", False)
+            new_doc = cmd_copy.pop("new", False)
+            fields = cmd_copy.pop("fields", None)
+            upsert = cmd_copy.pop("upsert", False)
+
+            coll = db[coll_name]
+
+            if remove:
+                doc = coll.find_one_and_delete(query)
+                return request_id, {"ok": 1, "value": doc}
+            elif update_doc:
+                update_doc = self._convert_objectids(update_doc)
+                if upsert:
+                    doc = coll.find_one_and_replace(
+                        query, update_doc, upsert=True, return_document=new_doc
+                    )
+                else:
+                    doc = coll.find_one_and_replace(
+                        query, update_doc, return_document=new_doc
+                    )
+                return request_id, {"ok": 1, "value": doc}
+            else:
+                return request_id, {
+                    "ok": 0,
+                    "errmsg": "findAndModify requires 'update' or 'remove'",
+                }
 
         # Handle update via NeoSQLite collection method
         if "update" in cmd_copy:
@@ -503,6 +583,8 @@ class NeoSQLiteHandler:
             for update in updates:
                 q = update.get("q", {})
                 u = update.get("u", {})
+                q = self._convert_objectids(q)
+                u = self._convert_objectids(u)
                 multi = update.get("multi", False)
                 if multi:
                     upd_result = coll.update_many(q, u)
@@ -516,8 +598,14 @@ class NeoSQLiteHandler:
         if "find" in cmd_copy:
             coll_name = cmd_copy.pop("find")
             filter_query = cmd_copy.pop("filter", {})
+            filter_query = self._convert_objectids(filter_query)
+            projection = cmd_copy.pop("projection", None)
             coll = db[coll_name]
-            cursor = coll.find(filter_query)
+            cursor = (
+                coll.find(filter_query, projection)
+                if projection
+                else coll.find(filter_query)
+            )
             if "sort" in cmd_copy:
                 cursor = cursor.sort(list(cmd_copy["sort"].items()))
             if "limit" in cmd_copy:
@@ -606,6 +694,13 @@ class NeoSQLiteHandler:
                 "totalSize": 0,
             }
 
+        # Handle listIndexes
+        if "listIndexes" in cmd_copy or "listindexes" in cmd_copy:
+            coll_name = cmd_copy.get("listIndexes") or cmd_copy.get(
+                "listindexes"
+            )
+            return self._handle_list_indexes(request_id, db, coll_name)
+
         # Handle explain command - extract inner command and execute with explain
         if "explain" in cmd_copy:
             explain_value = cmd_copy.get("explain")
@@ -691,6 +786,7 @@ class NeoSQLiteHandler:
 
         coll = db[coll_name]
         filter_query = command_doc.get("filter", {})
+        filter_query = self._convert_objectids(filter_query)
 
         cursor = coll.find(filter_query)
 
@@ -740,6 +836,8 @@ class NeoSQLiteHandler:
         for update in updates:
             q = update.get("q", {})
             u = update.get("u", {})
+            q = self._convert_objectids(q)
+            u = self._convert_objectids(u)
             upsert = update.get("upsert", False)
             multi = update.get("multi", False)
 
@@ -778,6 +876,7 @@ class NeoSQLiteHandler:
         removed = 0
         for delete in deletes:
             q = delete.get("q", {})
+            q = self._convert_objectids(q)
             limit = delete.get("limit", 0)
 
             result = coll.delete_many(q) if limit == 0 else coll.delete_one(q)
@@ -990,6 +1089,45 @@ class NeoSQLiteHandler:
             "scaleFactor": 1,
             "avgObjSize": 0,
             "nindexes": 1,
+        }
+
+    def _handle_list_indexes(
+        self, request_id: int, db: Connection, coll_name: str | None
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle listIndexes command."""
+        if not coll_name:
+            return request_id, {"ok": 0, "errmsg": "No collection specified"}
+
+        try:
+            coll = db[coll_name]
+        except Exception:
+            return request_id, {
+                "ok": 1,
+                "cursor": {
+                    "id": 0,
+                    "ns": f"{db.name}.{coll_name}",
+                    "firstBatch": [],
+                },
+            }
+
+        index_names = coll.list_indexes()
+        index_list = []
+        for idx_name in index_names:
+            if idx_name == f"idx_{coll.name}_id":
+                key = {"_id": 1}
+            else:
+                key_str = idx_name[len(f"idx_{coll.name}_") :]
+                key_str = key_str.replace("_", ".")
+                key = {key_str: 1}
+            index_list.append({"v": 2, "key": key, "name": idx_name})
+
+        return request_id, {
+            "ok": 1,
+            "cursor": {
+                "id": 0,
+                "ns": f"{db.name}.{coll_name}",
+                "firstBatch": index_list,
+            },
         }
 
     def _handle_list_collections(

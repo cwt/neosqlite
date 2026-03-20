@@ -1,170 +1,105 @@
 # NX-27017
 
-**NeoSQLite Experimental Project 27017** - A MongoDB Wire Protocol Server backed by SQLite.
+**NeoSQLite Experimental Project 27017** - *"To Boldy Go Where No SQLite Has Gone Before!"*
 
-## Overview
+A MongoDB Wire Protocol Server backed by SQLite. In plain English: we turned a simple SQLite file into a MongoDB server. Yes, this is exactly as crazy as it sounds.
 
-NX-27017 allows MongoDB clients to connect and perform operations while data is actually stored in SQLite databases. This provides MongoDB protocol compatibility for applications while leveraging SQLite's simplicity and portability.
+## Wait, What?
 
-## Features
+You know how SQLite is that tiny database that just... works? And you wish you could point your PyMongo app at it without rewriting everything?
 
-- **MongoDB Wire Protocol Compatible**: Supports OP_MSG and OP_QUERY opcodes
-- **SQLite Backend**: All data stored in SQLite databases
-- **Daemon Mode**: Run as a background service with `-d`
-- **Multi-Database Support**: Automatic database creation per MongoDB database
-- **Common Commands**: Supports ping, isMaster, hello, insert, find, update, delete, aggregate, and more
+That's NX-27017. It speaks MongoDB's wire protocol, stores everything in SQLite, and pretends nothing is wrong.
 
-## Installation
+> **Note:** The `NX` stands for "NeoSQLite Experimental" - our little Starship Enterprise of database adapters. 🚀
 
-NX-27017 requires Python 3.10+ and the following dependencies:
+## Requirements
 
-- `neosqlite` - SQLite wrapper with MongoDB-like API
-- `pymongo` / `bson` - BSON encoding/decoding
-
-## Usage
-
-### Run in Foreground
+- Python 3.10+
+- **pymongo** - Yes, the real pymongo. It includes `bson` so no separate `bson` package needed. *cough* not to be confused with the other `bson` package on PyPi *cough*
 
 ```bash
-# Default (uses nx-27017.db)
-python nx_27017.py
-
-# In-memory database
-python nx_27017.py --db memory
-
-# Custom database file
-python nx_27017.py --db /path/to/database.db
-
-# Custom host and port
-python nx_27017.py --host 0.0.0.0 -p 27018
+pip install pymongo neosqlite
 ```
 
-### Run as Daemon
+## Quick Start
 
 ```bash
-# Start daemon
-python nx_27017.py -d
+# Run with in-memory storage (gone when you stop)
+nx-27017 --db memory
 
-# Start daemon with custom database
-python nx_27017.py -d --db /data/mongo.db
+# Run with a file (persistent)
+nx-27017 --db ./myapp.db
 
-# Check status
-python nx_27017.py --status
-
-# Stop daemon
-python nx_27017.py --stop
-
-# Verbose logging
-python nx_27017.py -d --verbose
+# Daemon mode
+nx-27017 -d --db ./myapp.db
 ```
 
-### Command Line Options
+## Command Line Options
 
 | Option | Description |
 |--------|-------------|
-| `--db DB_PATH` | SQLite database path (default: nx-27017.db, use 'memory' for in-memory) |
-| `--host HOST` | Host to bind to (default: 127.0.0.1) |
-| `-p, --port PORT` | Port to listen on (default: 27017) |
-| `-d, --daemon` | Run as a background daemon |
-| `--stop` | Stop the running daemon |
-| `--status` | Check if daemon is running |
-| `--log-file LOG_FILE` | Log file path (default: /tmp/nx_27017.log) |
-| `--pid-file PID_FILE` | PID file path (default: /tmp/nx_27017.pid) |
-| `-v, --verbose` | Enable debug logging |
+| `--db DB_PATH` | SQLite database (default: nx-27017.db, use `memory` for RAM) |
+| `--host HOST` | Bind address (default: 127.0.0.1) |
+| `-p PORT` | Port (default: 27017) |
+| `-d` | Run as daemon |
+| `--stop` | Stop daemon |
+| `--status` | Check if running |
+| `-v` | Verbose logging |
 
-## Connecting with MongoDB Shell
+## Try It Out
 
 ```bash
-# Connect with mongosh
+# Terminal 1: Start the server
+nx-27017 --db memory -v
+
+# Terminal 2: Connect with mongosh
 mongosh mongodb://127.0.0.1:27017
 
-# Or with legacy mongo shell
-mongo mongodb://127.0.0.1:27017
+# In mongosh:
+db.users.insertOne({ name: "Picard", rank: "Captain" })
+db.users.insertOne({ name: "Riker", rank: "Commander" })
+db.users.find()
 ```
 
-## Supported MongoDB Commands
+## What Works
 
-### Handshake & Discovery
-- `ping`
-- `ismaster` / `isMaster`
-- `hello`
-- `buildInfo` / `buildinfo`
-- `serverStatus`
-- `whatsmyuri`
-- `dbStats` / `dbstats`
-- `collStats` / `collstats`
+| Category | Commands |
+|----------|----------|
+| **Handshake** | `ping`, `ismaster`, `hello`, `buildInfo` |
+| **CRUD** | `insert`, `find`, `update`, `delete` |
+| **Aggregation** | `aggregate`, `count`, `distinct` |
+| **Collections** | `create`, `drop`, `renameCollection` |
+| **Indexes** | `createIndexes`, `listIndexes`, `dropIndexes` |
+| **Sessions** | `startSession`, `endSessions` |
 
-### CRUD Operations
-- `insert` - Insert documents
-- `find` - Query documents (with filter, sort, limit, skip)
-- `update` - Update documents (with upsert support)
-- `delete` - Delete documents
+## What Doesn't (Yet)
 
-### Aggregation
-- `aggregate` - Aggregation pipeline (limited stage support)
-- `count` - Count documents
-- `distinct` - Get distinct values
-
-### Schema Management
-- `create` - Create collection
-- `drop` - Drop collection
-
-### Session Management
-- `endSessions`
-
-## Example Usage
-
-```javascript
-// Connect and use with any MongoDB client
-use testdb;
-
-// Insert documents
-db.users.insertOne({ name: "Alice", age: 30 });
-db.users.insertMany([
-  { name: "Bob", age: 25 },
-  { name: "Charlie", age: 35 }
-]);
-
-// Query documents
-db.users.find({ age: { $gt: 28 } });
-
-// Update documents
-db.users.updateOne(
-  { name: "Alice" },
-  { $set: { age: 31 } }
-);
-
-// Aggregate
-db.users.aggregate([
-  { $match: { age: { $gte: 30 } } },
-  { $count: "total" }
-]);
-```
+- Full aggregation pipeline (some stages missing)
+- Replication & sharding (coming never™)
+- Change streams via replica set (we do have SQLite-trigger-based watch though!)
 
 ## Architecture
 
+```text
+PyMongo Client ←→ NX-27017 (Wire Protocol) ←→ SQLite (via NeoSQLite)
+                      ↓
+            "A database inside a database?"
+            "It's more like... a database wearing a database costume."
 ```
-MongoDB Client → Wire Protocol (TCP:27017) → NeoSQLiteHandler → SQLite (via neosqlite)
-```
 
-## Limitations
+## Why Though?
 
-- Not all MongoDB commands are supported
-- Aggregation pipeline has limited stage support
-- No replication or sharding support
-- Wire version: 17-21 (MongoDB 6.x compatible)
+Honestly? Because we could. And because sometimes you want:
 
-## Files
-
-- `nx_27017.py` - Main server implementation
-- `tests/` - Unit tests
-- `README.md` - This file
+- One file = one database
+- Zero setup
+- A MongoDB-shaped interface to SQLite
+- The satisfaction of doing something ridiculous that somehow works
 
 ## License
 
-Part of the NeoSQLite project. See the main project LICENSE for details.
+Part of the NeoSQLite project. Use freely, modify liberally, blame no one.
 
-## Acknowledgments
+---
 
-- Built on top of [NeoSQLite](https://github.com/neosqlite/neosqlite)
-- MongoDB wire protocol implementation inspired by official MongoDB documentation
+> "NX-27017: Not The Final Frontier of SQLite Possibility."*

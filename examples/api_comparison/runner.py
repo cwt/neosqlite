@@ -406,52 +406,12 @@ def cleanup_test_collections():
     if client:
         try:
             db = client.test_database
-            test_collections = [
-                "test_collection",
-                "test_agg_cursor",
-                "test_agg_stages",
-                "users",
-                "products",
-                "items",
-                "test_index",
-                "test_bulk",
-                "test_distinct",
-                "test_binary",
-                "test_nested",
-                "test_raw",
-                "test_text",
-                "test_gridfs",
-                "test_objectid",
-                "test_type",
-                "test_unwind",
-                "test_facet",
-                "test_lookup",
-                "test_sample",
-                "test_push",
-                "test_addtoset",
-                "test_pull",
-                "test_pop",
-                "test_currentdate",
-                "test_nested",
-                "test_raw_batches",
-                "test_text",
-                "test_binary",
-                "test_distinct",
-                "test_bulk",
-                "test_find_modify",
-                "test_index",
-                "test_agg",
-                "test_update",
-                "test_query",
-                "test_expr",
-                "test_crud",
-            ]
-            for coll_name in test_collections:
+            for coll_name in db.list_collection_names():
                 try:
                     db.drop_collection(coll_name)
                 except Exception:
                     pass
-            print("MongoDB [test_database]: Cleaned up common test collections")
+            print("MongoDB [test_database]: Cleaned up all test collections")
         except Exception as e:
             print(f"MongoDB [test_database]: Cleanup skipped - {e}")
 
@@ -529,6 +489,9 @@ def run_all_comparisons():
 
             # Clear tier changes before each category
             clear_tier_changes()
+
+            # Cleanup test collections between categories to avoid data pollution
+            cleanup_test_collections()
 
             try:
                 func()

@@ -1,5 +1,6 @@
 """Module for comparing session and transaction methods between NeoSQLite and PyMongo"""
 
+import os
 import warnings
 
 import neosqlite
@@ -16,6 +17,10 @@ from .utils import test_pymongo_connection
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
 )
+
+# Check if we're running against NX-27017 (NeoSQLite backend)
+# In this case, we can run transaction tests because NeoSQLite supports them
+IS_NX27017_BACKEND = os.environ.get("NX27017_BACKEND", "").lower() == "true"
 
 
 def compare_session_methods():
@@ -143,7 +148,8 @@ def compare_session_methods():
 
         # If transactions didn't execute, mark this as a partial benchmark
         # because the main functionality being tested is transactions, not just session creation
-        if not mongo_tx_executed:
+        # BUT if we're on NX-27017 backend, don't skip - we should run and report failures
+        if not mongo_tx_executed and not IS_NX27017_BACKEND:
             if benchmark_reporter:
                 benchmark_reporter.mark_mongo_skipped(
                     "Session & Transactions",
@@ -168,6 +174,7 @@ def compare_session_methods():
 
     # For transactions, we compare results if both were executed, otherwise mark as skipped
     # because MongoDB requires a replica set which might not be available
+    # BUT if we're on NX-27017 backend, don't skip - it's a bug if transactions fail
     reporter.record_result(
         "Session & Transactions",
         "transaction_commit",
@@ -180,7 +187,7 @@ def compare_session_methods():
         mongo_result=mongo_tx_commit,
         skip_reason=(
             "NeoSQLite: OK; MongoDB: Requires replica set (skipped)"
-            if (client and mongo_tx_commit is False)
+            if (client and mongo_tx_commit is False and not IS_NX27017_BACKEND)
             else ("MongoDB not available" if not client else None)
         ),
     )
@@ -196,7 +203,7 @@ def compare_session_methods():
         mongo_result=mongo_tx_abort,
         skip_reason=(
             "NeoSQLite: OK; MongoDB: Requires replica set (skipped)"
-            if (client and mongo_tx_abort is False)
+            if (client and mongo_tx_abort is False and not IS_NX27017_BACKEND)
             else ("MongoDB not available" if not client else None)
         ),
     )
@@ -210,7 +217,7 @@ def compare_session_methods():
         mongo_result=mongo_with_tx,
         skip_reason=(
             "NeoSQLite: OK; MongoDB: Requires replica set (skipped)"
-            if (client and mongo_with_tx is False)
+            if (client and mongo_with_tx is False and not IS_NX27017_BACKEND)
             else ("MongoDB not available" if not client else None)
         ),
     )

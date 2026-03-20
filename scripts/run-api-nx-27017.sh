@@ -27,7 +27,7 @@ NX27017_PORT=27017
 NX27017_HOST="127.0.0.1"
 NX27017_CMD="/home/cwt/Env/neosqlite/bin/nx-27017"
 NX27017_DB_DIR="/tmp/nx27017_data"
-NX27017_DB="$NX27017_DB_DIR/neosqlite.db"
+NX27017_DB="memory"  # Use 'memory' for in-memory (converted to :memory: by nx-27017)
 COMPARISON_SCRIPT="$(dirname "$0")/../examples/api_comparison_main.py"
 
 # Track if we started the server (for cleanup)
@@ -164,9 +164,9 @@ cleanup_existing_server() {
 }
 
 cleanup_database() {
-    info "Cleaning up database file..."
+    info "Cleaning up database files..."
     if [ -d "$NX27017_DB_DIR" ]; then
-        rm -f "$NX27017_DB" 2>/dev/null || true
+        rm -f "$NX27017_DB_DIR"/*.db 2>/dev/null || true
     fi
 }
 
@@ -181,16 +181,13 @@ run_nx27017_server() {
         warn "Port $NX27017_PORT is already in use. Attempting to start anyway..."
     fi
 
-    # Create database directory if it doesn't exist
-    mkdir -p "$NX27017_DB_DIR"
-
-    # Start NX-27017 server with database file
+    # Start NX-27017 server with memory database
     $NX27017_CMD -v --db "$NX27017_DB" --host $NX27017_HOST -p $NX27017_PORT 2>&1 &
     NX27017_PID=$!
 
     SERVER_STARTED=true
 
-    # Wait for server to be ready
+    # Wait for NX-27017 to be ready
     info "Waiting for NX-27017 to be ready..."
     local max_attempts=30
     local attempt=0
@@ -239,6 +236,11 @@ run_comparison() {
     # Run the comparison script from the examples directory
     # The script will exit with non-zero if there are incompatibilities
     SCRIPT_DIR="$(dirname "$COMPARISON_SCRIPT")"
+    
+    # Indicate that we're running against NX-27017 (NeoSQLite backend)
+    # This allows tests to enable features that NeoSQLite supports but real MongoDB doesn't
+    export NX27017_BACKEND=true
+    
     if (cd "$SCRIPT_DIR" && python3 api_comparison_main.py); then
         success "API comparison completed - 100% compatible!"
         return 0
@@ -265,6 +267,11 @@ main() {
 
     # Step 2: Cleanup existing server
     cleanup_existing_server
+
+    # Step 2b: Clean database files (start fresh)
+    if [ -d "$NX27017_DB_DIR" ]; then
+        rm -f "$NX27017_DB_DIR"/*.db 2>/dev/null || true
+    fi
 
     # Step 3: Run NX-27017 server
     if ! run_nx27017_server; then

@@ -1,63 +1,22 @@
-# NX-27017 Sub-Projects
+# NeoSQLite Sub-Projects
 
-This directory contains sub-projects/packages that are part of the NX-27017 ecosystem but maintained separately from the main neosqlite package.
+Extends the NeoSQLite ecosystem with specialized tools and adapters.
 
 ## Packages
 
-### nx-27017
+| Package | Description |
+|---------|-------------|
+| [nx-27017](nx_27017/) | MongoDB Wire Protocol Server |
 
-MongoDB Wire Protocol Server backed by SQLite.
+## Adding a Package
 
-**Location:** `packages/nx_27017/`
-
-**Installation:**
-```bash
-cd packages/nx_27017
-pip install -e .
-```
-
-**Usage:**
-```bash
-# Run server
-nx-27017 --db memory
-
-# Run as daemon
-nx-27017 -d
-
-# Check status
-nx-27017 --status
-
-# Stop daemon
-nx-27017 --stop
-```
-
-**Development:**
-```bash
-cd packages/nx_27017
-pip install -e ".[dev]"
-pytest tests/
-```
+Create a new directory under `packages/` with its own README and `pyproject.toml`.
 
 ## Structure
 
-```
+```text
 packages/
-└── nx_27017/
-    ├── src/
-    │   └── nx_27017/
-    │       ├── __init__.py
-    │       └── nx_27017.py    # Main server implementation
-    ├── tests/
-    │   └── test_nx_27017.py
-    ├── pyproject.toml
-    ├── README.md
-    └── .gitignore
+├── README.md
+├── nx_27017/       # MongoDB Wire Protocol Server
+└── ...             # Future packages
 ```
-
-## Why Sub-Projects?
-
-Sub-projects allow us to:
-- Maintain separate version numbers
-- Have independent dependencies
-- Test and release independently
-- Keep the main neosqlite package focused

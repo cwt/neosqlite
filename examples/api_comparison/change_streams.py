@@ -1,5 +1,6 @@
 """Module for comparing change streams between NeoSQLite and PyMongo"""
 
+import os
 import warnings
 
 import neosqlite
@@ -14,14 +15,16 @@ warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
 )
 
+# Check if we're running against NX-27017 (NeoSQLite backend)
+IS_NX27017_BACKEND = os.environ.get("NX27017_BACKEND", "").lower() == "true"
+
 
 def compare_change_streams():
-    """Compare change streams (watch) - SKIPPED: Different architecture"""
+    """Compare change streams (watch)"""
     print("\n=== Change Streams (watch) Comparison ===")
 
-    # NeoSQLite uses SQLite triggers for change tracking
-    # MongoDB uses oplog-based change streams
-    # These are fundamentally different architectures
+    neo_watch_ok = False
+    mongo_watch_ok = False
 
     with neosqlite.Connection(":memory:") as neo_conn:
         neo_collection = neo_conn.test_collection
@@ -29,19 +32,13 @@ def compare_change_streams():
 
         set_accumulation_mode(True)
         try:
-            # NeoSQLite watch uses SQLite change tracking
-            # Do not time watch() as it uses fundamentally different
-            # architectures and is often skipped.
             _ = neo_collection.watch()
+            neo_watch_ok = True
             print("Neo watch: Supported")
         except Exception as e:
             print(f"Neo watch: Error - {e}")
 
     client = test_pymongo_connection()
-    # Initialize MongoDB result variables
-
-    mongo_collection = None
-    mongo_db = None
 
     if client:
         mongo_db = client.test_database
@@ -51,22 +48,29 @@ def compare_change_streams():
 
         set_accumulation_mode(True)
         try:
-            # MongoDB change streams require replica set
-            # This will likely fail on standalone MongoDB
-            # Do not time watch() as it uses fundamentally different
-            # architectures and is often skipped.
             _ = mongo_collection.watch()
+            mongo_watch_ok = True
             print("Mongo watch: Supported")
         except Exception as e:
             print(f"Mongo watch: Error - {e} (requires replica set)")
 
         client.close()
 
-    # Skip this test as it requires different infrastructure
+    # When on NX-27017 backend, compare results (both should work or both should fail)
+    # When on real MongoDB, skip if replica set not available
+    if IS_NX27017_BACKEND:
+        # On NX-27017, if NeoSQLite supports watch but MongoDB fails, it's a FAIL
+        skip_reason = None
+    else:
+        # On real MongoDB, skip if MongoDB doesn't support watch (no replica set)
+        skip_reason = (
+            "Requires MongoDB replica set; NeoSQLite uses SQLite triggers"
+        )
+
     reporter.record_comparison(
         "Change Streams",
         "watch",
-        "OK",
-        "OK",
-        skip_reason="Requires MongoDB replica set; NeoSQLite uses SQLite triggers",
+        "OK" if neo_watch_ok else "FAIL",
+        "OK" if mongo_watch_ok else "FAIL",
+        skip_reason=skip_reason,
     )
