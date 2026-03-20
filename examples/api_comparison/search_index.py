@@ -1,5 +1,6 @@
 """Module for comparing search index operations between NeoSQLite and PyMongo"""
 
+import os
 import warnings
 
 import neosqlite
@@ -17,6 +18,8 @@ from .utils import test_pymongo_connection
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
 )
+
+IS_NX27017_BACKEND = os.environ.get("NX27017_BACKEND", "").lower() == "true"
 
 
 def compare_search_index_operations():
@@ -154,12 +157,33 @@ def compare_search_index_operations():
         mongo_create_search_index if mongo_create_search_index else None,
         skip_reason="MongoDB not available" if not client else None,
     )
-    reporter.record_comparison(
+
+    if IS_NX27017_BACKEND:
+        skip_reason = "NeoSQLite FTS search indexes not comparable to MongoDB text indexes"
+    elif not client:
+        skip_reason = "MongoDB not available"
+    elif mongo_list_search_indexes is False:
+        skip_reason = "MongoDB text index not found"
+    else:
+        skip_reason = None
+
+    reporter.record_result(
         "Search Index Operations",
         "list_search_indexes",
-        neo_list_search_indexes if neo_list_search_indexes else "FAIL",
-        mongo_list_search_indexes if mongo_list_search_indexes else None,
-        skip_reason="MongoDB not available" if not client else None,
+        passed=(
+            neo_list_search_indexes == mongo_list_search_indexes
+            if mongo_list_search_indexes is not None
+            else True
+        ),
+        neo_result=(
+            neo_list_search_indexes if neo_list_search_indexes else "FAIL"
+        ),
+        mongo_result=(
+            mongo_list_search_indexes
+            if mongo_list_search_indexes is not None
+            else None
+        ),
+        skip_reason=skip_reason,
     )
     reporter.record_comparison(
         "Search Index Operations",

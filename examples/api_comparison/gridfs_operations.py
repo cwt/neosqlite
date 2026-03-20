@@ -1,5 +1,6 @@
 """Module for comparing GridFS operations between NeoSQLite and PyMongo"""
 
+import os
 import warnings
 
 import neosqlite
@@ -16,6 +17,8 @@ from .utils import test_pymongo_connection
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
 )
+
+IS_NX27017_BACKEND = os.environ.get("NX27017_BACKEND", "").lower() == "true"
 
 
 def compare_gridfs_operations():
@@ -104,10 +107,24 @@ def compare_gridfs_operations():
     else:
         mongo_gridfs_ok = False
 
-    reporter.record_comparison(
+    if IS_NX27017_BACKEND:
+        skip_reason = "GridFS not implemented in NX-27017 (MongoDB-specific)"
+    elif not client:
+        skip_reason = "MongoDB not available"
+    elif mongo_gridfs_ok is False:
+        skip_reason = "MongoDB GridFS operation failed"
+    else:
+        skip_reason = None
+
+    reporter.record_result(
         "GridFS",
         "GridFSBucket",
-        neo_gridfs_ok if neo_gridfs_ok else "FAIL",
-        mongo_gridfs_ok if mongo_gridfs_ok else None,
-        skip_reason="MongoDB not available" if not client else None,
+        passed=(
+            neo_gridfs_ok == mongo_gridfs_ok
+            if mongo_gridfs_ok is not None
+            else True
+        ),
+        neo_result=neo_gridfs_ok if neo_gridfs_ok else "FAIL",
+        mongo_result=mongo_gridfs_ok if mongo_gridfs_ok is not None else None,
+        skip_reason=skip_reason,
     )

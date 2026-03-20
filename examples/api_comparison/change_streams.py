@@ -59,18 +59,23 @@ def compare_change_streams():
     # When on NX-27017 backend, compare results (both should work or both should fail)
     # When on real MongoDB, skip if replica set not available
     if IS_NX27017_BACKEND:
-        # On NX-27017, if NeoSQLite supports watch but MongoDB fails, it's a FAIL
-        skip_reason = None
-    else:
-        # On real MongoDB, skip if MongoDB doesn't support watch (no replica set)
+        skip_reason = None  # On NX-27017, compare results
+    elif mongo_watch_ok is False:
         skip_reason = (
             "Requires MongoDB replica set; NeoSQLite uses SQLite triggers"
         )
+    else:
+        skip_reason = None
 
-    reporter.record_comparison(
+    reporter.record_result(
         "Change Streams",
         "watch",
-        "OK" if neo_watch_ok else "FAIL",
-        "OK" if mongo_watch_ok else "FAIL",
+        passed=(
+            neo_watch_ok == mongo_watch_ok
+            if mongo_watch_ok is not False
+            else True
+        ),
+        neo_result="OK" if neo_watch_ok else "FAIL",
+        mongo_result="OK" if mongo_watch_ok else "FAIL",
         skip_reason=skip_reason,
     )

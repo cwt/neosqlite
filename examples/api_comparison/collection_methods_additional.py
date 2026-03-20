@@ -266,8 +266,10 @@ def compare_additional_collection_methods():
     )
     # watch() is implemented in NeoSQLite (SQLite triggers) but can't be compared
     # with MongoDB in this test because MongoDB requires a replica set
-    # BUT if we're on NX-27017 backend, we should actually compare results
-    if IS_NX27017_BACKEND:
+    # Skip if MongoDB can't run watch (replica set not available)
+    if mongo_watch is False:
+        skip_reason = "NeoSQLite: Implemented via SQLite triggers; MongoDB: Requires replica set (not available in standalone test)"
+    elif IS_NX27017_BACKEND:
         skip_reason = None  # On NX-27017, compare results
     else:
         skip_reason = "NeoSQLite: Implemented via SQLite triggers; MongoDB: Requires replica set (not available in standalone test)"

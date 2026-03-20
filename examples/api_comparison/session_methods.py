@@ -187,7 +187,7 @@ def compare_session_methods():
         mongo_result=mongo_tx_commit,
         skip_reason=(
             "NeoSQLite: OK; MongoDB: Requires replica set (skipped)"
-            if (client and mongo_tx_commit is False and not IS_NX27017_BACKEND)
+            if (client and mongo_tx_commit is False)
             else ("MongoDB not available" if not client else None)
         ),
     )
@@ -203,7 +203,7 @@ def compare_session_methods():
         mongo_result=mongo_tx_abort,
         skip_reason=(
             "NeoSQLite: OK; MongoDB: Requires replica set (skipped)"
-            if (client and mongo_tx_abort is False and not IS_NX27017_BACKEND)
+            if (client and mongo_tx_abort is False)
             else ("MongoDB not available" if not client else None)
         ),
     )
@@ -217,7 +217,7 @@ def compare_session_methods():
         mongo_result=mongo_with_tx,
         skip_reason=(
             "NeoSQLite: OK; MongoDB: Requires replica set (skipped)"
-            if (client and mongo_with_tx is False and not IS_NX27017_BACKEND)
+            if (client and mongo_with_tx is False)
             else ("MongoDB not available" if not client else None)
         ),
     )

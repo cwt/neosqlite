@@ -514,7 +514,12 @@ class NeoSQLiteHandler:
             old_name = cmd_copy.pop("renameCollection")
             to_name = cmd_copy.pop("to", None)
             if to_name:
-                db[old_name].rename(to_name)
+                # Extract just the collection name from full namespace
+                old_coll = (
+                    old_name.split(".")[-1] if "." in old_name else old_name
+                )
+                new_coll = to_name.split(".")[-1] if "." in to_name else to_name
+                db[old_coll].rename(new_coll)
                 return request_id, {"ok": 1}
             return request_id, {
                 "ok": 0,
@@ -601,7 +606,13 @@ class NeoSQLiteHandler:
                 u = self._convert_objectids(u)
                 multi = update.get("multi", False)
                 upsert = update.get("upsert", False)
-                if multi:
+                # Check if this is a replace operation (u has no operators)
+                is_replace = not any(k.startswith("$") for k in u.keys())
+                if is_replace:
+                    # Replace operation - use replace_one
+                    upd_result = coll.replace_one(q, u, upsert=upsert)
+                    modified += upd_result.modified_count
+                elif multi:
                     upd_result = coll.update_many(q, u, upsert=upsert)
                     modified += upd_result.modified_count
                 else:
@@ -627,6 +638,30 @@ class NeoSQLiteHandler:
                 cursor = cursor.limit(cmd_copy["limit"])
             if "skip" in cmd_copy:
                 cursor = cursor.skip(cmd_copy["skip"])
+            # Handle hint (index hint)
+            if "hint" in cmd_copy:
+                hint_val = cmd_copy["hint"]
+                if isinstance(hint_val, str):
+                    cursor = cursor.hint(hint_val)
+                elif isinstance(hint_val, list):
+                    cursor = cursor.hint(hint_val)
+            # Handle min (minimum index bounds)
+            # PyMongo sends min/max as dicts, but cursor.min() expects list of tuples
+            if "min" in cmd_copy:
+                min_val = cmd_copy["min"]
+                if isinstance(min_val, dict):
+                    # Convert dict to list of tuples
+                    cursor = cursor.min(list(min_val.items()))
+                elif isinstance(min_val, list):
+                    cursor = cursor.min(min_val)
+            # Handle max (maximum index bounds)
+            if "max" in cmd_copy:
+                max_val = cmd_copy["max"]
+                if isinstance(max_val, dict):
+                    # Convert dict to list of tuples
+                    cursor = cursor.max(list(max_val.items()))
+                elif isinstance(max_val, list):
+                    cursor = cursor.max(max_val)
             docs = list(cursor)
             return request_id, {
                 "ok": 1,
@@ -717,6 +752,13 @@ class NeoSQLiteHandler:
                 "listindexes"
             )
             return self._handle_list_indexes(request_id, db, coll_name)
+
+        # Handle listSearchIndexes
+        if "listSearchIndexes" in cmd_copy or "listsearchindexes" in cmd_copy:
+            coll_name = cmd_copy.get("listSearchIndexes") or cmd_copy.get(
+                "listsearchindexes"
+            )
+            return self._handle_list_search_indexes(request_id, db, coll_name)
 
         # Handle explain command - extract inner command and execute with explain
         if "explain" in cmd_copy:
@@ -1081,6 +1123,41 @@ class NeoSQLiteHandler:
                 key_str = key_str.replace("_", ".")
                 key = {key_str: 1}
             index_list.append({"v": 2, "key": key, "name": idx_name})
+
+        return request_id, {
+            "ok": 1,
+            "cursor": {
+                "id": 0,
+                "ns": f"{db.name}.{coll_name}",
+                "firstBatch": index_list,
+            },
+        }
+
+    def _handle_list_search_indexes(
+        self, request_id: int, db: Connection, coll_name: str | None
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle listSearchIndexes command."""
+        if not coll_name:
+            return request_id, {"ok": 0, "errmsg": "No collection specified"}
+
+        try:
+            coll = db[coll_name]
+        except Exception:
+            return request_id, {
+                "ok": 1,
+                "cursor": {
+                    "id": 0,
+                    "ns": f"{db.name}.{coll_name}",
+                    "firstBatch": [],
+                },
+            }
+
+        search_indexes = coll.list_search_indexes()
+        index_list = []
+        for idx_name in search_indexes:
+            index_list.append(
+                {"v": 2, "key": {idx_name: "text"}, "name": f"{idx_name}_text"}
+            )
 
         return request_id, {
             "ok": 1,
