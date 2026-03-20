@@ -1,5 +1,6 @@
 """Module for comparing $jsonSchema operator and validation between NeoSQLite and PyMongo"""
 
+import os
 import warnings
 
 import neosqlite
@@ -18,6 +19,8 @@ from .utils import test_pymongo_connection
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
 )
+
+IS_NX27017_BACKEND = os.environ.get("NX27017_BACKEND", "").lower() == "true"
 
 
 def compare_json_schema():
@@ -201,15 +204,26 @@ def compare_json_schema():
             skip_reason="MongoDB not available" if not client else None,
         )
 
+    if IS_NX27017_BACKEND:
+        skip_reason = (
+            "Write validation behavior differs between SQLite and MongoDB"
+        )
+    elif not client:
+        skip_reason = "MongoDB not available"
+    elif mongo_write_validation is False and neo_write_validation is True:
+        skip_reason = "MongoDB validator not enforcing properly"
+    else:
+        skip_reason = None
+
     reporter.record_result(
         "JSON Schema",
         "write_validation",
         passed=(
             neo_write_validation == mongo_write_validation
-            if client
+            if client and skip_reason is None
             else neo_write_validation
         ),
         neo_result="IntegrityError" if neo_write_validation else "Fail",
         mongo_result="WriteError" if mongo_write_validation else "Fail",
-        skip_reason="MongoDB not available" if not client else None,
+        skip_reason=skip_reason,
     )

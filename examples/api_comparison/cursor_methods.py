@@ -339,6 +339,17 @@ def compare_cursor_methods():
     mongo_session_prop = None
     mongo_cursor_id_prop = None
     mongo_collation = None
+    mongo_to_list = None
+    mongo_to_list_length = None
+    mongo_clone = None
+    mongo_explain = None
+    mongo_comment = None
+    mongo_retrieved = None
+    mongo_alive = None
+    mongo_collection_prop = None
+    mongo_address = None
+    mongo_min = None
+    mongo_max = None
 
     if client:
         mongo_db = client.test_database

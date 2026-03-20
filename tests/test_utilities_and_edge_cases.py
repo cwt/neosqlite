@@ -726,6 +726,48 @@ def test_get_val_dollar_prefix():
     assert result == "value"
 
 
+def test_get_val_non_string_key():
+    """Test _get_val with non-string key (literal value like $group _id)."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test"]
+
+    # Test with integer key - should return the key itself (literal value)
+    result = collection._get_val({"a": "value"}, 1)
+    assert result == 1
+
+    # Test with float key
+    result = collection._get_val({"a": "value"}, 3.14)
+    assert result == 3.14
+
+    # Test with null key
+    result = collection._get_val({"a": "value"}, None)
+    assert result is None
+
+
+def test_group_with_literal_id():
+    """Test $group with literal _id value (integer, not field reference)."""
+    db = neosqlite.Connection(":memory:")
+    collection = db["test"]
+
+    collection.insert_many(
+        [
+            {"item": "apple", "qty": 5},
+            {"item": "banana", "qty": 3},
+            {"item": "cherry", "qty": 5},
+        ]
+    )
+
+    # Group all docs into one bucket using literal _id: 1
+    result = list(
+        collection.aggregate(
+            [{"$group": {"_id": 1, "total_qty": {"$sum": "$qty"}}}]
+        )
+    )
+    assert len(result) == 1
+    assert result[0]["_id"] == 1
+    assert result[0]["total_qty"] == 13
+
+
 def test_load_bytes_data():
     """Test _load with bytes data."""
     db = neosqlite.Connection(":memory:")

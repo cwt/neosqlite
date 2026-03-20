@@ -583,6 +583,7 @@ class QueryBuilderMixin:
                     if isinstance(op_val, (list, tuple)) and len(op_val) == 2:
                         divisor, remainder = op_val
                         clauses.append(
+                            f"json_type(data, {json_path}) IN ('integer', 'real') AND "
                             f"{self._json_function_prefix}_extract(data, {json_path}) % ? = ?"
                         )
                         params.extend([divisor, remainder])

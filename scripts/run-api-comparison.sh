@@ -225,26 +225,21 @@ run_mongodb_container() {
 
         # Wait for MongoDB to be ready
         info "Waiting for MongoDB to be ready..."
-        local max_attempts=30
+        local max_attempts=60
         local attempt=0
 
         while [ $attempt -lt $max_attempts ]; do
-            # Check if MongoDB is accepting connections
-            if command -v mongosh &> /dev/null; then
-                if mongosh --host localhost --port "$MONGODB_PORT" --eval "db.adminCommand('ping')" --quiet >/dev/null 2>&1; then
+            # Check if MongoDB is accepting connections using a simple socket test
+            if command -v nc &> /dev/null; then
+                if nc -z localhost "$MONGODB_PORT" 2>/dev/null; then
                     success "MongoDB is ready"
                     return 0
                 fi
-            elif command -v mongo &> /dev/null; then
-                if mongo --host localhost --port "$MONGODB_PORT" --eval "db.adminCommand('ping')" --quiet >/dev/null 2>&1; then
+            elif command -v timeout &> /dev/null; then
+                if timeout 1 bash -c "echo > /dev/tcp/localhost/$MONGODB_PORT" 2>/dev/null; then
                     success "MongoDB is ready"
                     return 0
                 fi
-            else
-                # No mongo client available, just wait a bit
-                sleep 2
-                success "Assuming MongoDB is ready (no client available to verify)"
-                return 0
             fi
 
             attempt=$((attempt + 1))

@@ -422,10 +422,11 @@ class Connection:
         List all collection names in the database.
 
         Returns:
-            List[str]: A list of all collection names in the database.
+            List[str]: A list of all collection names in the database,
+            excluding internal SQLite tables (sqlite_sequence, sqlite_stat*, etc.)
         """
         cursor = self.db.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
         )
         return [row[0] for row in cursor.fetchall()]
 
@@ -438,7 +439,7 @@ class Connection:
                                 Each dictionary has 'name' and 'options' keys.
         """
         cursor = self.db.execute(
-            "SELECT name, sql FROM sqlite_master WHERE type='table'"
+            "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
         )
         return [
             {"name": row[0], "options": row[1]} for row in cursor.fetchall()
@@ -791,15 +792,36 @@ class Connection:
                     total_indexes = 0
 
                     for coll_name in collections:
-                        count = self.db.execute(
-                            f"SELECT COUNT(*) FROM {quote_table_name(coll_name)}"
-                        ).fetchone()[0]
-                        total_objects += count
+                        cursor = self.db.execute(
+                            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+                            (coll_name,),
+                        )
+                        row = cursor.fetchone()
+                        if not row:
+                            continue
+                        sql = row[0] or ""
 
-                        indexes = self.db.execute(
-                            f"PRAGMA index_list({quote_table_name(coll_name)})"
-                        ).fetchall()
-                        total_indexes += len(indexes)
+                        if (
+                            "VIRTUAL TABLE" in sql.upper()
+                            and "fts" in sql.lower()
+                        ):
+                            continue
+
+                        try:
+                            count = self.db.execute(
+                                f"SELECT COUNT(*) FROM {quote_table_name(coll_name)}"
+                            ).fetchone()[0]
+                            total_objects += count
+                        except Exception:
+                            pass
+
+                        try:
+                            indexes = self.db.execute(
+                                f"PRAGMA index_list({quote_table_name(coll_name)})"
+                            ).fetchall()
+                            total_indexes += len(indexes)
+                        except Exception:
+                            pass
 
                     storage_size = page_count * page_size
 

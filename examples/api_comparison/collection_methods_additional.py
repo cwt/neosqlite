@@ -1,5 +1,6 @@
 """Module for comparing additional collection methods between NeoSQLite and PyMongo"""
 
+import os
 import warnings
 
 import neosqlite
@@ -17,6 +18,9 @@ from .utils import test_pymongo_connection
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
 )
+
+# Check if we're running against NX-27017 (NeoSQLite backend)
+IS_NX27017_BACKEND = os.environ.get("NX27017_BACKEND", "").lower() == "true"
 
 
 def compare_additional_collection_methods():
@@ -262,12 +266,20 @@ def compare_additional_collection_methods():
     )
     # watch() is implemented in NeoSQLite (SQLite triggers) but can't be compared
     # with MongoDB in this test because MongoDB requires a replica set
+    # Skip if MongoDB can't run watch (replica set not available)
+    if mongo_watch is False:
+        skip_reason = "NeoSQLite: Implemented via SQLite triggers; MongoDB: Requires replica set (not available in standalone test)"
+    elif IS_NX27017_BACKEND:
+        skip_reason = None  # On NX-27017, compare results
+    else:
+        skip_reason = "NeoSQLite: Implemented via SQLite triggers; MongoDB: Requires replica set (not available in standalone test)"
+
     reporter.record_comparison(
         "Collection Methods",
         "watch",
         "IMPLEMENTED (SQLite triggers)" if neo_watch else "FAIL",
         "IMPLEMENTED (replica set)" if mongo_watch else None,
-        skip_reason="NeoSQLite: Implemented via SQLite triggers; MongoDB: Requires replica set (not available in standalone test)",
+        skip_reason=skip_reason,
     )
     # Extract collection name from full_name (e.g., "memory.test_fullname" -> "test_fullname")
     neo_coll_name = neo_full_name.split(".")[-1] if neo_full_name else None
