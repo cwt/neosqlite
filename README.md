@@ -52,7 +52,7 @@ NeoSQLite v1.13.0 is a **major feature release** that introduces **NX-27017**, a
 
 ```bash
 # Run NX-27017 server
-pip install "neosqlite[nx-27017]"
+pip install "neosqlite[nx27017]"
 nx-27017 --db ./myapp.db
 
 # Connect with PyMongo (no code changes needed)
@@ -238,14 +238,14 @@ pip install neosqlite[memory-constrained]
 For **NX-27017** (MongoDB Wire Protocol Server):
 
 ```bash
-pip install "neosqlite[nx-27017]"          # Core
-pip install "neosqlite[nx-27017-speed]"   # With uvloop (recommended)
+pip install "neosqlite[nx27017]"          # Core
+pip install "neosqlite[nx27017-speed]"    # With uvloop (recommended if you are on Linux or macOS)
 ```
 
 You can also install multiple extras:
 
 ```bash
-pip install neosqlite[jsonb,nx-27017]
+pip install neosqlite[jsonb,nx27017]
 ```
 
 **Note**: `NeoSQLite` will work with any SQLite installation. The `jsonb` extra is only needed if:
