@@ -312,14 +312,23 @@ class NeoSQLiteHandler:
         }
     )
 
-    def __init__(self, db_path: str = ":memory:"):
+    def __init__(
+        self, db_path: str = ":memory:", tokenizers: list | None = None
+    ):
         self.db_path = db_path
+        self.tokenizers = tokenizers
+
         if db_path == ":memory:":
             self.conn = Connection(
-                "file::memory:?cache=shared", check_same_thread=False, uri=True
+                "file::memory:?cache=shared",
+                check_same_thread=False,
+                uri=True,
+                tokenizers=tokenizers,
             )
         else:
-            self.conn = Connection(db_path, check_same_thread=False)
+            self.conn = Connection(
+                db_path, check_same_thread=False, tokenizers=tokenizers
+            )
         self.databases: dict[str, Connection] = {"admin": self.conn}
 
     def get_database(self, db_name: str) -> Connection:
@@ -329,12 +338,14 @@ class NeoSQLiteHandler:
                     "file::memory:?cache=shared",
                     check_same_thread=False,
                     uri=True,
+                    tokenizers=self.tokenizers,
                 )
             else:
-                base_path = self.db_path.replace(".db", "")
-                db_path = f"{base_path}_{db_name}.db"
+                # Use the same file for all databases (single-file mode)
                 self.databases[db_name] = Connection(
-                    db_path, check_same_thread=False
+                    self.db_path,
+                    check_same_thread=False,
+                    tokenizers=self.tokenizers,
                 )
         return self.databases[db_name]
 
@@ -1604,6 +1615,9 @@ def run_as_daemon(args: argparse.Namespace):
         logger.error(f"NX-27017 is already running (PID: {pid})")
         sys.exit(1)
 
+    if args.db_path != "memory" and not os.path.isabs(args.db_path):
+        args.db_path = os.path.abspath(args.db_path)
+
     daemonize()
 
     with open(args.log_file, "a") as log_fh:
@@ -1642,15 +1656,18 @@ def run_server_sync(args: argparse.Namespace):
     if db_path == "memory":
         db_path = ":memory:"
 
+    tokenizers = args.fts5_tokenizers
+
     logger.info(
-        "Starting NX-27017 with db_path=%s, host=%s, port=%s (threaded=%s)",
+        "Starting NX-27017 with db_path=%s, host=%s, port=%s, tokenizers=%s (threaded=%s)",
         db_path,
         args.host,
         args.port,
+        tokenizers,
         args.threaded,
     )
 
-    handler = NeoSQLiteHandler(db_path)
+    handler = NeoSQLiteHandler(db_path, tokenizers=tokenizers)
 
     try:
         run_server_threaded(
@@ -1740,8 +1757,25 @@ Examples:
         action="store_true",
         help="Enable verbose (DEBUG) logging",
     )
+    parser.add_argument(
+        "--fts5-tokenizer",
+        dest="fts5_tokenizers",
+        action="append",
+        default=None,
+        help=(
+            "FTS5 tokenizer as 'name=path' (can be specified multiple times). "
+            "Example: --fts5-tokenizer icu=/path/to/libfts5_icu.so"
+        ),
+    )
 
     args = parser.parse_args()
+
+    if args.fts5_tokenizers:
+        args.fts5_tokenizers = [
+            tuple(t.split("=", 1)) for t in args.fts5_tokenizers
+        ]
+    else:
+        args.fts5_tokenizers = None
 
     log_level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(
