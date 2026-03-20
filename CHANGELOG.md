@@ -1,5 +1,39 @@
 # CHANGELOG
 
+## 1.13.0
+
+### Major Feature: NX-27017 MongoDB Wire Protocol Server
+
+NX-27017 allows MongoDB clients (PyMongo) to connect directly to SQLite using the standard MongoDB protocol.
+
+**Quick Start**:
+```bash
+pip install "neosqlite[nx-27017]"
+nx-27017 --db ./myapp.db
+# Then connect with PyMongo - no code changes needed
+```
+
+**Supported**: insert, find, update, delete, aggregate, createIndexes, listIndexes, sessions, hint/min/max/sort/skip/limit
+
+**Test Results**: 376 API tests (359 passed, 17 skipped) — 100% compatibility
+
+### Bug Fixes
+
+- **$mod Operator**: Fixed SQLite loosely coercing string "25" to integer 25
+- **dbStats**: Fixed FTS5 virtual table "no such column" errors
+- **list_collections**: Filter internal `sqlite_*` tables (sqlite_sequence, etc.)
+- **delete_one/many**: Return `deleted_count=0` on non-existent collections (was raising error)
+
+### New Extras
+
+```toml
+[tool.poetry.extras]
+nx-27017 = ["pymongo>=4.16.0"]
+nx-27017-speed = ["pymongo>=4.16.0", "uvloop"]
+```
+
+---
+
 ## 1.12.1
 
 ### Bug Fix Release: PyMongo 4.16+ Compatibility

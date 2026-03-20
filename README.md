@@ -13,6 +13,7 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 ## Features
 
 - **`PyMongo`-like API**: A familiar interface for developers experienced with MongoDB.
+- **NX-27017**: [MongoDB Wire Protocol Server](packages/nx_27017/README.md) — Use PyMongo with SQLite backend
 - **Schemaless Documents**: Store flexible JSON-like documents.
 - **Lazy Cursor**: `find()` returns a memory-efficient cursor for iterating over results.
 - **Raw Batch Support**: `find_raw_batches()` returns raw JSON data in batches for efficient processing.
@@ -43,31 +44,37 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 
 See [CHANGELOG.md](CHANGELOG.md) for the latest features and improvements.
 
-## Latest Release: v1.12.1
+## Latest Release: v1.13.0
 
-NeoSQLite v1.12.1 is a **bug fix release** that addresses PyMongo 4.16+ compatibility for `Cursor.min()`, `Cursor.max()`, and `Cursor.hint()` methods.
+NeoSQLite v1.13.0 is a **major feature release** that introduces **NX-27017**, a MongoDB Wire Protocol Server backed by SQLite. This allows MongoDB clients (including PyMongo) to connect directly to NeoSQLite using the standard MongoDB protocol.
 
-### Breaking Change ⚠️
+### New Feature: NX-27017
 
-`cursor.min()` and `cursor.max()` now require **list format** instead of dict format:
+```bash
+# Run NX-27017 server
+pip install "neosqlite[nx-27017]"
+nx-27017 --db ./myapp.db
 
-```python
-# Before (v1.12.0)
-cursor.min({"field": 10})  # Dict format
-
-# After (v1.12.1)
-cursor.hint([("field", 1)]).min([("field", 10)])  # List format required
+# Connect with PyMongo (no code changes needed)
+from pymongo import MongoClient
+client = MongoClient('mongodb://localhost:27017/')
+db.client.my_database
+db.users.insert_one({"name": "Picard", "rank": "Captain"})
 ```
 
-**Migration Required**: Update all calls to `cursor.min()` and `cursor.max()` to use list format with `hint()`.
+### Bug Fixes
 
-### Key Fixes
+- **$mod Operator**: Fixed string value matching (SQLite coercion issue)
+- **dbStats**: Fixed FTS5 virtual table handling
+- **list_collections**: Filter internal `sqlite_*` tables
+- **delete_one/many**: Return `deleted_count=0` on non-existent collections
 
-- **PyMongo 4.16+ Compatibility**: `min()`/`max()`/`hint()` now accept list format `[("field", value)]`
-- **Type Validation**: Methods now raise `TypeError` for dict format (matching PyMongo 4.16+ behavior)
-- **100% API Compatibility**: All 2,404 unit tests passing
+### Key Metrics
 
-For more details, see [documents/releases/v1.12.1.md](documents/releases/v1.12.1.md).
+- **376 API Tests**: 100% compatibility with both real MongoDB and NX-27017
+- **~2,400+ Unit Tests**: All passing
+
+For more details, see [documents/releases/v1.13.0.md](documents/releases/v1.13.0.md).
 
 ## PyMongo Compatibility Tests
 
@@ -84,7 +91,7 @@ NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-
 | **XFailed** | 5 |
 | **Failed** | 0 |
 | **Code Coverage** | 82% |
- 
+
 #### API Comparison Tests
 
 | Metric | v1.10.0 | v1.11.0 | v1.12.0 | **v1.12.1** |
@@ -164,20 +171,35 @@ See the [`examples/`](examples/) directory for detailed benchmark implementation
 
 ## Drop-in Replacement for PyMongo and NoSQL Solutions
 
-For many common use cases, `NeoSQLite` can serve as a drop-in replacement for `PyMongo`. The API is designed to be compatible, meaning you can switch from MongoDB to a SQLite backend with minimal code changes. The primary difference is in the initial connection setup.
+`NeoSQLite` can serve as a drop-in replacement for `PyMongo` in two ways:
 
-Once you have a `collection` object, the method calls for all implemented APIs are identical.
+### 1. Direct API (No MongoDB)
 
-**PyMongo:**
+Use the native NeoSQLite API for SQLite storage:
 
 ```python
-from pymongo import MongoClient
-client = MongoClient('mongodb://localhost:27017/')
-db = client.mydatabase
-collection = db.mycollection
+import neosqlite
+client = neosqlite.Connection('mydatabase.db')  # Direct SQLite
+collection = client.mycollection
+collection.insert_one({"name": "test"})
 ```
 
-**NeoSQLite (NoSQLite solution):**
+### 2. Wire Protocol (NX-27017) — Zero Code Changes
+
+Use [NX-27017](packages/nx_27017/README.md) to accept MongoDB wire protocol connections with PyMongo:
+
+```bash
+# Start server
+nx-27017 --db ./myapp.db
+
+# Then use PyMongo normally - no code changes!
+from pymongo import MongoClient
+client = MongoClient('mongodb://localhost:27017/')
+collection = client.mydatabase.mycollection
+collection.insert_one({"name": "test"})  # Works!
+```
+
+**PyMongo:**
 
 ```python
 import neosqlite
@@ -201,29 +223,34 @@ print(document)
 pip install neosqlite
 ```
 
-For enhanced JSON/JSONB support on systems where the built-in SQLite doesn't support these features, you can install with the `jsonb` extra:
+For enhanced JSON/JSONB support on systems where the built-in SQLite doesn't support these features:
 
 ```bash
 pip install neosqlite[jsonb]
 ```
 
-For memory-constrained processing of large result sets, you can install with the `memory-constrained` extra which includes the `quez` library:
+For memory-constrained processing of large result sets:
 
 ```bash
 pip install neosqlite[memory-constrained]
 ```
 
-This will install `quez` which provides compressed in-memory queues for handling large aggregation results with reduced memory footprint.
+For **NX-27017** (MongoDB Wire Protocol Server):
+
+```bash
+pip install "neosqlite[nx-27017]"          # Core
+pip install "neosqlite[nx-27017-speed]"   # With uvloop (recommended)
+```
 
 You can also install multiple extras:
 
 ```bash
-pip install neosqlite[jsonb,memory-constrained]
+pip install neosqlite[jsonb,nx-27017]
 ```
 
 **Note**: `NeoSQLite` will work with any SQLite installation. The `jsonb` extra is only needed if:
 1. Your system's built-in SQLite doesn't support JSON functions, **and**
-2. You want to take advantage of JSONB column type for better performance with JSON operations
+2. You want to try advantage of JSONB column type for better performance with JSON operations
 
 If your system's SQLite already supports JSONB column type, `NeoSQLite` will automatically use them without needing the extra dependency.
 
