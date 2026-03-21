@@ -121,11 +121,12 @@ class ResponseBuilder:
         documents: list[dict[str, Any]],
         flags: int = 0,
     ) -> bytes:
-        sections = b""
+        sections = []
         for doc in documents:
             doc_data = encode(_convert_objectids(doc))  # type: ignore[arg-type]
-            sections += struct.pack("<B", 0) + doc_data
-        body = struct.pack("<I", flags) + sections
+            sections.append(struct.pack("<B", 0))
+            sections.append(doc_data)
+        body = struct.pack("<I", flags) + b"".join(sections)
         header = struct.pack(
             "<iiii",
             16 + len(body),
@@ -990,8 +991,7 @@ class NeoSQLiteHandler:
             for stage in pipeline:
                 if isinstance(stage, dict) and "$count" in stage:
                     count_field = stage["$count"]
-                    cursor = coll.find({})
-                    count = len(list(cursor))
+                    count = coll.count_documents({})
                     return request_id, {
                         "ok": 1,
                         "cursor": {
@@ -1308,12 +1308,15 @@ async def handle_client(
     try:
         while True:
             # Read header (16 bytes)
-            header = b""
-            while len(header) < 16:
-                chunk = await reader.read(16 - len(header))
+            header_bytes = bytearray(16)
+            pos = 0
+            while pos < 16:
+                chunk = await reader.read(16 - pos)
                 if not chunk:
                     return  # Connection closed
-                header += chunk
+                header_bytes[pos : pos + len(chunk)] = chunk
+                pos += len(chunk)
+            header = bytes(header_bytes)
 
             message_length = struct.unpack("<i", header[0:4])[0]
             request_id = struct.unpack("<i", header[4:8])[0]
@@ -1327,18 +1330,20 @@ async def handle_client(
 
             # Read body
             if message_length > 16:
-                body = b""
+                body = bytearray(message_length - 16)
+                pos = 0
                 remaining = message_length - 16
-                while len(body) < remaining:
-                    chunk = await reader.read(remaining - len(body))
+                while pos < remaining:
+                    chunk = await reader.read(remaining - pos)
                     if not chunk:
                         logger.warning(
                             f"Incomplete message: expected {remaining}, "
-                            f"got {len(body)}"
+                            f"got {pos}"
                         )
                         return
-                    body += chunk
-                full_message = header + body
+                    body[pos : pos + len(chunk)] = chunk
+                    pos += len(chunk)
+                full_message = header + bytes(body)
             else:
                 full_message = header
 
@@ -1433,12 +1438,15 @@ def handle_client_threaded(
         with client_socket:
             while True:
                 # Read header (16 bytes)
-                header = b""
-                while len(header) < 16:
-                    chunk = client_socket.recv(16 - len(header))
+                header_bytes = bytearray(16)
+                pos = 0
+                while pos < 16:
+                    chunk = client_socket.recv(16 - pos)
                     if not chunk:
                         return  # Connection closed
-                    header += chunk
+                    header_bytes[pos : pos + len(chunk)] = chunk
+                    pos += len(chunk)
+                header = bytes(header_bytes)
 
                 message_length = struct.unpack("<i", header[0:4])[0]
                 request_id = struct.unpack("<i", header[4:8])[0]
@@ -1454,18 +1462,20 @@ def handle_client_threaded(
 
                 # Read body
                 if message_length > 16:
-                    body = b""
+                    body = bytearray(message_length - 16)
+                    pos = 0
                     remaining = message_length - 16
-                    while len(body) < remaining:
-                        chunk = client_socket.recv(remaining - len(body))
+                    while pos < remaining:
+                        chunk = client_socket.recv(remaining - pos)
                         if not chunk:
                             logger.warning(
                                 f"Incomplete message: expected {remaining}, "
-                                f"got {len(body)}"
+                                f"got {pos}"
                             )
                             return
-                        body += chunk
-                    full_message = header + body
+                        body[pos : pos + len(chunk)] = chunk
+                        pos += len(chunk)
+                    full_message = header + bytes(body)
                 else:
                     full_message = header
 

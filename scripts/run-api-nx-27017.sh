@@ -26,8 +26,8 @@ NC='\033[0m' # No Color
 NX27017_PORT=27017
 NX27017_HOST="127.0.0.1"
 NX27017_CMD="/home/cwt/Env/neosqlite/bin/nx-27017"
-NX27017_DB_DIR="/tmp/nx27017_data"
-NX27017_DB="/tmp/nx27017_data/neosqlite"  # Use file-based database for persistence
+NX27017_DB_DIR=$(mktemp -d)
+NX27017_DB="$NX27017_DB_DIR/neosqlite"  # Use file-based database for persistence
 COMPARISON_SCRIPT="$(dirname "$0")/../examples/api_comparison_main.py"
 
 # Track if we started the server (for cleanup)
@@ -166,7 +166,7 @@ cleanup_existing_server() {
 cleanup_database() {
     info "Cleaning up database files..."
     if [ -d "$NX27017_DB_DIR" ]; then
-        rm -f "$NX27017_DB_DIR"/*.db 2>/dev/null || true
+        rm -rf "$NX27017_DB_DIR"
     fi
 }
 
@@ -267,11 +267,6 @@ main() {
 
     # Step 2: Cleanup existing server
     cleanup_existing_server
-
-    # Step 2b: Clean database files (start fresh)
-    if [ -d "$NX27017_DB_DIR" ]; then
-        rm -f "$NX27017_DB_DIR"/*.db 2>/dev/null || true
-    fi
 
     # Step 3: Run NX-27017 server
     if ! run_nx27017_server; then
