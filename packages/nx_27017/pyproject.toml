@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "nx-27017"
-version = "0.1.0"
+version = "0.2.0"
 description = "NeoSQLite Experimental Project 27017 - MongoDB Wire Protocol Server"
 authors = ["NeoSQLite Team"]
 license = "MIT"
@@ -9,7 +9,7 @@ packages = [
     { include = "nx_27017", from = "src" }
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
