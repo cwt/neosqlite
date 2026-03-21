@@ -156,11 +156,9 @@ class OP_MSG:  # noqa: N801
         )
 
         sections: list[tuple[str, Any]] = []
-        section_num = 0
         while offset < effective_length:
             kind = data[offset]
             offset += 1
-            section_num += 1
 
             if kind == 0:
                 doc_len = struct.unpack("<i", data[offset : offset + 4])[0]
@@ -270,7 +268,7 @@ class OP_QUERY:  # noqa: N801
         query = BSON(doc_data).decode()
 
         parts = full_collection_name.split(".", 1)
-        db = parts[0] if len(parts) > 0 else "admin"
+        db = parts[0] or "admin"
         collection = parts[1] if len(parts) > 1 else None
 
         return {
@@ -1139,12 +1137,12 @@ class NeoSQLiteHandler:
 
         index_names = coll.list_indexes()
         index_list = []
+        prefix = f"idx_{coll.name}_"
         for idx_name in index_names:
-            if idx_name == f"idx_{coll.name}_id":
+            if idx_name == f"{prefix}id":
                 key = {"_id": 1}
             else:
-                key_str = idx_name[len(f"idx_{coll.name}_") :]
-                key_str = key_str.replace("_", ".")
+                key_str = idx_name.removeprefix(prefix).replace("_", ".")
                 key = {key_str: 1}
             index_list.append({"v": 2, "key": key, "name": idx_name})
 
@@ -1586,8 +1584,14 @@ def run_server_threaded(
 
 async def run_server(host: str, port: int, handler: NeoSQLiteHandler):
     """Run the MongoDB wire protocol server."""
+
+    async def handle_client_closure(
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        await handle_client(reader, writer, handler)
+
     server = await asyncio.start_server(
-        lambda r, w: handle_client(r, w, handler),
+        handle_client_closure,
         host,
         port,
     )
@@ -1720,6 +1724,11 @@ def daemonize():
     sys.stderr.flush()
 
 
+def _signal_exit_handler(signum: int, frame: Any) -> None:
+    """Handle termination signals by exiting cleanly."""
+    sys.exit(0)
+
+
 def run_as_daemon(args: argparse.Namespace):
     """Run the server as a background daemon."""
     if is_running(args.pid_file):
@@ -1744,8 +1753,8 @@ def run_as_daemon(args: argparse.Namespace):
     if not write_pid_file(args.pid_file):
         sys.exit(1)
 
-    signal.signal(signal.SIGTERM, lambda s, f: sys.exit(0))
-    signal.signal(signal.SIGINT, lambda s, f: sys.exit(0))
+    signal.signal(signal.SIGTERM, _signal_exit_handler)
+    signal.signal(signal.SIGINT, _signal_exit_handler)
 
     try:
         run_server_sync(args)
@@ -1758,8 +1767,8 @@ def run_foreground(args: argparse.Namespace):
     if not write_pid_file(args.pid_file):
         sys.exit(1)
 
-    signal.signal(signal.SIGTERM, lambda s, f: sys.exit(0))
-    signal.signal(signal.SIGINT, lambda s, f: sys.exit(0))
+    signal.signal(signal.SIGTERM, _signal_exit_handler)
+    signal.signal(signal.SIGINT, _signal_exit_handler)
 
     try:
         run_server_sync(args)
