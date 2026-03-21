@@ -1109,58 +1109,20 @@ class NeoSQLiteHandler:
         coll = db[coll_name]
         pipeline = command_doc.get("pipeline", [])
 
-        if pipeline and isinstance(pipeline, list):
-            for stage in pipeline:
-                if isinstance(stage, dict) and "$count" in stage:
-                    count_field = stage["$count"]
-                    count = coll.count_documents({})
-                    return request_id, {
-                        "ok": 1,
-                        "cursor": {
-                            "id": 0,
-                            "ns": f"{db.name}.{coll_name}",
-                            "firstBatch": [{count_field: count}],
-                        },
-                    }
-
-            if len(pipeline) == 2:
-                match_stage = pipeline[0]
-                group_stage = pipeline[1]
-                if (
-                    isinstance(match_stage, dict)
-                    and "$match" in match_stage
-                    and isinstance(group_stage, dict)
-                    and "$group" in group_stage
-                ):
-                    group_spec = group_stage["$group"]
-                    if (
-                        group_spec.get("_id") == 1
-                        and len(group_spec) == 2
-                        and "n" in group_spec
-                        and group_spec["n"].get("$sum") == 1
-                    ):
-                        filter_query = match_stage.get("$match", {})
-                        count = coll.count_documents(filter_query)
-                        return request_id, {
-                            "ok": 1,
-                            "cursor": {
-                                "id": 0,
-                                "ns": f"{db.name}.{coll_name}",
-                                "firstBatch": [{"_id": 1, "n": count}],
-                            },
-                        }
-
-        cursor = coll.aggregate(pipeline)  # type: ignore[assignment]
-        docs = list(cursor)
-
-        return request_id, {
-            "ok": 1,
-            "cursor": {
-                "id": 0,
-                "ns": f"{db.name}.{coll_name}",
-                "firstBatch": docs,
-            },
-        }
+        try:
+            cursor = coll.aggregate(pipeline)
+            docs = list(cursor)
+            return request_id, {
+                "ok": 1,
+                "cursor": {
+                    "id": 0,
+                    "ns": f"{db.name}.{coll_name}",
+                    "firstBatch": docs,
+                },
+            }
+        except Exception as e:
+            logger.error(f"Error in aggregate: {e}")
+            return request_id, {"ok": 0, "errmsg": str(e)}
 
     def _handle_count(
         self, request_id: int, command_doc: dict, db: Connection
