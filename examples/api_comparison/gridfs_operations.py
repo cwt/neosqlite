@@ -107,12 +107,10 @@ def compare_gridfs_operations():
     else:
         mongo_gridfs_ok = False
 
-    if IS_NX27017_BACKEND:
-        skip_reason = "GridFS not implemented in NX-27017 (MongoDB-specific)"
-    elif not client:
-        skip_reason = "MongoDB not available"
+    if not client:
+        skip_reason = "MongoDB/NX-27017 not available"
     elif mongo_gridfs_ok is False:
-        skip_reason = "MongoDB GridFS operation failed"
+        skip_reason = "MongoDB/NX-27017 GridFS operation failed"
     else:
         skip_reason = None
 

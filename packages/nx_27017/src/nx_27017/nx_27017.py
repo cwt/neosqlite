@@ -399,15 +399,13 @@ class NeoSQLiteHandler:
             self._active_connections -= 1
 
     def _is_gridfs_collection(self, coll_name: str) -> bool:
-        """Check if collection name is a GridFS collection."""
-        return coll_name.endswith(".files") or coll_name.endswith(".chunks")
+        """Check if collection name is a GridFS .files collection (not .chunks)."""
+        return coll_name.endswith(".files")
 
     def _get_gridfs_bucket_name(self, coll_name: str) -> str | None:
         """Extract bucket name from GridFS collection name, or None if not GridFS."""
         if coll_name.endswith(".files"):
             return coll_name.rsplit(".files", 1)[0]
-        elif coll_name.endswith(".chunks"):
-            return coll_name.rsplit(".chunks", 1)[0]
         return None
 
     def _get_gridfs_bucket(self, db: Connection, coll_name: str):

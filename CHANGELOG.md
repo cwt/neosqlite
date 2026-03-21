@@ -1,5 +1,30 @@
 # CHANGELOG
 
+## 1.13.4
+
+### NX-27017: GridFS Support & Performance
+
+**GridFS via Wire Protocol**: Upload, download, list, and delete files through PyMongo GridFS:
+
+```python
+fs.put(b"data", filename="test.txt")
+fs.get(file_id).read()
+fs.delete(file_id)
+```
+
+**Configurable Journal Mode**: `-j` flag for WAL, DELETE, MEMORY, etc.
+
+**Real Server Stats**: Uptime, memory usage, and connection counts now return actual values.
+
+### Bug Fixes
+
+- **GridFS Routing**: Fixed `.chunks` collections incorrectly routed to GridFS handler
+- **Table Quoting**: Fixed SQL errors with dotted table names (`fs.files`)
+- **Legacy Migration**: Fixed partial migration failure when only some tables exist
+- **I/O Performance**: Reduced O(n²) bytes concatenation to O(n)
+
+---
+
 ## 1.13.0
 
 ### Major Feature: NX-27017 MongoDB Wire Protocol Server
@@ -7,6 +32,7 @@
 NX-27017 allows MongoDB clients (PyMongo) to connect directly to SQLite using the standard MongoDB protocol.
 
 **Quick Start**:
+
 ```bash
 pip install "neosqlite[nx-27017]"
 nx-27017 --db ./myapp.db
@@ -46,11 +72,13 @@ nx-27017-speed = ["pymongo>=4.16.0", "uvloop"]
 ### Breaking Changes
 
 **Before (v1.12.0)**:
+
 ```python
 cursor.min({"field": 10})  # Dict format - NOW REJECTED
 ```
 
 **After (v1.12.1)**:
+
 ```python
 cursor.hint([("field", 1)]).min([("field", 10)])  # List format - REQUIRED
 ```

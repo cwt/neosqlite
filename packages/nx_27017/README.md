@@ -102,14 +102,38 @@ db.users.find()
 | **Aggregation** | `aggregate`, `count`, `distinct` with all common stages |
 | **Collections** | `create`, `drop`, `renameCollection`, `listCollections`, `listCollectionNames` |
 | **Indexes** | `createIndexes`, `listIndexes`, `dropIndexes`, `listSearchIndexes` |
+| **GridFS** | `find`, `delete`, `upload`, `openDownloadStream` on `.files` collections |
 | **Sessions** | `startSession`, `endSessions` |
 | **Query Features** | `hint`, `min`, `max`, `sort`, `skip`, `limit`, `projection` |
+
+### GridFS Support
+
+NX-27017 supports GridFS operations via the MongoDB wire protocol:
+
+```python
+from pymongo import MongoClient
+from gridfs import GridFS
+
+client = MongoClient('mongodb://localhost:27017/')
+db = client.my_database
+fs = GridFS(db)
+
+# Upload
+file_id = fs.put(b"Hello GridFS!", filename="hello.txt")
+
+# Download
+content = fs.get(file_id).read()
+
+# List and delete
+for f in fs.find():
+    print(f.filename, f.length)
+fs.delete(file_id)
+```
 
 ## What Doesn't (Yet)
 
 - Replication & sharding (coming never™)
 - Change streams via replica set (Note: SQLite-trigger-based `watch()` is supported!)
-- GridFS (MongoDB-specific file storage)
 - Transactions (requires replica set)
 - `find_raw_batches` with batch_size (requires cursor state management)
 

@@ -18,6 +18,7 @@ from ..collection.type_utils import validate_session
 
 # Import ObjectId for MongoDB-compatible ID support
 from ..objectid import ObjectId
+from ..sql_utils import quote_table_name
 from .errors import FileExists, NoFile
 from .grid_file import GridIn, GridOut, GridOutCursor
 from .utils import (
@@ -104,27 +105,31 @@ class GridFSBucket:
         new_files = f"{self._files_collection}"
         new_chunks = f"{self._chunks_collection}"
 
-        # Check if old tables exist
         cursor = self._db.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
             (old_files,),
         )
         if cursor.fetchone():
-            # Old tables exist, attempt migration
             try:
-                # Rename tables (quote old names that may contain dots)
                 self._db.execute(
                     f'ALTER TABLE "{old_files}" RENAME TO {new_files}'
                 )
+            except Exception:
+                self._files_collection = old_files
+                self._chunks_collection = old_chunks
+                return
+
+        cursor = self._db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (old_chunks,),
+        )
+        if cursor.fetchone():
+            try:
                 self._db.execute(
                     f'ALTER TABLE "{old_chunks}" RENAME TO {new_chunks}'
                 )
-                # Note: Indexes are automatically renamed by SQLite when table is renamed
             except Exception:
-                # If migration fails for any reason, fall back to old naming
-                # This ensures backward compatibility even if migration partially fails
-                self._files_collection = old_files
-                self._chunks_collection = old_chunks
+                pass
 
     def _apply_write_concern(self):
         """Apply write concern settings to SQLite connection."""
@@ -144,14 +149,14 @@ class GridFSBucket:
 
     def _create_collections(self):
         """Create the files and chunks collections (tables) if they don't exist."""
-        # Check if JSONB is supported using the established utility
         jsonb_supported = supports_jsonb(self._db)
+        files_coll = quote_table_name(self._files_collection)
+        chunks_coll = quote_table_name(self._chunks_collection)
 
-        # Create files collection (table)
         if jsonb_supported:
             self._db.execute(
                 f"""
-                CREATE TABLE IF NOT EXISTS {self._files_collection} (
+                CREATE TABLE IF NOT EXISTS {files_coll} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     _id JSONB,
                     filename TEXT,
@@ -168,7 +173,7 @@ class GridFSBucket:
         else:
             self._db.execute(
                 f"""
-                CREATE TABLE IF NOT EXISTS {self._files_collection} (
+                CREATE TABLE IF NOT EXISTS {files_coll} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     _id TEXT,
                     filename TEXT,
@@ -183,31 +188,29 @@ class GridFSBucket:
                 """
             )
 
-        # Create chunks collection (table) - no change needed
         self._db.execute(
             f"""
-            CREATE TABLE IF NOT EXISTS {self._chunks_collection} (
+            CREATE TABLE IF NOT EXISTS {chunks_coll} (
                 _id INTEGER PRIMARY KEY AUTOINCREMENT,
                 files_id INTEGER,
                 n INTEGER,
                 data BLOB,
-                FOREIGN KEY (files_id) REFERENCES {self._files_collection} (id)
+                FOREIGN KEY (files_id) REFERENCES {files_coll} (id)
             )
         """
         )
 
-        # Create indexes for better performance
         self._db.execute(
             f"""
-            CREATE INDEX IF NOT EXISTS idx_{self._files_collection}_filename
-            ON {self._files_collection} (filename)
+            CREATE INDEX IF NOT EXISTS {quote_table_name(f"idx_{self._files_collection}_filename")}
+            ON {files_coll} (filename)
         """
         )
 
         self._db.execute(
             f"""
-            CREATE INDEX IF NOT EXISTS idx_{self._chunks_collection}_files_id
-            ON {self._chunks_collection} (files_id)
+            CREATE INDEX IF NOT EXISTS {quote_table_name(f"idx_{self._chunks_collection}_files_id")}
+            ON {chunks_coll} (files_id)
         """
         )
 
@@ -215,48 +218,32 @@ class GridFSBucket:
         self._migrate_table_schema()
 
         # Create unique index on _id column for faster lookups
+        files_coll = quote_table_name(self._files_collection)
         try:
             self._db.execute(
-                f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{self._files_collection}_id ON {self._files_collection}(_id)"
+                f"CREATE UNIQUE INDEX IF NOT EXISTS {quote_table_name(f'idx_{self._files_collection}_id')} ON {files_coll}(_id)"
             )
         except Exception:
-            # If we can't create the index (e.g., due to duplicate values), continue without it
             pass
-
-        # Create indexes for better performance
-        self._db.execute(
-            f"""
-            CREATE INDEX IF NOT EXISTS idx_{self._files_collection}_filename
-            ON {self._files_collection} (filename)
-        """
-        )
-
-        self._db.execute(
-            f"""
-            CREATE INDEX IF NOT EXISTS idx_{self._chunks_collection}_files_id
-            ON {self._chunks_collection} (files_id)
-        """
-        )
 
     def _migrate_table_schema(self):
         """Migrate existing tables to add new columns for content_type and aliases."""
-        # Check if content_type column exists, add it if not
+        files_coll = quote_table_name(self._files_collection)
         try:
             if not column_exists(
                 self._db, self._files_collection, "content_type"
             ):
                 self._db.execute(
-                    f"ALTER TABLE {self._files_collection} ADD COLUMN content_type TEXT"
+                    f"ALTER TABLE {files_coll} ADD COLUMN content_type TEXT"
                 )
 
             if not column_exists(self._db, self._files_collection, "aliases"):
                 jsonb_supported = supports_jsonb(self._db)
                 column_type = "JSONB" if jsonb_supported else "TEXT"
                 self._db.execute(
-                    f"ALTER TABLE {self._files_collection} ADD COLUMN aliases {column_type}"
+                    f"ALTER TABLE {files_coll} ADD COLUMN aliases {column_type}"
                 )
         except Exception:
-            # If migration fails, continue (table might be in use or other issues)
             pass
 
     def _serialize_metadata(

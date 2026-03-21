@@ -44,11 +44,11 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 
 See [CHANGELOG.md](CHANGELOG.md) for the latest features and improvements.
 
-## Latest Release: v1.13.0
+## Latest Release: v1.13.4
 
-NeoSQLite v1.13.0 is a **major feature release** that introduces **NX-27017**, a MongoDB Wire Protocol Server backed by SQLite. This allows MongoDB clients (including PyMongo) to connect directly to NeoSQLite using the standard MongoDB protocol.
+NeoSQLite v1.13.4 is a **bug fix release** that adds **GridFS support** to NX-27017, along with performance improvements, configurable journal modes, and stability enhancements.
 
-### New Feature: NX-27017
+### New Features: NX-27017 with GridFS
 
 ```bash
 # Run NX-27017 server
@@ -57,52 +57,65 @@ nx-27017 --db ./myapp.db
 
 # Connect with PyMongo (no code changes needed)
 from pymongo import MongoClient
+from gridfs import GridFS
 client = MongoClient('mongodb://localhost:27017/')
-db.client.my_database
-db.users.insert_one({"name": "Picard", "rank": "Captain"})
+db = client.my_database
+fs = GridFS(db)
+
+# Upload a file
+file_id = fs.put(b"Hello GridFS!", filename="hello.txt")
+
+# Download and delete
+content = fs.get(file_id).read()
+fs.delete(file_id)
+```
+
+### Configurable Journal Mode
+
+NX-27017 now supports configurable SQLite journal modes via `-j` CLI flag:
+
+```bash
+nx-27017 --db ./myapp.db -j DELETE  # Traditional rollback journal
+nx-27017 --db ./myapp.db -j MEMORY # Journal in RAM (fast)
 ```
 
 ### Bug Fixes
 
-- **$mod Operator**: Fixed string value matching (SQLite coercion issue)
-- **dbStats**: Fixed FTS5 virtual table handling
-- **list_collections**: Filter internal `sqlite_*` tables
-- **delete_one/many**: Return `deleted_count=0` on non-existent collections
+- **GridFS Routing**: Fixed `.chunks` collections being incorrectly routed to GridFS handler
+- **Table Name Quoting**: Fixed SQL errors with dotted table names (e.g., `fs.files`)
+- **Legacy Migration**: Fixed migration failure when only partial tables exist
+- **I/O Performance**: Reduced O(n²) bytes concatenation to O(n)
+- **Real Statistics**: Uptime, memory, and connection counts now return actual values
 
-### Key Metrics
-
-- **376 API Tests**: 100% compatibility with both real MongoDB and NX-27017
-- **~2,400+ Unit Tests**: All passing
-
-For more details, see [documents/releases/v1.13.0.md](documents/releases/v1.13.0.md).
+For more details, see [documents/releases/v1.13.4.md](documents/releases/v1.13.4.md).
 
 ## PyMongo Compatibility Tests
 
 NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-compatible behavior. Our automated test suite covers all major API categories:
 
-### Test Results (v1.12.1)
+### Test Results (v1.13.4)
 
 #### Unit Tests
 
 | Metric | Result |
 |--------|--------|
-| **Total Tests** | 2,409 |
-| **Passed** | 2,404 |
+| **Total Tests** | 2,413 |
+| **Passed** | 2,408 |
 | **XFailed** | 5 |
 | **Failed** | 0 |
 | **Code Coverage** | 82% |
 
 #### API Comparison Tests
 
-| Metric | v1.10.0 | v1.11.0 | v1.12.0 | **v1.12.1** |
-|--------|---------|---------|---------|-------------|
-| **Total Tests** | 375 | 375 | 376 | **376** |
-| **Passed** | 360 | 360 | 361 | **361** |
-| **Skipped** | 15 | 15 | 15 | **15** |
-| **Failed** | 0 | 0 | 0 | **0** |
-| **Compatibility** | 100% | 100% | 100% | **100%** |
+| Metric | **v1.13.4** |
+|--------|-------------|
+| **Total Tests** | **376** |
+| **Passed** | **360** |
+| **Skipped** | **16** |
+| **Failed** | **0** |
+| **Compatibility** | **100%** |
 
-**Skipped Tests Note**: The 15 skipped tests are due to architectural differences or environment limitations, not missing implementations:
+**Skipped Tests Note**: The 16 skipped tests are due to architectural differences or environment limitations, not missing implementations:
 
 > **Important Note on Change Streams & Transactions**:
 > The `watch()` method and multi-document transactions are **fully implemented** in NeoSQLite using native SQLite triggers and `ClientSession`. They are only skipped in the automated comparison tests because MongoDB requires a replica set for these features, which is not available in the single-node test environment.
