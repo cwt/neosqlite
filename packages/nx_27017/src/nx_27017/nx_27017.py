@@ -330,6 +330,9 @@ class NeoSQLiteHandler:
         self.db_path = db_path
         self.tokenizers = tokenizers
         self.journal_mode = journal_mode
+        self.start_time = time.time()
+        self._active_connections = 0
+        self._connections_lock = threading.Lock()
 
         if db_path == ":memory:":
             self.conn = Connection(
@@ -386,6 +389,14 @@ class NeoSQLiteHandler:
         for key, value in doc.items():
             result[key] = convert_value(value)
         return result
+
+    def increment_connections(self) -> None:
+        with self._connections_lock:
+            self._active_connections += 1
+
+    def decrement_connections(self) -> None:
+        with self._connections_lock:
+            self._active_connections -= 1
 
     def handle_insert(self, msg: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         request_id = msg["request_id"]
@@ -761,12 +772,31 @@ class NeoSQLiteHandler:
 
         # Handle listDatabases
         if "listDatabases" in cmd_copy or "listdatabases" in cmd_copy:
+            databases_info = []
+            total_size = 0
+            for db_name, db_conn in self.databases.items():
+                if self.db_path == ":memory:":
+                    size_on_disk = 0
+                    is_empty = True
+                else:
+                    try:
+                        size_on_disk = os.path.getsize(self.db_path)
+                        is_empty = False
+                    except OSError:
+                        size_on_disk = 0
+                        is_empty = True
+                databases_info.append(
+                    {
+                        "name": db_name,
+                        "sizeOnDisk": size_on_disk,
+                        "empty": is_empty,
+                    }
+                )
+                total_size += size_on_disk
             return request_id, {
                 "ok": 1,
-                "databases": [
-                    {"name": db.name, "sizeOnDisk": 0, "empty": False}
-                ],
-                "totalSize": 0,
+                "databases": databases_info,
+                "totalSize": total_size,
             }
 
         # Handle listIndexes
@@ -1094,15 +1124,31 @@ class NeoSQLiteHandler:
         import platform
         from datetime import datetime, timezone
 
+        try:
+            import resource
+
+            rusage = resource.getrusage(resource.RUSAGE_SELF)
+            resident_mem = rusage.ru_maxrss * 1024
+            virtual_mem = rusage.ru_maxrss * 1024
+        except (ImportError, AttributeError):
+            resident_mem = 0
+            virtual_mem = 0
+
+        uptime_seconds = time.time() - self.start_time
+        uptime_millis = int(uptime_seconds * 1000)
+
+        with self._connections_lock:
+            current_connections = self._active_connections
+
         return request_id, {
             "ok": 1,
             "host": platform.node(),
             "version": "7.0.0",
             "process": "nx_27017",
             "pid": os.getpid(),
-            "uptime": 0,
-            "uptimeMillis": 0,
-            "uptimeEstimate": 0,
+            "uptime": int(uptime_seconds),
+            "uptimeMillis": uptime_millis,
+            "uptimeEstimate": int(uptime_seconds),
             "localTime": datetime.now(timezone.utc),
             "asserts": {
                 "regular": 0,
@@ -1111,8 +1157,12 @@ class NeoSQLiteHandler:
                 "user": 0,
                 "rollovers": 0,
             },
-            "connections": {"current": 1, "available": 1000},
-            "mem": {"bits": 64, "resident": 0, "virtual": 0},
+            "connections": {"current": current_connections, "available": 1000},
+            "mem": {
+                "bits": 64,
+                "resident": resident_mem,
+                "virtual": virtual_mem,
+            },
             "globalLock": {"totalTime": 0},
         }
 
@@ -1305,6 +1355,7 @@ async def handle_client(
     handler: NeoSQLiteHandler,
 ):
     """Handle a single client connection."""
+    handler.increment_connections()
     try:
         while True:
             # Read header (16 bytes)
@@ -1424,6 +1475,7 @@ async def handle_client(
     ):
         pass
     finally:
+        handler.decrement_connections()
         writer.close()
         with contextlib.suppress(Exception):
             await writer.wait_closed()
@@ -1434,6 +1486,7 @@ def handle_client_threaded(
     handler: NeoSQLiteHandler,
 ):
     """Handle a single client connection (threaded version)."""
+    handler.increment_connections()
     try:
         with client_socket:
             while True:
@@ -1549,6 +1602,8 @@ def handle_client_threaded(
         logger.debug(f"Client connection error: {e}")
     except Exception as e:
         logger.exception(f"Unexpected error in client thread: {e}")
+    finally:
+        handler.decrement_connections()
 
 
 def run_server_threaded(
