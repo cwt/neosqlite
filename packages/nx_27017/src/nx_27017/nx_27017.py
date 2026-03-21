@@ -398,6 +398,39 @@ class NeoSQLiteHandler:
         with self._connections_lock:
             self._active_connections -= 1
 
+    def _is_gridfs_collection(self, coll_name: str) -> bool:
+        """Check if collection name is a GridFS collection."""
+        return coll_name.endswith(".files") or coll_name.endswith(".chunks")
+
+    def _get_gridfs_bucket_name(self, coll_name: str) -> str | None:
+        """Extract bucket name from GridFS collection name, or None if not GridFS."""
+        if coll_name.endswith(".files"):
+            return coll_name.rsplit(".files", 1)[0]
+        elif coll_name.endswith(".chunks"):
+            return coll_name.rsplit(".chunks", 1)[0]
+        return None
+
+    def _get_gridfs_bucket(self, db: Connection, coll_name: str):
+        """Get GridFSBucket for a GridFS collection."""
+        from neosqlite.gridfs import GridFSBucket
+
+        bucket_name = self._get_gridfs_bucket_name(coll_name)
+        if bucket_name is None:
+            return None
+        return GridFSBucket(db.db, bucket_name=bucket_name)
+
+    def _convert_gridfs_result(self, grid_out) -> dict:
+        """Convert GridOut to MongoDB-compatible dict."""
+        return {
+            "_id": grid_out._id,
+            "filename": grid_out.filename,
+            "length": grid_out.length,
+            "chunkSize": grid_out.chunk_size,
+            "uploadDate": grid_out.upload_date,
+            "md5": grid_out.md5,
+            "metadata": grid_out.metadata,
+        }
+
     def handle_insert(self, msg: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         request_id = msg["request_id"]
         sections = msg["sections"]
@@ -652,37 +685,33 @@ class NeoSQLiteHandler:
                 "nIndexesWas": len(coll.list_indexes()) + 1,
             }
 
-        # Handle insert via NeoSQLite collection method
-        if "insert" in cmd_copy:
-            coll_name = cmd_copy.pop("insert")
-            documents = cmd_copy.pop("documents", [])
-            coll = db[coll_name]
-            if documents:
-                result = coll.insert_many(documents)
-                return request_id, {
-                    "ok": 1,
-                    "n": len(result.inserted_ids),
-                    "insertedIds": result.inserted_ids,
-                }
-            return request_id, {"ok": 1, "n": 0}
-
-        # Handle delete via NeoSQLite collection method
+        # Handle delete (both GridFS and regular collections)
         if "delete" in cmd_copy:
             coll_name = cmd_copy.pop("delete")
-            deletes = cmd_copy.pop("deletes", []) or payload_deletes
-            coll = db[coll_name]
-            removed = 0
-            for delete in deletes:
-                q = delete.get("q", {})
-                q = self._convert_objectids(q)
-                limit = delete.get("limit", 0)
-                if limit == 0:
-                    del_result = coll.delete_many(q)
-                    removed += del_result.deleted_count
-                else:
-                    del_result = coll.delete_one(q)
-                    removed += del_result.deleted_count
-            return request_id, {"ok": 1, "n": removed}
+            if self._is_gridfs_collection(coll_name):
+                return self._handle_gridfs_delete(
+                    request_id, cmd_copy, db, coll_name
+                )
+            # Non-GridFS delete - build command doc for _handle_delete
+            cmd_copy["delete"] = coll_name
+            # Merge deletes from payload if not already in cmd_copy
+            if "deletes" not in cmd_copy and payload_deletes:
+                cmd_copy["deletes"] = payload_deletes
+            return self._handle_delete(request_id, cmd_copy, db)
+
+        # Handle GridFS upload
+        if "upload" in cmd_copy:
+            return self._handle_gridfs_upload(request_id, cmd_copy, db)
+
+        # Handle GridFS download (openDownloadStream)
+        if "openDownloadStream" in cmd_copy:
+            file_id = cmd_copy.get("openDownloadStream")
+            if isinstance(file_id, str):
+                from neosqlite.objectid import ObjectId
+
+                file_id = ObjectId(file_id)
+            cmd_copy["fileId"] = file_id
+            return self._handle_gridfs_download(request_id, cmd_copy, db)
 
         # Handle findAndModify via NeoSQLite collection method
         # IMPORTANT: This must be checked BEFORE "update" because findAndModify
@@ -752,6 +781,15 @@ class NeoSQLiteHandler:
             filter_query = cmd_copy.pop("filter", {})
             filter_query = self._convert_objectids(filter_query)
             projection = cmd_copy.pop("projection", None)
+
+            # Check if this is a GridFS collection
+            if self._is_gridfs_collection(coll_name):
+                # Put filter back for _handle_gridfs_find which expects it in command_doc
+                cmd_copy["filter"] = filter_query
+                return self._handle_gridfs_find(
+                    request_id, cmd_copy, db, coll_name
+                )
+
             coll = db[coll_name]
             cursor = (
                 coll.find(filter_query, projection)
@@ -918,6 +956,33 @@ class NeoSQLiteHandler:
                 if "find" in inner_cmd:
                     coll_name = inner_cmd.pop("find")
                     filter_query = inner_cmd.pop("filter", {})
+
+                    if self._is_gridfs_collection(coll_name):
+                        return request_id, {
+                            "ok": 1,
+                            "queryPlanner": {
+                                "plannerVersion": 1,
+                                "namespace": f"{db.name}.{coll_name}",
+                                "indexFilterSet": False,
+                                "parsedQuery": filter_query,
+                                "winningPlan": {"stage": "COLLSCAN"},
+                                "rejectedPlans": [],
+                            },
+                            "executionStats": {
+                                "executionSuccess": True,
+                                "nReturned": 0,
+                                "executionTimeMillis": 0,
+                                "totalKeysExamined": 0,
+                                "totalDocsExamined": 0,
+                            },
+                            "serverInfo": {
+                                "host": "localhost",
+                                "port": 27017,
+                                "version": "7.0.0",
+                                "gitVersion": "unknown",
+                            },
+                        }
+
                     coll = db[coll_name]
 
                     # Execute find and get explain info
@@ -988,6 +1053,11 @@ class NeoSQLiteHandler:
         if not coll_name:
             return request_id, {"ok": 0, "errmsg": "No collection specified"}
 
+        if self._is_gridfs_collection(coll_name):
+            return self._handle_gridfs_find(
+                request_id, command_doc, db, coll_name
+            )
+
         coll = db[coll_name]
         filter_query = command_doc.get("filter", {})
         filter_query = self._convert_objectids(filter_query)
@@ -1012,6 +1082,161 @@ class NeoSQLiteHandler:
                 "firstBatch": docs,
             },
         }
+
+    def _handle_gridfs_find(
+        self,
+        request_id: int,
+        command_doc: dict,
+        db: Connection,
+        coll_name: str,
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle find command on GridFS collections (fs.files)."""
+        if not coll_name.endswith(".files"):
+            return request_id, {
+                "ok": 0,
+                "errmsg": "GridFS find only supported on .files collections",
+            }
+
+        try:
+            bucket = self._get_gridfs_bucket(db, coll_name)
+            if bucket is None:
+                return request_id, {
+                    "ok": 0,
+                    "errmsg": "Invalid GridFS collection",
+                }
+
+            filter_query = command_doc.get("filter", {})
+            filter_query = self._convert_objectids(filter_query)
+
+            skip = command_doc.get("skip", 0)
+            sort = command_doc.get("sort", None)
+
+            cursor = bucket.find(filter_query)
+            files = list(cursor)
+
+            if skip > 0:
+                files = files[skip:]
+            if sort:
+                sort_list = (
+                    list(sort.items()) if isinstance(sort, dict) else sort
+                )
+                files = sorted(
+                    files,
+                    key=lambda f: tuple(getattr(f, k, v) for k, v in sort_list),
+                )
+
+            limit = command_doc.get("limit", 0)
+            if limit > 0:
+                files = files[:limit]
+
+            docs = [self._convert_gridfs_result(f) for f in files]
+
+            return request_id, {
+                "ok": 1,
+                "cursor": {
+                    "id": 0,
+                    "ns": f"{db.name}.{coll_name}",
+                    "firstBatch": docs,
+                },
+            }
+        except Exception as e:
+            logger.error(f"GridFS find error: {e}")
+            import traceback
+
+            traceback.print_exc()
+            return request_id, {"ok": 0, "errmsg": str(e)}
+
+    def _handle_gridfs_delete(
+        self, request_id: int, cmd_copy: dict, db: Connection, coll_name: str
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle delete command on GridFS collections."""
+        if not coll_name.endswith(".files"):
+            return request_id, {
+                "ok": 0,
+                "errmsg": "GridFS delete only supported on .files collections",
+            }
+
+        try:
+            bucket = self._get_gridfs_bucket(db, coll_name)
+            if bucket is None:
+                return request_id, {
+                    "ok": 0,
+                    "errmsg": "Invalid GridFS collection",
+                }
+
+            deletes = cmd_copy.get("deletes", [])
+            removed = 0
+            for delete in deletes:
+                file_id = delete.get("q", {}).get("_id")
+                if file_id:
+                    bucket.delete(file_id)
+                    removed += 1
+
+            return request_id, {"ok": 1, "n": removed}
+        except Exception as e:
+            logger.error(f"GridFS delete error: {e}")
+            return request_id, {"ok": 0, "errmsg": str(e)}
+
+    def _handle_gridfs_upload(
+        self, request_id: int, cmd_copy: dict, db: Connection
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle GridFS upload commands."""
+        try:
+            filename = cmd_copy.get("filename")
+            if not filename:
+                return request_id, {
+                    "ok": 0,
+                    "errmsg": "filename required for GridFS upload",
+                }
+
+            bucket_name = cmd_copy.get("bucket", "fs")
+            from neosqlite.gridfs import GridFSBucket
+
+            bucket = GridFSBucket(db.db, bucket_name=bucket_name)
+
+            metadata = cmd_copy.get("metadata", {})
+            chunk_size = cmd_copy.get("chunkSize")
+
+            grid_in = bucket.open_upload_stream(
+                filename,
+                chunk_size_bytes=chunk_size,
+                metadata=metadata if metadata else None,
+            )
+
+            data = cmd_copy.get("data")
+            if data:
+                grid_in.write(data)
+            grid_in.close()
+
+            return request_id, {"ok": 1, "fileId": grid_in._file_id}
+        except Exception as e:
+            logger.error(f"GridFS find error: {e}")
+            return request_id, {"ok": 0, "errmsg": str(e)}
+
+    def _handle_gridfs_download(
+        self, request_id: int, cmd_copy: dict, db: Connection
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle GridFS download commands."""
+        try:
+            file_id = cmd_copy.get("fileId")
+            if not file_id:
+                return request_id, {
+                    "ok": 0,
+                    "errmsg": "fileId required for GridFS download",
+                }
+
+            bucket_name = cmd_copy.get("bucket", "fs")
+            from neosqlite.gridfs import GridFSBucket
+
+            bucket = GridFSBucket(db.db, bucket_name=bucket_name)
+
+            grid_out = bucket.open_download_stream(file_id)
+            data = grid_out.read()
+
+            return request_id, {"ok": 1, "data": data}
+        except Exception as e:
+            logger.error(f"GridFS download error: {e}")
+            return request_id, {"ok": 0, "errmsg": str(e)}
 
     def _handle_update(
         self, request_id: int, command_doc: dict, db: Connection
@@ -1383,6 +1608,19 @@ class NeoSQLiteHandler:
                 }
             )  # noqa: E501
             return result[0], [result[1]]
+
+        # Check if this is a GridFS collection BEFORE accessing db[collection]
+        # because accessing db[collection] creates a table with that name
+        if self._is_gridfs_collection(collection):
+            # Route to GridFS handler - build command doc structure
+            command_doc = dict(query)
+            command_doc["find"] = collection
+            _, response = self._handle_gridfs_find(
+                msg["request_id"], command_doc, db, collection
+            )
+            # Extract firstBatch from cursor response
+            docs = response.get("cursor", {}).get("firstBatch", [])
+            return msg["request_id"], docs
 
         coll = db[collection]
 
