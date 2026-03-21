@@ -37,6 +37,7 @@ from bson import BSON, Int64, encode
 from bson import ObjectId as BsonObjectId
 from neosqlite import Connection
 from neosqlite.objectid import ObjectId as NeoObjectId
+from neosqlite.options import JournalMode
 
 logger = logging.getLogger("nx_27017")
 
@@ -322,10 +323,14 @@ class NeoSQLiteHandler:
     )
 
     def __init__(
-        self, db_path: str = ":memory:", tokenizers: list | None = None
+        self,
+        db_path: str = ":memory:",
+        tokenizers: list | None = None,
+        journal_mode: str = "WAL",
     ):
         self.db_path = db_path
         self.tokenizers = tokenizers
+        self.journal_mode = journal_mode
 
         if db_path == ":memory:":
             self.conn = Connection(
@@ -333,10 +338,14 @@ class NeoSQLiteHandler:
                 check_same_thread=False,
                 uri=True,
                 tokenizers=tokenizers,
+                journal_mode=journal_mode,
             )
         else:
             self.conn = Connection(
-                db_path, check_same_thread=False, tokenizers=tokenizers
+                db_path,
+                check_same_thread=False,
+                tokenizers=tokenizers,
+                journal_mode=journal_mode,
             )
         self.databases: dict[str, Connection] = {"admin": self.conn}
 
@@ -348,13 +357,14 @@ class NeoSQLiteHandler:
                     check_same_thread=False,
                     uri=True,
                     tokenizers=self.tokenizers,
+                    journal_mode=self.journal_mode,
                 )
             else:
-                # Use the same file for all databases (single-file mode)
                 self.databases[db_name] = Connection(
                     self.db_path,
                     check_same_thread=False,
                     tokenizers=self.tokenizers,
+                    journal_mode=self.journal_mode,
                 )
         return self.databases[db_name]
 
@@ -1767,16 +1777,19 @@ def run_server_sync(args: argparse.Namespace):
 
     async_lib = "uvloop" if uvloop is not None else "asyncio"
     logger.info(
-        "Starting NX-27017 with db_path=%s, host=%s, port=%s, tokenizers=%s (async=%s, threaded=%s)",
+        "Starting NX-27017 with db_path=%s, host=%s, port=%s, journal_mode=%s, tokenizers=%s (async=%s, threaded=%s)",
         db_path,
         args.host,
         args.port,
+        args.journal_mode,
         tokenizers,
         async_lib,
         args.threaded,
     )
 
-    handler = NeoSQLiteHandler(db_path, tokenizers=tokenizers)
+    handler = NeoSQLiteHandler(
+        db_path, tokenizers=tokenizers, journal_mode=args.journal_mode
+    )
 
     try:
         run_server_threaded(
@@ -1876,8 +1889,21 @@ Examples:
             "Example: --fts5-tokenizer icu=/path/to/libfts5_icu.so"
         ),
     )
+    parser.add_argument(
+        "-j",
+        "--journal-mode",
+        dest="journal_mode",
+        default="WAL",
+        choices=["WAL", "DELETE", "TRUNCATE", "PERSIST", "MEMORY", "OFF"],
+        help=(
+            "SQLite journal mode (default: WAL). "
+            "WAL provides best concurrency; DELETE is traditional rollback."
+        ),
+    )
 
     args = parser.parse_args()
+
+    args.journal_mode = JournalMode.validate(args.journal_mode)
 
     if args.fts5_tokenizers:
         args.fts5_tokenizers = [

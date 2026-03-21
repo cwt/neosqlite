@@ -30,6 +30,9 @@ nx-27017 --db memory
 # Run with a file (persistent)
 nx-27017 --db ./myapp.db
 
+# Run with specific journal mode (WAL is default)
+nx-27017 --db ./myapp.db -j DELETE
+
 # Daemon mode
 nx-27017 -d --db ./myapp.db
 ```
@@ -41,11 +44,29 @@ nx-27017 -d --db ./myapp.db
 | `--db DB_PATH` | SQLite database (default: nx-27017.db, use `memory` for RAM) |
 | `--host HOST` | Bind address (default: 127.0.0.1) |
 | `-p PORT` | Port (default: 27017) |
+| `-j MODE` | SQLite journal mode (default: WAL). Modes: WAL, DELETE, TRUNCATE, PERSIST, MEMORY, OFF |
 | `-d` | Run as daemon |
 | `--stop` | Stop daemon |
 | `--status` | Check if running |
 | `--fts5-tokenizer NAME=PATH` | Load FTS5 tokenizer (can be repeated for multiple tokenizers) |
 | `-v` | Verbose logging |
+
+### Journal Mode
+
+NX-27017 supports configurable SQLite journal modes via `-j` or `--journal-mode`:
+
+```bash
+# WAL mode (default) - best concurrency
+nx-27017 --db ./myapp.db -j WAL
+
+# DELETE mode - traditional rollback journal
+nx-27017 --db ./myapp.db -j DELETE
+
+# MEMORY mode - journal in RAM (fast but no crash recovery)
+nx-27017 --db ./myapp.db -j MEMORY
+```
+
+For more details on journal modes, see the [NeoSQLite documentation](../../README.md#journal-mode-configuration).
 
 ### FTS5 Tokenizer
 
