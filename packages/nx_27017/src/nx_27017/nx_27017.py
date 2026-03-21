@@ -548,7 +548,6 @@ class NeoSQLiteHandler:
             old_name = cmd_copy.pop("renameCollection")
             to_name = cmd_copy.pop("to", None)
             if to_name:
-                # Extract just the collection name from full namespace
                 old_coll = (
                     old_name.split(".")[-1] if "." in old_name else old_name
                 )
@@ -558,6 +557,99 @@ class NeoSQLiteHandler:
             return request_id, {
                 "ok": 0,
                 "errmsg": "renameCollection requires 'to' parameter",
+            }
+
+        # Handle createIndexes via NeoSQLite collection method
+        if "createIndexes" in cmd_copy:
+            coll_name = cmd_copy.pop("createIndexes")
+            indexes_spec = cmd_copy.pop("indexes", [])
+            coll = db[coll_name]
+            created_names = []
+            for index_spec in indexes_spec:
+                key = index_spec.get("key", {})
+                name = index_spec.get("name")
+                unique = index_spec.get("unique", False)
+                sparse = index_spec.get("sparse", False)
+                fts = index_spec.get("fts", False)
+                tokenizer = index_spec.get("tokenizer")
+
+                if isinstance(key, dict):
+                    keys_list = list(key.keys())
+                else:
+                    keys_list = key
+
+                idx_name = coll.create_index(
+                    keys_list,
+                    unique=unique,
+                    sparse=sparse,
+                    fts=fts,
+                    tokenizer=tokenizer,
+                )
+                if name and name != idx_name:
+                    logger.warning(
+                        f"Index name mismatch: requested '{name}', got '{idx_name}'"
+                    )
+                created_names.append(idx_name)
+            return request_id, {
+                "ok": 1,
+                "createdCollectionAutomatically": False,
+                "numIndexesBefore": len(coll.list_indexes()),
+                "numIndexesAfter": len(coll.list_indexes()),
+                "indexesCreated": [{"name": n} for n in created_names],
+            }
+
+        # Handle dropIndexes via NeoSQLite collection method
+        if "dropIndexes" in cmd_copy:
+            coll_name = cmd_copy.pop("dropIndexes")
+            index = cmd_copy.pop("index", "*")
+            coll = db[coll_name]
+            if index == "*":
+                coll.drop_indexes()
+                return request_id, {
+                    "ok": 1,
+                    "nIndexesWas": len(coll.list_indexes()) + 1,
+                }
+            else:
+                coll.drop_index(index)
+                return request_id, {
+                    "ok": 1,
+                    "nIndexesWas": len(coll.list_indexes()) + 1,
+                }
+
+        # Handle createIndex (singular - legacy)
+        if "createIndex" in cmd_copy:
+            coll_name = cmd_copy.pop("createIndex")
+            key = cmd_copy.get("key", {})
+            name = cmd_copy.get("name")
+            unique = cmd_copy.get("unique", False)
+            sparse = cmd_copy.get("sparse", False)
+            coll = db[coll_name]
+
+            if isinstance(key, dict):
+                keys_list = list(key.keys())
+            else:
+                keys_list = key
+
+            idx_name = coll.create_index(
+                keys_list, unique=unique, sparse=sparse
+            )
+            return request_id, {
+                "ok": 1,
+                "createdCollectionAutomatically": False,
+                "numIndexesBefore": len(coll.list_indexes()),
+                "numIndexesAfter": len(coll.list_indexes()),
+                "indexesCreated": [{"name": idx_name}],
+            }
+
+        # Handle dropIndex (singular - legacy)
+        if "dropIndex" in cmd_copy:
+            coll_name = cmd_copy.pop("dropIndex")
+            index = cmd_copy.pop("index")
+            coll = db[coll_name]
+            coll.drop_index(index)
+            return request_id, {
+                "ok": 1,
+                "nIndexesWas": len(coll.list_indexes()) + 1,
             }
 
         # Handle insert via NeoSQLite collection method
