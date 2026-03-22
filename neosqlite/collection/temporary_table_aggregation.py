@@ -842,7 +842,9 @@ class TemporaryTableAggregationProcessor:
         """
         if foreign_field is None:
             foreign_field = "_id"
-        hash_table_name = f"_lookup_hash_{uuid.uuid4().hex[:8]}"
+        stage_key = f"{from_collection}:{foreign_field}:{str(pipeline) if pipeline else ''}"
+        hash_suffix = hashlib.sha256(stage_key.encode()).hexdigest()[:8]
+        hash_table_name = f"_lookup_hash_{hash_suffix}"
         join_key = "_join_key"
 
         try:
@@ -1105,7 +1107,11 @@ class TemporaryTableAggregationProcessor:
             )
             processor = TemporaryTableAggregationProcessor(target_coll, None)
 
-            pipeline_result_table = f"_lookup_pipeline_{uuid.uuid4().hex[:8]}"
+            pipeline_key = f"{from_collection}:{str(pipeline)}"
+            pipeline_hash = hashlib.sha256(pipeline_key.encode()).hexdigest()[
+                :8
+            ]
+            pipeline_result_table = f"_lookup_pipeline_{pipeline_hash}"
             try:
                 pipeline_result = processor.process_pipeline(pipeline)
                 if not pipeline_result:
@@ -2401,8 +2407,12 @@ class TemporaryTableAggregationProcessor:
 
         json_extract = f"{self._json_function_prefix}_extract"
 
+        densify_key = f"{field}:{step}:{lower_bound}:{upper_bound}"
+        densify_hash = hashlib.sha256(densify_key.encode()).hexdigest()[:8]
+        series_table = f"_densify_series_{densify_hash}"
+
         step_series = []
-        current = lower_bound
+        current = float(lower_bound)
         while current <= upper_bound:
             step_series.append(current)
             current += step
@@ -2411,9 +2421,6 @@ class TemporaryTableAggregationProcessor:
 
         if not step_series:
             return current_table
-
-        ",".join([str(v) for v in step_series])
-        series_table = f"_densify_series_{uuid.uuid4().hex[:8]}"
 
         try:
             self.collection.db.execute(
