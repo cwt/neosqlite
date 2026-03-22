@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "nx-27017"
-version = "0.3.0"
+version = "0.4.0"
 description = "NeoSQLite Experimental Project 27017 - MongoDB Wire Protocol Server"
 authors = ["NeoSQLite Team"]
 license = "MIT"
@@ -29,7 +29,6 @@ pytest = "^9.0"
 pytest-asyncio = "^1.0.0"
 pytest-cov = "^7.1"
 mypy = "^1.17"
-ruff = "^0.15"
 
 [tool.poetry.scripts]
 nx-27017 = "nx_27017.nx_27017:main"
@@ -41,14 +40,6 @@ build-backend = "poetry.core.masonry.api"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"
-addopts = "-v"
-
-[tool.ruff]
-target-version = "py310"
-line-length = 79
-
-[tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM"]
 
 [tool.mypy]
 python_version = "3.10"

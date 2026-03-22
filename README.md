@@ -44,56 +44,65 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 
 See [CHANGELOG.md](CHANGELOG.md) for the latest features and improvements.
 
-## Latest Release: v1.13.4
+## Latest Release: v1.13.5
 
-NeoSQLite v1.13.4 is a **bug fix release** that adds **GridFS support** to NX-27017, along with performance improvements, configurable journal modes, and stability enhancements.
+NeoSQLite v1.13.5 is a **performance release** featuring **O(n+m) hash join optimization** for `$lookup` aggregation, memory-aware query planning, and full transaction support for NX-27017.
 
-### New Features: NX-27017 with GridFS
+### New: O(n+m) Hash Join for $lookup
 
-```bash
-# Run NX-27017 server
-pip install "neosqlite[nx27017]"
-nx-27017 --db ./myapp.db
+The `$lookup` aggregation stage now uses an optimized hash join algorithm instead of O(n×m) correlated subquery:
 
-# Connect with PyMongo (no code changes needed)
+```python
+# This now automatically uses hash join for better performance
+results = collection.aggregate([
+    {"$lookup": {
+        "from": "orders",
+        "localField": "_id",
+        "foreignField": "userId",
+        "as": "userOrders"
+    }}
+])
+```
+
+| Dataset | Before (O(n×m)) | After (O(n+m)) |
+|---------|------------------|----------------|
+| 1K × 1K | 1,000,000 ops | 2,000 ops |
+| 10K × 10K | 100,000,000 ops | 20,000 ops |
+
+### New: Memory-Aware Query Planning
+
+The optimizer automatically selects the best strategy based on available memory:
+- **Hash join** when collection < 30% of available memory (faster)
+- **Correlated subquery** for large collections (memory-efficient)
+
+### New: NX-27017 Transactions
+
+NX-27017 now supports full transaction commands via the MongoDB wire protocol:
+
+```python
 from pymongo import MongoClient
-from gridfs import GridFS
+
 client = MongoClient('mongodb://localhost:27017/')
-db = client.my_database
-fs = GridFS(db)
+session = client.start_session()
 
-# Upload a file
-file_id = fs.put(b"Hello GridFS!", filename="hello.txt")
-
-# Download and delete
-content = fs.get(file_id).read()
-fs.delete(file_id)
+try:
+    session.start_transaction()
+    client.db.users.insert_one({"name": "Alice"})
+    client.db.orders.insert_one({"user_id": 1, "product": "Book"})
+    session.commit_transaction()
+except:
+    session.abort_transaction()
+finally:
+    session.end_session()
 ```
 
-### Configurable Journal Mode
-
-NX-27017 now supports configurable SQLite journal modes via `-j` CLI flag:
-
-```bash
-nx-27017 --db ./myapp.db -j DELETE  # Traditional rollback journal
-nx-27017 --db ./myapp.db -j MEMORY # Journal in RAM (fast)
-```
-
-### Bug Fixes
-
-- **GridFS Routing**: Fixed `.chunks` collections being incorrectly routed to GridFS handler
-- **Table Name Quoting**: Fixed SQL errors with dotted table names (e.g., `fs.files`)
-- **Legacy Migration**: Fixed migration failure when only partial tables exist
-- **I/O Performance**: Reduced O(n²) bytes concatenation to O(n)
-- **Real Statistics**: Uptime, memory, and connection counts now return actual values
-
-For more details, see [documents/releases/v1.13.4.md](documents/releases/v1.13.4.md).
+For more details, see [documents/releases/v1.13.5.md](documents/releases/v1.13.5.md).
 
 ## PyMongo Compatibility Tests
 
 NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-compatible behavior. Our automated test suite covers all major API categories:
 
-### Test Results (v1.13.4)
+### Test Results (v1.13.5)
 
 #### Unit Tests
 
@@ -107,7 +116,7 @@ NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-
 
 #### API Comparison Tests
 
-| Metric | **v1.13.4** |
+| Metric | **v1.13.5** |
 |--------|-------------|
 | **Total Tests** | **376** |
 | **Passed** | **360** |

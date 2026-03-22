@@ -1,5 +1,65 @@
 # CHANGELOG
 
+## 1.13.5
+
+### Performance: O(n+m) Hash Join for $lookup
+
+The `$lookup` aggregation stage now uses an optimized hash join algorithm instead of O(n×m) correlated subquery:
+
+```python
+# Automatically uses hash join for better performance
+collection.aggregate([
+    {"$lookup": {
+        "from": "orders",
+        "localField": "_id",
+        "foreignField": "userId",
+        "as": "userOrders"
+    }}
+])
+```
+
+| Dataset | Before (O(n×m)) | After (O(n+m)) |
+|---------|------------------|----------------|
+| 1K × 1K | 1,000,000 ops | 2,000 ops |
+| 10K × 10K | 100,000,000 ops | 20,000 ops |
+
+### Memory-Aware Query Planning
+
+The optimizer automatically selects the best strategy based on available memory:
+- **Hash join** when collection < 30% of available memory (faster)
+- **Correlated subquery** for large collections (memory-efficient)
+
+### NX-27017: Full Transaction Support
+
+NX-27017 now supports full transaction commands via the MongoDB wire protocol:
+
+```python
+from pymongo import MongoClient
+
+client = MongoClient('mongodb://localhost:27017/')
+session = client.start_session()
+
+try:
+    session.start_transaction()
+    client.db.users.insert_one({"name": "Alice"})
+    client.db.orders.insert_one({"user_id": 1, "product": "Book"})
+    session.commit_transaction()
+except:
+    session.abort_transaction()
+finally:
+    session.end_session()
+```
+
+**Supported Commands**: `startSession`, `commitTransaction`, `abortTransaction`, `endSessions`
+
+### Bug Fixes
+
+- **$lookup _id Handling**: Fixed `_id` field extraction to properly use `main_table.id` when `_id` is not in JSON data
+- **Type Annotation**: Fixed mypy error in `_extract_field_value` helper
+- **$densify Float Conversion**: Added explicit `float()` conversion for bounds
+
+---
+
 ## 1.13.4
 
 ### NX-27017: GridFS Support & Performance

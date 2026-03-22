@@ -29,12 +29,14 @@ except ImportError:
     ASYNC_LIBRARY = "asyncio"
 import threading
 import time
+import uuid
 from datetime import datetime, timezone
 from itertools import count
 from typing import Any
 
 from bson import BSON, Int64, encode
 from bson import ObjectId as BsonObjectId
+
 from neosqlite import Connection
 from neosqlite.objectid import ObjectId as NeoObjectId
 from neosqlite.options import JournalMode
@@ -333,6 +335,8 @@ class NeoSQLiteHandler:
         self.start_time = time.time()
         self._active_connections = 0
         self._connections_lock = threading.Lock()
+        self._sessions: dict[str, Any] = {}
+        self._sessions_lock = threading.Lock()
 
         if db_path == ":memory:":
             self.conn = Connection(
@@ -545,6 +549,57 @@ class NeoSQLiteHandler:
                     "minWireVersion": 17,
                     "maxWireVersion": 21,
                 }
+
+        # Handle startSession
+        if "startSession" in command_doc:
+            session_id = f"session_{uuid.uuid4().hex}"
+            session = self.conn.start_session()
+            with self._sessions_lock:
+                self._sessions[session_id] = session
+            return request_id, {
+                "ok": 1,
+                "session": {"id": {"$oid": session_id}},
+            }
+
+        # Handle commitTransaction
+        if "commitTransaction" in command_doc:
+            lsid = command_doc.get("lsid")
+            if lsid:
+                session_id = lsid.get("id", {}).get("$oid")
+                if session_id:
+                    with self._sessions_lock:
+                        commit_session: Any = self._sessions.get(session_id)
+                    if commit_session:
+                        commit_session.commit_transaction()
+                        return request_id, {"ok": 1}
+            return request_id, {"ok": 0, "errmsg": "No session specified"}
+
+        # Handle abortTransaction
+        if "abortTransaction" in command_doc:
+            lsid = command_doc.get("lsid")
+            if lsid:
+                session_id = lsid.get("id", {}).get("$oid")
+                if session_id:
+                    with self._sessions_lock:
+                        abort_session: Any = self._sessions.get(session_id)
+                    if abort_session:
+                        abort_session.abort_transaction()
+                        return request_id, {"ok": 1}
+            return request_id, {"ok": 0, "errmsg": "No session specified"}
+
+        # Handle endSessions
+        if "endSessions" in command_doc:
+            session_ids = command_doc.get("endSessions", [])
+            if isinstance(session_ids, str):
+                session_ids = [session_ids]
+            with self._sessions_lock:
+                for sid in session_ids:
+                    if isinstance(sid, dict):
+                        sid = sid.get("$oid", sid)
+                    session = self._sessions.pop(sid, None)
+                    if session:
+                        session.end_session()
+            return request_id, {"ok": 1}
 
         # Translate MongoDB commands to NeoSQLite API
         cmd_copy = dict(command_doc)

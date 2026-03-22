@@ -240,6 +240,100 @@ class TestNeoSQLiteHandler:
         request_id, response = handler.handle_command(msg)
         assert response["ok"] == 1
 
+    def test_start_session(self, handler):
+        msg = {
+            "request_id": 16,
+            "sections": [("body", {"startSession": 1, "$db": "admin"})],
+        }
+        request_id, response = handler.handle_command(msg)
+        assert response["ok"] == 1
+        assert "session" in response
+        assert "id" in response["session"]
+        assert "$oid" in response["session"]["id"]
+        session_id = response["session"]["id"]["$oid"]
+        assert session_id in handler._sessions
+
+    def test_commit_transaction(self, handler):
+        start_msg = {
+            "request_id": 17,
+            "sections": [("body", {"startSession": 1, "$db": "admin"})],
+        }
+        _, start_response = handler.handle_command(start_msg)
+        session_id = start_response["session"]["id"]["$oid"]
+
+        with handler._sessions_lock:
+            session = handler._sessions[session_id]
+            session.start_transaction()
+
+        commit_msg = {
+            "request_id": 18,
+            "sections": [
+                (
+                    "body",
+                    {
+                        "commitTransaction": 1,
+                        "$db": "admin",
+                        "lsid": {"id": {"$oid": session_id}},
+                    },
+                )
+            ],
+        }
+        _, commit_response = handler.handle_command(commit_msg)
+        assert commit_response["ok"] == 1
+
+    def test_abort_transaction(self, handler):
+        start_msg = {
+            "request_id": 19,
+            "sections": [("body", {"startSession": 1, "$db": "admin"})],
+        }
+        _, start_response = handler.handle_command(start_msg)
+        session_id = start_response["session"]["id"]["$oid"]
+
+        with handler._sessions_lock:
+            session = handler._sessions[session_id]
+            session.start_transaction()
+
+        abort_msg = {
+            "request_id": 20,
+            "sections": [
+                (
+                    "body",
+                    {
+                        "abortTransaction": 1,
+                        "$db": "admin",
+                        "lsid": {"id": {"$oid": session_id}},
+                    },
+                )
+            ],
+        }
+        _, abort_response = handler.handle_command(abort_msg)
+        assert abort_response["ok"] == 1
+
+    def test_end_sessions_with_session(self, handler):
+        start_msg = {
+            "request_id": 21,
+            "sections": [("body", {"startSession": 1, "$db": "admin"})],
+        }
+        _, start_response = handler.handle_command(start_msg)
+        session_id = start_response["session"]["id"]["$oid"]
+        assert session_id in handler._sessions
+
+        end_msg = {
+            "request_id": 22,
+            "sections": [
+                (
+                    "body",
+                    {
+                        "endSessions": [{"$oid": session_id}],
+                        "$db": "admin",
+                    },
+                )
+            ],
+        }
+        _, end_response = handler.handle_command(end_msg)
+        assert end_response["ok"] == 1
+        assert session_id not in handler._sessions
+
     def test_unknown_command(self, handler):
         msg = {
             "request_id": 15,
@@ -1676,9 +1770,9 @@ class TestGridFSOperations:
 
     @pytest.fixture
     def handler(self, tmp_path):
-        from neosqlite.gridfs import GridFSBucket
-
         from nx_27017.nx_27017 import NeoSQLiteHandler
+
+        from neosqlite.gridfs import GridFSBucket
 
         db_path = str(tmp_path / "gridfs_test.db")
         handler = NeoSQLiteHandler(db_path)
