@@ -7,6 +7,7 @@ that the current implementation can't optimize with a single SQL query.
 from __future__ import annotations
 
 import hashlib
+import os
 import uuid
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, List, Tuple
@@ -23,6 +24,8 @@ from .jsonb_support import (
     supports_jsonb_each,
 )
 from .sql_translator_unified import SQLTranslator
+
+HASH_JOIN_MEMORY_THRESHOLD = 100 * 1024 * 1024  # 100 MB default threshold
 
 
 class DeterministicTempTableManager:
@@ -817,6 +820,200 @@ class TemporaryTableAggregationProcessor:
 
         return current_temp_table
 
+    def _create_lookup_hash_table(
+        self,
+        from_collection: str,
+        foreign_field: str | None,
+        pipeline: List[Dict[str, Any]] | None = None,
+    ) -> Tuple[str, str]:
+        """
+        Create a hash table (temp table with index) from a foreign collection
+        for efficient hash join lookup.
+
+        This implements O(n+m) hash join instead of O(n*m) correlated subquery.
+
+        Args:
+            from_collection: The collection to build hash table from
+            foreign_field: The field to use as join key (None for _id)
+            pipeline: Optional pipeline to run on foreign collection first
+
+        Returns:
+            Tuple of (hash_table_name, join_key_column)
+        """
+        if foreign_field is None:
+            foreign_field = "_id"
+        hash_table_name = f"_lookup_hash_{uuid.uuid4().hex[:8]}"
+        join_key = "_join_key"
+
+        try:
+            if pipeline:
+                target_coll = self.collection.database.get_collection(
+                    from_collection
+                )
+                processor = TemporaryTableAggregationProcessor(
+                    target_coll, None
+                )
+                pipeline_result = processor.process_pipeline(pipeline)
+
+                if not pipeline_result:
+                    self.db.execute(
+                        f"CREATE TEMP TABLE {hash_table_name} (id INTEGER PRIMARY KEY, _id INTEGER, data TEXT, {join_key} TEXT)"
+                    )
+                else:
+                    from .json_helpers import neosqlite_json_dumps
+
+                    self.db.execute(
+                        f"CREATE TEMP TABLE {hash_table_name} (id INTEGER PRIMARY KEY, _id INTEGER, data TEXT, {join_key} TEXT)"
+                    )
+
+                    if foreign_field == "_id":
+                        for doc in pipeline_result:
+                            self.db.execute(
+                                f"INSERT INTO {hash_table_name} (id, _id, data, {join_key}) VALUES (?, ?, ?, ?)",
+                                (
+                                    doc.get("id", 0),
+                                    doc.get("_id"),
+                                    neosqlite_json_dumps(doc),
+                                    str(doc.get("_id")),
+                                ),
+                            )
+                    else:
+                        from .json_path_utils import parse_json_path
+
+                        for doc in pipeline_result:
+                            key_val = self._extract_field_value(
+                                doc, foreign_field
+                            )
+                            self.db.execute(
+                                f"INSERT INTO {hash_table_name} (id, _id, data, {join_key}) VALUES (?, ?, ?, ?)",
+                                (
+                                    doc.get("id", 0),
+                                    doc.get("_id"),
+                                    neosqlite_json_dumps(doc),
+                                    (
+                                        str(key_val)
+                                        if key_val is not None
+                                        else None
+                                    ),
+                                ),
+                            )
+            else:
+                if foreign_field == "_id":
+                    self.db.execute(
+                        f"CREATE TEMP TABLE {hash_table_name} AS "
+                        f"SELECT id, _id, data, CAST(_id AS TEXT) as {join_key} "
+                        f"FROM {quote_table_name(from_collection)}"
+                    )
+                else:
+                    json_extract = f"{self._json_function_prefix}_extract"
+                    self.db.execute(
+                        f"CREATE TEMP TABLE {hash_table_name} AS "
+                        f"SELECT id, _id, data, CAST({json_extract}(data, '$.{foreign_field}') AS TEXT) as {join_key} "
+                        f"FROM {quote_table_name(from_collection)}"
+                    )
+
+            self.db.execute(
+                f"CREATE INDEX {hash_table_name}_idx ON {hash_table_name}({join_key})"
+            )
+
+            return hash_table_name, join_key
+
+        except Exception:
+            self.db.execute(f"DROP TABLE IF EXISTS {hash_table_name}")
+            raise
+
+    def _estimate_collection_size(self, collection_name: str) -> int:
+        """
+        Estimate the size of a collection in bytes.
+
+        Uses SQLite's table statistics to estimate size.
+
+        Args:
+            collection_name: Name of the collection to estimate
+
+        Returns:
+            Estimated size in bytes
+        """
+        try:
+            result = self.db.execute(
+                f"SELECT COUNT(*), AVG(LENGTH(data)) FROM {quote_table_name(collection_name)}"
+            ).fetchone()
+            if result and result[0]:
+                count, avg_size = result
+                avg_size = avg_size or 0
+                row_size = (
+                    int(avg_size) + 50
+                )  # Add overhead for id, _id columns
+                return count * row_size
+        except Exception:
+            pass
+        return 0
+
+    def _get_available_memory(self) -> int:
+        """
+        Get available memory for hash join operations.
+
+        Returns:
+            Available memory in bytes (estimated from SQLite cache or system)
+        """
+        try:
+            page_size = self.db.execute("PRAGMA page_size").fetchone()[0]
+            cache_pages = self.db.execute("PRAGMA cache_size").fetchone()[0]
+            if cache_pages < 0:
+                cache_pages = -cache_pages
+            sqlite_memory = page_size * cache_pages
+            return int(sqlite_memory * 0.5)
+        except Exception:
+            pass
+        try:
+            import resource
+
+            soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+            if soft != resource.RLIM_INFINITY:
+                return int(soft * 0.3)
+        except Exception:
+            pass
+        return HASH_JOIN_MEMORY_THRESHOLD
+
+    def _should_use_hash_join(
+        self,
+        from_collection: str,
+        pipeline: List[Dict[str, Any]] | None = None,
+    ) -> bool:
+        """
+        Decide whether to use hash join or correlated subquery for $lookup.
+
+        Uses memory estimation to decide:
+        - If foreign collection estimate < 30% of available memory: use hash join (faster)
+        - Otherwise: use correlated subquery (lower memory, slower)
+
+        Args:
+            from_collection: The foreign collection name
+            pipeline: Optional pipeline to run on foreign collection first
+
+        Returns:
+            True if should use hash join, False for correlated subquery
+        """
+        if pipeline:
+            return True
+        try:
+            est_size = self._estimate_collection_size(from_collection)
+            available = self._get_available_memory()
+            return est_size < (available * 0.3)
+        except Exception:
+            return True
+
+    def _extract_field_value(self, doc: Dict[str, Any], field: str) -> Any:
+        """Extract field value from document, supporting dot notation."""
+        parts = field.split(".")
+        val: Any = doc
+        for part in parts:
+            if isinstance(val, dict):
+                val = val.get(part)
+            else:
+                return None
+        return val
+
     def _process_lookup_stage(
         self,
         create_temp: Callable,
@@ -824,21 +1021,15 @@ class TemporaryTableAggregationProcessor:
         lookup_spec: Dict[str, Any],
     ) -> str:
         """
-        Process a $lookup stage using temporary tables.
+        Process a $lookup stage using hash join for O(n+m) complexity.
 
         This method implements the $lookup aggregation stage which performs a left
         outer join to another collection in the same database. It uses an optimized
-        SQL query with a subquery to efficiently join the collections.
+        hash join approach:
+        1. Creates a temporary table with an index on the foreign field (hash table)
+        2. Uses a single JOIN query instead of correlated subquery
 
-        The method handles both the special _id field and regular fields for both
-        the local and foreign fields. It constructs an SQL query that:
-        1. Selects all fields from the current collection
-        2. Adds a new array field containing the matched documents from the foreign collection
-        3. Uses json_set to add the lookup results to the document data
-        4. Uses a correlated subquery with json_group_array to collect all matching documents
-
-        The lookup results are stored as an array field in the document, with an
-        empty array used when no matches are found.
+        This replaces the previous correlated subquery approach which was O(n*m).
 
         Args:
             create_temp (Callable): Function to create temporary tables
@@ -852,6 +1043,44 @@ class TemporaryTableAggregationProcessor:
 
         Returns:
             str: Name of the newly created temporary table with lookup results added
+        """
+        from_collection = lookup_spec["from"]
+        local_field = lookup_spec.get("localField")
+        foreign_field = lookup_spec.get("foreignField")
+        as_field = lookup_spec["as"]
+        pipeline = lookup_spec.get("pipeline", [])
+
+        json_set_func = f"{self._json_function_prefix}_set"
+
+        use_hash_join = self._should_use_hash_join(from_collection, pipeline)
+
+        if use_hash_join:
+            return self._process_lookup_hash_join(
+                create_temp, current_table, lookup_spec
+            )
+        else:
+            return self._process_lookup_correlated_subquery(
+                create_temp, current_table, lookup_spec
+            )
+
+    def _process_lookup_correlated_subquery(
+        self,
+        create_temp: Callable,
+        current_table: str,
+        lookup_spec: Dict[str, Any],
+    ) -> str:
+        """
+        Process $lookup using correlated subquery (O(n*m) but low memory).
+
+        This is the fallback when the foreign collection is too large for hash join.
+
+        Args:
+            create_temp: Function to create temporary tables
+            current_table: Current temp table name
+            lookup_spec: The $lookup specification
+
+        Returns:
+            Name of the new temporary table
         """
         from_collection = lookup_spec["from"]
         local_field = lookup_spec.get("localField")
@@ -969,6 +1198,83 @@ class TemporaryTableAggregationProcessor:
         lookup_stage = {"$lookup": lookup_spec}
         new_table = create_temp(lookup_stage, f"{select_clause} {from_clause}")
         return new_table
+
+    def _process_lookup_hash_join(
+        self,
+        create_temp: Callable,
+        current_table: str,
+        lookup_spec: Dict[str, Any],
+    ) -> str:
+        """
+        Process $lookup using hash join (O(n+m) but uses more memory).
+
+        Args:
+            create_temp: Function to create temporary tables
+            current_table: Current temp table name
+            lookup_spec: The $lookup specification
+
+        Returns:
+            Name of the new temporary table
+        """
+        from_collection = lookup_spec["from"]
+        local_field = lookup_spec.get("localField")
+        foreign_field = lookup_spec.get("foreignField")
+        as_field = lookup_spec["as"]
+        pipeline = lookup_spec.get("pipeline", [])
+
+        json_set_func = f"{self._json_function_prefix}_set"
+
+        if pipeline:
+            if not local_field or not foreign_field:
+                raise NotImplementedError(
+                    "$lookup with pipeline requires localField and foreignField"
+                )
+
+            hash_table_name, join_key = self._create_lookup_hash_table(
+                from_collection, foreign_field, pipeline
+            )
+        else:
+            if not all([from_collection, local_field, foreign_field, as_field]):
+                raise ValueError(
+                    "$lookup requires from, localField, foreignField, and as"
+                )
+            hash_table_name, join_key = self._create_lookup_hash_table(
+                from_collection, foreign_field, None
+            )
+
+        try:
+            if local_field == "_id":
+                local_extract = f"CAST(COALESCE({self._json_function_prefix}_extract(main_table.data, '$._id'), main_table.id) AS TEXT)"
+            else:
+                local_extract = f"CAST({self._json_function_prefix}_extract(main_table.data, '$.{local_field}') AS TEXT)"
+
+            select_clause = (
+                f"SELECT main_table.id, "
+                f"json({json_set_func}({json_set_func}(main_table.data, '$._id', main_table.id), '$.{as_field}', "
+                f"COALESCE(aggregated.results, '[]'))) as data "
+            )
+
+            from_clause = (
+                f"FROM {current_table} as main_table "
+                f"LEFT JOIN ("
+                f"  SELECT {join_key}, {self.json_group_array_function}(json(data)) as results "
+                f"  FROM {hash_table_name} "
+                f"  GROUP BY {join_key}"
+                f") aggregated ON {local_extract} = aggregated.{join_key}"
+            )
+
+            lookup_stage = {"$lookup": lookup_spec}
+            new_table = create_temp(
+                lookup_stage, f"{select_clause} {from_clause}"
+            )
+            return new_table
+        finally:
+            try:
+                self.collection.db.execute(
+                    f"DROP TABLE IF EXISTS {hash_table_name}"
+                )
+            except Exception:
+                pass
 
     def _process_sort_skip_limit_stage(
         self,
