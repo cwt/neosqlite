@@ -152,12 +152,10 @@ class IndexManager:
         # Note: We don't use the 'content' option because we manage the FTS data manually
         # to properly support array fields with json_tree()
         tokenizer_clause = f"TOKENIZE={tokenizer}" if tokenizer else ""
-        self.collection.db.execute(
-            f"""
+        self.collection.db.execute(f"""
             CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name}
             USING FTS5({index_name}, {tokenizer_clause})
-            """
-        )
+            """)
 
         # For nested fields with arrays, use json_tree() to index all matching values
         # Convert field path to json_tree fullkey pattern (e.g., "comments.text" -> "$.comments[*].text")
@@ -165,14 +163,12 @@ class IndexManager:
         if len(field_parts) == 1:
             # Simple field - use direct json_extract
             json_path = parse_json_path(field)
-            self.collection.db.execute(
-                f"""
+            self.collection.db.execute(f"""
                 INSERT INTO {fts_table_name}(rowid, {index_name})
                 SELECT id, lower(json_extract(data, '{json_path}'))
                 FROM {quote_table_name(self.collection.name)}
                 WHERE json_extract(data, '{json_path}') IS NOT NULL
-                """
-            )
+                """)
         else:
             # Nested field - use json_tree/jsonb_tree to find all matching values including array elements
             # Concatenate all text values with spaces for FTS indexing
@@ -203,8 +199,7 @@ class IndexManager:
         if len(field_parts) == 1:
             # Simple field
             json_path = parse_json_path(field)
-            self.collection.db.execute(
-                f"""
+            self.collection.db.execute(f"""
                 CREATE TRIGGER IF NOT EXISTS {quote_table_name(self.collection.name)}_{index_name}_fts_insert
                 AFTER INSERT ON {quote_table_name(self.collection.name)}
                 BEGIN
@@ -212,16 +207,14 @@ class IndexManager:
                     INSERT INTO {fts_table_name}(rowid, {index_name})
                     VALUES (new.id, lower(json_extract(new.data, '{json_path}')));
                 END
-                """
-            )
+                """)
         else:
             # Nested field - use json_tree/jsonb_tree with GROUP BY
             jsonb_each_supported = supports_jsonb_each(self.collection.db)
             json_tree_func = _get_json_tree_function(
                 self._jsonb_supported, jsonb_each_supported
             )
-            self.collection.db.execute(
-                f"""
+            self.collection.db.execute(f"""
                 CREATE TRIGGER IF NOT EXISTS {quote_table_name(self.collection.name)}_{index_name}_fts_insert
                 AFTER INSERT ON {quote_table_name(self.collection.name)}
                 BEGIN
@@ -234,15 +227,13 @@ class IndexManager:
                     WHERE t.key = '{last_key}' AND t.type = 'text'
                     GROUP BY new.id;
                 END
-                """
-            )
+                """)
 
         # Update trigger - delete old entries and insert new ones
         if len(field_parts) == 1:
             # Simple field
             json_path = parse_json_path(field)
-            self.collection.db.execute(
-                f"""
+            self.collection.db.execute(f"""
                 CREATE TRIGGER IF NOT EXISTS {quote_table_name(self.collection.name)}_{index_name}_fts_update
                 AFTER UPDATE ON {quote_table_name(self.collection.name)}
                 BEGIN
@@ -250,16 +241,14 @@ class IndexManager:
                     INSERT INTO {fts_table_name}(rowid, {index_name})
                     VALUES (new.id, lower(json_extract(new.data, '{json_path}')));
                 END
-                """
-            )
+                """)
         else:
             # Nested field - use json_tree/jsonb_tree with GROUP BY
             jsonb_each_supported = supports_jsonb_each(self.collection.db)
             json_tree_func = _get_json_tree_function(
                 self._jsonb_supported, jsonb_each_supported
             )
-            self.collection.db.execute(
-                f"""
+            self.collection.db.execute(f"""
                 CREATE TRIGGER IF NOT EXISTS {quote_table_name(self.collection.name)}_{index_name}_fts_update
                 AFTER UPDATE ON {quote_table_name(self.collection.name)}
                 BEGIN
@@ -272,19 +261,16 @@ class IndexManager:
                     WHERE t.key = '{last_key}' AND t.type = 'text'
                     GROUP BY new.id;
                 END
-                """
-            )
+                """)
 
         # Delete trigger - remove all entries for the deleted row
-        self.collection.db.execute(
-            f"""
+        self.collection.db.execute(f"""
             CREATE TRIGGER IF NOT EXISTS {quote_table_name(self.collection.name)}_{index_name}_fts_delete
             AFTER DELETE ON {quote_table_name(self.collection.name)}
             BEGIN
                 DELETE FROM {fts_table_name} WHERE rowid = old.id;
             END
-            """
-        )
+            """)
 
     def create_indexes(
         self,

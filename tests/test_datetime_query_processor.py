@@ -32,15 +32,13 @@ def setup_test_db():
         db = sqlite3.connect(db_path)
 
         # Create the collection table (similar to how NeoSQLite does it)
-        db.execute(
-            """
+        db.execute("""
             CREATE TABLE test_collection (
                 id INTEGER PRIMARY KEY,
                 data TEXT,
                 _id TEXT
             )
-        """
-        )
+        """)
 
         # Create datetime index for efficient datetime queries
         db.execute(

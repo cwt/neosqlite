@@ -2,6 +2,7 @@
 """
 Example script demonstrating how to use the force fallback kill switch for benchmarking
 """
+
 import time
 
 import neosqlite

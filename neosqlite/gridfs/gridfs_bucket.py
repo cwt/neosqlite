@@ -154,8 +154,7 @@ class GridFSBucket:
         chunks_coll = quote_table_name(self._chunks_collection)
 
         if jsonb_supported:
-            self._db.execute(
-                f"""
+            self._db.execute(f"""
                 CREATE TABLE IF NOT EXISTS {files_coll} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     _id JSONB,
@@ -168,11 +167,9 @@ class GridFSBucket:
                     content_type TEXT,
                     aliases JSONB
                 )
-            """
-            )
+            """)
         else:
-            self._db.execute(
-                f"""
+            self._db.execute(f"""
                 CREATE TABLE IF NOT EXISTS {files_coll} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     _id TEXT,
@@ -185,11 +182,9 @@ class GridFSBucket:
                     content_type TEXT,
                     aliases TEXT
                 )
-                """
-            )
+                """)
 
-        self._db.execute(
-            f"""
+        self._db.execute(f"""
             CREATE TABLE IF NOT EXISTS {chunks_coll} (
                 _id INTEGER PRIMARY KEY AUTOINCREMENT,
                 files_id INTEGER,
@@ -197,22 +192,17 @@ class GridFSBucket:
                 data BLOB,
                 FOREIGN KEY (files_id) REFERENCES {files_coll} (id)
             )
-        """
-        )
+        """)
 
-        self._db.execute(
-            f"""
+        self._db.execute(f"""
             CREATE INDEX IF NOT EXISTS {quote_table_name(f"idx_{self._files_collection}_filename")}
             ON {files_coll} (filename)
-        """
-        )
+        """)
 
-        self._db.execute(
-            f"""
+        self._db.execute(f"""
             CREATE INDEX IF NOT EXISTS {quote_table_name(f"idx_{self._chunks_collection}_files_id")}
             ON {chunks_coll} (files_id)
-        """
-        )
+        """)
 
         # Migrate existing tables to add new columns
         self._migrate_table_schema()

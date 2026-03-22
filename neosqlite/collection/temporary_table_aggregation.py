@@ -1735,11 +1735,9 @@ class TemporaryTableAggregationProcessor:
         # We need to extract text content from the JSON data for indexing
         # After $unwind, the unwound field contains the element (e.g., {"text": "...", ...})
         # We try multiple paths to find text content and concatenate them
-        self.db.execute(
-            f"""
+        self.db.execute(f"""
             CREATE VIRTUAL TABLE {fts_table_name} USING fts5(src_rowid, id, content {tokenizer_clause})
-        """
-        )
+        """)
 
         # Step 2: Populate FTS5 table with text content from current table
         # Extract text from common patterns and concatenate with space separator
@@ -1756,8 +1754,7 @@ class TemporaryTableAggregationProcessor:
         # When using jsonb_extract, we need to wrap with json() to get text output
         json_wrapper = "json(" if use_jsonb else ""
 
-        self.db.execute(
-            f"""
+        self.db.execute(f"""
             INSERT INTO {fts_table_name}(src_rowid, id, content)
             SELECT c.rowid, c.id,
                    TRIM(COALESCE(
@@ -1795,8 +1792,7 @@ class TemporaryTableAggregationProcessor:
                        ''
                    )) as content
             FROM {current_table} c
-        """
-        )
+        """)
 
         # Step 3: Query FTS5 and create result table with matching documents
         # Join on source rowid to get exact matching rows

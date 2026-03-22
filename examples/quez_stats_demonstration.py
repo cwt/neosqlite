@@ -126,8 +126,7 @@ def demonstrate_quez_stats_during_processing():
 
         # Show API usage
         print("4. Using quez in your code:")
-        print(
-            """
+        print("""
 # Install neosqlite with quez support:
 # pip install neosqlite[memory-constrained]
 
@@ -143,8 +142,7 @@ for doc in cursor:
 
 # Or convert to list (loads all, but still compressed in queue):
 results = list(cursor)  # Returns list of decompressed documents
-        """
-        )
+        """)
 
         print("5. Benefits of quez integration:")
         print("   • 50-80% memory reduction for large result sets")

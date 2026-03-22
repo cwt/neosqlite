@@ -2,6 +2,7 @@
 """
 Simple test to verify the AggregationCursor implementation
 """
+
 import operator
 
 import neosqlite

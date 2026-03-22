@@ -32,16 +32,14 @@ def benchmark_query_plan_cache(num_runs: int = 10000) -> dict:
     conn = sqlite3.connect(":memory:")
 
     # Create a test table with some data
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE test_data (
             id INTEGER PRIMARY KEY,
             name TEXT,
             category TEXT,
             value REAL
         )
-    """
-    )
+    """)
 
     # Insert test data
     data = [

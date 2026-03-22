@@ -2,6 +2,7 @@
 """
 Performance demonstration for $unwind + $group SQL optimization
 """
+
 import time
 
 import neosqlite

@@ -1070,14 +1070,12 @@ class AggregationMixin:
 
         # Create result temp table to store sub-pipeline results
         result_table = f"_facet_result_{uuid.uuid4().hex[:12]}"
-        self.collection.db.execute(
-            f"""
+        self.collection.db.execute(f"""
             CREATE TEMP TABLE {result_table} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 data TEXT
             )
-        """
-        )
+        """)
 
         try:
             # Process input docs in batches

@@ -2,6 +2,7 @@
 """
 Test script for the watch() implementation in neosqlite with fullDocument support
 """
+
 from neosqlite import Connection
 
 

@@ -2,6 +2,7 @@
 """
 Tests for the watch() method and ChangeStream functionality
 """
+
 import json
 import time
 

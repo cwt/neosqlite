@@ -2,6 +2,7 @@
 """
 Demonstration of the watch() feature in neosqlite
 """
+
 import time
 
 from neosqlite import Connection

@@ -291,26 +291,22 @@ class Collection:
 
         # Use the QueryEngine's cached JSONB support flag
         if self.query_engine._jsonb_supported:
-            self.db.execute(
-                f"""
+            self.db.execute(f"""
                 CREATE TABLE IF NOT EXISTS {quote_table_name(self.name)} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     _id JSONB,
                     data JSONB NOT NULL
                     {check_clause}
-                )"""
-            )
+                )""")
         else:
-            self.db.execute(
-                f"""
+            self.db.execute(f"""
                 CREATE TABLE IF NOT EXISTS {quote_table_name(self.name)} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     _id TEXT,
                     data TEXT NOT NULL
                     {check_clause}
                 )
-                """
-            )
+                """)
 
         # Create unique index on _id column for faster lookups
         create_unique_index_on_id(self.db, self.name)

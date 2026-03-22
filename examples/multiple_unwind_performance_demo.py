@@ -2,6 +2,7 @@
 """
 Performance comparison for enhanced multiple $unwind stages
 """
+
 import time
 
 import neosqlite

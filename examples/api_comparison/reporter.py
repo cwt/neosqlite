@@ -598,7 +598,9 @@ class BenchmarkReporter:
                 )
             else:
                 # Show skip reason for MongoDB even if some timing was recorded
-                lines.append(f"- **MongoDB:** ⚠️ SKIPPED - {result.skip_reason}")
+                lines.append(
+                    f"- **MongoDB:** ⚠️ SKIPPED - {result.skip_reason}"
+                )
 
             lines.append("")
 

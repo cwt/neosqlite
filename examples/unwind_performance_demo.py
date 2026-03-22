@@ -2,6 +2,7 @@
 """
 Demonstration of the performance improvement with the new $unwind implementation
 """
+
 import time
 
 import neosqlite
