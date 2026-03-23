@@ -40,6 +40,13 @@ from bson import ObjectId as BsonObjectId
 from neosqlite import Connection
 from neosqlite.objectid import ObjectId as NeoObjectId
 from neosqlite.options import JournalMode
+from nx_27017.gridfs_adapter import (
+    GridFSAdapter,
+    _convert_gridfs_collection_name,
+    _get_gridfs_bucket_name,
+    _is_gridfs_collection,
+    create_gridfs_adapter,
+)
 
 logger = logging.getLogger("nx_27017")
 
@@ -53,6 +60,26 @@ _request_id_counter = count(1)
 def _get_next_request_id() -> int:
     """Generate a unique request ID for responses."""
     return next(_request_id_counter)
+
+
+def _extract_session_id(lsid: dict) -> str | None:
+    """Extract session ID from lsid document, handling Binary and dict formats."""
+    if not lsid:
+        return None
+    # Handle {"$oid": session_id} format (direct session ID in dict)
+    if "$oid" in lsid:
+        return lsid["$oid"]
+    # Handle {"id": Binary(...)} format (PyMongo style)
+    session_id_obj = lsid.get("id")
+    if session_id_obj is None:
+        return None
+    if isinstance(session_id_obj, dict):
+        return session_id_obj.get("$oid")
+    from bson import Binary
+
+    if isinstance(session_id_obj, Binary):
+        return session_id_obj.hex()
+    return str(session_id_obj)
 
 
 def _convert_objectids(doc):
@@ -357,21 +384,7 @@ class NeoSQLiteHandler:
 
     def get_database(self, db_name: str) -> Connection:
         if db_name not in self.databases:
-            if self.db_path == ":memory:":
-                self.databases[db_name] = Connection(
-                    "file::memory:?cache=shared",
-                    check_same_thread=False,
-                    uri=True,
-                    tokenizers=self.tokenizers,
-                    journal_mode=self.journal_mode,
-                )
-            else:
-                self.databases[db_name] = Connection(
-                    self.db_path,
-                    check_same_thread=False,
-                    tokenizers=self.tokenizers,
-                    journal_mode=self.journal_mode,
-                )
+            self.databases[db_name] = self.conn
         return self.databases[db_name]
 
     def _convert_objectids(self, doc: dict) -> dict:
@@ -403,20 +416,18 @@ class NeoSQLiteHandler:
             self._active_connections -= 1
 
     def _is_gridfs_collection(self, coll_name: str) -> bool:
-        """Check if collection name is a GridFS .files collection (not .chunks)."""
-        return coll_name.endswith(".files")
+        """Check if collection name is a GridFS collection."""
+        return _is_gridfs_collection(coll_name)
 
     def _get_gridfs_bucket_name(self, coll_name: str) -> str | None:
         """Extract bucket name from GridFS collection name, or None if not GridFS."""
-        if coll_name.endswith(".files"):
-            return coll_name.rsplit(".files", 1)[0]
-        return None
+        return _get_gridfs_bucket_name(coll_name)
 
     def _get_gridfs_bucket(self, db: Connection, coll_name: str):
         """Get GridFSBucket for a GridFS collection."""
         from neosqlite.gridfs import GridFSBucket
 
-        bucket_name = self._get_gridfs_bucket_name(coll_name)
+        bucket_name = _get_gridfs_bucket_name(coll_name)
         if bucket_name is None:
             return None
         return GridFSBucket(db.db, bucket_name=bucket_name)
@@ -432,6 +443,123 @@ class NeoSQLiteHandler:
             "md5": grid_out.md5,
             "metadata": grid_out.metadata,
         }
+
+    def _handle_gridfs_insert(
+        self,
+        coll_name: str,
+        docs: list[dict],
+        db: Connection,
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle insert operations on GridFS collections using the GridFSAdapter.
+
+        GridFS uses direct column storage (not JSON-in-column like regular collections).
+        This method converts PyMongo's document format to GridFS's internal format.
+
+        For chunks inserts, this method auto-creates file metadata if the file doesn't exist,
+        since PyMongo doesn't explicitly send file metadata inserts.
+        """
+        logger.debug(
+            f"_handle_gridfs_insert called: coll_name={coll_name}, doc_count={len(docs)}"
+        )
+
+        if not docs:
+            logger.debug(f"_handle_gridfs_insert: no docs, returning success")
+            return 0, {"ok": 1, "n": 0}
+
+        is_files = coll_name.endswith(".files")
+        is_chunks = coll_name.endswith(".chunks")
+
+        logger.debug(
+            f"_handle_gridfs_insert: is_files={is_files}, is_chunks={is_chunks}"
+        )
+
+        logger.debug(
+            f"Calling create_gridfs_adapter with db.db type={type(db.db)}, coll_name={coll_name}"
+        )
+
+        adapter, bucket_name = create_gridfs_adapter(db.db, coll_name)
+        if adapter is None:
+            logger.error(
+                f"create_gridfs_adapter returned None for coll_name={coll_name}"
+            )
+            return 0, {"ok": 0, "errmsg": "Invalid GridFS collection"}
+
+        # If inserting chunks, ensure the corresponding file metadata exists
+        if is_chunks and docs:
+            logger.debug(
+                f"_handle_gridfs_insert: Ensuring file metadata exists for chunks"
+            )
+            for doc in docs:
+                files_id = doc.get("files_id")
+                if files_id:
+                    adapter.ensure_file_metadata_exists(files_id, db.db)
+
+        logger.debug(f"Calling adapter.handle_insert: is_files={is_files}")
+        result = adapter.handle_insert(docs, is_files=is_files)
+        logger.debug(f"adapter.handle_insert result: {result}")
+        return 0, result
+
+    def _gridfs_insert_file(self, bucket, doc: dict) -> BsonObjectId:
+        """Insert a file document into GridFS files collection."""
+        from datetime import datetime
+
+        from bson import ObjectId
+
+        file_id = doc.get("_id") or ObjectId()
+        filename = doc.get("filename", "")
+        length = doc.get("length", 0)
+        chunk_size = doc.get("chunkSize", bucket._chunk_size_bytes)
+        upload_date = doc.get("uploadDate")
+        if isinstance(upload_date, datetime):
+            upload_date = upload_date.isoformat()
+        elif upload_date is None:
+            upload_date = datetime.now().isoformat()
+        md5 = doc.get("md5")
+        metadata = doc.get("metadata", {})
+
+        bucket._db.execute(
+            f"""
+            INSERT INTO {bucket._files_collection}
+            (id, _id, filename, length, chunkSize, uploadDate, md5, metadata, content_type, aliases)
+            VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+            (
+                str(file_id),
+                filename,
+                length,
+                chunk_size,
+                upload_date,
+                md5,
+                str(metadata) if isinstance(metadata, dict) else metadata,
+                None,
+                None,
+            ),
+        )
+
+        return file_id
+
+    def _gridfs_insert_chunk(self, bucket, doc: dict) -> BsonObjectId:
+        """Insert a chunk document into GridFS chunks collection."""
+        from bson import ObjectId
+
+        chunk_id = doc.get("_id") or ObjectId()
+        files_id = doc.get("files_id")
+        n = doc.get("n", 0)
+        data = doc.get("data", b"")
+
+        if isinstance(files_id, ObjectId):
+            files_id = str(files_id)
+
+        bucket._db.execute(
+            f"""
+            INSERT INTO {bucket._chunks_collection}
+            (_id, files_id, n, data)
+            VALUES (?, ?, ?, ?)
+        """,
+            (str(chunk_id) if chunk_id else None, files_id, n, data),
+        )
+
+        return chunk_id
 
     def handle_insert(self, msg: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         request_id = msg["request_id"]
@@ -476,6 +604,32 @@ class NeoSQLiteHandler:
         if not coll_name:
             return request_id, {"ok": 0, "errmsg": "No collection specified"}
 
+        logger.debug(
+            f"handle_insert: coll_name={coll_name}, is_gridfs={self._is_gridfs_collection(coll_name)}"
+        )
+        if coll_name == "fs.files":
+            logger.debug(
+                f"handle_insert: fs.files INSERT - command_doc keys={list(command_doc.keys())}, payload_docs count={len(payload_docs)}"
+            )
+        if not self._is_gridfs_collection(coll_name):
+            logger.debug(
+                f"handle_insert: NOT gridfs, coll_name={coll_name}, command_doc keys={list(command_doc.keys())}"
+            )
+
+        if self._is_gridfs_collection(coll_name):
+            docs_to_insert = payload_docs.copy() if payload_docs else []
+            for key, value in command_doc.items():
+                if key == "documents" and isinstance(value, list):
+                    docs_to_insert.extend(value)
+                elif (
+                    key
+                    not in {"$db", "insert", "ordered", "writeConcern", "lsid"}
+                    and not key.startswith("$")
+                    and isinstance(value, dict)
+                ):
+                    docs_to_insert.append(value)
+            return self._handle_gridfs_insert(coll_name, docs_to_insert, db)
+
         if coll_name not in db._collections:
             coll = db.create_collection(coll_name)
         else:
@@ -497,8 +651,22 @@ class NeoSQLiteHandler:
             self._convert_objectids(doc) for doc in docs_to_insert
         ]
 
+        session_to_use = None
+        if command_doc.get("startTransaction") and "lsid" in command_doc:
+            lsid = command_doc.get("lsid")
+            session_id = _extract_session_id(lsid) if lsid else None
+            if session_id:
+                with self._sessions_lock:
+                    if session_id not in self._sessions:
+                        session = self.conn.start_session()
+                        session._in_transaction = False
+                        self._sessions[session_id] = session
+                    session_to_use = self._sessions[session_id]
+                    if not session_to_use._in_transaction:
+                        session_to_use.start_transaction()
+
         if docs_to_insert:
-            result = coll.insert_many(docs_to_insert)
+            result = coll.insert_many(docs_to_insert, session=session_to_use)
             return request_id, {
                 "ok": 1,
                 "n": len(result.inserted_ids),
@@ -564,27 +732,25 @@ class NeoSQLiteHandler:
         # Handle commitTransaction
         if "commitTransaction" in command_doc:
             lsid = command_doc.get("lsid")
-            if lsid:
-                session_id = lsid.get("id", {}).get("$oid")
-                if session_id:
-                    with self._sessions_lock:
-                        commit_session: Any = self._sessions.get(session_id)
-                    if commit_session:
-                        commit_session.commit_transaction()
-                        return request_id, {"ok": 1}
+            tx_session_id = _extract_session_id(lsid) if lsid else None
+            if tx_session_id:
+                with self._sessions_lock:
+                    commit_session: Any = self._sessions.get(tx_session_id)
+                if commit_session and commit_session.in_transaction:
+                    commit_session.commit_transaction()
+                    return request_id, {"ok": 1}
             return request_id, {"ok": 0, "errmsg": "No session specified"}
 
         # Handle abortTransaction
         if "abortTransaction" in command_doc:
             lsid = command_doc.get("lsid")
-            if lsid:
-                session_id = lsid.get("id", {}).get("$oid")
-                if session_id:
-                    with self._sessions_lock:
-                        abort_session: Any = self._sessions.get(session_id)
-                    if abort_session:
-                        abort_session.abort_transaction()
-                        return request_id, {"ok": 1}
+            tx_session_id = _extract_session_id(lsid) if lsid else None
+            if tx_session_id:
+                with self._sessions_lock:
+                    abort_session: Any = self._sessions.get(tx_session_id)
+                if abort_session and abort_session.in_transaction:
+                    abort_session.abort_transaction()
+                    return request_id, {"ok": 1}
             return request_id, {"ok": 0, "errmsg": "No session specified"}
 
         # Handle endSessions
@@ -594,11 +760,18 @@ class NeoSQLiteHandler:
                 session_ids = [session_ids]
             with self._sessions_lock:
                 for sid in session_ids:
+                    end_session: Any = None
                     if isinstance(sid, dict):
-                        sid = sid.get("$oid", sid)
-                    session = self._sessions.pop(sid, None)
-                    if session:
-                        session.end_session()
+                        sid = _extract_session_id(sid)
+                    elif isinstance(sid, bytes):
+                        from bson import Binary
+
+                        if isinstance(sid, Binary):
+                            sid = sid.hex()
+                    if sid:
+                        end_session = self._sessions.pop(sid, None)
+                    if end_session:
+                        end_session.end_session()
             return request_id, {"ok": 1}
 
         # Translate MongoDB commands to NeoSQLite API
@@ -649,6 +822,17 @@ class NeoSQLiteHandler:
         if "createIndexes" in cmd_copy:
             coll_name = cmd_copy.pop("createIndexes")
             indexes_spec = cmd_copy.pop("indexes", [])
+
+            if _is_gridfs_collection(coll_name):
+                adapter, bucket_name = create_gridfs_adapter(db.db, coll_name)
+                if adapter is None:
+                    return request_id, {
+                        "ok": 0,
+                        "errmsg": "Failed to create GridFS adapter",
+                    }
+                result = adapter.create_indexes()
+                return request_id, result
+
             coll = db[coll_name]
             created_names = []
             for index_spec in indexes_spec:
@@ -709,6 +893,21 @@ class NeoSQLiteHandler:
             name = cmd_copy.get("name")
             unique = cmd_copy.get("unique", False)
             sparse = cmd_copy.get("sparse", False)
+
+            if self._is_gridfs_collection(coll_name):
+                bucket_name = self._get_gridfs_bucket_name(coll_name)
+                if bucket_name:
+                    from neosqlite.gridfs import GridFSBucket
+
+                    GridFSBucket(db.db, bucket_name=bucket_name)
+                return request_id, {
+                    "ok": 1,
+                    "createdCollectionAutomatically": False,
+                    "numIndexesBefore": 0,
+                    "numIndexesAfter": 0,
+                    "indexesCreated": [],
+                }
+
             coll = db[coll_name]
 
             if isinstance(key, dict):
@@ -1143,16 +1342,30 @@ class NeoSQLiteHandler:
         db: Connection,
         coll_name: str,
     ) -> tuple[int, dict[str, Any]]:
-        """Handle find command on GridFS collections (fs.files)."""
+        """Handle find command on GridFS collections (fs.files or fs.chunks)."""
+        logger.debug(f"_handle_gridfs_find called with coll_name={coll_name}")
+
+        # Handle fs.chunks - return empty results (PyMongo queries chunks internally during uploads)
+        if coll_name.endswith(".chunks"):
+            logger.debug(f"Returning empty cursor for fs.chunks query")
+            return request_id, {
+                "ok": 1,
+                "cursor": {
+                    "id": 0,
+                    "ns": f"{db.name}.{coll_name}",
+                    "firstBatch": [],
+                },
+            }
+
         if not coll_name.endswith(".files"):
             return request_id, {
                 "ok": 0,
-                "errmsg": "GridFS find only supported on .files collections",
+                "errmsg": "GridFS find only supported on .files or .chunks collections",
             }
 
         try:
-            bucket = self._get_gridfs_bucket(db, coll_name)
-            if bucket is None:
+            adapter, bucket_name = create_gridfs_adapter(db.db, coll_name)
+            if adapter is None:
                 return request_id, {
                     "ok": 0,
                     "errmsg": "Invalid GridFS collection",
@@ -1163,26 +1376,23 @@ class NeoSQLiteHandler:
 
             skip = command_doc.get("skip", 0)
             sort = command_doc.get("sort", None)
+            limit = command_doc.get("limit", 0)
 
-            cursor = bucket.find(filter_query)
-            files = list(cursor)
+            docs = adapter.handle_find(filter_query)
 
             if skip > 0:
-                files = files[skip:]
+                docs = docs[skip:]
             if sort:
                 sort_list = (
                     list(sort.items()) if isinstance(sort, dict) else sort
                 )
-                files = sorted(
-                    files,
-                    key=lambda f: tuple(getattr(f, k, v) for k, v in sort_list),
+                docs = sorted(
+                    docs,
+                    key=lambda f: tuple(f.get(k, v) for k, v in sort_list),
                 )
 
-            limit = command_doc.get("limit", 0)
             if limit > 0:
-                files = files[:limit]
-
-            docs = [self._convert_gridfs_result(f) for f in files]
+                docs = docs[:limit]
 
             return request_id, {
                 "ok": 1,
@@ -1762,6 +1972,20 @@ async def handle_client(
                     )
 
                     try:
+                        logger.debug(
+                            f"OP_MSG about to handle: is_insert={is_insert}, has_payload={has_payload_docs}"
+                        )
+                        logger.debug(
+                            f"OP_MSG msg['request_id']={msg.get('request_id')}, msg['response_to']={msg.get('response_to')}"
+                        )
+                        # Log the body of non-insert messages
+                        if not is_insert and not has_payload_docs:
+                            for s_type, s_data in msg["sections"]:
+                                if s_type == "body":
+                                    logger.debug(
+                                        f"Non-insert command body: {s_data}"
+                                    )
+                        client_request_id = msg.get("request_id", 0)
                         if is_insert or has_payload_docs:
                             request_id, response_doc = await asyncio.to_thread(
                                 handler.handle_insert, msg
@@ -1770,15 +1994,21 @@ async def handle_client(
                             request_id, response_doc = await asyncio.to_thread(
                                 handler.handle_command, msg
                             )
+                        logger.debug(
+                            f"OP_MSG handled: request_id={request_id}, response_doc={response_doc.get('ok') if isinstance(response_doc, dict) else 'N/A'}"
+                        )
                     except Exception as e:
                         logger.error(f"Error handling OP_MSG: {e}")
+                        import traceback
+
+                        traceback.print_exc()
                         response_doc = {"ok": 0, "errmsg": str(e)}
                         request_id = msg.get("request_id", 0)
 
                     try:
                         reply = ResponseBuilder.build_op_msg_reply(
                             request_id=0,
-                            response_to=request_id,
+                            response_to=msg.get("request_id", 0),
                             document=response_doc,
                         )  # noqa: E501
                         writer.write(reply)
