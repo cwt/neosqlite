@@ -941,6 +941,9 @@ class NeoSQLiteHandler:
         if "delete" in cmd_copy:
             coll_name = cmd_copy.pop("delete")
             if self._is_gridfs_collection(coll_name):
+                # Merge deletes from payload if not already in cmd_copy
+                if "deletes" not in cmd_copy and payload_deletes:
+                    cmd_copy["deletes"] = payload_deletes
                 return self._handle_gridfs_delete(
                     request_id, cmd_copy, db, coll_name
                 )
@@ -1345,23 +1348,11 @@ class NeoSQLiteHandler:
         """Handle find command on GridFS collections (fs.files or fs.chunks)."""
         logger.debug(f"_handle_gridfs_find called with coll_name={coll_name}")
 
-        # Handle fs.chunks - return empty results (PyMongo queries chunks internally during uploads)
+        # Handle fs.chunks - query chunks if there's a files_id filter
         if coll_name.endswith(".chunks"):
-            logger.debug(f"Returning empty cursor for fs.chunks query")
-            return request_id, {
-                "ok": 1,
-                "cursor": {
-                    "id": 0,
-                    "ns": f"{db.name}.{coll_name}",
-                    "firstBatch": [],
-                },
-            }
-
-        if not coll_name.endswith(".files"):
-            return request_id, {
-                "ok": 0,
-                "errmsg": "GridFS find only supported on .files or .chunks collections",
-            }
+            return self._handle_gridfs_chunks_find(
+                request_id, command_doc, db, coll_name
+            )
 
         try:
             adapter, bucket_name = create_gridfs_adapter(db.db, coll_name)
@@ -1409,10 +1400,54 @@ class NeoSQLiteHandler:
             traceback.print_exc()
             return request_id, {"ok": 0, "errmsg": str(e)}
 
+    def _handle_gridfs_chunks_find(
+        self,
+        request_id: int,
+        command_doc: dict,
+        db: Connection,
+        coll_name: str,
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle find command on fs.chunks collection."""
+        try:
+            adapter, bucket_name = create_gridfs_adapter(db.db, coll_name)
+            if adapter is None:
+                return request_id, {
+                    "ok": 0,
+                    "errmsg": "Invalid GridFS collection",
+                }
+
+            filter_query = command_doc.get("filter", {})
+            filter_query = self._convert_objectids(filter_query)
+
+            skip = command_doc.get("skip", 0)
+            limit = command_doc.get("limit", 0)
+
+            docs = adapter.handle_chunks_find(filter_query)
+
+            if skip > 0:
+                docs = docs[skip:]
+            if limit > 0:
+                docs = docs[:limit]
+
+            return request_id, {
+                "ok": 1,
+                "cursor": {
+                    "id": 0,
+                    "ns": f"{db.name}.{coll_name}",
+                    "firstBatch": docs,
+                },
+            }
+        except Exception as e:
+            logger.error(f"GridFS chunks find error: {e}")
+            return request_id, {"ok": 0, "errmsg": str(e)}
+
     def _handle_gridfs_delete(
         self, request_id: int, cmd_copy: dict, db: Connection, coll_name: str
     ) -> tuple[int, dict[str, Any]]:
         """Handle delete command on GridFS collections."""
+        logger.debug(f"_handle_gridfs_delete: coll_name={coll_name}")
+        if coll_name.endswith(".chunks"):
+            return request_id, {"ok": 1, "n": 0}
         if not coll_name.endswith(".files"):
             return request_id, {
                 "ok": 0,
@@ -1420,22 +1455,22 @@ class NeoSQLiteHandler:
             }
 
         try:
-            bucket = self._get_gridfs_bucket(db, coll_name)
-            if bucket is None:
+            adapter, bucket_name = create_gridfs_adapter(db.db, coll_name)
+            if adapter is None:
                 return request_id, {
                     "ok": 0,
                     "errmsg": "Invalid GridFS collection",
                 }
 
             deletes = cmd_copy.get("deletes", [])
-            removed = 0
+            file_ids = []
             for delete in deletes:
                 file_id = delete.get("q", {}).get("_id")
                 if file_id:
-                    bucket.delete(file_id)
-                    removed += 1
+                    file_ids.append(file_id)
 
-            return request_id, {"ok": 1, "n": removed}
+            result = adapter.handle_delete(file_ids)
+            return request_id, result
         except Exception as e:
             logger.error(f"GridFS delete error: {e}")
             return request_id, {"ok": 0, "errmsg": str(e)}
@@ -1943,8 +1978,7 @@ async def handle_client(
                     chunk = await reader.read(remaining - pos)
                     if not chunk:
                         logger.warning(
-                            f"Incomplete message: expected {remaining}, "
-                            f"got {pos}"
+                            f"Incomplete message: expected {remaining}, got {pos}"
                         )
                         return
                     body[pos : pos + len(chunk)] = chunk
@@ -2097,8 +2131,7 @@ def handle_client_threaded(
                         chunk = client_socket.recv(remaining - pos)
                         if not chunk:
                             logger.warning(
-                                f"Incomplete message: expected {remaining}, "
-                                f"got {pos}"
+                                f"Incomplete message: expected {remaining}, got {pos}"
                             )
                             return
                         body[pos : pos + len(chunk)] = chunk
@@ -2481,8 +2514,7 @@ Examples:
         dest="db_path",
         default="nx-27017.db",
         help=(
-            "SQLite database path (default: nx-27017.db, "
-            "use 'memory' for in-memory)"
+            "SQLite database path (default: nx-27017.db, use 'memory' for in-memory)"
         ),
     )
     parser.add_argument(

@@ -524,6 +524,51 @@ class GridFSAdapter:
             logger.error(f"GridFS find error: {e}")
             raise
 
+    def handle_chunks_find(
+        self, filter_query: dict | None = None
+    ) -> list[dict[str, Any]]:
+        """Handle find operation on GridFS chunks collection.
+
+        Args:
+            filter_query: Query filter dictionary with files_id
+
+        Returns:
+            List of matching chunk documents in MongoDB format
+        """
+        self._ensure_bucket()
+
+        if filter_query is None:
+            filter_query = {}
+
+        filter_query = _convert_objectids_in_dict(filter_query) or {}
+
+        try:
+            chunks = []
+            files_id = filter_query.get("files_id")
+            if files_id is not None:
+                file_int_id = self._get_bucket()._get_integer_id_for_file(
+                    files_id
+                )
+                if file_int_id is not None:
+                    cursor = self._db.execute(
+                        f"""SELECT _id, files_id, n, data FROM {self._get_bucket()._chunks_collection}
+                           WHERE files_id = ? ORDER BY n""",
+                        (file_int_id,),
+                    )
+                    for row in cursor.fetchall():
+                        chunks.append(
+                            {
+                                "_id": row[0],
+                                "files_id": row[1],
+                                "n": row[2],
+                                "data": row[3],
+                            }
+                        )
+            return chunks
+        except Exception as e:
+            logger.error(f"GridFS chunks find error: {e}")
+            raise
+
     def handle_delete(self, file_ids: list[Any]) -> dict[str, Any]:
         """Handle delete operation on GridFS files collection.
 
@@ -590,7 +635,7 @@ class GridFSAdapter:
 
             query = f"""
                 UPDATE {self._get_bucket()._files_collection}
-                SET {', '.join(updates)}
+                SET {", ".join(updates)}
                 WHERE id = ?
             """
 
