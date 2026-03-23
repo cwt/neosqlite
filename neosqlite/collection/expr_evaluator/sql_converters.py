@@ -947,7 +947,8 @@ class SqlConvertersMixin:
                 substr_sql, substr_params = self._convert_operand_to_sql(
                     operands[1]
                 )
-                # SQLite instr returns 1-based index, convert to 0-based
+                # SQLite instr(haystack, needle) returns 1-based index, convert to 0-based
+                # Note: The haystack comes first, needle second (opposite of MongoDB's order)
                 sql = f"instr({string_sql}, {substr_sql}) - 1"
                 return sql, string_params + substr_params
             case _:

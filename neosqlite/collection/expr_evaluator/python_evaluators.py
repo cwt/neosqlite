@@ -1466,8 +1466,6 @@ class PythonEvaluatorsMixin:
                             else []
                         ),
                     }
-                    if match_result.groups():
-                        match_obj["captures"] = list(match_result.groups())
                     all_results.append(match_obj)
                 return all_results
             case _:

@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Set, Tuple, cast
 
 from .._sqlite import sqlite3
-from ..sql_utils import quote_table_name
+from ..sql_utils import quote_identifier, quote_table_name
 from .expr_evaluator import (
     AggregationContext,
     ExprEvaluator,
@@ -971,12 +971,12 @@ class SQLTierAggregator:
                     value, context=agg_ctx
                 )
                 all_params.extend(expr_params)
-                select_parts.append(f"{expr_sql} AS {field}")
+                select_parts.append(f"{expr_sql} AS {quote_identifier(field)}")
                 context.add_computed_field(field, expr_sql)
             elif value == 1:
                 json_extract_func = f"{self._json_function_prefix}_extract"
                 select_parts.append(
-                    f"{json_extract_func}(data, '{parse_json_path(field)}') AS {field}"
+                    f"{json_extract_func}(data, '{parse_json_path(field)}') AS {quote_identifier(field)}"
                 )
 
         return f"SELECT {', '.join(select_parts)} FROM {prev_stage}", all_params

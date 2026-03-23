@@ -1123,7 +1123,7 @@ class NeoSQLiteHandler:
                 pipeline = cmd_copy.pop("pipeline", [])
                 coll = db[coll_name]
                 cursor = coll.aggregate(pipeline)  # type: ignore[assignment]
-                docs = list(cursor)
+                docs = cursor.to_list()
                 return request_id, {
                     "ok": 1,
                     "cursor": {

@@ -182,7 +182,7 @@ run_nx27017_server() {
     fi
 
     # Start NX-27017 server with memory database
-    $NX27017_CMD -v --db "$NX27017_DB" --host $NX27017_HOST -p $NX27017_PORT 2>&1 &
+    $NX27017_CMD --db "$NX27017_DB" --host $NX27017_HOST -p $NX27017_PORT 2>&1 &
     NX27017_PID=$!
 
     SERVER_STARTED=true
