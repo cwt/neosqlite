@@ -134,12 +134,11 @@ fs.delete(file_id)
 
 - Replication & sharding (coming never™)
 - Change streams via replica set (Note: SQLite-trigger-based `watch()` is supported!)
-- Transactions (requires replica set)
 - `find_raw_batches` with batch_size (requires cursor state management)
 
 ## API Compatibility
 
-NX-27017 passes the **376 MongoDB API compatibility tests** (359 passed, 17 skipped) when compared against PyMongo's expected behavior. This includes:
+NX-27017 passes **377 MongoDB API compatibility tests** (360 passed, 17 skipped) when compared against PyMongo's expected behavior. This includes:
 
 - All CRUD operations
 - Query operators ($eq, $gt, $gte, $lt, $lte, $ne, $in, $nin, $exists, $type, $all, $size, $regex, $nor, etc.)

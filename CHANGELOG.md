@@ -1,5 +1,37 @@
 # CHANGELOG
 
+## 1.13.6
+
+### Bug Fix: MongoDB Compatibility
+
+**$regexFind and $regexFindAll Output Format**: Fixed output to use `idx` field name instead of `index`, and include `captures` array:
+
+```python
+# Before: {"match": "Alice", "index": 2}
+# After:  {"match": "Alice", "idx": 2, "captures": []}
+```
+
+**$indexOfCP and $indexOfBytes**: Fixed swapped parameter order in both SQL and Python evaluators:
+
+```python
+# Searching for "ice" in "Alice"
+# Before (wrong): 0
+# After (correct): 4
+```
+
+**SQL Column Alias Quoting**: Added proper identifier quoting to prevent syntax errors with SQLite reserved keywords like `index`.
+
+### NX-27017 v0.5.0
+
+**New: GridFS Adapter** - Full GridFS support via MongoDB wire protocol
+
+**Bug Fixes**:
+- Use `cursor.to_list()` instead of `list(cursor)` for proper aggregation handling
+- Fixed session ID extraction from Binary format
+- Fixed transaction handling
+
+---
+
 ## 1.13.5
 
 ### Performance: O(n+m) Hash Join for $lookup

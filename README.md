@@ -44,65 +44,33 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 
 See [CHANGELOG.md](CHANGELOG.md) for the latest features and improvements.
 
-## Latest Release: v1.13.5
+## Latest Release: v1.13.6
 
-NeoSQLite v1.13.5 is a **performance release** featuring **O(n+m) hash join optimization** for `$lookup` aggregation, memory-aware query planning, and full transaction support for NX-27017.
+NeoSQLite v1.13.6 is a **bug fix release** that improves MongoDB compatibility for string operators and SQL projections.
 
-### New: O(n+m) Hash Join for $lookup
+### Bug Fixes
 
-The `$lookup` aggregation stage now uses an optimized hash join algorithm instead of O(n×m) correlated subquery:
+- **`$regexFind` and `$regexFindAll`**: Fixed output to use `idx` field name and include `captures` array (matching MongoDB format)
+- **`$indexOfCP` and `$indexOfBytes`**: Fixed swapped parameter order causing incorrect results
+- **SQL Projections**: Added proper identifier quoting to prevent syntax errors with reserved keywords
+
+### Example: $regexFind Now MongoDB-Compatible
 
 ```python
-# This now automatically uses hash join for better performance
-results = collection.aggregate([
-    {"$lookup": {
-        "from": "orders",
-        "localField": "_id",
-        "foreignField": "userId",
-        "as": "userOrders"
-    }}
+# Output now matches MongoDB exactly:
+# {"match": "Alice", "idx": 2, "captures": []}
+result = collection.aggregate([
+    {"$project": {"match": {"$regexFind": {"input": "$name", "regex": "Alice"}}}}
 ])
 ```
 
-| Dataset | Before (O(n×m)) | After (O(n+m)) |
-|---------|------------------|----------------|
-| 1K × 1K | 1,000,000 ops | 2,000 ops |
-| 10K × 10K | 100,000,000 ops | 20,000 ops |
-
-### New: Memory-Aware Query Planning
-
-The optimizer automatically selects the best strategy based on available memory:
-- **Hash join** when collection < 30% of available memory (faster)
-- **Correlated subquery** for large collections (memory-efficient)
-
-### New: NX-27017 Transactions
-
-NX-27017 now supports full transaction commands via the MongoDB wire protocol:
-
-```python
-from pymongo import MongoClient
-
-client = MongoClient('mongodb://localhost:27017/')
-session = client.start_session()
-
-try:
-    session.start_transaction()
-    client.db.users.insert_one({"name": "Alice"})
-    client.db.orders.insert_one({"user_id": 1, "product": "Book"})
-    session.commit_transaction()
-except:
-    session.abort_transaction()
-finally:
-    session.end_session()
-```
-
-For more details, see [documents/releases/v1.13.5.md](documents/releases/v1.13.5.md).
+For more details, see [documents/releases/v1.13.6.md](documents/releases/v1.13.6.md).
 
 ## PyMongo Compatibility Tests
 
 NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-compatible behavior. Our automated test suite covers all major API categories:
 
-### Test Results (v1.13.5)
+### Test Results (v1.13.6)
 
 #### Unit Tests
 
@@ -116,11 +84,11 @@ NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-
 
 #### API Comparison Tests
 
-| Metric | **v1.13.5** |
+| Metric | **v1.13.6** |
 |--------|-------------|
-| **Total Tests** | **376** |
+| **Total Tests** | **377** |
 | **Passed** | **360** |
-| **Skipped** | **16** |
+| **Skipped** | **17** |
 | **Failed** | **0** |
 | **Compatibility** | **100%** |
 
