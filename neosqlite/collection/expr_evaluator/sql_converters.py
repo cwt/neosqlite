@@ -721,16 +721,16 @@ class SqlConvertersMixin:
             case "$indexOfBytes":
                 if len(operands) < 2:
                     raise ValueError(
-                        "$indexOfBytes requires substring and string"
+                        "$indexOfBytes requires string and substring"
                     )
-                substr_sql, substr_params = self._convert_operand_to_sql(
+                string_sql, string_params = self._convert_operand_to_sql(
                     operands[0]
                 )
-                string_sql, string_params = self._convert_operand_to_sql(
+                substr_sql, substr_params = self._convert_operand_to_sql(
                     operands[1]
                 )
                 sql = f"(instr({string_sql}, {substr_sql}) - 1)"
-                return sql, substr_params + string_params
+                return sql, string_params + substr_params
             case "$strcasecmp":
                 # Case-insensitive string comparison using SQLite's COLLATE NOCASE
                 if len(operands) != 2:
@@ -940,16 +940,16 @@ class SqlConvertersMixin:
                 return sql, string_params
             case "$indexOfCP":
                 if len(operands) < 2:
-                    raise ValueError("$indexOfCP requires substring and string")
-                substr_sql, substr_params = self._convert_operand_to_sql(
+                    raise ValueError("$indexOfCP requires string and substring")
+                string_sql, string_params = self._convert_operand_to_sql(
                     operands[0]
                 )
-                string_sql, string_params = self._convert_operand_to_sql(
+                substr_sql, substr_params = self._convert_operand_to_sql(
                     operands[1]
                 )
                 # SQLite instr returns 1-based index, convert to 0-based
                 sql = f"instr({string_sql}, {substr_sql}) - 1"
-                return sql, substr_params + string_params
+                return sql, string_params + substr_params
             case _:
                 raise NotImplementedError(
                     f"String operator {operator} not supported in SQL tier"

@@ -5,7 +5,14 @@ import warnings
 import neosqlite
 
 from .reporter import reporter
-from .timing import end_neo_timing, set_accumulation_mode, start_neo_timing
+from .timing import (
+    end_mongo_timing,
+    end_neo_timing,
+    set_accumulation_mode,
+    start_mongo_timing,
+    start_neo_timing,
+)
+from .utils import test_pymongo_connection
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -30,42 +37,57 @@ def compare_bulk_operation_executors():
         )
 
         set_accumulation_mode(True)
-        # Test initialize_ordered_bulk_op with add() method
-        try:
-            start_neo_timing()
-            neo_ordered = neo_collection.initialize_ordered_bulk_op()
-            neo_ordered.add(neosqlite.InsertOne({"name": "D", "value": 4}))
-            neo_ordered.add(
-                neosqlite.UpdateOne({"name": "A"}, {"$set": {"value": 10}})
-            )
-            neo_ordered.add(neosqlite.DeleteOne({"name": "B"}))
-            neo_ordered_result = neo_ordered.execute()
-            end_neo_timing()
 
-            neo_ordered_ok = neo_ordered_result.matched_count >= 0
-            print(
-                f"Neo initialize_ordered_bulk_op: OK (matched={neo_ordered_result.matched_count})"
-            )
-        except Exception as e:
-            print(f"Neo initialize_ordered_bulk_op: Error - {e}")
+        # Test initialize_ordered_bulk_op with add() method
+        start_neo_timing()
+        try:
+            try:
+                neo_ordered = neo_collection.initialize_ordered_bulk_op()
+                neo_ordered.add(neosqlite.InsertOne({"name": "D", "value": 4}))
+                neo_ordered.add(
+                    neosqlite.UpdateOne({"name": "A"}, {"$set": {"value": 10}})
+                )
+                neo_ordered.add(neosqlite.DeleteOne({"name": "B"}))
+                neo_ordered_result = neo_ordered.execute()
+
+                neo_ordered_ok = (
+                    neo_ordered_result is not None
+                    and neo_ordered_result.matched_count >= 0
+                )
+                print(
+                    f"Neo initialize_ordered_bulk_op: OK (matched={neo_ordered_result.matched_count})"
+                )
+            except Exception as e:
+                print(f"Neo initialize_ordered_bulk_op: Error - {e}")
+                neo_ordered_ok = False
+        finally:
+            end_neo_timing()
 
         # Test initialize_unordered_bulk_op with add() method
+        start_neo_timing()
         try:
-            start_neo_timing()
-            neo_unordered = neo_collection.initialize_unordered_bulk_op()
-            neo_unordered.add(neosqlite.InsertOne({"name": "E", "value": 5}))
-            neo_unordered.add(
-                neosqlite.UpdateOne({"name": "C"}, {"$set": {"value": 30}})
-            )
-            neo_unordered_result = neo_unordered.execute()
-            end_neo_timing()
+            try:
+                neo_unordered = neo_collection.initialize_unordered_bulk_op()
+                neo_unordered.add(
+                    neosqlite.InsertOne({"name": "E", "value": 5})
+                )
+                neo_unordered.add(
+                    neosqlite.UpdateOne({"name": "C"}, {"$set": {"value": 30}})
+                )
+                neo_unordered_result = neo_unordered.execute()
 
-            neo_unordered_ok = neo_unordered_result.matched_count >= 0
-            print(
-                f"Neo initialize_unordered_bulk_op: OK (matched={neo_unordered_result.matched_count})"
-            )
-        except Exception as e:
-            print(f"Neo initialize_unordered_bulk_op: Error - {e}")
+                neo_unordered_ok = (
+                    neo_unordered_result is not None
+                    and neo_unordered_result.matched_count >= 0
+                )
+                print(
+                    f"Neo initialize_unordered_bulk_op: OK (matched={neo_unordered_result.matched_count})"
+                )
+            except Exception as e:
+                print(f"Neo initialize_unordered_bulk_op: Error - {e}")
+                neo_unordered_ok = False
+        finally:
+            end_neo_timing()
 
     # Note: The old initialize_ordered_bulk_op/initialize_unordered_bulk_op API
     # was deprecated in PyMongo 3.5 and completely removed in PyMongo 4.x.
@@ -75,6 +97,20 @@ def compare_bulk_operation_executors():
         "Mongo: initialize_ordered_bulk_op/initialize_unordered_bulk_op "
         "removed in PyMongo 4.x (use bulk_write instead)"
     )
+
+    client = test_pymongo_connection()
+    if client:
+        # Structure for MongoDB (skipped as explained above)
+        start_mongo_timing()
+        try:
+            # In PyMongo 4.x, these methods would raise AttributeError
+            # mongo_db = client.test_database
+            # mongo_collection = mongo_db.test_bulk_exec
+            # mongo_ordered = mongo_collection.initialize_ordered_bulk_op()
+            pass
+        finally:
+            end_mongo_timing()
+        client.close()
 
     reporter.record_result(
         "Bulk Operation Executors",

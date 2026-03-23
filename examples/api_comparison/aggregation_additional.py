@@ -43,14 +43,15 @@ def compare_additional_aggregation():
         set_accumulation_mode(True)
         # Test $unwind
         unwind_pipeline = [{"$unwind": "$sizes"}]
+        start_neo_timing()
         try:
-            start_neo_timing()
             neo_unwind = len(list(neo_collection.aggregate(unwind_pipeline)))
-            end_neo_timing()
             print(f"Neo $unwind: {neo_unwind}")
         except Exception as e:
             neo_unwind = f"Error: {e}"
             print(f"Neo $unwind: Error - {e}")
+        finally:
+            end_neo_timing()
 
         # Test $unwind with advanced options
         neo_collection.insert_many(
@@ -70,36 +71,38 @@ def compare_additional_aggregation():
                 }
             }
         ]
+        start_neo_timing()
         try:
-            start_neo_timing()
             neo_unwind_advanced_result = list(
                 neo_collection.aggregate(unwind_advanced_pipeline)
             )
             neo_unwind_advanced = len(neo_unwind_advanced_result)
-            end_neo_timing()
             print(f"Neo $unwind (advanced): {neo_unwind_advanced} docs")
         except Exception as e:
             neo_unwind_advanced = f"Error: {e}"
             print(f"Neo $unwind (advanced): Error - {e}")
+        finally:
+            end_neo_timing()
 
         # Test $group with $push
         push_pipeline = [
             {"$group": {"_id": "$item", "prices": {"$push": "$price"}}},
             {"$sort": {"_id": 1}},
         ]
+        start_neo_timing()
         try:
-            start_neo_timing()
             neo_push_result = list(neo_collection.aggregate(push_pipeline))
             neo_push = len(neo_push_result)
-            end_neo_timing()
             print(f"Neo $group $push: {neo_push} groups")
         except Exception as e:
             neo_push = f"Error: {e}"
             print(f"Neo $group $push: Error - {e}")
+        finally:
+            end_neo_timing()
 
         # Test $switch
+        start_neo_timing()
         try:
-            start_neo_timing()
             neo_switch_result = list(
                 neo_collection.aggregate(
                     [
@@ -130,11 +133,12 @@ def compare_additional_aggregation():
                 )
             )
             neo_switch = len(neo_switch_result) > 0
-            end_neo_timing()
             print(f"Neo $switch: {'OK' if neo_switch else 'FAIL'}")
         except Exception as e:
             neo_switch = False
             print(f"Neo $switch: Error - {e}")
+        finally:
+            end_neo_timing()
 
     client = test_pymongo_connection()
     mongo_collection = None
@@ -161,16 +165,17 @@ def compare_additional_aggregation():
 
         set_accumulation_mode(True)
         # Test $unwind
+        start_mongo_timing()
         try:
-            start_mongo_timing()
             mongo_unwind = len(
                 list(mongo_collection.aggregate(unwind_pipeline))
             )
-            end_mongo_timing()
             print(f"Mongo $unwind: {mongo_unwind}")
         except Exception as e:
             mongo_unwind = f"Error: {e}"
             print(f"Mongo $unwind: Error - {e}")
+        finally:
+            end_mongo_timing()
 
         # Test $unwind with advanced options
         mongo_collection.insert_many(
@@ -181,32 +186,34 @@ def compare_additional_aggregation():
             ]
         )
 
+        start_mongo_timing()
         try:
-            start_mongo_timing()
             mongo_unwind_advanced_result = list(
                 mongo_collection.aggregate(unwind_advanced_pipeline)
             )
             mongo_unwind_advanced = len(mongo_unwind_advanced_result)
-            end_mongo_timing()
             print(f"Mongo $unwind (advanced): {mongo_unwind_advanced} docs")
         except Exception as e:
             mongo_unwind_advanced = f"Error: {e}"
             print(f"Mongo $unwind (advanced): Error - {e}")
+        finally:
+            end_mongo_timing()
 
         # Test $group with $push
+        start_mongo_timing()
         try:
-            start_mongo_timing()
             mongo_push_result = list(mongo_collection.aggregate(push_pipeline))
             mongo_push = len(mongo_push_result)
-            end_mongo_timing()
             print(f"Mongo $group $push: {mongo_push} groups")
         except Exception as e:
             mongo_push = f"Error: {e}"
             print(f"Mongo $group $push: Error - {e}")
+        finally:
+            end_mongo_timing()
 
         # Test $switch
+        start_mongo_timing()
         try:
-            start_mongo_timing()
             mongo_switch_result = list(
                 mongo_collection.aggregate(
                     [
@@ -237,11 +244,12 @@ def compare_additional_aggregation():
                 )
             )
             mongo_switch = len(mongo_switch_result) > 0
-            end_mongo_timing()
             print(f"Mongo $switch: {'OK' if mongo_switch else 'FAIL'}")
         except Exception as e:
             mongo_switch = False
             print(f"Mongo $switch: Error - {e}")
+        finally:
+            end_mongo_timing()
 
         client.close()
 

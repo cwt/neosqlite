@@ -25,14 +25,34 @@ def compare_gridfs_operations():
     """Compare GridFS operations"""
     print("\n=== GridFS Operations Comparison ===")
 
+    neo_gridfs_ok = False
+    neo_file_data = None
+
+    # 1. NeoSQLite Comparison
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         try:
             from neosqlite.gridfs import GridFSBucket
 
             # NeoSQLite GridFSBucket takes the underlying SQLite connection
+            # Initialize outside timing to exclude table/index creation
             bucket = GridFSBucket(neo_conn.db, bucket_name="fs")
+        except ImportError:
+            print("Neo GridFS: Not available")
+            reporter.record_result(
+                "GridFS",
+                "GridFSBucket",
+                passed=True,
+                neo_result="Not available",
+                mongo_result=None,
+                skip_reason="GridFS not compiled in this build",
+            )
+            return
+        except Exception as e:
+            print(f"Neo GridFS: Setup Error - {e}")
+            return
 
+        start_neo_timing()
+        try:
             # Upload file
             file_id = bucket.upload_from_stream("test.txt", b"Hello GridFS!")
 
@@ -48,72 +68,64 @@ def compare_gridfs_operations():
             )
 
             neo_gridfs_ok = neo_file_data == b"Hello GridFS!"
-        except ImportError:
-            print("Neo GridFS: Not available")
-            reporter.record_comparison(
-                "GridFS",
-                "GridFSBucket",
-                "Not available",
-                None,
-                skip_reason="GridFS not compiled in this build",
-            )
-            return
         except Exception as e:
             print(f"Neo GridFS: Error - {e}")
-            reporter.record_comparison(
-                "GridFS",
-                "GridFSBucket",
-                f"Error: {e}",
-                None,
-                skip_reason=f"NeoSQLite error: {e}",
-            )
-            return
+            neo_gridfs_ok = False
+        finally:
+            end_neo_timing()
 
-        end_neo_timing()
-
+    # 2. MongoDB Comparison
     client = test_pymongo_connection()
     mongo_db = None
     mongo_file_data = None
     mongo_gridfs_ok = None
+    skip_reason = None
 
     if client:
-        start_mongo_timing()
         mongo_db = client.test_database
         try:
             from gridfs import GridFSBucket as MongoGridFSBucket
 
             bucket = MongoGridFSBucket(mongo_db, bucket_name="fs")
 
-            # Upload file
-            file_id = bucket.upload_from_stream("test.txt", b"Hello GridFS!")
+            # WARM UP: PyMongo creates indexes on the FIRST operation.
+            # We trigger this outside the timing block to exclude indexing from the benchmark.
+            warmup_id = bucket.upload_from_stream("warmup.txt", b"setup")
+            bucket.delete(warmup_id)
 
-            # Download file - MongoDB also uses open_download_stream
-            grid_out = bucket.open_download_stream(file_id)
-            mongo_file_data = grid_out.read() if grid_out else None
+            start_mongo_timing()
+            try:
+                # Upload file
+                file_id = bucket.upload_from_stream(
+                    "test.txt", b"Hello GridFS!"
+                )
 
-            # Find files
-            files = list(bucket.find({"filename": "test.txt"}))
+                # Download file - MongoDB also uses open_download_stream
+                grid_out = bucket.open_download_stream(file_id)
+                mongo_file_data = grid_out.read() if grid_out else None
 
-            print(
-                f"Mongo GridFS: upload={file_id is not None}, download={mongo_file_data is not None}, find={len(files)}"
-            )
+                # Find files
+                files = list(bucket.find({"filename": "test.txt"}))
 
-            mongo_gridfs_ok = mongo_file_data == b"Hello GridFS!"
+                print(
+                    f"Mongo GridFS: upload={file_id is not None}, download={mongo_file_data is not None}, find={len(files)}"
+                )
+
+                mongo_gridfs_ok = mongo_file_data == b"Hello GridFS!"
+            except Exception as e:
+                print(f"Mongo GridFS: Error - {e}")
+                mongo_gridfs_ok = False
+            finally:
+                end_mongo_timing()
         except Exception as e:
-            print(f"Mongo GridFS: Error - {e}")
+            print(f"Mongo GridFS: Setup Error - {e}")
             mongo_gridfs_ok = False
-        end_mongo_timing()
-        client.close()
+        finally:
+            client.close()
     else:
-        mongo_gridfs_ok = False
-
-    if not client:
         skip_reason = "MongoDB/NX-27017 not available"
-    elif mongo_gridfs_ok is False:
-        skip_reason = "MongoDB/NX-27017 GridFS operation failed"
-    else:
-        skip_reason = None
 
+    # 3. Record Comparison
     reporter.record_result(
         "GridFS",
         "GridFSBucket",

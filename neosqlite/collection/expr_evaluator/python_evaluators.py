@@ -1229,10 +1229,10 @@ class PythonEvaluatorsMixin:
             case "$indexOfBytes":
                 if len(operands) < 2:
                     raise ValueError(
-                        "$indexOfBytes requires substring and string"
+                        "$indexOfBytes requires string and substring"
                     )
-                substr = self._evaluate_operand_python(operands[0], document)
-                string = self._evaluate_operand_python(operands[1], document)
+                string = self._evaluate_operand_python(operands[0], document)
+                substr = self._evaluate_operand_python(operands[1], document)
                 if substr is None or string is None:
                     return -1
                 idx = str(string).find(str(substr))
@@ -1356,9 +1356,9 @@ class PythonEvaluatorsMixin:
             case "$indexOfCP":
                 # Find substring by code points
                 if len(operands) < 2:
-                    raise ValueError("$indexOfCP requires substring and string")
-                substr = self._evaluate_operand_python(operands[0], document)
-                string = self._evaluate_operand_python(operands[1], document)
+                    raise ValueError("$indexOfCP requires string and substring")
+                string = self._evaluate_operand_python(operands[0], document)
+                substr = self._evaluate_operand_python(operands[1], document)
                 if substr is None or string is None:
                     return -1
                 idx = str(string).find(str(substr))
@@ -1422,10 +1422,13 @@ class PythonEvaluatorsMixin:
                 if match_result:
                     result = {
                         "match": match_result.group(),
-                        "index": match_result.start(),
+                        "idx": match_result.start(),
+                        "captures": (
+                            list(match_result.groups())
+                            if match_result.groups()
+                            else []
+                        ),
                     }
-                    if match_result.groups():
-                        result["captures"] = list(match_result.groups())
                     return result
                 return None
             case "$regexFindAll":
@@ -1456,7 +1459,12 @@ class PythonEvaluatorsMixin:
                 for match_result in matches:
                     match_obj: Dict[str, Any] = {
                         "match": match_result.group(),
-                        "index": match_result.start(),
+                        "idx": match_result.start(),
+                        "captures": (
+                            list(match_result.groups())
+                            if match_result.groups()
+                            else []
+                        ),
                     }
                     if match_result.groups():
                         match_obj["captures"] = list(match_result.groups())

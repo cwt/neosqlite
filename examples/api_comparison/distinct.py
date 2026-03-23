@@ -35,8 +35,11 @@ def compare_distinct():
 
         set_accumulation_mode(True)
         start_neo_timing()
-        neo_distinct = neo_collection.distinct("dept")
-        end_neo_timing()
+        try:
+            neo_distinct = neo_collection.distinct("dept")
+        finally:
+
+            end_neo_timing()
         print(f"Neo distinct: {sorted(neo_distinct)}")
 
     client = test_pymongo_connection()
@@ -60,8 +63,11 @@ def compare_distinct():
 
         set_accumulation_mode(True)
         start_mongo_timing()
-        mongo_distinct = mongo_collection.distinct("dept")
-        end_mongo_timing()
+        try:
+            mongo_distinct = mongo_collection.distinct("dept")
+        finally:
+
+            end_mongo_timing()
         print(f"Mongo distinct: {sorted(mongo_distinct)}")
         client.close()
 

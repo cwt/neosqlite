@@ -8,6 +8,7 @@ from .reporter import reporter
 from .timing import (
     end_mongo_timing,
     end_neo_timing,
+    set_accumulation_mode,
     start_mongo_timing,
     start_neo_timing,
 )
@@ -63,38 +64,46 @@ def compare_fill_stage():
         neo_collection = neo_conn.test_fill
         neo_collection.insert_many(test_data)
 
+        set_accumulation_mode(True)
         start_neo_timing()
-        for name, pipeline in pipelines.items():
-            try:
-                neo_results[name] = list(neo_collection.aggregate(pipeline))
-                print(f"Neo $fill ({name}): OK")
-            except Exception as e:
-                neo_results[name] = f"Error: {e}"
-                print(f"Neo $fill ({name}): Error - {e}")
-
-        end_neo_timing()
+        try:
+            for name, pipeline in pipelines.items():
+                try:
+                    result = list(neo_collection.aggregate(pipeline))
+                    neo_results[name] = result
+                    print(f"Neo $fill ({name}): OK")
+                except Exception as e:
+                    neo_results[name] = f"Error: {e}"
+                    print(f"Neo $fill ({name}): Error - {e}")
+        finally:
+            end_neo_timing()
 
     client = test_pymongo_connection()
     mongo_results = {}
 
     if client:
-        mongo_db = client.test_database
-        mongo_collection = mongo_db.test_fill
-        mongo_collection.delete_many({})
-        mongo_collection.insert_many(test_data)
+        try:
+            mongo_db = client.test_database
+            mongo_collection = mongo_db.test_fill
+            mongo_collection.delete_many({})
+            mongo_collection.insert_many(test_data)
 
-        start_mongo_timing()
-        for name, pipeline in pipelines.items():
+            set_accumulation_mode(True)
+            start_mongo_timing()
             try:
-                # MongoDB 5.3+ supports $fill
-                mongo_results[name] = list(mongo_collection.aggregate(pipeline))
-                print(f"Mongo $fill ({name}): OK")
-            except Exception as e:
-                mongo_results[name] = f"Error: {e}"
-                print(f"Mongo $fill ({name}): Error - {e}")
-
-        end_mongo_timing()
-        client.close()
+                for name, pipeline in pipelines.items():
+                    try:
+                        # MongoDB 5.3+ supports $fill
+                        result = list(mongo_collection.aggregate(pipeline))
+                        mongo_results[name] = result
+                        print(f"Mongo $fill ({name}): OK")
+                    except Exception as e:
+                        mongo_results[name] = f"Error: {e}"
+                        print(f"Mongo $fill ({name}): Error - {e}")
+            finally:
+                end_mongo_timing()
+        finally:
+            client.close()
 
     # Record comparisons
     for name in pipelines:

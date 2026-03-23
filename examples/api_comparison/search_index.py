@@ -26,6 +26,12 @@ def compare_search_index_operations():
     """Compare search index (FTS) operations"""
     print("\n=== Search Index Operations Comparison ===")
 
+    # NeoSQLite Results
+    neo_create_search_index = False
+    neo_list_search_indexes = False
+    neo_update_search_index = False
+    neo_drop_search_index = False
+
     with neosqlite.Connection(":memory:") as neo_conn:
         neo_collection = neo_conn.test_search_index
         neo_collection.insert_many(
@@ -40,115 +46,116 @@ def compare_search_index_operations():
         )
 
         set_accumulation_mode(True)
+
         # Test create_search_index
+        start_neo_timing()
         try:
-            start_neo_timing()
             neo_collection.create_search_index("content")
-            end_neo_timing()
             neo_create_search_index = True
             print("Neo create_search_index: OK")
         except Exception as e:
-            neo_create_search_index = False
             print(f"Neo create_search_index: Error - {e}")
+        finally:
+            end_neo_timing()
 
         # Test list_search_indexes
+        start_neo_timing()
         try:
-            start_neo_timing()
             neo_indexes = neo_collection.list_search_indexes()
-            end_neo_timing()
             neo_list_search_indexes = len(neo_indexes) >= 1
             print(f"Neo list_search_indexes: {len(neo_indexes)} indexes")
         except Exception as e:
-            neo_list_search_indexes = False
             print(f"Neo list_search_indexes: Error - {e}")
+        finally:
+            end_neo_timing()
 
         # Test update_search_index
+        start_neo_timing()
         try:
-            start_neo_timing()
             neo_collection.update_search_index("content", "porter")
-            end_neo_timing()
             neo_update_search_index = True
             print("Neo update_search_index: OK")
         except Exception as e:
-            neo_update_search_index = False
             print(f"Neo update_search_index: Error - {e}")
+        finally:
+            end_neo_timing()
 
         # Test drop_search_index
+        start_neo_timing()
         try:
-            start_neo_timing()
             neo_collection.drop_search_index("content")
-            end_neo_timing()
             neo_drop_search_index = True
             print("Neo drop_search_index: OK")
         except Exception as e:
-            neo_drop_search_index = False
             print(f"Neo drop_search_index: Error - {e}")
+        finally:
+            end_neo_timing()
 
     client = test_pymongo_connection()
-    # Initialize MongoDB result variables
 
-    mongo_collection = None
+    # MongoDB Results
     mongo_create_search_index = None
-    mongo_db = None
-    mongo_drop_search_index = None
-    mongo_indexes = None
     mongo_list_search_indexes = None
     mongo_update_search_index = None
+    mongo_drop_search_index = None
 
     if client:
-        mongo_db = client.test_database
-        mongo_collection = mongo_db.test_search_index
-        mongo_collection.delete_many({})
-        mongo_collection.insert_many(
-            [
-                {"title": "Python programming", "content": "Learn Python"},
-                {"title": "Java guide", "content": "Learn Java"},
-                {
-                    "title": "Python advanced",
-                    "content": "Advanced Python topics",
-                },
-            ]
-        )
-
-        set_accumulation_mode(True)
-        # MongoDB uses create_index with "text" for text search
         try:
+            mongo_db = client.test_database
+            mongo_collection = mongo_db.test_search_index
+            mongo_collection.delete_many({})
+            mongo_collection.insert_many(
+                [
+                    {"title": "Python programming", "content": "Learn Python"},
+                    {"title": "Java guide", "content": "Learn Java"},
+                    {
+                        "title": "Python advanced",
+                        "content": "Advanced Python topics",
+                    },
+                ]
+            )
+
+            set_accumulation_mode(True)
+
+            # MongoDB uses create_index with "text" for text search
             start_mongo_timing()
-            mongo_collection.create_index([("content", "text")])
-            end_mongo_timing()
-            mongo_create_search_index = True
-            print("Mongo create_index (text): OK")
-        except Exception as e:
-            mongo_create_search_index = False
-            print(f"Mongo create_index (text): Error - {e}")
+            try:
+                mongo_collection.create_index([("content", "text")])
+                mongo_create_search_index = True
+                print("Mongo create_index (text): OK")
+            except Exception as e:
+                print(f"Mongo create_index (text): Error - {e}")
+            finally:
+                end_mongo_timing()
 
-        # Test list_indexes (MongoDB doesn't have separate search index list)
-        try:
+            # Test list_indexes (MongoDB doesn't have separate search index list)
             start_mongo_timing()
-            mongo_indexes = list(mongo_collection.list_indexes())
-            end_mongo_timing()
-            mongo_list_search_indexes = len(mongo_indexes) >= 1
-            print(f"Mongo list_indexes: {len(mongo_indexes)} indexes")
-        except Exception as e:
-            mongo_list_search_indexes = False
-            print(f"Mongo list_indexes: Error - {e}")
+            try:
+                mongo_indexes = list(mongo_collection.list_indexes())
+                mongo_list_search_indexes = len(mongo_indexes) >= 1
+                print(f"Mongo list_indexes: {len(mongo_indexes)} indexes")
+            except Exception as e:
+                print(f"Mongo list_indexes: Error - {e}")
+            finally:
+                end_mongo_timing()
 
-        # MongoDB doesn't have update_search_index, would need to drop and recreate
-        mongo_update_search_index = True  # Not directly supported
-        print("Mongo update_search_index: N/A (not directly supported)")
+            # MongoDB doesn't have update_search_index, would need to drop and recreate
+            mongo_update_search_index = True  # Not directly supported
+            print("Mongo update_search_index: N/A (not directly supported)")
 
-        # Test drop index
-        try:
+            # Test drop index
             start_mongo_timing()
-            mongo_collection.drop_index("content_text")
-            end_mongo_timing()
-            mongo_drop_search_index = True
-            print("Mongo drop_index: OK")
-        except Exception as e:
-            mongo_drop_search_index = False
-            print(f"Mongo drop_index: Error - {e}")
+            try:
+                mongo_collection.drop_index("content_text")
+                mongo_drop_search_index = True
+                print("Mongo drop_index: OK")
+            except Exception as e:
+                print(f"Mongo drop_index: Error - {e}")
+            finally:
+                end_mongo_timing()
 
-        client.close()
+        finally:
+            client.close()
 
     reporter.record_comparison(
         "Search Index Operations",

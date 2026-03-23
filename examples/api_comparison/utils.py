@@ -32,14 +32,26 @@ def test_pymongo_connection() -> MongoClient | None:
 
 def _normalize_id(value: Any) -> Any:
     """
-    Normalize ObjectId and _id fields for comparison.
+    Normalize ObjectId, _id fields, and complex types for comparison.
 
-    Converts ObjectId to string and removes _id fields for comparison purposes.
-    This handles auto-generated IDs that differ between NeoSQLite and MongoDB.
-    Also normalizes datetime objects (tz-aware vs naive).
+    - Converts ObjectId to string.
+    - Removes _id fields for comparison.
+    - Normalizes datetime objects to naive UTC.
+    - Recursively handles dicts and lists.
+    - Normalizes MongoDB helper formats like {'$date': ...} to Python datetime.
     """
     if value is None:
         return None
+
+    # Handle datetime - normalize to naive UTC for comparison
+    if hasattr(value, "__class__") and value.__class__.__name__ == "datetime":
+        # If timezone-aware, convert to UTC and make naive
+        if getattr(value, "tzinfo", None) is not None:
+            from datetime import timezone as dt_timezone
+
+            utc_dt = value.astimezone(dt_timezone.utc)
+            return utc_dt.replace(tzinfo=None)
+        return value
 
     # Handle ObjectId
     if hasattr(value, "__class__") and value.__class__.__name__ == "ObjectId":
@@ -49,18 +61,23 @@ def _normalize_id(value: Any) -> Any:
     if isinstance(value, dict) and "__neosqlite_objectid__" in value:
         return str(value.get("id"))
 
-    # Handle datetime - normalize to naive UTC for comparison
-    if hasattr(value, "__class__") and value.__class__.__name__ == "datetime":
-        # If timezone-aware, convert to UTC and make naive
-        if getattr(value, "tzinfo", None) is not None:
-            # Convert to UTC
-            utc_dt = value.astimezone(timezone.utc)
-            # Return as naive datetime
-            return utc_dt.replace(tzinfo=None)
-        return value
-
-    # Handle dict - remove _id and normalize nested values
+    # Handle dict - recursive normalization
     if isinstance(value, dict):
+        # Normalization for MongoDB helper formats in NeoSQLite output
+        # If it's {'$date': datetime(...) or str}, normalize to datetime
+        if len(value) == 1 and "$date" in value:
+            date_val = value["$date"]
+            if isinstance(date_val, str):
+                from datetime import datetime
+
+                # Handle common ISO formats
+                for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S.%fZ"):
+                    try:
+                        return _normalize_id(datetime.strptime(date_val, fmt))
+                    except ValueError:
+                        continue
+            return _normalize_id(date_val)
+
         return {
             k: _normalize_id(v)
             for k, v in value.items()
@@ -73,6 +90,62 @@ def _normalize_id(value: Any) -> Any:
 
     # Handle other types as-is
     return value
+
+
+def sanitize_for_mongodb(data: Any) -> Any:
+    """
+    Sanitize data for insertion into MongoDB.
+
+    - Deep copies documents to avoid modifying the original data.
+    - Converts NeoSQLite ObjectIds to bson.ObjectId or strings.
+    - Converts NeoSQLite Binary to bson.binary.Binary.
+    - Handles nested dictionaries and lists.
+    """
+    if data is None:
+        return None
+
+    # Handle NeoSQLite ObjectId
+    if hasattr(data, "__class__") and data.__class__.__name__ == "ObjectId":
+        try:
+            from bson import ObjectId as BsonObjectId
+
+            if isinstance(data, BsonObjectId):
+                return data
+            return BsonObjectId(str(data))
+        except (ImportError, Exception):
+            return str(data)
+
+    # Handle NeoSQLite's internal dict representation of ObjectId
+    if isinstance(data, dict) and "__neosqlite_objectid__" in data:
+        try:
+            from bson import ObjectId as BsonObjectId
+
+            return BsonObjectId(str(data.get("id")))
+        except (ImportError, Exception):
+            return str(data.get("id"))
+
+    # Handle NeoSQLite Binary
+    if hasattr(data, "__class__") and data.__class__.__name__ == "Binary":
+        try:
+            from bson.binary import Binary as BsonBinary
+
+            if isinstance(data, BsonBinary):
+                return data
+            subtype = getattr(data, "subtype", 0)
+            return BsonBinary(bytes(data), subtype)
+        except (ImportError, Exception):
+            return bytes(data)
+
+    # Handle dict
+    if isinstance(data, dict):
+        return {k: sanitize_for_mongodb(v) for k, v in data.items()}
+
+    # Handle list
+    if isinstance(data, list):
+        return [sanitize_for_mongodb(item) for item in data]
+
+    # Handle other types
+    return data
 
 
 def compare_results(

@@ -31,26 +31,38 @@ def compare_objectid_operations():
         from neosqlite.objectid import ObjectId as NeoObjectId
 
         start_neo_timing()
-        oid = NeoObjectId()
-        neo_collection.insert_one({"_id": oid, "name": "test"})
-        end_neo_timing()
+        try:
+            oid = NeoObjectId()
+            neo_collection.insert_one({"_id": oid, "name": "test"})
+        finally:
+
+            end_neo_timing()
 
         # Find by ObjectId
         start_neo_timing()
-        doc = neo_collection.find_one({"_id": oid})
-        end_neo_timing()
+        try:
+            doc = neo_collection.find_one({"_id": oid})
+        finally:
+
+            end_neo_timing()
         neo_found = doc is not None
 
         # Test ObjectId generation
         start_neo_timing()
-        oid2 = NeoObjectId()
-        end_neo_timing()
+        try:
+            oid2 = NeoObjectId()
+        finally:
+
+            end_neo_timing()
         neo_unique = oid != oid2
 
         # Test ObjectId string conversion
         start_neo_timing()
-        neo_hex = len(str(oid)) == 24
-        end_neo_timing()
+        try:
+            neo_hex = len(str(oid)) == 24
+        finally:
+
+            end_neo_timing()
 
         print(
             f"Neo ObjectId: create={oid is not None}, find={neo_found}, unique={neo_unique}, hex={neo_hex}"
@@ -75,23 +87,35 @@ def compare_objectid_operations():
         set_accumulation_mode(True)
 
         start_mongo_timing()
-        oid = BsonObjectId()
-        mongo_collection.insert_one({"_id": oid, "name": "test"})
-        end_mongo_timing()
+        try:
+            oid = BsonObjectId()
+            mongo_collection.insert_one({"_id": oid, "name": "test"})
+        finally:
+
+            end_mongo_timing()
 
         start_mongo_timing()
-        doc = mongo_collection.find_one({"_id": oid})
-        end_mongo_timing()
+        try:
+            doc = mongo_collection.find_one({"_id": oid})
+        finally:
+
+            end_mongo_timing()
         mongo_found = doc is not None
 
         start_mongo_timing()
-        oid2 = BsonObjectId()
-        end_mongo_timing()
+        try:
+            oid2 = BsonObjectId()
+        finally:
+
+            end_mongo_timing()
         mongo_unique = oid != oid2
 
         start_mongo_timing()
-        mongo_hex = len(str(oid)) == 24
-        end_mongo_timing()
+        try:
+            mongo_hex = len(str(oid)) == 24
+        finally:
+
+            end_mongo_timing()
 
         print(
             f"Mongo ObjectId: create={oid is not None}, find={mongo_found}, unique={mongo_unique}, hex={mongo_hex}"

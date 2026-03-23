@@ -393,7 +393,7 @@ class TestExistingStringOperators:
                     [
                         {
                             "$project": {
-                                "idx": {"$indexOfBytes": ["world", "$text"]}
+                                "idx": {"$indexOfBytes": ["$text", "world"]}
                             }
                         }
                     ]
@@ -410,7 +410,7 @@ class TestExistingStringOperators:
 
             result = list(
                 coll.aggregate(
-                    [{"$project": {"idx": {"$indexOfCP": ["世界", "$text"]}}}]
+                    [{"$project": {"idx": {"$indexOfCP": ["$text", "世界"]}}}]
                 )
             )
 

@@ -99,13 +99,13 @@ class TestStringOperatorsPython:
     def test_indexOfBytes_operator(self):
         """Test $indexOfBytes operator."""
         evaluator = ExprEvaluator()
-        expr = {"$indexOfBytes": ["world", "hello world"]}
+        expr = {"$indexOfBytes": ["hello world", "world"]}
         assert evaluator._evaluate_expr_python(expr, {}) == 6
 
     def test_indexOfBytes_not_found(self):
         """Test $indexOfBytes not found."""
         evaluator = ExprEvaluator()
-        expr = {"$indexOfBytes": ["xyz", "hello world"]}
+        expr = {"$indexOfBytes": ["hello world", "xyz"]}
         assert evaluator._evaluate_expr_python(expr, {}) == -1
 
     def test_regexMatch_operator(self):
@@ -149,7 +149,7 @@ class TestStringOperatorsPython:
     def test_indexOfCP_operator(self):
         """Test $indexOfCP operator."""
         evaluator = ExprEvaluator()
-        expr = {"$indexOfCP": ["$search", "$text"]}
+        expr = {"$indexOfCP": ["$text", "$search"]}
         result = evaluator._evaluate_expr_python(
             expr, {"text": "hello world", "search": "world"}
         )
@@ -322,7 +322,7 @@ class TestStringOperatorsSQL:
     def test_indexOfBytes_sql(self):
         """Test $indexOfBytes SQL conversion."""
         evaluator = ExprEvaluator()
-        expr = {"$indexOfBytes": ["world", "hello world"]}
+        expr = {"$indexOfBytes": ["hello world", "world"]}
         sql, params = evaluator._evaluate_sql_tier1(expr)
         assert sql is not None
         assert "instr" in sql

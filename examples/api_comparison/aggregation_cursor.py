@@ -31,27 +31,27 @@ def compare_aggregation_cursor_methods():
 
         set_accumulation_mode(True)
         # Test aggregation cursor with batch_size
+        start_neo_timing()
         try:
-            start_neo_timing()
             cursor = neo_collection.aggregate(
                 [{"$match": {"value": {"$gte": 3}}}]
             ).batch_size(3)
             results = list(cursor)
-            end_neo_timing()
             neo_agg_batch_size = len(results) == 7
             print(f"Neo aggregate batch_size: {len(results)} results")
         except Exception as e:
             neo_agg_batch_size = False
             print(f"Neo aggregate batch_size: Error - {e}")
+        finally:
+            end_neo_timing()
 
         # Test allow_disk_use (PyMongo style: parameter to aggregate())
+        start_neo_timing()
         try:
-            start_neo_timing()
             cursor = neo_collection.aggregate(
                 [{"$match": {"value": {"$gte": 3}}}], allowDiskUse=True
             )
             results = list(cursor)
-            end_neo_timing()
             neo_allow_disk_use = len(results) >= 0
             print(
                 f"Neo allow_disk_use: {'OK' if neo_allow_disk_use else 'FAIL'}"
@@ -59,10 +59,12 @@ def compare_aggregation_cursor_methods():
         except Exception as e:
             neo_allow_disk_use = False
             print(f"Neo allow_disk_use: Error - {e}")
+        finally:
+            end_neo_timing()
 
         # Test new AggregationCursor properties
+        start_neo_timing()
         try:
-            start_neo_timing()
             cursor = neo_collection.aggregate([{"$match": {}}])
             neo_retrieved = cursor.retrieved == 0
             neo_alive = cursor.alive is True
@@ -75,7 +77,6 @@ def compare_aggregation_cursor_methods():
             neo_retrieved_after = cursor.retrieved == 10
             neo_alive_after = cursor.alive is False
             neo_address_after = cursor.address is not None
-            end_neo_timing()
 
             neo_props_ok = all(
                 [
@@ -96,6 +97,8 @@ def compare_aggregation_cursor_methods():
         except Exception as e:
             neo_props_ok = False
             print(f"Neo AggregationCursor properties: Error - {e}")
+        finally:
+            end_neo_timing()
 
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
@@ -107,7 +110,7 @@ def compare_aggregation_cursor_methods():
     mongo_props_ok = None
 
     if client:
-        mongo_db = client.test_database
+        mongo_db = client.test_agg_cursor
         mongo_collection = mongo_db.test_agg_cursor
         mongo_collection.delete_many({})
         mongo_collection.insert_many(
@@ -116,27 +119,27 @@ def compare_aggregation_cursor_methods():
 
         set_accumulation_mode(True)
         # Test aggregation cursor with batch_size
+        start_mongo_timing()
         try:
-            start_mongo_timing()
             cursor = mongo_collection.aggregate(
                 [{"$match": {"value": {"$gte": 3}}}]
             ).batch_size(3)
             results = list(cursor)
-            end_mongo_timing()
             mongo_agg_batch_size = len(results) == 7
             print(f"Mongo aggregate batch_size: {len(results)} results")
         except Exception as e:
             mongo_agg_batch_size = False
             print(f"Mongo aggregate batch_size: Error - {e}")
+        finally:
+            end_mongo_timing()
 
         # Test allow_disk_use (PyMongo style: parameter to aggregate())
+        start_mongo_timing()
         try:
-            start_mongo_timing()
             cursor = mongo_collection.aggregate(
                 [{"$match": {"value": {"$gte": 3}}}], allowDiskUse=True
             )
             results = list(cursor)
-            end_mongo_timing()
             mongo_allow_disk_use = len(results) >= 0
             print(
                 f"Mongo allow_disk_use: {'OK' if mongo_allow_disk_use else 'FAIL'}"
@@ -144,10 +147,12 @@ def compare_aggregation_cursor_methods():
         except Exception as e:
             mongo_allow_disk_use = False
             print(f"Mongo allow_disk_use: Error - {e}")
+        finally:
+            end_mongo_timing()
 
         # Test AggregationCursor properties (called CommandCursor in PyMongo)
+        start_mongo_timing()
         try:
-            start_mongo_timing()
             cursor = mongo_collection.aggregate([{"$match": {}}])
             # CommandCursor has fewer properties than standard Cursor in some drivers,
             # but let's check what we can.
@@ -157,7 +162,6 @@ def compare_aggregation_cursor_methods():
 
             list(cursor)
             mongo_alive_after = cursor.alive is False
-            end_mongo_timing()
 
             mongo_props_ok = all(
                 [mongo_alive, mongo_session, mongo_cursor_id, mongo_alive_after]
@@ -168,6 +172,8 @@ def compare_aggregation_cursor_methods():
         except Exception as e:
             mongo_props_ok = False
             print(f"Mongo AggregationCursor properties: Error - {e}")
+        finally:
+            end_mongo_timing()
 
         client.close()
 

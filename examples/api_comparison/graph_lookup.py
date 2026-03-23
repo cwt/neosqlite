@@ -95,40 +95,41 @@ def compare_graph_lookup():
 
         set_accumulation_mode(True)
         for name, pipeline in pipelines.items():
+            start_neo_timing()
             try:
-                start_neo_timing()
                 result = list(neo_collection.aggregate(pipeline))
-                end_neo_timing()
-
                 neo_results[name] = result
                 print(f"Neo $graphLookup ({name}): OK")
             except Exception as e:
                 neo_results[name] = f"Error: {e}"
                 print(f"Neo $graphLookup ({name}): Error - {e}")
+            finally:
+                end_neo_timing()
 
     client = test_pymongo_connection()
     mongo_results = {}
 
     if client:
-        mongo_db = client.test_database
-        mongo_collection = mongo_db.employees
-        mongo_collection.delete_many({})
-        mongo_collection.insert_many(test_data)
+        try:
+            mongo_db = client.test_database
+            mongo_collection = mongo_db.employees
+            mongo_collection.delete_many({})
+            mongo_collection.insert_many(test_data)
 
-        set_accumulation_mode(True)
-        for name, pipeline in pipelines.items():
-            try:
+            set_accumulation_mode(True)
+            for name, pipeline in pipelines.items():
                 start_mongo_timing()
-                result = list(mongo_collection.aggregate(pipeline))
-                end_mongo_timing()
-
-                mongo_results[name] = result
-                print(f"Mongo $graphLookup ({name}): OK")
-            except Exception as e:
-                mongo_results[name] = f"Error: {e}"
-                print(f"Mongo $graphLookup ({name}): Error - {e}")
-
-        client.close()
+                try:
+                    result = list(mongo_collection.aggregate(pipeline))
+                    mongo_results[name] = result
+                    print(f"Mongo $graphLookup ({name}): OK")
+                except Exception as e:
+                    mongo_results[name] = f"Error: {e}"
+                    print(f"Mongo $graphLookup ({name}): Error - {e}")
+                finally:
+                    end_mongo_timing()
+        finally:
+            client.close()
 
     # Record comparisons
     for name in pipelines:

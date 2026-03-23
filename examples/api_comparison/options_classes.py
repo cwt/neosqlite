@@ -26,40 +26,45 @@ def compare_options_classes():
     # Test NeoSQLite
     with neosqlite.Connection(":memory:") as neo_conn:
         start_neo_timing()
-        # 1. WriteConcern
-        neo_wc = WriteConcern(w=1, j=True)
-        neo_wc_repr = repr(neo_wc)
+        try:
+            # 1. WriteConcern
+            neo_wc = WriteConcern(w=1, j=True)
+            neo_wc_repr = repr(neo_wc)
 
-        # Verify it affects NeoSQLite behavior (PRAGMA synchronous)
-        # j=True -> synchronous=FULL (2)
-        neo_conn_wc = neo_conn.with_options(write_concern=neo_wc)
-        cursor = neo_conn_wc.db.execute("PRAGMA synchronous")
-        neo_sync_mode = cursor.fetchone()[0]
+            # Verify it affects NeoSQLite behavior (PRAGMA synchronous)
+            # j=True -> synchronous=FULL (2)
+            neo_conn_wc = neo_conn.with_options(write_concern=neo_wc)
+            cursor = neo_conn_wc.db.execute("PRAGMA synchronous")
+            neo_sync_mode = cursor.fetchone()[0]
 
-        # 2. ReadPreference
-        neo_rp = ReadPreference(ReadPreference.SECONDARY_PREFERRED)
+            # 2. ReadPreference
+            neo_rp = ReadPreference(ReadPreference.SECONDARY_PREFERRED)
 
-        # 3. ReadConcern
-        neo_rc = ReadConcern(level="majority")
+            # 3. ReadConcern
+            neo_rc = ReadConcern(level="majority")
 
-        # 4. CodecOptions
-        neo_co = CodecOptions(tz_aware=True)
+            # 4. CodecOptions
+            neo_co = CodecOptions(tz_aware=True)
 
-        # Test MongoDB
-        end_neo_timing()
+            # Test MongoDB
+        finally:
+
+            end_neo_timing()
 
     client = test_pymongo_connection()
     mongo_wc_repr = None
 
     if client:
         start_mongo_timing()
-        from pymongo import WriteConcern as MongoWriteConcern
+        try:
+            from pymongo import WriteConcern as MongoWriteConcern
 
-        # 1. WriteConcern
-        mongo_wc = MongoWriteConcern(w=1, j=True)
-        mongo_wc_repr = repr(mongo_wc)
+            # 1. WriteConcern
+            mongo_wc = MongoWriteConcern(w=1, j=True)
+            mongo_wc_repr = repr(mongo_wc)
+        finally:
 
-        end_mongo_timing()
+            end_mongo_timing()
         client.close()
 
     # Record results

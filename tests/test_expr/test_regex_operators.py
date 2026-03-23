@@ -25,7 +25,7 @@ class TestRegexOperationsPython:
         result = evaluator._evaluate_expr_python(expr, {"text": "hello world"})
         assert result is not None
         assert result["match"] == "hello"
-        assert result["index"] == 0
+        assert result["idx"] == 0
 
     def test_regex_find_with_index_python(self):
         """Test $regexFind with index."""
@@ -39,7 +39,7 @@ class TestRegexOperationsPython:
         result = evaluator._evaluate_expr_python(expr, {"text": "hello world"})
         assert result is not None
         assert result["match"] == "world"
-        assert result["index"] == 6
+        assert result["idx"] == 6
 
     def test_regex_find_no_match_python(self):
         """Test $regexFind with no match."""

@@ -36,8 +36,11 @@ def compare_nested_field_queries():
         set_accumulation_mode(True)
         # Dot notation query
         start_neo_timing()
-        neo_result = list(neo_collection.find({"profile.city": "NYC"}))
-        end_neo_timing()
+        try:
+            neo_result = list(neo_collection.find({"profile.city": "NYC"}))
+        finally:
+
+            end_neo_timing()
         print(f"Neo nested query (profile.city): {len(neo_result)}")
 
     client = test_pymongo_connection()
@@ -61,8 +64,11 @@ def compare_nested_field_queries():
 
         set_accumulation_mode(True)
         start_mongo_timing()
-        mongo_result = list(mongo_collection.find({"profile.city": "NYC"}))
-        end_mongo_timing()
+        try:
+            mongo_result = list(mongo_collection.find({"profile.city": "NYC"}))
+        finally:
+
+            end_mongo_timing()
         print(f"Mongo nested query (profile.city): {len(mongo_result)}")
         client.close()
 

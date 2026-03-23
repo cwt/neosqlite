@@ -24,21 +24,23 @@ def compare_bulk_operations():
 
     with neosqlite.Connection(":memory:") as neo_conn:
         start_neo_timing()
-        neo_collection = neo_conn.test_collection
-        from neosqlite import DeleteOne, InsertOne, UpdateOne
+        try:
+            neo_collection = neo_conn.test_collection
+            from neosqlite import DeleteOne, InsertOne, UpdateOne
 
-        requests = [
-            InsertOne({"name": "Alice", "age": 30}),
-            InsertOne({"name": "Bob", "age": 25}),
-            UpdateOne({"name": "Alice"}, {"$set": {"age": 31}}),
-            DeleteOne({"name": "Bob"}),
-        ]
-        result = neo_collection.bulk_write(requests)
-        print(
-            f"Neo bulk_write: inserted={result.inserted_count}, matched={result.matched_count}, modified={result.modified_count}, deleted={result.deleted_count}"
-        )
+            requests = [
+                InsertOne({"name": "Alice", "age": 30}),
+                InsertOne({"name": "Bob", "age": 25}),
+                UpdateOne({"name": "Alice"}, {"$set": {"age": 31}}),
+                DeleteOne({"name": "Bob"}),
+            ]
+            result = neo_collection.bulk_write(requests)
+            print(
+                f"Neo bulk_write: inserted={result.inserted_count}, matched={result.matched_count}, modified={result.modified_count}, deleted={result.deleted_count}"
+            )
+        finally:
 
-        end_neo_timing()
+            end_neo_timing()
 
     client = test_pymongo_connection()
     # Initialize MongoDB result variables
@@ -49,22 +51,25 @@ def compare_bulk_operations():
 
     if client:
         start_mongo_timing()
-        mongo_db = client.test_database
-        mongo_collection = mongo_db.test_collection
-        mongo_collection.delete_many({})
-        from pymongo import DeleteOne, InsertOne, UpdateOne
+        try:
+            mongo_db = client.test_database
+            mongo_collection = mongo_db.test_collection
+            mongo_collection.delete_many({})
+            from pymongo import DeleteOne, InsertOne, UpdateOne
 
-        requests = [
-            InsertOne({"name": "Alice", "age": 30}),
-            InsertOne({"name": "Bob", "age": 25}),
-            UpdateOne({"name": "Alice"}, {"$set": {"age": 31}}),
-            DeleteOne({"name": "Bob"}),
-        ]
-        result = mongo_collection.bulk_write(requests)
-        print(
-            f"Mongo bulk_write: inserted={result.inserted_count}, matched={result.matched_count}, modified={result.modified_count}, deleted={result.deleted_count}"
-        )
-        end_mongo_timing()
+            requests = [
+                InsertOne({"name": "Alice", "age": 30}),
+                InsertOne({"name": "Bob", "age": 25}),
+                UpdateOne({"name": "Alice"}, {"$set": {"age": 31}}),
+                DeleteOne({"name": "Bob"}),
+            ]
+            result = mongo_collection.bulk_write(requests)
+            print(
+                f"Mongo bulk_write: inserted={result.inserted_count}, matched={result.matched_count}, modified={result.modified_count}, deleted={result.deleted_count}"
+            )
+        finally:
+
+            end_mongo_timing()
         client.close()
 
     reporter.record_comparison("Bulk Operations", "bulk_write", "OK", "OK")

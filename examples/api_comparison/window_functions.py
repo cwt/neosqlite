@@ -172,28 +172,26 @@ def compare_window_functions():
 
         set_accumulation_mode(True)
         for name, pipeline in pipelines.items():
+            start_neo_timing()
             try:
-                start_neo_timing()
                 result = list(neo_collection.aggregate(pipeline))
-                end_neo_timing()
-
                 neo_results[name] = result
                 print(f"Neo $setWindowFields ({name}): OK")
             except Exception as e:
                 neo_results[name] = f"Error: {e}"
                 print(f"Neo $setWindowFields ({name}): Error - {e}")
+            finally:
+                end_neo_timing()
 
         # Test explain() - NeoSQLite uses db.command() like MongoDB
+        start_neo_timing()
         try:
-            start_neo_timing()
             explanation = neo_conn.command(
                 "aggregate",
                 "test_window",
                 pipeline=pipelines["rank"],
                 explain=True,
             )
-            end_neo_timing()
-
             neo_explain_ok = explanation.get("tier") == 1
             print(
                 f"Neo AggregationCursor.explain(): {'OK' if neo_explain_ok else 'FAIL'}"
@@ -201,52 +199,53 @@ def compare_window_functions():
         except Exception as e:
             neo_explain_ok = False
             print(f"Neo AggregationCursor.explain(): Error - {e}")
+        finally:
+            end_neo_timing()
 
     client = test_pymongo_connection()
     mongo_results = {}
     mongo_explain_ok = False
 
     if client:
-        mongo_db = client.test_database
-        mongo_collection = mongo_db.test_window
-        mongo_collection.delete_many({})
-        mongo_collection.insert_many(test_data)
-
-        set_accumulation_mode(True)
-        for name, pipeline in pipelines.items():
-            try:
-                start_mongo_timing()
-                result = list(mongo_collection.aggregate(pipeline))
-                end_mongo_timing()
-
-                mongo_results[name] = result
-                print(f"Mongo $setWindowFields ({name}): OK")
-            except Exception as e:
-                mongo_results[name] = f"Error: {e}"
-                print(f"Mongo $setWindowFields ({name}): Error - {e}")
-
-        # Test explain() on MongoDB
-        # Note: MongoDB aggregation explain requires using db.command() approach
-        # This is a NeoSQLite extension beyond MongoDB's standard cursor API
         try:
+            mongo_db = client.test_database
+            mongo_collection = mongo_db.test_window
+            mongo_collection.delete_many({})
+            mongo_collection.insert_many(test_data)
+
+            set_accumulation_mode(True)
+            for name, pipeline in pipelines.items():
+                start_mongo_timing()
+                try:
+                    result = list(mongo_collection.aggregate(pipeline))
+                    mongo_results[name] = result
+                    print(f"Mongo $setWindowFields ({name}): OK")
+                except Exception as e:
+                    mongo_results[name] = f"Error: {e}"
+                    print(f"Mongo $setWindowFields ({name}): Error - {e}")
+                finally:
+                    end_mongo_timing()
+
+            # Test explain() on MongoDB
             start_mongo_timing()
-            explanation = mongo_db.command(
-                "aggregate",
-                "test_window",
-                pipeline=pipelines["rank"],
-                explain=True,
-            )
-            end_mongo_timing()
-
-            mongo_explain_ok = isinstance(explanation, dict)
-            print(
-                f"Mongo AggregationCursor.explain(): {'OK' if mongo_explain_ok else 'FAIL'}"
-            )
-        except Exception as e:
-            mongo_explain_ok = False
-            print(f"Mongo AggregationCursor.explain(): Error - {e}")
-
-        client.close()
+            try:
+                explanation = mongo_db.command(
+                    "aggregate",
+                    "test_window",
+                    pipeline=pipelines["rank"],
+                    explain=True,
+                )
+                mongo_explain_ok = isinstance(explanation, dict)
+                print(
+                    f"Mongo AggregationCursor.explain(): {'OK' if mongo_explain_ok else 'FAIL'}"
+                )
+            except Exception as e:
+                mongo_explain_ok = False
+                print(f"Mongo AggregationCursor.explain(): Error - {e}")
+            finally:
+                end_mongo_timing()
+        finally:
+            client.close()
 
     # Record comparisons
     for name in pipelines:

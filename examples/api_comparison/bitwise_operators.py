@@ -24,6 +24,34 @@ def compare_bitwise_operators():
     """Compare bitwise query operators between NeoSQLite and PyMongo"""
     print("\n=== Bitwise Query Operators Comparison ===")
 
+    operators = [
+        # $bitsAllClear - all specified bits are 0
+        ({"value": {"$bitsAllClear": 5}}, "$bitsAllClear (bitmask=5)"),
+        (
+            {"value": {"$bitsAllClear": [0, 1]}},
+            "$bitsAllClear (positions [0,1])",
+        ),
+        # $bitsAllSet - all specified bits are 1
+        ({"value": {"$bitsAllSet": 5}}, "$bitsAllSet (bitmask=5)"),
+        (
+            {"value": {"$bitsAllSet": [0, 1]}},
+            "$bitsAllSet (positions [0,1])",
+        ),
+        # $bitsAnyClear - any of specified bits are 0
+        ({"value": {"$bitsAnyClear": 5}}, "$bitsAnyClear (bitmask=5)"),
+        (
+            {"value": {"$bitsAnyClear": [0, 1]}},
+            "$bitsAnyClear (positions [0,1])",
+        ),
+        # $bitsAnySet - any of specified bits are 1
+        ({"value": {"$bitsAnySet": 5}}, "$bitsAnySet (bitmask=5)"),
+        (
+            {"value": {"$bitsAnySet": [0, 1]}},
+            "$bitsAnySet (positions [0,1])",
+        ),
+    ]
+
+    neo_results = {}
     with neosqlite.Connection(":memory:") as neo_conn:
         neo_collection = neo_conn.test_collection
         # Insert test documents with different bit patterns
@@ -39,98 +67,67 @@ def compare_bitwise_operators():
             ]
         )
 
-        operators = [
-            # $bitsAllClear - all specified bits are 0
-            ({"value": {"$bitsAllClear": 5}}, "$bitsAllClear (bitmask=5)"),
-            (
-                {"value": {"$bitsAllClear": [0, 1]}},
-                "$bitsAllClear (positions [0,1])",
-            ),
-            # $bitsAllSet - all specified bits are 1
-            ({"value": {"$bitsAllSet": 5}}, "$bitsAllSet (bitmask=5)"),
-            (
-                {"value": {"$bitsAllSet": [0, 1]}},
-                "$bitsAllSet (positions [0,1])",
-            ),
-            # $bitsAnyClear - any of specified bits are 0
-            ({"value": {"$bitsAnyClear": 5}}, "$bitsAnyClear (bitmask=5)"),
-            (
-                {"value": {"$bitsAnyClear": [0, 1]}},
-                "$bitsAnyClear (positions [0,1])",
-            ),
-            # $bitsAnySet - any of specified bits are 1
-            ({"value": {"$bitsAnySet": 5}}, "$bitsAnySet (bitmask=5)"),
-            (
-                {"value": {"$bitsAnySet": [0, 1]}},
-                "$bitsAnySet (positions [0,1])",
-            ),
-        ]
-
         set_accumulation_mode(True)
-        neo_results = {}
         for query, op_name in operators:
             try:
                 start_neo_timing()
-                result = list(neo_collection.find(query))
-                end_neo_timing()
-
-                neo_results[op_name] = result
-                print(f"Neo {op_name}: {len(result)} documents")
+                try:
+                    result = list(neo_collection.find(query))
+                    neo_results[op_name] = result
+                    print(f"Neo {op_name}: {len(result)} documents")
+                except Exception as e:
+                    neo_results[op_name] = f"Error: {e}"
+                    print(f"Neo {op_name}: Error - {e}")
+                finally:
+                    end_neo_timing()
             except Exception as e:
                 neo_results[op_name] = f"Error: {e}"
-                print(f"Neo {op_name}: Error - {e}")
 
     client = test_pymongo_connection()
-    mongo_collection = None
     mongo_results = {}
 
     if client:
-        mongo_db = client.test_database
-        mongo_collection = mongo_db.test_collection
-        mongo_collection.delete_many({})
-        mongo_collection.insert_many(
-            [
-                {"value": 0, "name": "zero"},
-                {"value": 1, "name": "one"},
-                {"value": 5, "name": "five"},
-                {"value": 7, "name": "seven"},
-                {"value": 8, "name": "eight"},
-                {"value": 10, "name": "ten"},
-                {"value": 15, "name": "fifteen"},
-            ]
+        try:
+            mongo_db = client.test_database
+            mongo_collection = mongo_db.test_collection
+            mongo_collection.delete_many({})
+            mongo_collection.insert_many(
+                [
+                    {"value": 0, "name": "zero"},
+                    {"value": 1, "name": "one"},
+                    {"value": 5, "name": "five"},
+                    {"value": 7, "name": "seven"},
+                    {"value": 8, "name": "eight"},
+                    {"value": 10, "name": "ten"},
+                    {"value": 15, "name": "fifteen"},
+                ]
+            )
+
+            set_accumulation_mode(True)
+            for query, op_name in operators:
+                try:
+                    mongo_query = copy.deepcopy(query)
+                    start_mongo_timing()
+                    try:
+                        result = list(mongo_collection.find(mongo_query))
+                        mongo_results[op_name] = result
+                        print(f"Mongo {op_name}: {len(result)} documents")
+                    except Exception as e:
+                        mongo_results[op_name] = f"Error: {e}"
+                        print(f"Mongo {op_name}: Error - {e}")
+                    finally:
+                        end_mongo_timing()
+                except Exception as e:
+                    mongo_results[op_name] = f"Error: {e}"
+        finally:
+            client.close()
+
+    # Record results
+    for _, op_name in operators:
+        reporter.record_comparison(
+            "Bitwise Operators",
+            op_name,
+            neo_results.get(op_name),
+            mongo_results.get(op_name),
+            skip_reason="MongoDB not available" if not client else None,
         )
-
-        set_accumulation_mode(True)
-        for query, op_name in operators:
-            try:
-                mongo_query = copy.deepcopy(query)
-
-                start_mongo_timing()
-                result = list(mongo_collection.find(mongo_query))
-                end_mongo_timing()
-
-                mongo_results[op_name] = result
-                print(f"Mongo {op_name}: {len(result)} documents")
-            except Exception as e:
-                mongo_results[op_name] = f"Error: {e}"
-                print(f"Mongo {op_name}: Error - {e}")
-
-        for op_name in neo_results:
-            reporter.record_comparison(
-                "Bitwise Operators",
-                op_name,
-                neo_results[op_name],
-                mongo_results.get(op_name),
-                skip_reason="MongoDB not available" if not client else None,
-            )
-        client.close()
-    else:
-        # MongoDB not available, record NeoSQLite results as skipped
-        for op_name in neo_results:
-            reporter.record_comparison(
-                "Bitwise Operators",
-                op_name,
-                neo_results[op_name],
-                None,
-                skip_reason="MongoDB not available",
-            )

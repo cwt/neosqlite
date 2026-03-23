@@ -34,12 +34,18 @@ def compare_math_operators():
 
         set_accumulation_mode(True)
 
-        # Helper to run a project aggregate
         def neo_project(expr):
             start_neo_timing()
-            res = list(neo_collection.aggregate([{"$project": {"val": expr}}]))
-            end_neo_timing()
-            return res
+            try:
+                res = list(
+                    neo_collection.aggregate([{"$project": {"val": expr}}])
+                )
+                return res
+            except Exception as e:
+                print(f"Neo Error: {e}")
+                return None
+            finally:
+                end_neo_timing()
 
         # Run NeoSQLite tests
         neo_pow = neo_project({"$pow": ["$value", 2]})
@@ -67,28 +73,35 @@ def compare_math_operators():
     mongo_sigmoid = None
 
     if client:
-        mongo_db = client.test_database
-        mongo_collection = mongo_db.test_collection
-        mongo_collection.delete_many({})
-        mongo_collection.insert_many(
-            [
-                {"name": "A", "value": 16, "angle": 1.5708},
-                {"name": "B", "value": 25, "angle": 0},
-            ]
-        )
-
-        set_accumulation_mode(True)
-
-        def mongo_project(expr):
-            start_mongo_timing()
-            res = list(
-                mongo_collection.aggregate([{"$project": {"val": expr}}])
-            )
-            end_mongo_timing()
-            return res
-
-        # Run MongoDB tests
         try:
+            mongo_db = client.test_database
+            mongo_collection = mongo_db.test_collection
+            mongo_collection.delete_many({})
+            mongo_collection.insert_many(
+                [
+                    {"name": "A", "value": 16, "angle": 1.5708},
+                    {"name": "B", "value": 25, "angle": 0},
+                ]
+            )
+
+            set_accumulation_mode(True)
+
+            def mongo_project(expr):
+                start_mongo_timing()
+                try:
+                    res = list(
+                        mongo_collection.aggregate(
+                            [{"$project": {"val": expr}}]
+                        )
+                    )
+                    return res
+                except Exception as e:
+                    print(f"Mongo Error: {e}")
+                    return None
+                finally:
+                    end_mongo_timing()
+
+            # Run MongoDB tests
             mongo_pow = mongo_project({"$pow": ["$value", 2]})
             mongo_sqrt = mongo_project({"$sqrt": "$value"})
             mongo_asin = mongo_project({"$asin": 0.5})
@@ -103,16 +116,9 @@ def compare_math_operators():
             mongo_ln = mongo_project({"$ln": 10})
             mongo_log = mongo_project({"$log": ["$value", 10]})
             mongo_log10 = mongo_project({"$log10": "$value"})
-
-            # $sigmoid is MongoDB 8.0+
-            try:
-                mongo_sigmoid = mongo_project({"$sigmoid": "$value"})
-            except Exception:
-                mongo_sigmoid = None
-        except Exception as e:
-            print(f"Mongo math operators: Error - {e}")
-
-        client.close()
+            mongo_sigmoid = mongo_project({"$sigmoid": "$value"})
+        finally:
+            client.close()
 
     # Record comparisons
     ops = [

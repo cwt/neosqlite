@@ -60,74 +60,75 @@ def compare_type_operator():
         for query, op_name in type_tests:
             try:
                 start_neo_timing()
-                result = list(neo_collection.find(query))
-                end_neo_timing()
-
-                neo_results[op_name] = result
-                print(f"Neo {op_name}: {len(neo_results[op_name])}")
+                try:
+                    result = list(neo_collection.find(query))
+                    neo_results[op_name] = result
+                    print(f"Neo {op_name}: {len(result)}")
+                finally:
+                    end_neo_timing()
             except Exception as e:
                 neo_results[op_name] = f"Error: {e}"
+                print(f"Neo {op_name}: Error - {e}")
 
     client = test_pymongo_connection()
-    # Initialize MongoDB result variables
-
-    mongo_collection = None
-    mongo_db = None
     mongo_results = {}
 
     if client:
-        mongo_db = client.test_database
-        mongo_collection = mongo_db.test_collection
-        mongo_collection.delete_many({})
-        mongo_collection.insert_many(
-            [
-                {
-                    "name": "Alice",
-                    "age": 30,
-                    "active": True,
-                    "items": [1, 2],
-                    "data": {"key": "val"},
-                    "nothing": None,
-                },
-                {
-                    "name": 123,
-                    "age": "thirty",
-                    "active": "yes",
-                    "items": "not array",
-                    "data": "not object",
-                    "nothing": "something",
-                },
-            ]
-        )
-
-        set_accumulation_mode(True)
-        for query, op_name in type_tests:
-            try:
-                start_mongo_timing()
-                result = list(mongo_collection.find(query))
-                end_mongo_timing()
-
-                mongo_results[op_name] = result
-                print(f"Mongo {op_name}: {len(mongo_results[op_name])}")
-            except Exception as e:
-                mongo_results[op_name] = f"Error: {e}"
-
-        for op_name in neo_results:
-            reporter.record_comparison(
-                "$type Operator",
-                op_name,
-                neo_results[op_name],
-                mongo_results.get(op_name),
-                skip_reason="MongoDB not available" if not client else None,
+        try:
+            mongo_db = client.test_database
+            mongo_collection = mongo_db.test_collection
+            mongo_collection.delete_many({})
+            mongo_collection.insert_many(
+                [
+                    {
+                        "name": "Alice",
+                        "age": 30,
+                        "active": True,
+                        "items": [1, 2],
+                        "data": {"key": "val"},
+                        "nothing": None,
+                    },
+                    {
+                        "name": 123,
+                        "age": "thirty",
+                        "active": "yes",
+                        "items": "not array",
+                        "data": "not object",
+                        "nothing": "something",
+                    },
+                ]
             )
-        client.close()
+
+            set_accumulation_mode(True)
+            for query, op_name in type_tests:
+                try:
+                    start_mongo_timing()
+                    try:
+                        result = list(mongo_collection.find(query))
+                        mongo_results[op_name] = result
+                        print(f"Mongo {op_name}: {len(result)}")
+                    finally:
+                        end_mongo_timing()
+                except Exception as e:
+                    mongo_results[op_name] = f"Error: {e}"
+                    print(f"Mongo {op_name}: Error - {e}")
+
+                reporter.record_comparison(
+                    "$type Operator",
+                    op_name,
+                    neo_results.get(op_name),
+                    mongo_results.get(op_name),
+                    skip_reason=None,
+                )
+        finally:
+            client.close()
     else:
         # MongoDB not available, record NeoSQLite results as skipped
-        for op_name in neo_results:
+        for query, op_name in type_tests:
             reporter.record_comparison(
                 "$type Operator",
                 op_name,
-                neo_results[op_name],
+                neo_results.get(op_name),
                 None,
                 skip_reason="MongoDB not available",
             )

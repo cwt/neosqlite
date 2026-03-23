@@ -271,7 +271,8 @@ run_comparison() {
     # Run the comparison script from the examples directory
     # The script will exit with non-zero if there are incompatibilities
     SCRIPT_DIR="$(dirname "$COMPARISON_SCRIPT")"
-    if (cd "$SCRIPT_DIR" && python3 api_comparison_main.py); then
+    PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+    if (cd "$SCRIPT_DIR" && PYTHONPATH="$PROJECT_ROOT" python3 api_comparison_main.py); then
         success "API comparison completed - 100% compatible!"
         return 0
     else

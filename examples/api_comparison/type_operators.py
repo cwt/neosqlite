@@ -36,20 +36,22 @@ def compare_type_operators():
 
         set_accumulation_mode(True)
         # Test $isNumber
+        neo_is_number = None
         try:
             start_neo_timing()
-            result = list(
-                neo_collection.aggregate(
-                    [
-                        {"$match": {"_id": 1}},
-                        {"$project": {"is_num": {"$isNumber": "$num"}}},
-                    ]
+            try:
+                result = list(
+                    neo_collection.aggregate(
+                        [
+                            {"$match": {"_id": 1}},
+                            {"$project": {"is_num": {"$isNumber": "$num"}}},
+                        ]
+                    )
                 )
-            )
-            end_neo_timing()
-
-            neo_is_number = result[0].get("is_num") if result else None
-            print(f"Neo $isNumber: {neo_is_number}")
+                neo_is_number = result[0].get("is_num") if result else None
+                print(f"Neo $isNumber: {neo_is_number}")
+            finally:
+                end_neo_timing()
         except Exception as e:
             neo_is_number = f"Error: {e}"
             print(f"Neo $isNumber: Error - {e}")
@@ -58,38 +60,42 @@ def compare_type_operators():
     mongo_is_number = None
 
     if client:
-        mongo_db = client.test_database
-        mongo_collection = mongo_db.test_type_ops
-        mongo_collection.delete_many({})
-        mongo_collection.insert_one(
-            {
-                "_id": 1,
-                "num": 42,
-                "str": "hello",
-                "arr": [1, 2, 3],
-            }
-        )
-
-        set_accumulation_mode(True)
         try:
-            start_mongo_timing()
-            result = list(
-                mongo_collection.aggregate(
-                    [
-                        {"$match": {"_id": 1}},
-                        {"$project": {"is_num": {"$isNumber": "$num"}}},
-                    ]
-                )
+            mongo_db = client.test_database
+            mongo_collection = mongo_db.test_type_ops
+            mongo_collection.delete_many({})
+            mongo_collection.insert_one(
+                {
+                    "_id": 1,
+                    "num": 42,
+                    "str": "hello",
+                    "arr": [1, 2, 3],
+                }
             )
-            end_mongo_timing()
 
-            mongo_is_number = result[0].get("is_num") if result else None
-            print(f"Mongo $isNumber: {mongo_is_number}")
-        except Exception as e:
-            mongo_is_number = f"Error: {e}"
-            print(f"Mongo $isNumber: Error - {e}")
-
-        client.close()
+            set_accumulation_mode(True)
+            try:
+                start_mongo_timing()
+                try:
+                    result = list(
+                        mongo_collection.aggregate(
+                            [
+                                {"$match": {"_id": 1}},
+                                {"$project": {"is_num": {"$isNumber": "$num"}}},
+                            ]
+                        )
+                    )
+                    mongo_is_number = (
+                        result[0].get("is_num") if result else None
+                    )
+                    print(f"Mongo $isNumber: {mongo_is_number}")
+                finally:
+                    end_mongo_timing()
+            except Exception as e:
+                mongo_is_number = f"Error: {e}"
+                print(f"Mongo $isNumber: Error - {e}")
+        finally:
+            client.close()
 
     reporter.record_comparison(
         "Type Operators",

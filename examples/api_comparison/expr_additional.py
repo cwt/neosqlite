@@ -23,6 +23,10 @@ def compare_additional_expr_operators():
     """Compare additional aggregation expression operators"""
     print("\n=== Additional Aggregation Expression Operators Comparison ===")
 
+    # Initialize result variables
+    neo_results = {}
+    mongo_results = {}
+
     with neosqlite.Connection(":memory:") as neo_conn:
         neo_collection = neo_conn.test_collection
         neo_collection.insert_many(
@@ -41,38 +45,32 @@ def compare_additional_expr_operators():
         )
 
         set_accumulation_mode(True)
+
         # Test $arrayElemAt
+        start_neo_timing()
         try:
-            start_neo_timing()
-            neo_result = list(
+            res = list(
                 neo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "first_score": {"$arrayElemAt": ["$scores", 0]}
-                            }
-                        }
-                    ]
+                    [{"$project": {"val": {"$arrayElemAt": ["$scores", 0]}}}]
                 )
             )
-            end_neo_timing()
-            neo_arrayelemat = len(neo_result) == 2 and all(
-                "first_score" in doc for doc in neo_result
-            )
-            print(f"Neo $arrayElemAt: {'OK' if neo_arrayelemat else 'FAIL'}")
+            neo_results["$arrayElemAt"] = res
+            print("Neo $arrayElemAt: OK")
         except Exception as e:
-            neo_arrayelemat = False
+            neo_results["$arrayElemAt"] = f"Error: {e}"
             print(f"Neo $arrayElemAt: Error - {e}")
+        finally:
+            end_neo_timing()
 
         # Test $concat
+        start_neo_timing()
         try:
-            start_neo_timing()
-            neo_result = list(
+            res = list(
                 neo_collection.aggregate(
                     [
                         {
                             "$project": {
-                                "full_info": {
+                                "val": {
                                     "$concat": ["$name", " - ", "$meta.city"]
                                 }
                             }
@@ -80,41 +78,39 @@ def compare_additional_expr_operators():
                     ]
                 )
             )
-            end_neo_timing()
-            neo_concat = len(neo_result) == 2
-            print(f"Neo $concat: {'OK' if neo_concat else 'FAIL'}")
+            neo_results["$concat"] = res
+            print("Neo $concat: OK")
         except Exception as e:
-            neo_concat = False
+            neo_results["$concat"] = f"Error: {e}"
             print(f"Neo $concat: Error - {e}")
+        finally:
+            end_neo_timing()
 
         # Test $objectToArray
+        start_neo_timing()
         try:
-            start_neo_timing()
-            neo_result = list(
+            res = list(
                 neo_collection.aggregate(
-                    [{"$project": {"meta_array": {"$objectToArray": "$meta"}}}]
+                    [{"$project": {"val": {"$objectToArray": "$meta"}}}]
                 )
             )
-            end_neo_timing()
-            neo_objecttoarray = len(neo_result) == 2 and all(
-                "meta_array" in doc for doc in neo_result
-            )
-            print(
-                f"Neo $objectToArray: {'OK' if neo_objecttoarray else 'FAIL'}"
-            )
+            neo_results["$objectToArray"] = res
+            print("Neo $objectToArray: OK")
         except Exception as e:
-            neo_objecttoarray = False
+            neo_results["$objectToArray"] = f"Error: {e}"
             print(f"Neo $objectToArray: Error - {e}")
+        finally:
+            end_neo_timing()
 
         # Test $switch
+        start_neo_timing()
         try:
-            start_neo_timing()
-            neo_result = list(
+            res = list(
                 neo_collection.aggregate(
                     [
                         {
                             "$project": {
-                                "grade": {
+                                "val": {
                                     "$switch": {
                                         "branches": [
                                             {
@@ -154,202 +150,166 @@ def compare_additional_expr_operators():
                     ]
                 )
             )
-            end_neo_timing()
-            neo_switch = len(neo_result) == 2
-            print(f"Neo $switch: {'OK' if neo_switch else 'FAIL'}")
+            neo_results["$switch"] = res
+            print("Neo $switch: OK")
         except Exception as e:
-            neo_switch = False
+            neo_results["$switch"] = f"Error: {e}"
             print(f"Neo $switch: Error - {e}")
-
-        end_neo_timing()
+        finally:
+            end_neo_timing()
 
     client = test_pymongo_connection()
-    # Initialize MongoDB result variables
-
-    mongo_arrayelemat = None
-
-    mongo_collection = None
-
-    mongo_concat = None
-
-    mongo_db = None
-
-    mongo_objecttoarray = None
-
-    mongo_result = None
-
-    mongo_switch = None
-
     if client:
-        mongo_db = client.test_database
-        mongo_collection = mongo_db.test_collection
-        mongo_collection.delete_many({})
-        mongo_collection.insert_many(
-            [
-                {
-                    "name": "Alice",
-                    "scores": [80, 90, 100],
-                    "meta": {"city": "NYC", "zip": 10001},
-                },
-                {
-                    "name": "Bob",
-                    "scores": [70, 80],
-                    "meta": {"city": "LA", "zip": 90001},
-                },
-            ]
-        )
-
-        set_accumulation_mode(True)
-
-        # Test $arrayElemAt
         try:
-            start_mongo_timing()
-            mongo_result = list(
-                mongo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "first_score": {"$arrayElemAt": ["$scores", 0]}
-                            }
-                        }
-                    ]
-                )
+            mongo_db = client.test_database
+            mongo_collection = mongo_db.test_collection
+            mongo_collection.delete_many({})
+            mongo_collection.insert_many(
+                [
+                    {
+                        "name": "Alice",
+                        "scores": [80, 90, 100],
+                        "meta": {"city": "NYC", "zip": 10001},
+                    },
+                    {
+                        "name": "Bob",
+                        "scores": [70, 80],
+                        "meta": {"city": "LA", "zip": 90001},
+                    },
+                ]
             )
-            end_mongo_timing()
-            mongo_arrayelemat = len(mongo_result) == 2 and all(
-                "first_score" in doc for doc in mongo_result
-            )
-            print(
-                f"Mongo $arrayElemAt: {'OK' if mongo_arrayelemat else 'FAIL'}"
-            )
-        except Exception as e:
-            mongo_arrayelemat = False
-            print(f"Mongo $arrayElemAt: Error - {e}")
 
-        # Test $concat
-        try:
+            set_accumulation_mode(True)
+
+            # Test $arrayElemAt
             start_mongo_timing()
-            mongo_result = list(
-                mongo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "full_info": {
-                                    "$concat": ["$name", " - ", "$meta.city"]
+            try:
+                res = list(
+                    mongo_collection.aggregate(
+                        [
+                            {
+                                "$project": {
+                                    "val": {"$arrayElemAt": ["$scores", 0]}
                                 }
                             }
-                        }
-                    ]
+                        ]
+                    )
                 )
-            )
-            end_mongo_timing()
-            mongo_concat = len(mongo_result) == 2
-            print(f"Mongo $concat: {'OK' if mongo_concat else 'FAIL'}")
-        except Exception as e:
-            mongo_concat = False
-            print(f"Mongo $concat: Error - {e}")
+                mongo_results["$arrayElemAt"] = res
+                print("Mongo $arrayElemAt: OK")
+            except Exception as e:
+                mongo_results["$arrayElemAt"] = f"Error: {e}"
+                print(f"Mongo $arrayElemAt: Error - {e}")
+            finally:
+                end_mongo_timing()
 
-        # Test $objectToArray
-        try:
+            # Test $concat
             start_mongo_timing()
-            mongo_result = list(
-                mongo_collection.aggregate(
-                    [{"$project": {"meta_array": {"$objectToArray": "$meta"}}}]
-                )
-            )
-            end_mongo_timing()
-            mongo_objecttoarray = len(mongo_result) == 2 and all(
-                "meta_array" in doc for doc in mongo_result
-            )
-            print(
-                f"Mongo $objectToArray: {'OK' if mongo_objecttoarray else 'FAIL'}"
-            )
-        except Exception as e:
-            mongo_objecttoarray = False
-            print(f"Mongo $objectToArray: Error - {e}")
-
-        # Test $switch
-        try:
-            start_mongo_timing()
-            mongo_result = list(
-                mongo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "grade": {
-                                    "$switch": {
-                                        "branches": [
-                                            {
-                                                "case": {
-                                                    "$gte": [
-                                                        {
-                                                            "$arrayElemAt": [
-                                                                "$scores",
-                                                                0,
-                                                            ]
-                                                        },
-                                                        90,
-                                                    ]
-                                                },
-                                                "then": "A",
-                                            },
-                                            {
-                                                "case": {
-                                                    "$gte": [
-                                                        {
-                                                            "$arrayElemAt": [
-                                                                "$scores",
-                                                                0,
-                                                            ]
-                                                        },
-                                                        80,
-                                                    ]
-                                                },
-                                                "then": "B",
-                                            },
-                                        ],
-                                        "default": "C",
+            try:
+                res = list(
+                    mongo_collection.aggregate(
+                        [
+                            {
+                                "$project": {
+                                    "val": {
+                                        "$concat": [
+                                            "$name",
+                                            " - ",
+                                            "$meta.city",
+                                        ]
                                     }
                                 }
                             }
-                        }
-                    ]
+                        ]
+                    )
                 )
-            )
-            end_mongo_timing()
-            mongo_switch = len(mongo_result) == 2
-            print(f"Mongo $switch: {'OK' if mongo_switch else 'FAIL'}")
-        except Exception as e:
-            mongo_switch = False
-            print(f"Mongo $switch: Error - {e}")
+                mongo_results["$concat"] = res
+                print("Mongo $concat: OK")
+            except Exception as e:
+                mongo_results["$concat"] = f"Error: {e}"
+                print(f"Mongo $concat: Error - {e}")
+            finally:
+                end_mongo_timing()
 
-        client.close()
+            # Test $objectToArray
+            start_mongo_timing()
+            try:
+                res = list(
+                    mongo_collection.aggregate(
+                        [{"$project": {"val": {"$objectToArray": "$meta"}}}]
+                    )
+                )
+                mongo_results["$objectToArray"] = res
+                print("Mongo $objectToArray: OK")
+            except Exception as e:
+                mongo_results["$objectToArray"] = f"Error: {e}"
+                print(f"Mongo $objectToArray: Error - {e}")
+            finally:
+                end_mongo_timing()
 
-    reporter.record_comparison(
-        "Aggregation Expressions",
-        "$arrayElemAt",
-        neo_arrayelemat if neo_arrayelemat else "FAIL",
-        mongo_arrayelemat if mongo_arrayelemat else None,
-        skip_reason="MongoDB not available" if not client else None,
-    )
-    reporter.record_comparison(
-        "Aggregation Expressions",
-        "$concat",
-        neo_concat if neo_concat else "FAIL",
-        mongo_concat if mongo_concat else None,
-        skip_reason="MongoDB not available" if not client else None,
-    )
-    reporter.record_comparison(
-        "Aggregation Expressions",
-        "$objectToArray",
-        neo_objecttoarray if neo_objecttoarray else "FAIL",
-        mongo_objecttoarray if mongo_objecttoarray else None,
-        skip_reason="MongoDB not available" if not client else None,
-    )
-    reporter.record_comparison(
-        "Aggregation Expressions",
-        "$switch",
-        neo_switch if neo_switch else "FAIL",
-        mongo_switch if mongo_switch else None,
-        skip_reason="MongoDB not available" if not client else None,
-    )
+            # Test $switch
+            start_mongo_timing()
+            try:
+                res = list(
+                    mongo_collection.aggregate(
+                        [
+                            {
+                                "$project": {
+                                    "val": {
+                                        "$switch": {
+                                            "branches": [
+                                                {
+                                                    "case": {
+                                                        "$gte": [
+                                                            {
+                                                                "$arrayElemAt": [
+                                                                    "$scores",
+                                                                    0,
+                                                                ]
+                                                            },
+                                                            90,
+                                                        ]
+                                                    },
+                                                    "then": "A",
+                                                },
+                                                {
+                                                    "case": {
+                                                        "$gte": [
+                                                            {
+                                                                "$arrayElemAt": [
+                                                                    "$scores",
+                                                                    0,
+                                                                ]
+                                                            },
+                                                            80,
+                                                        ]
+                                                    },
+                                                    "then": "B",
+                                                },
+                                            ],
+                                            "default": "C",
+                                        }
+                                    }
+                                }
+                            }
+                        ]
+                    )
+                )
+                mongo_results["$switch"] = res
+                print("Mongo $switch: OK")
+            except Exception as e:
+                mongo_results["$switch"] = f"Error: {e}"
+                print(f"Mongo $switch: Error - {e}")
+            finally:
+                end_mongo_timing()
+        finally:
+            client.close()
+
+    for op in ["$arrayElemAt", "$concat", "$objectToArray", "$switch"]:
+        reporter.record_comparison(
+            "Aggregation Expressions",
+            op,
+            neo_results.get(op),
+            mongo_results.get(op),
+            skip_reason="MongoDB not available" if not client else None,
+        )

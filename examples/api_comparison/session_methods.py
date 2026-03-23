@@ -9,6 +9,7 @@ from .reporter import reporter
 from .timing import (
     end_mongo_timing,
     end_neo_timing,
+    set_accumulation_mode,
     start_mongo_timing,
     start_neo_timing,
 )
@@ -33,130 +34,199 @@ def compare_session_methods():
     # Track whether MongoDB actually ran tests or skipped
     mongo_tx_executed = False
 
+    # Initialize NeoSQLite result variables
+    neo_session = False
+    neo_tx_commit = False
+    neo_tx_abort = False
+    neo_with_tx = False
+
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_session
+        set_accumulation_mode(True)
 
-        # Test start_session()
+        # 1. Test start_session()
+        start_neo_timing()
         try:
-            with neo_conn.start_session() as session:
-                neo_session = session is not None
-                print(f"Neo start_session(): {'OK' if neo_session else 'FAIL'}")
-
-                # Test transaction
-                session.start_transaction()
-                neo_collection.insert_one({"a": 1}, session=session)
-                session.commit_transaction()
-
-                neo_tx_commit = neo_collection.count_documents({"a": 1}) == 1
-                print(
-                    f"Neo transaction commit: {'OK' if neo_tx_commit else 'FAIL'}"
-                )
-
-                session.start_transaction()
-                neo_collection.insert_one({"a": 2}, session=session)
-                session.abort_transaction()
-
-                neo_tx_abort = neo_collection.count_documents({"a": 2}) == 0
-                print(
-                    f"Neo transaction abort: {'OK' if neo_tx_abort else 'FAIL'}"
-                )
-
-                # Test with_transaction
-                def callback(s):
-                    neo_collection.insert_one({"a": 3}, session=s)
-
-                session.with_transaction(callback)
-                neo_with_tx = neo_collection.count_documents({"a": 3}) == 1
-                print(
-                    f"Neo with_transaction: {'OK' if neo_with_tx else 'FAIL'}"
-                )
+            session = neo_conn.start_session()
+            neo_session = session is not None
         except Exception as e:
-            neo_session = neo_tx_commit = neo_tx_abort = neo_with_tx = False
-            print(f"Neo session: Error - {e}")
+            print(f"Neo start_session(): Error - {e}")
+            neo_session = False
+        finally:
+            end_neo_timing()
 
-        end_neo_timing()
+        if neo_session:
+            try:
+                with session:
+                    print("Neo start_session(): OK")
 
+                    # 2. Test transaction commit
+                    start_neo_timing()
+                    try:
+                        session.start_transaction()
+                        neo_collection.insert_one({"a": 1}, session=session)
+                        session.commit_transaction()
+                        neo_tx_commit = (
+                            neo_collection.count_documents({"a": 1}) == 1
+                        )
+                        print(
+                            f"Neo transaction commit: {'OK' if neo_tx_commit else 'FAIL'}"
+                        )
+                    except Exception as e:
+                        print(f"Neo transaction commit: Error - {e}")
+                        neo_tx_commit = False
+                    finally:
+                        end_neo_timing()
+
+                    # 3. Test transaction abort
+                    start_neo_timing()
+                    try:
+                        session.start_transaction()
+                        neo_collection.insert_one({"a": 2}, session=session)
+                        session.abort_transaction()
+                        neo_tx_abort = (
+                            neo_collection.count_documents({"a": 2}) == 0
+                        )
+                        print(
+                            f"Neo transaction abort: {'OK' if neo_tx_abort else 'FAIL'}"
+                        )
+                    except Exception as e:
+                        print(f"Neo transaction abort: Error - {e}")
+                        neo_tx_abort = False
+                    finally:
+                        end_neo_timing()
+
+                    # 4. Test with_transaction
+                    start_neo_timing()
+                    try:
+
+                        def callback(s):
+                            neo_collection.insert_one({"a": 3}, session=s)
+
+                        session.with_transaction(callback)
+                        neo_with_tx = (
+                            neo_collection.count_documents({"a": 3}) == 1
+                        )
+                        print(
+                            f"Neo with_transaction: {'OK' if neo_with_tx else 'FAIL'}"
+                        )
+                    except Exception as e:
+                        print(f"Neo with_transaction: Error - {e}")
+                        neo_with_tx = False
+                    finally:
+                        end_neo_timing()
+            except Exception as e:
+                print(f"Neo session context: Error - {e}")
+
+    # MongoDB part
     client = test_pymongo_connection()
-    # Initialize MongoDB result variables
-
     mongo_session = None
     mongo_tx_commit = None
     mongo_tx_abort = None
     mongo_with_tx = None
 
     if client:
-        start_mongo_timing()
-        mongo_db = client.test_session_methods
-        mongo_collection = mongo_db.test_session
-        mongo_collection.delete_many({})
-
-        # Test start_session() - Note: MongoDB requires replica set for transactions
         try:
-            with client.start_session() as session:
+            mongo_db = client.test_session_methods
+            mongo_collection = mongo_db.test_session
+            mongo_collection.delete_many({})
+            set_accumulation_mode(True)
+
+            # 1. Test start_session()
+            start_mongo_timing()
+            try:
+                session = client.start_session()
                 mongo_session = session is not None
-                print(
-                    f"Mongo start_session(): {'OK' if mongo_session else 'FAIL'}"
-                )
+            except Exception as e:
+                print(f"Mongo start_session(): Error - {e}")
+                mongo_session = False
+            finally:
+                end_mongo_timing()
 
+            if mongo_session:
                 try:
-                    with session.start_transaction():
-                        mongo_collection.insert_one({"a": 1}, session=session)
+                    with session:
+                        print("Mongo start_session(): OK")
 
-                    mongo_tx_commit = (
-                        mongo_collection.count_documents({"a": 1}) == 1
-                    )
-                    print(
-                        f"Mongo transaction commit: {'OK' if mongo_tx_commit else 'FAIL'}"
-                    )
+                        try:
+                            # 2. Test transaction commit
+                            start_mongo_timing()
+                            try:
+                                session.start_transaction()
+                                mongo_collection.insert_one(
+                                    {"a": 1}, session=session
+                                )
+                                session.commit_transaction()
+                                mongo_tx_commit = (
+                                    mongo_collection.count_documents({"a": 1})
+                                    == 1
+                                )
+                                print(
+                                    f"Mongo transaction commit: {'OK' if mongo_tx_commit else 'FAIL'}"
+                                )
+                            finally:
+                                end_mongo_timing()
 
-                    with session.start_transaction():
-                        mongo_collection.insert_one({"a": 2}, session=session)
-                        session.abort_transaction()
+                            # 3. Test transaction abort
+                            start_mongo_timing()
+                            try:
+                                session.start_transaction()
+                                mongo_collection.insert_one(
+                                    {"a": 2}, session=session
+                                )
+                                session.abort_transaction()
+                                mongo_tx_abort = (
+                                    mongo_collection.count_documents({"a": 2})
+                                    == 0
+                                )
+                                print(
+                                    f"Mongo transaction abort: {'OK' if mongo_tx_abort else 'FAIL'}"
+                                )
+                            finally:
+                                end_mongo_timing()
 
-                    mongo_tx_abort = (
-                        mongo_collection.count_documents({"a": 2}) == 0
-                    )
-                    print(
-                        f"Mongo transaction abort: {'OK' if mongo_tx_abort else 'FAIL'}"
-                    )
+                            # 4. Test with_transaction
+                            start_mongo_timing()
+                            try:
 
-                    # Test with_transaction
-                    def mongo_callback(s):
-                        mongo_collection.insert_one({"a": 3}, session=s)
+                                def mongo_callback(s):
+                                    mongo_collection.insert_one(
+                                        {"a": 3}, session=s
+                                    )
 
-                    session.with_transaction(mongo_callback)
-                    mongo_with_tx = (
-                        mongo_collection.count_documents({"a": 3}) == 1
-                    )
-                    print(
-                        f"Mongo with_transaction: {'OK' if mongo_with_tx else 'FAIL'}"
-                    )
-                    mongo_tx_executed = True
+                                session.with_transaction(mongo_callback)
+                                mongo_with_tx = (
+                                    mongo_collection.count_documents({"a": 3})
+                                    == 1
+                                )
+                                print(
+                                    f"Mongo with_transaction: {'OK' if mongo_with_tx else 'FAIL'}"
+                                )
+                            finally:
+                                end_mongo_timing()
+
+                            mongo_tx_executed = True
+                        except Exception as e:
+                            # standalone MongoDB doesn't support transactions
+                            mongo_tx_commit = mongo_tx_abort = mongo_with_tx = (
+                                False
+                            )
+                            print(
+                                f"Mongo transaction: SKIPPED (requires replica set) - {e}"
+                            )
                 except Exception as e:
-                    # standalone MongoDB doesn't support transactions
-                    mongo_tx_commit = mongo_tx_abort = mongo_with_tx = False
-                    print(
-                        f"Mongo transaction: SKIPPED (requires replica set) - {e}"
+                    print(f"Mongo session context: Error - {e}")
+        finally:
+            # If transactions didn't execute, mark this as a partial benchmark
+            # because the main functionality being tested is transactions
+            # BUT if we're on NX-27017 backend, don't skip - we should run and report failures
+            if not mongo_tx_executed and not IS_NX27017_BACKEND:
+                if benchmark_reporter:
+                    benchmark_reporter.mark_mongo_skipped(
+                        "Session & Transactions",
+                        "MongoDB requires replica set for transactions (only start_session() ran)",
                     )
-        except Exception as e:
-            mongo_session = False
-            print(f"Mongo session: Error - {e}")
-
-        # End timing (will capture whatever ran)
-        end_mongo_timing()
-
-        # If transactions didn't execute, mark this as a partial benchmark
-        # because the main functionality being tested is transactions, not just session creation
-        # BUT if we're on NX-27017 backend, don't skip - we should run and report failures
-        if not mongo_tx_executed and not IS_NX27017_BACKEND:
-            if benchmark_reporter:
-                benchmark_reporter.mark_mongo_skipped(
-                    "Session & Transactions",
-                    "MongoDB requires replica set for transactions (only start_session() ran)",
-                )
-
-        client.close()
+            client.close()
     else:
         # MongoDB not available at all
         if benchmark_reporter:
@@ -164,6 +234,7 @@ def compare_session_methods():
                 "Session & Transactions", "MongoDB not available"
             )
 
+    # Report results
     reporter.record_comparison(
         "Session & Transactions",
         "start_session",
@@ -187,10 +258,16 @@ def compare_session_methods():
         mongo_result=mongo_tx_commit,
         skip_reason=(
             "NeoSQLite: OK; MongoDB: Requires replica set (skipped)"
-            if (client and mongo_tx_commit is False)
+            if (
+                client
+                and mongo_tx_commit is False
+                and not mongo_tx_executed
+                and not IS_NX27017_BACKEND
+            )
             else ("MongoDB not available" if not client else None)
         ),
     )
+
     reporter.record_result(
         "Session & Transactions",
         "transaction_abort",
@@ -203,10 +280,16 @@ def compare_session_methods():
         mongo_result=mongo_tx_abort,
         skip_reason=(
             "NeoSQLite: OK; MongoDB: Requires replica set (skipped)"
-            if (client and mongo_tx_abort is False)
+            if (
+                client
+                and mongo_tx_abort is False
+                and not mongo_tx_executed
+                and not IS_NX27017_BACKEND
+            )
             else ("MongoDB not available" if not client else None)
         ),
     )
+
     reporter.record_result(
         "Session & Transactions",
         "with_transaction",
@@ -217,7 +300,12 @@ def compare_session_methods():
         mongo_result=mongo_with_tx,
         skip_reason=(
             "NeoSQLite: OK; MongoDB: Requires replica set (skipped)"
-            if (client and mongo_with_tx is False)
+            if (
+                client
+                and mongo_with_tx is False
+                and not mongo_tx_executed
+                and not IS_NX27017_BACKEND
+            )
             else ("MongoDB not available" if not client else None)
         ),
     )

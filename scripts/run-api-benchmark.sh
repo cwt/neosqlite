@@ -336,7 +336,10 @@ run_benchmark() {
     fi
 
     # Run the benchmark script from the examples directory
-    if (cd "$SCRIPT_DIR" && $CMD >/dev/null 2>&1); then
+    SCRIPT_DIR="$(dirname "$COMPARISON_SCRIPT")"
+    PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+    
+    if (cd "$SCRIPT_DIR" && PYTHONPATH="$PROJECT_ROOT" $CMD >/dev/null 2>&1); then
         if [ "$BENCHMARK_SILENT" = true ]; then
             echo "Benchmark complete. Reports generated in documents/benchmarks/"
         else

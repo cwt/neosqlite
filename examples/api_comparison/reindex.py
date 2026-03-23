@@ -19,69 +19,84 @@ warnings.filterwarnings(
 
 
 def compare_reindex_operation():
-    """Compare reindex operation"""
+    """Compare reindex operation between NeoSQLite and PyMongo"""
     print("\n=== Reindex Operation Comparison ===")
 
-    with neosqlite.Connection(":memory:") as neo_conn:
-        neo_collection = neo_conn.test_reindex
-        neo_collection.insert_many(
-            [
-                {"name": "A", "value": 1},
-                {"name": "B", "value": 2},
-            ]
-        )
-        neo_collection.create_index("name")
+    neo_reindex_ok = False
+    mongo_reindex_ok = False
 
-        start_neo_timing()
-        # Test reindex
-        try:
-            neo_conn.command("reIndex", "test_reindex")
-            neo_reindex_ok = True
-            print("Neo reindex: OK")
-        except Exception as e:
-            neo_reindex_ok = False
-            print(f"Neo reindex: Error - {e}")
+    # NeoSQLite
+    try:
+        with neosqlite.Connection(":memory:") as neo_conn:
+            neo_collection = neo_conn.test_reindex
+            neo_collection.insert_many(
+                [
+                    {"name": "A", "value": 1},
+                    {"name": "B", "value": 2},
+                ]
+            )
+            neo_collection.create_index("name")
 
-        end_neo_timing()
+            # Test reindex
+            start_neo_timing()
+            try:
+                # Use "reindex" (lowercase) which is supported by NeoSQLite command method
+                result = neo_conn.command("reindex", "test_reindex")
+                if result.get("ok"):
+                    neo_reindex_ok = True
+                    print("Neo reindex: OK")
+                else:
+                    print(f"Neo reindex: Failed - {result.get('errmsg')}")
+            finally:
+                end_neo_timing()
+    except Exception as e:
+        print(f"NeoSQLite Error: {e}")
 
+    # MongoDB
     client = test_pymongo_connection()
-    # Initialize MongoDB result variables
-
-    mongo_collection = None
-
-    mongo_db = None
-
-    mongo_reindex_ok = None
-
     if client:
-        mongo_db = client.test_database
-        mongo_collection = mongo_db.test_reindex
-        mongo_collection.delete_many({})
-        mongo_collection.insert_many(
-            [
-                {"name": "A", "value": 1},
-                {"name": "B", "value": 2},
-            ]
-        )
-        mongo_collection.create_index("name")
-
-        start_mongo_timing()
-        # Test reindex (MongoDB command)
         try:
-            mongo_db.command("reIndex", "test_reindex")
-            mongo_reindex_ok = True
-            print("Mongo reIndex command: OK")
+            mongo_db = client.test_database
+            mongo_collection = mongo_db.test_reindex
+            # Ensure clean state
+            mongo_collection.drop()
+            mongo_collection.insert_many(
+                [
+                    {"name": "A", "value": 1},
+                    {"name": "B", "value": 2},
+                ]
+            )
+            mongo_collection.create_index("name")
+
+            # Test reindex
+            start_mongo_timing()
+            try:
+                # MongoDB command name is "reIndex"
+                # Note: reIndex is often restricted or unsupported in some environments
+                result = mongo_db.command("reIndex", "test_reindex")
+                if result.get("ok"):
+                    mongo_reindex_ok = True
+                    print("Mongo reIndex command: OK")
+                else:
+                    print(
+                        f"Mongo reIndex command: Failed - {result.get('errmsg')}"
+                    )
+            except Exception as e:
+                print(f"Mongo reIndex command: Error - {e}")
+            finally:
+                end_mongo_timing()
         except Exception as e:
-            mongo_reindex_ok = False
-            print(f"Mongo reIndex command: Error - {e}")
+            print(f"MongoDB Error: {e}")
+        finally:
+            client.close()
+    else:
+        print("MongoDB not available, skipping Mongo reindex test")
 
-        end_mongo_timing()
-        client.close()
-
+    # Record comparison
     reporter.record_comparison(
         "Reindex Operation",
         "reindex",
-        neo_reindex_ok if neo_reindex_ok else "FAIL",
-        mongo_reindex_ok if mongo_reindex_ok else None,
+        "OK" if neo_reindex_ok else "FAIL",
+        "OK" if mongo_reindex_ok else ("FAIL" if client else None),
         skip_reason="MongoDB not available" if not client else None,
     )

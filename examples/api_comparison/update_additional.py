@@ -24,6 +24,19 @@ def compare_additional_update_operators():
     """Compare additional update operators"""
     print("\n=== Additional Update Operators Comparison ===")
 
+    # Initialize result variables
+    neo_push = False
+    neo_addtoset = False
+    neo_pull = False
+    neo_pop = False
+    neo_currentdate = False
+
+    mongo_push = None
+    mongo_addtoset = None
+    mongo_pull = None
+    mongo_pop = None
+    mongo_currentdate = None
+
     with neosqlite.Connection(":memory:") as neo_conn:
         neo_collection = neo_conn.test_collection
         neo_collection.insert_one(
@@ -31,161 +44,142 @@ def compare_additional_update_operators():
         )
 
         set_accumulation_mode(True)
+
         # Test $push
+        start_neo_timing()
         try:
-            start_neo_timing()
             neo_collection.update_one(
                 {"name": "Alice"}, {"$push": {"tags": "sql"}}
             )
+        finally:
             end_neo_timing()
 
-            doc = neo_collection.find_one({"name": "Alice"})
-            neo_push = "sql" in doc.get("tags", [])
-            print(f"Neo $push: {'OK' if neo_push else 'FAIL'}")
-        except Exception as e:
-            neo_push = False
-            print(f"Neo $push: Error - {e}")
+        doc = neo_collection.find_one({"name": "Alice"})
+        neo_push = "sql" in doc.get("tags", [])
+        print(f"Neo $push: {'OK' if neo_push else 'FAIL'}")
 
-        # Reset for $addToSet (not timed)
+        # Reset for $addToSet
         neo_collection.update_one(
             {"name": "Alice"}, {"$set": {"tags": ["python", "sql"]}}
         )
 
         # Test $addToSet
+        start_neo_timing()
         try:
-            start_neo_timing()
             neo_collection.update_one(
                 {"name": "Alice"}, {"$addToSet": {"tags": "sql"}}
             )
             neo_collection.update_one(
                 {"name": "Alice"}, {"$addToSet": {"tags": "mongodb"}}
             )
+        finally:
             end_neo_timing()
 
-            doc = neo_collection.find_one({"name": "Alice"})
-            tags = doc.get("tags", [])
-            neo_addtoset = (
-                "sql" in tags and "mongodb" in tags and tags.count("sql") == 1
-            )
-            print(f"Neo $addToSet: {'OK' if neo_addtoset else 'FAIL'}")
-        except Exception as e:
-            neo_addtoset = False
-            print(f"Neo $addToSet: Error - {e}")
+        doc = neo_collection.find_one({"name": "Alice"})
+        tags = doc.get("tags", [])
+        neo_addtoset = (
+            "sql" in tags and "mongodb" in tags and tags.count("sql") == 1
+        )
+        print(f"Neo $addToSet: {'OK' if neo_addtoset else 'FAIL'}")
 
-        # Reset for $pull (not timed)
+        # Reset for $pull
         neo_collection.update_one(
             {"name": "Alice"}, {"$set": {"tags": ["python", "sql", "mongodb"]}}
         )
 
         # Test $pull
+        start_neo_timing()
         try:
-            start_neo_timing()
             neo_collection.update_one(
                 {"name": "Alice"}, {"$pull": {"tags": "sql"}}
             )
+        finally:
             end_neo_timing()
 
-            doc = neo_collection.find_one({"name": "Alice"})
-            neo_pull = "sql" not in doc.get("tags", [])
-            print(f"Neo $pull: {'OK' if neo_pull else 'FAIL'}")
-        except Exception as e:
-            neo_pull = False
-            print(f"Neo $pull: Error - {e}")
+        doc = neo_collection.find_one({"name": "Alice"})
+        neo_pull = "sql" not in doc.get("tags", [])
+        print(f"Neo $pull: {'OK' if neo_pull else 'FAIL'}")
 
-        # Reset for $pop (not timed)
+        # Reset for $pop
         neo_collection.update_one(
             {"name": "Alice"}, {"$set": {"tags": ["first", "middle", "last"]}}
         )
 
         # Test $pop (remove last)
+        start_neo_timing()
         try:
-            start_neo_timing()
             neo_collection.update_one({"name": "Alice"}, {"$pop": {"tags": 1}})
+        finally:
             end_neo_timing()
 
-            doc = neo_collection.find_one({"name": "Alice"})
-            neo_pop = doc.get("tags", []) == ["first", "middle"]
-            print(f"Neo $pop (last): {'OK' if neo_pop else 'FAIL'}")
-        except Exception as e:
-            neo_pop = False
-            print(f"Neo $pop: Error - {e}")
+        doc = neo_collection.find_one({"name": "Alice"})
+        neo_pop = doc.get("tags", []) == ["first", "middle"]
+        print(f"Neo $pop (last): {'OK' if neo_pop else 'FAIL'}")
 
-        # Reset for $currentDate (not timed)
+        # Reset for $currentDate
         neo_collection.update_one(
             {"name": "Alice"}, {"$set": {"updated_at": None}}
         )
 
         # Test $currentDate
+        start_neo_timing()
         try:
-            start_neo_timing()
             neo_collection.update_one(
                 {"name": "Alice"}, {"$currentDate": {"updated_at": True}}
             )
+        finally:
             end_neo_timing()
 
-            doc = neo_collection.find_one({"name": "Alice"})
-            updated_at = doc.get("updated_at")
-            # MongoDB returns datetime object, NeoSQLite should too for compatibility
-            neo_currentdate = updated_at is not None and isinstance(
-                updated_at, datetime
-            )
-            print(
-                f"Neo $currentDate: {'OK' if neo_currentdate else 'FAIL'} (returns {type(updated_at).__name__})"
-            )
-        except Exception as e:
-            neo_currentdate = False
-            print(f"Neo $currentDate: Error - {e}")
-
-    client = test_pymongo_connection()
-    # Initialize MongoDB result variables
-
-    mongo_addtoset = None
-    mongo_collection = None
-    mongo_currentdate = None
-    mongo_db = None
-    mongo_pop = None
-    mongo_pull = None
-    mongo_push = None
-
-    if client:
-        mongo_db = client.test_database
-        mongo_collection = mongo_db.test_collection
-        mongo_collection.delete_many({})
-        mongo_collection.insert_one(
-            {"name": "Alice", "tags": ["python"], "score": 100}
+        doc = neo_collection.find_one({"name": "Alice"})
+        updated_at = doc.get("updated_at")
+        neo_currentdate = updated_at is not None and isinstance(
+            updated_at, datetime
+        )
+        print(
+            f"Neo $currentDate: {'OK' if neo_currentdate else 'FAIL'} (returns {type(updated_at).__name__})"
         )
 
-        set_accumulation_mode(True)
-        # Test $push
+    client = test_pymongo_connection()
+    if client:
         try:
-            start_mongo_timing()
-            mongo_collection.update_one(
-                {"name": "Alice"}, {"$push": {"tags": "sql"}}
+            mongo_db = client.test_database
+            mongo_collection = mongo_db.test_collection
+            mongo_collection.delete_many({})
+            mongo_collection.insert_one(
+                {"name": "Alice", "tags": ["python"], "score": 100}
             )
-            end_mongo_timing()
+
+            set_accumulation_mode(True)
+
+            # Test $push
+            start_mongo_timing()
+            try:
+                mongo_collection.update_one(
+                    {"name": "Alice"}, {"$push": {"tags": "sql"}}
+                )
+            finally:
+                end_mongo_timing()
 
             doc = mongo_collection.find_one({"name": "Alice"})
             mongo_push = "sql" in doc.get("tags", [])
             print(f"Mongo $push: {'OK' if mongo_push else 'FAIL'}")
-        except Exception as e:
-            mongo_push = False
-            print(f"Mongo $push: Error - {e}")
 
-        # Reset for $addToSet (not timed)
-        mongo_collection.update_one(
-            {"name": "Alice"}, {"$set": {"tags": ["python", "sql"]}}
-        )
+            # Reset for $addToSet
+            mongo_collection.update_one(
+                {"name": "Alice"}, {"$set": {"tags": ["python", "sql"]}}
+            )
 
-        # Test $addToSet
-        try:
+            # Test $addToSet
             start_mongo_timing()
-            mongo_collection.update_one(
-                {"name": "Alice"}, {"$addToSet": {"tags": "sql"}}
-            )
-            mongo_collection.update_one(
-                {"name": "Alice"}, {"$addToSet": {"tags": "mongodb"}}
-            )
-            end_mongo_timing()
+            try:
+                mongo_collection.update_one(
+                    {"name": "Alice"}, {"$addToSet": {"tags": "sql"}}
+                )
+                mongo_collection.update_one(
+                    {"name": "Alice"}, {"$addToSet": {"tags": "mongodb"}}
+                )
+            finally:
+                end_mongo_timing()
 
             doc = mongo_collection.find_one({"name": "Alice"})
             tags = doc.get("tags", [])
@@ -193,62 +187,58 @@ def compare_additional_update_operators():
                 "sql" in tags and "mongodb" in tags and tags.count("sql") == 1
             )
             print(f"Mongo $addToSet: {'OK' if mongo_addtoset else 'FAIL'}")
-        except Exception as e:
-            mongo_addtoset = False
-            print(f"Mongo $addToSet: Error - {e}")
 
-        # Reset for $pull (not timed)
-        mongo_collection.update_one(
-            {"name": "Alice"}, {"$set": {"tags": ["python", "sql", "mongodb"]}}
-        )
-
-        # Test $pull
-        try:
-            start_mongo_timing()
+            # Reset for $pull
             mongo_collection.update_one(
-                {"name": "Alice"}, {"$pull": {"tags": "sql"}}
+                {"name": "Alice"},
+                {"$set": {"tags": ["python", "sql", "mongodb"]}},
             )
-            end_mongo_timing()
+
+            # Test $pull
+            start_mongo_timing()
+            try:
+                mongo_collection.update_one(
+                    {"name": "Alice"}, {"$pull": {"tags": "sql"}}
+                )
+            finally:
+                end_mongo_timing()
 
             doc = mongo_collection.find_one({"name": "Alice"})
             mongo_pull = "sql" not in doc.get("tags", [])
             print(f"Mongo $pull: {'OK' if mongo_pull else 'FAIL'}")
-        except Exception as e:
-            mongo_pull = False
-            print(f"Mongo $pull: Error - {e}")
 
-        # Reset for $pop (not timed)
-        mongo_collection.update_one(
-            {"name": "Alice"}, {"$set": {"tags": ["first", "middle", "last"]}}
-        )
-
-        # Test $pop (remove last)
-        try:
-            start_mongo_timing()
+            # Reset for $pop
             mongo_collection.update_one(
-                {"name": "Alice"}, {"$pop": {"tags": 1}}
+                {"name": "Alice"},
+                {"$set": {"tags": ["first", "middle", "last"]}},
             )
-            end_mongo_timing()
+
+            # Test $pop (remove last)
+            start_mongo_timing()
+            try:
+                mongo_collection.update_one(
+                    {"name": "Alice"}, {"$pop": {"tags": 1}}
+                )
+            finally:
+                end_mongo_timing()
 
             doc = mongo_collection.find_one({"name": "Alice"})
             mongo_pop = doc.get("tags", []) == ["first", "middle"]
             print(f"Mongo $pop (last): {'OK' if mongo_pop else 'FAIL'}")
-        except Exception as e:
-            mongo_pop = False
-            print(f"Mongo $pop: Error - {e}")
 
-        # Reset for $currentDate (not timed)
-        mongo_collection.update_one(
-            {"name": "Alice"}, {"$set": {"updated_at": None}}
-        )
-
-        # Test $currentDate
-        try:
-            start_mongo_timing()
+            # Reset for $currentDate
             mongo_collection.update_one(
-                {"name": "Alice"}, {"$currentDate": {"updated_at": True}}
+                {"name": "Alice"}, {"$set": {"updated_at": None}}
             )
-            end_mongo_timing()
+
+            # Test $currentDate
+            start_mongo_timing()
+            try:
+                mongo_collection.update_one(
+                    {"name": "Alice"}, {"$currentDate": {"updated_at": True}}
+                )
+            finally:
+                end_mongo_timing()
 
             doc = mongo_collection.find_one({"name": "Alice"})
             updated_at = doc.get("updated_at")
@@ -256,44 +246,23 @@ def compare_additional_update_operators():
             print(
                 f"Mongo $currentDate: {'OK' if mongo_currentdate else 'FAIL'} (returns datetime)"
             )
-        except Exception as e:
-            mongo_currentdate = False
-            print(f"Mongo $currentDate: Error - {e}")
+        finally:
+            client.close()
 
-        client.close()
+    # Record comparisons
+    ops = [
+        ("$push", neo_push, mongo_push),
+        ("$addToSet", neo_addtoset, mongo_addtoset),
+        ("$pull", neo_pull, mongo_pull),
+        ("$pop", neo_pop, mongo_pop),
+        ("$currentDate", neo_currentdate, mongo_currentdate),
+    ]
 
-    reporter.record_comparison(
-        "Update Operators",
-        "$push",
-        neo_push if neo_push else neo_push,
-        mongo_push if mongo_push else mongo_push,
-        skip_reason="MongoDB not available" if not client else None,
-    )
-    reporter.record_comparison(
-        "Update Operators",
-        "$addToSet",
-        neo_addtoset if neo_addtoset else neo_addtoset,
-        mongo_addtoset if mongo_addtoset else mongo_addtoset,
-        skip_reason="MongoDB not available" if not client else None,
-    )
-    reporter.record_comparison(
-        "Update Operators",
-        "$pull",
-        neo_pull if neo_pull else neo_pull,
-        mongo_pull if mongo_pull else mongo_pull,
-        skip_reason="MongoDB not available" if not client else None,
-    )
-    reporter.record_comparison(
-        "Update Operators",
-        "$pop",
-        neo_pop if neo_pop else neo_pop,
-        mongo_pop if mongo_pop else mongo_pop,
-        skip_reason="MongoDB not available" if not client else None,
-    )
-    reporter.record_comparison(
-        "Update Operators",
-        "$currentDate",
-        neo_currentdate if neo_currentdate else neo_currentdate,
-        mongo_currentdate if mongo_currentdate else mongo_currentdate,
-        skip_reason="MongoDB not available" if not client else None,
-    )
+    for op_name, neo_res, mongo_res in ops:
+        reporter.record_comparison(
+            "Update Operators",
+            op_name,
+            neo_res,
+            mongo_res,
+            skip_reason="MongoDB not available" if not client else None,
+        )

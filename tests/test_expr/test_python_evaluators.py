@@ -296,7 +296,7 @@ def test_string_operators(evaluator):
     assert eval_py(evaluator, {"$trim": {"input": "  abc  "}}, doc) == "abc"
     assert eval_py(evaluator, {"$ltrim": {"input": "  abc  "}}, doc) == "abc  "
     assert eval_py(evaluator, {"$rtrim": {"input": "  abc  "}}, doc) == "  abc"
-    assert eval_py(evaluator, {"$indexOfBytes": ["l", "hello"]}, doc) == 2
+    assert eval_py(evaluator, {"$indexOfBytes": ["hello", "l"]}, doc) == 2
     assert (
         eval_py(
             evaluator, {"$regexMatch": {"input": "hello", "regex": "ell"}}, doc
@@ -338,7 +338,7 @@ def test_string_operators(evaluator):
     )
     assert eval_py(evaluator, {"$strLenCP": "hello"}, doc) == 5
     assert eval_py(evaluator, {"$substrCP": ["hello", 1, 2]}, doc) == "el"
-    assert eval_py(evaluator, {"$indexOfCP": ["l", "hello"]}, doc) == 2
+    assert eval_py(evaluator, {"$indexOfCP": ["hello", "l"]}, doc) == 2
     assert eval_py(evaluator, {"$strcasecmp": ["abc", "ABC"]}, doc) == 0
     assert eval_py(evaluator, {"$substrBytes": ["你好", 0, 3]}, doc) == "你"
 
@@ -347,7 +347,7 @@ def test_string_operators(evaluator):
         evaluator, {"$regexFind": {"input": "abc123def", "regex": "\\d+"}}, doc
     )
     assert res["match"] == "123"
-    assert res["index"] == 3
+    assert res["idx"] == 3
 
     res_all = eval_py(
         evaluator, {"$regexFindAll": {"input": "a1b2", "regex": "\\d"}}, doc

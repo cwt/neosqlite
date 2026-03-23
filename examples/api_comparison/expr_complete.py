@@ -1,5 +1,6 @@
 """Module for comparing additional $expr operators complete coverage between NeoSQLite and PyMongo"""
 
+import os
 import warnings
 
 import neosqlite
@@ -18,10 +19,16 @@ warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
 )
 
+# Check if we're running against NX-27017 (NeoSQLite backend)
+IS_NX27017_BACKEND = os.environ.get("NX27017_BACKEND", "").lower() == "true"
+
 
 def compare_additional_expr_operators_complete():
     """Compare all remaining $expr operators not yet tested"""
     print("\n=== Additional $expr Operators (Complete Coverage) ===")
+
+    neo_results = {}
+    mongo_results = {}
 
     with neosqlite.Connection(":memory:") as neo_conn:
         set_accumulation_mode(True)
@@ -47,614 +54,503 @@ def compare_additional_expr_operators_complete():
             ]
         )
 
+        # $map
         start_neo_timing()
-        # Test $map
         try:
-            start_neo_timing()
-            result = list(
-                neo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "doubled": {
-                                    "$map": {
-                                        "input": "$values",
-                                        "as": "v",
-                                        "in": {"$multiply": ["$$v", 2]},
-                                    }
-                                }
+            pipeline = [
+                {
+                    "$project": {
+                        "doubled": {
+                            "$map": {
+                                "input": "$values",
+                                "as": "v",
+                                "in": {"$multiply": ["$$v", 2]},
                             }
                         }
-                    ]
-                )
-            )
-            end_neo_timing()
-            neo_map = len(result) == 2
-            print(f"Neo $map: {'OK' if neo_map else 'FAIL'}")
-        except Exception as e:
-            neo_map = False
-            print(f"Neo $map: Error - {e}")
-
-        # Test $reduce
-        try:
-            start_neo_timing()
-            result = list(
-                neo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "sum": {
-                                    "$reduce": {
-                                        "input": "$values",
-                                        "initialValue": 0,
-                                        "in": {"$add": ["$$value", "$$this"]},
-                                    }
-                                }
-                            }
-                        }
-                    ]
-                )
-            )
-            end_neo_timing()
-            neo_reduce = len(result) == 2
-            print(f"Neo $reduce: {'OK' if neo_reduce else 'FAIL'}")
-        except Exception as e:
-            neo_reduce = False
-            print(f"Neo $reduce: Error - {e}")
-
-        # Test $indexOfArray
-        try:
-            start_neo_timing()
-            result = list(
-                neo_collection.aggregate(
-                    [{"$project": {"index": {"$indexOfArray": ["$values", 3]}}}]
-                )
-            )
-            end_neo_timing()
-            neo_indexofarray = len(result) == 2
-            print(f"Neo $indexOfArray: {'OK' if neo_indexofarray else 'FAIL'}")
-        except Exception as e:
-            neo_indexofarray = False
-            print(f"Neo $indexOfArray: Error - {e}")
-
-        # Test $setEquals
-        try:
-            result = list(
-                neo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "equals": {"$setEquals": [[1, 2, 3], [3, 2, 1]]}
-                            }
-                        }
-                    ]
-                )
-            )
-            neo_setequals = len(result) == 2
-            print(f"Neo $setEquals: {'OK' if neo_setequals else 'FAIL'}")
-        except Exception as e:
-            neo_setequals = False
-            print(f"Neo $setEquals: Error - {e}")
-
-        # Test $setIntersection
-        try:
-            result = list(
-                neo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "intersection": {
-                                    "$setIntersection": [
-                                        [1, 2, 3],
-                                        [2, 3, 4],
-                                    ]
-                                }
-                            }
-                        }
-                    ]
-                )
-            )
-            neo_setintersection = len(result) == 2
-            print(
-                f"Neo $setIntersection: {'OK' if neo_setintersection else 'FAIL'}"
-            )
-        except Exception as e:
-            neo_setintersection = False
-            print(f"Neo $setIntersection: Error - {e}")
-
-        # Test $setUnion
-        try:
-            result = list(
-                neo_collection.aggregate(
-                    [{"$project": {"union": {"$setUnion": [[1, 2], [3, 4]]}}}]
-                )
-            )
-            neo_setunion = len(result) == 2
-            print(f"Neo $setUnion: {'OK' if neo_setunion else 'FAIL'}")
-        except Exception as e:
-            neo_setunion = False
-            print(f"Neo $setUnion: Error - {e}")
-
-        # Test $setDifference
-        try:
-            result = list(
-                neo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "difference": {
-                                    "$setDifference": [
-                                        [1, 2, 3],
-                                        [2, 3, 4],
-                                    ]
-                                }
-                            }
-                        }
-                    ]
-                )
-            )
-            neo_setdifference = len(result) == 2
-            print(
-                f"Neo $setDifference: {'OK' if neo_setdifference else 'FAIL'}"
-            )
-        except Exception as e:
-            neo_setdifference = False
-            print(f"Neo $setDifference: Error - {e}")
-
-        # Test $setIsSubset
-        try:
-            result = list(
-                neo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "issubset": {
-                                    "$setIsSubset": [[1, 2], [1, 2, 3]]
-                                }
-                            }
-                        }
-                    ]
-                )
-            )
-            neo_setissubset = len(result) == 2
-            print(f"Neo $setIsSubset: {'OK' if neo_setissubset else 'FAIL'}")
-        except Exception as e:
-            neo_setissubset = False
-            print(f"Neo $setIsSubset: Error - {e}")
-
-        # Test $anyElementTrue - MongoDB format: array directly
-        try:
-            result = list(
-                neo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "anytrue": {
-                                    "$anyElementTrue": [[True, False, True]]
-                                }
-                            }
-                        }
-                    ]
-                )
-            )
-            neo_anyelementtrue = len(result) == 2
-            print(
-                f"Neo $anyElementTrue: {'OK' if neo_anyelementtrue else 'FAIL'}"
-            )
-        except Exception as e:
-            neo_anyelementtrue = False
-            print(f"Neo $anyElementTrue: Error - {e}")
-
-        # Test $allElementsTrue - MongoDB format: array directly
-        try:
-            result = list(
-                neo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "alltrue": {
-                                    "$allElementsTrue": [[True, True, True]]
-                                }
-                            }
-                        }
-                    ]
-                )
-            )
-            neo_allelementstrue = len(result) == 2
-            print(
-                f"Neo $allElementsTrue: {'OK' if neo_allelementstrue else 'FAIL'}"
-            )
-        except Exception as e:
-            neo_allelementstrue = False
-            print(f"Neo $allElementsTrue: Error - {e}")
-
-        # Test $nor - Query operator (not $expr operator), use at top level
-        try:
-            result = list(
-                neo_collection.find(
-                    {
-                        "$nor": [
-                            {"name": "A"},
-                            {"name": "B"},
-                        ]
                     }
-                )
-            )
-            neo_nor = len(result) == 0  # Should match neither A nor B
-            print(f"Neo $nor: {'OK' if neo_nor else 'FAIL'}")
+                }
+            ]
+            result = list(neo_collection.aggregate(pipeline))
+            neo_results["map"] = result
+            print("Neo $map: OK")
         except Exception as e:
-            neo_nor = False
+            neo_results["map"] = f"Error: {e}"
+            print(f"Neo $map: Error - {e}")
+        finally:
+            end_neo_timing()
+
+        # $reduce
+        start_neo_timing()
+        try:
+            pipeline = [
+                {
+                    "$project": {
+                        "sum": {
+                            "$reduce": {
+                                "input": "$values",
+                                "initialValue": 0,
+                                "in": {"$add": ["$$value", "$$this"]},
+                            }
+                        }
+                    }
+                }
+            ]
+            result = list(neo_collection.aggregate(pipeline))
+            neo_results["reduce"] = result
+            print("Neo $reduce: OK")
+        except Exception as e:
+            neo_results["reduce"] = f"Error: {e}"
+            print(f"Neo $reduce: Error - {e}")
+        finally:
+            end_neo_timing()
+
+        # $indexOfArray
+        start_neo_timing()
+        try:
+            pipeline = [
+                {"$project": {"index": {"$indexOfArray": ["$values", 3]}}}
+            ]
+            result = list(neo_collection.aggregate(pipeline))
+            neo_results["indexOfArray"] = result
+            print("Neo $indexOfArray: OK")
+        except Exception as e:
+            neo_results["indexOfArray"] = f"Error: {e}"
+            print(f"Neo $indexOfArray: Error - {e}")
+        finally:
+            end_neo_timing()
+
+        # $setEquals
+        start_neo_timing()
+        try:
+            pipeline = [
+                {"$project": {"equals": {"$setEquals": [[1, 2, 3], [3, 2, 1]]}}}
+            ]
+            result = list(neo_collection.aggregate(pipeline))
+            neo_results["setEquals"] = result
+            print("Neo $setEquals: OK")
+        except Exception as e:
+            neo_results["setEquals"] = f"Error: {e}"
+            print(f"Neo $setEquals: Error - {e}")
+        finally:
+            end_neo_timing()
+
+        # $setIntersection
+        start_neo_timing()
+        try:
+            pipeline = [
+                {
+                    "$project": {
+                        "intersection": {
+                            "$setIntersection": [[1, 2, 3], [2, 3, 4]]
+                        }
+                    }
+                }
+            ]
+            result = list(neo_collection.aggregate(pipeline))
+            neo_results["setIntersection"] = result
+            print("Neo $setIntersection: OK")
+        except Exception as e:
+            neo_results["setIntersection"] = f"Error: {e}"
+            print(f"Neo $setIntersection: Error - {e}")
+        finally:
+            end_neo_timing()
+
+        # $setUnion
+        start_neo_timing()
+        try:
+            pipeline = [
+                {"$project": {"union": {"$setUnion": [[1, 2], [3, 4]]}}}
+            ]
+            result = list(neo_collection.aggregate(pipeline))
+            neo_results["setUnion"] = result
+            print("Neo $setUnion: OK")
+        except Exception as e:
+            neo_results["setUnion"] = f"Error: {e}"
+            print(f"Neo $setUnion: Error - {e}")
+        finally:
+            end_neo_timing()
+
+        # $setDifference
+        start_neo_timing()
+        try:
+            pipeline = [
+                {
+                    "$project": {
+                        "difference": {"$setDifference": [[1, 2, 3], [2, 3, 4]]}
+                    }
+                }
+            ]
+            result = list(neo_collection.aggregate(pipeline))
+            neo_results["setDifference"] = result
+            print("Neo $setDifference: OK")
+        except Exception as e:
+            neo_results["setDifference"] = f"Error: {e}"
+            print(f"Neo $setDifference: Error - {e}")
+        finally:
+            end_neo_timing()
+
+        # $setIsSubset
+        start_neo_timing()
+        try:
+            pipeline = [
+                {
+                    "$project": {
+                        "issubset": {"$setIsSubset": [[1, 2], [1, 2, 3]]}
+                    }
+                }
+            ]
+            result = list(neo_collection.aggregate(pipeline))
+            neo_results["setIsSubset"] = result
+            print("Neo $setIsSubset: OK")
+        except Exception as e:
+            neo_results["setIsSubset"] = f"Error: {e}"
+            print(f"Neo $setIsSubset: Error - {e}")
+        finally:
+            end_neo_timing()
+
+        # $anyElementTrue
+        start_neo_timing()
+        try:
+            pipeline = [
+                {
+                    "$project": {
+                        "anytrue": {"$anyElementTrue": [[True, False, True]]}
+                    }
+                }
+            ]
+            result = list(neo_collection.aggregate(pipeline))
+            neo_results["anyElementTrue"] = result
+            print("Neo $anyElementTrue: OK")
+        except Exception as e:
+            neo_results["anyElementTrue"] = f"Error: {e}"
+            print(f"Neo $anyElementTrue: Error - {e}")
+        finally:
+            end_neo_timing()
+
+        # $allElementsTrue
+        start_neo_timing()
+        try:
+            pipeline = [
+                {
+                    "$project": {
+                        "alltrue": {"$allElementsTrue": [[True, True, True]]}
+                    }
+                }
+            ]
+            result = list(neo_collection.aggregate(pipeline))
+            neo_results["allElementsTrue"] = result
+            print("Neo $allElementsTrue: OK")
+        except Exception as e:
+            neo_results["allElementsTrue"] = f"Error: {e}"
+            print(f"Neo $allElementsTrue: Error - {e}")
+        finally:
+            end_neo_timing()
+
+        # $nor
+        start_neo_timing()
+        try:
+            result = list(
+                neo_collection.find({"$nor": [{"name": "A"}, {"name": "B"}]})
+            )
+            neo_results["nor"] = result
+            print("Neo $nor: OK")
+        except Exception as e:
+            neo_results["nor"] = f"Error: {e}"
             print(f"Neo $nor: Error - {e}")
+        finally:
+            end_neo_timing()
 
-        # Test $literal - use a value that doesn't look like an operator
+        # $literal
+        start_neo_timing()
         try:
-            result = list(
-                neo_collection.aggregate(
-                    [{"$project": {"literal": {"$literal": "literal_value"}}}]
-                )
-            )
-            neo_literal = len(result) == 2
-            print(f"Neo $literal: {'OK' if neo_literal else 'FAIL'}")
+            pipeline = [
+                {"$project": {"literal": {"$literal": "literal_value"}}}
+            ]
+            result = list(neo_collection.aggregate(pipeline))
+            neo_results["literal"] = result
+            print("Neo $literal: OK")
         except Exception as e:
-            neo_literal = False
+            neo_results["literal"] = f"Error: {e}"
             print(f"Neo $literal: Error - {e}")
+        finally:
+            end_neo_timing()
 
-        # Test $setField
+        # $setField
+        start_neo_timing()
         try:
-            result = list(
-                neo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "updated": {
-                                    "$setField": {
-                                        "field": "new_field",
-                                        "input": "$meta",
-                                        "value": "new_value",
-                                    }
-                                }
+            pipeline = [
+                {
+                    "$project": {
+                        "updated": {
+                            "$setField": {
+                                "field": "new_field",
+                                "input": "$meta",
+                                "value": "new_value",
                             }
                         }
-                    ]
-                )
-            )
-            neo_setfield = len(result) == 2
-            print(f"Neo $setField: {'OK' if neo_setfield else 'FAIL'}")
+                    }
+                }
+            ]
+            result = list(neo_collection.aggregate(pipeline))
+            neo_results["setField"] = result
+            print("Neo $setField: OK")
         except Exception as e:
-            neo_setfield = False
+            neo_results["setField"] = f"Error: {e}"
             print(f"Neo $setField: Error - {e}")
+        finally:
+            end_neo_timing()
 
-        # Test $unsetField
+        # $unsetField
+        start_neo_timing()
         try:
-            result = list(
-                neo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "removed": {
-                                    "$unsetField": {
-                                        "field": "count",
-                                        "input": "$meta",
-                                    }
-                                }
-                            }
+            pipeline = [
+                {
+                    "$project": {
+                        "removed": {
+                            "$unsetField": {"field": "count", "input": "$meta"}
                         }
-                    ]
-                )
-            )
-            neo_unsetfield = len(result) == 2
-            print(f"Neo $unsetField: {'OK' if neo_unsetfield else 'FAIL'}")
+                    }
+                }
+            ]
+            result = list(neo_collection.aggregate(pipeline))
+            neo_results["unsetField"] = result
+            print("Neo $unsetField: OK")
         except Exception as e:
-            neo_unsetfield = False
+            neo_results["unsetField"] = f"Error: {e}"
             print(f"Neo $unsetField: Error - {e}")
+        finally:
+            end_neo_timing()
 
-        # Test $log2
+        # $log2
+        start_neo_timing()
         try:
-            result = list(
-                neo_collection.aggregate(
-                    [{"$project": {"log2": {"$log2": "$num"}}}]
-                )
-            )
-            neo_log2 = len(result) == 2
-            print(f"Neo $log2: {'OK' if neo_log2 else 'FAIL'}")
+            pipeline = [{"$project": {"log2": {"$log2": "$num"}}}]
+            result = list(neo_collection.aggregate(pipeline))
+            neo_results["log2"] = result
+            print("Neo $log2: OK")
         except Exception as e:
-            neo_log2 = False
+            neo_results["log2"] = f"Error: {e}"
             print(f"Neo $log2: Error - {e}")
+        finally:
+            end_neo_timing()
 
-        # Test $sigmoid (MongoDB 8.0+)
+        # $sigmoid
+        start_neo_timing()
         try:
-            result = list(
-                neo_collection.aggregate(
-                    [{"$project": {"sigmoid": {"$sigmoid": 0}}}]
-                )
-            )
-            neo_sigmoid = len(result) == 2
-            print(f"Neo $sigmoid: {'OK' if neo_sigmoid else 'FAIL'}")
+            pipeline = [{"$project": {"sigmoid": {"$sigmoid": 0}}}]
+            result = list(neo_collection.aggregate(pipeline))
+            neo_results["sigmoid"] = result
+            print("Neo $sigmoid: OK")
         except Exception as e:
-            neo_sigmoid = False
+            neo_results["sigmoid"] = f"Error: {e}"
             print(f"Neo $sigmoid: Error - {e}")
+        finally:
+            end_neo_timing()
 
-        # Test $asinh
+        # $asinh
+        start_neo_timing()
         try:
-            result = list(
-                neo_collection.aggregate(
-                    [{"$project": {"asinh": {"$asinh": 1}}}]
-                )
-            )
-            neo_asinh = len(result) == 2
-            print(f"Neo $asinh: {'OK' if neo_asinh else 'FAIL'}")
+            pipeline = [{"$project": {"asinh": {"$asinh": 1}}}]
+            result = list(neo_collection.aggregate(pipeline))
+            neo_results["asinh"] = result
+            print("Neo $asinh: OK")
         except Exception as e:
-            neo_asinh = False
+            neo_results["asinh"] = f"Error: {e}"
             print(f"Neo $asinh: Error - {e}")
+        finally:
+            end_neo_timing()
 
-        # Test $acosh
+        # $acosh
+        start_neo_timing()
         try:
-            result = list(
-                neo_collection.aggregate(
-                    [{"$project": {"acosh": {"$acosh": 2}}}]
-                )
-            )
-            neo_acosh = len(result) == 2
-            print(f"Neo $acosh: {'OK' if neo_acosh else 'FAIL'}")
+            pipeline = [{"$project": {"acosh": {"$acosh": 2}}}]
+            result = list(neo_collection.aggregate(pipeline))
+            neo_results["acosh"] = result
+            print("Neo $acosh: OK")
         except Exception as e:
-            neo_acosh = False
+            neo_results["acosh"] = f"Error: {e}"
             print(f"Neo $acosh: Error - {e}")
+        finally:
+            end_neo_timing()
 
-        # Test $atanh
+        # $atanh
+        start_neo_timing()
         try:
-            result = list(
-                neo_collection.aggregate(
-                    [{"$project": {"atanh": {"$atanh": 0.5}}}]
-                )
-            )
-            neo_atanh = len(result) == 2
-            print(f"Neo $atanh: {'OK' if neo_atanh else 'FAIL'}")
+            pipeline = [{"$project": {"atanh": {"$atanh": 0.5}}}]
+            result = list(neo_collection.aggregate(pipeline))
+            neo_results["atanh"] = result
+            print("Neo $atanh: OK")
         except Exception as e:
-            neo_atanh = False
+            neo_results["atanh"] = f"Error: {e}"
             print(f"Neo $atanh: Error - {e}")
+        finally:
+            end_neo_timing()
 
-        # Test $regexMatch
+        # $regexMatch
+        start_neo_timing()
         try:
-            result = list(
-                neo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "matches": {
-                                    "$regexMatch": {
-                                        "input": "$str",
-                                        "regex": "Hello|foo",
-                                    }
-                                }
+            pipeline = [
+                {
+                    "$project": {
+                        "matches": {
+                            "$regexMatch": {
+                                "input": "$str",
+                                "regex": "Hello|foo",
                             }
                         }
-                    ]
-                )
-            )
-            neo_regexmatch = len(result) == 2
-            print(f"Neo $regexMatch: {'OK' if neo_regexmatch else 'FAIL'}")
+                    }
+                }
+            ]
+            result = list(neo_collection.aggregate(pipeline))
+            neo_results["regexMatch"] = result
+            print("Neo $regexMatch: OK")
         except Exception as e:
-            neo_regexmatch = False
+            neo_results["regexMatch"] = f"Error: {e}"
             print(f"Neo $regexMatch: Error - {e}")
+        finally:
+            end_neo_timing()
 
-        # Test $replaceOne
+        # $replaceOne
+        start_neo_timing()
         try:
-            result = list(
-                neo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "replaced": {
-                                    "$replaceOne": {
-                                        "input": "$str",
-                                        "find": "o",
-                                        "replacement": "0",
-                                    }
-                                }
+            pipeline = [
+                {
+                    "$project": {
+                        "replaced": {
+                            "$replaceOne": {
+                                "input": "$str",
+                                "find": "o",
+                                "replacement": "0",
                             }
                         }
-                    ]
-                )
-            )
-            neo_replaceone = len(result) == 2
-            print(f"Neo $replaceOne: {'OK' if neo_replaceone else 'FAIL'}")
+                    }
+                }
+            ]
+            result = list(neo_collection.aggregate(pipeline))
+            neo_results["replaceOne"] = result
+            print("Neo $replaceOne: OK")
         except Exception as e:
-            neo_replaceone = False
+            neo_results["replaceOne"] = f"Error: {e}"
             print(f"Neo $replaceOne: Error - {e}")
+        finally:
+            end_neo_timing()
 
-        # Test $ltrim
+        # $ltrim
+        start_neo_timing()
         try:
-            result = list(
-                neo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "trimmed": {"$ltrim": {"input": "  hello  "}}
-                            }
-                        }
-                    ]
-                )
-            )
-            neo_ltrim = len(result) == 2
-            print(f"Neo $ltrim: {'OK' if neo_ltrim else 'FAIL'}")
+            pipeline = [
+                {"$project": {"trimmed": {"$ltrim": {"input": "  hello  "}}}}
+            ]
+            result = list(neo_collection.aggregate(pipeline))
+            neo_results["ltrim"] = result
+            print("Neo $ltrim: OK")
         except Exception as e:
-            neo_ltrim = False
+            neo_results["ltrim"] = f"Error: {e}"
             print(f"Neo $ltrim: Error - {e}")
+        finally:
+            end_neo_timing()
 
-        # Test $rtrim
+        # $rtrim
+        start_neo_timing()
         try:
-            result = list(
-                neo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "trimmed": {"$rtrim": {"input": "  hello  "}}
-                            }
-                        }
-                    ]
-                )
-            )
-            neo_rtrim = len(result) == 2
-            print(f"Neo $rtrim: {'OK' if neo_rtrim else 'FAIL'}")
+            pipeline = [
+                {"$project": {"trimmed": {"$rtrim": {"input": "  hello  "}}}}
+            ]
+            result = list(neo_collection.aggregate(pipeline))
+            neo_results["rtrim"] = result
+            print("Neo $rtrim: OK")
         except Exception as e:
-            neo_rtrim = False
+            neo_results["rtrim"] = f"Error: {e}"
             print(f"Neo $rtrim: Error - {e}")
+        finally:
+            end_neo_timing()
 
-        # Test $indexOfBytes
+        # $indexOfBytes
+        start_neo_timing()
         try:
-            result = list(
-                neo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "index": {"$indexOfBytes": ["$str", "World"]}
-                            }
-                        }
-                    ]
-                )
-            )
-            neo_indexofbytes = len(result) == 2
-            print(f"Neo $indexOfBytes: {'OK' if neo_indexofbytes else 'FAIL'}")
+            pipeline = [
+                {"$project": {"index": {"$indexOfBytes": ["$str", "World"]}}}
+            ]
+            result = list(neo_collection.aggregate(pipeline))
+            neo_results["indexOfBytes"] = result
+            print("Neo $indexOfBytes: OK")
         except Exception as e:
-            neo_indexofbytes = False
+            neo_results["indexOfBytes"] = f"Error: {e}"
             print(f"Neo $indexOfBytes: Error - {e}")
+        finally:
+            end_neo_timing()
 
-        # Test $toLong
+        # $toLong
+        start_neo_timing()
         try:
-            result = list(
-                neo_collection.aggregate(
-                    [{"$project": {"long": {"$toLong": "$num"}}}]
-                )
-            )
-            neo_tolong = len(result) == 2
-            print(f"Neo $toLong: {'OK' if neo_tolong else 'FAIL'}")
+            pipeline = [{"$project": {"long": {"$toLong": "$num"}}}]
+            result = list(neo_collection.aggregate(pipeline))
+            neo_results["toLong"] = result
+            print("Neo $toLong: OK")
         except Exception as e:
-            neo_tolong = False
+            neo_results["toLong"] = f"Error: {e}"
             print(f"Neo $toLong: Error - {e}")
+        finally:
+            end_neo_timing()
 
-        # Test $toDecimal
+        # $toDecimal
+        start_neo_timing()
         try:
-            result = list(
-                neo_collection.aggregate(
-                    [{"$project": {"decimal": {"$toDecimal": "$num"}}}]
-                )
-            )
-            neo_todecimal = len(result) == 2
-            print(f"Neo $toDecimal: {'OK' if neo_todecimal else 'FAIL'}")
+            pipeline = [{"$project": {"decimal": {"$toDecimal": "$num"}}}]
+            result = list(neo_collection.aggregate(pipeline))
+            neo_results["toDecimal"] = result
+            print("Neo $toDecimal: OK")
         except Exception as e:
-            neo_todecimal = False
+            neo_results["toDecimal"] = f"Error: {e}"
             print(f"Neo $toDecimal: Error - {e}")
+        finally:
+            end_neo_timing()
 
-        # Test $toObjectId
+        # $toObjectId
+        start_neo_timing()
         try:
-            result = list(
-                neo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "oid": {
-                                    "$toObjectId": "507f1f77bcf86cd799439011"
-                                }
-                            }
-                        }
-                    ]
-                )
-            )
-            neo_toobjectid = len(result) == 2
-            print(f"Neo $toObjectId: {'OK' if neo_toobjectid else 'FAIL'}")
+            pipeline = [
+                {
+                    "$project": {
+                        "oid": {"$toObjectId": "507f1f77bcf86cd799439011"}
+                    }
+                }
+            ]
+            result = list(neo_collection.aggregate(pipeline))
+            neo_results["toObjectId"] = result
+            print("Neo $toObjectId: OK")
         except Exception as e:
-            neo_toobjectid = False
+            neo_results["toObjectId"] = f"Error: {e}"
             print(f"Neo $toObjectId: Error - {e}")
+        finally:
+            end_neo_timing()
 
-        # Test $convert
+        # $convert
+        start_neo_timing()
         try:
-            result = list(
-                neo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "converted": {
-                                    "$convert": {
-                                        "input": "$str",
-                                        "to": "int",
-                                    }
-                                }
+            pipeline = [
+                {
+                    "$project": {
+                        "converted": {
+                            "$convert": {
+                                "input": "$str",
+                                "to": "int",
+                                "onError": None,
                             }
                         }
-                    ]
-                )
-            )
-            neo_convert = len(result) == 2
-            print(f"Neo $convert: {'OK' if neo_convert else 'FAIL'}")
+                    }
+                }
+            ]
+            result = list(neo_collection.aggregate(pipeline))
+            neo_results["convert"] = result
+            print("Neo $convert: OK")
         except Exception as e:
-            neo_convert = False
+            neo_results["convert"] = f"Error: {e}"
             print(f"Neo $convert: Error - {e}")
-
-        end_neo_timing()
+        finally:
+            end_neo_timing()
 
     client = test_pymongo_connection()
-    # Initialize MongoDB result variables
-
-    mongo_acosh = None
-
-    mongo_allelementstrue = None
-
-    mongo_anyelementtrue = None
-
-    mongo_asinh = None
-
-    mongo_atanh = None
-
-    mongo_collection = None
-
-    mongo_convert = None
-
-    mongo_db = None
-
-    mongo_indexofarray = None
-
-    mongo_indexofbytes = None
-
-    mongo_literal = None
-
-    mongo_log2 = None
-
-    mongo_ltrim = None
-
-    mongo_map = None
-
-    mongo_nor = None
-
-    mongo_reduce = None
-
-    mongo_regexmatch = None
-
-    mongo_replaceone = None
-
-    mongo_rtrim = None
-
-    mongo_setdifference = None
-
-    mongo_setequals = None
-
-    mongo_setfield = None
-
-    mongo_setintersection = None
-
-    mongo_setissubset = None
-
-    mongo_setunion = None
-
-    mongo_sigmoid = None
-
-    mongo_todecimal = None
-
-    mongo_tolong = None
-
-    mongo_toobjectid = None
-
-    mongo_unsetfield = None
-
     if client:
         set_accumulation_mode(True)
         mongo_db = client.test_database
@@ -681,738 +577,564 @@ def compare_additional_expr_operators_complete():
             ]
         )
 
+        # $map
         start_mongo_timing()
-        # Test $map
         try:
-            result = list(
-                mongo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "doubled": {
-                                    "$map": {
-                                        "input": "$values",
-                                        "as": "v",
-                                        "in": {"$multiply": ["$$v", 2]},
-                                    }
-                                }
+            pipeline = [
+                {
+                    "$project": {
+                        "doubled": {
+                            "$map": {
+                                "input": "$values",
+                                "as": "v",
+                                "in": {"$multiply": ["$$v", 2]},
                             }
                         }
-                    ]
-                )
-            )
-            mongo_map = len(result) == 2
-            print(f"Mongo $map: {'OK' if mongo_map else 'FAIL'}")
-        except Exception as e:
-            mongo_map = False
-            print(f"Mongo $map: Error - {e}")
-
-        # Test $reduce
-        try:
-            result = list(
-                mongo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "sum": {
-                                    "$reduce": {
-                                        "input": "$values",
-                                        "initialValue": 0,
-                                        "in": {"$add": ["$$value", "$$this"]},
-                                    }
-                                }
-                            }
-                        }
-                    ]
-                )
-            )
-            mongo_reduce = len(result) == 2
-            print(f"Mongo $reduce: {'OK' if mongo_reduce else 'FAIL'}")
-        except Exception as e:
-            mongo_reduce = False
-            print(f"Mongo $reduce: Error - {e}")
-
-        # Test $indexOfArray
-        try:
-            result = list(
-                mongo_collection.aggregate(
-                    [{"$project": {"index": {"$indexOfArray": ["$values", 3]}}}]
-                )
-            )
-            mongo_indexofarray = len(result) == 2
-            print(
-                f"Mongo $indexOfArray: {'OK' if mongo_indexofarray else 'FAIL'}"
-            )
-        except Exception as e:
-            mongo_indexofarray = False
-            print(f"Mongo $indexOfArray: Error - {e}")
-
-        # Test $setEquals
-        try:
-            result = list(
-                mongo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "equals": {"$setEquals": [[1, 2, 3], [3, 2, 1]]}
-                            }
-                        }
-                    ]
-                )
-            )
-            mongo_setequals = len(result) == 2
-            print(f"Mongo $setEquals: {'OK' if mongo_setequals else 'FAIL'}")
-        except Exception as e:
-            mongo_setequals = False
-            print(f"Mongo $setEquals: Error - {e}")
-
-        # Test $setIntersection
-        try:
-            result = list(
-                mongo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "intersection": {
-                                    "$setIntersection": [
-                                        [1, 2, 3],
-                                        [2, 3, 4],
-                                    ]
-                                }
-                            }
-                        }
-                    ]
-                )
-            )
-            mongo_setintersection = len(result) == 2
-            print(
-                f"Mongo $setIntersection: {'OK' if mongo_setintersection else 'FAIL'}"
-            )
-        except Exception as e:
-            mongo_setintersection = False
-            print(f"Mongo $setIntersection: Error - {e}")
-
-        # Test $setUnion
-        try:
-            result = list(
-                mongo_collection.aggregate(
-                    [{"$project": {"union": {"$setUnion": [[1, 2], [3, 4]]}}}]
-                )
-            )
-            mongo_setunion = len(result) == 2
-            print(f"Mongo $setUnion: {'OK' if mongo_setunion else 'FAIL'}")
-        except Exception as e:
-            mongo_setunion = False
-            print(f"Mongo $setUnion: Error - {e}")
-
-        # Test $setDifference
-        try:
-            result = list(
-                mongo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "difference": {
-                                    "$setDifference": [
-                                        [1, 2, 3],
-                                        [2, 3, 4],
-                                    ]
-                                }
-                            }
-                        }
-                    ]
-                )
-            )
-            mongo_setdifference = len(result) == 2
-            print(
-                f"Mongo $setDifference: {'OK' if mongo_setdifference else 'FAIL'}"
-            )
-        except Exception as e:
-            mongo_setdifference = False
-            print(f"Mongo $setDifference: Error - {e}")
-
-        # Test $setIsSubset
-        try:
-            result = list(
-                mongo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "issubset": {
-                                    "$setIsSubset": [[1, 2], [1, 2, 3]]
-                                }
-                            }
-                        }
-                    ]
-                )
-            )
-            mongo_setissubset = len(result) == 2
-            print(
-                f"Mongo $setIsSubset: {'OK' if mongo_setissubset else 'FAIL'}"
-            )
-        except Exception as e:
-            mongo_setissubset = False
-            print(f"Mongo $setIsSubset: Error - {e}")
-
-        # Test $anyElementTrue - MongoDB format: array directly
-        try:
-            result = list(
-                mongo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "anytrue": {
-                                    "$anyElementTrue": [[True, False, True]]
-                                }
-                            }
-                        }
-                    ]
-                )
-            )
-            mongo_anyelementtrue = len(result) == 2
-            print(
-                f"Mongo $anyElementTrue: {'OK' if mongo_anyelementtrue else 'FAIL'}"
-            )
-        except Exception as e:
-            mongo_anyelementtrue = False
-            print(f"Mongo $anyElementTrue: Error - {e}")
-
-        # Test $allElementsTrue - MongoDB format: array directly
-        try:
-            result = list(
-                mongo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "alltrue": {
-                                    "$allElementsTrue": [[True, True, True]]
-                                }
-                            }
-                        }
-                    ]
-                )
-            )
-            mongo_allelementstrue = len(result) == 2
-            print(
-                f"Mongo $allElementsTrue: {'OK' if mongo_allelementstrue else 'FAIL'}"
-            )
-        except Exception as e:
-            mongo_allelementstrue = False
-            print(f"Mongo $allElementsTrue: Error - {e}")
-
-        # Test $nor - Query operator (not $expr operator), use at top level
-        try:
-            result = list(
-                mongo_collection.find(
-                    {
-                        "$nor": [
-                            {"name": "A"},
-                            {"name": "B"},
-                        ]
                     }
-                )
-            )
-            mongo_nor = len(result) == 0
-            print(f"Mongo $nor: {'OK' if mongo_nor else 'FAIL'}")
+                }
+            ]
+            result = list(mongo_collection.aggregate(pipeline))
+            mongo_results["map"] = result
+            print("Mongo $map: OK")
         except Exception as e:
-            mongo_nor = False
+            mongo_results["map"] = f"Error: {e}"
+            print(f"Mongo $map: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # $reduce
+        start_mongo_timing()
+        try:
+            pipeline = [
+                {
+                    "$project": {
+                        "sum": {
+                            "$reduce": {
+                                "input": "$values",
+                                "initialValue": 0,
+                                "in": {"$add": ["$$value", "$$this"]},
+                            }
+                        }
+                    }
+                }
+            ]
+            result = list(mongo_collection.aggregate(pipeline))
+            mongo_results["reduce"] = result
+            print("Mongo $reduce: OK")
+        except Exception as e:
+            mongo_results["reduce"] = f"Error: {e}"
+            print(f"Mongo $reduce: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # $indexOfArray
+        start_mongo_timing()
+        try:
+            pipeline = [
+                {"$project": {"index": {"$indexOfArray": ["$values", 3]}}}
+            ]
+            result = list(mongo_collection.aggregate(pipeline))
+            mongo_results["indexOfArray"] = result
+            print("Mongo $indexOfArray: OK")
+        except Exception as e:
+            mongo_results["indexOfArray"] = f"Error: {e}"
+            print(f"Mongo $indexOfArray: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # $setEquals
+        start_mongo_timing()
+        try:
+            pipeline = [
+                {"$project": {"equals": {"$setEquals": [[1, 2, 3], [3, 2, 1]]}}}
+            ]
+            result = list(mongo_collection.aggregate(pipeline))
+            mongo_results["setEquals"] = result
+            print("Mongo $setEquals: OK")
+        except Exception as e:
+            mongo_results["setEquals"] = f"Error: {e}"
+            print(f"Mongo $setEquals: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # $setIntersection
+        start_mongo_timing()
+        try:
+            pipeline = [
+                {
+                    "$project": {
+                        "intersection": {
+                            "$setIntersection": [[1, 2, 3], [2, 3, 4]]
+                        }
+                    }
+                }
+            ]
+            result = list(mongo_collection.aggregate(pipeline))
+            mongo_results["setIntersection"] = result
+            print("Mongo $setIntersection: OK")
+        except Exception as e:
+            mongo_results["setIntersection"] = f"Error: {e}"
+            print(f"Mongo $setIntersection: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # $setUnion
+        start_mongo_timing()
+        try:
+            pipeline = [
+                {"$project": {"union": {"$setUnion": [[1, 2], [3, 4]]}}}
+            ]
+            result = list(mongo_collection.aggregate(pipeline))
+            mongo_results["setUnion"] = result
+            print("Mongo $setUnion: OK")
+        except Exception as e:
+            mongo_results["setUnion"] = f"Error: {e}"
+            print(f"Mongo $setUnion: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # $setDifference
+        start_mongo_timing()
+        try:
+            pipeline = [
+                {
+                    "$project": {
+                        "difference": {"$setDifference": [[1, 2, 3], [2, 3, 4]]}
+                    }
+                }
+            ]
+            result = list(mongo_collection.aggregate(pipeline))
+            mongo_results["setDifference"] = result
+            print("Mongo $setDifference: OK")
+        except Exception as e:
+            mongo_results["setDifference"] = f"Error: {e}"
+            print(f"Mongo $setDifference: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # $setIsSubset
+        start_mongo_timing()
+        try:
+            pipeline = [
+                {
+                    "$project": {
+                        "issubset": {"$setIsSubset": [[1, 2], [1, 2, 3]]}
+                    }
+                }
+            ]
+            result = list(mongo_collection.aggregate(pipeline))
+            mongo_results["setIsSubset"] = result
+            print("Mongo $setIsSubset: OK")
+        except Exception as e:
+            mongo_results["setIsSubset"] = f"Error: {e}"
+            print(f"Mongo $setIsSubset: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # $anyElementTrue
+        start_mongo_timing()
+        try:
+            pipeline = [
+                {
+                    "$project": {
+                        "anytrue": {"$anyElementTrue": [[True, False, True]]}
+                    }
+                }
+            ]
+            result = list(mongo_collection.aggregate(pipeline))
+            mongo_results["anyElementTrue"] = result
+            print("Mongo $anyElementTrue: OK")
+        except Exception as e:
+            mongo_results["anyElementTrue"] = f"Error: {e}"
+            print(f"Mongo $anyElementTrue: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # $allElementsTrue
+        start_mongo_timing()
+        try:
+            pipeline = [
+                {
+                    "$project": {
+                        "alltrue": {"$allElementsTrue": [[True, True, True]]}
+                    }
+                }
+            ]
+            result = list(mongo_collection.aggregate(pipeline))
+            mongo_results["allElementsTrue"] = result
+            print("Mongo $allElementsTrue: OK")
+        except Exception as e:
+            mongo_results["allElementsTrue"] = f"Error: {e}"
+            print(f"Mongo $allElementsTrue: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # $nor
+        start_mongo_timing()
+        try:
+            result = list(
+                mongo_collection.find({"$nor": [{"name": "A"}, {"name": "B"}]})
+            )
+            mongo_results["nor"] = result
+            print("Mongo $nor: OK")
+        except Exception as e:
+            mongo_results["nor"] = f"Error: {e}"
             print(f"Mongo $nor: Error - {e}")
+        finally:
+            end_mongo_timing()
 
-        # Test $literal - use a value that doesn't look like an operator
+        # $literal
+        start_mongo_timing()
         try:
-            result = list(
-                mongo_collection.aggregate(
-                    [{"$project": {"literal": {"$literal": "literal_value"}}}]
-                )
-            )
-            mongo_literal = len(result) == 2
-            print(f"Mongo $literal: {'OK' if mongo_literal else 'FAIL'}")
+            pipeline = [
+                {"$project": {"literal": {"$literal": "literal_value"}}}
+            ]
+            result = list(mongo_collection.aggregate(pipeline))
+            mongo_results["literal"] = result
+            print("Mongo $literal: OK")
         except Exception as e:
-            mongo_literal = False
+            mongo_results["literal"] = f"Error: {e}"
             print(f"Mongo $literal: Error - {e}")
+        finally:
+            end_mongo_timing()
 
-        # Test $setField
+        # $setField
+        start_mongo_timing()
         try:
-            result = list(
-                mongo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "updated": {
-                                    "$setField": {
-                                        "field": "new_field",
-                                        "input": "$meta",
-                                        "value": "new_value",
-                                    }
-                                }
+            pipeline = [
+                {
+                    "$project": {
+                        "updated": {
+                            "$setField": {
+                                "field": "new_field",
+                                "input": "$meta",
+                                "value": "new_value",
                             }
                         }
-                    ]
-                )
-            )
-            mongo_setfield = len(result) == 2
-            print(f"Mongo $setField: {'OK' if mongo_setfield else 'FAIL'}")
+                    }
+                }
+            ]
+            result = list(mongo_collection.aggregate(pipeline))
+            mongo_results["setField"] = result
+            print("Mongo $setField: OK")
         except Exception as e:
-            mongo_setfield = False
+            mongo_results["setField"] = f"Error: {e}"
             print(f"Mongo $setField: Error - {e}")
+        finally:
+            end_mongo_timing()
 
-        # Test $unsetField
+        # $unsetField
+        start_mongo_timing()
         try:
-            result = list(
-                mongo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "removed": {
-                                    "$unsetField": {
-                                        "field": "count",
-                                        "input": "$meta",
-                                    }
-                                }
-                            }
+            pipeline = [
+                {
+                    "$project": {
+                        "removed": {
+                            "$unsetField": {"field": "count", "input": "$meta"}
                         }
-                    ]
-                )
-            )
-            mongo_unsetfield = len(result) == 2
-            print(f"Mongo $unsetField: {'OK' if mongo_unsetfield else 'FAIL'}")
+                    }
+                }
+            ]
+            result = list(mongo_collection.aggregate(pipeline))
+            mongo_results["unsetField"] = result
+            print("Mongo $unsetField: OK")
         except Exception as e:
-            mongo_unsetfield = False
+            mongo_results["unsetField"] = f"Error: {e}"
             print(f"Mongo $unsetField: Error - {e}")
+        finally:
+            end_mongo_timing()
 
-        # Test $log2 - NeoSQLite extension (not in MongoDB)
-        mongo_log2 = True  # Skip - NeoSQLite extension
-        print("Mongo $log2: N/A (NeoSQLite extension)")
-
-        # Test $sigmoid (MongoDB 8.0+)
+        # $log2 (NeoSQLite extension)
+        start_mongo_timing()
         try:
-            result = list(
-                mongo_collection.aggregate(
-                    [{"$project": {"sigmoid": {"$sigmoid": 0}}}]
-                )
-            )
-            mongo_sigmoid = len(result) == 2
-            print(f"Mongo $sigmoid: {'OK' if mongo_sigmoid else 'FAIL'}")
+            if IS_NX27017_BACKEND:
+                pipeline = [{"$project": {"log2": {"$log2": "$num"}}}]
+                result = list(mongo_collection.aggregate(pipeline))
+                mongo_results["log2"] = result
+                print("Mongo $log2: OK")
+            else:
+                # MongoDB doesn't support $log2, we record it as None to mark it as skipped
+                mongo_results["log2"] = None
+                print("Mongo $log2: Skipped (extension)")
         except Exception as e:
-            mongo_sigmoid = False
+            mongo_results["log2"] = f"Error: {e}"
+            print(f"Mongo $log2: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # $sigmoid
+        start_mongo_timing()
+        try:
+            pipeline = [{"$project": {"sigmoid": {"$sigmoid": 0}}}]
+            result = list(mongo_collection.aggregate(pipeline))
+            mongo_results["sigmoid"] = result
+            print("Mongo $sigmoid: OK")
+        except Exception as e:
+            mongo_results["sigmoid"] = f"Error: {e}"
             print(f"Mongo $sigmoid: Error - {e}")
+        finally:
+            end_mongo_timing()
 
-        # Test $asinh
+        # $asinh
+        start_mongo_timing()
         try:
-            result = list(
-                mongo_collection.aggregate(
-                    [{"$project": {"asinh": {"$asinh": 1}}}]
-                )
-            )
-            mongo_asinh = len(result) == 2
-            print(f"Mongo $asinh: {'OK' if mongo_asinh else 'FAIL'}")
+            pipeline = [{"$project": {"asinh": {"$asinh": 1}}}]
+            result = list(mongo_collection.aggregate(pipeline))
+            mongo_results["asinh"] = result
+            print("Mongo $asinh: OK")
         except Exception as e:
-            mongo_asinh = False
+            mongo_results["asinh"] = f"Error: {e}"
             print(f"Mongo $asinh: Error - {e}")
+        finally:
+            end_mongo_timing()
 
-        # Test $acosh
+        # $acosh
+        start_mongo_timing()
         try:
-            result = list(
-                mongo_collection.aggregate(
-                    [{"$project": {"acosh": {"$acosh": 2}}}]
-                )
-            )
-            mongo_acosh = len(result) == 2
-            print(f"Mongo $acosh: {'OK' if mongo_acosh else 'FAIL'}")
+            pipeline = [{"$project": {"acosh": {"$acosh": 2}}}]
+            result = list(mongo_collection.aggregate(pipeline))
+            mongo_results["acosh"] = result
+            print("Mongo $acosh: OK")
         except Exception as e:
-            mongo_acosh = False
+            mongo_results["acosh"] = f"Error: {e}"
             print(f"Mongo $acosh: Error - {e}")
+        finally:
+            end_mongo_timing()
 
-        # Test $atanh
+        # $atanh
+        start_mongo_timing()
         try:
-            result = list(
-                mongo_collection.aggregate(
-                    [{"$project": {"atanh": {"$atanh": 0.5}}}]
-                )
-            )
-            mongo_atanh = len(result) == 2
-            print(f"Mongo $atanh: {'OK' if mongo_atanh else 'FAIL'}")
+            pipeline = [{"$project": {"atanh": {"$atanh": 0.5}}}]
+            result = list(mongo_collection.aggregate(pipeline))
+            mongo_results["atanh"] = result
+            print("Mongo $atanh: OK")
         except Exception as e:
-            mongo_atanh = False
+            mongo_results["atanh"] = f"Error: {e}"
             print(f"Mongo $atanh: Error - {e}")
+        finally:
+            end_mongo_timing()
 
-        # Test $regexMatch
+        # $regexMatch
+        start_mongo_timing()
         try:
-            result = list(
-                mongo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "matches": {
-                                    "$regexMatch": {
-                                        "input": "$str",
-                                        "regex": "Hello|foo",
-                                    }
-                                }
+            pipeline = [
+                {
+                    "$project": {
+                        "matches": {
+                            "$regexMatch": {
+                                "input": "$str",
+                                "regex": "Hello|foo",
                             }
                         }
-                    ]
-                )
-            )
-            mongo_regexmatch = len(result) == 2
-            print(f"Mongo $regexMatch: {'OK' if mongo_regexmatch else 'FAIL'}")
+                    }
+                }
+            ]
+            result = list(mongo_collection.aggregate(pipeline))
+            mongo_results["regexMatch"] = result
+            print("Mongo $regexMatch: OK")
         except Exception as e:
-            mongo_regexmatch = False
+            mongo_results["regexMatch"] = f"Error: {e}"
             print(f"Mongo $regexMatch: Error - {e}")
+        finally:
+            end_mongo_timing()
 
-        # Test $replaceOne
+        # $replaceOne
+        start_mongo_timing()
         try:
-            result = list(
-                mongo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "replaced": {
-                                    "$replaceOne": {
-                                        "input": "$str",
-                                        "find": "o",
-                                        "replacement": "0",
-                                    }
-                                }
+            pipeline = [
+                {
+                    "$project": {
+                        "replaced": {
+                            "$replaceOne": {
+                                "input": "$str",
+                                "find": "o",
+                                "replacement": "0",
                             }
                         }
-                    ]
-                )
-            )
-            mongo_replaceone = len(result) == 2
-            print(f"Mongo $replaceOne: {'OK' if mongo_replaceone else 'FAIL'}")
+                    }
+                }
+            ]
+            result = list(mongo_collection.aggregate(pipeline))
+            mongo_results["replaceOne"] = result
+            print("Mongo $replaceOne: OK")
         except Exception as e:
-            mongo_replaceone = False
+            mongo_results["replaceOne"] = f"Error: {e}"
             print(f"Mongo $replaceOne: Error - {e}")
+        finally:
+            end_mongo_timing()
 
-        # Test $ltrim
+        # $ltrim
+        start_mongo_timing()
         try:
-            result = list(
-                mongo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "trimmed": {"$ltrim": {"input": "  hello  "}}
-                            }
-                        }
-                    ]
-                )
-            )
-            mongo_ltrim = len(result) == 2
-            print(f"Mongo $ltrim: {'OK' if mongo_ltrim else 'FAIL'}")
+            pipeline = [
+                {"$project": {"trimmed": {"$ltrim": {"input": "  hello  "}}}}
+            ]
+            result = list(mongo_collection.aggregate(pipeline))
+            mongo_results["ltrim"] = result
+            print("Mongo $ltrim: OK")
         except Exception as e:
-            mongo_ltrim = False
+            mongo_results["ltrim"] = f"Error: {e}"
             print(f"Mongo $ltrim: Error - {e}")
+        finally:
+            end_mongo_timing()
 
-        # Test $rtrim
+        # $rtrim
+        start_mongo_timing()
         try:
-            result = list(
-                mongo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "trimmed": {"$rtrim": {"input": "  hello  "}}
-                            }
-                        }
-                    ]
-                )
-            )
-            mongo_rtrim = len(result) == 2
-            print(f"Mongo $rtrim: {'OK' if mongo_rtrim else 'FAIL'}")
+            pipeline = [
+                {"$project": {"trimmed": {"$rtrim": {"input": "  hello  "}}}}
+            ]
+            result = list(mongo_collection.aggregate(pipeline))
+            mongo_results["rtrim"] = result
+            print("Mongo $rtrim: OK")
         except Exception as e:
-            mongo_rtrim = False
+            mongo_results["rtrim"] = f"Error: {e}"
             print(f"Mongo $rtrim: Error - {e}")
+        finally:
+            end_mongo_timing()
 
-        # Test $indexOfBytes
+        # $indexOfBytes
+        start_mongo_timing()
         try:
-            result = list(
-                mongo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "index": {"$indexOfBytes": ["$str", "World"]}
-                            }
-                        }
-                    ]
-                )
-            )
-            mongo_indexofbytes = len(result) == 2
-            print(
-                f"Mongo $indexOfBytes: {'OK' if mongo_indexofbytes else 'FAIL'}"
-            )
+            pipeline = [
+                {"$project": {"index": {"$indexOfBytes": ["$str", "World"]}}}
+            ]
+            result = list(mongo_collection.aggregate(pipeline))
+            mongo_results["indexOfBytes"] = result
+            print("Mongo $indexOfBytes: OK")
         except Exception as e:
-            mongo_indexofbytes = False
+            mongo_results["indexOfBytes"] = f"Error: {e}"
             print(f"Mongo $indexOfBytes: Error - {e}")
+        finally:
+            end_mongo_timing()
 
-        # Test $toLong
+        # $toLong
+        start_mongo_timing()
         try:
-            result = list(
-                mongo_collection.aggregate(
-                    [{"$project": {"long": {"$toLong": "$num"}}}]
-                )
-            )
-            mongo_tolong = len(result) == 2
-            print(f"Mongo $toLong: {'OK' if mongo_tolong else 'FAIL'}")
+            pipeline = [{"$project": {"long": {"$toLong": "$num"}}}]
+            result = list(mongo_collection.aggregate(pipeline))
+            mongo_results["toLong"] = result
+            print("Mongo $toLong: OK")
         except Exception as e:
-            mongo_tolong = False
+            mongo_results["toLong"] = f"Error: {e}"
             print(f"Mongo $toLong: Error - {e}")
+        finally:
+            end_mongo_timing()
 
-        # Test $toDecimal
+        # $toDecimal
+        start_mongo_timing()
         try:
-            result = list(
-                mongo_collection.aggregate(
-                    [{"$project": {"decimal": {"$toDecimal": "$num"}}}]
-                )
-            )
-            mongo_todecimal = len(result) == 2
-            print(f"Mongo $toDecimal: {'OK' if mongo_todecimal else 'FAIL'}")
+            pipeline = [{"$project": {"decimal": {"$toDecimal": "$num"}}}]
+            result = list(mongo_collection.aggregate(pipeline))
+            mongo_results["toDecimal"] = result
+            print("Mongo $toDecimal: OK")
         except Exception as e:
-            mongo_todecimal = False
+            mongo_results["toDecimal"] = f"Error: {e}"
             print(f"Mongo $toDecimal: Error - {e}")
+        finally:
+            end_mongo_timing()
 
-        # Test $toObjectId
+        # $toObjectId
+        start_mongo_timing()
         try:
-            result = list(
-                mongo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "oid": {
-                                    "$toObjectId": "507f1f77bcf86cd799439011"
-                                }
-                            }
-                        }
-                    ]
-                )
-            )
-            mongo_toobjectid = len(result) == 2
-            print(f"Mongo $toObjectId: {'OK' if mongo_toobjectid else 'FAIL'}")
+            pipeline = [
+                {
+                    "$project": {
+                        "oid": {"$toObjectId": "507f1f77bcf86cd799439011"}
+                    }
+                }
+            ]
+            result = list(mongo_collection.aggregate(pipeline))
+            mongo_results["toObjectId"] = result
+            print("Mongo $toObjectId: OK")
         except Exception as e:
-            mongo_toobjectid = False
+            mongo_results["toObjectId"] = f"Error: {e}"
             print(f"Mongo $toObjectId: Error - {e}")
+        finally:
+            end_mongo_timing()
 
-        # Test $convert
+        # $convert
+        start_mongo_timing()
         try:
-            result = list(
-                mongo_collection.aggregate(
-                    [
-                        {
-                            "$project": {
-                                "converted": {
-                                    "$convert": {
-                                        "input": "$str",
-                                        "to": "int",
-                                        "onError": None,  # Handle conversion errors gracefully
-                                    }
-                                }
+            pipeline = [
+                {
+                    "$project": {
+                        "converted": {
+                            "$convert": {
+                                "input": "$str",
+                                "to": "int",
+                                "onError": None,
                             }
                         }
-                    ]
-                )
-            )
-            mongo_convert = len(result) == 2
-            print(f"Mongo $convert: {'OK' if mongo_convert else 'FAIL'}")
+                    }
+                }
+            ]
+            result = list(mongo_collection.aggregate(pipeline))
+            mongo_results["convert"] = result
+            print("Mongo $convert: OK")
         except Exception as e:
-            mongo_convert = False
+            mongo_results["convert"] = f"Error: {e}"
             print(f"Mongo $convert: Error - {e}")
+        finally:
+            end_mongo_timing()
 
-        end_mongo_timing()
         client.close()
 
-        # Record results
+    def check_res(res, op):
+        if op == "nor":
+            return isinstance(res, list) and len(res) == 0
+        return isinstance(res, list) and len(res) == 2
+
+    operators = [
+        "map",
+        "reduce",
+        "indexOfArray",
+        "setEquals",
+        "setIntersection",
+        "setUnion",
+        "setDifference",
+        "setIsSubset",
+        "anyElementTrue",
+        "allElementsTrue",
+        "nor",
+        "literal",
+        "setField",
+        "unsetField",
+        "log2",
+        "sigmoid",
+        "asinh",
+        "acosh",
+        "atanh",
+        "regexMatch",
+        "replaceOne",
+        "ltrim",
+        "rtrim",
+        "indexOfBytes",
+        "toLong",
+        "toDecimal",
+        "toObjectId",
+        "convert",
+    ]
+
+    for op in operators:
+        op_label = f"${op}"
+        neo_status = check_res(neo_results.get(op), op)
+        mongo_status = check_res(mongo_results.get(op), op)
+
+        skip_reason = None
+        if not client:
+            skip_reason = "MongoDB not available"
+        elif op == "log2" and not IS_NX27017_BACKEND:
+            skip_reason = "NeoSQLite extension not in MongoDB"
+
         reporter.record_comparison(
             "Additional $expr Operators",
-            "$map",
-            neo_map if neo_map else "FAIL",
-            mongo_map if mongo_map else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Additional $expr Operators",
-            "$reduce",
-            neo_reduce if neo_reduce else "FAIL",
-            mongo_reduce if mongo_reduce else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Additional $expr Operators",
-            "$indexOfArray",
-            neo_indexofarray if neo_indexofarray else "FAIL",
-            mongo_indexofarray if mongo_indexofarray else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Additional $expr Operators",
-            "$setEquals",
-            neo_setequals if neo_setequals else "FAIL",
-            mongo_setequals if mongo_setequals else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Additional $expr Operators",
-            "$setIntersection",
-            neo_setintersection if neo_setintersection else "FAIL",
-            mongo_setintersection if mongo_setintersection else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Additional $expr Operators",
-            "$setUnion",
-            neo_setunion if neo_setunion else "FAIL",
-            mongo_setunion if mongo_setunion else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Additional $expr Operators",
-            "$setDifference",
-            neo_setdifference if neo_setdifference else "FAIL",
-            mongo_setdifference if mongo_setdifference else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Additional $expr Operators",
-            "$setIsSubset",
-            neo_setissubset if neo_setissubset else "FAIL",
-            mongo_setissubset if mongo_setissubset else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Additional $expr Operators",
-            "$anyElementTrue",
-            neo_anyelementtrue if neo_anyelementtrue else "FAIL",
-            mongo_anyelementtrue if mongo_anyelementtrue else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Additional $expr Operators",
-            "$allElementsTrue",
-            neo_allelementstrue if neo_allelementstrue else "FAIL",
-            mongo_allelementstrue if mongo_allelementstrue else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Additional $expr Operators",
-            "$nor",
-            neo_nor if neo_nor else "FAIL",
-            mongo_nor if mongo_nor else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Additional $expr Operators",
-            "$literal",
-            neo_literal if neo_literal else "FAIL",
-            mongo_literal if mongo_literal else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Additional $expr Operators",
-            "$setField",
-            neo_setfield if neo_setfield else "FAIL",
-            mongo_setfield if mongo_setfield else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Additional $expr Operators",
-            "$unsetField",
-            neo_unsetfield if neo_unsetfield else "FAIL",
-            mongo_unsetfield if mongo_unsetfield else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Additional $expr Operators",
-            "$log2",
-            neo_log2 if neo_log2 else "FAIL",
-            mongo_log2 if mongo_log2 else None,
-            skip_reason="NeoSQLite extension not in MongoDB",
-        )
-        reporter.record_comparison(
-            "Additional $expr Operators",
-            "$sigmoid",
-            neo_sigmoid if neo_sigmoid else "FAIL",
-            mongo_sigmoid if mongo_sigmoid else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Additional $expr Operators",
-            "$asinh",
-            neo_asinh if neo_asinh else "FAIL",
-            mongo_asinh if mongo_asinh else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Additional $expr Operators",
-            "$acosh",
-            neo_acosh if neo_acosh else "FAIL",
-            mongo_acosh if mongo_acosh else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Additional $expr Operators",
-            "$atanh",
-            neo_atanh if neo_atanh else "FAIL",
-            mongo_atanh if mongo_atanh else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Additional $expr Operators",
-            "$regexMatch",
-            neo_regexmatch if neo_regexmatch else "FAIL",
-            mongo_regexmatch if mongo_regexmatch else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Additional $expr Operators",
-            "$replaceOne",
-            neo_replaceone if neo_replaceone else "FAIL",
-            mongo_replaceone if mongo_replaceone else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Additional $expr Operators",
-            "$ltrim",
-            neo_ltrim if neo_ltrim else "FAIL",
-            mongo_ltrim if mongo_ltrim else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Additional $expr Operators",
-            "$rtrim",
-            neo_rtrim if neo_rtrim else "FAIL",
-            mongo_rtrim if mongo_rtrim else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Additional $expr Operators",
-            "$indexOfBytes",
-            neo_indexofbytes if neo_indexofbytes else "FAIL",
-            mongo_indexofbytes if mongo_indexofbytes else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Additional $expr Operators",
-            "$toLong",
-            neo_tolong if neo_tolong else "FAIL",
-            mongo_tolong if mongo_tolong else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Additional $expr Operators",
-            "$toDecimal",
-            neo_todecimal if neo_todecimal else "FAIL",
-            mongo_todecimal if mongo_todecimal else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Additional $expr Operators",
-            "$toObjectId",
-            neo_toobjectid if neo_toobjectid else "FAIL",
-            mongo_toobjectid if mongo_toobjectid else None,
-            skip_reason="MongoDB not available" if not client else None,
-        )
-        reporter.record_comparison(
-            "Additional $expr Operators",
-            "$convert",
-            neo_convert if neo_convert else "FAIL",
-            mongo_convert if mongo_convert else None,
-            skip_reason="MongoDB not available" if not client else None,
+            op_label,
+            neo_status if neo_status else "FAIL",
+            (
+                mongo_status
+                if mongo_status
+                else (None if not client or skip_reason else "FAIL")
+            ),
+            skip_reason=skip_reason,
         )

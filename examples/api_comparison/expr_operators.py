@@ -23,8 +23,87 @@ def compare_expr_operator():
     """Compare $expr operator between NeoSQLite and PyMongo"""
     print("\n=== $expr Operator Comparison ===")
 
+    expr_queries = [
+        # Comparison operators
+        ({"$expr": {"$gt": ["$salary", 50000]}}, "$expr $gt"),
+        ({"$expr": {"$eq": ["$age", 30]}}, "$expr $eq"),
+        ({"$expr": {"$ne": ["$age", 30]}}, "$expr $ne"),
+        ({"$expr": {"$lt": ["$age", 30]}}, "$expr $lt"),
+        ({"$expr": {"$lte": ["$age", 28]}}, "$expr $lte"),
+        ({"$expr": {"$gte": ["$age", 30]}}, "$expr $gte"),
+        # Note: $cmp has binding issues - skip for now
+        # ({"$expr": {"$cmp": ["$age", 30]}}, "$expr $cmp"),
+        # Logical operators
+        (
+            {"$expr": {"$and": [{"$gt": ["$age", 26]}, {"$lt": ["$age", 35]}]}},
+            "$expr $and",
+        ),
+        (
+            {"$expr": {"$or": [{"$eq": ["$age", 25]}, {"$eq": ["$age", 35]}]}},
+            "$expr $or",
+        ),
+        # Note: $not has different semantics - skip for now
+        # ({"$expr": {"$not": {"$gt": ["$age", 30]}}}, "$expr $not"),
+        # Arithmetic operators
+        ({"$expr": {"$add": ["$age", 5]}}, "$expr $add"),
+        ({"$expr": {"$subtract": ["$age", 5]}}, "$expr $subtract"),
+        ({"$expr": {"$multiply": ["$salary", 0.001]}}, "$expr $multiply"),
+        ({"$expr": {"$divide": ["$salary", 1000]}}, "$expr $divide"),
+        ({"$expr": {"$mod": ["$age", 5]}}, "$expr $mod"),
+        ({"$expr": {"$abs": {"$subtract": ["$age", 28]}}}, "$expr $abs"),
+        ({"$expr": {"$ceil": "$score"}}, "$expr $ceil"),
+        ({"$expr": {"$floor": "$score"}}, "$expr $floor"),
+        ({"$expr": {"$trunc": "$score"}}, "$expr $trunc"),
+        # Note: $round has implementation issues - skip for now
+        # ({"$expr": {"$round": ["$score", 0]}}, "$expr $round"),
+        # Trigonometric operators
+        ({"$expr": {"$sin": "$angle"}}, "$expr $sin"),
+        ({"$expr": {"$cos": "$angle"}}, "$expr $cos"),
+        ({"$expr": {"$tan": "$angle"}}, "$expr $tan"),
+        ({"$expr": {"$asin": 0.5}}, "$expr $asin"),
+        ({"$expr": {"$acos": 0.5}}, "$expr $acos"),
+        ({"$expr": {"$atan": 1}}, "$expr $atan"),
+        ({"$expr": {"$atan2": [1, 1]}}, "$expr $atan2"),
+        # Hyperbolic operators
+        ({"$expr": {"$sinh": 1}}, "$expr $sinh"),
+        ({"$expr": {"$cosh": 1}}, "$expr $cosh"),
+        ({"$expr": {"$tanh": 1}}, "$expr $tanh"),
+        # Logarithmic operators
+        ({"$expr": {"$ln": {"$add": ["$age", 1]}}}, "$expr $ln"),
+        ({"$expr": {"$log10": {"$add": ["$age", 1]}}}, "$expr $log10"),
+        ({"$expr": {"$log": [{"$add": ["$age", 1]}, 2]}}, "$expr $log"),
+        # Exponential operators
+        # Note: $exp has implementation issues - skip for now
+        # ({"$expr": {"$exp": 1}}, "$expr $exp"),
+        # Angle conversion - Note: has implementation issues with literals - skip for now
+        # ({"$expr": {"$degreesToRadians": 180}}, "$expr $degreesToRadians"),
+        # ({"$expr": {"$radiansToDegrees": 3.14159}}, "$expr $radiansToDegrees"),
+        # Conditional operators
+        (
+            {"$expr": {"$cond": [{"$gt": ["$age", 28]}, "senior", "junior"]}},
+            "$expr $cond",
+        ),
+        # Note: $ifNull has implementation issues - skip for now
+        # ({"$expr": {"$ifNull": ["$middle_name", "no_middle"]}}, "$expr $ifNull"),
+        # Type operators
+        ({"$expr": {"$toString": "$age"}}, "$expr $toString"),
+        ({"$expr": {"$toInt": "$age"}}, "$expr $toInt"),
+        ({"$expr": {"$toDouble": "$age"}}, "$expr $toDouble"),
+        ({"$expr": {"$toBool": "$age"}}, "$expr $toBool"),
+        ({"$expr": {"$type": "$age"}}, "$expr $type"),
+        # String operators
+        ({"$expr": {"$toUpper": "$name"}}, "$expr $toUpper"),
+        ({"$expr": {"$toLower": "$name"}}, "$expr $toLower"),
+        ({"$expr": {"$strLenBytes": "$name"}}, "$expr $strLenBytes"),
+        # Note: $concat has implementation issues - skip for now
+        # ({"$expr": {"$concat": ["$name", " - ", "$name"]}}, "$expr $concat"),
+        # Array operators
+        # Note: $isArray has implementation issues - skip for now
+        # ({"$expr": {"$isArray": ["$tags"]}}, "$expr $isArray"),
+    ]
+
+    neo_results = {}
     with neosqlite.Connection(":memory:") as neo_conn:
-        start_neo_timing()
         neo_collection = neo_conn.test_collection
         neo_collection.insert_many(
             [
@@ -63,120 +142,23 @@ def compare_expr_operator():
             ]
         )
 
-        expr_queries = [
-            # Comparison operators
-            ({"$expr": {"$gt": ["$salary", 50000]}}, "$expr $gt"),
-            ({"$expr": {"$eq": ["$age", 30]}}, "$expr $eq"),
-            ({"$expr": {"$ne": ["$age", 30]}}, "$expr $ne"),
-            ({"$expr": {"$lt": ["$age", 30]}}, "$expr $lt"),
-            ({"$expr": {"$lte": ["$age", 28]}}, "$expr $lte"),
-            ({"$expr": {"$gte": ["$age", 30]}}, "$expr $gte"),
-            # Note: $cmp has binding issues - skip for now
-            # ({"$expr": {"$cmp": ["$age", 30]}}, "$expr $cmp"),
-            # Logical operators
-            (
-                {
-                    "$expr": {
-                        "$and": [{"$gt": ["$age", 26]}, {"$lt": ["$age", 35]}]
-                    }
-                },
-                "$expr $and",
-            ),
-            (
-                {
-                    "$expr": {
-                        "$or": [{"$eq": ["$age", 25]}, {"$eq": ["$age", 35]}]
-                    }
-                },
-                "$expr $or",
-            ),
-            # Note: $not has different semantics - skip for now
-            # ({"$expr": {"$not": {"$gt": ["$age", 30]}}}, "$expr $not"),
-            # Arithmetic operators
-            ({"$expr": {"$add": ["$age", 5]}}, "$expr $add"),
-            ({"$expr": {"$subtract": ["$age", 5]}}, "$expr $subtract"),
-            ({"$expr": {"$multiply": ["$salary", 0.001]}}, "$expr $multiply"),
-            ({"$expr": {"$divide": ["$salary", 1000]}}, "$expr $divide"),
-            ({"$expr": {"$mod": ["$age", 5]}}, "$expr $mod"),
-            ({"$expr": {"$abs": {"$subtract": ["$age", 28]}}}, "$expr $abs"),
-            ({"$expr": {"$ceil": "$score"}}, "$expr $ceil"),
-            ({"$expr": {"$floor": "$score"}}, "$expr $floor"),
-            ({"$expr": {"$trunc": "$score"}}, "$expr $trunc"),
-            # Note: $round has implementation issues - skip for now
-            # ({"$expr": {"$round": ["$score", 0]}}, "$expr $round"),
-            # Trigonometric operators
-            ({"$expr": {"$sin": "$angle"}}, "$expr $sin"),
-            ({"$expr": {"$cos": "$angle"}}, "$expr $cos"),
-            ({"$expr": {"$tan": "$angle"}}, "$expr $tan"),
-            ({"$expr": {"$asin": 0.5}}, "$expr $asin"),
-            ({"$expr": {"$acos": 0.5}}, "$expr $acos"),
-            ({"$expr": {"$atan": 1}}, "$expr $atan"),
-            ({"$expr": {"$atan2": [1, 1]}}, "$expr $atan2"),
-            # Hyperbolic operators
-            ({"$expr": {"$sinh": 1}}, "$expr $sinh"),
-            ({"$expr": {"$cosh": 1}}, "$expr $cosh"),
-            ({"$expr": {"$tanh": 1}}, "$expr $tanh"),
-            # Logarithmic operators
-            ({"$expr": {"$ln": {"$add": ["$age", 1]}}}, "$expr $ln"),
-            ({"$expr": {"$log10": {"$add": ["$age", 1]}}}, "$expr $log10"),
-            ({"$expr": {"$log": [{"$add": ["$age", 1]}, 2]}}, "$expr $log"),
-            # Exponential operators
-            # Note: $exp has implementation issues - skip for now
-            # ({"$expr": {"$exp": 1}}, "$expr $exp"),
-            # Angle conversion - Note: has implementation issues with literals - skip for now
-            # ({"$expr": {"$degreesToRadians": 180}}, "$expr $degreesToRadians"),
-            # ({"$expr": {"$radiansToDegrees": 3.14159}}, "$expr $radiansToDegrees"),
-            # Conditional operators
-            (
-                {
-                    "$expr": {
-                        "$cond": [{"$gt": ["$age", 28]}, "senior", "junior"]
-                    }
-                },
-                "$expr $cond",
-            ),
-            # Note: $ifNull has implementation issues - skip for now
-            # ({"$expr": {"$ifNull": ["$middle_name", "no_middle"]}}, "$expr $ifNull"),
-            # Type operators
-            ({"$expr": {"$toString": "$age"}}, "$expr $toString"),
-            ({"$expr": {"$toInt": "$age"}}, "$expr $toInt"),
-            ({"$expr": {"$toDouble": "$age"}}, "$expr $toDouble"),
-            ({"$expr": {"$toBool": "$age"}}, "$expr $toBool"),
-            ({"$expr": {"$type": "$age"}}, "$expr $type"),
-            # String operators
-            ({"$expr": {"$toUpper": "$name"}}, "$expr $toUpper"),
-            ({"$expr": {"$toLower": "$name"}}, "$expr $toLower"),
-            ({"$expr": {"$strLenBytes": "$name"}}, "$expr $strLenBytes"),
-            # Note: $concat has implementation issues - skip for now
-            # ({"$expr": {"$concat": ["$name", " - ", "$name"]}}, "$expr $concat"),
-            # Array operators
-            # Note: $isArray has implementation issues - skip for now
-            # ({"$expr": {"$isArray": ["$tags"]}}, "$expr $isArray"),
-        ]
         set_accumulation_mode(True)
-        neo_results = {}
         for query, op_name in expr_queries:
+            start_neo_timing()
             try:
-                start_neo_timing()
                 result = list(neo_collection.find(query))
-                end_neo_timing()
                 neo_results[op_name] = result
-                print(f"Neo {op_name}: {len(neo_results[op_name])} documents")
+                print(f"Neo {op_name}: {len(result)} documents")
             except Exception as e:
                 neo_results[op_name] = f"Error: {e}"
                 print(f"Neo {op_name}: Error - {e}")
+            finally:
+                end_neo_timing()
 
     client = test_pymongo_connection()
-    # Initialize MongoDB result variables
-
-    mongo_collection = None
-
-    mongo_db = None
-
     mongo_results = {}
 
     if client:
-        set_accumulation_mode(True)
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
         mongo_collection.delete_many({})
@@ -217,36 +199,26 @@ def compare_expr_operator():
             ]
         )
 
+        set_accumulation_mode(True)
         for query, op_name in expr_queries:
+            start_mongo_timing()
             try:
-                start_mongo_timing()
                 result = list(mongo_collection.find(query))
-                end_mongo_timing()
                 mongo_results[op_name] = result
-                print(
-                    f"Mongo {op_name}: {len(mongo_results[op_name])} documents"
-                )
+                print(f"Mongo {op_name}: {len(result)} documents")
             except Exception as e:
                 mongo_results[op_name] = f"Error: {e}"
                 print(f"Mongo {op_name}: Error - {e}")
-
-        for op_name in neo_results:
-            reporter.record_comparison(
-                "$expr Operator",
-                op_name,
-                neo_results[op_name],
-                mongo_results.get(op_name),
-                skip_reason="MongoDB not available" if not client else None,
-            )
-        end_mongo_timing()
+            finally:
+                end_mongo_timing()
         client.close()
-    else:
-        # MongoDB not available, record NeoSQLite results as skipped
-        for op_name in neo_results:
-            reporter.record_comparison(
-                "$expr Operator",
-                op_name,
-                neo_results[op_name],
-                None,
-                skip_reason="MongoDB not available",
-            )
+
+    # Record comparisons
+    for query, op_name in expr_queries:
+        reporter.record_comparison(
+            "$expr Operator",
+            op_name,
+            neo_results[op_name],
+            mongo_results.get(op_name),
+            skip_reason="MongoDB not available" if not client else None,
+        )

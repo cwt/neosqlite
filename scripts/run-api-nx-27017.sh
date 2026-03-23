@@ -241,7 +241,8 @@ run_comparison() {
     # This allows tests to enable features that NeoSQLite supports but real MongoDB doesn't
     export NX27017_BACKEND=true
     
-    if (cd "$SCRIPT_DIR" && python3 api_comparison_main.py); then
+    PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+    if (cd "$SCRIPT_DIR" && PYTHONPATH="$PROJECT_ROOT" python3 api_comparison_main.py); then
         success "API comparison completed - 100% compatible!"
         return 0
     else

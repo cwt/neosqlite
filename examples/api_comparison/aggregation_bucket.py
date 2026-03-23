@@ -31,8 +31,8 @@ def compare_bucket_aggregation():
 
         set_accumulation_mode(True)
         # Test $bucket
+        start_neo_timing()
         try:
-            start_neo_timing()
             result = list(
                 neo_collection.aggregate(
                     [
@@ -46,12 +46,13 @@ def compare_bucket_aggregation():
                     ]
                 )
             )
-            end_neo_timing()
             neo_bucket = len(result)
             print(f"Neo $bucket: {len(result)} buckets")
         except Exception as e:
             neo_bucket = f"Error: {e}"
             print(f"Neo $bucket: Error - {e}")
+        finally:
+            end_neo_timing()
 
     client = test_pymongo_connection()
     mongo_bucket = None
@@ -65,8 +66,8 @@ def compare_bucket_aggregation():
         )
 
         set_accumulation_mode(True)
+        start_mongo_timing()
         try:
-            start_mongo_timing()
             result = list(
                 mongo_collection.aggregate(
                     [
@@ -80,12 +81,13 @@ def compare_bucket_aggregation():
                     ]
                 )
             )
-            end_mongo_timing()
             mongo_bucket = len(result)
             print(f"Mongo $bucket: {len(result)} buckets")
         except Exception as e:
             mongo_bucket = f"Error: {e}"
             print(f"Mongo $bucket: Error - {e}")
+        finally:
+            end_mongo_timing()
 
         client.close()
 

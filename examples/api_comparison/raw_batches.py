@@ -26,6 +26,7 @@ def compare_raw_batch_operations():
     """Compare raw batch operations"""
     print("\n=== Raw Batch Operations Comparison ===")
 
+    neo_raw_batches = None
     with neosqlite.Connection(":memory:") as neo_conn:
         neo_collection = neo_conn.test_collection
         neo_collection.insert_many(
@@ -33,23 +34,21 @@ def compare_raw_batch_operations():
         )
 
         set_accumulation_mode(True)
+        # Test NeoSQLite find_raw_batches
+        start_neo_timing()
         try:
-            start_neo_timing()
             cursor = neo_collection.find_raw_batches(
                 {"value": {"$gte": 5}}, batch_size=3
             )
             neo_raw_batches = sum(1 for _ in cursor)
-            end_neo_timing()
             print(f"Neo find_raw_batches: {neo_raw_batches} batches")
         except Exception as e:
             neo_raw_batches = f"Error: {e}"
             print(f"Neo find_raw_batches: Error - {e}")
+        finally:
+            end_neo_timing()
 
     client = test_pymongo_connection()
-    # Initialize MongoDB result variables
-
-    mongo_collection = None
-    mongo_db = None
     mongo_raw_batches = None
 
     if client:
@@ -61,17 +60,19 @@ def compare_raw_batch_operations():
         )
 
         set_accumulation_mode(True)
+        # Test MongoDB find_raw_batches
+        start_mongo_timing()
         try:
-            start_mongo_timing()
             cursor = mongo_collection.find_raw_batches(
                 {"value": {"$gte": 5}}, batch_size=3
             )
             mongo_raw_batches = sum(1 for _ in cursor)
-            end_mongo_timing()
             print(f"Mongo find_raw_batches: {mongo_raw_batches} batches")
         except Exception as e:
             mongo_raw_batches = f"Error: {e}"
             print(f"Mongo find_raw_batches: Error - {e}")
+        finally:
+            end_mongo_timing()
 
         client.close()
 

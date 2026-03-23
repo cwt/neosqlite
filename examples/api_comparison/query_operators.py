@@ -94,38 +94,48 @@ def compare_query_operators():
 
         set_accumulation_mode(True)
         for query, op_name in operators:
+            start_neo_timing()
             try:
-                start_neo_timing()
-                result = list(neo_collection.find(query))
+                try:
+                    neo_results[op_name] = list(neo_collection.find(query))
+                except Exception as e:
+                    neo_results[op_name] = f"Error: {e}"
+            finally:
                 end_neo_timing()
-                neo_results[op_name] = result
-            except Exception as e:
-                neo_results[op_name] = f"Error: {e}"
 
         # Test $contains (NeoSQLite extension)
+        start_neo_timing()
         try:
-            start_neo_timing()
-            neo_results["$contains"] = list(
-                neo_collection.find({"name": {"$contains": "li"}})
-            )
+            try:
+                neo_results["$contains"] = list(
+                    neo_collection.find({"name": {"$contains": "li"}})
+                )
+            except Exception as e:
+                neo_results["$contains"] = f"Error: {e}"
+        finally:
             end_neo_timing()
+
+        if isinstance(neo_results["$contains"], list):
             print(f"Neo $contains: {len(neo_results['$contains'])} documents")
-        except Exception as e:
-            neo_results["$contains"] = f"Error: {e}"
+        else:
+            print(f"Neo $contains: {neo_results['$contains']}")
 
         # Test $text separately as it requires index creation
+        neo_collection.create_index([("name", "text")])
+        start_neo_timing()
         try:
-            neo_collection.create_index([("name", "text")])
-
-            start_neo_timing()
-            neo_results["$text"] = list(
-                neo_collection.find({"$text": {"$search": "Alice"}})
-            )
+            try:
+                neo_results["$text"] = list(
+                    neo_collection.find({"$text": {"$search": "Alice"}})
+                )
+            except Exception as e:
+                neo_results["$text"] = f"Error: {e}"
+                print(f"Neo $text: Error - {e}")
+        finally:
             end_neo_timing()
+
+        if isinstance(neo_results["$text"], list):
             print(f"Neo $text: {len(neo_results['$text'])} documents")
-        except Exception as e:
-            neo_results["$text"] = f"Error: {e}"
-            print(f"Neo $text: Error - {e}")
 
     client = test_pymongo_connection()
     mongo_results = {}
@@ -171,36 +181,38 @@ def compare_query_operators():
 
         set_accumulation_mode(True)
         for query, op_name in operators:
+            start_mongo_timing()
             try:
-                start_mongo_timing()
-                result = list(mongo_collection.find(query))
+                try:
+                    mongo_results[op_name] = list(mongo_collection.find(query))
+                except Exception as e:
+                    mongo_results[op_name] = f"Error: {e}"
+            finally:
                 end_mongo_timing()
-                mongo_results[op_name] = result
-            except Exception as e:
-                mongo_results[op_name] = f"Error: {e}"
 
         # MongoDB doesn't support $contains
         mongo_results["$contains"] = None
 
         # Test $text separately for MongoDB
+        mongo_collection.create_index([("name", "text")])
+        start_mongo_timing()
         try:
-            mongo_collection.create_index([("name", "text")])
-
-            start_mongo_timing()
-            mongo_results["$text"] = list(
-                mongo_collection.find({"$text": {"$search": "Alice"}})
-            )
+            try:
+                mongo_results["$text"] = list(
+                    mongo_collection.find({"$text": {"$search": "Alice"}})
+                )
+            except Exception as e:
+                mongo_results["$text"] = f"Error: {e}"
+                print(f"Mongo $text: Error - {e}")
+        finally:
             end_mongo_timing()
+
+        if isinstance(mongo_results["$text"], list):
             print(f"Mongo $text: {len(mongo_results['$text'])} documents")
-        except Exception as e:
-            mongo_results["$text"] = f"Error: {e}"
-            print(f"Mongo $text: Error - {e}")
 
         for op_name in neo_results:
             skip_reason = None
-            if not client:
-                skip_reason = "MongoDB not available"
-            elif op_name == "$contains":
+            if op_name == "$contains":
                 skip_reason = "NeoSQLite extension not in MongoDB"
             elif "(NotImplementedError)" in op_name:
                 skip_reason = (

@@ -32,8 +32,11 @@ def compare_find_and_modify():
         set_accumulation_mode(True)
         # Test find_one_and_delete
         start_neo_timing()
-        doc = neo_collection.find_one_and_delete({"name": "Bob"})
-        end_neo_timing()
+        try:
+            doc = neo_collection.find_one_and_delete({"name": "Bob"})
+        finally:
+
+            end_neo_timing()
         neo_foad = doc is not None
 
         # Reset for next test (not timed)
@@ -41,18 +44,24 @@ def compare_find_and_modify():
 
         # Test find_one_and_replace
         start_neo_timing()
-        doc = neo_collection.find_one_and_replace(
-            {"name": "Alice"}, {"name": "Alice Smith", "age": 31}
-        )
-        end_neo_timing()
+        try:
+            doc = neo_collection.find_one_and_replace(
+                {"name": "Alice"}, {"name": "Alice Smith", "age": 31}
+            )
+        finally:
+
+            end_neo_timing()
         neo_foar = doc is not None
 
         # Test find_one_and_update
         start_neo_timing()
-        doc = neo_collection.find_one_and_update(
-            {"name": "Alice Smith"}, {"$inc": {"age": 1}}
-        )
-        end_neo_timing()
+        try:
+            doc = neo_collection.find_one_and_update(
+                {"name": "Alice Smith"}, {"$inc": {"age": 1}}
+            )
+        finally:
+
+            end_neo_timing()
         neo_foau = doc is not None
 
         print(
@@ -79,8 +88,11 @@ def compare_find_and_modify():
         set_accumulation_mode(True)
         # Test find_one_and_delete
         start_mongo_timing()
-        doc = mongo_collection.find_one_and_delete({"name": "Bob"})
-        end_mongo_timing()
+        try:
+            doc = mongo_collection.find_one_and_delete({"name": "Bob"})
+        finally:
+
+            end_mongo_timing()
         mongo_foad = doc is not None
 
         # Reset for next test
@@ -88,18 +100,24 @@ def compare_find_and_modify():
 
         # Test find_one_and_replace
         start_mongo_timing()
-        doc = mongo_collection.find_one_and_replace(
-            {"name": "Alice"}, {"name": "Alice Smith", "age": 31}
-        )
-        end_mongo_timing()
+        try:
+            doc = mongo_collection.find_one_and_replace(
+                {"name": "Alice"}, {"name": "Alice Smith", "age": 31}
+            )
+        finally:
+
+            end_mongo_timing()
         mongo_foar = doc is not None
 
         # Test find_one_and_update
         start_mongo_timing()
-        doc = mongo_collection.find_one_and_update(
-            {"name": "Alice Smith"}, {"$inc": {"age": 1}}
-        )
-        end_mongo_timing()
+        try:
+            doc = mongo_collection.find_one_and_update(
+                {"name": "Alice Smith"}, {"$inc": {"age": 1}}
+            )
+        finally:
+
+            end_mongo_timing()
         mongo_foau = doc is not None
 
         print(
