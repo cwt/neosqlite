@@ -2443,6 +2443,16 @@ def run_foreground(args: argparse.Namespace):
     signal.signal(signal.SIGTERM, _signal_exit_handler)
     signal.signal(signal.SIGINT, _signal_exit_handler)
 
+    log_level = logging.DEBUG if args.verbose else logging.INFO
+    file_handler = logging.FileHandler(args.log_file)
+    file_handler.setLevel(log_level)
+    file_handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - [%(process)d] - %(message)s"
+        )
+    )
+    logging.getLogger().addHandler(file_handler)
+
     try:
         run_server_sync(args)
     finally:
@@ -2596,7 +2606,7 @@ Examples:
     log_level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(
         level=log_level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        format="%(asctime)s - %(name)s - %(levelname)s - [%(process)d] - %(message)s",
     )
 
     match (args.stop, args.status, args.daemon):
