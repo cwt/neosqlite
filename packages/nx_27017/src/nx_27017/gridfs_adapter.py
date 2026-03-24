@@ -19,6 +19,9 @@ from neosqlite.objectid import ObjectId
 
 logger = logging.getLogger(__name__)
 
+# GridFS constants
+DEFAULT_CHUNK_SIZE_BYTES = 261_120  # 256 KiB (MongoDB default)
+
 
 class GridFSAdapter:
     """Adapter to translate PyMongo GridFS operations to NeoSQLite GridFS."""
@@ -188,7 +191,9 @@ class GridFSAdapter:
                     self._get_bucket()._chunks_collection = (
                         f"{self._bucket_name}_chunks"
                     )
-                    self._get_bucket()._chunk_size_bytes = 261120
+                    self._get_bucket()._chunk_size_bytes = (
+                        DEFAULT_CHUNK_SIZE_BYTES
+                    )
                     logger.debug(f"GridFSBucket initialized (skipped creation)")
                     return
 
@@ -213,7 +218,7 @@ class GridFSAdapter:
             self._bucket = GridFSBucket(
                 self._db,
                 bucket_name=self._bucket_name,
-                chunk_size_bytes=261120,  # Default MongoDB chunk size
+                chunk_size_bytes=DEFAULT_CHUNK_SIZE_BYTES,
             )
             logger.debug(f"GridFSBucket created successfully")
 

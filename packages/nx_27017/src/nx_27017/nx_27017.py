@@ -53,6 +53,25 @@ logger = logging.getLogger("nx_27017")
 PID_FILE = "/tmp/nx_27017.pid"
 LOG_FILE = "/tmp/nx_27017.log"
 
+# Wire protocol constants
+MESSAGE_HEADER_SIZE = 16
+MAX_BSON_DOCUMENT_SIZE = 16 * 1024 * 1024  # 16MB
+MAX_MESSAGE_SIZE_BYTES = 48_000_000
+MAX_WRITE_BATCH_SIZE = 100_000
+
+# MongoDB wire version support
+MIN_WIRE_VERSION = 17
+MAX_WIRE_VERSION = 21
+
+# Session and connection defaults
+DEFAULT_SESSION_TIMEOUT_MINUTES = 30
+DEFAULT_MAX_CONNECTIONS = 1000
+SOCKET_BACKLOG = 128
+
+# Shutdown configuration
+SHUTDOWN_RETRY_COUNT = 10
+SHUTDOWN_POLL_INTERVAL = 0.5
+
 # Counter for generating unique request IDs
 _request_id_counter = count(1)
 
@@ -82,11 +101,19 @@ def _extract_session_id(lsid: dict) -> str | None:
     return str(session_id_obj)
 
 
-def _convert_objectids(doc):
-    """Convert NeoSQLite ObjectIds to BSON ObjectIds, and Decimal to float."""
+def _convert_objectids(doc: dict) -> dict:
+    """Convert NeoSQLite ObjectIds to BSON ObjectIds, and Decimal to float.
+
+    Args:
+        doc: A dictionary potentially containing NeoSQLite ObjectId or Decimal values.
+
+    Returns:
+        A new dictionary with NeoSQLite ObjectIds converted to BSON ObjectIds
+        and Decimal values converted to float.
+    """
     from decimal import Decimal as PyDecimal
 
-    def _convert_value(value):
+    def _convert_value(value: Any) -> Any:
         if isinstance(value, NeoObjectId):
             return BsonObjectId(value.binary)
         elif isinstance(value, PyDecimal):
@@ -150,6 +177,17 @@ class ResponseBuilder:
         documents: list[dict[str, Any]],
         flags: int = 0,
     ) -> bytes:
+        """Build an OP_MSG reply with multiple documents.
+
+        Args:
+            request_id: The request ID to respond to.
+            response_to: The response_to value from the original request.
+            documents: List of documents to include in the response.
+            flags: Optional message flags (default: 0).
+
+        Returns:
+            Bytes representing the wire protocol response message.
+        """
         sections = []
         for doc in documents:
             doc_data = encode(_convert_objectids(doc))  # type: ignore[arg-type]
@@ -170,13 +208,29 @@ class OP_MSG:  # noqa: N801
     """Parser for MongoDB OP_MSG wire protocol messages."""
 
     @staticmethod
-    def parse(data: bytes) -> dict[str, Any]:
-        message_length = struct.unpack("<i", data[0:4])[0]
-        request_id = struct.unpack("<i", data[4:8])[0]
-        response_to = struct.unpack("<i", data[8:12])[0]
-        opcode = struct.unpack("<i", data[12:16])[0]
+    def parse(message_bytes: bytes) -> dict[str, Any]:
+        """Parse an OP_MSG wire protocol message from bytes.
+
+        Args:
+            message_bytes: Raw bytes containing the wire protocol message.
+
+        Returns:
+            A dictionary containing:
+                - request_id: The message request ID
+                - response_to: The ID of the message being responded to
+                - flags: Message flags
+                - sections: List of (section_type, data) tuples
+
+        Raises:
+            ValueError: If the message contains invalid BSON document lengths
+                or extends beyond the provided data.
+        """
+        message_length = struct.unpack("<i", message_bytes[0:4])[0]
+        request_id = struct.unpack("<i", message_bytes[4:8])[0]
+        response_to = struct.unpack("<i", message_bytes[8:12])[0]
+        opcode = struct.unpack("<i", message_bytes[12:16])[0]
         offset = 16
-        flags = struct.unpack("<I", data[offset : offset + 4])[0]
+        flags = struct.unpack("<I", message_bytes[offset : offset + 4])[0]
         offset += 4
 
         # Check if checksum is present (flag bit 1)
@@ -187,48 +241,52 @@ class OP_MSG:  # noqa: N801
 
         sections: list[tuple[str, Any]] = []
         while offset < effective_length:
-            kind = data[offset]
+            section_type = message_bytes[offset]
             offset += 1
 
-            if kind == 0:
-                doc_len = struct.unpack("<i", data[offset : offset + 4])[0]
+            if section_type == 0:
+                doc_len = struct.unpack(
+                    "<i", message_bytes[offset : offset + 4]
+                )[0]
 
                 # Sanity check
-                if doc_len <= 0 or doc_len > 16777216:
+                if doc_len <= 0 or doc_len > MAX_BSON_DOCUMENT_SIZE:
                     logger.error(
                         f"Invalid document length: {doc_len} at offset {offset}"
                     )
                     raise ValueError(f"Invalid BSON document length: {doc_len}")
 
-                if offset + doc_len > len(data):
+                if offset + doc_len > len(message_bytes):
                     logger.error(
                         f"Document extends beyond data: offset={offset}, "
-                        f"doc_len={doc_len}, data_len={len(data)}, "
+                        f"doc_len={doc_len}, data_len={len(message_bytes)}, "
                         f"effective_length={effective_length}"
                     )
                     raise ValueError("Document extends beyond message")
 
-                doc_data = data[offset : offset + doc_len]
+                doc_data = message_bytes[offset : offset + doc_len]
                 doc = BSON(doc_data).decode()
                 sections.append(("body", doc))
                 offset += doc_len
-            elif kind == 1:
-                # Kind 1: Document Sequence
-                # Format: kind(1) + size(int32) + CString(identifier) + BSON documents*
+            elif section_type == 1:
+                # Section type 1: Document Sequence
+                # Format: section_type(1) + size(int32) + CString(identifier) + BSON documents*
                 # Note: size includes the 4 bytes for itself
-                size = struct.unpack("<I", data[offset : offset + 4])[0]
+                size = struct.unpack("<I", message_bytes[offset : offset + 4])[
+                    0
+                ]
                 offset += 4
 
                 # Read CString (null-terminated field name)
-                cstring_end = data.index(b"\x00", offset)
-                field_name = data[offset:cstring_end].decode("utf-8")
+                cstring_end = message_bytes.index(b"\x00", offset)
+                field_name = message_bytes[offset:cstring_end].decode("utf-8")
                 offset = cstring_end + 1
 
                 # Documents start here and go until size bytes are consumed
                 # The size includes: 4 (size field) + identifier + null + documents
                 docs_start = offset
                 docs_end = offset - 4 + size
-                doc_data = data[docs_start:docs_end]
+                doc_data = message_bytes[docs_start:docs_end]
 
                 # Parse individual BSON documents from the concatenated data
                 docs = []
@@ -247,19 +305,23 @@ class OP_MSG:  # noqa: N801
 
                 sections.append(("payload", {field_name: docs}))
                 offset = docs_end
-            elif kind == 2:
-                count = struct.unpack("<I", data[offset : offset + 4])[0]
+            elif section_type == 2:
+                count = struct.unpack("<I", message_bytes[offset : offset + 4])[
+                    0
+                ]
                 offset += 4
                 docs = []
                 for _ in range(count):
-                    doc_len = struct.unpack("<i", data[offset : offset + 4])[0]
-                    doc_data = data[offset : offset + doc_len]
+                    doc_len = struct.unpack(
+                        "<i", message_bytes[offset : offset + 4]
+                    )[0]
+                    doc_data = message_bytes[offset : offset + doc_len]
                     docs.append(BSON(doc_data).decode())
                     offset += doc_len
                 sections.append(("payload_docs", docs))
             else:
-                logger.error(f"Unknown section kind: {kind}")
-                raise ValueError(f"Unknown section kind: {kind}")
+                logger.error(f"Unknown section kind: {section_type}")
+                raise ValueError(f"Unknown section kind: {section_type}")
 
         return {
             "request_id": request_id,
@@ -408,10 +470,12 @@ class NeoSQLiteHandler:
         return result
 
     def increment_connections(self) -> None:
+        """Increment the active connections counter."""
         with self._connections_lock:
             self._active_connections += 1
 
     def decrement_connections(self) -> None:
+        """Decrement the active connections counter."""
         with self._connections_lock:
             self._active_connections -= 1
 
@@ -423,8 +487,16 @@ class NeoSQLiteHandler:
         """Extract bucket name from GridFS collection name, or None if not GridFS."""
         return _get_gridfs_bucket_name(coll_name)
 
-    def _get_gridfs_bucket(self, db: Connection, coll_name: str):
-        """Get GridFSBucket for a GridFS collection."""
+    def _get_gridfs_bucket(self, db: Connection, coll_name: str) -> Any | None:
+        """Get GridFSBucket for a GridFS collection.
+
+        Args:
+            db: Database connection.
+            coll_name: Collection name to check.
+
+        Returns:
+            GridFSBucket instance if collection is GridFS, None otherwise.
+        """
         from neosqlite.gridfs import GridFSBucket
 
         bucket_name = _get_gridfs_bucket_name(coll_name)
@@ -708,14 +780,14 @@ class NeoSQLiteHandler:
                 return request_id, {
                     "ok": 1,
                     "isWritablePrimary": True,
-                    "maxBsonObjectSize": 16777216,
-                    "maxMessageSizeBytes": 48000000,
-                    "maxWriteBatchSize": 100000,
+                    "maxBsonObjectSize": MAX_BSON_DOCUMENT_SIZE,
+                    "maxMessageSizeBytes": MAX_MESSAGE_SIZE_BYTES,
+                    "maxWriteBatchSize": MAX_WRITE_BATCH_SIZE,
                     "localTime": datetime.now(timezone.utc),
-                    "logicalSessionTimeoutMinutes": 30,
+                    "logicalSessionTimeoutMinutes": DEFAULT_SESSION_TIMEOUT_MINUTES,
                     "connectionId": 1,
-                    "minWireVersion": 17,
-                    "maxWireVersion": 21,
+                    "minWireVersion": MIN_WIRE_VERSION,
+                    "maxWireVersion": MAX_WIRE_VERSION,
                 }
 
         # Handle startSession
@@ -1377,10 +1449,12 @@ class NeoSQLiteHandler:
                 sort_list = (
                     list(sort.items()) if isinstance(sort, dict) else sort
                 )
-                docs = sorted(
-                    docs,
-                    key=lambda f: tuple(f.get(k, v) for k, v in sort_list),
-                )
+
+                def _sort_key(doc: dict) -> tuple:
+                    """Extract sort key values from document."""
+                    return tuple(doc.get(k, v) for k, v in sort_list)
+
+                docs = sorted(docs, key=_sort_key)
 
             if limit > 0:
                 docs = docs[:limit]
@@ -1734,7 +1808,10 @@ class NeoSQLiteHandler:
                 "user": 0,
                 "rollovers": 0,
             },
-            "connections": {"current": current_connections, "available": 1000},
+            "connections": {
+                "current": current_connections,
+                "available": DEFAULT_MAX_CONNECTIONS,
+            },
             "mem": {
                 "bits": 64,
                 "resident": resident_mem,
@@ -1965,7 +2042,10 @@ async def handle_client(
             opcode = struct.unpack("<i", header[12:16])[0]
 
             # Sanity check message length
-            if message_length < 16 or message_length > 48000000:
+            if (
+                message_length < MESSAGE_HEADER_SIZE
+                or message_length > MAX_MESSAGE_SIZE_BYTES
+            ):
                 logger.warning(f"Invalid message length: {message_length}")
                 return
 
@@ -1992,11 +2072,11 @@ async def handle_client(
                     msg = OP_MSG.parse(full_message)
 
                     is_insert = False
-                    for s_type, s_data in msg["sections"]:
+                    for section_type, section_data in msg["sections"]:
                         if (
-                            s_type == "body"
-                            and isinstance(s_data, dict)
-                            and "insert" in s_data
+                            section_type == "body"
+                            and isinstance(section_data, dict)
+                            and "insert" in section_data
                         ):
                             is_insert = True
                             break
@@ -2014,10 +2094,10 @@ async def handle_client(
                         )
                         # Log the body of non-insert messages
                         if not is_insert and not has_payload_docs:
-                            for s_type, s_data in msg["sections"]:
-                                if s_type == "body":
+                            for section_type, section_data in msg["sections"]:
+                                if section_type == "body":
                                     logger.debug(
-                                        f"Non-insert command body: {s_data}"
+                                        f"Non-insert command body: {section_data}"
                                     )
                         client_request_id = msg.get("request_id", 0)
                         if is_insert or has_payload_docs:
@@ -2118,7 +2198,10 @@ def handle_client_threaded(
                 opcode = struct.unpack("<i", header[12:16])[0]
 
                 # Sanity check message length
-                if message_length < 16 or message_length > 48000000:
+                if (
+                    message_length < MESSAGE_HEADER_SIZE
+                    or message_length > MAX_MESSAGE_SIZE_BYTES
+                ):
                     logger.warning(f"Invalid message length: {message_length}")
                     return
 
@@ -2148,11 +2231,11 @@ def handle_client_threaded(
                     msg = OP_MSG.parse(full_message)
 
                     is_insert = False
-                    for s_type, s_data in msg["sections"]:
+                    for section_type, section_data in msg["sections"]:
                         if (
-                            s_type == "body"
-                            and isinstance(s_data, dict)
-                            and "insert" in s_data
+                            section_type == "body"
+                            and isinstance(section_data, dict)
+                            and "insert" in section_data
                         ):
                             is_insert = True
                             break
@@ -2232,7 +2315,7 @@ def run_server_threaded(
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server_socket.bind((host, port))
-    server_socket.listen(128)
+    server_socket.listen(SOCKET_BACKLOG)
 
     logger.info(f"Listening on {host}:{port} (threaded mode)")
 
@@ -2341,13 +2424,13 @@ def stop_daemon(pid_file: str) -> int:
         os.kill(pid, signal.SIGTERM)
         print(f"Sent SIGTERM to NX-27017 (PID: {pid})")
 
-        for _ in range(10):
+        for _ in range(SHUTDOWN_RETRY_COUNT):
             try:
                 os.kill(pid, 0)
             except OSError:
                 print("NX-27017 stopped")
                 return 0
-            time.sleep(0.5)
+            time.sleep(SHUTDOWN_POLL_INTERVAL)
 
         os.kill(pid, signal.SIGKILL)
         print(f"Forcefully killed NX-27017 (PID: {pid})")
