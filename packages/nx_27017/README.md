@@ -99,12 +99,13 @@ db.users.find()
 |----------|----------|
 | **Handshake** | `ping`, `ismaster`, `hello`, `buildInfo` |
 | **CRUD** | `insert`, `find`, `update`, `delete`, `replace_one` |
-| **Aggregation** | `aggregate`, `count`, `distinct` with all common stages |
+| **Aggregation** | `aggregate`, `count`, `distinct` with all common stages including `$collStats` |
 | **Collections** | `create`, `drop`, `renameCollection`, `listCollections`, `listCollectionNames` |
 | **Indexes** | `createIndexes`, `listIndexes`, `dropIndexes`, `listSearchIndexes` |
 | **GridFS** | `find`, `delete`, `upload`, `openDownloadStream` on `.files` collections |
 | **Sessions** | `startSession`, `endSessions` |
 | **Query Features** | `hint`, `min`, `max`, `sort`, `skip`, `limit`, `projection` |
+| **Statistics** | `serverStatus`, `dbStats`, `collStats`, `$collStats` aggregation |
 
 ### GridFS Support
 
@@ -132,20 +133,23 @@ fs.delete(file_id)
 
 ## What Doesn't (Yet)
 
-- Replication & sharding (coming never™)
-- Change streams via replica set (Note: SQLite-trigger-based `watch()` is supported!)
+- Replication & sharding (coming never™ — This is NX-class, not NCC-1701!)
 - `find_raw_batches` with batch_size (requires cursor state management)
 
 ## API Compatibility
 
-NX-27017 passes **377 MongoDB API compatibility tests** (360 passed, 17 skipped) when compared against PyMongo's expected behavior. This includes:
+NX-27017 passes **372 MongoDB API compatibility tests** (357 passed, 15 skipped, 0 failed) when compared against PyMongo's expected behavior. This includes:
 
 - All CRUD operations
 - Query operators ($eq, $gt, $gte, $lt, $lte, $ne, $in, $nin, $exists, $type, $all, $size, $regex, $nor, etc.)
 - Update operators ($set, $inc, $push, $pull, $addToSet, $pop, etc.)
-- Aggregation stages ($match, $group, $sort, $limit, $skip, $project, $unwind, $lookup, $facet, etc.)
+- Aggregation stages ($match, $group, $sort, $limit, $skip, $project, $unwind, $lookup, $facet, $collStats, etc.)
 - Index operations (including text search indexes)
 - Cursor methods (hint, min, max, sort)
+- Wire protocol message parsing (OP_MSG)
+- GridFS operations
+- Session management
+- Change streams via SQLite-trigger-based `watch()`
 
 ## Architecture
 
@@ -164,6 +168,7 @@ Honestly? Because we could. And because sometimes you want:
 - Zero setup
 - A MongoDB-shaped interface to SQLite
 - The satisfaction of doing something ridiculous that somehow works
+- **Maximum dogfooding**: Testing NX-27017 with real PyMongo, which talks to NX-27017, which uses NeoSQLite, which pretends to be PyMongo, which talks to SQLite. It's dogfood all the way down.
 
 ## License
 
