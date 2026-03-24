@@ -345,7 +345,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         ]
 
         for stage in pipeline:
-            stage_name = next(iter(stage.keys()))
+            stage_name = next(iter(stage.keys())).strip()
             match stage_name:
                 case "$match":
                     query = stage["$match"]
@@ -1359,6 +1359,95 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                                         break  # Use first item as template
 
                         docs_with_context = new_docs_with_context
+                case "$collStats":
+                    from ...sql_utils import quote_table_name
+
+                    coll_stats_spec = (
+                        stage.get("$collStats")
+                        or stage.get(" $collStats")
+                        or {}
+                    )
+                    table_name = self.collection.name
+                    quoted_table = quote_table_name(table_name)
+                    db = self.collection.db
+
+                    count_cursor = db.execute(
+                        f"SELECT COUNT(*) FROM {quoted_table}"
+                    )
+                    count = count_cursor.fetchone()[0] or 0
+
+                    size = 0
+                    try:
+                        size_cursor = db.execute(
+                            f"SELECT SUM(LENGTH(data)) FROM {quoted_table}"
+                        )
+                        size = size_cursor.fetchone()[0] or 0
+                    except Exception:
+                        pass
+
+                    avg_obj_size = size / count if count > 0 else 0
+
+                    storage_size = 0
+                    total_index_size = 0
+                    index_sizes: Dict[str, int] = {}
+
+                    try:
+                        db.execute(
+                            "CREATE VIRTUAL TABLE IF NOT EXISTS temp.dbstat USING dbstat(main)"
+                        )
+
+                        storage_cursor = db.execute(
+                            "SELECT SUM(pgsize) FROM dbstat WHERE name = ?",
+                            (table_name,),
+                        )
+                        storage_size = storage_cursor.fetchone()[0] or 0
+
+                        index_cursor = db.execute(
+                            "SELECT name, SUM(pgsize) as size FROM dbstat "
+                            "WHERE tbl_name = ? AND type = 'index' GROUP BY name",
+                            (table_name,),
+                        )
+                        for row in index_cursor.fetchall():
+                            idx_name, idx_size = row
+                            if idx_name and idx_size:
+                                index_sizes[idx_name] = idx_size
+                                total_index_size += idx_size
+                    except Exception:
+                        pass
+
+                    db_name = (
+                        self.collection._database.name
+                        if self.collection._database
+                        else "unknown"
+                    )
+                    stats_result: Dict[str, Any] = {
+                        "ns": f"{db_name}.{table_name}",
+                        "count": count,
+                        "size": size,
+                        "avgObjSize": avg_obj_size,
+                        "storageSize": storage_size,
+                        "totalIndexSize": total_index_size,
+                        "indexSizes": index_sizes,
+                    }
+
+                    if coll_stats_spec and "count" in coll_stats_spec:
+                        stats_result = {"count": count}
+                    elif coll_stats_spec and "storageStats" in coll_stats_spec:
+                        stats_result = {
+                            "ns": f"{db_name}.{table_name}",
+                            "storageStats": {
+                                "count": count,
+                                "size": size,
+                                "avgObjSize": avg_obj_size,
+                                "storageSize": storage_size,
+                                "totalIndexSize": total_index_size,
+                                "indexSizes": index_sizes,
+                            },
+                        }
+
+                    docs_with_context = [
+                        {"__doc__": stats_result, "__root__": stats_result}
+                    ]
                 case _:
                     raise MalformedQueryException(
                         f"Aggregation stage '{stage_name}' not supported"

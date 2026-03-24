@@ -377,14 +377,14 @@ files = [
 
 [[package]]
 name = "neosqlite"
-version = "1.13.4"
+version = "1.13.6"
 description = "NoSQL for SQLite with PyMongo-like API"
 optional = false
 python-versions = "<3.15,>=3.10"
 groups = ["main"]
 files = [
-    {file = "neosqlite-1.13.4-py3-none-any.whl", hash = "sha256:b48d314d708e2f6d2371fbe08a2074d88c3fa3f029b8a4301285518d8e09f618"},
-    {file = "neosqlite-1.13.4.tar.gz", hash = "sha256:2df590c275494c111ac26931d97271e47d487b56bdf4bc0d929b70c1be5fabd5"},
+    {file = "neosqlite-1.13.6-py3-none-any.whl", hash = "sha256:7816b1a9e6dfd98e5909b4fab7183fae6160f5c741c9f9022c092b002ba525da"},
+    {file = "neosqlite-1.13.6.tar.gz", hash = "sha256:df7d1ba69d135f3c2befbb87144b6c34dd6f011eef22da8647fe8bf88815b3f2"},
 ]
 
 [package.extras]

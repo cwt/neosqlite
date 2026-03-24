@@ -765,16 +765,77 @@ class Connection:
                         raise ValueError(
                             "collstats requires 'collection' parameter"
                         )
+                    quoted_table = quote_table_name(collection_name)
+
                     cursor = self.db.execute(
-                        f"SELECT COUNT(*) FROM {quote_table_name(collection_name)}"
+                        f"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
+                        (collection_name,),
                     )
-                    count = cursor.fetchone()[0]
+                    if not cursor.fetchone():
+                        return {
+                            "ok": 1,
+                            "ns": collection_name,
+                            "count": 0,
+                            "size": 0,
+                            "avgObjSize": 0,
+                            "storageSize": 0,
+                            "totalIndexSize": 0,
+                            "indexSizes": {},
+                        }
+
+                    cursor = self.db.execute(
+                        f"SELECT COUNT(*) FROM {quoted_table}"
+                    )
+                    count = cursor.fetchone()[0] or 0
+
+                    size = 0
+                    try:
+                        size_cursor = self.db.execute(
+                            f"SELECT SUM(LENGTH(data)) FROM {quoted_table}"
+                        )
+                        size = size_cursor.fetchone()[0] or 0
+                    except Exception:
+                        pass
+
+                    avg_obj_size = size / count if count > 0 else 0
+
+                    storage_size = 0
+                    total_index_size = 0
+                    index_sizes: dict = {}
+
+                    try:
+                        self.db.execute(
+                            "CREATE VIRTUAL TABLE IF NOT EXISTS temp.dbstat USING dbstat(main)"
+                        )
+
+                        storage_cursor = self.db.execute(
+                            "SELECT SUM(pgsize) FROM dbstat WHERE name = ?",
+                            (collection_name,),
+                        )
+                        storage_size = storage_cursor.fetchone()[0] or 0
+
+                        index_cursor = self.db.execute(
+                            "SELECT name, SUM(pgsize) as size FROM dbstat "
+                            "WHERE tbl_name = ? AND type = 'index' GROUP BY name",
+                            (collection_name,),
+                        )
+                        for row in index_cursor.fetchall():
+                            idx_name, idx_size = row
+                            if idx_name and idx_size:
+                                index_sizes[idx_name] = idx_size
+                                total_index_size += idx_size
+                    except Exception:
+                        pass
+
                     return {
                         "ok": 1,
                         "ns": collection_name,
                         "count": count,
-                        "size": 0,
-                        "storageSize": 0,
+                        "size": size,
+                        "avgObjSize": avg_obj_size,
+                        "storageSize": storage_size,
+                        "totalIndexSize": total_index_size,
+                        "indexSizes": index_sizes,
                     }
 
                 case "dbstats":

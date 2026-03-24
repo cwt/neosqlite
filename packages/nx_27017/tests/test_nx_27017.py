@@ -827,6 +827,49 @@ class TestAggregate:
         # This might not be supported - just verify no crash
         assert "ok" in response
 
+    def test_aggregate_coll_stats(self, handler):
+        """Test aggregate with $collStats stage."""
+        insert_msg = {
+            "request_id": 1,
+            "sections": [
+                ("body", {"insert": "users", "$db": "test"}),
+                (
+                    "payload_docs",
+                    [
+                        {"name": "Alice", "age": 30},
+                        {"name": "Bob", "age": 25},
+                        {"name": "Charlie", "age": 35},
+                    ],
+                ),
+            ],
+        }
+        handler.handle_insert(insert_msg)
+
+        agg_msg = {
+            "request_id": 2,
+            "sections": [
+                (
+                    "body",
+                    {
+                        "aggregate": "users",
+                        "pipeline": [{" $collStats": {}}],
+                        "$db": "test",
+                    },
+                )
+            ],
+        }
+        _, response = handler.handle_command(agg_msg)
+        assert response["ok"] == 1
+        assert "cursor" in response
+        assert len(response["cursor"]["firstBatch"]) == 1
+        stats = response["cursor"]["firstBatch"][0]
+        assert stats["count"] == 3
+        assert "size" in stats
+        assert "avgObjSize" in stats
+        assert "storageSize" in stats
+        assert "totalIndexSize" in stats
+        assert "indexSizes" in stats
+
 
 class TestInMemoryDatabase:
     """Test in-memory database handling."""

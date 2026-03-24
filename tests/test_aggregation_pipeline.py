@@ -191,6 +191,39 @@ def test_aggregate_count(collection):
     }  # Three groups: None (from previous docs), A, B
 
 
+def test_aggregate_coll_stats(collection):
+    """Test $collStats aggregation stage."""
+    collection.insert_many([{"a": 1}, {"a": 2}, {"a": 3}])
+
+    pipeline = [{"$collStats": {}}]
+    result = collection.aggregate(pipeline)
+    result_list = list(result)
+
+    assert len(result_list) == 1
+    stats = result_list[0]
+
+    assert "count" in stats
+    assert stats["count"] == 3
+
+    assert "size" in stats
+    assert "avgObjSize" in stats
+    assert "storageSize" in stats
+    assert "totalIndexSize" in stats
+    assert "indexSizes" in stats
+
+
+def test_aggregate_coll_stats_count_only(collection):
+    """Test $collStats with count option."""
+    collection.insert_many([{"a": i} for i in range(5)])
+
+    pipeline = [{"$collStats": {"count": {}}}]
+    result = collection.aggregate(pipeline)
+    result_list = list(result)
+
+    assert len(result_list) == 1
+    assert result_list[0] == {"count": 5}
+
+
 def test_aggregate_sample(collection):
     """Test $sample aggregation stage."""
     # Test basic sample
