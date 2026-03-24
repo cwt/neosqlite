@@ -150,6 +150,7 @@ NX-27017 passes **372 MongoDB API compatibility tests** (357 passed, 15 skipped,
 - GridFS operations
 - Session management
 - Change streams via SQLite-trigger-based `watch()`
+- Statistics commands (`serverStatus`, `dbStats`, `collStats`, `$collStats` aggregation)
 
 ## Architecture
 

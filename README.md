@@ -44,47 +44,49 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 
 See [CHANGELOG.md](CHANGELOG.md) for the latest features and improvements.
 
-## Latest Release: v1.13.6
+## Latest Release: v1.13.7
 
-NeoSQLite v1.13.6 is a **bug fix release** that improves MongoDB compatibility for string operators and SQL projections.
+NeoSQLite v1.13.7 is a **bug fix release** that improves MongoDB compatibility by adding `$collStats` aggregation stage support and fixing edge cases in aggregation pipeline parsing and `collStats` command.
 
 ### Bug Fixes
 
-- **`$regexFind` and `$regexFindAll`**: Fixed output to use `idx` field name and include `captures` array (matching MongoDB format)
-- **`$indexOfCP` and `$indexOfBytes`**: Fixed swapped parameter order causing incorrect results
-- **SQL Projections**: Added proper identifier quoting to prevent syntax errors with reserved keywords
+- **`$collStats` aggregation stage**: Added full support for collection statistics with count, size, storageSize, totalIndexSize, and indexSizes metrics
+- **`collStats` command**: Enhanced to return actual statistics instead of placeholder zeros
+- **Aggregation pipeline parsing**: Fixed handling of stage names with leading/trailing whitespace
 
-### Example: $regexFind Now MongoDB-Compatible
+### Example: $collStats Aggregation Stage
 
 ```python
-# Output now matches MongoDB exactly:
-# {"match": "Alice", "idx": 2, "captures": []}
-result = collection.aggregate([
-    {"$project": {"match": {"$regexFind": {"input": "$name", "regex": "Alice"}}}}
-])
+# Get full collection statistics
+stats = list(collection.aggregate([{"$collStats": {}}]))[0]
+print(f"Count: {stats['count']}, Size: {stats['size']} bytes")
+
+# Get count only
+count_result = list(collection.aggregate([{"$collStats": {"count": {}}}]))[0]
+print(f"Count: {count_result['count']}")
 ```
 
-For more details, see [documents/releases/v1.13.6.md](documents/releases/v1.13.6.md).
+For more details, see [documents/releases/v1.13.7.md](documents/releases/v1.13.7.md).
 
 ## PyMongo Compatibility Tests
 
 NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-compatible behavior. Our automated test suite covers all major API categories:
 
-### Test Results (v1.13.6)
+### Test Results (v1.13.7)
 
 #### Unit Tests
 
 | Metric | Result |
 |--------|--------|
-| **Total Tests** | 2,413 |
-| **Passed** | 2,408 |
+| **Total Tests** | 2,415 |
+| **Passed** | 2,410 |
 | **XFailed** | 5 |
 | **Failed** | 0 |
-| **Code Coverage** | 82% |
+| **Code Coverage** | 81% |
 
 #### API Comparison Tests
 
-| Metric | **v1.13.6** |
+| Metric | **v1.13.7** |
 |--------|-------------|
 | **Total Tests** | **377** |
 | **Passed** | **360** |

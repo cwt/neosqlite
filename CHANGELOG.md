@@ -1,5 +1,55 @@
 # CHANGELOG
 
+## 1.13.7
+
+### Bug Fix Release: MongoDB Compatibility - $collStats Support
+
+**`$collStats` Aggregation Stage**: Added full support for collection statistics aggregation stage:
+
+```python
+# Get full collection statistics
+stats = list(collection.aggregate([{"$collStats": {}}]))[0]
+# Returns: {"ns": "db.coll", "count": 100, "size": 12345, "avgObjSize": 123.45, 
+#           "storageSize": 40960, "totalIndexSize": 8192, "indexSizes": {...}}
+
+# Count only
+list(collection.aggregate([{"$collStats": {"count": {}}}]))[0]
+# Returns: {"count": 100}
+```
+
+**`collStats` Command**: Enhanced to return actual statistics instead of placeholder zeros:
+
+```python
+# Before: {"count": 100, "size": 0, "storageSize": 0, ...}
+# After:  {"count": 100, "size": 12345, "storageSize": 40960, ...}
+```
+
+**Aggregation Pipeline Parsing**: Fixed handling of stage names with leading/trailing whitespace:
+
+```python
+# Now works correctly (stage names are stripped)
+collection.aggregate([{" $collStats": {}}])  # Works!
+```
+
+### NX-27017 v0.5.1
+
+**Bug Fixes**:
+- GridFS chunk size constant fixed to MongoDB default (256 KiB)
+- Added type hints and docstrings for wire protocol constants
+- Improved variable naming in OP_MSG parsing
+- Enhanced logging with process ID
+
+**Documentation**:
+- Updated README to reflect `$collStats` support
+- Corrected test statistics
+
+### Test Results
+- **Unit Tests**: 2,415 total (2,410 passed, 5 xfailed, 0 failed)
+- **API Comparison**: 377 tests (360 passed, 17 skipped, 0 failed)
+- **Code Coverage**: 81%
+
+---
+
 ## 1.13.6
 
 ### Bug Fix: MongoDB Compatibility
