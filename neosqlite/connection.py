@@ -807,7 +807,10 @@ class Connection:
                             f"SELECT SUM(LENGTH(data)) FROM {quoted_table}"
                         )
                         size = size_cursor.fetchone()[0] or 0
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(
+                            f"Failed to calculate collection size: {e}"
+                        )
                         pass
 
                     avg_obj_size = size / count if count > 0 else 0
@@ -837,7 +840,8 @@ class Connection:
                             if idx_name and idx_size:
                                 index_sizes[idx_name] = idx_size
                                 total_index_size += idx_size
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Failed to calculate index sizes: {e}")
                         pass
 
                     return {
@@ -884,7 +888,10 @@ class Connection:
                                 f"SELECT COUNT(*) FROM {quote_table_name(coll_name)}"
                             ).fetchone()[0]
                             total_objects += count
-                        except Exception:
+                        except Exception as e:
+                            logger.debug(
+                                f"Failed to count documents in '{coll_name}': {e}"
+                            )
                             pass
 
                         try:
@@ -892,7 +899,10 @@ class Connection:
                                 f"PRAGMA index_list({quote_table_name(coll_name)})"
                             ).fetchall()
                             total_indexes += len(indexes)
-                        except Exception:
+                        except Exception as e:
+                            logger.debug(
+                                f"Failed to get indexes for '{coll_name}': {e}"
+                            )
                             pass
 
                     storage_size = page_count * page_size
@@ -905,7 +915,10 @@ class Connection:
                             "SELECT SUM(pgsize) FROM dbstat WHERE name LIKE 'idx_%' OR name LIKE 'sqlite_autoindex%'"
                         )
                         index_size = cursor.fetchone()[0] or 0
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(
+                            f"Failed to calculate index size, using estimate: {e}"
+                        )
                         index_size = int(storage_size * 0.2)
 
                     data_size = storage_size - index_size
@@ -934,7 +947,8 @@ class Connection:
                             shm_path = self._db_path + "-shm"
                             if os.path.exists(shm_path):
                                 db_file_size += os.path.getsize(shm_path)
-                        except OSError:
+                        except OSError as e:
+                            logger.debug(f"Failed to get filesystem stats: {e}")
                             pass
 
                     return {

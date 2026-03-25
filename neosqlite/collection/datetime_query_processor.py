@@ -14,10 +14,13 @@ This extends the existing text search functionality to also use only json_* func
 from __future__ import annotations
 
 import hashlib
+import logging
 import uuid
 from typing import Any, Dict, List
 
 from ..sql_utils import quote_table_name
+
+logger = logging.getLogger(__name__)
 from .jsonb_support import supports_jsonb
 from .query_helper import QueryHelper
 from .sql_translator_unified import SQLFieldAccessor, SQLTranslator
@@ -131,8 +134,9 @@ class DateTimeQueryProcessor:
                 result = self._process_with_sql_tier(query)
                 if result is not None:
                     return result
-            except Exception:
-                # If SQL tier fails, fall through to next tier
+            except Exception as e:
+                # If SQL/temp table tier fails, fall through to next tier
+                logger.debug(f"Datetime processing tier failed: {e}")
                 pass
 
         # Try temporary table tier
@@ -449,8 +453,9 @@ class EnhancedDateTimeQueryProcessor(DateTimeQueryProcessor):
                 result = self._process_with_sql_tier(query)
                 if result is not None:
                     return result
-            except Exception:
-                # If SQL tier fails, fall through to next tier
+            except Exception as e:
+                # If SQL/temp table tier fails, fall through to next tier
+                logger.debug(f"Datetime processing tier failed: {e}")
                 pass
 
         # Try temporary table tier

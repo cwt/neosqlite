@@ -7,10 +7,13 @@ while preserving all data.
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 
 from ._sqlite import sqlite3
+
+logger = logging.getLogger(__name__)
 
 
 def needs_migration(
@@ -51,12 +54,14 @@ def checkpoint_and_prepare_for_migration(
     # Ensure all WAL data is written to main file
     try:
         db.execute("PRAGMA wal_checkpoint(FULL)")
-    except Exception:
+    except Exception as e:
+        logger.warning(f"WAL checkpoint failed during migration: {e}")
         pass
 
     try:
         db.execute("COMMIT")
-    except Exception:
+    except Exception as e:
+        logger.warning(f"COMMIT failed during migration: {e}")
         pass
 
     return []
@@ -146,7 +151,8 @@ def migrate_autovacuum(
 
         return True
 
-    except Exception:
+    except Exception as e:
+        logger.error(f"Migration failed, restoring backup: {e}")
         for original_path, backup_path in backup_files.items():
             if os.path.exists(backup_path):
                 shutil.move(backup_path, original_path)

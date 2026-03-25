@@ -1,6 +1,7 @@
 import datetime
 import hashlib
 import io
+import logging
 from typing import Any, Dict
 
 from .._sqlite import sqlite3
@@ -18,6 +19,8 @@ from ..collection.type_utils import validate_session
 
 # Import ObjectId for MongoDB-compatible ID support
 from ..objectid import ObjectId
+
+logger = logging.getLogger(__name__)
 from ..sql_utils import quote_table_name
 from .errors import FileExists, NoFile
 from .grid_file import GridIn, GridOut, GridOutCursor
@@ -114,7 +117,11 @@ class GridFSBucket:
                 self._db.execute(
                     f'ALTER TABLE "{old_files}" RENAME TO {new_files}'
                 )
-            except Exception:
+            except Exception as e:
+                logger.warning(
+                    f"Failed to rename legacy files table '{old_files}' to '{new_files}': {e}. "
+                    f"Using legacy table names."
+                )
                 self._files_collection = old_files
                 self._chunks_collection = old_chunks
                 return
@@ -128,8 +135,11 @@ class GridFSBucket:
                 self._db.execute(
                     f'ALTER TABLE "{old_chunks}" RENAME TO {new_chunks}'
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(
+                    f"Failed to rename legacy chunks table '{old_chunks}' to '{new_chunks}': {e}. "
+                    f"GridFS bucket may be in inconsistent state."
+                )
 
     def _apply_write_concern(self):
         """Apply write concern settings to SQLite connection."""

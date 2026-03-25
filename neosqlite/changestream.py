@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 import time
 from typing import TYPE_CHECKING, Any, Dict, List
@@ -7,6 +8,8 @@ from typing import TYPE_CHECKING, Any, Dict, List
 if TYPE_CHECKING:
     from .client_session import ClientSession
     from .collection import Collection
+
+logger = logging.getLogger(__name__)
 
 
 class ChangeStream:
@@ -185,8 +188,9 @@ class ChangeStream:
 
             # Note: We don't drop the _neosqlite_changestream table as it might be used by other change streams
             self._collection.db.commit()
-        except Exception:
+        except Exception as e:
             # Ignore errors during cleanup
+            logger.warning(f"Error during ChangeStream cleanup: {e}")
             pass
 
     def __iter__(self) -> ChangeStream:
@@ -389,19 +393,24 @@ class ChangeStream:
                                     else document_id
                                 )
                             change_doc["fullDocument"] = doc
-                        except (json.JSONDecodeError, TypeError):
+                        except (json.JSONDecodeError, TypeError) as e:
+                            logger.debug(f"Failed to parse document JSON: {e}")
                             pass
 
                     return change_doc
                 else:
                     # No changes, rollback the empty transaction
                     self._collection.db.rollback()
-            except Exception:
+            except Exception as e:
                 # Rollback on any error
                 try:
                     self._collection.db.rollback()
-                except Exception:
+                except Exception as rollback_error:
+                    logger.warning(
+                        f"Failed to rollback after error: {rollback_error}"
+                    )
                     pass
+                logger.error(f"ChangeStream polling error: {e}", exc_info=True)
                 raise
 
             # If we had rows to process, change_doc has been returned

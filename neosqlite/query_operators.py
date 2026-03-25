@@ -1,7 +1,10 @@
+import logging
 import re
 from typing import Any, Dict, List
 
 from .exceptions import MalformedQueryException
+
+logger = logging.getLogger(__name__)
 
 
 def _get_nested_field(field: str, document: Dict[str, Any]) -> Any:
@@ -415,7 +418,8 @@ def _apply_query_operators(operators: Dict[str, Any], value: Any) -> bool:
             else:
                 if not op_func("_temp", operand, temp_doc):
                     return False
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Query operator evaluation failed: {e}")
             return False
 
     return True

@@ -7,6 +7,7 @@ that the current implementation can't optimize with a single SQL query.
 from __future__ import annotations
 
 import hashlib
+import logging
 import uuid
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, List, Tuple
@@ -23,6 +24,8 @@ from .jsonb_support import (
     supports_jsonb_each,
 )
 from .sql_translator_unified import SQLTranslator
+
+logger = logging.getLogger(__name__)
 
 HASH_JOIN_MEMORY_THRESHOLD = 100 * 1024 * 1024  # 100 MB default threshold
 
@@ -214,9 +217,10 @@ def aggregation_pipeline_context(db_connection, pipeline_id: str | None = None):
 
     try:
         yield create_temp_table
-    except Exception:
+    except Exception as e:
         # Rollback on error
         db_connection.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name}")
+        logger.error(f"Temporary table aggregation error: {e}", exc_info=True)
         raise
     finally:
         # Cleanup
@@ -225,7 +229,10 @@ def aggregation_pipeline_context(db_connection, pipeline_id: str | None = None):
         for table_name in temp_tables:
             try:
                 db_connection.execute(f"DROP TABLE IF EXISTS {table_name}")
-            except Exception:
+            except Exception as drop_error:
+                logger.debug(
+                    f"Failed to drop temp table '{table_name}': {drop_error}"
+                )
                 pass
 
 

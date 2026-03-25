@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, Dict, Iterator, List
 
 if TYPE_CHECKING:
@@ -15,6 +16,7 @@ except ImportError:
     CompressedQueue = None
     QUEZ_AVAILABLE = False
 
+logger = logging.getLogger(__name__)
 
 from .type_utils import validate_session
 
@@ -167,6 +169,9 @@ class AggregationCursor:
             try:
                 return self._results.get(block=False)
             except Exception:
+                logger.debug(
+                    "AggregationCursor: CompressedQueue.get() failed, raising StopIteration"
+                )
                 raise StopIteration
 
         # Handle list results

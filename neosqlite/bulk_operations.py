@@ -1,6 +1,7 @@
 # coding: utf-8
 from __future__ import annotations
 
+import logging
 from abc import ABC
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List
@@ -11,6 +12,8 @@ if TYPE_CHECKING:
     from .client_session import ClientSession
 
 from .results import BulkWriteResult
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -348,7 +351,10 @@ class BulkOperationExecutor:
                     self._collection.db.execute(
                         "RELEASE SAVEPOINT bulk_operations"
                     )
-                except Exception:
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to release savepoint 'bulk_operations': {e}"
+                    )
                     pass
 
         return BulkWriteResult(

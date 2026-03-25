@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, Callable, Dict
 
 if TYPE_CHECKING:
     from .connection import Connection
+
+logger = logging.getLogger(__name__)
 
 
 class ClientSession:
@@ -99,7 +102,10 @@ class ClientSession:
         if self._in_transaction:
             try:
                 self.abort_transaction()
-            except Exception:
+            except Exception as e:
+                logger.warning(
+                    f"Failed to abort transaction during session close: {e}"
+                )
                 pass
 
     def with_transaction(

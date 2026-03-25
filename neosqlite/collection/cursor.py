@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from copy import deepcopy
 from functools import partial
@@ -11,6 +12,8 @@ from .type_utils import validate_session
 if TYPE_CHECKING:
     from ..client_session import ClientSession
     from . import Collection
+
+logger = logging.getLogger(__name__)
 
 ASCENDING = 1
 DESCENDING = -1
@@ -686,8 +689,9 @@ class Cursor:
 
                 datetime_processor = DateTimeQueryProcessor(self._collection)
                 return datetime_processor.process_datetime_query(self._filter)
-            except Exception:
+            except Exception as e:
                 # If datetime processor fails, fall back to normal processing
+                logger.debug(f"DateTime processor failed, falling back: {e}")
                 pass
 
         # Special handling for $expr queries
