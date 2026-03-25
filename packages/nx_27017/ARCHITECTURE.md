@@ -171,7 +171,7 @@ Client receives: Cursor with matching documents
 
 - [README.md](README.md)
   Quick start guide and usage examples
-- [NeoSQLite Documentation](https://github.com/neosqlite/neosqlite)
+- [NeoSQLite Documentation](https://neosqlite.readthedocs.io/en/latest/modules.html)
   Core library docs
 - [MongoDB Wire Protocol](https://www.mongodb.com/docs/manual/reference/mongodb-wire-protocol/)
   Official protocol specification

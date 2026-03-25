@@ -12,7 +12,7 @@ poetry update
 pip install -q -e .[docs,memory-constrained]
 
 # regenerate poetry.lock based on installed/updated packages
-rm -f poetry.lock && poetry lock
+rm -f poetry.lock && poetry lock --no-cache
 
 # run unit tests
 PYTHONPATH=. poetry run pytest tests/ -n $CPU_CORES --cov=neosqlite --cov-report=term-missing --cov-fail-under=80
@@ -25,7 +25,7 @@ cd packages/nx_27017
 pip install -q -e .[speed]
 
 # regenerate poetry.lock based on installed/updated packages
-rm -f poetry.lock && poetry lock
+rm -f poetry.lock && poetry lock --no-cache
 
 # run unit tests
 PYTHONPATH=. poetry run pytest tests/ -n $CPU_CORES --cov=nx_27017 --cov-report=term-missing
