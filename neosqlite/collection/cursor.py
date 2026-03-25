@@ -1276,6 +1276,26 @@ class Cursor:
         except Exception:
             pass
 
+    def __enter__(self) -> Cursor:
+        """
+        Enter the context manager.
+
+        Returns:
+            Cursor: The cursor itself.
+        """
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """
+        Exit the context manager and close the cursor.
+
+        Args:
+            exc_type: The exception type if an exception was raised.
+            exc_val: The exception value if an exception was raised.
+            exc_tb: The exception traceback if an exception was raised.
+        """
+        self.close()
+
     def _cleanup_tables(self) -> None:
         """
         Drop any temporary tables created for this cursor.
