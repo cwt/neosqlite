@@ -7,7 +7,11 @@ import neosqlite
 
 from .reporter import reporter
 from .timing import (
+    end_mongo_timing,
+    end_neo_timing,
     set_accumulation_mode,
+    start_mongo_timing,
+    start_neo_timing,
 )
 from .utils import test_pymongo_connection
 
@@ -22,6 +26,9 @@ IS_NX27017_BACKEND = os.environ.get("NX27017_BACKEND", "").lower() == "true"
 def compare_change_streams():
     """Compare change streams (watch)"""
     print("\n=== Change Streams (watch) Comparison ===")
+
+    # Import benchmark_reporter to mark MongoDB as skipped in benchmark mode
+    from .reporter import benchmark_reporter
 
     neo_watch_ok = False
     mongo_watch_ok = False
@@ -56,26 +63,32 @@ def compare_change_streams():
 
         client.close()
 
-    # When on NX-27017 backend, compare results (both should work or both should fail)
-    # When on real MongoDB, skip if replica set not available
-    if IS_NX27017_BACKEND:
-        skip_reason = None  # On NX-27017, compare results
-    elif mongo_watch_ok is False:
-        skip_reason = (
-            "Requires MongoDB replica set; NeoSQLite uses SQLite triggers"
+    # Mark MongoDB as skipped in benchmark mode when not on replica set
+    # NX-27017 backend: Both NeoSQLite and NX-27017 support change streams
+    # Real MongoDB standalone: Skip because replica set not available
+    if not IS_NX27017_BACKEND and not mongo_watch_ok:
+        if benchmark_reporter:
+            benchmark_reporter.mark_mongo_skipped(
+                "Change Streams",
+                "Requires MongoDB replica set; NeoSQLite uses SQLite triggers",
+            )
+
+    # Record the comparison
+    # For benchmark mode with MongoDB standalone, mark MongoDB as skipped
+    if not IS_NX27017_BACKEND and not mongo_watch_ok:
+        reporter.record_comparison(
+            "Change Streams",
+            "watch",
+            neo_results="OK" if neo_watch_ok else "FAIL",
+            mongo_results=None,  # Mark as skipped
+            skip_reason="Requires MongoDB replica set; NeoSQLite uses SQLite triggers",
         )
     else:
-        skip_reason = None
-
-    reporter.record_result(
-        "Change Streams",
-        "watch",
-        passed=(
-            neo_watch_ok == mongo_watch_ok
-            if mongo_watch_ok is not False
-            else True
-        ),
-        neo_result="OK" if neo_watch_ok else "FAIL",
-        mongo_result="OK" if mongo_watch_ok else "FAIL",
-        skip_reason=skip_reason,
-    )
+        # API comparison mode or both supported
+        reporter.record_comparison(
+            "Change Streams",
+            "watch",
+            neo_results="OK" if neo_watch_ok else "FAIL",
+            mongo_results="OK" if mongo_watch_ok else "FAIL",
+            skip_reason=None,
+        )
