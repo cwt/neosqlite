@@ -7,7 +7,6 @@ that the current implementation can't optimize with a single SQL query.
 from __future__ import annotations
 
 import hashlib
-import os
 import uuid
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, List, Tuple
@@ -880,8 +879,6 @@ class TemporaryTableAggregationProcessor:
                                 ),
                             )
                     else:
-                        from .json_path_utils import parse_json_path
-
                         for doc in pipeline_result:
                             key_val = self._extract_field_value(
                                 doc, foreign_field
@@ -1047,12 +1044,7 @@ class TemporaryTableAggregationProcessor:
             str: Name of the newly created temporary table with lookup results added
         """
         from_collection = lookup_spec["from"]
-        local_field = lookup_spec.get("localField")
-        foreign_field = lookup_spec.get("foreignField")
-        as_field = lookup_spec["as"]
         pipeline = lookup_spec.get("pipeline", [])
-
-        json_set_func = f"{self._json_function_prefix}_set"
 
         use_hash_join = self._should_use_hash_join(from_collection, pipeline)
 

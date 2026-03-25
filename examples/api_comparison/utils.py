@@ -2,7 +2,6 @@
 Utility functions for API comparison tests
 """
 
-from datetime import timezone
 from typing import Any, Callable
 
 from pymongo import MongoClient

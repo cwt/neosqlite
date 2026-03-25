@@ -44,7 +44,6 @@ def compare_additional_collection_methods():
     mongo_full_name = None
     mongo_full_name_ok = None
     mongo_client_prop = None
-    mongo_db_path_prop = None
     mongo_with_options = None
 
     with neosqlite.Connection(":memory:") as neo_conn:
@@ -224,7 +223,7 @@ def compare_additional_collection_methods():
         except Exception:
             pass
         if mongo_watch:
-            print(f"Mongo watch(): OK (replica set available)")
+            print("Mongo watch(): OK (replica set available)")
 
         # Test full_name property
         mongo_collection_fullname = mongo_db.test_fullname
@@ -264,9 +263,8 @@ def compare_additional_collection_methods():
             start_mongo_timing()
             try:
                 _ = mongo_collection2.db_path
-                mongo_db_path_prop = True
             except Exception:
-                mongo_db_path_prop = False
+                pass
             finally:
                 end_mongo_timing()
         except Exception:

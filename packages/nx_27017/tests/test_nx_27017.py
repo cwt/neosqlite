@@ -1929,7 +1929,7 @@ class TestGridFSOperations:
         # Upload via direct GridFS (simulating what PyMongo would do via upload command)
         db = handler.get_database("test")
         bucket = GridFSBucket(db.db, bucket_name="fs")
-        file_id = bucket.upload_from_stream("newfile.txt", b"New content here!")
+        bucket.upload_from_stream("newfile.txt", b"New content here!")
 
         # Find and verify
         find_msg = {

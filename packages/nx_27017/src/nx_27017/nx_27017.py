@@ -41,8 +41,6 @@ from neosqlite import Connection
 from neosqlite.objectid import ObjectId as NeoObjectId
 from neosqlite.options import JournalMode
 from nx_27017.gridfs_adapter import (
-    GridFSAdapter,
-    _convert_gridfs_collection_name,
     _get_gridfs_bucket_name,
     _is_gridfs_collection,
     create_gridfs_adapter,
@@ -535,7 +533,7 @@ class NeoSQLiteHandler:
         )
 
         if not docs:
-            logger.debug(f"_handle_gridfs_insert: no docs, returning success")
+            logger.debug("_handle_gridfs_insert: no docs, returning success")
             return 0, {"ok": 1, "n": 0}
 
         is_files = coll_name.endswith(".files")
@@ -559,7 +557,7 @@ class NeoSQLiteHandler:
         # If inserting chunks, ensure the corresponding file metadata exists
         if is_chunks and docs:
             logger.debug(
-                f"_handle_gridfs_insert: Ensuring file metadata exists for chunks"
+                "_handle_gridfs_insert: Ensuring file metadata exists for chunks"
             )
             for doc in docs:
                 files_id = doc.get("files_id")
@@ -1050,7 +1048,7 @@ class NeoSQLiteHandler:
             update_doc = cmd_copy.pop("update", None)
             remove = cmd_copy.pop("remove", False)
             new_doc = cmd_copy.pop("new", False)
-            fields = cmd_copy.pop("fields", None)
+            cmd_copy.pop("fields", None)
             upsert = cmd_copy.pop("upsert", False)
 
             coll = db[coll_name]
@@ -2099,7 +2097,7 @@ async def handle_client(
                                     logger.debug(
                                         f"Non-insert command body: {section_data}"
                                     )
-                        client_request_id = msg.get("request_id", 0)
+                        msg.get("request_id", 0)
                         if is_insert or has_payload_docs:
                             request_id, response_doc = await asyncio.to_thread(
                                 handler.handle_insert, msg
@@ -2192,7 +2190,7 @@ def handle_client_threaded(
 
                 message_length = struct.unpack("<i", header[0:4])[0]
                 request_id = struct.unpack("<i", header[4:8])[0]
-                response_to = struct.unpack("<i", header[8:12])[
+                struct.unpack("<i", header[8:12])[
                     0
                 ]  # Save original response_to
                 opcode = struct.unpack("<i", header[12:16])[0]

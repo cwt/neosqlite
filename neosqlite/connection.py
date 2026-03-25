@@ -781,7 +781,7 @@ class Connection:
                     quoted_table = quote_table_name(collection_name)
 
                     cursor = self.db.execute(
-                        f"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
+                        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
                         (collection_name,),
                     )
                     if not cursor.fetchone():

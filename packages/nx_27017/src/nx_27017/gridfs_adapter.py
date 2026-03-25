@@ -194,7 +194,7 @@ class GridFSAdapter:
                     self._get_bucket()._chunk_size_bytes = (
                         DEFAULT_CHUNK_SIZE_BYTES
                     )
-                    logger.debug(f"GridFSBucket initialized (skipped creation)")
+                    logger.debug("GridFSBucket initialized (skipped creation)")
                     return
 
             # Also check fs.chunks table if it exists (PyMongo might create this instead)
@@ -220,7 +220,7 @@ class GridFSAdapter:
                 bucket_name=self._bucket_name,
                 chunk_size_bytes=DEFAULT_CHUNK_SIZE_BYTES,
             )
-            logger.debug(f"GridFSBucket created successfully")
+            logger.debug("GridFSBucket created successfully")
 
     def _get_bucket(self) -> GridFSBucket:
         """Get the GridFSBucket with type safety assertion."""
