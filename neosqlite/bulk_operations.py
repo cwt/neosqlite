@@ -310,6 +310,7 @@ class BulkOperationExecutor:
         upserted_count = 0
 
         self._collection.db.execute("SAVEPOINT bulk_operations")
+        released = False
         try:
             for op in self._operations:
                 match op:
@@ -337,9 +338,18 @@ class BulkOperationExecutor:
                         deleted_count += delete_res.deleted_count
 
             self._collection.db.execute("RELEASE SAVEPOINT bulk_operations")
+            released = True
         except Exception as e:
             self._collection.db.execute("ROLLBACK TO SAVEPOINT bulk_operations")
             raise e
+        finally:
+            if not released:
+                try:
+                    self._collection.db.execute(
+                        "RELEASE SAVEPOINT bulk_operations"
+                    )
+                except Exception:
+                    pass
 
         return BulkWriteResult(
             inserted_count=inserted_count,
