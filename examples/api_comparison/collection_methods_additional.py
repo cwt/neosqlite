@@ -27,6 +27,12 @@ def compare_additional_collection_methods():
     """Compare additional collection methods"""
     print("\n=== Additional Collection Methods Comparison ===")
 
+    # Check MongoDB availability FIRST to determine which operations to benchmark
+    client = test_pymongo_connection()
+    mongo_available = client is not None
+    if client:
+        client.close()
+
     # Initialize NeoSQLite result variables
     neo_drop = False
     neo_db_ok = False
@@ -49,27 +55,30 @@ def compare_additional_collection_methods():
     with neosqlite.Connection(":memory:") as neo_conn:
         set_accumulation_mode(True)
 
-        # Test drop()
+        # Test drop() - ONLY time if MongoDB is available for comparison
         neo_collection = neo_conn.test_drop
         neo_collection.insert_one({"name": "test"})
-        try:
+        if mongo_available:
             start_neo_timing()
+        try:
             try:
                 neo_collection.drop()
             except Exception as e:
                 neo_drop = False
                 print(f"Neo drop(): Error - {e}")
             finally:
-                end_neo_timing()
+                if mongo_available:
+                    end_neo_timing()
             neo_drop = "test_drop" not in neo_conn.list_collection_names()
         except Exception:
             pass
         print(f"Neo drop(): {'OK' if neo_drop else 'FAIL'}")
 
-        # Test database property
+        # Test database property - ONLY time if MongoDB is available
         neo_collection2 = neo_conn.test
-        try:
+        if mongo_available:
             start_neo_timing()
+        try:
             try:
                 neo_db = neo_collection2.database
                 neo_db_ok = neo_db is not None
@@ -77,33 +86,32 @@ def compare_additional_collection_methods():
                 neo_db_ok = False
                 print(f"Neo database property: Error - {e}")
             finally:
-                end_neo_timing()
+                if mongo_available:
+                    end_neo_timing()
         except Exception:
             pass
         print(f"Neo database property: {'OK' if neo_db_ok else 'FAIL'}")
 
-        # Test watch() - Change streams
+        # Test watch() - Change streams (SKIPPED - MongoDB requires replica set)
+        # Don't time this - it's a known limitation, not a fair comparison
+        neo_collection_watch = neo_conn.test_watch
         try:
-            start_neo_timing()
-            try:
-                neo_collection_watch = neo_conn.test_watch
-                neo_stream = neo_collection_watch.watch()
-                neo_watch = neo_stream is not None
-                if neo_stream:
-                    neo_stream.close()
-            except Exception as e:
-                neo_watch = False
-                print(f"Neo watch(): Error - {e}")
-            finally:
-                end_neo_timing()
-        except Exception:
-            pass
-        print(f"Neo watch(): {'OK (SQLite triggers)' if neo_watch else 'FAIL'}")
+            neo_stream = neo_collection_watch.watch()
+            neo_watch = neo_stream is not None
+            if neo_stream:
+                neo_stream.close()
+        except Exception as e:
+            neo_watch = False
+            print(f"Neo watch(): SKIPPED (SQLite triggers) - {e}")
+        print(
+            f"Neo watch(): {'OK (SQLite triggers)' if neo_watch else 'FAIL'} (not timed)"
+        )
 
-        # Test full_name property
+        # Test full_name property - ONLY time if MongoDB is available
         neo_collection_fullname = neo_conn.test_fullname
-        try:
+        if mongo_available:
             start_neo_timing()
+        try:
             try:
                 neo_full_name = neo_collection_fullname.full_name
                 neo_full_name_ok = (
@@ -113,43 +121,44 @@ def compare_additional_collection_methods():
                 neo_full_name_ok = False
                 print(f"Neo full_name: Error - {e}")
             finally:
-                end_neo_timing()
+                if mongo_available:
+                    end_neo_timing()
         except Exception:
             pass
         print(f"Neo full_name: '{neo_full_name}'")
 
-        # Test client property
-        try:
+        # Test client property - ONLY time if MongoDB is available
+        if mongo_available:
             start_neo_timing()
+        try:
             try:
                 neo_client_prop = neo_collection2.client == neo_conn
             except Exception as e:
                 neo_client_prop = False
                 print(f"Neo client property: Error - {e}")
             finally:
-                end_neo_timing()
+                if mongo_available:
+                    end_neo_timing()
         except Exception:
             pass
         print(f"Neo client property: {'OK' if neo_client_prop else 'FAIL'}")
 
-        # Test db_path property (NeoSQLite specific)
+        # Test db_path property (NeoSQLite specific - SKIPPED from benchmark)
+        # Don't time this - MongoDB doesn't have this feature
         try:
-            start_neo_timing()
-            try:
-                neo_db_path_prop = neo_collection2.db_path == ":memory:"
-            except Exception as e:
-                neo_db_path_prop = False
-                print(f"Neo db_path property: Error - {e}")
-            finally:
-                end_neo_timing()
-        except Exception:
-            pass
-        print(f"Neo db_path property: {'OK' if neo_db_path_prop else 'FAIL'}")
+            neo_db_path_prop = neo_collection2.db_path == ":memory:"
+        except Exception as e:
+            neo_db_path_prop = False
+            print(f"Neo db_path property: SKIPPED (NeoSQLite specific) - {e}")
+        print(
+            f"Neo db_path property: {'OK' if neo_db_path_prop else 'FAIL'} (not timed)"
+        )
 
-        # Test with_options()
+        # Test with_options() - ONLY time if MongoDB is available
         neo_collection_opts = neo_conn.test_with_opts
-        try:
+        if mongo_available:
             start_neo_timing()
+        try:
             try:
                 neo_coll_opts = neo_collection_opts.with_options(
                     write_concern={"w": "majority"}, read_preference=None
@@ -162,55 +171,56 @@ def compare_additional_collection_methods():
                 neo_with_options = False
                 print(f"Neo with_options(): Error - {e}")
             finally:
-                end_neo_timing()
+                if mongo_available:
+                    end_neo_timing()
         except Exception:
             pass
         print(f"Neo with_options(): {'OK' if neo_with_options else 'FAIL'}")
 
-    client = test_pymongo_connection()
-    if client:
-        mongo_db = client.test_database
-        set_accumulation_mode(True)
+    if mongo_available:
+        client = test_pymongo_connection()
+        if client:
+            mongo_db = client.test_database
+            set_accumulation_mode(True)
 
-        # Test drop()
-        mongo_collection = mongo_db.test_drop
-        mongo_collection.delete_many({})
-        mongo_collection.insert_one({"name": "test"})
-        try:
-            start_mongo_timing()
+            # Test drop()
+            mongo_collection = mongo_db.test_drop
+            mongo_collection.delete_many({})
+            mongo_collection.insert_one({"name": "test"})
             try:
-                mongo_collection.drop()
-            except Exception as e:
-                mongo_drop = False
-                print(f"Mongo drop(): Error - {e}")
-            finally:
-                end_mongo_timing()
-            mongo_drop = "test_drop" not in mongo_db.list_collection_names()
-        except Exception:
-            pass
-        print(f"Mongo drop(): {'OK' if mongo_drop else 'FAIL'}")
+                start_mongo_timing()
+                try:
+                    mongo_collection.drop()
+                except Exception as e:
+                    mongo_drop = False
+                    print(f"Mongo drop(): Error - {e}")
+                finally:
+                    end_mongo_timing()
+                mongo_drop = "test_drop" not in mongo_db.list_collection_names()
+            except Exception:
+                pass
+            print(f"Mongo drop(): {'OK' if mongo_drop else 'FAIL'}")
 
-        # Test database property
-        mongo_collection2 = mongo_db.test
-        try:
-            start_mongo_timing()
+            # Test database property
+            mongo_collection2 = mongo_db.test
             try:
-                mongo_db_prop = mongo_collection2.database
-                mongo_db_ok = mongo_db_prop is not None
-            except Exception as e:
-                mongo_db_ok = False
-                print(f"Mongo database property: Error - {e}")
-            finally:
-                end_mongo_timing()
-        except Exception:
-            pass
-        print(f"Mongo database property: {'OK' if mongo_db_ok else 'FAIL'}")
+                start_mongo_timing()
+                try:
+                    mongo_db_prop = mongo_collection2.database
+                    mongo_db_ok = mongo_db_prop is not None
+                except Exception as e:
+                    mongo_db_ok = False
+                    print(f"Mongo database property: Error - {e}")
+                finally:
+                    end_mongo_timing()
+            except Exception:
+                pass
+            print(f"Mongo database property: {'OK' if mongo_db_ok else 'FAIL'}")
 
-        # Test watch() - Change streams (requires replica set)
-        try:
-            start_mongo_timing()
+            # Test watch() - Change streams (SKIPPED - requires replica set)
+            # Don't time this - it's a known limitation, not a fair comparison
+            mongo_collection3 = mongo_db.test_watch
             try:
-                mongo_collection3 = mongo_db.test_watch
                 change_stream = mongo_collection3.watch([])
                 mongo_watch = change_stream is not None
                 if change_stream:
@@ -218,107 +228,102 @@ def compare_additional_collection_methods():
             except Exception as e:
                 mongo_watch = False
                 print(f"Mongo watch(): SKIPPED (requires replica set) - {e}")
-            finally:
-                end_mongo_timing()
-        except Exception:
-            pass
-        if mongo_watch:
-            print("Mongo watch(): OK (replica set available)")
+            print(
+                f"Mongo watch(): {'OK (replica set available)' if mongo_watch else 'FAIL'} (not timed)"
+            )
 
-        # Test full_name property
-        mongo_collection_fullname = mongo_db.test_fullname
-        try:
-            start_mongo_timing()
+            # Test full_name property
+            mongo_collection_fullname = mongo_db.test_fullname
             try:
-                mongo_full_name = mongo_collection_fullname.full_name
-                mongo_full_name_ok = (
-                    isinstance(mongo_full_name, str)
-                    and len(mongo_full_name) > 0
-                )
-            except Exception as e:
-                mongo_full_name_ok = False
-                print(f"Mongo full_name: Error - {e}")
-            finally:
-                end_mongo_timing()
-        except Exception:
-            pass
-        print(f"Mongo full_name: '{mongo_full_name}'")
+                start_mongo_timing()
+                try:
+                    mongo_full_name = mongo_collection_fullname.full_name
+                    mongo_full_name_ok = (
+                        isinstance(mongo_full_name, str)
+                        and len(mongo_full_name) > 0
+                    )
+                except Exception as e:
+                    mongo_full_name_ok = False
+                    print(f"Mongo full_name: Error - {e}")
+                finally:
+                    end_mongo_timing()
+            except Exception:
+                pass
+            print(f"Mongo full_name: '{mongo_full_name}'")
 
-        # Test client property
-        try:
-            start_mongo_timing()
+            # Test client property
             try:
-                mongo_client_prop = mongo_collection2.database.client == client
-            except Exception as e:
-                mongo_client_prop = False
-                print(f"Mongo client property: Error - {e}")
-            finally:
-                end_mongo_timing()
-        except Exception:
-            pass
-        print(f"Mongo client property: {'OK' if mongo_client_prop else 'FAIL'}")
+                start_mongo_timing()
+                try:
+                    mongo_client_prop = (
+                        mongo_collection2.database.client == client
+                    )
+                except Exception as e:
+                    mongo_client_prop = False
+                    print(f"Mongo client property: Error - {e}")
+                finally:
+                    end_mongo_timing()
+            except Exception:
+                pass
+            print(
+                f"Mongo client property: {'OK' if mongo_client_prop else 'FAIL'}"
+            )
 
-        # Test db_path property (Not in PyMongo)
-        try:
-            start_mongo_timing()
+            # Test db_path property (Not in PyMongo - SKIPPED from benchmark)
+            # Don't time this - MongoDB doesn't have this feature
             try:
                 _ = mongo_collection2.db_path
             except Exception:
                 pass
-            finally:
-                end_mongo_timing()
-        except Exception:
-            pass
+            print("Mongo db_path property: SKIPPED (not available in PyMongo)")
 
-        # Test with_options()
-        mongo_collection_opts = mongo_db.test_with_opts
-        try:
-            from pymongo.write_concern import WriteConcern
-
-            start_mongo_timing()
+            # Test with_options()
+            mongo_collection_opts = mongo_db.test_with_opts
             try:
-                mongo_coll_opts = mongo_collection_opts.with_options(
-                    write_concern=WriteConcern(w="majority"),
-                    read_preference=None,
-                )
-                mongo_with_options = (
-                    mongo_coll_opts is not None
-                    and mongo_coll_opts.name == mongo_collection_opts.name
-                )
-            except Exception as e:
-                mongo_with_options = False
-                print(f"Mongo with_options(): Error - {e}")
-            finally:
-                end_mongo_timing()
-        except Exception:
-            pass
-        print(f"Mongo with_options(): {'OK' if mongo_with_options else 'FAIL'}")
+                from pymongo.write_concern import WriteConcern
 
-        client.close()
+                start_mongo_timing()
+                try:
+                    mongo_coll_opts = mongo_collection_opts.with_options(
+                        write_concern=WriteConcern(w="majority"),
+                        read_preference=None,
+                    )
+                    mongo_with_options = (
+                        mongo_coll_opts is not None
+                        and mongo_coll_opts.name == mongo_collection_opts.name
+                    )
+                except Exception as e:
+                    mongo_with_options = False
+                    print(f"Mongo with_options(): Error - {e}")
+                finally:
+                    end_mongo_timing()
+            except Exception:
+                pass
+            print(
+                f"Mongo with_options(): {'OK' if mongo_with_options else 'FAIL'}"
+            )
 
+            client.close()
+
+    # Record comparisons - only for operations that were actually timed
     reporter.record_comparison(
         "Collection Methods",
         "drop",
         neo_drop if neo_drop else "FAIL",
         mongo_drop if mongo_drop else None,
-        skip_reason="MongoDB not available" if not client else None,
+        skip_reason="MongoDB not available" if not mongo_available else None,
     )
     reporter.record_comparison(
         "Collection Methods",
         "database_property",
         neo_db_ok if neo_db_ok else "FAIL",
         mongo_db_ok if mongo_db_ok else None,
-        skip_reason="MongoDB not available" if not client else None,
+        skip_reason="MongoDB not available" if not mongo_available else None,
     )
     # watch() is implemented in NeoSQLite (SQLite triggers) but can't be compared
     # with MongoDB in this test because MongoDB requires a replica set
-    # Skip if MongoDB can't run watch (replica set not available)
-    if mongo_watch is False:
-        skip_reason = "NeoSQLite: Implemented via SQLite triggers; MongoDB: Requires replica set (not available in standalone test)"
-    elif IS_NX27017_BACKEND:
-        skip_reason = None  # On NX-27017, compare results
-    else:
-        skip_reason = "NeoSQLite: Implemented via SQLite triggers; MongoDB: Requires replica set (not available in standalone test)"
+    # This is a known limitation - mark as skipped for both sides
+    skip_reason = "NeoSQLite: Implemented via SQLite triggers; MongoDB: Requires replica set (not available in standalone test)"
 
     reporter.record_comparison(
         "Collection Methods",
@@ -338,26 +343,26 @@ def compare_additional_collection_methods():
         "full_name",
         neo_coll_name if neo_full_name_ok else "FAIL",
         mongo_coll_name if mongo_full_name_ok else None,
-        skip_reason="MongoDB not available" if not client else None,
+        skip_reason="MongoDB not available" if not mongo_available else None,
     )
     reporter.record_comparison(
         "Collection Methods",
         "client",
         neo_client_prop if neo_client_prop else "FAIL",
         mongo_client_prop if mongo_client_prop else None,
-        skip_reason="MongoDB not available" if not client else None,
+        skip_reason="MongoDB not available" if not mongo_available else None,
     )
     reporter.record_comparison(
         "Collection Methods",
         "db_path",
         neo_db_path_prop if neo_db_path_prop else "FAIL",
         None,
-        skip_reason="NeoSQLite specific (SQLite database path)",
+        skip_reason="NeoSQLite specific (SQLite database path) - not timed in benchmark",
     )
     reporter.record_comparison(
         "Collection Methods",
         "with_options",
         neo_with_options if neo_with_options else "FAIL",
         mongo_with_options if mongo_with_options else None,
-        skip_reason="MongoDB not available" if not client else None,
+        skip_reason="MongoDB not available" if not mongo_available else None,
     )

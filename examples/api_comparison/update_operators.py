@@ -23,6 +23,12 @@ def compare_update_operators():
     """Compare update operators between NeoSQLite and PyMongo"""
     print("\n=== Update Operators Comparison ===")
 
+    # Check MongoDB availability FIRST to determine if we should time operations
+    client = test_pymongo_connection()
+    mongo_available = client is not None
+    if client:
+        client.close()
+
     update_ops = [
         ({"$set": {"age": 31}}, "$set"),
         ({"$unset": {"score": ""}}, "$unset"),
@@ -52,7 +58,9 @@ def compare_update_operators():
                 },
             )
 
-            start_neo_timing()
+            # ONLY time if MongoDB is available for comparison
+            if mongo_available:
+                start_neo_timing()
             try:
                 try:
                     result = neo_collection.update_one({}, update)
@@ -64,55 +72,57 @@ def compare_update_operators():
                     neo_results[op_name] = f"Error: {e}"
                     print(f"Neo {op_name}: {neo_results[op_name]}")
             finally:
-                end_neo_timing()
+                if mongo_available:
+                    end_neo_timing()
 
-    client = test_pymongo_connection()
     mongo_results = {}
 
-    if client:
-        try:
-            mongo_db = client.test_database
-            mongo_collection = mongo_db.test_collection
-            mongo_collection.delete_many({})
-            mongo_collection.insert_one(
-                {"name": "Alice", "age": 30, "score": 100, "tags": ["a"]}
-            )
-
-            set_accumulation_mode(True)
-            for update, op_name in update_ops:
-                # Reset document to initial state (not timed)
-                mongo_collection.update_one(
-                    {},
-                    {
-                        "$set": {"name": "Alice", "age": 30, "score": 100},
-                        "$unset": {"fullName": "", "created": ""},
-                    },
+    if mongo_available:
+        client = test_pymongo_connection()
+        if client:
+            try:
+                mongo_db = client.test_database
+                mongo_collection = mongo_db.test_collection
+                mongo_collection.delete_many({})
+                mongo_collection.insert_one(
+                    {"name": "Alice", "age": 30, "score": 100, "tags": ["a"]}
                 )
 
-                start_mongo_timing()
-                try:
+                set_accumulation_mode(True)
+                for update, op_name in update_ops:
+                    # Reset document to initial state (not timed)
+                    mongo_collection.update_one(
+                        {},
+                        {
+                            "$set": {"name": "Alice", "age": 30, "score": 100},
+                            "$unset": {"fullName": "", "created": ""},
+                        },
+                    )
+
+                    start_mongo_timing()
                     try:
-                        result = mongo_collection.update_one({}, update)
-                        mongo_results[op_name] = (
-                            "OK" if result.modified_count >= 0 else "FAIL"
-                        )
-                        print(f"Mongo {op_name}: {mongo_results[op_name]}")
-                    except Exception as e:
-                        mongo_results[op_name] = f"Error: {e}"
-                        print(f"Mongo {op_name}: {mongo_results[op_name]}")
-                finally:
-                    end_mongo_timing()
+                        try:
+                            result = mongo_collection.update_one({}, update)
+                            mongo_results[op_name] = (
+                                "OK" if result.modified_count >= 0 else "FAIL"
+                            )
+                            print(f"Mongo {op_name}: {mongo_results[op_name]}")
+                        except Exception as e:
+                            mongo_results[op_name] = f"Error: {e}"
+                            print(f"Mongo {op_name}: {mongo_results[op_name]}")
+                    finally:
+                        end_mongo_timing()
 
-            for op_name in neo_results:
-                reporter.record_comparison(
-                    "Update Operators",
-                    op_name,
-                    neo_results[op_name],
-                    mongo_results.get(op_name),
-                    skip_reason=None,
-                )
-        finally:
-            client.close()
+                for op_name in neo_results:
+                    reporter.record_comparison(
+                        "Update Operators",
+                        op_name,
+                        neo_results[op_name],
+                        mongo_results.get(op_name),
+                        skip_reason=None,
+                    )
+            finally:
+                client.close()
     else:
         # MongoDB not available, record NeoSQLite results as skipped
         for op_name in neo_results:
