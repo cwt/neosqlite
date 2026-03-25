@@ -158,6 +158,13 @@ For more details, see the [`examples/api_comparison/`](examples/api_comparison/)
 
 NeoSQLite includes comprehensive benchmarks demonstrating how its progressive optimizations improve both runtime performance and database maintenance.
 
+**v1.13.8 Security & Reliability Improvements**:
+- **SQL Injection Prevention**: Collection name validation, comment marker escaping, identifier whitelist validation
+- **Cursor Context Manager**: `with` statement support for guaranteed cleanup of temporary tables and resources
+- **Changestream Atomicity**: BEGIN IMMEDIATE transactions for exactly-once processing semantics
+- **Savepoint Cleanup Guarantees**: `finally` blocks ensure savepoints are always released
+- **Migration Error Logging**: Proper error handling and logging instead of silent failures
+
 **v1.12.0 Maintenance Improvements**:
 - **Incremental VACUUM**: Non-blocking vacuum operations via `compact` command with configurable batch sizes
 - **Accurate Statistics**: dbStats uses dbstat virtual table for precise index sizing
