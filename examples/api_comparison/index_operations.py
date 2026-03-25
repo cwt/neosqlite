@@ -186,3 +186,11 @@ def compare_index_operations():
             "drop_indexes",
         ]:
             reporter.record_comparison("Index Operations", op, "OK", "OK")
+
+        from .reporter import benchmark_reporter
+
+        if benchmark_reporter:
+            benchmark_reporter.mark_mongo_skipped(
+                "Index Operations",
+                "Index operations only compared via NX-27017 wire protocol",
+            )
