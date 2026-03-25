@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 from typing import TYPE_CHECKING, Any, Dict, List
 
@@ -60,8 +61,35 @@ class ChangeStream:
         self._closed = False
         self._last_id = 0
 
+        self._sanitized_name = self._sanitize_collection_name(collection.name)
+
         # Set up triggers to capture changes
         self._setup_triggers()
+
+    @staticmethod
+    def _sanitize_collection_name(name: str) -> str:
+        """
+        Validate and sanitize a collection name to prevent SQL injection.
+
+        Args:
+            name: The collection name to validate.
+
+        Returns:
+            The validated collection name.
+
+        Raises:
+            ValueError: If the collection name contains invalid characters.
+        """
+        if not isinstance(name, str):
+            raise ValueError(
+                f"Collection name must be a string, got {type(name).__name__}"
+            )
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
+            raise ValueError(
+                f"Invalid collection name '{name}': must contain only "
+                f"alphanumeric characters and underscores, and must not start with a digit"
+            )
+        return name
 
     def _setup_triggers(self):
         """
@@ -92,34 +120,34 @@ class ChangeStream:
         # Create triggers for INSERT, UPDATE, DELETE operations
         # Insert trigger
         self._collection.db.execute(f"""
-            CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._collection.name}_insert_trigger
-            AFTER INSERT ON {self._collection.name}
+            CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._sanitized_name}_insert_trigger
+            AFTER INSERT ON {self._sanitized_name}
             BEGIN
                 INSERT INTO _neosqlite_changestream
                 (collection_name, operation, document_id, document_data, document_id_value)
-                VALUES ('{self._collection.name}', 'insert', NEW.id, NEW.data, NEW._id);
+                VALUES ('{self._sanitized_name}', 'insert', NEW.id, NEW.data, NEW._id);
             END
             """)
 
         # Update trigger
         self._collection.db.execute(f"""
-            CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._collection.name}_update_trigger
-            AFTER UPDATE ON {self._collection.name}
+            CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._sanitized_name}_update_trigger
+            AFTER UPDATE ON {self._sanitized_name}
             BEGIN
                 INSERT INTO _neosqlite_changestream
                 (collection_name, operation, document_id, document_data, document_id_value)
-                VALUES ('{self._collection.name}', 'update', NEW.id, NEW.data, NEW._id);
+                VALUES ('{self._sanitized_name}', 'update', NEW.id, NEW.data, NEW._id);
             END
             """)
 
         # Delete trigger
         self._collection.db.execute(f"""
-            CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._collection.name}_delete_trigger
-            AFTER DELETE ON {self._collection.name}
+            CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._sanitized_name}_delete_trigger
+            AFTER DELETE ON {self._sanitized_name}
             BEGIN
                 INSERT INTO _neosqlite_changestream
                 (collection_name, operation, document_id, document_data, document_id_value)
-                VALUES ('{self._collection.name}', 'delete', OLD.id, OLD.data, OLD._id);
+                VALUES ('{self._sanitized_name}', 'delete', OLD.id, OLD.data, OLD._id);
             END
             """)
 
@@ -146,13 +174,13 @@ class ChangeStream:
         try:
             # Drop the triggers
             self._collection.db.execute(
-                f"DROP TRIGGER IF EXISTS _neosqlite_{self._collection.name}_insert_trigger"
+                f"DROP TRIGGER IF EXISTS _neosqlite_{self._sanitized_name}_insert_trigger"
             )
             self._collection.db.execute(
-                f"DROP TRIGGER IF EXISTS _neosqlite_{self._collection.name}_update_trigger"
+                f"DROP TRIGGER IF EXISTS _neosqlite_{self._sanitized_name}_update_trigger"
             )
             self._collection.db.execute(
-                f"DROP TRIGGER IF EXISTS _neosqlite_{self._collection.name}_delete_trigger"
+                f"DROP TRIGGER IF EXISTS _neosqlite_{self._sanitized_name}_delete_trigger"
             )
 
             # Note: We don't drop the _neosqlite_changestream table as it might be used by other change streams
