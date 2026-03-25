@@ -236,73 +236,93 @@ class ChangeStream:
             if time.time() - start_time > timeout:
                 raise StopIteration("Change stream timeout exceeded")
 
-            # Query for new changes
-            cursor = self._collection.db.execute(
-                """
-                SELECT id, operation, document_id, document_data, document_id_value, timestamp
-                FROM _neosqlite_changestream
-                WHERE collection_name = ? AND id > ?
-                ORDER BY id
-                LIMIT ?
-                """,
-                (self._collection.name, self._last_id, self._batch_size),
-            )
-
-            rows = cursor.fetchall()
-
-            if rows:
-                # Process the first change
-                row = rows[0]
-                (
-                    change_id,
-                    operation,
-                    document_id,
-                    document_data,
-                    document_id_value,
-                    timestamp,
-                ) = row
-
-                # Update the last processed ID
-                self._last_id = change_id
-
-                # Get the actual _id of the document
-                # Try to get _id from the stored document_id_value first (this works even for deleted documents)
-                actual_id = (
-                    document_id  # Default to integer ID if nothing else works
+            # Use a transaction to atomically read and delete changes
+            # BEGIN IMMEDIATE acquires a write lock immediately
+            self._collection.db.execute("BEGIN IMMEDIATE")
+            try:
+                cursor = self._collection.db.execute(
+                    """
+                    SELECT id, operation, document_id, document_data, document_id_value, timestamp
+                    FROM _neosqlite_changestream
+                    WHERE collection_name = ? AND id > ?
+                    ORDER BY id
+                    LIMIT ?
+                    """,
+                    (self._collection.name, self._last_id, self._batch_size),
                 )
-                if document_id_value is not None:
-                    # Use the stored _id value
-                    # If it looks like a hex string (ObjectId), convert it back to ObjectId
-                    from neosqlite.objectid import ObjectId
 
-                    try:
-                        actual_id = ObjectId(document_id_value)
-                    except (ValueError, TypeError):
-                        # If not a valid ObjectId hex, use as-is
-                        actual_id = document_id_value
-                elif document_data:
-                    try:
-                        import json
+                rows = cursor.fetchall()
 
-                        # Handle bytes data - decode to string first
-                        if isinstance(document_data, bytes):
-                            try:
-                                document_str = document_data.decode("utf-8")
-                            except UnicodeDecodeError:
-                                # If UTF-8 decoding fails, use default ID
-                                document_str = None
-                        else:
-                            document_str = document_data
+                if rows:
+                    # Process the first change
+                    row = rows[0]
+                    (
+                        change_id,
+                        operation,
+                        document_id,
+                        document_data,
+                        document_id_value,
+                        timestamp,
+                    ) = row
 
-                        doc_dict = (
-                            json.loads(document_str)
-                            if document_str is not None
-                            else None
-                        )
-                        if doc_dict and "_id" in doc_dict:
-                            actual_id = doc_dict["_id"]
-                        else:
-                            # If not in JSON, try to get from the _id column in the database
+                    # Delete the processed row atomically within the transaction
+                    self._collection.db.execute(
+                        "DELETE FROM _neosqlite_changestream WHERE id = ?",
+                        (change_id,),
+                    )
+
+                    # Commit the transaction
+                    self._collection.db.commit()
+
+                    # Update the last processed ID after successful commit
+                    self._last_id = change_id
+
+                    # Get the actual _id of the document
+                    # Try to get _id from the stored document_id_value first (this works even for deleted documents)
+                    actual_id = document_id  # Default to integer ID if nothing else works
+                    if document_id_value is not None:
+                        # Use the stored _id value
+                        # If it looks like a hex string (ObjectId), convert it back to ObjectId
+                        from neosqlite.objectid import ObjectId
+
+                        try:
+                            actual_id = ObjectId(document_id_value)
+                        except (ValueError, TypeError):
+                            # If not a valid ObjectId hex, use as-is
+                            actual_id = document_id_value
+                    elif document_data:
+                        try:
+                            import json
+
+                            # Handle bytes data - decode to string first
+                            if isinstance(document_data, bytes):
+                                try:
+                                    document_str = document_data.decode("utf-8")
+                                except UnicodeDecodeError:
+                                    # If UTF-8 decoding fails, use default ID
+                                    document_str = None
+                            else:
+                                document_str = document_data
+
+                            doc_dict = (
+                                json.loads(document_str)
+                                if document_str is not None
+                                else None
+                            )
+                            if doc_dict and "_id" in doc_dict:
+                                actual_id = doc_dict["_id"]
+                            else:
+                                # If not in JSON, try to get from the _id column in the database
+                                stored_id = self._collection._get_stored_id(
+                                    document_id
+                                )
+                                actual_id = (
+                                    stored_id
+                                    if stored_id is not None
+                                    else document_id
+                                )
+                        except (json.JSONDecodeError, TypeError):
+                            # If JSON parsing fails, try database lookup
                             stored_id = self._collection._get_stored_id(
                                 document_id
                             )
@@ -311,77 +331,84 @@ class ChangeStream:
                                 if stored_id is not None
                                 else document_id
                             )
-                    except (json.JSONDecodeError, TypeError):
-                        # If JSON parsing fails, try database lookup
+                    else:
+                        # No JSON data, try database lookup
                         stored_id = self._collection._get_stored_id(document_id)
                         actual_id = (
                             stored_id if stored_id is not None else document_id
                         )
+
+                    # Create the change document
+                    change_doc = {
+                        "_id": {"id": change_id},
+                        "operationType": operation,
+                        "clusterTime": timestamp,
+                        "ns": {
+                            "db": (
+                                "default"
+                            ),  # Default database name since Connection doesn't have a name property
+                            "coll": self._collection.name,
+                        },
+                        "documentKey": {"_id": actual_id},
+                    }
+
+                    # Add full document if requested
+                    if self._full_document == "updateLookup" and document_data:
+                        try:
+                            import json
+
+                            # Handle bytes data - decode to string first
+                            if isinstance(document_data, bytes):
+                                try:
+                                    document_str = document_data.decode("utf-8")
+                                except UnicodeDecodeError:
+                                    # If UTF-8 decoding fails, skip this change
+                                    continue
+                            else:
+                                document_str = document_data
+
+                            doc = json.loads(document_str)
+                            # Ensure the _id in the full document is correct
+                            # Use the stored document_id_value if available (e.g., for deleted docs)
+                            if document_id_value is not None:
+                                from neosqlite.objectid import ObjectId
+
+                                try:
+                                    actual_doc_id = ObjectId(document_id_value)
+                                except (ValueError, TypeError):
+                                    actual_doc_id = document_id_value
+                                doc["_id"] = actual_doc_id
+                            elif "_id" not in doc:
+                                # Fallback: get from database if not in JSON
+                                stored_id = self._collection._get_stored_id(
+                                    document_id
+                                )
+                                doc["_id"] = (
+                                    stored_id
+                                    if stored_id is not None
+                                    else document_id
+                                )
+                            change_doc["fullDocument"] = doc
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+
+                    return change_doc
                 else:
-                    # No JSON data, try database lookup
-                    stored_id = self._collection._get_stored_id(document_id)
-                    actual_id = (
-                        stored_id if stored_id is not None else document_id
-                    )
+                    # No changes, rollback the empty transaction
+                    self._collection.db.rollback()
+            except Exception:
+                # Rollback on any error
+                try:
+                    self._collection.db.rollback()
+                except Exception:
+                    pass
+                raise
 
-                # Create the change document
-                change_doc = {
-                    "_id": {"id": change_id},
-                    "operationType": operation,
-                    "clusterTime": timestamp,
-                    "ns": {
-                        "db": (
-                            "default"
-                        ),  # Default database name since Connection doesn't have a name property
-                        "coll": self._collection.name,
-                    },
-                    "documentKey": {"_id": actual_id},
-                }
-
-                # Add full document if requested
-                if self._full_document == "updateLookup" and document_data:
-                    try:
-                        import json
-
-                        # Handle bytes data - decode to string first
-                        if isinstance(document_data, bytes):
-                            try:
-                                document_str = document_data.decode("utf-8")
-                            except UnicodeDecodeError:
-                                # If UTF-8 decoding fails, skip this change
-                                continue
-                        else:
-                            document_str = document_data
-
-                        doc = json.loads(document_str)
-                        # Ensure the _id in the full document is correct
-                        # Use the stored document_id_value if available (e.g., for deleted docs)
-                        if document_id_value is not None:
-                            from neosqlite.objectid import ObjectId
-
-                            try:
-                                actual_doc_id = ObjectId(document_id_value)
-                            except (ValueError, TypeError):
-                                actual_doc_id = document_id_value
-                            doc["_id"] = actual_doc_id
-                        elif "_id" not in doc:
-                            # Fallback: get from database if not in JSON
-                            stored_id = self._collection._get_stored_id(
-                                document_id
-                            )
-                            doc["_id"] = (
-                                stored_id
-                                if stored_id is not None
-                                else document_id
-                            )
-                        change_doc["fullDocument"] = doc
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-
-                return change_doc
-
-            # If no changes, sleep briefly before polling again
-            time.sleep(0.1)
+            # If we had rows to process, change_doc has been returned
+            # If not, loop continues to sleep and retry
+            if rows is None:
+                # If rows is None, no changes were found, sleep before retry
+                time.sleep(0.1)
 
     def __enter__(self) -> ChangeStream:
         """
