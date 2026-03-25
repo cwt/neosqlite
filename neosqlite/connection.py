@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Literal, Tuple
 
@@ -11,6 +12,8 @@ from .exceptions import CollectionInvalid
 from .migration import migrate_autovacuum, needs_migration, should_migrate
 from .options import AutoVacuumMode, JournalMode, WriteConcern
 from .sql_utils import quote_table_name
+
+logger = logging.getLogger(__name__)
 
 
 class Connection:
@@ -137,18 +140,28 @@ class Connection:
 
         try:
             self.db.execute("PRAGMA wal_checkpoint(FULL)")
-        except Exception:
-            pass
+        except sqlite3.OperationalError as e:
+            logger.warning(
+                f"WAL checkpoint skipped (may be no WAL or already checkpointing): {e}"
+            )
+        except Exception as e:
+            logger.error(
+                f"Unexpected error during WAL checkpoint: {e}", exc_info=True
+            )
 
         try:
             self.db.execute("COMMIT")
-        except Exception:
-            pass
+        except sqlite3.OperationalError as e:
+            logger.debug(f"Commit skipped (no active transaction): {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error during commit: {e}", exc_info=True)
 
         try:
             self.db.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(
+                f"Unexpected error closing database: {e}", exc_info=True
+            )
 
         migrate_autovacuum(
             db_path=old_path,
