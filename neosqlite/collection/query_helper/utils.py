@@ -17,6 +17,7 @@ from ..type_utils import _is_numeric_value as _is_numeric_value
 # Global cache for SQLite features
 _SQLITE_FEATURES: Dict[str, bool | None] = {
     "relative_indexing": None,
+    "returning_clause": None,
 }
 
 
@@ -54,6 +55,44 @@ def _supports_relative_json_indexing() -> bool:
     if val is None:
         val = _check_sqlite_version("3.42.0")
         _SQLITE_FEATURES["relative_indexing"] = val
+    return val
+
+
+def _supports_returning_clause() -> bool:
+    """
+    Check if current SQLite supports RETURNING clause in DELETE/UPDATE statements.
+
+    This tests the feature at runtime rather than relying on version checks,
+    as some SQLite builds may have features disabled at compile time.
+
+    RETURNING clause is supported in SQLite 3.35.0 (2021-03-12) and later.
+
+    Returns:
+        bool: True if supported, False otherwise
+    """
+    val = _SQLITE_FEATURES["returning_clause"]
+    if val is None:
+        try:
+            # Create a temporary table to test RETURNING
+            from ..._sqlite import sqlite3 as sqlite_module
+
+            # Use the same connection type as the collection
+            # We'll test with a simple in-memory database
+            test_conn = sqlite_module.connect(":memory:")
+            test_conn.execute(
+                "CREATE TABLE test_returning (id INTEGER, data TEXT)"
+            )
+            test_conn.execute("INSERT INTO test_returning VALUES (1, 'test')")
+            # Try DELETE with RETURNING
+            cursor = test_conn.execute(
+                "DELETE FROM test_returning WHERE id = 1 RETURNING data"
+            )
+            result = cursor.fetchone()
+            test_conn.close()
+            val = result is not None and result[0] == "test"
+        except Exception:
+            val = False
+        _SQLITE_FEATURES["returning_clause"] = val
     return val
 
 

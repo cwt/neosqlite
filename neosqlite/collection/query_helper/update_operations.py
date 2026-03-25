@@ -639,18 +639,20 @@ class UpdateOperationsMixin:
                                 f"{json_path}, strftime('%Y-%m-%dT%H:%M:%f', 'now')"
                             )
                 case "$rename":
-                    # SQL implementation for $rename
+                    # SQL implementation for $rename using single UPDATE
+                    # Combine json_set and json_remove in a single operation
                     for old_field, new_field in value.items():
                         old_json_path = f"'{parse_json_path(old_field)}'"
-                        new_field_key = f"'{new_field}'"
+                        new_json_path = f"'{parse_json_path(new_field)}'"
                         extract_func = _get_json_function(
                             "extract", self._jsonb_supported
                         )
-                        # Set new field with value from old field
+                        # First set the new field, then remove the old field
+                        # We need to nest the operations: json_remove(json_set(data, new_path, value), old_path)
+                        # This requires special handling - we'll use a combined approach
                         set_clauses.append(
-                            f"{new_field_key}, {extract_func}(data, {old_json_path})"
+                            f"{new_json_path}, {extract_func}(data, {old_json_path})"
                         )
-                        # Remove old field
                         unset_clauses.append(old_json_path)
                 case _:
                     # For other operations, use the standard approach
@@ -660,6 +662,20 @@ class UpdateOperationsMixin:
                         set_params.extend(params)
 
         # Execute updates in order
+        # Special handling for $rename: combine json_set and json_remove in single UPDATE
+        has_rename = any(op == "$rename" for op in update_spec.keys())
+
+        if has_rename and set_clauses and unset_clauses:
+            # Combined UPDATE for $rename: json_remove(json_set(data, ...), ...)
+            set_func = _get_json_function("set", self._jsonb_supported)
+            remove_func = _get_json_function("remove", self._jsonb_supported)
+            # First apply json_set, then wrap with json_remove
+            nested_cmd = f"UPDATE {quote_table_name(self.collection.name)} SET data = {remove_func}({set_func}(data, {', '.join(set_clauses)}), {', '.join(unset_clauses)}) WHERE id = ?"
+            self.collection.db.execute(nested_cmd, set_params + [int_doc_id])
+            # Clear the clauses so they don't get executed again
+            set_clauses = []
+            unset_clauses = []
+
         if unset_clauses:
             func_name = _get_json_function("remove", self._jsonb_supported)
             cmd = f"UPDATE {quote_table_name(self.collection.name)} SET data = {func_name}(data, {', '.join(unset_clauses)}) WHERE id = ?"

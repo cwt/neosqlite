@@ -10,6 +10,9 @@ if TYPE_CHECKING:
 from ...sql_utils import quote_table_name
 from ..cursor import Cursor
 from ..json_path_utils import parse_json_path
+
+# Import feature detection
+from ..query_helper import _supports_returning_clause, get_force_fallback
 from ..raw_batch_cursor import RawBatchCursor
 from ..type_utils import validate_session
 from .base import QueryEngineProtocol
@@ -144,6 +147,11 @@ class FindOperationsMixin(QueryEngineProtocol):
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         filter = self.helpers._normalize_id_query(filter)
 
+        # Check if RETURNING clause is supported (Tier-1 optimization)
+        use_returning = (
+            _supports_returning_clause() and not get_force_fallback()
+        )
+
         # Build sorting clause
         order_by = ""
         if sort:
@@ -156,7 +164,40 @@ class FindOperationsMixin(QueryEngineProtocol):
 
         # Use direct query to get integer ID for the delete operation
         where_clause, params = self.sql_translator.translate_match(filter)
-        if where_clause:
+        if not where_clause:
+            # Fallback: use Python-based approach for complex queries
+            cursor = self.find(filter, projection, session=session)
+            if sort:
+                cursor.sort(sort)
+            try:
+                doc = next(iter(cursor.limit(1)))
+                if doc:
+                    int_doc_id = self._get_integer_id_for_oid(doc["_id"])
+                    self.helpers._internal_delete(int_doc_id)
+                    return doc
+            except StopIteration:
+                pass
+            return None
+
+        if use_returning:
+            # Tier-1: Use RETURNING clause for atomic find-and-delete
+            # Note: SQLite doesn't support LIMIT with DELETE RETURNING directly
+            # We need to use a subquery approach
+            if self._jsonb_supported:
+                cmd = f"DELETE FROM {quote_table_name(self.collection.name)} WHERE id = (SELECT id FROM {quote_table_name(self.collection.name)} {where_clause} {order_by} LIMIT 1) RETURNING id, _id, json(data) as data"
+            else:
+                cmd = f"DELETE FROM {quote_table_name(self.collection.name)} WHERE id = (SELECT id FROM {quote_table_name(self.collection.name)} {where_clause} {order_by} LIMIT 1) RETURNING id, _id, data"
+            cursor = self.collection.db.execute(cmd, params)
+            row = cursor.fetchone()
+            if row:
+                int_id, stored_id, data = row
+                return self.collection._load_with_stored_id(
+                    int_id, data, stored_id
+                )
+            return None
+        else:
+            # Tier-1 (Fallback): Two-step process (SELECT then DELETE)
+            # Used when RETURNING clause is not supported (SQLite < 3.35.0)
             if self._jsonb_supported:
                 cmd = f"SELECT id, _id, json(data) as data FROM {quote_table_name(self.collection.name)} {where_clause} {order_by} LIMIT 1"
             else:
@@ -170,20 +211,7 @@ class FindOperationsMixin(QueryEngineProtocol):
                 )
                 self.helpers._internal_delete(int_id)
                 return doc
-        else:
-            # Fallback approach
-            cursor = self.find(filter, projection, session=session)
-            if sort:
-                cursor.sort(sort)
-            try:
-                doc = next(iter(cursor.limit(1)))
-                if doc:
-                    int_doc_id = self._get_integer_id_for_oid(doc["_id"])
-                    self.helpers._internal_delete(int_doc_id)
-                    return doc
-            except StopIteration:
-                pass
-        return None
+            return None
 
     def find_one_and_replace(
         self,
@@ -217,6 +245,11 @@ class FindOperationsMixin(QueryEngineProtocol):
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         filter = self.helpers._normalize_id_query(filter)
 
+        # Check if RETURNING clause is supported (Tier-1 optimization)
+        use_returning = (
+            _supports_returning_clause() and not get_force_fallback()
+        )
+
         # Build sorting clause
         order_by = ""
         if sort:
@@ -229,7 +262,77 @@ class FindOperationsMixin(QueryEngineProtocol):
 
         # Find document and get its integer ID for the replace operation
         where_clause, params = self.sql_translator.translate_match(filter)
-        if where_clause:
+        if not where_clause:
+            # Fallback: use Python-based approach for complex queries
+            cursor = self.find(filter, projection, session=session)
+            if sort:
+                cursor.sort(sort)
+            try:
+                doc = next(iter(cursor.limit(1)))
+                if doc:
+                    int_doc_id = self._get_integer_id_for_oid(doc["_id"])
+                    self.helpers._internal_replace(int_doc_id, replacement)
+                    if return_document:
+                        return self.find_one(
+                            {"_id": doc["_id"]}, projection, session=session
+                        )
+                    return doc
+            except StopIteration:
+                pass
+
+            if upsert:
+                res = self.insert_one(replacement, session=session)
+                if return_document:
+                    return self.find_one(
+                        {"_id": res.inserted_id}, projection, session=session
+                    )
+                return None
+            return None
+
+        if use_returning:
+            # Tier-1: Use RETURNING clause for atomic find-and-replace
+            if self._jsonb_supported:
+                cmd = f"SELECT id, _id, json(data) as data FROM {quote_table_name(self.collection.name)} {where_clause} {order_by} LIMIT 1"
+            else:
+                cmd = f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)} {where_clause} {order_by} LIMIT 1"
+            cursor = self.collection.db.execute(cmd, params)
+            row = cursor.fetchone()
+            if row:
+                int_id, stored_id, data = row
+                original_doc = self.collection._load_with_stored_id(
+                    int_id, data, stored_id
+                )
+                # Perform the replace
+                self.helpers._internal_replace(int_id, replacement)
+                if return_document:
+                    # Use RETURNING to get the updated document
+                    if self._jsonb_supported:
+                        update_cmd = f"UPDATE {quote_table_name(self.collection.name)} SET data = ? WHERE id = ? RETURNING id, _id, json(data) as data"
+                    else:
+                        update_cmd = f"UPDATE {quote_table_name(self.collection.name)} SET data = ? WHERE id = ? RETURNING id, _id, data"
+                    from ..json_helpers import neosqlite_json_dumps
+
+                    update_cursor = self.collection.db.execute(
+                        update_cmd, (neosqlite_json_dumps(replacement), int_id)
+                    )
+                    update_row = update_cursor.fetchone()
+                    if update_row:
+                        return self.collection._load_with_stored_id(
+                            update_row[0], update_row[2], update_row[1]
+                        )
+                return original_doc
+            # No document found, handle upsert
+            if upsert:
+                res = self.insert_one(replacement, session=session)
+                if return_document:
+                    return self.find_one(
+                        {"_id": res.inserted_id}, projection, session=session
+                    )
+                return None
+            return None
+        else:
+            # Tier-1 (Fallback): Two-step process
+            # Used when RETURNING clause is not supported (SQLite < 3.35.0)
             if self._jsonb_supported:
                 cmd = f"SELECT id, _id, json(data) as data FROM {quote_table_name(self.collection.name)} {where_clause} {order_by} LIMIT 1"
             else:
@@ -249,33 +352,16 @@ class FindOperationsMixin(QueryEngineProtocol):
                         session=session,
                     )
                 return original_doc
-        else:
-            # Fallback approach
-            cursor = self.find(filter, projection, session=session)
-            if sort:
-                cursor.sort(sort)
-            try:
-                doc = next(iter(cursor.limit(1)))
-                if doc:
-                    int_doc_id = self._get_integer_id_for_oid(doc["_id"])
-                    self.helpers._internal_replace(int_doc_id, replacement)
-                    if return_document:
-                        return self.find_one(
-                            {"_id": doc["_id"]}, projection, session=session
-                        )
-                    return doc
-            except StopIteration:
-                pass
 
-        if upsert:
-            res = self.insert_one(replacement, session=session)
-            if return_document:
-                return self.find_one(
-                    {"_id": res.inserted_id}, projection, session=session
-                )
+            if upsert:
+                res = self.insert_one(replacement, session=session)
+                if return_document:
+                    return self.find_one(
+                        {"_id": res.inserted_id}, projection, session=session
+                    )
+                return None
+
             return None
-
-        return None
 
     def find_one_and_update(
         self,
@@ -311,6 +397,11 @@ class FindOperationsMixin(QueryEngineProtocol):
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         filter = self.helpers._normalize_id_query(filter)
 
+        # Check if RETURNING clause is supported (Tier-1 optimization)
+        use_returning = (
+            _supports_returning_clause() and not get_force_fallback()
+        )
+
         # Build sorting clause
         order_by = ""
         if sort:
@@ -323,30 +414,8 @@ class FindOperationsMixin(QueryEngineProtocol):
 
         # Find document and get its integer ID for the update operation
         where_clause, params = self.sql_translator.translate_match(filter)
-        if where_clause:
-            if self._jsonb_supported:
-                cmd = f"SELECT id, _id, json(data) as data FROM {quote_table_name(self.collection.name)} {where_clause} {order_by} LIMIT 1"
-            else:
-                cmd = f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)} {where_clause} {order_by} LIMIT 1"
-            cursor = self.collection.db.execute(cmd, params)
-            row = cursor.fetchone()
-            if row:
-                int_id, stored_id, data = row
-                original_doc = self.collection._load_with_stored_id(
-                    int_id, data, stored_id
-                )
-                self.helpers._internal_update(
-                    int_id, update, original_doc, array_filters, filter
-                )
-                if return_document:
-                    return self.find_one(
-                        {"_id": original_doc["_id"]},
-                        projection,
-                        session=session,
-                    )
-                return original_doc
-        else:
-            # Fallback approach
+        if not where_clause:
+            # Fallback: use Python-based approach for complex queries
             cursor = self.find(filter, projection, session=session)
             if sort:
                 cursor.sort(sort)
@@ -374,20 +443,103 @@ class FindOperationsMixin(QueryEngineProtocol):
             except StopIteration:
                 pass
 
-        if upsert:
-            # Basic upsert logic
-            new_doc = dict(filter)
-            res = self.insert_one(new_doc, session=session)
-            self.update_one(
-                {"_id": res.inserted_id},
-                update,
-                array_filters=array_filters,
-                session=session,
-            )
-            if return_document:
-                return self.find_one(
-                    {"_id": res.inserted_id}, projection, session=session
+            if upsert:
+                # Basic upsert logic
+                new_doc = dict(filter)
+                res = self.insert_one(new_doc, session=session)
+                self.update_one(
+                    {"_id": res.inserted_id},
+                    update,
+                    array_filters=array_filters,
+                    session=session,
                 )
+                if return_document:
+                    return self.find_one(
+                        {"_id": res.inserted_id}, projection, session=session
+                    )
+                return None
             return None
 
-        return None
+        if use_returning:
+            # Tier-1: Use RETURNING clause for atomic find-and-update
+            if self._jsonb_supported:
+                cmd = f"SELECT id, _id, json(data) as data FROM {quote_table_name(self.collection.name)} {where_clause} {order_by} LIMIT 1"
+            else:
+                cmd = f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)} {where_clause} {order_by} LIMIT 1"
+            cursor = self.collection.db.execute(cmd, params)
+            row = cursor.fetchone()
+            if row:
+                int_id, stored_id, data = row
+                original_doc = self.collection._load_with_stored_id(
+                    int_id, data, stored_id
+                )
+                # Perform the update
+                self.helpers._internal_update(
+                    int_id, update, original_doc, array_filters, filter
+                )
+                if return_document:
+                    # Fetch the updated document
+                    return self.find_one(
+                        {"_id": original_doc["_id"]},
+                        projection,
+                        session=session,
+                    )
+                return original_doc
+            # No document found, handle upsert
+            if upsert:
+                new_doc = dict(filter)
+                res = self.insert_one(new_doc, session=session)
+                self.update_one(
+                    {"_id": res.inserted_id},
+                    update,
+                    array_filters=array_filters,
+                    session=session,
+                )
+                if return_document:
+                    return self.find_one(
+                        {"_id": res.inserted_id}, projection, session=session
+                    )
+                return None
+            return None
+        else:
+            # Tier-1 (Fallback): Two-step process
+            # Used when RETURNING clause is not supported (SQLite < 3.35.0)
+            if self._jsonb_supported:
+                cmd = f"SELECT id, _id, json(data) as data FROM {quote_table_name(self.collection.name)} {where_clause} {order_by} LIMIT 1"
+            else:
+                cmd = f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)} {where_clause} {order_by} LIMIT 1"
+            cursor = self.collection.db.execute(cmd, params)
+            row = cursor.fetchone()
+            if row:
+                int_id, stored_id, data = row
+                original_doc = self.collection._load_with_stored_id(
+                    int_id, data, stored_id
+                )
+                self.helpers._internal_update(
+                    int_id, update, original_doc, array_filters, filter
+                )
+                if return_document:
+                    return self.find_one(
+                        {"_id": original_doc["_id"]},
+                        projection,
+                        session=session,
+                    )
+                return original_doc
+
+            if upsert:
+                # Basic upsert logic
+                new_doc = dict(filter)
+                res = self.insert_one(new_doc, session=session)
+                self.update_one(
+                    {"_id": res.inserted_id},
+                    update,
+                    array_filters=array_filters,
+                    session=session,
+                )
+                if return_document:
+                    return self.find_one(
+                        {"_id": res.inserted_id}, projection, session=session
+                    )
+                return None
+
+            return None

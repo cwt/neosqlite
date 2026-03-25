@@ -40,6 +40,9 @@ from .utils import (
     _is_numeric_value as _is_numeric_value,
 )
 from .utils import (
+    _supports_returning_clause as _supports_returning_clause,
+)
+from .utils import (
     _validate_inc_mul_field_value as _validate_inc_mul_field_value,
 )
 from .utils import (
