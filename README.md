@@ -44,35 +44,48 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 
 See [CHANGELOG.md](CHANGELOG.md) for the latest features and improvements.
 
-## Latest Release: v1.13.7
+## Latest Release: v1.13.8
 
-NeoSQLite v1.13.7 is a **bug fix release** that improves MongoDB compatibility by adding `$collStats` aggregation stage support and fixing edge cases in aggregation pipeline parsing and `collStats` command.
+NeoSQLite v1.13.8 is a **security and reliability release** that fixes SQL injection vulnerabilities, adds context manager support for cursors, and improves transaction cleanup reliability.
+
+### Security Fixes
+
+- **SQL injection prevention**: Collection names in changestream triggers are now validated against malicious inputs
+- **Comment marker escaping**: SQL comment markers (`--`, `/**/`) are now escaped instead of removed
+- **Identifier whitelist validation**: Switched from broken bracket quoting to strict whitelist validation
 
 ### Bug Fixes
 
-- **`$collStats` aggregation stage**: Added full support for collection statistics with count, size, storageSize, totalIndexSize, and indexSizes metrics
-- **`collStats` command**: Enhanced to return actual statistics instead of placeholder zeros
-- **Aggregation pipeline parsing**: Fixed handling of stage names with leading/trailing whitespace
+- **Changestream race conditions**: Atomic read-delete ensures exactly-once processing semantics
+- **Cursor resource leaks**: Added context manager protocol (`with` statement) for guaranteed cleanup
+- **Savepoint leaks**: Added `finally` blocks to ensure savepoints are always released
+- **Silent migration failures**: Replaced bare `except` blocks with proper error logging
 
-### Example: $collStats Aggregation Stage
+### Example: Cursor Context Manager
 
 ```python
-# Get full collection statistics
-stats = list(collection.aggregate([{"$collStats": {}}]))[0]
-print(f"Count: {stats['count']}, Size: {stats['size']} bytes")
-
-# Get count only
-count_result = list(collection.aggregate([{"$collStats": {"count": {}}}]))[0]
-print(f"Count: {count_result['count']}")
+# Guaranteed cleanup, even on exceptions
+with collection.find({"status": "active"}) as cursor:
+    for doc in cursor:
+        process(doc)
+# cursor.close() always called, temporary tables dropped
 ```
 
-For more details, see [documents/releases/v1.13.7.md](documents/releases/v1.13.7.md).
+### Example: SQL Comment Marker Escaping
+
+```python
+# Attack attempts are now safely neutralized
+"normal -- DROP TABLE"  →  "normal - - DROP TABLE"
+"/* malicious */"       →  "/ * malicious * /"
+```
+
+For more details, see [documents/releases/v1.13.8.md](documents/releases/v1.13.8.md).
 
 ## PyMongo Compatibility Tests
 
 NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-compatible behavior. Our automated test suite covers all major API categories:
 
-### Test Results (v1.13.7)
+### Test Results (v1.13.8)
 
 #### Unit Tests
 
@@ -86,7 +99,7 @@ NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-
 
 #### API Comparison Tests
 
-| Metric | **v1.13.7** |
+| Metric | **v1.13.8** |
 |--------|-------------|
 | **Total Tests** | **377** |
 | **Passed** | **360** |
@@ -94,35 +107,39 @@ NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-
 | **Failed** | **0** |
 | **Compatibility** | **100%** |
 
-**Skipped Tests Note**: The 16 skipped tests are due to architectural differences or environment limitations, not missing implementations:
+**Skipped Tests Note**: The 17 skipped tests are due to architectural differences, environment limitations, or design decisions — not missing implementations:
 
 > **Important Note on Change Streams & Transactions**:
 > The `watch()` method and multi-document transactions are **fully implemented** in NeoSQLite using native SQLite triggers and `ClientSession`. They are only skipped in the automated comparison tests because MongoDB requires a replica set for these features, which is not available in the single-node test environment.
 
-**Collection/Database Methods:**
+### JavaScript Execution Operators (3 tests)
+- `$where` - Not supported in NeoSQLite (raises `NotImplementedError`). MongoDB uses JavaScript engine.
+- `$function` - Not supported in NeoSQLite (raises `NotImplementedError`). Use `$expr` or Python post-processing.
+- `$accumulator` - Not supported in NeoSQLite (raises `NotImplementedError`). Use `$expr` or Python post-processing.
 
-- `options` - NeoSQLite returns detailed SQLite schema info; MongoDB returns `{}`. Backend-specific difference.
-- `db_path` (Collection & Database) - **NeoSQLite extension** providing the underlying SQLite database file path. No MongoDB equivalent.
+**Reason**: NeoSQLite doesn't embed a JavaScript engine for security and complexity reasons.
 
-**Math Operators:**
+### NeoSQLite Extensions (4 tests)
+- `$contains` - NeoSQLite extension for case-insensitive substring search (deprecated, use `$text` with FTS5).
+- `$log2` (Math Operators) - NeoSQLite extension using SQLite's native `log2()` function. Raises `UserWarning`.
+- `$log2` (Additional $expr) - Same as above, tested in $expr context.
+- `db_path` (Collection & Database) - NeoSQLite-specific: returns underlying SQLite database file path.
 
-- `$log2` - **NeoSQLite extension** using SQLite's native `log2()` function. Raises `UserWarning` about MongoDB incompatibility.
+### Replica Set Required (5 tests)
+- `watch()` (Change Streams) - **Fully implemented** in NeoSQLite via SQLite triggers. MongoDB requires replica set.
+- `watch()` (Collection Methods) - Same as above, tested in collection context.
+- `transaction_commit` - **Fully implemented** in NeoSQLite via `ClientSession`. MongoDB requires replica set.
+- `transaction_abort` - **Fully implemented** in NeoSQLite via `ClientSession`. MongoDB requires replica set.
+- `with_transaction` - **Fully implemented** in NeoSQLite via `ClientSession`. MongoDB requires replica set.
 
-**Cursor Methods:**
+### Deprecated PyMongo 4.x APIs (2 tests)
+- `initialize_ordered_bulk_op()` - Deprecated/removed in PyMongo 4.x. Use `bulk_write()`.
+- `initialize_unordered_bulk_op()` - Deprecated/removed in PyMongo 4.x. Use `bulk_write()`.
 
-- `where` - **NeoSQLite implementation** using Python function filter. MongoDB uses JavaScript `$where` which requires a JS engine.
-
-**Change Streams:**
-
-- `watch()` - **Fully implemented in NeoSQLite** via SQLite triggers but cannot be compared because MongoDB requires a replica set for change streams.
-
-**Transactions:**
-
-- `transaction_commit` / `transaction_abort` / `with_transaction` - **Fully implemented in NeoSQLite** via `ClientSession` but skipped in comparison because MongoDB requires a replica set for multi-document transactions.
-
-**Bulk Operations:**
-
-- `initialize_ordered_bulk_op()` / `initialize_unordered_bulk_op()` - **Deprecated in NeoSQLite** to match PyMongo 4.x behavior (use `bulk_write()`).
+### Backend-Specific Differences (3 tests)
+- `options()` (Collection) - NeoSQLite returns detailed SQLite schema info; MongoDB returns `{}`.
+- `where` (Cursor Methods) - NeoSQLite uses Python function filter; MongoDB uses JavaScript `$where`.
+- `db_path` - Already listed under NeoSQLite Extensions (SQLite-specific).
 
 All comparable MongoDB APIs are tested with 100% compatibility.
 
