@@ -3,25 +3,30 @@ import re
 
 def quote_identifier(identifier: str) -> str:
     """
-    Safely quote a SQL identifier (like a table or column name) only if necessary.
-    If the identifier is already a safe alphanumeric string, it's returned as-is.
+    Safely quote a SQL identifier (like a table or column name).
+    Only allows safe identifiers matching ^[A-Za-z_][A-Za-z0-9_]*$.
+    For table names, use quote_table_name() instead.
 
     Args:
         identifier (str): The identifier to quote.
 
     Returns:
-        str: The quoted or unquoted identifier.
+        str: The identifier (validated to be safe).
+
+    Raises:
+        ValueError: If the identifier contains unsafe characters.
     """
     if not identifier:
-        return '""'
+        raise ValueError("Identifier cannot be empty")
 
-    # Check if it's already safe (alphanumeric and underscores, not starting with a digit)
-    if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", identifier):
-        return identifier
+    # Only allow safe alphanumeric + underscore identifiers
+    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", identifier):
+        raise ValueError(
+            f"Invalid identifier '{identifier}': must contain only "
+            f"alphanumeric characters and underscores, and must not start with a digit"
+        )
 
-    # Otherwise, quote it using [] and escape ]
-    safe_id = identifier.replace("]", "]]")
-    return f"[{safe_id}]"
+    return identifier
 
 
 def quote_table_name(name: str) -> str:
