@@ -100,16 +100,18 @@ def compare_bulk_operation_executors():
 
     client = test_pymongo_connection()
     if client:
-        # Structure for MongoDB (skipped as explained above)
+        from .reporter import benchmark_reporter
+
         start_mongo_timing()
         try:
-            # In PyMongo 4.x, these methods would raise AttributeError
-            # mongo_db = client.test_database
-            # mongo_collection = mongo_db.test_bulk_exec
-            # mongo_ordered = mongo_collection.initialize_ordered_bulk_op()
             pass
         finally:
             end_mongo_timing()
+
+        benchmark_reporter.mark_mongo_skipped(
+            "Bulk Executors",
+            "initialize_ordered/unordered_bulk_op removed in PyMongo 4.x (use bulk_write instead)",
+        )
         client.close()
 
     reporter.record_result(
