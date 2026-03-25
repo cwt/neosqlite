@@ -818,14 +818,14 @@ class Cursor:
         if pagination_clause:
             self._sql_handled_pagination = True
 
-        # Add comment if specified
-        if self._comment:
-            safe_comment = (
-                self._comment.replace("/*", "")
-                .replace("*/", "")
-                .replace("--", "")
-            )
-            cmd = f"/* {safe_comment} */ {cmd}"
+            # Add comment if specified
+            if self._comment:
+                safe_comment = (
+                    self._comment.replace("--", "- -")
+                    .replace("/*", "/ *")
+                    .replace("*/", "* /")
+                )
+                cmd = f"/* {safe_comment} */ {cmd}"
 
         db_cursor = self._collection.db.execute(cmd, params)
         apply = partial(self._query_helpers._apply_query, self._filter)
