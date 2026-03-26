@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "nx-27017"
-version = "0.6.0"
+version = "0.6.1"
 description = "NeoSQLite Experimental Project 27017 - MongoDB Wire Protocol Server"
 authors = ["NeoSQLite Team"]
 license = "MIT"
