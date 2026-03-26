@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "neosqlite"
-version = "1.13.8"
+version = "1.13.9"
 description = "NoSQL for SQLite with PyMongo-like API"
 authors = ["Chaiwat Suttipongsakul <cwt@bashell.com>"]
 license = "MIT"
@@ -31,7 +31,7 @@ furo = { version = "^2025.7.19", optional = true }
 quez = { version = "^1.1.1", optional = true }
 pymongo = { version = "^4.16.0", optional = true }
 uvloop = { version = "^0.22.0", optional = true }
-nx-27017 = { version = "^0.5.0", optional = true }
+nx-27017 = { version = "^0.6.0", optional = true }
 
 [tool.poetry.extras]
 jsonb = ["pysqlite3-binary"]

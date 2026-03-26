@@ -1,5 +1,78 @@
 # CHANGELOG
 
+## 1.13.9
+
+### Architecture & Wire Protocol Release: Modular NX-27017, $changeStream Support
+
+**NX-27017 Module Refactoring**: Split 2705-line monolithic `nx_27017.py` into 5 focused modules:
+
+```text
+Before: nx_27017.py (2705 lines) - Everything in one file
+After:
+  - wire_protocol.py  (~280 lines)  - Wire protocol parsers
+  - handler.py        (~1650 lines) - MongoDB command handlers
+  - server.py         (~360 lines)  - Server implementation
+  - daemon.py         (~240 lines)  - PID management & daemonization
+  - changestream.py   (~220 lines)  - Wire-protocol $changeStream support
+  - nx_27017.py       (~150 lines)  - Main entry point (thin glue)
+```
+
+**$changeStream Support**: PyMongo's `watch()` now works via NX-27017 wire protocol:
+
+```python
+from pymongo import MongoClient
+
+client = MongoClient('mongodb://localhost:27017')
+collection = client.db.collection
+
+# Now works - creates change stream via wire protocol
+change_stream = collection.watch()
+for change in change_stream:
+    print(change)
+```
+
+**How It Works**:
+1. PyMongo sends `aggregate` command with `{$changeStream: {}}` stage
+2. NX-27017 detects the `$changeStream` stage via `is_change_stream_pipeline()`
+3. Creates `ChangeStreamCursor` with integer cursor ID for wire protocol compatibility
+4. Returns MongoDB-compatible response with resume token
+5. PyMongo receives cursor and can iterate over changes
+
+**Test Fixes**:
+- Fixed null check for `benchmark_reporter` in `bulk_executors.py`
+- Fixed `watch()` comparison logic to report compatible when both implementations work
+
+### New Modules
+
+- **changestream.py**: Wire-protocol change stream support with `ChangeStreamCursor` and `ChangeStreamManager` classes
+- **wire_protocol.py**: Wire protocol constants, OP_MSG/OP_QUERY parsers, ResponseBuilder
+- **handler.py**: MongoDB command translation (`NeoSQLiteHandler`)
+- **server.py**: Async and threaded server implementations
+- **daemon.py**: PID file management and Unix daemonization
+
+### Type Safety
+
+All new modules have full type annotations:
+
+```python
+class ChangeStreamManager:
+    def __init__(self) -> None:
+        self._streams: dict[int, ChangeStreamCursor] = {}
+        self._listeners: dict[str, list[Callable]] = {}
+```
+
+### Test Results
+- **Unit Tests**: 2,415 total (2,410 passed, 5 xfailed, 0 failed)
+- **API Comparison (NeoSQLite vs MongoDB)**: 377 tests (360 passed, 17 skipped, 0 failed) — 100%
+- **API Comparison (NX-27017 vs MongoDB)**: 372 tests (358 passed, 14 skipped, 0 failed) — 100%
+
+### Compatibility
+- **Backward Compatible**: Zero breaking changes
+- **PyMongo API Parity**: 100% for comparable features
+- **Import Compatibility**: All existing imports from `nx_27017.nx_27017` continue to work
+
+---
+
 ## 1.13.8
 
 ### Security & Reliability Release: SQL Injection Prevention, Context Managers, Guaranteed Cleanup

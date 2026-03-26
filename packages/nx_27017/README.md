@@ -104,6 +104,7 @@ db.users.find()
 | **Indexes** | `createIndexes`, `listIndexes`, `dropIndexes`, `listSearchIndexes` |
 | **GridFS** | `find`, `delete`, `upload`, `openDownloadStream` on `.files` collections |
 | **Sessions** | `startSession`, `endSessions` |
+| **Change Streams** | `$changeStream` stage for `watch()` via wire protocol |
 | **Query Features** | `hint`, `min`, `max`, `sort`, `skip`, `limit`, `projection` |
 | **Statistics** | `serverStatus`, `dbStats`, `collStats`, `$collStats` aggregation |
 
@@ -138,7 +139,7 @@ fs.delete(file_id)
 
 ## API Compatibility
 
-NX-27017 passes **372 MongoDB API compatibility tests** (357 passed, 15 skipped, 0 failed) when compared against PyMongo's expected behavior. This includes:
+NX-27017 passes **372 MongoDB API compatibility tests** (358 passed, 14 skipped, 0 failed) when compared against PyMongo's expected behavior. This includes:
 
 - All CRUD operations
 - Query operators ($eq, $gt, $gte, $lt, $lte, $ne, $in, $nin, $exists, $type, $all, $size, $regex, $nor, etc.)

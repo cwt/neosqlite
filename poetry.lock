@@ -800,15 +800,15 @@ files = [
 
 [[package]]
 name = "nx-27017"
-version = "0.5.2"
+version = "0.6.0"
 description = "NeoSQLite Experimental Project 27017 - MongoDB Wire Protocol Server"
 optional = true
 python-versions = "<3.15,>=3.10"
 groups = ["main"]
 markers = "extra == \"nx27017\" or extra == \"nx27017-speed\""
 files = [
-    {file = "nx_27017-0.5.2-py3-none-any.whl", hash = "sha256:721ee7b5090936f31dabe5c680f0e4dcf9afd2438e43dbabd209664bcc0c54f1"},
-    {file = "nx_27017-0.5.2.tar.gz", hash = "sha256:b327e322a0d772043cf7d61d0f9e151eb1a0dd4892dd8d0b405a380c7fed2f75"},
+    {file = "nx_27017-0.6.0-py3-none-any.whl", hash = "sha256:03b89714d02bfd40401bd31f981b728ba5505e89f506db58f28828bc5ee2a2f3"},
+    {file = "nx_27017-0.6.0.tar.gz", hash = "sha256:44c63c615a20e4bf7850253d8ec46e3719a3d91fe37290d79cf5c4b57fa76d88"},
 ]
 
 [package.dependencies]
@@ -1496,4 +1496,4 @@ nx27017-speed = ["nx-27017", "pymongo", "uvloop"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.10, <3.15"
-content-hash = "a853fc7d6ac33cadbb0ff0015a42aab0a22f85d5d1325692748a81eba1972292"
+content-hash = "be8fb3ab479e2708d4ce12e8e70663eb0b34e182d548128a4541277ad28a08ab"

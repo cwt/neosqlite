@@ -44,7 +44,35 @@ NeoSQLite brings NoSQL capabilities to SQLite, offering a NoSQLite solution for 
 
 See [CHANGELOG.md](CHANGELOG.md) for the latest features and improvements.
 
-## Latest Release: v1.13.8
+## Latest Release: v1.13.9
+
+NeoSQLite v1.13.9 is an **architecture and wire protocol release** that refactors the NX-27017 module into focused components and adds full `$changeStream` support for PyMongo change streams via the MongoDB wire protocol.
+
+### Major Changes
+
+- **NX-27017 Refactoring**: Split 2705-line monolithic `nx_27017.py` into 5 focused modules (wire_protocol, handler, server, daemon, changestream)
+- **$changeStream Support**: PyMongo's `watch()` now works via NX-27017 wire protocol
+- **100% Compatibility**: 372 API tests pass (358 passed, 14 skipped, 0 failed)
+
+### Example: Change Streams via NX-27017
+
+```python
+from pymongo import MongoClient
+
+client = MongoClient('mongodb://localhost:27017')
+collection = client.db.collection
+
+# Now works via wire protocol!
+with collection.watch() as stream:
+    for change in stream:
+        print(change)
+```
+
+For more details, see [documents/releases/v1.13.9.md](documents/releases/v1.13.9.md).
+
+---
+
+## Previous Release: v1.13.8
 
 NeoSQLite v1.13.8 is a **security and reliability release** that fixes SQL injection vulnerabilities, adds context manager support for cursors, and improves transaction cleanup reliability.
 
@@ -85,7 +113,7 @@ For more details, see [documents/releases/v1.13.8.md](documents/releases/v1.13.8
 
 NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-compatible behavior. Our automated test suite covers all major API categories:
 
-### Test Results (v1.13.8)
+### Test Results (v1.13.9)
 
 #### Unit Tests
 
@@ -99,7 +127,7 @@ NeoSQLite maintains comprehensive PyMongo compatibility tests to ensure MongoDB-
 
 #### API Comparison Tests
 
-| Metric | **v1.13.8** |
+| Metric | **v1.13.9** |
 |--------|-------------|
 | **Total Tests** | **377** |
 | **Passed** | **360** |
@@ -157,6 +185,12 @@ For more details, see the [`examples/api_comparison/`](examples/api_comparison/)
 ## Improvements
 
 NeoSQLite includes comprehensive benchmarks demonstrating how its progressive optimizations improve both runtime performance and database maintenance.
+
+**v1.13.9 Architecture & Wire Protocol Improvements**:
+- **NX-27017 Module Refactoring**: Split 2705-line monolithic `nx_27017.py` into 5 focused modules (wire_protocol, handler, server, daemon, changestream) for better maintainability
+- **$changeStream Support**: PyMongo's `watch()` now works via NX-27017 wire protocol, enabling real-time change streams through PyMongo client
+- **Full Type Annotations**: All new modules pass mypy strict mode with complete type coverage
+- **Test Infrastructure**: Fixed API comparison tests for change streams and bulk operations
 
 **v1.13.8 Security & Reliability Improvements**:
 - **SQL Injection Prevention**: Collection name validation, comment marker escaping, identifier whitelist validation

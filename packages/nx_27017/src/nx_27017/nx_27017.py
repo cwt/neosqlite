@@ -7,15 +7,33 @@ import argparse
 import logging
 
 from neosqlite.options import JournalMode
-from nx_27017.daemon import (
+from nx_27017.changestream import (  # noqa: F401 - re-export for backward compatibility
+    ChangeStreamManager,
+    extract_change_stream_options,
+    is_change_stream_pipeline,
+)
+from nx_27017.daemon import (  # noqa: F401 - re-export for backward compatibility
     check_status,
+    daemonize,
+    get_pid,
     run_as_daemon,
     run_foreground,
     stop_daemon,
+    write_pid_file,
 )
-from nx_27017.wire_protocol import (
+from nx_27017.handler import (
+    NeoSQLiteHandler,  # noqa: F401 - re-export for backward compatibility
+)
+from nx_27017.wire_protocol import (  # noqa: F401 - re-export for backward compatibility
     LOG_FILE,
+    OP_MSG,
+    OP_QUERY,
     PID_FILE,
+    ResponseBuilder,
+    WireProtocol,
+    _convert_objectids,
+    _extract_session_id,
+    _get_next_request_id,
 )
 
 logger = logging.getLogger("nx_27017")
