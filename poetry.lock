@@ -1058,15 +1058,15 @@ testing = ["filelock"]
 
 [[package]]
 name = "quez"
-version = "1.1.1"
+version = "1.1.3"
 description = "Pluggable, compressed in-memory queues for both sync and asyncio applications."
 optional = true
 python-versions = "<4.0,>=3.10"
 groups = ["main"]
 markers = "extra == \"memory-constrained\""
 files = [
-    {file = "quez-1.1.1-py3-none-any.whl", hash = "sha256:cf9b2beb71e40a3042bd2267e03c5cc79ea762ab2f54404f60e34b609e994e6d"},
-    {file = "quez-1.1.1.tar.gz", hash = "sha256:eec6c8fd480a93f2b3af33673c9b1f32d7a84310731bf2ed1ed41de7796db7c4"},
+    {file = "quez-1.1.3-py3-none-any.whl", hash = "sha256:aac2e185b9c75ef3a31c009a3069c9167bb6e10c293ef68096a4003d0a30d856"},
+    {file = "quez-1.1.3.tar.gz", hash = "sha256:e36b951320ca6dd8dc848430a7327f23cc1ade038a911e47f6698b91db531dda"},
 ]
 
 [package.extras]
