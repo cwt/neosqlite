@@ -70,7 +70,8 @@ def compare_change_streams():
             )
 
     # Record the comparison
-    # For benchmark mode with MongoDB standalone, mark MongoDB as skipped
+    # When using real MongoDB standalone (not NX-27017): skip because no replica set
+    # When using NX-27017 backend or real MongoDB replica set: compare actual results
     if not IS_NX27017_BACKEND and not mongo_watch_ok:
         reporter.record_comparison(
             "Change Streams",
@@ -80,7 +81,7 @@ def compare_change_streams():
             skip_reason="Requires MongoDB replica set; NeoSQLite uses SQLite triggers",
         )
     else:
-        # API comparison mode or both supported
+        # Compare actual results (NX-27017 backend or real MongoDB with replica set)
         reporter.record_comparison(
             "Change Streams",
             "watch",

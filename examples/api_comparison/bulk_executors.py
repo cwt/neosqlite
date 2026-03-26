@@ -108,10 +108,11 @@ def compare_bulk_operation_executors():
         finally:
             end_mongo_timing()
 
-        benchmark_reporter.mark_mongo_skipped(
-            "Bulk Executors",
-            "initialize_ordered/unordered_bulk_op removed in PyMongo 4.x (use bulk_write instead)",
-        )
+        if benchmark_reporter:
+            benchmark_reporter.mark_mongo_skipped(
+                "Bulk Executors",
+                "initialize_ordered/unordered_bulk_op removed in PyMongo 4.x (use bulk_write instead)",
+            )
         client.close()
 
     reporter.record_result(

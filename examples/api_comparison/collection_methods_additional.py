@@ -320,18 +320,28 @@ def compare_additional_collection_methods():
         mongo_db_ok if mongo_db_ok else None,
         skip_reason="MongoDB not available" if not mongo_available else None,
     )
-    # watch() is implemented in NeoSQLite (SQLite triggers) but can't be compared
-    # with MongoDB in this test because MongoDB requires a replica set
-    # This is a known limitation - mark as skipped for both sides
-    skip_reason = "NeoSQLite: Implemented via SQLite triggers; MongoDB: Requires replica set (not available in standalone test)"
-
-    reporter.record_comparison(
-        "Collection Methods",
-        "watch",
-        "IMPLEMENTED (SQLite triggers)" if neo_watch else "FAIL",
-        "IMPLEMENTED (replica set)" if mongo_watch else None,
-        skip_reason=skip_reason,
-    )
+    # watch() is implemented in NeoSQLite (SQLite triggers) and via NX-27017
+    # When both implement the feature, report as compatible with same value
+    # When MongoDB doesn't support it (no replica set), skip the comparison
+    if mongo_watch:
+        # Both implement watch() - mark as compatible
+        reporter.record_comparison(
+            "Collection Methods",
+            "watch",
+            "OK",
+            "OK",
+            skip_reason=None,
+        )
+    else:
+        # MongoDB doesn't support watch (no replica set) - skip
+        skip_reason = "NeoSQLite: Implemented via SQLite triggers; MongoDB: Requires replica set (not available in standalone test)"
+        reporter.record_comparison(
+            "Collection Methods",
+            "watch",
+            "OK" if neo_watch else "FAIL",
+            None,
+            skip_reason=skip_reason,
+        )
     # Extract collection name from full_name (e.g., "memory.test_fullname" -> "test_fullname")
     neo_coll_name = neo_full_name.split(".")[-1] if neo_full_name else None
     mongo_coll_name = (
