@@ -3,13 +3,13 @@ Type correction utilities for NeoSQLite to handle automatic conversion
 between integer IDs and ObjectIds in queries.
 """
 
-from typing import Any, Dict
+from typing import Any
 
 from ..objectid import ObjectId
 from ..sql_utils import quote_table_name
 
 
-def normalize_id_query(query: Dict[str, Any]) -> Dict[str, Any]:
+def normalize_id_query(query: dict[str, Any]) -> dict[str, Any]:
     """
     Public function to normalize ID types in a query.
 
@@ -29,6 +29,36 @@ def normalize_id_query(query: Dict[str, Any]) -> Dict[str, Any]:
     return query
 
 
+def _try_convert_to_int(value: str) -> int | str:
+    """Try to convert a string to int, return original if fails."""
+    try:
+        return int(value)
+    except ValueError:
+        return value
+
+
+def _is_valid_objectid_hex(value: str) -> bool:
+    """Check if string is a valid ObjectId hex string (24 chars, valid hex)."""
+    if len(value) != 24:
+        return False
+    try:
+        ObjectId(value)
+        return True
+    except ValueError:
+        return False
+
+
+def _convert_list_item(item: Any) -> Any:
+    """Convert a single list item - ObjectIds to strings, recurse on dicts."""
+    match item:
+        case dict():
+            return normalize_id_query_for_db(item)
+        case ObjectId():
+            return str(item)
+        case _:
+            return item
+
+
 def normalize_objectid_for_db_query(value: Any) -> str:
     """
     Normalize an ObjectId value for database queries, converting ObjectId objects
@@ -40,22 +70,16 @@ def normalize_objectid_for_db_query(value: Any) -> str:
     Returns:
         The normalized string representation suitable for database queries
     """
-    if isinstance(value, ObjectId):
-        return str(value)
-    elif isinstance(value, str) and len(value) == 24:
-        # Check if it's a valid ObjectId hex string
-        try:
-            ObjectId(value)  # Validate the hex string
+    match value:
+        case ObjectId():
+            return str(value)
+        case str() if _is_valid_objectid_hex(value):
             return value
-        except ValueError:
-            # Not a valid ObjectId hex, return as-is
+        case _:
             return value
-    else:
-        # For non-ObjectId values, return as-is
-        return value
 
 
-def normalize_id_query_for_db(query: Dict[str, Any]) -> Dict[str, Any]:
+def normalize_id_query_for_db(query: dict[str, Any]) -> dict[str, Any]:
     """
     Normalize ID types in a query dictionary to correct common mismatches.
 
@@ -74,88 +98,62 @@ def normalize_id_query_for_db(query: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(query, dict):
         return query
 
-    corrected_query: Dict[str, Any] = {}
+    corrected_query: dict[str, Any] = {}
 
     for key, value in query.items():
-        if key == "id":
-            # Check if the value is an ObjectId or hex string that should go to '_id'
-            if isinstance(value, ObjectId):
-                # User is querying 'id' field with ObjectId - they probably meant '_id'
-                corrected_query["_id"] = str(value)  # Convert to string for SQL
-            elif isinstance(value, str):
-                # Check if it's a 24-character hex string (ObjectId format)
-                if len(value) == 24:
-                    try:
-                        # Try to parse as ObjectId to validate
-                        ObjectId(value)
-                        # Valid ObjectId hex - user probably meant '_id'
-                        corrected_query["_id"] = value
-                    except ValueError:
-                        # Not a valid ObjectId hex, but might be integer string
-                        try:
-                            int_val = int(value)
-                            corrected_query["id"] = int_val
-                        except ValueError:
-                            # Neither ObjectId nor integer - keep as is
-                            corrected_query["id"] = value
-                else:
-                    # Not 24 chars, try to parse as integer
-                    try:
-                        int_val = int(value)
-                        corrected_query["id"] = int_val
-                    except ValueError:
-                        # Not an integer string, keep as is
-                        corrected_query["id"] = value
-            else:
-                # Non-string, non-ObjectId value - keep as is
-                corrected_query["id"] = value
-        elif key == "_id":
-            # Check if the value is an ObjectId object
-            if isinstance(value, ObjectId):
-                # Convert ObjectId to string representation for SQL compatibility
+        match key, value:
+            # Case: 'id' field with ObjectId -> convert to '_id' with string
+            case ("id", ObjectId()):
                 corrected_query["_id"] = str(value)
-            # Check if the value is an integer string that should be converted to int
-            elif isinstance(value, str):
-                # Check if it's a valid integer string
-                try:
-                    int_val = int(value)
-                    corrected_query["_id"] = int_val
-                except ValueError:
-                    # Not an integer string, but check if it's ObjectId hex
-                    if len(value) == 24:
-                        try:
-                            ObjectId(value)
-                            # Valid ObjectId hex, keep as is
-                            corrected_query["_id"] = value
-                        except ValueError:
-                            # Not ObjectId hex, keep as string
-                            corrected_query["_id"] = value
-                    else:
-                        # Not 24 chars and not integer, keep as string
-                        corrected_query["_id"] = value
-            else:
-                # Non-string, non-ObjectId value - keep as is
+
+            # Case: 'id' field with valid ObjectId hex string -> convert to '_id'
+            case ("id", str() as s) if _is_valid_objectid_hex(s):
+                corrected_query["_id"] = s
+
+            # Case: 'id' field with string that can be converted to int
+            case ("id", str() as s):
+                corrected_query["id"] = _try_convert_to_int(s)
+
+            # Case: 'id' field with any other type -> keep as-is
+            case ("id", _):
+                corrected_query["id"] = value
+
+            # Case: '_id' field with ObjectId -> convert to string
+            case ("_id", ObjectId()):
+                corrected_query["_id"] = str(value)
+
+            # Case: '_id' field with string
+            case ("_id", str() as s):
+                # First try to convert to int, otherwise check if valid ObjectId hex
+                match _try_convert_to_int(s):
+                    case int() as int_val:
+                        corrected_query["_id"] = int_val
+                    case str() as str_val if _is_valid_objectid_hex(str_val):
+                        corrected_query["_id"] = str_val
+                    case _ as other:
+                        corrected_query["_id"] = other
+
+            # Case: '_id' field with any other type -> keep as-is
+            case ("_id", _):
                 corrected_query["_id"] = value
-        elif isinstance(value, dict):
-            # Recursively process nested queries (e.g., $and, $or)
-            corrected_query[key] = normalize_id_query_for_db(value)
-        elif isinstance(value, list):
-            # Process list values (e.g., for $in, $or operators)
-            # Convert ObjectId values in the list to strings
-            corrected_query[key] = [
-                (
-                    normalize_id_query_for_db(item)
-                    if isinstance(item, dict)
-                    else (str(item) if isinstance(item, ObjectId) else item)
-                )
-                for item in value
-            ]
-        elif isinstance(value, ObjectId):
-            # Convert ObjectId to string for any other field (reference fields)
-            corrected_query[key] = str(value)
-        else:
-            # Non-dict, non-list, non-ObjectId value - keep as is
-            corrected_query[key] = value
+
+            # Case: nested dictionary -> recurse
+            case (_, dict()):
+                corrected_query[key] = normalize_id_query_for_db(value)
+
+            # Case: list -> process items
+            case (_, list()):
+                corrected_query[key] = [
+                    _convert_list_item(item) for item in value
+                ]
+
+            # Case: ObjectId in other fields -> convert to string
+            case (_, ObjectId()):
+                corrected_query[key] = str(value)
+
+            # Case: default -> keep as-is
+            case _:
+                corrected_query[key] = value
 
     return corrected_query
 
@@ -179,17 +177,18 @@ def get_integer_id_for_oid(
     Raises:
         ValueError: If the ID cannot be found
     """
-    if isinstance(oid, int):
-        return oid
-
-    cursor = db_connection.execute(
-        f"SELECT id FROM {quote_table_name(collection_name)} WHERE _id = ?",
-        (str(oid) if hasattr(oid, "__str__") else oid,),
-    )
-    row = cursor.fetchone()
-    if row:
-        return row[0]
-    raise ValueError(f"Could not find integer ID for ObjectId: {oid}")
+    match oid:
+        case int():
+            return oid
+        case _:
+            cursor = db_connection.execute(
+                f"SELECT id FROM {quote_table_name(collection_name)} WHERE _id = ?",
+                (str(oid) if hasattr(oid, "__str__") else oid,),
+            )
+            row = cursor.fetchone()
+            if row:
+                return row[0]
+            raise ValueError(f"Could not find integer ID for ObjectId: {oid}")
 
 
 def get_integer_id_for_table(
