@@ -1,19 +1,19 @@
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any
 
 from .exceptions import MalformedQueryException
 
 logger = logging.getLogger(__name__)
 
 
-def _get_nested_field(field: str, document: Dict[str, Any]) -> Any:
+def _get_nested_field(field: str, document: dict[str, Any]) -> Any:
     """
     Get a nested field value from a document using dot notation.
 
     Args:
         field (str): The field path using dot notation (e.g., "profile.age").
-        document (Dict[str, Any]): The document to get the field value from.
+        document (dict[str, Any]): The document to get the field value from.
 
     Returns:
         Any: The field value, or None if the field doesn't exist.
@@ -30,15 +30,84 @@ def _get_nested_field(field: str, document: Dict[str, Any]) -> Any:
     return doc_value
 
 
+def _get_int_value(field: str, document: dict[str, Any]) -> int | None:
+    """
+    Get field value and convert to int, returning None if not possible.
+
+    Args:
+        field (str): The document field to get.
+        document (dict[str, Any]): The document to get the value from.
+
+    Returns:
+        int | None: The integer value, or None if conversion fails.
+    """
+    doc_value = _get_nested_field(field, document)
+
+    if doc_value is None:
+        return None
+
+    if isinstance(doc_value, bool):
+        return None  # Booleans are not valid for bitwise operations
+
+    try:
+        return int(doc_value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _convert_to_bitmask(value: Any) -> int | None:
+    """
+    Convert a value to a bitmask using pattern matching.
+
+    Handles:
+    - int: Direct integer bitmask
+    - list/tuple: Array of bit positions
+    - Other iterables: Iterable of bit positions
+    - Other: Try to convert to int
+
+    Args:
+        value: The value to convert.
+
+    Returns:
+        int | None: The bitmask, or None if conversion fails.
+    """
+    match value:
+        case int():
+            return value
+        case list() | tuple() as items:
+            try:
+                bitmask = 0
+                for bit_pos in items:
+                    bitmask |= 1 << int(bit_pos)
+                return bitmask
+            except (TypeError, ValueError):
+                return None
+        case _ if hasattr(value, "__iter__") and not isinstance(
+            value, (str, bytes)
+        ):
+            try:
+                bitmask = 0
+                for bit_pos in value:
+                    bitmask |= 1 << int(bit_pos)
+                return bitmask
+            except (TypeError, ValueError):
+                return None
+        case _:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+
 # Query operators
-def _eq(field: str, value: Any, document: Dict[str, Any]) -> bool:
+def _eq(field: str, value: Any, document: dict[str, Any]) -> bool:
     """
     Compare a field value with a given value using the equals operator.
 
     Args:
         field (str): The document field to compare.
         value (Any): The value to compare against.
-        document (Dict[str, Any]): The document to compare the field value from.
+        document (dict[str, Any]): The document to compare the field value from.
 
     Returns:
         bool: True if the field value equals the given value, False otherwise.
@@ -50,14 +119,14 @@ def _eq(field: str, value: Any, document: Dict[str, Any]) -> bool:
         return False
 
 
-def _gt(field: str, value: Any, document: Dict[str, Any]) -> bool:
+def _gt(field: str, value: Any, document: dict[str, Any]) -> bool:
     """
     Compare a field value with a given value using the greater than operator.
 
     Args:
         field (str): The document field to compare.
         value (Any): The value to compare against.
-        document (Dict[str, Any]): The document to compare the field value from.
+        document (dict[str, Any]): The document to compare the field value from.
 
     Returns:
         bool: True if the field value is greater than the given value, False otherwise.
@@ -69,14 +138,14 @@ def _gt(field: str, value: Any, document: Dict[str, Any]) -> bool:
         return False
 
 
-def _lt(field: str, value: Any, document: Dict[str, Any]) -> bool:
+def _lt(field: str, value: Any, document: dict[str, Any]) -> bool:
     """
     Compare a field value with a given value using the less than operator.
 
     Args:
         field (str): The document field to compare.
         value (Any): The value to compare against.
-        document (Dict[str, Any]): The document to compare the field value from.
+        document (dict[str, Any]): The document to compare the field value from.
 
     Returns:
         bool: True if the field value is less than the given value, False otherwise.
@@ -88,14 +157,14 @@ def _lt(field: str, value: Any, document: Dict[str, Any]) -> bool:
         return False
 
 
-def _gte(field: str, value: Any, document: Dict[str, Any]) -> bool:
+def _gte(field: str, value: Any, document: dict[str, Any]) -> bool:
     """
     Compare a field value with a given value using the greater than or equal to operator.
 
     Args:
         field (str): The document field to compare.
         value (Any): The value to compare against.
-        document (Dict[str, Any]): The document to compare the field value from.
+        document (dict[str, Any]): The document to compare the field value from.
 
     Returns:
         bool: True if the field value is greater than or equal to the given value, False otherwise.
@@ -107,14 +176,14 @@ def _gte(field: str, value: Any, document: Dict[str, Any]) -> bool:
         return False
 
 
-def _lte(field: str, value: Any, document: Dict[str, Any]) -> bool:
+def _lte(field: str, value: Any, document: dict[str, Any]) -> bool:
     """
     Compare a field value with a given value using the less than or equal to operator.
 
     Args:
         field (str): The document field to compare.
         value (Any): The value to compare against.
-        document (Dict[str, Any]): The document to compare the field value from.
+        document (dict[str, Any]): The document to compare the field value from.
 
     Returns:
         bool: True if the field value is less than or equal to the given value, False otherwise.
@@ -126,14 +195,14 @@ def _lte(field: str, value: Any, document: Dict[str, Any]) -> bool:
         return False
 
 
-def _all(field: str, value: List[Any], document: Dict[str, Any]) -> bool:
+def _all(field: str, value: list[Any], document: dict[str, Any]) -> bool:
     """
     Check if all elements in an array field match the provided value.
 
     Args:
         field (str): The document field to compare.
-        value (List[Any]): The value to compare against.
-        document (Dict[str, Any]): The document to compare the field value from.
+        value (list[Any]): The value to compare against.
+        document (dict[str, Any]): The document to compare the field value from.
 
     Returns:
         bool: True if all elements in the array field match the given value, False otherwise.
@@ -151,14 +220,14 @@ def _all(field: str, value: List[Any], document: Dict[str, Any]) -> bool:
         return a.issubset(b)
 
 
-def _in(field: str, value: List[Any], document: Dict[str, Any]) -> bool:
+def _in(field: str, value: list[Any], document: dict[str, Any]) -> bool:
     """
     Check if a field value is present in the provided list.
 
     Args:
         field (str): The document field to compare.
-        value (List[Any]): The list to check against.
-        document (Dict[str, Any]): The document to compare the field value from.
+        value (list[Any]): The list to check against.
+        document (dict[str, Any]): The document to compare the field value from.
 
     Returns:
         bool: True if the field value is present in the list, False otherwise.
@@ -176,14 +245,14 @@ def _in(field: str, value: List[Any], document: Dict[str, Any]) -> bool:
         return doc_value in value
 
 
-def _ne(field: str, value: Any, document: Dict[str, Any]) -> bool:
+def _ne(field: str, value: Any, document: dict[str, Any]) -> bool:
     """
     Compare a field value with a given value using the not equal operator.
 
     Args:
         field (str): The document field to compare.
         value (Any): The value to compare against.
-        document (Dict[str, Any]): The document to compare the field value from.
+        document (dict[str, Any]): The document to compare the field value from.
 
     Returns:
         bool: True if the field value is not equal to the given value, False otherwise.
@@ -192,14 +261,14 @@ def _ne(field: str, value: Any, document: Dict[str, Any]) -> bool:
     return doc_value != value
 
 
-def _nin(field: str, value: List[Any], document: Dict[str, Any]) -> bool:
+def _nin(field: str, value: list[Any], document: dict[str, Any]) -> bool:
     """
     Check if a field value is not present in the provided list.
 
     Args:
         field (str): The document field to compare.
-        value (List[Any]): The list to check against.
-        document (Dict[str, Any]): The document to compare the field value from.
+        value (list[Any]): The list to check against.
+        document (dict[str, Any]): The document to compare the field value from.
 
     Returns:
         bool: True if the field value is not present in the list, False otherwise.
@@ -212,14 +281,14 @@ def _nin(field: str, value: List[Any], document: Dict[str, Any]) -> bool:
     return doc_value not in values
 
 
-def _mod(field: str, value: List[int], document: Dict[str, Any]) -> bool:
+def _mod(field: str, value: list[int], document: dict[str, Any]) -> bool:
     """
     Compare a field value with a given value using the modulo operator.
 
     Args:
         field (str): The document field to compare.
-        value (List[int]): The divisor and remainder to compare against.
-        document (Dict[str, Any]): The document to compare the field value from.
+        value (list[int]): The divisor and remainder to compare against.
+        document (dict[str, Any]): The document to compare the field value from.
 
     Returns:
         bool: True if the field value modulo the divisor equals the remainder, False otherwise.
@@ -239,14 +308,14 @@ def _mod(field: str, value: List[int], document: Dict[str, Any]) -> bool:
         return False
 
 
-def _exists(field: str, value: bool, document: Dict[str, Any]) -> bool:
+def _exists(field: str, value: bool, document: dict[str, Any]) -> bool:
     """
     Check if a field exists in the document.
 
     Args:
         field (str): The document field to check.
         value (bool): True if the field must exist, False if it must not exist.
-        document (Dict[str, Any]): The document to check the field in.
+        document (dict[str, Any]): The document to check the field in.
 
     Returns:
         bool: True if the field exists (if value is True), or does not exist (if value is False), False otherwise.
@@ -272,7 +341,7 @@ def _exists(field: str, value: bool, document: Dict[str, Any]) -> bool:
 
 
 def _regex(
-    field: str, value: Any, document: Dict[str, Any], options: str = ""
+    field: str, value: Any, document: dict[str, Any], options: str = ""
 ) -> bool:
     """
     Match a field value against a regular expression.
@@ -280,7 +349,7 @@ def _regex(
     Args:
         field (str): The document field to compare.
         value (Any): The regular expression to compare against (str or re.Pattern).
-        document (Dict[str, Any]): The document to compare the field value from.
+        document (dict[str, Any]): The document to compare the field value from.
         options (str): Optional regex flags (i, m, x, s).
 
     Returns:
@@ -311,7 +380,7 @@ def _regex(
         return False
 
 
-def _elemMatch(field: str, value: Any, document: Dict[str, Any]) -> bool:
+def _elemMatch(field: str, value: Any, document: dict[str, Any]) -> bool:
     """
     Check if a field value matches all criteria in a provided dictionary or simple value.
 
@@ -320,7 +389,7 @@ def _elemMatch(field: str, value: Any, document: Dict[str, Any]) -> bool:
         value (Any): Either a simple value to match directly, a dictionary of query
                      operators (e.g., {"$gte": 90}), or a dictionary of field-value
                      pairs for arrays of objects.
-        document (Dict[str, Any]): The document to compare the field value from.
+        document (dict[str, Any]): The document to compare the field value from.
 
     Returns:
         bool: True if the field value matches the criteria, False otherwise.
@@ -374,7 +443,7 @@ def _elemMatch(field: str, value: Any, document: Dict[str, Any]) -> bool:
         return False
 
 
-def _apply_query_operators(operators: Dict[str, Any], value: Any) -> bool:
+def _apply_query_operators(operators: dict[str, Any], value: Any) -> bool:
     """
     Apply query operators to a single value.
 
@@ -425,14 +494,14 @@ def _apply_query_operators(operators: Dict[str, Any], value: Any) -> bool:
     return True
 
 
-def _size(field: str, value: int, document: Dict[str, Any]) -> bool:
+def _size(field: str, value: int, document: dict[str, Any]) -> bool:
     """
     Check if the size of an array field matches a specified value.
 
     Args:
         field (str): The document field to compare.
         value (int): The size to compare against.
-        document (Dict[str, Any]): The document to compare the field value from.
+        document (dict[str, Any]): The document to compare the field value from.
 
     Returns:
         bool: True if the size of the array field matches the specified value, False otherwise.
@@ -443,14 +512,14 @@ def _size(field: str, value: int, document: Dict[str, Any]) -> bool:
     return len(field_val) == value
 
 
-def _contains(field: str, value: str, document: Dict[str, Any]) -> bool:
+def _contains(field: str, value: str, document: dict[str, Any]) -> bool:
     """
     Check if a field value contains a specified substring.
 
     Args:
         field (str): The document field to compare.
         value (str): The substring to compare against.
-        document (Dict[str, Any]): The document to compare the field value from.
+        document (dict[str, Any]): The document to compare the field value from.
 
     Returns:
         bool: True if the field value contains the specified substring, False otherwise.
@@ -465,14 +534,14 @@ def _contains(field: str, value: str, document: Dict[str, Any]) -> bool:
         return False
 
 
-def _type(field: str, value: Any, document: Dict[str, Any]) -> bool:
+def _type(field: str, value: Any, document: dict[str, Any]) -> bool:
     """
     Check if field is of specified type.
 
     Args:
         field (str): The document field to check.
         value (Any): The type to check against (as a number or type object).
-        document (Dict[str, Any]): The document to check the field value from.
+        document (dict[str, Any]): The document to check the field value from.
 
     Returns:
         bool: True if the field is of the specified type, False otherwise.
@@ -504,7 +573,7 @@ def _type(field: str, value: Any, document: Dict[str, Any]) -> bool:
     return isinstance(doc_value, expected_type)
 
 
-def _bits_all_clear(field: str, value: Any, document: Dict[str, Any]) -> bool:
+def _bits_all_clear(field: str, value: Any, document: dict[str, Any]) -> bool:
     """
     Check if all specified bits are clear (0) in a numeric field.
     MongoDB $bitsAllClear operator.
@@ -512,57 +581,24 @@ def _bits_all_clear(field: str, value: Any, document: Dict[str, Any]) -> bool:
     Args:
         field (str): The document field to check.
         value (Any): Bitmask as integer, BinData, or array of bit positions.
-        document (Dict[str, Any]): The document to check.
+        document (dict[str, Any]): The document to check.
 
     Returns:
         bool: True if all specified bits are clear, False otherwise.
     """
-    doc_value = _get_nested_field(field, document)
-
-    if doc_value is None:
+    int_value = _get_int_value(field, document)
+    if int_value is None:
         return False
 
-    # Convert doc_value to integer if needed
-    if isinstance(doc_value, bool):
-        return False  # Booleans are not valid for bitwise operations
-
-    try:
-        int_value = int(doc_value)
-    except (TypeError, ValueError):
+    bitmask = _convert_to_bitmask(value)
+    if bitmask is None:
         return False
-
-    # Handle different value formats
-    if isinstance(value, int):
-        # Direct integer bitmask
-        bitmask = value
-    elif isinstance(value, (list, tuple)):
-        # Array of bit positions to check
-        bitmask = 0
-        for bit_pos in value:
-            try:
-                bitmask |= 1 << int(bit_pos)
-            except (TypeError, ValueError):
-                return False
-    elif hasattr(value, "__iter__") and not isinstance(value, (str, bytes)):
-        # Iterable of bit positions
-        bitmask = 0
-        try:
-            for bit_pos in value:
-                bitmask |= 1 << int(bit_pos)
-        except (TypeError, ValueError):
-            return False
-    else:
-        # Try to convert to int
-        try:
-            bitmask = int(value)
-        except (TypeError, ValueError):
-            return False
 
     # Check if all specified bits are clear (result of AND should be 0)
     return (int_value & bitmask) == 0
 
 
-def _bits_all_set(field: str, value: Any, document: Dict[str, Any]) -> bool:
+def _bits_all_set(field: str, value: Any, document: dict[str, Any]) -> bool:
     """
     Check if all specified bits are set (1) in a numeric field.
     MongoDB $bitsAllSet operator.
@@ -570,53 +606,24 @@ def _bits_all_set(field: str, value: Any, document: Dict[str, Any]) -> bool:
     Args:
         field (str): The document field to check.
         value (Any): Bitmask as integer, BinData, or array of bit positions.
-        document (Dict[str, Any]): The document to check.
+        document (dict[str, Any]): The document to check.
 
     Returns:
         bool: True if all specified bits are set, False otherwise.
     """
-    doc_value = _get_nested_field(field, document)
-
-    if doc_value is None:
+    int_value = _get_int_value(field, document)
+    if int_value is None:
         return False
 
-    # Convert doc_value to integer if needed
-    if isinstance(doc_value, bool):
+    bitmask = _convert_to_bitmask(value)
+    if bitmask is None:
         return False
-
-    try:
-        int_value = int(doc_value)
-    except (TypeError, ValueError):
-        return False
-
-    # Handle different value formats
-    if isinstance(value, int):
-        bitmask = value
-    elif isinstance(value, (list, tuple)):
-        bitmask = 0
-        for bit_pos in value:
-            try:
-                bitmask |= 1 << int(bit_pos)
-            except (TypeError, ValueError):
-                return False
-    elif hasattr(value, "__iter__") and not isinstance(value, (str, bytes)):
-        bitmask = 0
-        try:
-            for bit_pos in value:
-                bitmask |= 1 << int(bit_pos)
-        except (TypeError, ValueError):
-            return False
-    else:
-        try:
-            bitmask = int(value)
-        except (TypeError, ValueError):
-            return False
 
     # Check if all specified bits are set
     return (int_value & bitmask) == bitmask
 
 
-def _bits_any_clear(field: str, value: Any, document: Dict[str, Any]) -> bool:
+def _bits_any_clear(field: str, value: Any, document: dict[str, Any]) -> bool:
     """
     Check if any of the specified bits are clear (0) in a numeric field.
     MongoDB $bitsAnyClear operator.
@@ -624,53 +631,25 @@ def _bits_any_clear(field: str, value: Any, document: Dict[str, Any]) -> bool:
     Args:
         field (str): The document field to check.
         value (Any): Bitmask as integer, BinData, or array of bit positions.
-        document (Dict[str, Any]): The document to check.
+        document (dict[str, Any]): The document to check.
 
     Returns:
         bool: True if any of the specified bits are clear, False otherwise.
     """
-    doc_value = _get_nested_field(field, document)
-
-    if doc_value is None:
+    int_value = _get_int_value(field, document)
+    if int_value is None:
         return False
 
-    if isinstance(doc_value, bool):
+    bitmask = _convert_to_bitmask(value)
+    if bitmask is None:
         return False
-
-    try:
-        int_value = int(doc_value)
-    except (TypeError, ValueError):
-        return False
-
-    # Handle different value formats
-    if isinstance(value, int):
-        bitmask = value
-    elif isinstance(value, (list, tuple)):
-        bitmask = 0
-        for bit_pos in value:
-            try:
-                bitmask |= 1 << int(bit_pos)
-            except (TypeError, ValueError):
-                return False
-    elif hasattr(value, "__iter__") and not isinstance(value, (str, bytes)):
-        bitmask = 0
-        try:
-            for bit_pos in value:
-                bitmask |= 1 << int(bit_pos)
-        except (TypeError, ValueError):
-            return False
-    else:
-        try:
-            bitmask = int(value)
-        except (TypeError, ValueError):
-            return False
 
     # Check if any of the specified bits are clear
     # Invert the value and check if any of the specified bits are set
     return ((~int_value) & bitmask) != 0
 
 
-def _bits_any_set(field: str, value: Any, document: Dict[str, Any]) -> bool:
+def _bits_any_set(field: str, value: Any, document: dict[str, Any]) -> bool:
     """
     Check if any of the specified bits are set (1) in a numeric field.
     MongoDB $bitsAnySet operator.
@@ -678,46 +657,18 @@ def _bits_any_set(field: str, value: Any, document: Dict[str, Any]) -> bool:
     Args:
         field (str): The document field to check.
         value (Any): Bitmask as integer, BinData, or array of bit positions.
-        document (Dict[str, Any]): The document to check.
+        document (dict[str, Any]): The document to check.
 
     Returns:
         bool: True if any of the specified bits are set, False otherwise.
     """
-    doc_value = _get_nested_field(field, document)
-
-    if doc_value is None:
+    int_value = _get_int_value(field, document)
+    if int_value is None:
         return False
 
-    if isinstance(doc_value, bool):
+    bitmask = _convert_to_bitmask(value)
+    if bitmask is None:
         return False
-
-    try:
-        int_value = int(doc_value)
-    except (TypeError, ValueError):
-        return False
-
-    # Handle different value formats
-    if isinstance(value, int):
-        bitmask = value
-    elif isinstance(value, (list, tuple)):
-        bitmask = 0
-        for bit_pos in value:
-            try:
-                bitmask |= 1 << int(bit_pos)
-            except (TypeError, ValueError):
-                return False
-    elif hasattr(value, "__iter__") and not isinstance(value, (str, bytes)):
-        bitmask = 0
-        try:
-            for bit_pos in value:
-                bitmask |= 1 << int(bit_pos)
-        except (TypeError, ValueError):
-            return False
-    else:
-        try:
-            bitmask = int(value)
-        except (TypeError, ValueError):
-            return False
 
     # Check if any of the specified bits are set
     return (int_value & bitmask) != 0
