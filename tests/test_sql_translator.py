@@ -407,7 +407,8 @@ class TestSQLClauseBuilder:
         builder = SQLClauseBuilder()
         conditions = ["invalid"]
         result = builder._build_logical_condition("$and", conditions)
-        assert result == ("", [])
+        # Should return None to signal Python fallback for unsupported conditions
+        assert result == (None, [])
 
     def test_build_where_clause_simple_equality(self):
         """Test building WHERE clause with simple equality."""
@@ -472,10 +473,9 @@ class TestSQLClauseBuilder:
         builder = SQLClauseBuilder()
         query = {"$and": [{"name": "Alice"}, {"$text": {"$search": "test"}}]}
         result = builder.build_where_clause(query)
-        # This should not fallback because the top-level $and doesn't contain $text
-        # The $text is in a nested condition which is handled by _build_logical_condition
-        assert result[0] == "WHERE (json_extract(data, '$.name') = ?)"
-        assert result[1] == ["Alice"]
+        # $text in a nested condition causes the $and to return None,
+        # signaling Python fallback
+        assert result[0] is None
 
     def test_build_where_clause_empty_query(self):
         """Test building WHERE clause with empty query."""
@@ -714,7 +714,7 @@ class TestSQLTranslator:
             assert result[1][0] == '"base64:test_data"'
 
     def test_build_logical_condition_break_on_none_clause(self):
-        """Test _build_logical_condition breaking when clause is None."""
+        """Test _build_logical_condition returning None when clause is None."""
         builder = SQLClauseBuilder()
 
         # Mock build_where_clause to return None for specific input
@@ -729,18 +729,18 @@ class TestSQLTranslator:
 
         conditions = [{"valid": "condition"}, {"invalid": "condition"}]
         result = builder._build_logical_condition("$and", conditions)
-        # Should break and return the clauses built so far
-        assert result[0] == "(json_extract(data, '$.valid') = ?)"
-        assert result[1] == ["condition"]
+        # Should return None to signal Python fallback for unsupported conditions
+        assert result[0] is None
+        assert result[1] == []
 
     def test_build_logical_condition_break_on_non_dict(self):
-        """Test _build_logical_condition breaking when condition is not dict."""
+        """Test _build_logical_condition returning None when condition is not dict."""
         builder = SQLClauseBuilder()
         conditions = [{"valid": "condition"}, "invalid_condition"]
         result = builder._build_logical_condition("$and", conditions)
-        # Should break and return the clauses built so far
-        assert result[0] == "(json_extract(data, '$.valid') = ?)"
-        assert result[1] == ["condition"]
+        # Should return None to signal Python fallback for unsupported conditions
+        assert result[0] is None
+        assert result[1] == []
 
     def test_build_where_clause_unsupported_operator_returns_none(self):
         """Test build_where_clause when translate_operator returns None."""

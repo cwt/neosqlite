@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Callable, Dict, List
+
+logger = logging.getLogger(__name__)
 
 from neosqlite.collection.jsonb_support import supports_jsonb
 
@@ -224,9 +227,9 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                                 )
                     self._notify_tier_change("tier1", pipeline)
                     return results
-        except Exception:
+        except Exception as e:
             # If SQL tier optimization fails, continue to next approach
-            pass
+            logger.debug("SQL tier 1 aggregation optimization failed: %s", e)
 
         # Try existing SQL optimization (legacy CTE-based approach)
         try:
@@ -292,9 +295,11 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                                 )
                     self._notify_tier_change("tier1_standard", pipeline)
                     return results
-        except Exception:
+        except Exception as e:
             # If SQL optimization fails, continue to next approach
-            pass
+            logger.debug(
+                "SQL tier 1 standard aggregation optimization failed: %s", e
+            )
 
         # Try the temporary table approach for complex pipelines that the
         # current SQL optimization can't handle efficiently
@@ -315,10 +320,10 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
             # If temporary table approach indicates it needs Python fallback,
             # continue to fallback below
             pass
-        except Exception:
+        except Exception as e:
             # If temporary table approach fails for other reasons,
             # continue to fallback below
-            pass
+            logger.debug("SQL tier 2 aggregation optimization failed: %s", e)
 
         # Optimize $count in SQLite when possible
         if (
@@ -348,6 +353,8 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         ]
 
         for stage in pipeline:
+            if not stage:
+                raise MalformedQueryException("Empty pipeline stage")
             stage_name = next(iter(stage.keys())).strip()
             match stage_name:
                 case "$match":
@@ -724,6 +731,10 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                 case "$sample":
                     sample_spec = stage["$sample"]
                     sample_size = sample_spec["size"]
+                    if sample_size < 0:
+                        raise MalformedQueryException(
+                            "$sample size must be non-negative"
+                        )
                     import random
 
                     docs_with_context = random.sample(

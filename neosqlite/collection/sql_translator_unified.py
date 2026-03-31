@@ -497,8 +497,8 @@ class SQLClauseBuilder:
                     condition, context, is_nested=True
                 )
                 if clause is None:
-                    # Break and return the clauses built so far
-                    break
+                    # Unsupported condition - return None to signal Python fallback
+                    return None, []
                 elif clause:  # Only add non-empty clauses
                     # Remove "WHERE " prefix if present
                     if clause.startswith("WHERE "):
@@ -506,7 +506,8 @@ class SQLClauseBuilder:
                     clauses.append(f"({clause})")
                     params.extend(clause_params)
             else:
-                break
+                # Non-dict condition - return None to signal Python fallback
+                return None, []
 
         if not clauses:
             return _empty_result()
