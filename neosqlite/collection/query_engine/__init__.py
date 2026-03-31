@@ -193,6 +193,9 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                             doc_id = row[0]
                             stored_id = row[1]
 
+                            if doc_data is None:
+                                continue
+
                             if doc_data.startswith("{") and doc_data.endswith(
                                 "}"
                             ):

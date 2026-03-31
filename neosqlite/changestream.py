@@ -275,12 +275,6 @@ class ChangeStream:
                         (change_id,),
                     )
 
-                    # Commit the transaction
-                    self._collection.db.commit()
-
-                    # Update the last processed ID after successful commit
-                    self._last_id = change_id
-
                     # Get the actual _id of the document
                     # Try to get _id from the stored document_id_value first (this works even for deleted documents)
                     actual_id = document_id  # Default to integer ID if nothing else works
@@ -357,45 +351,65 @@ class ChangeStream:
                     }
 
                     # Add full document if requested
+                    skip_change = False
                     if self._full_document == "updateLookup" and document_data:
+                        full_doc_str: str | None = None
                         try:
                             import json
 
                             # Handle bytes data - decode to string first
                             if isinstance(document_data, bytes):
                                 try:
-                                    document_str = document_data.decode("utf-8")
+                                    full_doc_str = document_data.decode("utf-8")
                                 except UnicodeDecodeError:
                                     # If UTF-8 decoding fails, skip this change
-                                    continue
+                                    skip_change = True
                             else:
-                                document_str = document_data
+                                full_doc_str = document_data
 
-                            doc = json.loads(document_str)
-                            # Ensure the _id in the full document is correct
-                            # Use the stored document_id_value if available (e.g., for deleted docs)
-                            if document_id_value is not None:
-                                from neosqlite.objectid import ObjectId
+                            if not skip_change and full_doc_str is not None:
+                                doc = json.loads(full_doc_str)
+                                # Ensure the _id in the full document is correct
+                                # Use the stored document_id_value if available (e.g., for deleted docs)
+                                if document_id_value is not None:
+                                    from neosqlite.objectid import ObjectId
 
-                                try:
-                                    actual_doc_id = ObjectId(document_id_value)
-                                except (ValueError, TypeError):
-                                    actual_doc_id = document_id_value
-                                doc["_id"] = actual_doc_id
-                            elif "_id" not in doc:
-                                # Fallback: get from database if not in JSON
-                                stored_id = self._collection._get_stored_id(
-                                    document_id
-                                )
-                                doc["_id"] = (
-                                    stored_id
-                                    if stored_id is not None
-                                    else document_id
-                                )
-                            change_doc["fullDocument"] = doc
+                                    try:
+                                        actual_doc_id = ObjectId(
+                                            document_id_value
+                                        )
+                                    except (ValueError, TypeError):
+                                        actual_doc_id = document_id_value
+                                    doc["_id"] = actual_doc_id
+                                elif "_id" not in doc:
+                                    # Fallback: get from database if not in JSON
+                                    stored_id = self._collection._get_stored_id(
+                                        document_id
+                                    )
+                                    doc["_id"] = (
+                                        stored_id
+                                        if stored_id is not None
+                                        else document_id
+                                    )
+                                change_doc["fullDocument"] = doc
                         except (json.JSONDecodeError, TypeError) as e:
                             logger.debug(f"Failed to parse document JSON: {e}")
                             pass
+
+                    if skip_change:
+                        # Rollback the delete so the bad row stays for next poll,
+                        # but also delete it to avoid infinite loop on unparseable data
+                        self._collection.db.commit()
+                        self._last_id = change_id
+                        continue
+
+                    # Commit the transaction AFTER all processing is complete
+                    # This ensures that if processing fails, the rollback will
+                    # restore the changestream row (preventing data loss)
+                    self._collection.db.commit()
+
+                    # Update the last processed ID after successful commit
+                    self._last_id = change_id
 
                     return change_doc
                 else:
@@ -415,8 +429,8 @@ class ChangeStream:
 
             # If we had rows to process, change_doc has been returned
             # If not, loop continues to sleep and retry
-            if rows is None:
-                # If rows is None, no changes were found, sleep before retry
+            if not rows:
+                # No changes were found, sleep before retry
                 time.sleep(0.1)
 
     def __enter__(self) -> ChangeStream:
