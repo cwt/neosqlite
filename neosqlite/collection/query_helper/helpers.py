@@ -1,8 +1,11 @@
 """Helper functions for QueryHelper operations."""
 
+import logging
 from typing import Any
 
 from ..type_correction import get_integer_id_for_oid
+
+logger = logging.getLogger(__name__)
 
 
 def _get_integer_id_for_oid(collection: Any, oid: Any) -> int:
@@ -49,7 +52,8 @@ def _validate_json_document(db: Any, json_str: str) -> bool:
 
             json.loads(json_str)
             return True
-    except (json.JSONDecodeError, Exception):
+    except Exception as e:
+        logger.debug("JSON validation failed: %s", e)
         return False
 
 
