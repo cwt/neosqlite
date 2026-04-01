@@ -206,6 +206,9 @@ class Connection:
         if self.db is not None:
             try:
                 if self.db.in_transaction:
+                    logger.warning(
+                        "Closing connection with pending transaction; committing automatically"
+                    )
                     self.db.commit()
             except (sqlite3.ProgrammingError, sqlite3.OperationalError):
                 pass
@@ -1182,8 +1185,7 @@ class Connection:
             if j is True:
                 self.db.execute("PRAGMA synchronous = FULL")
         except Exception as e:
-            if self.debug:
-                print(f"Error applying write concern: {e}")
+            logger.warning(f"Error applying write concern: {e}")
 
     @contextmanager
     def transaction(self) -> Iterator[None]:

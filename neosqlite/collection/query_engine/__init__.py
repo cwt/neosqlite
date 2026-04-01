@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib.util
 import logging
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any, Callable, Dict, List
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -344,7 +344,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
             # For more complex pipelines, fall back to Python
 
         # Fallback to old method for complex queries (Python implementation)
-        docs: List[Dict[str, Any]] = list(self.find())
+        docs: List[Dict[str, Any]] = list(self.find(session=session))
 
         # Store original documents for $$ROOT variable support
         # Each document is wrapped with metadata for variable scoping
@@ -620,7 +620,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
 
                         # Find matching documents in the from collection
                         matching_docs = []
-                        for match_doc in from_collection.find():
+                        for match_doc in from_collection.find(session=session):
                             foreign_value = from_collection._get_val(
                                 match_doc, foreign_field
                             )
@@ -741,26 +741,6 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                         docs_with_context,
                         min(sample_size, len(docs_with_context)),
                     )
-                case "$unset":
-                    unset_spec = stage["$unset"]
-                    if isinstance(unset_spec, str):
-                        unset_fields = [unset_spec]
-                    else:
-                        unset_fields = unset_spec
-                    for dc in docs_with_context:
-                        doc = dc["__doc__"]
-                        for field in unset_fields:
-                            # Handle nested fields
-                            keys = field.split(".")
-                            current = doc
-                            for key in keys[:-1]:
-                                if isinstance(current, dict) and key in current:
-                                    current = current[key]
-                                else:
-                                    break
-                            else:
-                                if keys[-1] in current:
-                                    del current[keys[-1]]
                 case "$facet":
                     facet_spec = stage["$facet"]
                     facet_tables: Dict[str, str] = {}
@@ -947,22 +927,45 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                     # Distribute into buckets
                     bucket_size = max(1, len(sorted_docs) // num_buckets)
                     bucket_list: List[List[Dict[str, Any]]] = []
+                    bucket_bounds: List[Tuple[Any, Any]] = []
                     current_bucket = []
+                    current_min = None
                     for dc in sorted_docs:
                         current_bucket.append(dc["__doc__"])
+                        if current_min is None:
+                            current_min = get_group_val(dc)
                         if (
                             len(current_bucket) >= bucket_size
                             and len(bucket_list) < num_buckets - 1
                         ):
                             bucket_list.append(current_bucket)
+                            bucket_bounds.append(
+                                (current_min, get_group_val(dc))
+                            )
                             current_bucket = []
+                            current_min = None
                     if current_bucket:
                         bucket_list.append(current_bucket)
+                        bucket_bounds.append(
+                            (
+                                current_min,
+                                (
+                                    get_group_val(sorted_docs[-1])
+                                    if sorted_docs
+                                    else current_min
+                                ),
+                            )
+                        )
 
                     # Build output documents
                     new_docs = []
                     for i, bucket_docs in enumerate(bucket_list):
-                        output_doc2: Dict[str, Any] = {"_id": i + 1}
+                        output_doc2: Dict[str, Any] = {
+                            "_id": {
+                                "min": bucket_bounds[i][0],
+                                "max": bucket_bounds[i][1],
+                            }
+                        }
                         for field_name, accumulator in output_spec.items():
                             if "$sum" in accumulator:
                                 sum_field = accumulator["$sum"]
@@ -1082,17 +1085,32 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                         )
 
                         if existing:
-                            # Document exists - handle based on whenMatched
                             if when_matched == "replace":
-                                # Replace entire document (keep existing _id)
-                                update_doc = {
+                                existing_id = existing.get("_id")
+                                new_doc = {
                                     k: v for k, v in doc.items() if k != "_id"
                                 }
+                                if existing_id is not None:
+                                    new_doc["_id"] = existing_id
                                 target_coll.update_one(
-                                    {on_field: on_value}, {"$set": update_doc}
+                                    {on_field: on_value},
+                                    {"$set": new_doc},
                                 )
+                                fields_to_remove = [
+                                    k
+                                    for k in existing
+                                    if k not in new_doc and k != on_field
+                                ]
+                                if fields_to_remove:
+                                    target_coll.update_one(
+                                        {on_field: on_value},
+                                        {
+                                            "$unset": {
+                                                f: "" for f in fields_to_remove
+                                            }
+                                        },
+                                    )
                             elif when_matched == "merge":
-                                # Merge fields (update existing with new values, exclude _id)
                                 update_doc = {
                                     k: v for k, v in doc.items() if k != "_id"
                                 }
@@ -1602,16 +1620,16 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
             for req in requests:
                 match req:
                     case InsertOne(document=doc):
-                        self.insert_one(doc)
+                        self.insert_one(doc, session=session)
                         inserted_count += 1
                     case UpdateOne(filter=f, update=u, upsert=up):
-                        update_res = self.update_one(f, u, up)
+                        update_res = self.update_one(f, u, up, session=session)
                         matched_count += update_res.matched_count
                         modified_count += update_res.modified_count
                         if update_res.upserted_id:
                             upserted_count += 1
                     case DeleteOne(filter=f):
-                        delete_res = self.delete_one(f)
+                        delete_res = self.delete_one(f, session=session)
                         deleted_count += delete_res.deleted_count
             self.collection.db.execute("RELEASE SAVEPOINT bulk_write")
             released = True

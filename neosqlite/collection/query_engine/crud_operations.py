@@ -451,8 +451,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             )
 
         # Fallback for complex queries
-        # Get the integer IDs for the documents to update
-        where_clause, where_params = self.sql_translator.translate_match(filter)
+        # Reuse the already-translated where_clause from line 438
         if where_clause is not None:
             cmd = f"SELECT id FROM {quote_table_name(self.collection.name)} {where_clause}"
             cursor = self.collection.db.execute(cmd, where_params)
@@ -568,8 +567,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             return DeleteResult(deleted_count=cursor.rowcount)
 
         # Fallback for complex queries
-        # Get integer IDs for the documents to delete
-        where_clause, params = self.sql_translator.translate_match(filter)
+        # Reuse the already-translated where_clause from line 563
         if where_clause is not None:
             # Use direct SQL if possible
             cmd = f"SELECT id FROM {quote_table_name(self.collection.name)} {where_clause}"

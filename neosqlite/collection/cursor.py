@@ -974,8 +974,8 @@ class Cursor:
                 """
                 try:
                     return evaluator.evaluate_python(expr, doc)
-                except Exception:
-                    # If evaluation fails, exclude the document
+                except Exception as e:
+                    logger.warning(f"$expr evaluation failed for document: {e}")
                     return False
 
             return filter(expr_filter, all_docs)  # type: ignore[arg-type]
