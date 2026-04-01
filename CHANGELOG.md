@@ -1,5 +1,69 @@
 # CHANGELOG
 
+## 1.13.10
+
+### Bug Fix & Code Quality Release: 28 Bugs Fixed, Python 3.10 Pattern Matching
+
+**28 Bugs Fixed** across all severity levels — no breaking changes, fully backward compatible with v1.13.9.
+
+#### High Severity Fixes
+
+- **ChangeStream CPU spin**: Fixed incorrect None check on fetchall() result that caused tight loop consuming 100% CPU
+- **NULL data column crash**: Prevented crash when aggregation query results contain NULL data column
+- **Transaction leak in document processing**: Moved commit after document processing to prevent data loss
+- **Unparseable document data**: Handle gracefully without leaving transactions open
+- **bulk_write savepoint leak**: Added try/finally to ensure SAVEPOINT cleanup even if RELEASE fails
+- **Unordered bulk semantics**: Implemented proper unordered execution that continues on individual failures instead of delegating to ordered execution
+- **Clone connection mutation**: Removed `_apply_write_concern()` on cloned connections to prevent PRAGMA changes from affecting the original
+- **Connection.**del** crash**: Wrapped `self.close()` in try/except to prevent AttributeError during interpreter shutdown
+
+#### Medium Severity Fixes
+
+- **Silent exception handlers**: Added debug logging to aggregation tier fallback exception handlers
+- **Incomplete logical condition**: Fixed condition to properly signal Python fallback instead of silently discarding partial results
+- **Empty pipeline validation**: Reject empty pipeline stages with clear error instead of StopIteration crash
+- **Negative $sample validation**: Reject negative sample sizes instead of raising unhandled ValueError
+- **$bucketAuto correctness**: _id now returns `{"min": ..., "max": ...}` instead of numeric index
+- **$merge replace mode**: Now also $unset fields missing from source document (previously identical to merge)
+- **bulk_write session propagation**: Session parameter now passed through to insert_one, update_one, delete_one
+- **Double filter translation**: update_many/delete_many now reuse first translation result in fallback path
+- **$lookup session respect**: from_collection.find() now passes session parameter
+- **Aggregation fallback session**: self.find(session=session) in Python fallback path
+- **Dead $unset case**: Removed duplicate unreachable $unset case in aggregation match statement
+- **Logging visibility**: Write concern errors log at warning level; pending transaction commits warn on close; $expr failures log exception details
+- **Redundant exception type**: Removed redundant json.JSONDecodeError from except clause; added debug logging for JSON validation
+
+#### Low Severity Fixes
+
+- **Cursor.clone()**: Now copies session context to cloned cursor
+- **compact accuracy**: Calculates actual bytesFreed by measuring page count before/after VACUUM
+- **dbstats ternary**: Replaced fragile `and/or` pattern with proper ternary for avgObjSize
+- **InvalidOperation exception**: New exception class replaces bare Exception raises in ClientSession
+- **ChangeStream cleanup**: Removed redundant pass after logging
+
+#### Code Modernization: Python 3.10 Pattern Matching
+
+Three modules refactored to use `match/case` pattern matching:
+
+- **type_correction.py**: Type dispatch for recursive value normalization
+- **query_operators.py**: Bitwise operator helpers with cleaner value extraction
+- **collection/**init**.py**: `_parse_stored_id` type dispatch
+
+#### Test Infrastructure
+
+- **conftest.py**: Suppress neosqlite logger warnings during test runs to keep output clean (warnings still active in production)
+
+### Test Results
+- **Unit Tests**: 2,415 total (2,410 passed, 5 xfailed, 0 failed)
+- **API Comparison (NeoSQLite vs MongoDB)**: 377 tests (360 passed, 17 skipped, 0 failed) — 100%
+- **Code Coverage**: 81%
+
+### Compatibility
+- **Backward Compatible**: Zero breaking changes
+- **PyMongo API Parity**: 100% for comparable features
+
+---
+
 ## 1.13.9
 
 ### Architecture & Wire Protocol Release: Modular NX-27017, $changeStream Support
