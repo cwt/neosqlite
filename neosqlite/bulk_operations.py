@@ -369,7 +369,10 @@ class BulkOperationExecutor:
         self, session: ClientSession | None = None
     ) -> BulkWriteResult:
         """
-        Execute operations in any order (for now, we'll just execute them in order).
+        Execute operations in any order, continuing on individual failures.
+
+        Unlike ordered execution, a failure in one operation does not prevent
+        subsequent operations from being attempted.
 
         Args:
             session (ClientSession, optional): A ClientSession for transactions.
@@ -377,7 +380,65 @@ class BulkOperationExecutor:
         Returns:
             BulkWriteResult: A result object containing the counts of inserted, matched, modified, deleted, and upserted documents.
         """
-        # For simplicity, we'll execute unordered operations the same as ordered
-        # In a more advanced implementation, we might group operations by type
-        # or execute them in parallel
-        return self._execute_ordered(session=session)
+        inserted_count = 0
+        matched_count = 0
+        modified_count = 0
+        deleted_count = 0
+        upserted_count = 0
+
+        self._collection.db.execute("SAVEPOINT bulk_operations")
+        released = False
+        try:
+            for op in self._operations:
+                try:
+                    match op:
+                        case InsertOperation(document=doc):
+                            self._collection.insert_one(doc)
+                            inserted_count += 1
+                        case UpdateOperation(
+                            filter=f, update=u, upsert=up, multi=multi
+                        ):
+                            if multi:
+                                update_res = self._collection.update_many(f, u)
+                            else:
+                                update_res = self._collection.update_one(
+                                    f, u, upsert=up
+                                )
+                            matched_count += update_res.matched_count
+                            modified_count += update_res.modified_count
+                            if update_res.upserted_id:
+                                upserted_count += 1
+                        case DeleteOperation(filter=f, multi=multi):
+                            if multi:
+                                delete_res = self._collection.delete_many(f)
+                            else:
+                                delete_res = self._collection.delete_one(f)
+                            deleted_count += delete_res.deleted_count
+                except Exception as e:
+                    logger.warning(f"Unordered bulk operation failed: {e}")
+                    continue
+
+            self._collection.db.execute("RELEASE SAVEPOINT bulk_operations")
+            released = True
+        except Exception as e:
+            self._collection.db.execute("ROLLBACK TO SAVEPOINT bulk_operations")
+            raise e
+        finally:
+            if not released:
+                try:
+                    self._collection.db.execute(
+                        "RELEASE SAVEPOINT bulk_operations"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to release savepoint 'bulk_operations': {e}"
+                    )
+                    pass
+
+        return BulkWriteResult(
+            inserted_count=inserted_count,
+            matched_count=matched_count,
+            modified_count=modified_count,
+            deleted_count=deleted_count,
+            upserted_count=upserted_count,
+        )

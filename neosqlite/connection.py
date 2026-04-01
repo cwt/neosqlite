@@ -1124,7 +1124,11 @@ class Connection:
             ...     read_preference={"mode": "primaryPreferred"}
             ... )
         """
-        # Return a new Connection instance that shares the same database connection
+        # Return a new Connection instance that shares the same database connection.
+        # This is by design: SQLite uses a single writable connection per database file,
+        # so clones naturally share the same sqlite3.Connection and _collections dict.
+        # The clone only differs in its stored PyMongo-compatible options
+        # (codec_options, read_preference, write_concern, read_concern).
         clone = Connection(name=self.name, _is_clone=True)
         clone.db = self.db
         clone._tokenizers = self._tokenizers
@@ -1138,8 +1142,10 @@ class Connection:
         clone._write_concern = write_concern
         clone._read_concern = read_concern
 
-        # Apply write concern mapping to SQLite PRAGMAs
-        clone._apply_write_concern(write_concern)
+        # NOTE: We intentionally do NOT call _apply_write_concern() here.
+        # The clone shares the same sqlite3.Connection with the original, so
+        # changing PRAGMAs would affect the original too. The write_concern
+        # is stored for API compatibility but does not mutate the shared connection.
 
         return clone
 
@@ -1203,5 +1209,10 @@ class Connection:
     def __del__(self):
         """
         Ensure the database connection is closed when the object is garbage collected.
+        Wrapped in try/except to avoid crashes during interpreter shutdown when
+        module-level imports (like sqlite3) may already be None.
         """
-        self.close()
+        try:
+            self.close()
+        except Exception:
+            pass

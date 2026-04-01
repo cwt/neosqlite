@@ -1596,6 +1596,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         deleted_count = 0
         upserted_count = 0
 
+        released = False
         self.collection.db.execute("SAVEPOINT bulk_write")
         try:
             for req in requests:
@@ -1613,9 +1614,16 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                         delete_res = self.delete_one(f)
                         deleted_count += delete_res.deleted_count
             self.collection.db.execute("RELEASE SAVEPOINT bulk_write")
+            released = True
         except Exception as e:
             self.collection.db.execute("ROLLBACK TO SAVEPOINT bulk_write")
             raise e
+        finally:
+            if not released:
+                try:
+                    self.collection.db.execute("RELEASE SAVEPOINT bulk_write")
+                except Exception:
+                    pass
 
         return BulkWriteResult(
             inserted_count=inserted_count,

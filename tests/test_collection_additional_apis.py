@@ -366,15 +366,15 @@ class TestInitializeUnorderedBulkOp:
         # This should still execute (unordered)
         bulk.add(InsertOne({"item": "c"}))
 
-        # Note: The current implementation executes unordered operations
-        # the same as ordered (with rollback on error), so all operations
-        # will be rolled back on error. This test verifies the error is raised.
-        with raises(Exception):
-            bulk.execute()
+        # Unordered bulk should continue on errors, not raise
+        result = bulk.execute()
 
-        # After rollback, only the original document should exist
-        assert collection.count_documents({}) == 1
+        # "b" and "c" should be inserted, "a" should fail (duplicate)
+        assert result.inserted_count == 2
+        assert collection.count_documents({}) == 3
         assert collection.find_one({"item": "a"}) is not None
+        assert collection.find_one({"item": "b"}) is not None
+        assert collection.find_one({"item": "c"}) is not None
 
     def test_unordered_bulk_with_mixed_operations(self, collection):
         """Test unordered bulk with mixed operation types."""
