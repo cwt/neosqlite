@@ -682,8 +682,17 @@ class Connection:
                         }
 
                     if free_space_target_mb == 0:
+                        page_count_before = self.db.execute(
+                            "PRAGMA page_count"
+                        ).fetchone()[0]
                         self.db.execute("VACUUM")
-                        return {"bytesFreed": free_bytes, "ok": 1}
+                        page_count_after = self.db.execute(
+                            "PRAGMA page_count"
+                        ).fetchone()[0]
+                        bytes_freed = (
+                            page_count_before - page_count_after
+                        ) * page_size
+                        return {"bytesFreed": bytes_freed, "ok": 1}
 
                     if free_space_target_mb is None:
                         free_space_target_mb = 20
@@ -960,9 +969,11 @@ class Connection:
                         "collections": len(collections),
                         "views": views_count,
                         "objects": total_objects,
-                        "avgObjSize": total_objects
-                        and int(data_size / total_objects)
-                        or 0,
+                        "avgObjSize": (
+                            int(data_size / total_objects)
+                            if total_objects
+                            else 0
+                        ),
                         "dataSize": data_size,
                         "storageSize": storage_size,
                         "indexes": total_indexes,

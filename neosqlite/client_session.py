@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Callable, Dict
 
+from .exceptions import InvalidOperation
+
 if TYPE_CHECKING:
     from .connection import Connection
 
@@ -49,7 +51,7 @@ class ClientSession:
             write_concern (dict, optional): Write concern for the transaction.
         """
         if self._in_transaction:
-            raise Exception("Transaction already in progress")
+            raise InvalidOperation("Transaction already in progress")
 
         # SQLite transaction logic
         if self.client.db.in_transaction:
@@ -69,7 +71,7 @@ class ClientSession:
         Commit the current transaction.
         """
         if not self._in_transaction:
-            raise Exception("No transaction in progress")
+            raise InvalidOperation("No transaction in progress")
 
         if self._is_savepoint:
             self.client.db.execute(f"RELEASE SAVEPOINT {self._savepoint_name}")
@@ -83,7 +85,7 @@ class ClientSession:
         Abort (rollback) the current transaction.
         """
         if not self._in_transaction:
-            raise Exception("No transaction in progress")
+            raise InvalidOperation("No transaction in progress")
 
         if self._is_savepoint:
             self.client.db.execute(

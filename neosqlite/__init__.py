@@ -14,6 +14,7 @@ from .collection.raw_batch_cursor import RawBatchCursor
 from .connection import Connection
 from .exceptions import (
     CollectionInvalid,
+    InvalidOperation,
     MalformedDocument,
     MalformedQueryException,
 )
@@ -62,6 +63,7 @@ __all__ = [
     "InsertManyResult",
     "InsertOne",
     "InsertOneResult",
+    "InvalidOperation",
     "MalformedDocument",
     "MalformedQueryException",
     "RawBatchCursor",

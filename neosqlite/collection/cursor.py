@@ -418,6 +418,7 @@ class Cursor:
         cloned._where_predicate = (
             self._where_predicate
         )  # Functions can't be deep copied
+        cloned._session = self._session
         cloned._retrieved = 0  # Clone starts fresh
         return cloned
 

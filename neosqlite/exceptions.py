@@ -20,3 +20,11 @@ class CollectionInvalid(Exception):
     """
 
     pass
+
+
+class InvalidOperation(Exception):
+    """
+    Exception raised when an operation is not valid in the current state.
+    """
+
+    pass

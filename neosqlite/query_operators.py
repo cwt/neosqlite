@@ -330,12 +330,13 @@ def _exists(field: str, value: bool, document: dict[str, Any]) -> bool:
         for i, path in enumerate(field_parts):
             if not isinstance(doc_value, dict) or path not in doc_value:
                 # Field doesn't exist
-                return not value if value else True
+                return not value
             if i == len(field_parts) - 1:
                 # We've reached the final field
                 return value
             doc_value = doc_value.get(path, None)
-        return not value if value else True
+        # Unreachable: loop always returns via lines 333 or 336
+        return not value
     else:
         return (field in document) if value else (field not in document)
 

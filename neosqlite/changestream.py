@@ -189,9 +189,7 @@ class ChangeStream:
             # Note: We don't drop the _neosqlite_changestream table as it might be used by other change streams
             self._collection.db.commit()
         except Exception as e:
-            # Ignore errors during cleanup
             logger.warning(f"Error during ChangeStream cleanup: {e}")
-            pass
 
     def __iter__(self) -> ChangeStream:
         """
