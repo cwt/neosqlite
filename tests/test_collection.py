@@ -639,6 +639,205 @@ def test_find_one_and_delete(collection):
     assert collection.count_documents({}) == 0
 
 
+def test_find_one_and_update_with_sort(collection):
+    """Test find_one_and_update with sort parameter."""
+    collection.insert_many(
+        [
+            {"name": "Alice", "age": 30},
+            {"name": "Bob", "age": 25},
+            {"name": "Charlie", "age": 35},
+        ]
+    )
+    # Update the youngest person
+    result = collection.find_one_and_update(
+        {"age": {"$gte": 25}}, {"$set": {"score": 100}}, sort=[("age", 1)]
+    )
+    assert result is not None
+    assert result["name"] == "Bob"
+
+
+def test_find_one_and_update_return_document(collection):
+    """Test find_one_and_update with return_document=True."""
+    collection.insert_one({"name": "Test", "value": 1})
+    result = collection.find_one_and_update(
+        {"name": "Test"}, {"$set": {"value": 2}}, return_document=True
+    )
+    assert result is not None
+    assert result["value"] == 2
+
+
+def test_find_one_and_update_upsert(collection):
+    """Test find_one_and_update with upsert."""
+    result = collection.find_one_and_update(
+        {"name": "NonExistent"}, {"$set": {"value": 1}}, upsert=True
+    )
+    assert result is None
+    new_doc = collection.find_one({"name": "NonExistent"})
+    assert new_doc is not None
+    assert new_doc["value"] == 1
+
+
+def test_find_one_and_update_upsert_return_document(collection):
+    """Test find_one_and_update with upsert and return_document."""
+    result = collection.find_one_and_update(
+        {"name": "NewUser"},
+        {"$set": {"value": 100}},
+        upsert=True,
+        return_document=True,
+    )
+    assert result is not None
+    assert result["name"] == "NewUser"
+    assert result["value"] == 100
+
+
+def test_find_one_and_update_array_filters(collection):
+    """Test find_one_and_update with array_filters."""
+    collection.insert_one({"name": "Test", "scores": [80, 90, 100]})
+    result = collection.find_one_and_update(
+        {"name": "Test"},
+        {"$set": {"scores.$[elem]": 85}},
+        array_filters=[{"elem": {"$gte": 90}}],
+    )
+    assert result is not None
+
+
+def test_find_one_and_update_with_session(collection, connection):
+    """Test find_one_and_update with session."""
+    collection.insert_one({"name": "SessionTest", "value": 1})
+    session = connection.start_session()
+    try:
+        result = collection.find_one_and_update(
+            {"name": "SessionTest"},
+            {"$set": {"value": 2}},
+            session=session,
+        )
+        assert result is not None
+        assert result["value"] == 1
+    finally:
+        session.end_session()
+
+
+def test_find_one_and_replace_with_sort(collection):
+    """Test find_one_and_replace with sort parameter."""
+    collection.insert_many(
+        [
+            {"name": "Alice", "age": 30},
+            {"name": "Bob", "age": 25},
+            {"name": "Charlie", "age": 35},
+        ]
+    )
+    # Replace the oldest person
+    result = collection.find_one_and_replace(
+        {"age": {"$gte": 25}},
+        {"name": "NewPerson", "age": 50},
+        sort=[("age", -1)],
+    )
+    assert result is not None
+    assert result["name"] == "Charlie"
+
+
+def test_find_one_and_replace_return_document(collection):
+    """Test find_one_and_replace with return_document=True."""
+    collection.insert_one({"name": "Test", "value": 1})
+    result = collection.find_one_and_replace(
+        {"name": "Test"},
+        {"name": "Updated", "value": 2},
+        return_document=True,
+    )
+    assert result is not None
+    assert result["name"] == "Updated"
+
+
+def test_find_one_and_replace_upsert(collection):
+    """Test find_one_and_replace with upsert."""
+    result = collection.find_one_and_replace(
+        {"name": "NonExistent"},
+        {"name": "NewUser", "value": 10},
+        upsert=True,
+    )
+    assert result is None
+    new_doc = collection.find_one({"name": "NewUser"})
+    assert new_doc is not None
+
+
+def test_find_one_and_replace_upsert_return_document(collection):
+    """Test find_one_and_replace with upsert and return_document."""
+    result = collection.find_one_and_replace(
+        {"name": "NewUser2"},
+        {"name": "NewUser2", "value": 20},
+        upsert=True,
+        return_document=True,
+    )
+    assert result is not None
+    assert result["name"] == "NewUser2"
+
+
+def test_find_one_and_replace_with_session(collection, connection):
+    """Test find_one_and_replace with session."""
+    collection.insert_one({"name": "SessionReplace", "value": 1})
+    session = connection.start_session()
+    try:
+        result = collection.find_one_and_replace(
+            {"name": "SessionReplace"},
+            {"name": "SessionReplaced", "value": 2},
+            session=session,
+        )
+        assert result is not None
+    finally:
+        session.end_session()
+
+
+def test_find_one_and_delete_with_sort(collection):
+    """Test find_one_and_delete with sort parameter."""
+    collection.insert_many(
+        [
+            {"name": "Alice", "age": 30},
+            {"name": "Bob", "age": 25},
+            {"name": "Charlie", "age": 35},
+        ]
+    )
+    # Delete the oldest person
+    result = collection.find_one_and_delete(
+        {"age": {"$gte": 25}}, sort=[("age", -1)]
+    )
+    assert result is not None
+    assert result["name"] == "Charlie"
+    assert collection.count_documents({}) == 2
+
+
+def test_find_one_and_delete_no_match(collection):
+    """Test find_one_and_delete when no document matches."""
+    initial_count = collection.count_documents({})
+    result = collection.find_one_and_delete({"name": "NonExistent"})
+    assert result is None
+    assert collection.count_documents({}) == initial_count
+
+
+def test_find_one_and_delete_with_projection(collection):
+    """Test find_one_and_delete with projection."""
+    collection.insert_one({"name": "Test", "value": 1, "extra": "data"})
+    result = collection.find_one_and_delete(
+        {"name": "Test"}, projection={"name": 1, "_id": 1}
+    )
+    assert result is not None
+    assert "name" in result
+    assert "_id" in result
+
+
+def test_find_one_and_delete_with_session(collection, connection):
+    """Test find_one_and_delete with session."""
+    collection.insert_one({"name": "SessionDelete", "value": 1})
+    session = connection.start_session()
+    try:
+        result = collection.find_one_and_delete(
+            {"name": "SessionDelete"}, session=session
+        )
+        assert result is not None
+        assert result["name"] == "SessionDelete"
+    finally:
+        session.end_session()
+
+
 def test_count_documents(collection):
     """Test counting documents."""
     collection.insert_many([{}, {}, {}])
