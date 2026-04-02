@@ -1332,10 +1332,23 @@ class TemporaryTableAggregationProcessor:
         Returns:
             str: Name of the newly created temporary table with sorted/skipped/limited results
         """
+        # Check what columns the current table has
+        columns = self.db.execute(
+            f"PRAGMA table_info({quote_table_name(current_table)})"
+        ).fetchall()
+        column_names = {col[1] for col in columns}
+        has_id = "id" in column_names
+        has_underscore_id = "_id" in column_names
+
         # Use SQLTranslator to build ORDER BY clause
         order_clause = ""
         if sort_spec:
             order_clause = self.sql_translator.translate_sort(sort_spec)
+            # If sorting by _id but table doesn't have _id column, use id instead
+            if "_id" in sort_spec and not has_underscore_id and has_id:
+                order_clause = order_clause.replace(
+                    "ORDER BY _id", "ORDER BY id"
+                )
 
         # Use SQLTranslator to build LIMIT/OFFSET clause
         limit_clause = self.sql_translator.translate_skip_limit(
@@ -1354,10 +1367,21 @@ class TemporaryTableAggregationProcessor:
             # Default case if all are None/default values
             stage_spec["$sort"] = {}
 
+        # Build SELECT clause based on available columns
+        # Always preserve id and _id columns if they exist
+        if has_id and has_underscore_id:
+            select_clause = f"SELECT id, _id, data FROM {current_table}"
+        elif has_id:
+            select_clause = f"SELECT id, data FROM {current_table}"
+        elif has_underscore_id:
+            select_clause = f"SELECT _id, data FROM {current_table}"
+        else:
+            select_clause = f"SELECT data FROM {current_table}"
+
         # Create sorted/skipped/limited temporary table
         new_table = create_temp(
             stage_spec,
-            f"SELECT * FROM {current_table} {order_clause} {limit_clause}",
+            f"{select_clause} {order_clause} {limit_clause}",
         )
         return new_table
 
@@ -1714,41 +1738,66 @@ class TemporaryTableAggregationProcessor:
                     select_parts.append(f"COUNT(*) AS {field}")
 
                 case "$first":
-                    # $first requires ordering - this is a simplified implementation
-                    # For proper $first, documents should be sorted before $group
-                    # Using a subquery approach that gets the first value per group
+                    # $first gets the first value in the group (by insertion order / minimum id)
+                    # When grouping by $_id, each document is its own group, so just return the value
                     if expr_field:
-                        if expr_field == "_id":
-                            # Use a correlated subquery to get first value
-                            # Note: This assumes the data is already sorted
+                        if group_id_expr == "$_id" or (
+                            isinstance(group_id_expr, str)
+                            and group_id_expr.lstrip("$") == "_id"
+                        ):
+                            # Special case: grouping by $_id, each doc is its own group
+                            if expr_field == "_id":
+                                select_parts.append(f"_id AS {field}")
+                            else:
+                                select_parts.append(
+                                    f"{json_extract}(data, '{parse_json_path(expr_field)}') AS {field}"
+                                )
+                        elif expr_field == "_id":
                             select_parts.append(
-                                f"(SELECT t2._id FROM {current_table} t2 "
-                                f"WHERE t2._id = _id LIMIT 1) AS {field}"
+                                f"(SELECT first_t._id FROM {current_table} first_t "
+                                f"INNER JOIN (SELECT MIN(sub_t.id) as min_id FROM {current_table} sub_t "
+                                f"WHERE sub_t.{group_by_parts[0]} = {group_by_parts[0]}) first_sub "
+                                f"ON first_t.id = first_sub.min_id) AS {field}"
                             )
                         else:
                             select_parts.append(
-                                f"(SELECT {json_extract}(t2.data, '{parse_json_path(expr_field)}') "
-                                f"FROM {current_table} t2 "
-                                f"WHERE t2._id = _id LIMIT 1) AS {field}"
+                                f"(SELECT {json_extract}(first_t.data, '{parse_json_path(expr_field)}') "
+                                f"FROM {current_table} first_t "
+                                f"INNER JOIN (SELECT MIN(sub_t.id) as min_id FROM {current_table} sub_t "
+                                f"WHERE sub_t.{group_by_parts[0]} = {group_by_parts[0]}) first_sub "
+                                f"ON first_t.id = first_sub.min_id) AS {field}"
                             )
                     # Note: This is a simplified implementation
                     # A full implementation would need proper ordering within groups
 
                 case "$last":
-                    # $last requires ordering - use subquery with ORDER BY DESC LIMIT 1
+                    # $last gets the last value in the group (by insertion order / maximum id)
                     if expr_field:
-                        if expr_field == "_id":
+                        if group_id_expr == "$_id" or (
+                            isinstance(group_id_expr, str)
+                            and group_id_expr.lstrip("$") == "_id"
+                        ):
+                            # Special case: grouping by $_id, each doc is its own group
+                            if expr_field == "_id":
+                                select_parts.append(f"_id AS {field}")
+                            else:
+                                select_parts.append(
+                                    f"{json_extract}(data, '{parse_json_path(expr_field)}') AS {field}"
+                                )
+                        elif expr_field == "_id":
                             select_parts.append(
-                                f"(SELECT t2._id FROM {current_table} t2 "
-                                f"WHERE t2._id = _id "
-                                f"ORDER BY t2.id DESC LIMIT 1) AS {field}"
+                                f"(SELECT last_t._id FROM {current_table} last_t "
+                                f"INNER JOIN (SELECT MAX(sub_t.id) as max_id FROM {current_table} sub_t "
+                                f"WHERE sub_t.{group_by_parts[0]} = {group_by_parts[0]}) last_sub "
+                                f"ON last_t.id = last_sub.max_id) AS {field}"
                             )
                         else:
                             select_parts.append(
-                                f"(SELECT {json_extract}(t2.data, '{parse_json_path(expr_field)}') "
-                                f"FROM {current_table} t2 "
-                                f"WHERE t2._id = _id "
-                                f"ORDER BY t2.id DESC LIMIT 1) AS {field}"
+                                f"(SELECT {json_extract}(last_t.data, '{parse_json_path(expr_field)}') "
+                                f"FROM {current_table} last_t "
+                                f"INNER JOIN (SELECT MAX(sub_t.id) as max_id FROM {current_table} sub_t "
+                                f"WHERE sub_t.{group_by_parts[0]} = {group_by_parts[0]}) last_sub "
+                                f"ON last_t.id = last_sub.max_id) AS {field}"
                             )
 
                 case "$addToSet":
@@ -1888,47 +1937,80 @@ class TemporaryTableAggregationProcessor:
         # we check if the source collection has JSONB support instead
         use_json_wrapper = self._jsonb_supported
 
-        # Check if the table has an _id column (some stages preserve it separately)
+        # Check if the table has id and _id columns
         columns = self.db.execute(
             f"PRAGMA table_info({quote_table_name(table_name)})"
         ).fetchall()
-        has_id_column = any(col[1] == "_id" for col in columns)
+        column_names = [col[1] for col in columns]
+        has_id_column = "id" in column_names
+        has_underscore_id_column = "_id" in column_names
+        has_data_column = "data" in column_names
 
+        # Check if this is a non-standard table (e.g., from $bucket, $bucketAuto, $group)
+        # These tables have custom columns like _id, count, etc. but no 'data' column
+        is_standard_table = has_data_column or (
+            has_id_column and has_underscore_id_column
+        )
+
+        if not is_standard_table:
+            # Non-standard table - return rows as dictionaries with column names as keys
+            select_clause = ", ".join(
+                quote_table_name(col) for col in column_names
+            )
+            cursor = self.db.execute(
+                f"SELECT {select_clause} FROM {table_name}"
+            )
+            results = []
+            while True:
+                rows = cursor.fetchmany(batch_size)
+                if not rows:
+                    break
+                for row in rows:
+                    doc = {}
+                    for i, col_name in enumerate(column_names):
+                        doc[col_name] = row[i]
+                    results.append(doc)
+            return results
+
+        # Build SELECT statement based on available columns for standard tables
         if use_json_wrapper:
-            if has_id_column:
+            if has_id_column and has_underscore_id_column and has_data_column:
                 cursor = self.db.execute(
                     f"SELECT id, _id, json(data) as data FROM {table_name}"
                 )
+            elif has_id_column and has_data_column:
+                # Table has id but not _id - select id and wrap data
+                cursor = self.db.execute(
+                    f"SELECT id, json(data) as data FROM {table_name}"
+                )
+                has_underscore_id_column = False
+            elif has_data_column:
+                # Only data column available
+                cursor = self.db.execute(
+                    f"SELECT json(data) as data FROM {table_name}"
+                )
+                has_id_column = False
+                has_underscore_id_column = False
             else:
-                # Even if no _id column, we still select it if it might be there (fallback)
-                try:
-                    cursor = self.db.execute(
-                        f"SELECT id, _id, json(data) as data FROM {table_name}"
-                    )
-                    has_id_column = True
-                except Exception as e:
-                    logger.debug(
-                        f"Failed to select _id with json(data), trying without: {e}"
-                    )
-                    cursor = self.db.execute(
-                        f"SELECT id, json(data) as data FROM {table_name}"
-                    )
+                # No standard columns - this is an edge case, return empty
+                logger.warning(f"Table {table_name} has no id/_id/data columns")
+                return []
         else:
-            if has_id_column:
+            if has_id_column and has_underscore_id_column and has_data_column:
                 cursor = self.db.execute(
                     f"SELECT id, _id, data FROM {table_name}"
                 )
+            elif has_id_column and has_data_column:
+                cursor = self.db.execute(f"SELECT id, data FROM {table_name}")
+                has_underscore_id_column = False
+            elif has_data_column:
+                cursor = self.db.execute(f"SELECT data FROM {table_name}")
+                has_id_column = False
+                has_underscore_id_column = False
             else:
-                try:
-                    cursor = self.db.execute(
-                        f"SELECT id, _id, data FROM {table_name}"
-                    )
-                    has_id_column = True
-                except Exception as e:
-                    logger.debug(f"Failed to select _id, trying without: {e}")
-                    cursor = self.db.execute(
-                        f"SELECT id, data FROM {table_name}"
-                    )
+                # No standard columns - this is an edge case, return empty
+                logger.warning(f"Table {table_name} has no id/_id/data columns")
+                return []
 
         # Use fetchmany to avoid loading all results into memory at once
         results = []
@@ -1943,16 +2025,27 @@ class TemporaryTableAggregationProcessor:
                     neosqlite_json_loads,
                 )
 
-                # Handle both 2-column (id, data) and 3-column (id, _id, data) results
-                if has_id_column and len(row) == 3:
+                # Handle different column counts based on what columns exist
+                # 3 columns: id, _id, data
+                # 2 columns: id, data OR _id, data (depending on has_id_column)
+                # 1 column: data only
+                if has_id_column and has_underscore_id_column and len(row) == 3:
                     # _id is provided as a separate column, use it directly
                     doc = neosqlite_json_loads(row[2])
                     # Only set _id from column if it's not already in the JSON
                     if "_id" not in doc:
                         doc["_id"] = self.collection._parse_stored_id(row[1])
-                else:
-                    # Parse _id from JSON data
+                elif has_id_column and len(row) == 2:
+                    # Only id column, no separate _id column
                     doc = neosqlite_json_loads(row[1])
+                elif len(row) == 2 and not has_id_column:
+                    # _id and data columns (no id)
+                    doc = neosqlite_json_loads(row[1])
+                    if "_id" not in doc:
+                        doc["_id"] = self.collection._parse_stored_id(row[0])
+                else:
+                    # Only data column
+                    doc = neosqlite_json_loads(row[0])
 
                 # Parse array fields that were created with json_group_array
                 # These are stored as JSON strings and need to be parsed
@@ -2206,19 +2299,20 @@ class TemporaryTableAggregationProcessor:
         sorted_boundaries = sorted(boundaries)
 
         # Build CASE expression for bucketing
+        # MongoDB uses the lower boundary as the _id value
         case_parts = []
         for i in range(len(sorted_boundaries) - 1):
             lower = sorted_boundaries[i]
             upper = sorted_boundaries[i + 1]
             case_parts.append(
-                f"WHEN {self._build_group_by_expr(group_by)} >= {lower} AND {self._build_group_by_expr(group_by)} < {upper} THEN '{lower}-{upper}'"
+                f"WHEN {self._build_group_by_expr(group_by)} >= {lower} AND {self._build_group_by_expr(group_by)} < {upper} THEN {lower}"
             )
-        # Last bucket (inclusive upper bound)
+        # Last bucket (inclusive upper bound) - use the last boundary as _id
         last_lower = sorted_boundaries[-1]
         case_parts.append(
-            f"WHEN {self._build_group_by_expr(group_by)} >= {last_lower} THEN '{last_lower}+'"
+            f"WHEN {self._build_group_by_expr(group_by)} >= {last_lower} THEN {last_lower}"
         )
-        # Default case
+        # Default case - use the default label
         case_parts.append(f"ELSE '{default_label}'")
 
         case_expr = "CASE " + " ".join(case_parts) + " END"
@@ -2268,9 +2362,11 @@ class TemporaryTableAggregationProcessor:
 
         select_clause = ", ".join(output_fields)
 
+        # Note: We must repeat the CASE expression in GROUP BY because SQLite
+        # doesn't allow column aliases in GROUP BY clause
         new_table = create_temp(
             {"$bucket": bucket_spec},
-            f"SELECT {select_clause} FROM {current_table} GROUP BY _id ORDER BY _id",
+            f"SELECT {select_clause} FROM {current_table} GROUP BY {case_expr} ORDER BY _id",
         )
 
         return new_table
@@ -2318,24 +2414,26 @@ class TemporaryTableAggregationProcessor:
         json_path = parse_json_path(field)
 
         # Use NTILE for automatic bucketing
-        output_fields = []
-        output_fields.append("bucket AS _id")
-
+        # MongoDB returns _id as {min: <value>, max: <value>}
+        agg_fields = []
         for field_name, accumulator in output_spec.items():
             if "$sum" in accumulator:
-                output_fields.append(f"SUM(val) AS {field_name}")
+                sum_expr = accumulator["$sum"]
+                if sum_expr == 1:
+                    # Special case: $sum: 1 is a count
+                    agg_fields.append(f"COUNT(*) AS {field_name}")
+                else:
+                    agg_fields.append(f"SUM(s.val) AS {field_name}")
             elif "$avg" in accumulator:
-                output_fields.append(f"AVG(val) AS {field_name}")
+                agg_fields.append(f"AVG(s.val) AS {field_name}")
             elif "$count" in accumulator:
-                output_fields.append(f"COUNT(*) AS {field_name}")
+                agg_fields.append(f"COUNT(*) AS {field_name}")
             elif "$min" in accumulator:
-                output_fields.append(f"MIN(val) AS {field_name}")
+                agg_fields.append(f"MIN(s.val) AS {field_name}")
             elif "$max" in accumulator:
-                output_fields.append(f"MAX(val) AS {field_name}")
+                agg_fields.append(f"MAX(s.val) AS {field_name}")
             else:
-                output_fields.append(f"COUNT(*) AS {field_name}")
-
-        select_clause = ", ".join(output_fields)
+                agg_fields.append(f"COUNT(*) AS {field_name}")
 
         # Create subquery with NTILE bucketing
         subquery = f"""
@@ -2345,9 +2443,18 @@ class TemporaryTableAggregationProcessor:
             FROM {current_table}
         """
 
+        # Group by bucket and create the _id object with min/max using json_object
+        # Wrap with json() to ensure text output (not JSONB binary)
+        json_set_func = (
+            "jsonb_object" if self._jsonb_supported else "json_object"
+        )
+        select_clause = f"json({json_set_func}('min', MIN(s.val), 'max', MAX(s.val))) AS _id"
+        if agg_fields:
+            select_clause += ", " + ", ".join(agg_fields)
+
         new_table = create_temp(
             {"$bucketAuto": bucket_auto_spec},
-            f"SELECT {select_clause} FROM ({subquery}) GROUP BY bucket ORDER BY bucket",
+            f"SELECT {select_clause} FROM ({subquery}) s GROUP BY bucket ORDER BY MIN(s.val)",
         )
 
         return new_table
@@ -2502,22 +2609,53 @@ class TemporaryTableAggregationProcessor:
         if not coll_name:
             return current_table
 
-        # Get documents from the other collection
+        # Check what columns the current table has
+        columns = self.db.execute(
+            f"PRAGMA table_info({quote_table_name(current_table)})"
+        ).fetchall()
+        column_names = {col[1] for col in columns}
+        has_id = "id" in column_names
+        has_underscore_id = "_id" in column_names
+
+        # Build SELECT clause for current table based on available columns
+        if has_id and has_underscore_id:
+            current_select = f"SELECT id, _id, data FROM {current_table}"
+        elif has_id:
+            current_select = f"SELECT id, data FROM {current_table}"
+        elif has_underscore_id:
+            current_select = f"SELECT _id, data FROM {current_table}"
+        else:
+            current_select = f"SELECT data FROM {current_table}"
+
+        # Get documents from the other collection with matching columns
+        other_columns = []
+        if has_id:
+            other_columns.append("id")
+        if has_underscore_id:
+            other_columns.append("_id")
+        other_columns.append("data")
+
+        other_select_cols = (
+            ", ".join(other_columns) if other_columns else "data"
+        )
+
         if pipeline:
             # If pipeline specified, process it
             # For simplicity, just get all documents
             other_table = create_temp(
-                {"$unionWith": union_spec}, f"SELECT id, data FROM {coll_name}"
+                {"$unionWith": union_spec},
+                f"SELECT {other_select_cols} FROM {coll_name}",
             )
         else:
             other_table = create_temp(
-                {"$unionWith": union_spec}, f"SELECT id, data FROM {coll_name}"
+                {"$unionWith": union_spec},
+                f"SELECT {other_select_cols} FROM {coll_name}",
             )
 
-        # Union the two tables
+        # Union the two tables with explicit column lists
         result_table = create_temp(
             {"$unionWith": union_spec},
-            f"SELECT * FROM {current_table} UNION ALL SELECT * FROM {other_table}",
+            f"{current_select} UNION ALL SELECT {other_select_cols} FROM {other_table}",
         )
 
         return result_table
@@ -2587,14 +2725,33 @@ class TemporaryTableAggregationProcessor:
         output: Dict[str, Any] = spec.get("output", {})
         all_params: List[Any] = []
 
+        # Check what columns the current table has
+        columns = self.db.execute(
+            f"PRAGMA table_info({quote_table_name(current_table)})"
+        ).fetchall()
+        column_names = {col[1] for col in columns}
+        has_id = "id" in column_names
+        has_underscore_id = "_id" in column_names
+        has_data = "data" in column_names
+
         # 1. Build PARTITION BY clause
         partition_parts = []
         if partition_by is not None:
-            sql, params = self.expr_evaluator.build_select_expression(
-                partition_by
-            )
-            partition_parts.append(sql)
-            all_params.extend(params)
+            # Handle _id specially - it's a column, not in JSON
+            if partition_by == "_id":
+                if has_underscore_id:
+                    partition_parts.append("_id")
+                elif has_id:
+                    partition_parts.append("id")
+                else:
+                    # Can't partition by _id if column doesn't exist
+                    partition_by = None
+            else:
+                sql, params = self.expr_evaluator.build_select_expression(
+                    partition_by
+                )
+                partition_parts.append(sql)
+                all_params.extend(params)
 
         partition_clause = ""
         if partition_parts:
@@ -2605,11 +2762,19 @@ class TemporaryTableAggregationProcessor:
         if sort_by:
             for field, direction in sort_by.items():
                 order = "ASC" if direction == 1 else "DESC"
-                sql, params = self.expr_evaluator.build_select_expression(
-                    f"${field}"
-                )
-                sort_parts.append(f"{sql} {order}")
-                all_params.extend(params)
+                # Handle _id specially
+                if field == "_id":
+                    if has_underscore_id:
+                        sort_parts.append(f"_id {order}")
+                    elif has_id:
+                        sort_parts.append(f"id {order}")
+                    # else skip this sort field
+                else:
+                    sql, params = self.expr_evaluator.build_select_expression(
+                        f"${field}"
+                    )
+                    sort_parts.append(f"{sql} {order}")
+                    all_params.extend(params)
 
         sort_clause = ""
         if sort_parts:
@@ -2618,6 +2783,15 @@ class TemporaryTableAggregationProcessor:
         # 3. Build output fields with window functions
         json_set_args = []
         for field, op_spec in output.items():
+            # Skip _id field - it's a separate column, not in JSON data
+            if field == "_id":
+                # For _id, we need to handle it separately in the SELECT clause
+                continue
+
+            if not isinstance(op_spec, dict) or not op_spec:
+                # Skip invalid op_spec
+                continue
+
             op_name = next(iter(op_spec.keys()))
             op_val = op_spec[op_name]
             window_spec = op_spec.get("window")
@@ -2632,24 +2806,64 @@ class TemporaryTableAggregationProcessor:
                 )
 
             all_params.extend(sql_params)
-            frame_clause = self._build_window_frame_sql(window_spec)
+            # Only include frame clause if we have ORDER BY (required by SQLite)
+            frame_clause = ""
+            if sort_parts and window_spec:
+                frame_clause = self._build_window_frame_sql(window_spec)
 
-            window_sql = f"{sql_func}({sql_operand}) OVER ({partition_clause} {sort_clause} {frame_clause})".strip()
-            window_sql = (
-                window_sql.replace("  ", " ")
-                .replace("( ", "(")
-                .replace(" )", ")")
-            )
+            # Build window SQL - ensure proper spacing
+            window_parts = []
+            if partition_clause:
+                window_parts.append(partition_clause)
+            if sort_clause:
+                window_parts.append(sort_clause)
+            if frame_clause:
+                window_parts.append(frame_clause)
+
+            if window_parts:
+                window_sql = (
+                    f"{sql_func}({sql_operand}) OVER ({' '.join(window_parts)})"
+                )
+            else:
+                window_sql = f"{sql_func}({sql_operand}) OVER ()"
 
             json_set_args.append(f"'{parse_json_path(field)}'")
             json_set_args.append(window_sql)
 
         # 4. Create the temporary table
         json_set_func = "jsonb_set" if self._jsonb_supported else "json_set"
-        args_str = ", ".join(json_set_args)
 
-        # We need to maintain the id column
-        sql = f"SELECT id, _id, json({json_set_func}(data, {args_str})) AS data FROM {current_table}"
+        # Build SELECT clause based on available columns
+        if has_id and has_underscore_id and has_data:
+            if json_set_args:
+                args_str = ", ".join(json_set_args)
+                sql = f"SELECT id, _id, json({json_set_func}(data, {args_str})) AS data FROM {current_table}"
+            else:
+                sql = f"SELECT id, _id, data FROM {current_table}"
+        elif has_id and has_data:
+            if json_set_args:
+                args_str = ", ".join(json_set_args)
+                sql = f"SELECT id, json({json_set_func}(data, {args_str})) AS data FROM {current_table}"
+            else:
+                sql = f"SELECT id, data FROM {current_table}"
+        elif has_underscore_id and has_data:
+            if json_set_args:
+                args_str = ", ".join(json_set_args)
+                sql = f"SELECT _id, json({json_set_func}(data, {args_str})) AS data FROM {current_table}"
+            else:
+                sql = f"SELECT _id, data FROM {current_table}"
+        elif has_data:
+            if json_set_args:
+                args_str = ", ".join(json_set_args)
+                sql = f"SELECT json({json_set_func}(data, {args_str})) AS data FROM {current_table}"
+            else:
+                sql = f"SELECT data FROM {current_table}"
+        else:
+            # No data column - can't process this stage
+            logger.warning(
+                f"Table {current_table} has no data column for setWindowFields"
+            )
+            return current_table
 
         return create_temp({"$setWindowFields": spec}, sql, all_params)
 
@@ -2713,9 +2927,13 @@ class TemporaryTableAggregationProcessor:
         if "documents" in window_spec:
             lower, upper = window_spec["documents"]
 
-            def map_bound(val: Any) -> str:
+            def map_bound(val: Any, is_upper: bool = False) -> str:
                 if val == "unbounded":
-                    return "UNBOUNDED"
+                    return (
+                        "UNBOUNDED FOLLOWING"
+                        if is_upper
+                        else "UNBOUNDED PRECEDING"
+                    )
                 if val == "current":
                     return "CURRENT ROW"
                 if isinstance(val, int):
@@ -2725,8 +2943,12 @@ class TemporaryTableAggregationProcessor:
                         return f"{val} FOLLOWING"
                 return "CURRENT ROW"
 
-            l_bound = map_bound(lower)
-            u_bound = map_bound(upper)
+            l_bound = map_bound(lower, is_upper=False)
+            u_bound = map_bound(upper, is_upper=True)
+
+            # Validate bounds - if either is empty, return empty string
+            if not l_bound or not u_bound:
+                return ""
 
             return f"ROWS BETWEEN {l_bound} AND {u_bound}"
 
@@ -2777,7 +2999,8 @@ class TemporaryTableAggregationProcessor:
         all_params.extend(start_with_params)
 
         # 2. Build restrictSearchWithMatch if present
-        restrict_sql = ""
+        restrict_where = ""
+        restrict_params = []
         if restrict_search:
             from .query_helper import QueryHelper
 
@@ -2788,14 +3011,21 @@ class TemporaryTableAggregationProcessor:
             query_result = helper._build_simple_where_clause(restrict_search)
             if query_result:
                 r_sql, r_params, _ = query_result
+                # Remove leading "WHERE " if present since we're adding it to existing WHERE clause
+                r_sql = r_sql.strip()
+                if r_sql.upper().startswith("WHERE "):
+                    r_sql = r_sql[6:]  # Remove "WHERE " prefix
                 r_sql = r_sql.replace(
                     "json_extract(data", "json_extract(t.data"
                 )
                 r_sql = r_sql.replace(
                     "jsonb_extract(data", "jsonb_extract(t.data"
                 )
-                restrict_sql = f"AND ({r_sql})"
-                all_params.extend(r_params)
+                restrict_where = f"AND ({r_sql})"
+                restrict_params = (
+                    r_params * 2
+                )  # Used twice: in start_points_sql and recursive_step_sql
+                all_params.extend(restrict_params)
 
         # 3. Build recursive search
         recurse_cte = "graph_recurse_tier2"
@@ -2824,7 +3054,7 @@ class TemporaryTableAggregationProcessor:
                 0 as depth
             FROM {current_table} p
             JOIN {from_collection} t ON {target_to_sql} = {start_with_sql}
-            WHERE 1=1 {restrict_sql}
+            WHERE 1=1 {restrict_where}
         """
 
         max_depth_cond = (
@@ -2838,10 +3068,11 @@ class TemporaryTableAggregationProcessor:
                 r.depth + 1
             FROM {recurse_cte} r
             JOIN {from_collection} t ON {target_to_sql} = {recurse_from_sql}
-            WHERE 1=1 {max_depth_cond} {restrict_sql}
+            WHERE 1=1 {max_depth_cond} {restrict_where}
         """
 
         # 4. Combine into stage SQL
+        # Move WITH clause to top level (SQLite doesn't allow nested WITH)
         depth_json_sql = ""
         if depth_field:
             depth_json_sql = f", '{parse_json_path(str(depth_field))}', depth"
@@ -2851,6 +3082,11 @@ class TemporaryTableAggregationProcessor:
 
         as_field_str = str(as_field)
         stage_sql = f"""
+            WITH RECURSIVE {recurse_cte} AS (
+                {start_points_sql}
+                UNION ALL
+                {recursive_step_sql}
+            )
             SELECT
                 p.id AS id,
                 json({json_set_func}({json_set_func}(p.data, '$._id', p.id), '{parse_json_path(as_field_str)}',
@@ -2859,11 +3095,6 @@ class TemporaryTableAggregationProcessor:
                             json({json_set_func}(sub.found_data, '$._id', sub.found_id {depth_json_sql}))
                         )
                         FROM (
-                            WITH RECURSIVE {recurse_cte} AS (
-                                {start_points_sql}
-                                UNION
-                                {recursive_step_sql}
-                            )
                             SELECT found_id, found_data, depth FROM {recurse_cte}
                             WHERE original_id = p.id
                             GROUP BY found_id
