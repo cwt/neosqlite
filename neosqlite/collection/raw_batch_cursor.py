@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, Dict, Iterator, List
+
+logger = logging.getLogger(__name__)
 
 from .json_helpers import neosqlite_json_dumps
 from .json_path_utils import parse_json_path
@@ -197,7 +200,12 @@ class RawBatchCursor:
             return
         for table in self._tables_to_cleanup:
             try:
-                self._collection.db.execute(f"DROP TABLE IF EXISTS {table}")
-            except Exception:
+                self._collection._database.execute(
+                    f"DROP TABLE IF EXISTS {table}"
+                )
+            except Exception as e:
+                logger.debug(
+                    f"Failed to drop temporary table {table} in RawBatchCursor cleanup: {e}"
+                )
                 pass
         self._tables_to_cleanup = []

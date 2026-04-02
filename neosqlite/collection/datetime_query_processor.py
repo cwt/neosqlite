@@ -145,8 +145,11 @@ class DateTimeQueryProcessor:
                 result = self._process_with_temp_table_tier(query)
                 if result is not None:
                     return result
-            except Exception:
+            except Exception as e:
                 # If temp table tier fails, fall through to Python tier
+                logger.debug(
+                    f"Temp table tier failed in datetime processor: {e}"
+                )
                 pass
 
         # Fallback to Python tier
@@ -284,8 +287,9 @@ class DateTimeQueryProcessor:
                 for row in cursor.fetchall()
             ]
             return results
-        except Exception:
+        except Exception as e:
             # If SQL execution fails, return None to trigger fallback
+            logger.debug(f"SQL execution failed in datetime processor: {e}")
             return None
 
     def _process_with_temp_table_tier(
@@ -363,8 +367,11 @@ class DateTimeQueryProcessor:
                 ]
                 return results
 
-        except Exception:
+        except Exception as e:
             # If temp table processing fails, return None to trigger Python fallback
+            logger.debug(
+                f"Temp table processing failed in datetime processor: {e}"
+            )
             return None
 
     def _process_with_python_tier(
@@ -464,8 +471,11 @@ class EnhancedDateTimeQueryProcessor(DateTimeQueryProcessor):
                 result = self._process_with_temp_table_tier(query)
                 if result is not None:
                     return result
-            except Exception:
+            except Exception as e:
                 # If temp table tier fails, fall through to Python tier
+                logger.debug(
+                    f"Temp table tier failed in datetime processor: {e}"
+                )
                 pass
 
         # Fallback to enhanced Python tier

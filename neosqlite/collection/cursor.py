@@ -625,6 +625,7 @@ class Cursor:
             return result
 
         except Exception as e:
+            logger.debug(f"Error getting query plan: {e}")
             return {
                 "queryPlanner": {
                     "winningPlan": [{"detail": f"Error getting plan: {e}"}],
@@ -1278,7 +1279,9 @@ class Cursor:
         """
         try:
             self.close()
-        except Exception:
+        except Exception as e:
+            if logger is not None:
+                logger.debug(f"Error during Cursor.__del__: {e}")
             pass
 
     def __enter__(self) -> Cursor:
@@ -1312,6 +1315,9 @@ class Cursor:
             try:
                 # Use a new connection or the shared connection to drop tables
                 self._collection.db.execute(f"DROP TABLE IF EXISTS {table}")
-            except Exception:
+            except Exception as e:
+                logger.debug(
+                    f"Failed to drop temporary table '{table}' during cleanup: {e}"
+                )
                 pass
         self._tables_to_cleanup = []

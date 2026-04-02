@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import warnings
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Tuple, overload
 
@@ -31,6 +32,8 @@ from .type_utils import validate_session
 if TYPE_CHECKING:
     from ..client_session import ClientSession
     from ..connection import Connection
+
+logger = logging.getLogger(__name__)
 
 
 class Collection:
@@ -122,14 +125,20 @@ class Collection:
             case str() as s if len(s) == 24:
                 try:
                     return ObjectId(s)
-                except (ValueError, ImportError):
+                except (ValueError, ImportError) as e:
+                    logger.debug(
+                        f"Failed to parse stored _id value '{s}' as ObjectId: {e}"
+                    )
                     return s
             case str() as s if (s.startswith("{") and s.endswith("}")) or (
                 s.startswith("[") and s.endswith("]")
             ):
                 try:
                     return neosqlite_json_loads(s)
-                except Exception:
+                except Exception as e:
+                    logger.debug(
+                        f"Failed to parse JSON string in _get_id_value: {e}"
+                    )
                     return s
             case _:
                 return stored_id
@@ -159,7 +168,10 @@ class Collection:
             if isinstance(stored_id_val, str) and len(stored_id_val) == 24:
                 try:
                     _id = ObjectId(stored_id_val)
-                except ValueError:
+                except ValueError as e:
+                    logger.debug(
+                        f"Failed to parse stored _id value '{stored_id_val}' as ObjectId: {e}"
+                    )
                     _id = stored_id_val
             else:
                 _id = stored_id_val
@@ -202,8 +214,11 @@ class Collection:
             else:
                 # For backward compatibility, if _id column doesn't exist, return the original ID
                 return doc_id
-        except Exception:
+        except Exception as e:
             # If there's any error retrieving the _id, return None
+            logger.debug(
+                f"Error in _get_stored_id for collection '{self.name}': {e}"
+            )
             return None
 
     def _get_val(self, item: Dict[str, Any], key: Any) -> Any:
@@ -329,8 +344,11 @@ class Collection:
                     )
                 # Create unique index on _id column for faster lookups
                 create_unique_index_on_id(self.db, self.name)
-        except Exception:
+        except Exception as e:
             # If we can't add the column, continue without it (for backward compatibility)
+            logger.debug(
+                f"Failed to add _id column to collection '{self.name}': {e}"
+            )
             pass
 
     def __getattr__(self, name: str) -> Any:
@@ -412,8 +430,11 @@ class Collection:
             options["read_concern"] = self.read_concern
 
             return options
-        except sqlite3.Error:
+        except sqlite3.Error as e:
             # If we can't get detailed information, return basic info
+            logger.debug(
+                f"Failed to get collection details for '{self.name}': {e}"
+            )
             options["columns"] = []
             options["indexes"] = []
             options["count"] = 0
@@ -698,8 +719,11 @@ class Collection:
                 # Check for GridFS chunks table columns
                 gridfs_columns = {"files_id", "n", "data"}
                 return gridfs_columns.issubset(columns)
-        except Exception:
+        except Exception as e:
             # If we can't check schema, fall back to naming convention
+            logger.debug(
+                f"Failed to check schema for GridFS identification in '{self.name}': {e}"
+            )
             pass
 
         # Default to naming convention if schema check fails

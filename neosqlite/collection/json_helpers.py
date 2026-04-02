@@ -1,9 +1,12 @@
 import json
+import logging
 import re
 from datetime import datetime
 from typing import Any, Dict
 
 from neosqlite.binary import Binary
+
+logger = logging.getLogger(__name__)
 
 # Pre-compile ISO date pattern for performance
 ISO_DATE_PATTERN = re.compile(
@@ -34,7 +37,8 @@ class NeoSQLiteJSONEncoder(json.JSONEncoder):
 
             if isinstance(obj, ObjectId):
                 return obj.encode_for_storage()
-        except ImportError:
+        except ImportError as e:
+            logger.debug(f"ObjectId module not available for encoding: {e}")
             pass  # ObjectId module not available
 
         # Handle datetime objects - convert to ISO format string
@@ -109,7 +113,8 @@ def neosqlite_json_loads(s: str, **kwargs) -> Any:
                     from neosqlite.objectid import ObjectId
 
                     return ObjectId(dct["id"])
-                except (ValueError, ImportError, KeyError):
+                except (ValueError, ImportError, KeyError) as e:
+                    logger.debug(f"Failed to parse __neosqlite_objectid__: {e}")
                     pass
 
         # Convert ISO date strings back to datetime for MongoDB compatibility
@@ -119,7 +124,10 @@ def neosqlite_json_loads(s: str, **kwargs) -> Any:
                     dct[key] = datetime.fromisoformat(
                         value.replace("Z", "+00:00")
                     )
-                except ValueError:
+                except ValueError as e:
+                    logger.debug(
+                        f"Failed to parse ISO date string '{value}': {e}"
+                    )
                     pass  # Not a valid date string, keep as string
         return dct
 

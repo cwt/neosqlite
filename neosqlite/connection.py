@@ -210,12 +210,14 @@ class Connection:
                         "Closing connection with pending transaction; committing automatically"
                     )
                     self.db.commit()
-            except (sqlite3.ProgrammingError, sqlite3.OperationalError):
+            except (sqlite3.ProgrammingError, sqlite3.OperationalError) as e:
+                logger.debug(f"Failed to commit transaction during close: {e}")
                 pass
 
             try:
                 self.db.close()
-            except (sqlite3.ProgrammingError, sqlite3.OperationalError):
+            except (sqlite3.ProgrammingError, sqlite3.OperationalError) as e:
+                logger.debug(f"Failed to close database: {e}")
                 pass
 
         self._closed = True
@@ -1021,6 +1023,7 @@ class Connection:
                             ],
                         }
                     except Exception as e:
+                        logger.debug(f"PRAGMA command '{cmd_name}' failed: {e}")
                         return {
                             "ok": 0,
                             "errmsg": f"Unknown command: {cmd_name}",
@@ -1028,6 +1031,7 @@ class Connection:
                         }
 
         except Exception as e:
+            logger.debug(f"Database command execution failed: {e}")
             return {"ok": 0, "errmsg": str(e), "code": 1}
 
     def cursor_command(
@@ -1215,7 +1219,8 @@ class Connection:
             self.db.execute("BEGIN")
             yield
             self.db.commit()
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Transaction failed, rolling back: {e}")
             self.db.rollback()
             raise
 
@@ -1227,5 +1232,7 @@ class Connection:
         """
         try:
             self.close()
-        except Exception:
+        except Exception as e:
+            if logger is not None:
+                logger.debug(f"Error during Connection.__del__: {e}")
             pass

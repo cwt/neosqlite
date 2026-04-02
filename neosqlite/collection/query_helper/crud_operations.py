@@ -1,11 +1,14 @@
 """CRUD operations for QueryHelper."""
 
+import logging
 from typing import TYPE_CHECKING, Any, Dict
 
 from ..._sqlite import sqlite3
 from ...objectid import ObjectId
 from ...sql_utils import quote_table_name
 from ..json_helpers import neosqlite_json_dumps
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .. import Collection
@@ -87,8 +90,11 @@ class CRUDOperationsMixin:
             elif isinstance(provided_id, str) and len(provided_id) == 24:
                 try:
                     generated_id = ObjectId(provided_id)
-                except ValueError:
+                except ValueError as e:
                     # If it's not a valid ObjectId string, keep the original
+                    logger.debug(
+                        f"Provided _id '{provided_id}' is not a valid ObjectId: {e}"
+                    )
                     generated_id = provided_id
             elif isinstance(provided_id, ObjectId):
                 generated_id = provided_id

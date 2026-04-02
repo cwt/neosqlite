@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
 from typing import Any, Dict
+
+logger = logging.getLogger(__name__)
 
 
 def serialize_metadata(metadata: Dict[str, Any] | None) -> str | None:
@@ -29,7 +32,10 @@ def serialize_metadata(metadata: Dict[str, Any] | None) -> str | None:
         return None
     try:
         return json.dumps(metadata)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as e:
+        logger.debug(
+            f"Failed to serialize GridFS metadata to JSON: {e}. Falling back to str()."
+        )
         return str(metadata)
 
 
@@ -53,12 +59,18 @@ def deserialize_metadata(
         return None
     try:
         return json.loads(metadata_str)
-    except (TypeError, ValueError, json.JSONDecodeError):
+    except (TypeError, ValueError, json.JSONDecodeError) as e:
+        logger.debug(
+            f"Failed to deserialize GridFS metadata JSON: {e}. Trying ast.literal_eval."
+        )
         try:
             result = ast.literal_eval(metadata_str)
             if isinstance(result, dict):
                 return result
-        except (ValueError, SyntaxError):
+        except (ValueError, SyntaxError) as e2:
+            logger.debug(
+                f"ast.literal_eval also failed for GridFS metadata: {e2}. Wrapping in dict."
+            )
             pass
         return {"_metadata": metadata_str}
 
@@ -80,7 +92,10 @@ def serialize_aliases(aliases: list[str] | None) -> str | None:
         return None
     try:
         return json.dumps(aliases)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as e:
+        logger.debug(
+            f"Failed to serialize GridFS aliases to JSON: {e}. Falling back to str()."
+        )
         return str(aliases)
 
 
@@ -105,7 +120,10 @@ def deserialize_aliases(aliases_str: str | None) -> list[str] | None:
             return result
         # If it's not a list, wrap it in a list
         return [str(result)]
-    except (TypeError, ValueError, json.JSONDecodeError):
+    except (TypeError, ValueError, json.JSONDecodeError) as e:
+        logger.debug(
+            f"Failed to deserialize GridFS aliases JSON: {e}. Falling back to simple string wrap."
+        )
         # Fallback to parsing as a simple string or return as-is
         if aliases_str:
             return [aliases_str]

@@ -5,7 +5,10 @@ This module provides common functionality for inspecting and modifying
 database schemas, avoiding code duplication across multiple modules.
 """
 
+import logging
 from typing import Any, Dict, Set
+
+logger = logging.getLogger(__name__)
 
 
 def get_table_columns(db_connection: Any, table_name: str) -> Set[str]:
@@ -100,9 +103,12 @@ def create_unique_index_on_id(
             f"ON {quote_table_name(table_name)}(_id)"
         )
         return True
-    except Exception:
+    except Exception as e:
         # If we can't create the index (e.g., due to duplicate values),
         # continue without it
+        logger.debug(
+            f"Failed to create unique index on _id for {table_name}: {e}"
+        )
         return False
 
 

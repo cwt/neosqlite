@@ -3,10 +3,13 @@ Type correction utilities for NeoSQLite to handle automatic conversion
 between integer IDs and ObjectIds in queries.
 """
 
+import logging
 from typing import Any
 
 from ..objectid import ObjectId
 from ..sql_utils import quote_table_name
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_id_query(query: dict[str, Any]) -> dict[str, Any]:
@@ -33,7 +36,8 @@ def _try_convert_to_int(value: str) -> int | str:
     """Try to convert a string to int, return original if fails."""
     try:
         return int(value)
-    except ValueError:
+    except ValueError as e:
+        logger.debug(f"Failed to convert '{value}' to int: {e}")
         return value
 
 
@@ -44,7 +48,8 @@ def _is_valid_objectid_hex(value: str) -> bool:
     try:
         ObjectId(value)
         return True
-    except ValueError:
+    except ValueError as e:
+        logger.debug(f"Invalid ObjectId hex string '{value}': {e}")
         return False
 
 

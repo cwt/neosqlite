@@ -924,7 +924,10 @@ class TemporaryTableAggregationProcessor:
 
             return hash_table_name, join_key
 
-        except Exception:
+        except Exception as e:
+            logger.debug(
+                f"Failed to create hash table '{hash_table_name}': {e}"
+            )
             self.db.execute(f"DROP TABLE IF EXISTS {hash_table_name}")
             raise
 
@@ -951,7 +954,10 @@ class TemporaryTableAggregationProcessor:
                     int(avg_size) + 50
                 )  # Add overhead for id, _id columns
                 return count * row_size
-        except Exception:
+        except Exception as e:
+            logger.debug(
+                f"Failed to estimate collection size for '{collection_name}': {e}"
+            )
             pass
         return 0
 
@@ -969,7 +975,8 @@ class TemporaryTableAggregationProcessor:
                 cache_pages = -cache_pages
             sqlite_memory = page_size * cache_pages
             return int(sqlite_memory * 0.5)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Failed to get SQLite memory info: {e}")
             pass
         try:
             import resource
@@ -977,7 +984,8 @@ class TemporaryTableAggregationProcessor:
             soft, hard = resource.getrlimit(resource.RLIMIT_AS)
             if soft != resource.RLIM_INFINITY:
                 return int(soft * 0.3)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Failed to get system memory info: {e}")
             pass
         return HASH_JOIN_MEMORY_THRESHOLD
 
@@ -1006,7 +1014,8 @@ class TemporaryTableAggregationProcessor:
             est_size = self._estimate_collection_size(from_collection)
             available = self._get_available_memory()
             return est_size < (available * 0.3)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Failed during _should_use_hash_join check: {e}")
             return True
 
     def _extract_field_value(self, doc: Dict[str, Any], field: str) -> Any:
@@ -1166,7 +1175,10 @@ class TemporaryTableAggregationProcessor:
                     self.collection.db.execute(
                         f"DROP TABLE IF EXISTS {pipeline_result_table}"
                     )
-                except Exception:
+                except Exception as e:
+                    logger.debug(
+                        f"Failed to drop pipeline result table '{pipeline_result_table}': {e}"
+                    )
                     pass
 
         if not all([from_collection, local_field, foreign_field, as_field]):
@@ -1278,7 +1290,10 @@ class TemporaryTableAggregationProcessor:
                 self.collection.db.execute(
                     f"DROP TABLE IF EXISTS {hash_table_name}"
                 )
-            except Exception:
+            except Exception as e:
+                logger.debug(
+                    f"Failed to drop hash table '{hash_table_name}': {e}"
+                )
                 pass
 
     def _process_sort_skip_limit_stage(
@@ -1604,9 +1619,12 @@ class TemporaryTableAggregationProcessor:
                     )
             except NotImplementedError:
                 raise
-            except Exception:
+            except Exception as e:
+                logger.debug(
+                    f"$group with expression key {group_id_expr} requires Python fallback: {e}"
+                )
                 raise NotImplementedError(
-                    f"$group with expression key {group_id_expr} requires Python fallback"
+                    f"$group with expression key {group_id_expr} requires Python fallback: {e}"
                 )
 
         # Handle accumulators
@@ -1888,7 +1906,10 @@ class TemporaryTableAggregationProcessor:
                         f"SELECT id, _id, json(data) as data FROM {table_name}"
                     )
                     has_id_column = True
-                except Exception:
+                except Exception as e:
+                    logger.debug(
+                        f"Failed to select _id with json(data), trying without: {e}"
+                    )
                     cursor = self.db.execute(
                         f"SELECT id, json(data) as data FROM {table_name}"
                     )
@@ -1903,7 +1924,8 @@ class TemporaryTableAggregationProcessor:
                         f"SELECT id, _id, data FROM {table_name}"
                     )
                     has_id_column = True
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Failed to select _id, trying without: {e}")
                     cursor = self.db.execute(
                         f"SELECT id, data FROM {table_name}"
                     )
@@ -1948,7 +1970,10 @@ class TemporaryTableAggregationProcessor:
                         ):
                             try:
                                 doc[key] = neosqlite_json_loads(value)
-                            except Exception:
+                            except Exception as e:
+                                logger.debug(
+                                    f"Failed to parse array field '{key}' JSON: {e}"
+                                )
                                 pass  # Keep as string if parsing fails
 
                 results.append(doc)
@@ -2453,7 +2478,10 @@ class TemporaryTableAggregationProcessor:
                 self.collection.db.execute(
                     f"DROP TABLE IF EXISTS {series_table}"
                 )
-            except Exception:
+            except Exception as e:
+                logger.debug(
+                    f"Failed to drop series table '{series_table}': {e}"
+                )
                 pass
 
     def _process_union_with_stage(self, create_temp, current_table, union_spec):
@@ -3106,10 +3134,12 @@ def execute_2nd_tier_aggregation(
                 query_engine.collection, query_engine
             )
             return processor.process_pipeline(pipeline, batch_size=batch_size)
-        except Exception:
-            # If temporary table approach fails, let the caller handle fallback
+        except Exception as e:
+            logger.debug(
+                f"Temporary table aggregation failed, fallback required: {e}"
+            )
             raise NotImplementedError(
-                "Temporary table aggregation failed, fallback required."
+                f"Temporary table aggregation failed, fallback required: {e}"
             )
 
     # If we can't process with temporary tables, signal for fallback.

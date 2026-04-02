@@ -2,10 +2,13 @@
 Enhanced text search functionality for NeoSQLite with international character support.
 """
 
+import logging
 import re
 import unicodedata
 from functools import lru_cache
 from typing import Any, Dict
+
+logger = logging.getLogger(__name__)
 
 
 class TextSearchOptimizer:
@@ -35,7 +38,8 @@ class TextSearchOptimizer:
             return re.compile(
                 re.escape(search_term), re.IGNORECASE | re.UNICODE
             )
-        except re.error:
+        except re.error as e:
+            logger.debug(f"Regex compilation failed: {e}")
             return None
 
     @staticmethod
@@ -69,7 +73,8 @@ class TextSearchOptimizer:
         try:
             normalized = TextSearchOptimizer.normalize_text(search_term)
             return re.compile(re.escape(normalized), re.IGNORECASE | re.UNICODE)
-        except re.error:
+        except re.error as e:
+            logger.debug(f"Regex compilation failed: {e}")
             return None
 
 

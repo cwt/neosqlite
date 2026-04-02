@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import logging
 from typing import Any, Dict
 
 from .._sqlite import sqlite3
@@ -17,6 +18,8 @@ from .utils import (
     serialize_aliases,
     serialize_metadata,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class GridIn:
@@ -421,8 +424,9 @@ class GridOut:
             has_aliases = column_exists(
                 self._db, self._files_collection, "aliases"
             )
-        except (AttributeError, TypeError):
+        except (AttributeError, TypeError) as e:
             # Handle mocked databases in tests - assume old schema
+            logger.debug(f"Failed to check GridFS schema columns: {e}")
             pass
 
         # Build dynamic SELECT query based on available columns
@@ -489,19 +493,28 @@ class GridOut:
                         self._actual_id = ObjectId(
                             self._stored_oid
                         )  # Convert to ObjectId
-                    except ValueError:
+                    except ValueError as e:
                         # If it's not a valid ObjectId hex, try to convert to int
+                        logger.debug(
+                            f"Failed to convert GridFS ID '{self._stored_oid}' to ObjectId: {e}"
+                        )
                         try:
                             self._actual_id = int(self._stored_oid)
-                        except ValueError:
+                        except ValueError as e:
                             # Keep as string if it's neither a valid ObjectId nor integer
+                            logger.debug(
+                                f"Failed to convert GridFS ID '{self._stored_oid}' to integer: {e}"
+                            )
                             self._actual_id = self._stored_oid
                 else:
                     # For other length strings, try to convert to integer first
                     try:
                         self._actual_id = int(self._stored_oid)
-                    except ValueError:
+                    except ValueError as e:
                         # If it's not an integer string, keep as is
+                        logger.debug(
+                            f"Failed to convert non-24 char GridFS ID '{self._stored_oid}' to integer: {e}"
+                        )
                         self._actual_id = self._stored_oid
             else:
                 # For any other type, keep as is
@@ -731,8 +744,11 @@ class GridOutCursor:
                                 ObjectId(value)
                                 where_conditions.append("_id = ?")
                                 params.append(value)
-                            except ValueError:
+                            except ValueError as e:
                                 # Not a valid ObjectId, treat as regular string
+                                logger.debug(
+                                    f"ID '{value}' is not a valid ObjectId: {e}"
+                                )
                                 where_conditions.append("_id = ?")
                                 params.append(value)
                         else:

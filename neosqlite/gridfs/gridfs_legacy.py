@@ -1,4 +1,5 @@
 import io
+import logging
 from typing import Any, Dict
 
 from .._sqlite import sqlite3
@@ -8,6 +9,8 @@ from ..objectid import ObjectId
 from .errors import NoFile
 from .grid_file import GridIn, GridOut, GridOutCursor
 from .gridfs_bucket import GridFSBucket
+
+logger = logging.getLogger(__name__)
 
 
 class GridFS:
@@ -116,8 +119,11 @@ class GridFS:
         """
         try:
             self._bucket.delete(file_id)
-        except NoFile:
+        except NoFile as e:
             # Legacy GridFS API is more lenient - doesn't raise exception for nonexistent files
+            logger.debug(
+                f"Legacy GridFS delete: file '{file_id}' not found: {e}"
+            )
             pass
 
     def list(self) -> list:

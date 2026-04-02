@@ -223,7 +223,8 @@ class GridFSBucket:
             self._db.execute(
                 f"CREATE UNIQUE INDEX IF NOT EXISTS {quote_table_name(f'idx_{self._files_collection}_id')} ON {files_coll}(_id)"
             )
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Failed to check/create GridFS indexes: {e}")
             pass
 
     def _migrate_table_schema(self):
@@ -243,7 +244,8 @@ class GridFSBucket:
                 self._db.execute(
                     f"ALTER TABLE {files_coll} ADD COLUMN aliases {column_type}"
                 )
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Failed to migrate GridFS table schema: {e}")
             pass
 
     def _serialize_metadata(
@@ -446,7 +448,10 @@ class GridFSBucket:
                         )
                         row = cursor.fetchone()
                         return row[0] if row else None
-                    except ValueError:
+                    except ValueError as e:
+                        logger.debug(
+                            f"Invalid ObjectId hex string '{file_id}': {e}"
+                        )
                         pass
                 # Try as integer string
                 try:
@@ -457,7 +462,10 @@ class GridFSBucket:
                     )
                     row = cursor.fetchone()
                     return row[0] if row else None
-                except ValueError:
+                except ValueError as e:
+                    logger.debug(
+                        f"Invalid integer file ID string '{file_id}': {e}"
+                    )
                     pass
             return None
 

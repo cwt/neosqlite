@@ -283,8 +283,11 @@ class ChangeStream:
 
                         try:
                             actual_id = ObjectId(document_id_value)
-                        except (ValueError, TypeError):
+                        except (ValueError, TypeError) as e:
                             # If not a valid ObjectId hex, use as-is
+                            logger.debug(
+                                f"Document ID '{document_id_value}' is not a valid ObjectId: {e}"
+                            )
                             actual_id = document_id_value
                     elif document_data:
                         try:
@@ -294,8 +297,11 @@ class ChangeStream:
                             if isinstance(document_data, bytes):
                                 try:
                                     document_str = document_data.decode("utf-8")
-                                except UnicodeDecodeError:
+                                except UnicodeDecodeError as e:
                                     # If UTF-8 decoding fails, use default ID
+                                    logger.debug(
+                                        f"Failed to decode document_data as UTF-8: {e}"
+                                    )
                                     document_str = None
                             else:
                                 document_str = document_data
@@ -317,8 +323,9 @@ class ChangeStream:
                                     if stored_id is not None
                                     else document_id
                                 )
-                        except (json.JSONDecodeError, TypeError):
+                        except (json.JSONDecodeError, TypeError) as e:
                             # If JSON parsing fails, try database lookup
+                            logger.debug(f"Failed to parse document JSON: {e}")
                             stored_id = self._collection._get_stored_id(
                                 document_id
                             )
@@ -359,8 +366,11 @@ class ChangeStream:
                             if isinstance(document_data, bytes):
                                 try:
                                     full_doc_str = document_data.decode("utf-8")
-                                except UnicodeDecodeError:
+                                except UnicodeDecodeError as e:
                                     # If UTF-8 decoding fails, skip this change
+                                    logger.debug(
+                                        f"Failed to decode full document data: {e}"
+                                    )
                                     skip_change = True
                             else:
                                 full_doc_str = document_data
@@ -376,7 +386,10 @@ class ChangeStream:
                                         actual_doc_id = ObjectId(
                                             document_id_value
                                         )
-                                    except (ValueError, TypeError):
+                                    except (ValueError, TypeError) as e:
+                                        logger.debug(
+                                            f"Document ID '{document_id_value}' is not a valid ObjectId: {e}"
+                                        )
                                         actual_doc_id = document_id_value
                                     doc["_id"] = actual_doc_id
                                 elif "_id" not in doc:

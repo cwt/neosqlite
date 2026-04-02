@@ -3,11 +3,14 @@ Native JSON Schema validator for NeoSQLite.
 Provides MongoDB-compatible $jsonSchema evaluation.
 """
 
+import logging
 import re
 from typing import Any, Dict
 
 from ...binary import Binary
 from ...objectid import ObjectId
+
+logger = logging.getLogger(__name__)
 
 
 def matches_json_schema(
@@ -144,7 +147,10 @@ def _check_single_type(data: Any, t: str) -> bool:
                 try:
                     ObjectId(data)
                     return True
-                except ValueError:
+                except ValueError as e:
+                    logger.debug(
+                        f"Invalid ObjectId hex string in schema validation: {e}"
+                    )
                     return False
             return False
         case "binData":

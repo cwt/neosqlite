@@ -5,6 +5,7 @@ This module contains the AggregationMixin class, which provides methods for
 building and executing MongoDB-like aggregation pipelines using SQL.
 """
 
+import logging
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Dict, List
 
@@ -18,6 +19,9 @@ from ..expr_evaluator import (
 from ..json_path_utils import (
     parse_json_path,
 )
+
+logger = logging.getLogger(__name__)
+
 
 # Import utility functions
 from .utils import (
@@ -1123,7 +1127,10 @@ class AggregationMixin:
             # Clean up temporary collection
             try:
                 temp_collection.drop()
-            except Exception:
+            except Exception as e:
+                logger.debug(
+                    f"Failed to drop temporary collection '{temp_collection.name}': {e}"
+                )
                 pass  # Ignore cleanup errors
 
     def _apply_projection(

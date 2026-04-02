@@ -6,7 +6,10 @@ into SQL statements that can be used both for direct execution and for
 temporary table generation.
 """
 
+import logging
 from typing import Any, Dict, List, Tuple
+
+logger = logging.getLogger(__name__)
 
 from .cursor import DESCENDING
 from .jsonb_support import should_use_json_functions
@@ -49,7 +52,8 @@ def _convert_to_bitmask(value: Any) -> int | None:
         for bit_pos in value:
             try:
                 bitmask |= 1 << int(bit_pos)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError) as e:
+                logger.debug(f"Failed to convert item to bitmask: {e}")
                 return None
         return bitmask
     elif hasattr(value, "__iter__") and not isinstance(value, (str, bytes)):
@@ -57,13 +61,15 @@ def _convert_to_bitmask(value: Any) -> int | None:
         try:
             for bit_pos in value:
                 bitmask |= 1 << int(bit_pos)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as e:
+            logger.debug(f"Failed to convert item to bitmask: {e}")
             return None
         return bitmask
     else:
         try:
             return int(value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as e:
+            logger.debug(f"Failed to convert item to bitmask: {e}")
             return None
 
 

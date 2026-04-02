@@ -140,7 +140,8 @@ class ClientSession:
             result = callback(self)
             self.commit_transaction()
             return result
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Transaction context manager failed: {e}")
             if self._in_transaction:
                 self.abort_transaction()
             raise

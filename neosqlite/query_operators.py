@@ -51,7 +51,8 @@ def _get_int_value(field: str, document: dict[str, Any]) -> int | None:
 
     try:
         return int(doc_value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as e:
+        logger.debug(f"Failed to get nested field '{field}': {e}")
         return None
 
 
@@ -80,7 +81,8 @@ def _convert_to_bitmask(value: Any) -> int | None:
                 for bit_pos in items:
                     bitmask |= 1 << int(bit_pos)
                 return bitmask
-            except (TypeError, ValueError):
+            except (TypeError, ValueError) as e:
+                logger.debug(f"Failed to convert bitmask: {e}")
                 return None
         case _ if hasattr(value, "__iter__") and not isinstance(
             value, (str, bytes)
@@ -90,12 +92,14 @@ def _convert_to_bitmask(value: Any) -> int | None:
                 for bit_pos in value:
                     bitmask |= 1 << int(bit_pos)
                 return bitmask
-            except (TypeError, ValueError):
+            except (TypeError, ValueError) as e:
+                logger.debug(f"Failed to convert bitmask: {e}")
                 return None
         case _:
             try:
                 return int(value)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError) as e:
+                logger.debug(f"Failed to convert bitmask: {e}")
                 return None
 
 
@@ -115,7 +119,8 @@ def _eq(field: str, value: Any, document: dict[str, Any]) -> bool:
     try:
         doc_value = _get_nested_field(field, document)
         return doc_value == value
-    except (TypeError, AttributeError):
+    except (TypeError, AttributeError) as e:
+        logger.debug(f"Equality comparison failed for field '{field}': {e}")
         return False
 
 
@@ -134,7 +139,8 @@ def _gt(field: str, value: Any, document: dict[str, Any]) -> bool:
     try:
         doc_value = _get_nested_field(field, document)
         return doc_value > value
-    except TypeError:
+    except TypeError as e:
+        logger.debug(f"Operator evaluation failed due to TypeError: {e}")
         return False
 
 
@@ -153,7 +159,8 @@ def _lt(field: str, value: Any, document: dict[str, Any]) -> bool:
     try:
         doc_value = _get_nested_field(field, document)
         return doc_value < value
-    except TypeError:
+    except TypeError as e:
+        logger.debug(f"Operator evaluation failed due to TypeError: {e}")
         return False
 
 
@@ -172,7 +179,8 @@ def _gte(field: str, value: Any, document: dict[str, Any]) -> bool:
     try:
         doc_value = _get_nested_field(field, document)
         return doc_value >= value
-    except TypeError:
+    except TypeError as e:
+        logger.debug(f"Operator evaluation failed due to TypeError: {e}")
         return False
 
 
@@ -191,7 +199,8 @@ def _lte(field: str, value: Any, document: dict[str, Any]) -> bool:
     try:
         doc_value = _get_nested_field(field, document)
         return doc_value <= value
-    except TypeError:
+    except TypeError as e:
+        logger.debug(f"Operator evaluation failed due to TypeError: {e}")
         return False
 
 
@@ -209,12 +218,16 @@ def _all(field: str, value: list[Any], document: dict[str, Any]) -> bool:
     """
     try:
         a = set(value)
-    except TypeError:
+    except TypeError as e:
+        logger.debug(
+            f"Operator evaluation failed for '$all' field '{field}': {e}"
+        )
         raise MalformedQueryException("'$all' must accept an iterable")
     try:
         doc_value = _get_nested_field(field, document)
         b = set(doc_value if isinstance(doc_value, list) else [])
-    except TypeError:
+    except TypeError as e:
+        logger.debug(f"Operator evaluation failed due to TypeError: {e}")
         return False
     else:
         return a.issubset(b)
@@ -275,7 +288,10 @@ def _nin(field: str, value: list[Any], document: dict[str, Any]) -> bool:
     """
     try:
         values = iter(value)
-    except TypeError:
+    except TypeError as e:
+        logger.debug(
+            f"Operator evaluation failed for '$nin' field '{field}': {e}"
+        )
         raise MalformedQueryException("'$nin' must accept an iterable")
     doc_value = _get_nested_field(field, document)
     return doc_value not in values
@@ -295,7 +311,10 @@ def _mod(field: str, value: list[int], document: dict[str, Any]) -> bool:
     """
     try:
         divisor, remainder = list(map(int, value))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as e:
+        logger.debug(
+            f"Operator evaluation failed for '$mod' field '{field}': {e}"
+        )
         raise MalformedQueryException(
             "'$mod' must accept an iterable: [divisor, remainder]"
         )
@@ -304,7 +323,8 @@ def _mod(field: str, value: list[int], document: dict[str, Any]) -> bool:
         if val is None:
             return False
         return int(val) % divisor == remainder
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as e:
+        logger.debug(f"Modulo comparison failed for field '{field}': {e}")
         return False
 
 
@@ -377,7 +397,8 @@ def _regex(
             return value.search(str(doc_val)) is not None
 
         return re.search(value, str(doc_val), flags) is not None
-    except (TypeError, re.error):
+    except (TypeError, re.error) as e:
+        logger.debug(f"Regex matching failed for field '{field}': {e}")
         return False
 
 
@@ -531,7 +552,10 @@ def _contains(field: str, value: str, document: dict[str, Any]) -> bool:
             return False
         # Convert both values to strings and do a case-insensitive comparison
         return str(value).lower() in str(field_val).lower()
-    except (TypeError, AttributeError):
+    except (TypeError, AttributeError) as e:
+        logger.debug(
+            f"Contains operator evaluation failed for field '{field}': {e}"
+        )
         return False
 
 

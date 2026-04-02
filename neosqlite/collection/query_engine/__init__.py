@@ -110,7 +110,8 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
             for callback in self._tier_callbacks:
                 try:
                     callback(self._last_tier, new_tier, pipeline)
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Query tier callback error: {e}")
                     pass  # Don't let callback errors affect query execution
             self._last_tier = new_tier
 
@@ -264,7 +265,10 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                                         processed_row.append(
                                             neosqlite_json_loads(value)
                                         )
-                                    except Exception:
+                                    except Exception as e:
+                                        logger.debug(
+                                            f"Failed to parse JSON in aggregation result: {e}"
+                                        )
                                         processed_row.append(value)
                                 else:
                                     processed_row.append(value)
@@ -425,8 +429,9 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                             new_doc = evaluator._evaluate_operand_python(
                                 new_root_expr, dc["__doc__"]
                             )
-                        except Exception:
+                        except Exception as e:
                             # Fallback if evaluation fails
+                            logger.debug(f"$replaceRoot evaluation failed: {e}")
                             new_doc = dc["__doc__"]
 
                         # MongoDB requirement: result MUST be an object
@@ -774,7 +779,10 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                             self.collection.db.execute(
                                 f"DROP TABLE IF EXISTS {table_name}"
                             )
-                        except Exception:
+                        except Exception as e:
+                            logger.debug(
+                                f"Failed to drop facet temporary table '{table_name}': {e}"
+                            )
                             pass
 
                     docs_with_context = [
@@ -1202,7 +1210,10 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                                     return then_expr
                                 else:
                                     return else_expr
-                            except Exception:
+                            except Exception as e:
+                                logger.debug(
+                                    f"Redaction evaluation failed: {e}"
+                                )
                                 return "$$DESCEND"
 
                         # If spec is a direct expression, evaluate it
@@ -1217,7 +1228,10 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                                 )
                                 if result in ("$$KEEP", "$$DESCEND", "$$PRUNE"):
                                     return result
-                            except Exception:
+                            except Exception as e:
+                                logger.debug(
+                                    f"Redaction expression evaluation failed: {e}"
+                                )
                                 pass
 
                         return "$$DESCEND"
@@ -1414,7 +1428,10 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                             f"SELECT SUM(LENGTH(data)) FROM {quoted_table}"
                         )
                         size = size_cursor.fetchone()[0] or 0
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(
+                            f"Failed to calculate collection size for stats: {e}"
+                        )
                         pass
 
                     avg_obj_size = size / count if count > 0 else 0
@@ -1444,7 +1461,10 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                             if idx_name and idx_size:
                                 index_sizes[idx_name] = idx_size
                                 total_index_size += idx_size
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(
+                            f"Failed to calculate storage/index sizes for stats: {e}"
+                        )
                         pass
 
                     db_name = (
@@ -1634,13 +1654,15 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
             self.collection.db.execute("RELEASE SAVEPOINT bulk_write")
             released = True
         except Exception as e:
+            logger.debug(f"Error in bulk_write: {e}")
             self.collection.db.execute("ROLLBACK TO SAVEPOINT bulk_write")
             raise e
         finally:
             if not released:
                 try:
                     self.collection.db.execute("RELEASE SAVEPOINT bulk_write")
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Failed to release bulk_write savepoint: {e}")
                     pass
 
         return BulkWriteResult(

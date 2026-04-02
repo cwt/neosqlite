@@ -5,6 +5,7 @@ This module contains the QueryBuilderMixin class, which provides methods for
 building SQL queries from MongoDB-like query specifications.
 """
 
+import logging
 import re
 from typing import TYPE_CHECKING, Any, Dict, List
 
@@ -16,6 +17,9 @@ from ..json_helpers import neosqlite_json_dumps_for_sql
 from ..json_path_utils import parse_json_path
 from ..text_search import unified_text_search
 from ..type_correction import normalize_id_query_for_db
+
+logger = logging.getLogger(__name__)
+
 
 if TYPE_CHECKING:
     from .. import Collection
@@ -804,7 +808,10 @@ class QueryBuilderMixin:
                                         field_value = self.collection._get_val(
                                             document, field_name
                                         )
-                                    except (AttributeError, TypeError):
+                                    except (AttributeError, TypeError) as e:
+                                        logger.debug(
+                                            f"Failed to get field '{field_name}' for FTS matching: {e}"
+                                        )
                                         continue
 
                                     if field_value and isinstance(

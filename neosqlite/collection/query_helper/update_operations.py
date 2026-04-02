@@ -5,6 +5,7 @@ This module contains the UpdateOperationsMixin class which provides
 SQL-based and Python-based update operations for NeoSQLite collections.
 """
 
+import logging
 from copy import deepcopy
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Set, Tuple
@@ -19,6 +20,9 @@ from ..json_helpers import (
 from ..json_path_utils import (
     parse_json_path,
 )
+
+logger = logging.getLogger(__name__)
+
 
 # Import positional update functions
 from .positional_update import (
@@ -117,12 +121,18 @@ class UpdateOperationsMixin:
                 )
                 # For SQL updates, assume modified if we got a result
                 return updated_doc, updated_doc != original_doc
-            except Exception:
+            except Exception as e:
                 # If enhanced update fails, fall back to standard SQL update
+                logger.debug(
+                    f"Enhanced update failed: {e}. Falling back to standard SQL update."
+                )
                 try:
                     updated_doc = self._perform_sql_update(doc_id, update_spec)
                     return updated_doc, updated_doc != original_doc
-                except Exception:
+                except Exception as e2:
+                    logger.debug(
+                        f"Standard SQL update failed: {e2}. Falling back to Python update."
+                    )
                     return self._perform_python_update(
                         doc_id,
                         update_spec,
@@ -744,8 +754,11 @@ class UpdateOperationsMixin:
                 return set(doc_data.keys())
             else:
                 return set()
-        except Exception:
+        except Exception as e:
             # If we can't parse the document, return empty set
+            logger.debug(
+                f"Failed to parse document for indexed fields extraction: {e}"
+            )
             return set()
 
     def _build_update_clause(
@@ -1642,6 +1655,7 @@ class UpdateOperationsMixin:
                                 return False
             # If no row matches, the update will be a no-op anyway, so it's safe to use fast path
             return True
-        except Exception:
+        except Exception as e:
             # Fallback to slow path on any SQL error
+            logger.debug(f"Fast path check failed due to SQL error: {e}")
             return False

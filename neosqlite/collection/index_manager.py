@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Dict, List, Literal, Tuple, overload
 
 from .._sqlite import sqlite3
@@ -9,6 +10,8 @@ from .jsonb_support import (
     supports_jsonb,
     supports_jsonb_each,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class IndexManager:
@@ -547,8 +550,10 @@ class IndexManager:
 
                 info[idx_name] = index_info
 
-        except sqlite3.Error:
-            # If we can't get index information, return empty dict
+        except sqlite3.Error as e:
+            logger.debug(
+                f"Failed to get index information for collection '{self.collection.name}': {e}"
+            )
             pass
 
         return info

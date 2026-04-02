@@ -14,8 +14,11 @@ Tier 2 is used when:
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any, Dict, List, Tuple
+
+logger = logging.getLogger(__name__)
 
 from .._sqlite import sqlite3
 from .json_path_utils import parse_json_path
@@ -150,7 +153,10 @@ class TempTableExprEvaluator:
                 )
             return result
 
-        except (NotImplementedError, ValueError):
+        except (NotImplementedError, ValueError) as e:
+            logger.debug(
+                f"Tier 2 evaluation failed, falling back to Python: {e}"
+            )
             # Fall back to Python evaluation
             return None, [], []
         # Cleanup handled by Cursor
@@ -387,7 +393,10 @@ class TempTableExprEvaluator:
         try:
             self.db.execute(f"SELECT _id FROM {collection_name} LIMIT 0")
             has_id = True
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as e:
+            logger.debug(
+                f"Collection '{collection_name}' does not have _id column: {e}"
+            )
             has_id = False
 
         if has_id:
@@ -780,9 +789,12 @@ class TempTableExprEvaluator:
 
     def cleanup_temp_tables(self) -> None:
         """Clean up all temporary tables created by this evaluator."""
-        for table_name in self._temp_tables:
+        for table in self._temp_tables:
             try:
-                self.db.execute(f"DROP TABLE IF EXISTS {table_name}")
-            except Exception:
+                self.db.execute(f"DROP TABLE IF EXISTS {table}")
+            except Exception as e:
+                logger.debug(
+                    f"Failed to drop temporary table {table} during cleanup: {e}"
+                )
                 pass  # Ignore cleanup errors
         self._temp_tables.clear()

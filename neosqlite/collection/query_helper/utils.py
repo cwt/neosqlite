@@ -1,5 +1,6 @@
 """Utility functions for query helper operations."""
 
+import logging
 from typing import Any, Dict
 
 from ..._sqlite import sqlite3
@@ -13,6 +14,8 @@ from ..jsonb_support import (
 
 # Import type checking helpers from shared module to avoid duplication
 from ..type_utils import _is_numeric_value as _is_numeric_value
+
+logger = logging.getLogger(__name__)
 
 # Global cache for SQLite features
 _SQLITE_FEATURES: Dict[str, bool | None] = {
@@ -90,7 +93,8 @@ def _supports_returning_clause() -> bool:
             result = cursor.fetchone()
             test_conn.close()
             val = result is not None and result[0] == "test"
-        except Exception:
+        except Exception as e:
+            logger.debug(f"SQLite RETURNING clause check failed: {e}")
             val = False
         _SQLITE_FEATURES["returning_clause"] = val
     return val

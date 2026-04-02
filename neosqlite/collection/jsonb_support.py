@@ -5,9 +5,12 @@ Provides efficient detection of JSONB capabilities with automatic caching
 to avoid redundant database queries.
 """
 
+import logging
 from typing import Dict
 
 from .._sqlite import sqlite3
+
+logger = logging.getLogger(__name__)
 
 # Module-level cache for JSONB support detection results
 # Key: connection id (int), Value: dict with support flags
@@ -54,7 +57,8 @@ def supports_jsonb(db_connection) -> bool:
         try:
             db_connection.execute('SELECT jsonb(\'{"test": "value"}\')')
             cache["jsonb_supported"] = True
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as e:
+            logger.debug(f"JSONB not supported: {e}")
             cache["jsonb_supported"] = False
 
     return cache["jsonb_supported"]
@@ -87,7 +91,8 @@ def supports_jsonb_each(db_connection) -> bool:
                 "SELECT key, value FROM jsonb_each('[1,2,3]')"
             )
             cache["jsonb_each_supported"] = True
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as e:
+            logger.debug(f"jsonb_each not supported: {e}")
             cache["jsonb_each_supported"] = False
 
     return cache["jsonb_each_supported"]

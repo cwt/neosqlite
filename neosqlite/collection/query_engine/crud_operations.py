@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, Dict, List
 
 if TYPE_CHECKING:
     from ..client_session import ClientSession
+
+logger = logging.getLogger(__name__)
 
 from neosqlite.binary import Binary
 from neosqlite.collection.json_helpers import neosqlite_json_dumps_for_sql
@@ -402,7 +405,8 @@ class CRUDOperationsMixin(QueryEngineProtocol):
                     modified_count=0,
                     upserted_id=None,
                 )
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Update operation failed: {e}")
             return None
 
         return None

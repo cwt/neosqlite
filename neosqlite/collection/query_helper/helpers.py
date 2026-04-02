@@ -80,6 +80,9 @@ def _get_json_error_position(db: Any, json_str: str) -> int:
             return int(result[0])
         else:
             return -1
-    except Exception:
+    except Exception as e:
         # json_error_position not supported
+        logger.debug(
+            f"SQLite json_error_position function not supported or failed: {e}"
+        )
         return -1

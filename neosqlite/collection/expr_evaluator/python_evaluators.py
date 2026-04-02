@@ -9,12 +9,15 @@ in Python as a fallback when SQL evaluation is not possible.
 from __future__ import annotations
 
 import calendar
+import logging
 import math
 import random
 import re
 import warnings
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Dict, List
+
+logger = logging.getLogger(__name__)
 
 # Import from sibling modules
 from .constants import REMOVE_SENTINEL
@@ -1757,12 +1760,16 @@ class PythonEvaluatorsMixin:
                                     if tz_str[0] == "-":
                                         offset_seconds = -offset_seconds
                                     dt = dt.replace(tzinfo=tz.utc)  # Simplified
-                            except (ValueError, TypeError, AttributeError):
+                            except (ValueError, TypeError, AttributeError) as e:
+                                logger.debug(
+                                    f"Failed to parse timezone in $dateFromString: {e}"
+                                )
                                 pass
 
                         return dt
                     return None
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Failed to evaluate $dateFromString: {e}")
                     return on_error
             case "$dateToString":
                 # Handle MongoDB dict format: {format, date, timezone}
@@ -2165,7 +2172,10 @@ class PythonEvaluatorsMixin:
                 try:
                     bin_val = Binary.decode_from_storage(value)
                     return len(bin_val)
-                except Exception:
+                except Exception as e:
+                    logger.debug(
+                        f"Failed to decode binary for $binarySize: {e}"
+                    )
                     pass
 
             raise TypeError(
@@ -2181,8 +2191,11 @@ class PythonEvaluatorsMixin:
             try:
                 # Use a basic approach for now
                 return len(json.dumps(value).encode("utf-8"))
-            except Exception:
+            except Exception as e:
                 # Fallback to string length for non-serializable objects
+                logger.debug(
+                    f"Failed to calculate $bsonSize using JSON, falling back to string length: {e}"
+                )
                 return len(str(value).encode("utf-8"))
 
         raise NotImplementedError(f"Operator {operator} not supported")
@@ -2268,7 +2281,10 @@ class PythonEvaluatorsMixin:
                         return ObjectId(value)
                     # For other types, try to create from string representation
                     return ObjectId(str(value))
-                except Exception:
+                except Exception as e:
+                    logger.debug(
+                        f"Failed to convert to ObjectId in expression: {e}"
+                    )
                     return None
             case "$isNumber":
                 # Check if value is a number (int or float, but not bool)
@@ -2318,7 +2334,8 @@ class PythonEvaluatorsMixin:
                     if converter:
                         return converter(input_val)
                     return input_val
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Failed to convert type in $convert: {e}")
                     return on_error
             case _:
                 raise NotImplementedError(

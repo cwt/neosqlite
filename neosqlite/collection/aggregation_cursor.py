@@ -7,16 +7,17 @@ if TYPE_CHECKING:
     from ..client_session import ClientSession
     from . import Collection
 
+logger = logging.getLogger(__name__)
+
 # Try to import quez, but make it optional
 try:
     from quez import CompressedQueue
 
     QUEZ_AVAILABLE = True
-except ImportError:
+except ImportError as e:
+    logger.debug(f"quez module not available, using fallback Queue: {e}")
     CompressedQueue = None
     QUEZ_AVAILABLE = False
-
-logger = logging.getLogger(__name__)
 
 from .type_utils import validate_session
 
@@ -168,11 +169,11 @@ class AggregationCursor:
         if QUEZ_AVAILABLE and isinstance(self._results, CompressedQueue):
             try:
                 return self._results.get(block=False)
-            except Exception:
+            except Exception as e:
                 logger.debug(
-                    "AggregationCursor: CompressedQueue.get() failed, raising StopIteration"
+                    f"AggregationCursor: CompressedQueue.get() failed, raising StopIteration: {e}"
                 )
-                raise StopIteration
+                raise StopIteration from e
 
         # Handle list results
         if isinstance(self._results, list):
@@ -348,7 +349,10 @@ class AggregationCursor:
             while not self._results.empty():
                 try:
                     results.append(self._results.get(block=False))
-                except Exception:
+                except Exception as e:
+                    logger.debug(
+                        f"Error getting item from CompressedQueue: {e}"
+                    )
                     break
             return results
 

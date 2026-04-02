@@ -12,6 +12,7 @@ while being optimized for NeoSQLite's local-only architecture.
 
 from __future__ import annotations
 
+import logging
 import os
 import random
 import threading
@@ -20,6 +21,8 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     pass
+
+logger = logging.getLogger(__name__)
 
 
 class ObjectId:
@@ -64,7 +67,8 @@ class ObjectId:
                     )
                 try:
                     self._id = bytes.fromhex(oid)
-                except ValueError:
+                except ValueError as e:
+                    logger.debug(f"Invalid ObjectId hex string '{oid}': {e}")
                     raise ValueError(
                         "ObjectId hex string contains invalid characters"
                     )
@@ -193,7 +197,8 @@ class ObjectId:
                 try:
                     int(oid, 16)  # Try to parse as hex
                     return True
-                except (TypeError, ValueError):
+                except (TypeError, ValueError) as e:
+                    logger.debug(f"Invalid ObjectId hex string '{oid}': {e}")
                     return False
             case bytes():
                 return len(oid) == 12
@@ -234,7 +239,10 @@ class ObjectId:
             case str():
                 try:
                     return self._id == bytes.fromhex(other)
-                except ValueError:
+                except ValueError as e:
+                    logger.debug(
+                        f"Failed to compare ObjectId with invalid hex string '{other}': {e}"
+                    )
                     return False
             case _:
                 return False
