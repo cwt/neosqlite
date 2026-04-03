@@ -330,31 +330,32 @@ def _matches_query_operators(value: Any, operators: Dict[str, Any]) -> bool:
         bool: True if value matches all operators
     """
     for op, expected in operators.items():
-        if op == "$eq":
-            if value != expected:
-                return False
-        elif op == "$gt":
-            if not (value > expected):
-                return False
-        elif op == "$gte":
-            if not (value >= expected):
-                return False
-        elif op == "$lt":
-            if not (value < expected):
-                return False
-        elif op == "$lte":
-            if not (value <= expected):
-                return False
-        elif op == "$ne":
-            if value == expected:
-                return False
-        elif op == "$in":
-            if value not in expected:
-                return False
-        elif op == "$nin":
-            if value in expected:
-                return False
-        # Add more operators as needed
+        match op:
+            case "$eq":
+                if value != expected:
+                    return False
+            case "$gt":
+                if not (value > expected):
+                    return False
+            case "$gte":
+                if not (value >= expected):
+                    return False
+            case "$lt":
+                if not (value < expected):
+                    return False
+            case "$lte":
+                if not (value <= expected):
+                    return False
+            case "$ne":
+                if value == expected:
+                    return False
+            case "$in":
+                if value not in expected:
+                    return False
+            case "$nin":
+                if value in expected:
+                    return False
+            # Add more operators as needed
     return True
 
 

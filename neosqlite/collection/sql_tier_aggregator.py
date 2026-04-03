@@ -821,13 +821,15 @@ class SQLTierAggregator:
 
     def _expression_uses_root(self, obj: Any) -> bool:
         """Recursively check if expression uses $$ROOT."""
-        if isinstance(obj, str):
-            return obj == "$$ROOT"
-        elif isinstance(obj, dict):
-            return any(self._expression_uses_root(v) for v in obj.values())
-        elif isinstance(obj, list):
-            return any(self._expression_uses_root(i) for i in obj)
-        return False
+        match obj:
+            case str():
+                return obj == "$$ROOT"
+            case dict():
+                return any(self._expression_uses_root(v) for v in obj.values())
+            case list():
+                return any(self._expression_uses_root(i) for i in obj)
+            case _:
+                return False
 
     def _build_stage_sql(
         self,

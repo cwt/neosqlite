@@ -1181,12 +1181,13 @@ class Connection:
         if not write_concern:
             return
 
-        if isinstance(write_concern, WriteConcern):
-            wc_doc = write_concern.document
-        elif isinstance(write_concern, dict):
-            wc_doc = write_concern
-        else:
-            return
+        match write_concern:
+            case WriteConcern():
+                wc_doc = write_concern.document
+            case dict():
+                wc_doc = write_concern
+            case _:
+                return
 
         w = wc_doc.get("w")
         j = wc_doc.get("j")

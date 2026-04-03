@@ -1338,39 +1338,46 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                                 current = min_val
                                 while current <= max_val:
                                     all_values.append(current)
-                                    if unit == "year":
-                                        current = current.replace(
-                                            year=current.year + step
-                                        )
-                                    elif unit == "month":
-                                        new_month = current.month + step
-                                        new_year = (
-                                            current.year + (new_month - 1) // 12
-                                        )
-                                        new_month = ((new_month - 1) % 12) + 1
-                                        try:
+                                    match unit:
+                                        case "year":
                                             current = current.replace(
-                                                year=new_year, month=new_month
+                                                year=current.year + step
                                             )
-                                        except ValueError:
-                                            # Handle month-end edge cases
+                                        case "month":
+                                            new_month = current.month + step
+                                            new_year = (
+                                                current.year
+                                                + (new_month - 1) // 12
+                                            )
+                                            new_month = (
+                                                (new_month - 1) % 12
+                                            ) + 1
+                                            try:
+                                                current = current.replace(
+                                                    year=new_year,
+                                                    month=new_month,
+                                                )
+                                            except ValueError:
+                                                # Handle month-end edge
+                                                break
+                                        case "day":
+                                            current = current + timedelta(
+                                                days=step
+                                            )
+                                        case "hour":
+                                            current = current + timedelta(
+                                                hours=step
+                                            )
+                                        case "minute":
+                                            current = current + timedelta(
+                                                minutes=step
+                                            )
+                                        case "second":
+                                            current = current + timedelta(
+                                                seconds=step
+                                            )
+                                        case _:
                                             break
-                                    elif unit == "day":
-                                        current = current + timedelta(days=step)
-                                    elif unit == "hour":
-                                        current = current + timedelta(
-                                            hours=step
-                                        )
-                                    elif unit == "minute":
-                                        current = current + timedelta(
-                                            minutes=step
-                                        )
-                                    elif unit == "second":
-                                        current = current + timedelta(
-                                            seconds=step
-                                        )
-                                    else:
-                                        break
                             else:
                                 # Handle numeric ranges
                                 current = min_val

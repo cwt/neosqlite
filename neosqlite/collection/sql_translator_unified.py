@@ -47,29 +47,32 @@ def _convert_to_bitmask(value: Any) -> int | None:
     """
     if isinstance(value, int):
         return value
-    elif isinstance(value, (list, tuple)):
-        bitmask = 0
-        for bit_pos in value:
+    match value:
+        case list() | tuple():
+            bitmask = 0
+            for bit_pos in value:
+                try:
+                    bitmask |= 1 << int(bit_pos)
+                except (TypeError, ValueError) as e:
+                    logger.debug(f"Failed to convert item to bitmask: {e}")
+                    return None
+            return bitmask
+        case _ if hasattr(value, "__iter__") and not isinstance(
+            value, (str, bytes)
+        ):
+            bitmask = 0
             try:
-                bitmask |= 1 << int(bit_pos)
+                for bit_pos in value:
+                    bitmask |= 1 << int(bit_pos)
             except (TypeError, ValueError) as e:
                 logger.debug(f"Failed to convert item to bitmask: {e}")
                 return None
-        return bitmask
-    elif hasattr(value, "__iter__") and not isinstance(value, (str, bytes)):
-        bitmask = 0
-        try:
-            for bit_pos in value:
-                bitmask |= 1 << int(bit_pos)
-        except (TypeError, ValueError) as e:
-            logger.debug(f"Failed to convert item to bitmask: {e}")
-            return None
-        return bitmask
-    else:
-        try:
-            return int(value)
-        except (TypeError, ValueError) as e:
-            logger.debug(f"Failed to convert item to bitmask: {e}")
+            return bitmask
+        case _:
+            try:
+                return int(value)
+            except (TypeError, ValueError) as e:
+                logger.debug(f"Failed to convert item to bitmask: {e}")
             return None
 
 

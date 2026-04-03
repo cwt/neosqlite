@@ -114,29 +114,31 @@ def unified_text_search(document: Dict[str, Any], search_term: str) -> bool:
         Returns:
             True if the value contains the search term, False otherwise
         """
-        if isinstance(value, str):
-            # Try exact match with regex first (handles Unicode properly)
-            if exact_pattern and exact_pattern.search(value):
-                return True
-
-            # Try normalized match (diacritic-insensitive)
-            if normalized_pattern:
-                normalized_value = TextSearchOptimizer.normalize_text(value)
-                if normalized_pattern.search(normalized_value):
+        match value:
+            case str():
+                # Try exact match with regex first (handles Unicode properly)
+                if exact_pattern and exact_pattern.search(value):
                     return True
 
-            # Fallback to simple case-insensitive substring matching
-            return term.lower() in value.lower()
+                # Try normalized match (diacritic-insensitive)
+                if normalized_pattern:
+                    normalized_value = TextSearchOptimizer.normalize_text(value)
+                    if normalized_pattern.search(normalized_value):
+                        return True
 
-        elif isinstance(value, dict):
-            # Recursively search in nested dictionaries
-            return search_in_document(value, term)
+                # Fallback to simple case-insensitive substring matching
+                return term.lower() in value.lower()
 
-        elif isinstance(value, list):
-            # Search in list items
-            return any(search_in_value(item, term) for item in value)
+            case dict():
+                # Recursively search in nested dictionaries
+                return search_in_document(value, term)
 
-        return False
+            case list():
+                # Search in list items
+                return any(search_in_value(item, term) for item in value)
+
+            case _:
+                return False
 
     def search_in_document(doc: Dict[str, Any], term: str) -> bool:
         """

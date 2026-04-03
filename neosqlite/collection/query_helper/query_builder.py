@@ -707,17 +707,20 @@ class QueryBuilderMixin:
         Returns:
             bool: True if the search term is found, False otherwise
         """
-        if isinstance(value, str):
-            return search_term.lower() in value.lower()
-        elif isinstance(value, dict):
-            return any(
-                self._search_in_value(v, search_term) for v in value.values()
-            )
-        elif isinstance(value, list):
-            return any(
-                self._search_in_value(elem, search_term) for elem in value
-            )
-        return False
+        match value:
+            case str():
+                return search_term.lower() in value.lower()
+            case dict():
+                return any(
+                    self._search_in_value(v, search_term)
+                    for v in value.values()
+                )
+            case list():
+                return any(
+                    self._search_in_value(elem, search_term) for elem in value
+                )
+            case _:
+                return False
 
     def _apply_query(
         self,
