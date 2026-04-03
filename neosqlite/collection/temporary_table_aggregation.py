@@ -2322,43 +2322,32 @@ class TemporaryTableAggregationProcessor:
         output_fields.append(f"{case_expr} AS _id")
 
         for field_name, accumulator in output_spec.items():
-            if "$sum" in accumulator:
-                output_fields.append(
-                    f"SUM({accumulator['$sum']}) AS {field_name}"
-                )
-            elif "$avg" in accumulator:
-                output_fields.append(
-                    f"AVG({accumulator['$avg']}) AS {field_name}"
-                )
-            elif "$count" in accumulator:
-                output_fields.append(f"COUNT(*) AS {field_name}")
-            elif "$min" in accumulator:
-                output_fields.append(
-                    f"MIN({accumulator['$min']}) AS {field_name}"
-                )
-            elif "$max" in accumulator:
-                output_fields.append(
-                    f"MAX({accumulator['$max']}) AS {field_name}"
-                )
-            elif "$first" in accumulator:
-                output_fields.append(
-                    f"MIN({accumulator['$first']}) AS {field_name}"
-                )
-            elif "$last" in accumulator:
-                output_fields.append(
-                    f"MAX({accumulator['$last']}) AS {field_name}"
-                )
-            elif "$push" in accumulator:
-                # Use json_group_array for push
-                json_group_func = _get_json_group_array_function(
-                    self._jsonb_supported
-                )
-                output_fields.append(
-                    f"{json_group_func}({accumulator['$push']}) AS {field_name}"
-                )
-            else:
-                # Default to count
-                output_fields.append(f"COUNT(*) AS {field_name}")
+            match accumulator:
+                case {"$sum": sum_expr}:
+                    output_fields.append(f"SUM({sum_expr}) AS {field_name}")
+                case {"$avg": avg_expr}:
+                    output_fields.append(f"AVG({avg_expr}) AS {field_name}")
+                case {"$count": _}:
+                    output_fields.append(f"COUNT(*) AS {field_name}")
+                case {"$min": min_expr}:
+                    output_fields.append(f"MIN({min_expr}) AS {field_name}")
+                case {"$max": max_expr}:
+                    output_fields.append(f"MAX({max_expr}) AS {field_name}")
+                case {"$first": first_expr}:
+                    output_fields.append(f"MIN({first_expr}) AS {field_name}")
+                case {"$last": last_expr}:
+                    output_fields.append(f"MAX({last_expr}) AS {field_name}")
+                case {"$push": push_expr}:
+                    # Use json_group_array for push
+                    json_group_func = _get_json_group_array_function(
+                        self._jsonb_supported
+                    )
+                    output_fields.append(
+                        f"{json_group_func}({push_expr}) AS {field_name}"
+                    )
+                case _:
+                    # Default to count
+                    output_fields.append(f"COUNT(*) AS {field_name}")
 
         select_clause = ", ".join(output_fields)
 
@@ -2417,23 +2406,22 @@ class TemporaryTableAggregationProcessor:
         # MongoDB returns _id as {min: <value>, max: <value>}
         agg_fields = []
         for field_name, accumulator in output_spec.items():
-            if "$sum" in accumulator:
-                sum_expr = accumulator["$sum"]
-                if sum_expr == 1:
+            match accumulator:
+                case {"$sum": 1}:
                     # Special case: $sum: 1 is a count
                     agg_fields.append(f"COUNT(*) AS {field_name}")
-                else:
+                case {"$sum": _}:
                     agg_fields.append(f"SUM(s.val) AS {field_name}")
-            elif "$avg" in accumulator:
-                agg_fields.append(f"AVG(s.val) AS {field_name}")
-            elif "$count" in accumulator:
-                agg_fields.append(f"COUNT(*) AS {field_name}")
-            elif "$min" in accumulator:
-                agg_fields.append(f"MIN(s.val) AS {field_name}")
-            elif "$max" in accumulator:
-                agg_fields.append(f"MAX(s.val) AS {field_name}")
-            else:
-                agg_fields.append(f"COUNT(*) AS {field_name}")
+                case {"$avg": _}:
+                    agg_fields.append(f"AVG(s.val) AS {field_name}")
+                case {"$count": _}:
+                    agg_fields.append(f"COUNT(*) AS {field_name}")
+                case {"$min": _}:
+                    agg_fields.append(f"MIN(s.val) AS {field_name}")
+                case {"$max": _}:
+                    agg_fields.append(f"MAX(s.val) AS {field_name}")
+                case _:
+                    agg_fields.append(f"COUNT(*) AS {field_name}")
 
         # Create subquery with NTILE bucketing
         subquery = f"""

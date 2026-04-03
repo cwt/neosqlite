@@ -1484,26 +1484,27 @@ class SQLTierAggregator:
 
                 if isinstance(value, dict):
                     for op, arg in value.items():
-                        if op == "$gt":
-                            where_clauses.append(f"{field_sql} > ?")
-                            all_params.append(arg)
-                        elif op == "$lt":
-                            where_clauses.append(f"{field_sql} < ?")
-                            all_params.append(arg)
-                        elif op == "$gte":
-                            where_clauses.append(f"{field_sql} >= ?")
-                            all_params.append(arg)
-                        elif op == "$lte":
-                            where_clauses.append(f"{field_sql} <= ?")
-                            all_params.append(arg)
-                        elif op == "$eq":
-                            where_clauses.append(f"{field_sql} = ?")
-                            all_params.append(arg)
-                        elif op == "$ne":
-                            where_clauses.append(f"{field_sql} != ?")
-                            all_params.append(arg)
-                        else:
-                            return None, []
+                        match op:
+                            case "$gt":
+                                where_clauses.append(f"{field_sql} > ?")
+                                all_params.append(arg)
+                            case "$lt":
+                                where_clauses.append(f"{field_sql} < ?")
+                                all_params.append(arg)
+                            case "$gte":
+                                where_clauses.append(f"{field_sql} >= ?")
+                                all_params.append(arg)
+                            case "$lte":
+                                where_clauses.append(f"{field_sql} <= ?")
+                                all_params.append(arg)
+                            case "$eq":
+                                where_clauses.append(f"{field_sql} = ?")
+                                all_params.append(arg)
+                            case "$ne":
+                                where_clauses.append(f"{field_sql} != ?")
+                                all_params.append(arg)
+                            case _:
+                                return None, []
                 else:
                     where_clauses.append(f"{field_sql} = ?")
                     all_params.append(value)

@@ -1673,26 +1673,27 @@ class PythonEvaluatorsMixin:
                 # Calculate difference
                 delta = end - start
 
-                if unit == "year":
-                    return end.year - start.year
-                elif unit == "month":
-                    return (end.year - start.year) * 12 + (
-                        end.month - start.month
-                    )
-                elif unit == "day":
-                    return delta.days
-                elif unit == "hour":
-                    return int(delta.total_seconds() / 3600)
-                elif unit == "minute":
-                    return int(delta.total_seconds() / 60)
-                elif unit == "second":
-                    return int(delta.total_seconds())
-                elif unit == "millisecond":
-                    return int(delta.total_seconds() * 1000)
-                elif unit == "week":
-                    return delta.days // 7
-                else:
-                    return delta.days
+                match unit:
+                    case "year":
+                        return end.year - start.year
+                    case "month":
+                        return (end.year - start.year) * 12 + (
+                            end.month - start.month
+                        )
+                    case "day":
+                        return delta.days
+                    case "hour":
+                        return int(delta.total_seconds() / 3600)
+                    case "minute":
+                        return int(delta.total_seconds() / 60)
+                    case "second":
+                        return int(delta.total_seconds())
+                    case "millisecond":
+                        return int(delta.total_seconds() * 1000)
+                    case "week":
+                        return delta.days // 7
+                    case _:
+                        return delta.days
             case "$dateFromString":
                 # Handle MongoDB dict format: {dateString, timezone, onError, onNull}
                 if isinstance(operands, dict):
@@ -1939,37 +1940,45 @@ class PythonEvaluatorsMixin:
                 }
 
                 # If unit is specified, only return parts up to that unit
-                if unit == "year":
-                    return {"year": parts["year"]}
-                elif unit == "month":
-                    return {"year": parts["year"], "month": parts["month"]}
-                elif unit == "day":
-                    return {
-                        "year": parts["year"],
-                        "month": parts["month"],
-                        "day": parts["day"],
-                    }
-                elif unit == "hour":
-                    return {
-                        k: v
-                        for k, v in parts.items()
-                        if k in ["year", "month", "day", "hour"]
-                    }
-                elif unit == "minute":
-                    return {
-                        k: v
-                        for k, v in parts.items()
-                        if k in ["year", "month", "day", "hour", "minute"]
-                    }
-                elif unit == "second":
-                    return {
-                        k: v
-                        for k, v in parts.items()
-                        if k
-                        in ["year", "month", "day", "hour", "minute", "second"]
-                    }
-
-                return parts
+                match unit:
+                    case "year":
+                        return {"year": parts["year"]}
+                    case "month":
+                        return {"year": parts["year"], "month": parts["month"]}
+                    case "day":
+                        return {
+                            "year": parts["year"],
+                            "month": parts["month"],
+                            "day": parts["day"],
+                        }
+                    case "hour":
+                        return {
+                            k: v
+                            for k, v in parts.items()
+                            if k in ["year", "month", "day", "hour"]
+                        }
+                    case "minute":
+                        return {
+                            k: v
+                            for k, v in parts.items()
+                            if k in ["year", "month", "day", "hour", "minute"]
+                        }
+                    case "second":
+                        return {
+                            k: v
+                            for k, v in parts.items()
+                            if k
+                            in [
+                                "year",
+                                "month",
+                                "day",
+                                "hour",
+                                "minute",
+                                "second",
+                            ]
+                        }
+                    case _:
+                        return parts
             case "$dateTrunc":
                 # Handle MongoDB dict format: {date, unit, startOfWeek}
                 if isinstance(operands, dict):

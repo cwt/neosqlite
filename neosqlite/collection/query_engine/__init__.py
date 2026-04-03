@@ -1093,54 +1093,62 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                         )
 
                         if existing:
-                            if when_matched == "replace":
-                                existing_id = existing.get("_id")
-                                new_doc = {
-                                    k: v for k, v in doc.items() if k != "_id"
-                                }
-                                if existing_id is not None:
-                                    new_doc["_id"] = existing_id
-                                target_coll.update_one(
-                                    {on_field: on_value},
-                                    {"$set": new_doc},
-                                )
-                                fields_to_remove = [
-                                    k
-                                    for k in existing
-                                    if k not in new_doc and k != on_field
-                                ]
-                                if fields_to_remove:
+                            match when_matched:
+                                case "replace":
+                                    existing_id = existing.get("_id")
+                                    new_doc = {
+                                        k: v
+                                        for k, v in doc.items()
+                                        if k != "_id"
+                                    }
+                                    if existing_id is not None:
+                                        new_doc["_id"] = existing_id
                                     target_coll.update_one(
                                         {on_field: on_value},
-                                        {
-                                            "$unset": {
-                                                f: "" for f in fields_to_remove
-                                            }
-                                        },
+                                        {"$set": new_doc},
                                     )
-                            elif when_matched == "merge":
-                                update_doc = {
-                                    k: v for k, v in doc.items() if k != "_id"
-                                }
-                                target_coll.update_one(
-                                    {on_field: on_value}, {"$set": update_doc}
-                                )
-                            elif when_matched == "keepExisting":
-                                # Keep existing, don't update
-                                pass
-                            elif when_matched == "fail":
-                                raise Exception(
-                                    f"$merge failed: document with {on_field}={on_value} already exists"
-                                )
-                            # Note: "pipeline" mode not implemented
+                                    fields_to_remove = [
+                                        k
+                                        for k in existing
+                                        if k not in new_doc and k != on_field
+                                    ]
+                                    if fields_to_remove:
+                                        target_coll.update_one(
+                                            {on_field: on_value},
+                                            {
+                                                "$unset": {
+                                                    f: ""
+                                                    for f in fields_to_remove
+                                                }
+                                            },
+                                        )
+                                case "merge":
+                                    update_doc = {
+                                        k: v
+                                        for k, v in doc.items()
+                                        if k != "_id"
+                                    }
+                                    target_coll.update_one(
+                                        {on_field: on_value},
+                                        {"$set": update_doc},
+                                    )
+                                case "keepExisting":
+                                    # Keep existing, don't update
+                                    pass
+                                case "fail":
+                                    raise Exception(
+                                        f"$merge failed: document with {on_field}={on_value} already exists"
+                                    )
+                                # Note: "pipeline" mode not implemented
                         else:
                             # Document doesn't exist - handle based on whenNotMatched
-                            if when_not_matched == "insert":
-                                target_coll.insert_one(doc)
-                            elif when_not_matched == "fail":
-                                raise Exception(
-                                    f"$merge failed: no document found with {on_field}={on_value}"
-                                )
+                            match when_not_matched:
+                                case "insert":
+                                    target_coll.insert_one(doc)
+                                case "fail":
+                                    raise Exception(
+                                        f"$merge failed: no document found with {on_field}={on_value}"
+                                    )
 
                     # After merge, return empty or pass through based on requirements
                     # MongoDB returns the merged documents for further pipeline processing
