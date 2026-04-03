@@ -20,6 +20,7 @@ from ..json_helpers import (
 from ..json_path_utils import (
     parse_json_path,
 )
+from ..jsonb_support import json_data_column
 
 logger = logging.getLogger(__name__)
 
@@ -324,10 +325,11 @@ class UpdateOperationsMixin:
 
         # Fetch and return the updated document
         # Use the instance's JSONB support flag to determine how to select data
-        if self._jsonb_supported:
-            cmd = f"SELECT id, json(data) as data FROM {quote_table_name(self.collection.name)} WHERE id = ?"
-        else:
-            cmd = f"SELECT id, data FROM {quote_table_name(self.collection.name)} WHERE id = ?"
+        jsonb = self._jsonb_supported
+        cmd = (
+            f"SELECT id, {json_data_column(jsonb)} as data "
+            f"FROM {quote_table_name(self.collection.name)} WHERE id = ?"
+        )
 
         if row := self.collection.db.execute(cmd, (int_doc_id,)).fetchone():
             return self.collection._load(row[0], row[1])
@@ -709,10 +711,11 @@ class UpdateOperationsMixin:
                 raise RuntimeError(f"No rows updated for doc_id {doc_id}")
 
         # Fetch updated document
-        if self._jsonb_supported:
-            cmd = f"SELECT id, json(data) as data FROM {quote_table_name(self.collection.name)} WHERE id = ?"
-        else:
-            cmd = f"SELECT id, data FROM {quote_table_name(self.collection.name)} WHERE id = ?"
+        jsonb = self._jsonb_supported
+        cmd = (
+            f"SELECT id, {json_data_column(jsonb)} as data "
+            f"FROM {quote_table_name(self.collection.name)} WHERE id = ?"
+        )
 
         if row := self.collection.db.execute(cmd, (int_doc_id,)).fetchone():
             return self.collection._load(row[0], row[1])
@@ -736,10 +739,11 @@ class UpdateOperationsMixin:
         int_doc_id = self._get_integer_id_for_oid(doc_id)
 
         # Fetch the document data
-        if self._jsonb_supported:
-            cmd = f"SELECT json(data) as data FROM {quote_table_name(self.collection.name)} WHERE id = ?"
-        else:
-            cmd = f"SELECT data FROM {quote_table_name(self.collection.name)} WHERE id = ?"
+        jsonb = self._jsonb_supported
+        cmd = (
+            f"SELECT {json_data_column(jsonb)} as data "
+            f"FROM {quote_table_name(self.collection.name)} WHERE id = ?"
+        )
 
         row = self.collection.db.execute(cmd, (int_doc_id,)).fetchone()
         if not row:

@@ -21,6 +21,7 @@ from ...results import (
 )
 from ...sql_utils import quote_table_name
 from ..json_path_utils import parse_json_path
+from ..jsonb_support import json_data_column
 from ..query_helper import _convert_bytes_to_binary, _get_json_function
 from ..type_correction import get_integer_id_for_oid
 from ..type_utils import validate_session
@@ -119,10 +120,11 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         if where_clause:
             # Get the integer id as well for internal operations
             # Use the same approach as the original code considering JSONB support
-            if self._jsonb_supported:
-                cmd = f"SELECT id, _id, json(data) as data FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
-            else:
-                cmd = f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
+            jsonb = self._jsonb_supported
+            cmd = (
+                f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                f"FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
+            )
             cursor = self.collection.db.execute(cmd, params)
             row = cursor.fetchone()
             if row:
@@ -471,10 +473,11 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         modified_count = 0
         for int_doc_id in ids:
             # Get the document using the integer ID for the update
-            if self._jsonb_supported:
-                cmd = f"SELECT id, _id, json(data) as data FROM {quote_table_name(self.collection.name)} WHERE id = ?"
-            else:
-                cmd = f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)} WHERE id = ?"
+            jsonb = self._jsonb_supported
+            cmd = (
+                f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                f"FROM {quote_table_name(self.collection.name)} WHERE id = ?"
+            )
             cursor = self.collection.db.execute(cmd, (int_doc_id,))
             row = cursor.fetchone()
             if row:

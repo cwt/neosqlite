@@ -7,6 +7,7 @@ logger = logging.getLogger(__name__)
 
 from .json_helpers import neosqlite_json_dumps
 from .json_path_utils import parse_json_path
+from .jsonb_support import json_data_column
 
 if TYPE_CHECKING:
     from ..client_session import ClientSession
@@ -110,19 +111,19 @@ class RawBatchCursor:
                 order_by = "ORDER BY " + ", ".join(sort_clauses)
 
             # Use the collection's JSONB support flag to determine how to select data
-            jsonb_supported = self._collection.query_engine._jsonb_supported
+            jsonb = self._collection.query_engine._jsonb_supported
 
             # Build the full query with proper WHERE clause handling
             if where_clause and where_clause.strip():
-                if jsonb_supported:
-                    cmd = f"SELECT id, json(data) as data FROM {self._collection.name} {where_clause} {order_by}"
-                else:
-                    cmd = f"SELECT id, data FROM {self._collection.name} {where_clause} {order_by}"
+                cmd = (
+                    f"SELECT id, {json_data_column(jsonb)} as data "
+                    f"FROM {self._collection.name} {where_clause} {order_by}"
+                )
             else:
-                if jsonb_supported:
-                    cmd = f"SELECT id, json(data) as data FROM {self._collection.name} {order_by}"
-                else:
-                    cmd = f"SELECT id, data FROM {self._collection.name} {order_by}"
+                cmd = (
+                    f"SELECT id, {json_data_column(jsonb)} as data "
+                    f"FROM {self._collection.name} {order_by}"
+                )
 
             # Execute and process in batches
             offset = self._skip

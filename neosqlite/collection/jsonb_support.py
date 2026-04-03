@@ -228,3 +228,12 @@ def _contains_text_operator(query: dict) -> bool:
             # Found a $text operator
             return True
     return False
+
+
+def json_data_column(jsonb_supported: bool, source: str = "data") -> str:
+    """Return the data column expression for SELECT queries.
+
+    When JSONB is supported, wraps the source with json() to convert
+    JSONB to text.  Otherwise returns the source unchanged.
+    """
+    return f"json({source})" if jsonb_supported else source

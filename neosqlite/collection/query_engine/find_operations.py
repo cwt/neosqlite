@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 from ...sql_utils import quote_table_name
 from ..cursor import Cursor
 from ..json_path_utils import parse_json_path
+from ..jsonb_support import json_data_column
 
 # Import feature detection
 from ..query_helper import _supports_returning_clause, get_force_fallback
@@ -183,10 +184,14 @@ class FindOperationsMixin(QueryEngineProtocol):
             # Tier-1: Use RETURNING clause for atomic find-and-delete
             # Note: SQLite doesn't support LIMIT with DELETE RETURNING directly
             # We need to use a subquery approach
-            if self._jsonb_supported:
-                cmd = f"DELETE FROM {quote_table_name(self.collection.name)} WHERE id = (SELECT id FROM {quote_table_name(self.collection.name)} {where_clause} {order_by} LIMIT 1) RETURNING id, _id, json(data) as data"
-            else:
-                cmd = f"DELETE FROM {quote_table_name(self.collection.name)} WHERE id = (SELECT id FROM {quote_table_name(self.collection.name)} {where_clause} {order_by} LIMIT 1) RETURNING id, _id, data"
+            jsonb = self._jsonb_supported
+            data_col = json_data_column(jsonb)
+            cmd = (
+                f"DELETE FROM {quote_table_name(self.collection.name)} "
+                f"WHERE id = (SELECT id FROM {quote_table_name(self.collection.name)} "
+                f"{where_clause} {order_by} LIMIT 1) "
+                f"RETURNING id, _id, {data_col} as data"
+            )
             cursor = self.collection.db.execute(cmd, params)
             row = cursor.fetchone()
             if row:
@@ -198,10 +203,12 @@ class FindOperationsMixin(QueryEngineProtocol):
         else:
             # Tier-1 (Fallback): Two-step process (SELECT then DELETE)
             # Used when RETURNING clause is not supported (SQLite < 3.35.0)
-            if self._jsonb_supported:
-                cmd = f"SELECT id, _id, json(data) as data FROM {quote_table_name(self.collection.name)} {where_clause} {order_by} LIMIT 1"
-            else:
-                cmd = f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)} {where_clause} {order_by} LIMIT 1"
+            jsonb = self._jsonb_supported
+            cmd = (
+                f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                f"FROM {quote_table_name(self.collection.name)} "
+                f"{where_clause} {order_by} LIMIT 1"
+            )
             cursor = self.collection.db.execute(cmd, params)
             row = cursor.fetchone()
             if row:
@@ -291,10 +298,12 @@ class FindOperationsMixin(QueryEngineProtocol):
 
         if use_returning:
             # Tier-1: Use RETURNING clause for atomic find-and-replace
-            if self._jsonb_supported:
-                cmd = f"SELECT id, _id, json(data) as data FROM {quote_table_name(self.collection.name)} {where_clause} {order_by} LIMIT 1"
-            else:
-                cmd = f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)} {where_clause} {order_by} LIMIT 1"
+            jsonb = self._jsonb_supported
+            cmd = (
+                f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                f"FROM {quote_table_name(self.collection.name)} "
+                f"{where_clause} {order_by} LIMIT 1"
+            )
             cursor = self.collection.db.execute(cmd, params)
             row = cursor.fetchone()
             if row:
@@ -306,10 +315,13 @@ class FindOperationsMixin(QueryEngineProtocol):
                 self.helpers._internal_replace(int_id, replacement)
                 if return_document:
                     # Use RETURNING to get the updated document
-                    if self._jsonb_supported:
-                        update_cmd = f"UPDATE {quote_table_name(self.collection.name)} SET data = ? WHERE id = ? RETURNING id, _id, json(data) as data"
-                    else:
-                        update_cmd = f"UPDATE {quote_table_name(self.collection.name)} SET data = ? WHERE id = ? RETURNING id, _id, data"
+                    jsonb = self._jsonb_supported
+                    data_col = json_data_column(jsonb)
+                    update_cmd = (
+                        f"UPDATE {quote_table_name(self.collection.name)} "
+                        f"SET data = ? WHERE id = ? "
+                        f"RETURNING id, _id, {data_col} as data"
+                    )
                     from ..json_helpers import neosqlite_json_dumps
 
                     update_cursor = self.collection.db.execute(
@@ -333,10 +345,12 @@ class FindOperationsMixin(QueryEngineProtocol):
         else:
             # Tier-1 (Fallback): Two-step process
             # Used when RETURNING clause is not supported (SQLite < 3.35.0)
-            if self._jsonb_supported:
-                cmd = f"SELECT id, _id, json(data) as data FROM {quote_table_name(self.collection.name)} {where_clause} {order_by} LIMIT 1"
-            else:
-                cmd = f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)} {where_clause} {order_by} LIMIT 1"
+            jsonb = self._jsonb_supported
+            cmd = (
+                f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                f"FROM {quote_table_name(self.collection.name)} "
+                f"{where_clause} {order_by} LIMIT 1"
+            )
             cursor = self.collection.db.execute(cmd, params)
             row = cursor.fetchone()
             if row:
@@ -462,10 +476,12 @@ class FindOperationsMixin(QueryEngineProtocol):
 
         if use_returning:
             # Tier-1: Use RETURNING clause for atomic find-and-update
-            if self._jsonb_supported:
-                cmd = f"SELECT id, _id, json(data) as data FROM {quote_table_name(self.collection.name)} {where_clause} {order_by} LIMIT 1"
-            else:
-                cmd = f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)} {where_clause} {order_by} LIMIT 1"
+            jsonb = self._jsonb_supported
+            cmd = (
+                f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                f"FROM {quote_table_name(self.collection.name)} "
+                f"{where_clause} {order_by} LIMIT 1"
+            )
             cursor = self.collection.db.execute(cmd, params)
             row = cursor.fetchone()
             if row:
@@ -504,10 +520,12 @@ class FindOperationsMixin(QueryEngineProtocol):
         else:
             # Tier-1 (Fallback): Two-step process
             # Used when RETURNING clause is not supported (SQLite < 3.35.0)
-            if self._jsonb_supported:
-                cmd = f"SELECT id, _id, json(data) as data FROM {quote_table_name(self.collection.name)} {where_clause} {order_by} LIMIT 1"
-            else:
-                cmd = f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)} {where_clause} {order_by} LIMIT 1"
+            jsonb = self._jsonb_supported
+            cmd = (
+                f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                f"FROM {quote_table_name(self.collection.name)} "
+                f"{where_clause} {order_by} LIMIT 1"
+            )
             cursor = self.collection.db.execute(cmd, params)
             row = cursor.fetchone()
             if row:

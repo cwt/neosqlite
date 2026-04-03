@@ -17,9 +17,11 @@ from ..sql_utils import quote_table_name
 from .expr_evaluator import ExprEvaluator
 from .json_path_utils import parse_json_path
 from .jsonb_support import (
+    _contains_text_operator,
     _get_json_each_function,
     _get_json_function_prefix,
     _get_json_group_array_function,
+    json_data_column,
     supports_jsonb,
     supports_jsonb_each,
 )
@@ -1480,18 +1482,12 @@ class TemporaryTableAggregationProcessor:
         add_fields_stage = {"$addFields": add_fields_spec}
 
         # When using JSONB, we need to convert final output to text JSON for Python
-        if self._jsonb_supported:
-            new_table = create_temp(
-                add_fields_stage,
-                f"SELECT id, _id, json({data_expr}) as data FROM {current_table}",
-                params if params else None,
-            )
-        else:
-            new_table = create_temp(
-                add_fields_stage,
-                f"SELECT id, _id, {data_expr} as data FROM {current_table}",
-                params if params else None,
-            )
+        jsonb = self._jsonb_supported
+        new_table = create_temp(
+            add_fields_stage,
+            f"SELECT id, _id, {json_data_column(jsonb, data_expr)} as data FROM {current_table}",
+            params if params else None,
+        )
         return new_table
 
     def _process_replace_root_stage(
@@ -3309,8 +3305,6 @@ def _contains_text_search(match_spec: Dict[str, Any]) -> bool:
     Returns:
         bool: True if the match specification contains text search operations, False otherwise
     """
-    from .jsonb_support import _contains_text_operator
-
     return _contains_text_operator(match_spec)
 
 

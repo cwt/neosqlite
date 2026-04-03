@@ -7,6 +7,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, Iterator, List
 
 from .json_path_utils import parse_json_path
+from .jsonb_support import json_data_column
 from .type_utils import validate_session
 
 if TYPE_CHECKING:
@@ -570,16 +571,18 @@ class Cursor:
 
         if where_result is not None:
             where_clause, params, tables = where_result
-            if self._collection.query_engine._jsonb_supported:
-                sql = f"SELECT id, _id, json(data) as data FROM {self._collection.name} {where_clause}{sort_clause}{pagination_clause}"
-            else:
-                sql = f"SELECT id, _id, data FROM {self._collection.name} {where_clause}{sort_clause}{pagination_clause}"
+            jsonb = self._collection.query_engine._jsonb_supported
+            sql = (
+                f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                f"FROM {self._collection.name} {where_clause}{sort_clause}{pagination_clause}"
+            )
         else:
             # No filter - simple select
-            if self._collection.query_engine._jsonb_supported:
-                sql = f"SELECT id, _id, json(data) as data FROM {self._collection.name}{sort_clause}{pagination_clause}"
-            else:
-                sql = f"SELECT id, _id, data FROM {self._collection.name}{sort_clause}{pagination_clause}"
+            jsonb = self._collection.query_engine._jsonb_supported
+            sql = (
+                f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                f"FROM {self._collection.name}{sort_clause}{pagination_clause}"
+            )
             params = ()
 
         # Get the query plan from SQLite
@@ -737,10 +740,11 @@ class Cursor:
                 )
 
             # Use the collection's JSONB support flag to determine how to select data
-            if self._collection.query_engine._jsonb_supported:
-                cmd = f"SELECT id, _id, json(data) as data FROM {self._collection.name} {where_clause}{sort_clause}{pagination_clause}"
-            else:
-                cmd = f"SELECT id, _id, data FROM {self._collection.name} {where_clause}{sort_clause}{pagination_clause}"
+            jsonb = self._collection.query_engine._jsonb_supported
+            cmd = (
+                f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                f"FROM {self._collection.name} {where_clause}{sort_clause}{pagination_clause}"
+            )
 
             # Track which parts were handled by SQL
             if sort_clause:
@@ -798,10 +802,11 @@ class Cursor:
         pagination_clause = ""
 
         # Use the collection's JSONB support flag to determine how to select data
-        if self._collection.query_engine._jsonb_supported:
-            cmd = f"SELECT id, _id, json(data) as data FROM {self._collection.name}"
-        else:
-            cmd = f"SELECT id, _id, data FROM {self._collection.name}"
+        jsonb = self._collection.query_engine._jsonb_supported
+        cmd = (
+            f"SELECT id, _id, {json_data_column(jsonb)} as data "
+            f"FROM {self._collection.name}"
+        )
 
         # Add min/max bounds if specified (no filter case)
         if self._min or self._max:
@@ -892,10 +897,11 @@ class Cursor:
                         )
                     )
 
-                if self._collection.query_engine._jsonb_supported:
-                    cmd = f"SELECT id, _id, json(data) as data FROM {self._collection.name} {where_clause}{sort_clause}{pagination_clause}"
-                else:
-                    cmd = f"SELECT id, _id, data FROM {self._collection.name} {where_clause}{sort_clause}{pagination_clause}"
+                jsonb = self._collection.query_engine._jsonb_supported
+                cmd = (
+                    f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                    f"FROM {self._collection.name} {where_clause}{sort_clause}{pagination_clause}"
+                )
 
                 # Track which parts were handled by SQL
                 if sort_clause:
@@ -934,10 +940,11 @@ class Cursor:
             pagination_clause = ""
 
             # Get all documents
-            if self._collection.query_engine._jsonb_supported:
-                cmd = f"SELECT id, _id, json(data) as data FROM {self._collection.name}{sort_clause}{pagination_clause}"
-            else:
-                cmd = f"SELECT id, _id, data FROM {self._collection.name}{sort_clause}{pagination_clause}"
+            jsonb = self._collection.query_engine._jsonb_supported
+            cmd = (
+                f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                f"FROM {self._collection.name}{sort_clause}{pagination_clause}"
+            )
 
             # Track which parts were handled by SQL
             if sort_clause:
