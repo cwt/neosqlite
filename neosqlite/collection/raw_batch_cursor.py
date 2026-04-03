@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 from .json_helpers import neosqlite_json_dumps
 from .json_path_utils import parse_json_path
-from .jsonb_support import json_data_column
+from .jsonb_support import _get_json_function_prefix, json_data_column
 
 if TYPE_CHECKING:
     from ..client_session import ClientSession
@@ -100,18 +100,20 @@ class RawBatchCursor:
             if tables:
                 self._tables_to_cleanup.extend(tables)
 
+            # Use the collection's JSONB support flag to determine how to select data
+            jsonb = self._collection.query_engine._jsonb_supported
+            json_func = _get_json_function_prefix(jsonb)
+
             # Build ORDER BY clause if sorting is specified
             order_by = ""
             if self._sort:
                 sort_clauses = []
                 for key, direction in self._sort.items():
                     sort_clauses.append(
-                        f"json_extract(data, '{parse_json_path(key)}') {'DESC' if direction == -1 else 'ASC'}"
+                        f"{json_func}_extract(data, '{parse_json_path(key)}') "
+                        f"{'DESC' if direction == -1 else 'ASC'}"
                     )
                 order_by = "ORDER BY " + ", ".join(sort_clauses)
-
-            # Use the collection's JSONB support flag to determine how to select data
-            jsonb = self._collection.query_engine._jsonb_supported
 
             # Build the full query with proper WHERE clause handling
             if where_clause and where_clause.strip():

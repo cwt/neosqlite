@@ -7,7 +7,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, Iterator, List
 
 from .json_path_utils import parse_json_path
-from .jsonb_support import json_data_column
+from .jsonb_support import _get_json_function_prefix, json_data_column
 from .type_utils import validate_session
 
 if TYPE_CHECKING:
@@ -1011,12 +1011,15 @@ class Cursor:
         additional_conditions = []
         additional_params = list(params)
 
+        jsonb = self._collection.query_engine._jsonb_supported
+        json_func = _get_json_function_prefix(jsonb)
+
         # Add minimum bounds
         if min_spec:
             for field, value in min_spec.items():
                 json_path = parse_json_path(field)
                 additional_conditions.append(
-                    f"jsonb_extract(data, '{json_path}') >= ?"
+                    f"{json_func}_extract(data, '{json_path}') >= ?"
                 )
                 additional_params.append(value)
 
@@ -1025,7 +1028,7 @@ class Cursor:
             for field, value in max_spec.items():
                 json_path = parse_json_path(field)
                 additional_conditions.append(
-                    f"jsonb_extract(data, '{json_path}') < ?"
+                    f"{json_func}_extract(data, '{json_path}') < ?"
                 )
                 additional_params.append(value)
 

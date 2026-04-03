@@ -9,7 +9,6 @@ if TYPE_CHECKING:
 
 from ...sql_utils import quote_table_name
 from ..cursor import Cursor
-from ..json_path_utils import parse_json_path
 from ..jsonb_support import json_data_column
 
 # Import feature detection
@@ -156,12 +155,7 @@ class FindOperationsMixin(QueryEngineProtocol):
         # Build sorting clause
         order_by = ""
         if sort:
-            sort_clauses = []
-            for key, direction in sort:
-                sort_clauses.append(
-                    f"json_extract(data, '{parse_json_path(key)}') {'DESC' if direction == -1 else 'ASC'}"
-                )
-            order_by = "ORDER BY " + ", ".join(sort_clauses)
+            order_by = self.helpers._build_sort_clause(dict(sort))
 
         # Use direct query to get integer ID for the delete operation
         where_clause, params = self.sql_translator.translate_match(filter)
@@ -260,12 +254,7 @@ class FindOperationsMixin(QueryEngineProtocol):
         # Build sorting clause
         order_by = ""
         if sort:
-            sort_clauses = []
-            for key, direction in sort:
-                sort_clauses.append(
-                    f"json_extract(data, '{parse_json_path(key)}') {'DESC' if direction == -1 else 'ASC'}"
-                )
-            order_by = "ORDER BY " + ", ".join(sort_clauses)
+            order_by = self.helpers._build_sort_clause(dict(sort))
 
         # Find document and get its integer ID for the replace operation
         where_clause, params = self.sql_translator.translate_match(filter)
@@ -419,12 +408,7 @@ class FindOperationsMixin(QueryEngineProtocol):
         # Build sorting clause
         order_by = ""
         if sort:
-            sort_clauses = []
-            for key, direction in sort:
-                sort_clauses.append(
-                    f"json_extract(data, '{parse_json_path(key)}') {'DESC' if direction == -1 else 'ASC'}"
-                )
-            order_by = "ORDER BY " + ", ".join(sort_clauses)
+            order_by = self.helpers._build_sort_clause(dict(sort))
 
         # Find document and get its integer ID for the update operation
         where_clause, params = self.sql_translator.translate_match(filter)
