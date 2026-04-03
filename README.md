@@ -33,21 +33,20 @@
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
-## Latest Release: v1.13.10
+## Latest Release: v1.13.11
 
-NeoSQLite v1.13.10 is a **bug fix and code quality release** that resolves 28 bugs across all severity levels, modernizes code with Python 3.10 pattern matching, and improves reliability of ChangeStream, bulk operations, aggregation, and connection lifecycle management.
+NeoSQLite v1.13.11 is a **bug fix and code quality release** that resolves critical JSONB function mismatches affecting sort and min/max clause builders, fixes multiple SQL generation errors in temporary table aggregation pipelines, adds comprehensive debug logging for observability, and modernizes code with Python 3.10 pattern matching.
+
+**Important:** The bugs fixed in this release **did not affect result correctness**. When SQL generation failed, NeoSQLite automatically fell back to the Python implementation, ensuring results were always correct. These fixes improve **performance** by keeping more operations in the fast SQL tier.
 
 ### Key Fixes
 
-- **ChangeStream**: Fixed CPU spin from incorrect None check on fetchall()
-- **Aggregation**: NULL data column crash prevention, empty/negative pipeline validation, transaction leak fixes
-- **bulk_write**: Savepoint cleanup with try/finally prevents transaction stack corruption
-- **Unordered bulk**: Now correctly continues on individual failures (MongoDB semantics)
-- **$bucketAuto**: Returns `{min, max}` _id instead of numeric index
-- **$merge replace**: Now removes fields missing from source document
-- **Connection lifecycle**: Clone no longer mutates original; `__del__` safe during shutdown
+- **JSONB Function Mismatch**: Fixed 3 places using wrong JSON functions regardless of JSONB support (improves SQL tier hit rate)
+- **Aggregation Pipeline SQL Errors**: Resolved multiple SQL generation issues in `$setWindowFields`, `$graphLookup`, `$bucket`, `$bucketAuto`, and window functions (all previously fell back to Python correctly)
+- **Observability**: Added comprehensive debug logging across 11+ modules for improved troubleshooting
+- **Code Quality**: Python 3.10 pattern matching modernization and elimination of 21 duplicated code blocks
 
-For full details, see [documents/releases/v1.13.10.md](documents/releases/v1.13.10.md).
+For full details, see [documents/releases/v1.13.11.md](documents/releases/v1.13.11.md).
 
 ## Installation
 

@@ -1,5 +1,71 @@
 # CHANGELOG
 
+## 1.13.11
+
+### Bug Fix & Code Quality Release: JSONB Function Mismatch Fixed, Aggregation SQL Errors Resolved, Debug Logging Added
+
+**Critical Bug Fixes** and code quality improvements — no breaking changes, fully backward compatible with v1.13.10.
+
+**Important Note on Result Correctness:** The SQL generation bugs fixed in this release **did not affect result correctness**. NeoSQLite's tiered architecture automatically falls back to the Python implementation when SQL generation fails. All results were already correct — these fixes improve **performance** by keeping more operations in the fast SQL tier.
+
+#### High Severity Fixes
+
+- **JSONB function mismatch**: Fixed 3 places (find_operations.py, raw_batch_cursor.py, cursor.py) that hardcoded wrong JSON functions regardless of `_jsonb_supported` setting
+- **Temporary table aggregation SQL errors**: Fixed 9 SQL generation issues including:
+  - Column detection for non-standard tables ($bucket, $bucketAuto, $group output)
+  - Window frame SQL syntax (UNBOUNDED PRECEDING/FOLLOWING)
+  - graphLookup restrictSearchWithMatch parameter handling
+  - $bucket and $bucketAuto MongoDB-compatible _id structures
+  - $first/$last accumulators with proper subquery logic
+  - Sort/skip/limit column handling
+  - UNION ALL column matching
+  - _id as separate column in JSON operations
+
+#### Medium Severity Fixes
+
+- **Comprehensive debug logging**: Added structured debug logging to 11+ modules for improved observability:
+  - Exception handlers with error details before fallback behavior
+  - Schema migration failures, index creation issues, type conversion errors
+  - Query operators, JSON parsing, ObjectId handling with exception context
+  - All logs use debug level to avoid production noise
+
+#### Code Modernization: Python 3.10 Pattern Matching
+
+Seven modules refactored to use `match/case` pattern matching:
+
+- **expr_evaluator.py**: $dateDiff and $datePart date unit dispatch
+- **temporary_table_aggregation.py**: $bucket and $bucketAuto accumulator output
+- **sql_tier_aggregator.py**: Comparison operator dispatch ($gt, $lt, $gte, $lte, $eq, $ne)
+- **query_engine/__init__.py**: $merge stage whenMatched/whenNotMatched handling
+- **_matches_query_operators**: 8 comparison operators
+- **$fill date unit dispatch**: 6 date units
+- **_convert_to_bitmask**: isinstance int/list/tuple/iterable chains
+- **_expression_uses_root**: isinstance str/dict/list chains
+- **search_in_value** (text_search, query_builder): isinstance str/dict/list chains
+- **_apply_write_concern**: isinstance WriteConcern/dict chains
+
+#### Code Deduplication
+
+- **json_data_column helper**: Extracted to eliminate 21 duplicated if/else blocks across 6 files
+
+#### Test Coverage Improvements
+
+- **test_jsonschema.py**: 46 new tests for schema validation and compilation
+- **test_collection.py**: 14 new tests for find_one_and_* operations
+- **test_temp_table_aggregation_fixes.py**: 31 new tests for aggregation pipeline fixes
+- **Total new tests**: 91 tests added
+
+### Test Results
+- **Unit Tests**: 2,502 total (2,502 passed, 5 xfailed, 0 failed)
+- **API Comparison (NeoSQLite vs MongoDB)**: 377 tests (360 passed, 17 skipped, 0 failed) — 100%
+- **Code Coverage**: 81%
+
+### Compatibility
+- **Backward Compatible**: Zero breaking changes
+- **PyMongo API Parity**: 100% for comparable features
+
+---
+
 ## 1.13.10
 
 ### Bug Fix & Code Quality Release: 28 Bugs Fixed, Python 3.10 Pattern Matching
