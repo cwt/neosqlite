@@ -52,7 +52,7 @@ def benchmark_feature(
     query_helper.set_force_fallback(False)
 
     # Verify results are identical (for simple counts)
-    result_count_match = len(result_optimized) == len(result_fallback)
+    result_count_match = result_optimized == result_fallback
 
     speedup = (
         avg_fallback / avg_optimized if avg_optimized > 0 else float("inf")
@@ -91,21 +91,21 @@ def benchmark_find_feature(
 
     # Test fallback path
     query_helper.set_force_fallback(True)
-    fallback_times = []
-    for _ in range(num_runs):
-        start_time = time.perf_counter()
-        cursor_fallback = collection.find(query)
-        # Force execution by converting to list
-        result_fallback = list(cursor_fallback)
-        fallback_times.append(time.perf_counter() - start_time)
+    try:
+        fallback_times = []
+        for _ in range(num_runs):
+            start_time = time.perf_counter()
+            cursor_fallback = collection.find(query)
+            # Force execution by converting to list
+            result_fallback = list(cursor_fallback)
+            fallback_times.append(time.perf_counter() - start_time)
 
-    avg_fallback = statistics.mean(fallback_times)
-
-    # Reset to normal operation
-    query_helper.set_force_fallback(False)
+        avg_fallback = statistics.mean(fallback_times)
+    finally:
+        query_helper.set_force_fallback(False)
 
     # Verify results are identical
-    result_count_match = len(result_optimized) == len(result_fallback)
+    result_count_match = result_optimized == result_fallback
 
     speedup = (
         avg_fallback / avg_optimized if avg_optimized > 0 else float("inf")
@@ -210,7 +210,7 @@ def main():
                     "category": f"Category{i % 5}",
                 }
             )
-        text_collection = conn["reviews"]
+        text_collection = conn["text_reviews"]
         text_collection.insert_many(text_docs)
         text_collection.create_index("comments.text", fts=True)
         text_collection.create_index(

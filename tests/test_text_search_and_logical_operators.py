@@ -430,10 +430,10 @@ def test_create_indexes_with_tokenizer():
         mock_db.execute.return_value = None
         mock_db.fetchone.return_value = None
 
-        # Test with dict format
+        # Test with IndexModel objects
         indexes = [
-            {"key": "content", "fts": True, "tokenizer": "icu"},
-            {"key": "title", "fts": True},
+            neosqlite.IndexModel("content", fts=True, tokenizer="icu"),
+            neosqlite.IndexModel("title", fts=True),
         ]
 
         # This should not raise an exception

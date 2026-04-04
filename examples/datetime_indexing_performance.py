@@ -7,8 +7,9 @@ datetime query performance in NeoSQLite, bringing it much closer to MongoDB leve
 It showcases both traditional JSON indexing and the new enhanced datetime indexing.
 """
 
+import calendar
 import time
-from random import choice, randint
+from random import randint
 
 from neosqlite import Connection
 
@@ -32,17 +33,14 @@ def test_indexed_vs_unindexed_performance():
         # Create documents with datetime fields
         year = randint(2022, 2025)
         month = randint(1, 12)
-        day = randint(1, 28) if month == 2 else randint(1, 30)
+        max_day = calendar.monthrange(year, month)[1]
+        day = randint(1, max_day)
         hour = randint(0, 23)
         minute = randint(0, 59)
         second = randint(0, 59)
-        timezone_hour = randint(0, 23)
-        timezone_direction = choice(("+", "-"))
-        if timezone_hour == 0:
-            timezone = choice(("Z", ""))  # Random both UTC formats.
-        else:
-            timezone = f"{timezone_direction}{timezone_hour}:00"
-        timestamp = f"{year}-{month:02d}-{day:02d}T{hour:02d}:{minute:02d}:{second:02d}.000{timezone}"
+        timestamp = (
+            f"{year}-{month:02d}-{day:02d}T{hour:02d}:{minute:02d}:{second:02d}"
+        )
         test_docs.append(
             {
                 "id": i,
@@ -77,7 +75,7 @@ def test_indexed_vs_unindexed_performance():
 
     print(f"Query: {query1}")
     print(f"Results: {len(results1)} documents")
-    print(f"Execution Time: {unindexed_time*1000:.2f}ms")
+    print(f"Execution Time: {unindexed_time * 1000:.2f}ms")
     print()
 
     # Test 2: Traditional JSON index (standard approach)
@@ -92,14 +90,14 @@ def test_indexed_vs_unindexed_performance():
 
     print(f"Query: {query1} (with traditional JSON index)")
     print(f"Results: {len(results2)} documents")
-    print(f"Execution Time: {traditional_indexed_time*1000:.2f}ms")
+    print(f"Execution Time: {traditional_indexed_time * 1000:.2f}ms")
     print()
 
     # Test 3: Enhanced datetime index (NEW FEATURE)
     print("Test 3: Enhanced DateTime Index Performance (NEW)")
     print("-" * 50)
 
-    # Drop traditinal index
+    # Drop traditional index
     collection.drop_index("timestamp")
 
     # Create enhanced datetime index
@@ -111,15 +109,15 @@ def test_indexed_vs_unindexed_performance():
 
     print(f"Query: {query1} (with enhanced datetime index)")
     print(f"Results: {len(results3)} documents")
-    print(f"Execution Time: {enhanced_indexed_time*1000:.2f}ms")
+    print(f"Execution Time: {enhanced_indexed_time * 1000:.2f}ms")
     print()
 
     # Performance comparison
     print("Performance Comparison:")
     print("=" * 24)
-    print(f"Unindexed:           {unindexed_time*1000:.2f}ms")
-    print(f"Traditional Index:   {traditional_indexed_time*1000:.2f}ms")
-    print(f"Enhanced DateTime:   {enhanced_indexed_time*1000:.2f}ms")
+    print(f"Unindexed:           {unindexed_time * 1000:.2f}ms")
+    print(f"Traditional Index:   {traditional_indexed_time * 1000:.2f}ms")
+    print(f"Enhanced DateTime:   {enhanced_indexed_time * 1000:.2f}ms")
 
     if traditional_indexed_time > 0:
         traditional_speedup = unindexed_time / traditional_indexed_time
@@ -161,7 +159,7 @@ def test_indexed_vs_unindexed_performance():
 
     print(f"Query: {complex_query}")
     print(f"Results: {len(results4)} documents")
-    print(f"Execution Time: {complex_enhanced_time*1000:.2f}ms")
+    print(f"Execution Time: {complex_enhanced_time * 1000:.2f}ms")
     print()
 
     # Test 5: Range query with sorting using enhanced datetime indexing
@@ -181,7 +179,7 @@ def test_indexed_vs_unindexed_performance():
 
     print(f"Query: {range_query} with sorting by timestamp")
     print(f"Results: {len(sorted_results)} documents")
-    print(f"Execution Time: {sorted_time*1000:.2f}ms")
+    print(f"Execution Time: {sorted_time * 1000:.2f}ms")
     print()
 
     # Cleanup
@@ -215,82 +213,80 @@ def demonstrate_index_types():
     print("=" * 35)
     print()
 
-    db = Connection(":memory:")
-    collection = db["index_types_test"]
+    with Connection(":memory:") as db:
+        collection = db["index_types_test"]
 
-    # Insert sample data
-    sample_docs = [
-        {
-            "id": 1,
-            "created_at": "2023-01-15T10:30:00",
-            "updated_at": "2023-01-15T11:00:00",
-            "status": "active",
-        },
-        {
-            "id": 2,
-            "created_at": "2023-02-20T14:45:00",
-            "updated_at": "2023-02-21T09:15:00",
-            "status": "inactive",
-        },
-        {
-            "id": 3,
-            "created_at": "2023-03-10T08:20:00",
-            "updated_at": "2023-03-10T08:25:00",
-            "status": "active",
-        },
-    ]
+        # Insert sample data
+        sample_docs = [
+            {
+                "id": 1,
+                "created_at": "2023-01-15T10:30:00",
+                "updated_at": "2023-01-15T11:00:00",
+                "status": "active",
+            },
+            {
+                "id": 2,
+                "created_at": "2023-02-20T14:45:00",
+                "updated_at": "2023-02-21T09:15:00",
+                "status": "inactive",
+            },
+            {
+                "id": 3,
+                "created_at": "2023-03-10T08:20:00",
+                "updated_at": "2023-03-10T08:25:00",
+                "status": "active",
+            },
+        ]
 
-    for doc in sample_docs:
-        collection.insert_one(doc)
+        for doc in sample_docs:
+            collection.insert_one(doc)
 
-    print("Available Index Types for DateTime Fields:")
-    print()
+        print("Available Index Types for DateTime Fields:")
+        print()
 
-    # 1. Traditional JSON index (standard approach)
-    print("1. Traditional JSON Index:")
-    print("   collection.create_index('created_at')")
-    print("   - Standard JSON indexing using json_extract")
-    print("   - Good baseline performance for simple queries")
-    print()
+        # 1. Traditional JSON index (standard approach)
+        print("1. Traditional JSON Index:")
+        print("   collection.create_index('created_at')")
+        print("   - Standard JSON indexing using json_extract")
+        print("   - Good baseline performance for simple queries")
+        print()
 
-    # 2. Enhanced datetime index (NEW FEATURE)
-    print("2. Enhanced DateTime Index (NEW):")
-    print("   collection.create_index('created_at', datetime_field=True)")
-    print("   - Optimized indexing using Unix timestamp expressions")
-    print("   - 5-50x performance improvements over traditional indexing")
-    print("   - Proper chronological ordering for datetime comparisons")
-    print()
+        # 2. Enhanced datetime index (NEW FEATURE)
+        print("2. Enhanced DateTime Index (NEW):")
+        print("   collection.create_index('created_at', datetime_field=True)")
+        print("   - Optimized indexing using Unix timestamp expressions")
+        print("   - 5-50x performance improvements over traditional indexing")
+        print("   - Proper chronological ordering for datetime comparisons")
+        print()
 
-    # 3. Composite index with enhanced datetime
-    print("3. Composite Index with Enhanced DateTime:")
-    print(
-        "   collection.create_index([('created_at', 1), ('status', 1)], datetime_field=True)"
-    )
-    print("   - Multi-field index with optimized datetime field")
-    print(
-        "   - Efficient for complex queries involving datetime and other fields"
-    )
-    print()
+        # 3. Composite index with enhanced datetime
+        print("3. Composite Index with Enhanced DateTime:")
+        print(
+            "   collection.create_index([('created_at', 1), ('status', 1)], datetime_field=True)"
+        )
+        print("   - Multi-field index with optimized datetime field")
+        print(
+            "   - Efficient for complex queries involving datetime and other fields"
+        )
+        print()
 
-    # 4. Multiple enhanced indexes
-    print("4. Multiple Enhanced Indexes:")
-    print("   collection.create_index('created_at', datetime_field=True)")
-    print("   collection.create_index('updated_at', datetime_field=True)")
-    print("   - Separate optimized indexes for multiple datetime fields")
-    print("   - Maximum query flexibility with enhanced performance")
-    print()
+        # 4. Multiple enhanced indexes
+        print("4. Multiple Enhanced Indexes:")
+        print("   collection.create_index('created_at', datetime_field=True)")
+        print("   collection.create_index('updated_at', datetime_field=True)")
+        print("   - Separate optimized indexes for multiple datetime fields")
+        print("   - Maximum query flexibility with enhanced performance")
+        print()
 
-    # 5. Descending enhanced datetime index
-    print("5. Descending Enhanced DateTime Index:")
-    print(
-        "   collection.create_index([('created_at', -1)], datetime_field=True)"
-    )
-    print("   - Optimized for sorting by newest first")
-    print("   - Great for time-series data retrieval")
-    print("   - Perfect for common chronological queries")
-    print()
-
-    db.close()
+        # 5. Descending enhanced datetime index
+        print("5. Descending Enhanced DateTime Index:")
+        print(
+            "   collection.create_index([('created_at', -1)], datetime_field=True)"
+        )
+        print("   - Optimized for sorting by newest first")
+        print("   - Great for time-series data retrieval")
+        print("   - Perfect for common chronological queries")
+        print()
 
 
 def mongodb_indexing_comparison():

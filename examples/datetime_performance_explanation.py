@@ -58,7 +58,7 @@ def explain_performance_characteristics():
         ),
         (
             "Composite Indexes",
-            "Multi-field indexes for complex queries: collection.create_index(['timestamp', 'category'])",
+            "Multi-field indexes for complex queries: collection.create_index([('timestamp', 1), ('category', 1)])",
             "Enable efficient multi-condition queries",
         ),
         (

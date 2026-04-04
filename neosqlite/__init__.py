@@ -18,6 +18,7 @@ from .exceptions import (
     MalformedDocument,
     MalformedQueryException,
 )
+from .index_model import IndexModel
 from .options import (
     AutoVacuumMode,
     CodecOptions,
@@ -64,6 +65,7 @@ __all__ = [
     "InsertOne",
     "InsertOneResult",
     "InvalidOperation",
+    "IndexModel",
     "MalformedDocument",
     "MalformedQueryException",
     "RawBatchCursor",

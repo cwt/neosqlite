@@ -62,7 +62,7 @@ def test_insert_auto_index(collection):
 
 def test_create_compound_index(collection):
     collection.insert_one({"foo": "bar", "far": "boo"})
-    collection.create_index(["foo", "far"])
+    collection.create_index([("foo", 1), ("far", 1)])
     assert "idx_foo_foo_far" in collection.list_indexes()
 
 
@@ -122,7 +122,9 @@ def test_drop_indexes_from_collection_index(collection):
 
 def test_create_indexes_with_string_keys(collection):
     collection.insert_one({"foo": "bar", "baz": "qux"})
-    indexes = collection.create_indexes(["foo", "baz"])
+    indexes = collection.create_indexes(
+        [neosqlite.IndexModel("foo"), neosqlite.IndexModel("baz")]
+    )
     assert "idx_foo_foo" in indexes
     assert "idx_foo_baz" in indexes
     assert len(indexes) == 2
@@ -132,7 +134,12 @@ def test_create_indexes_with_string_keys(collection):
 
 def test_create_indexes_with_compound_keys(collection):
     collection.insert_one({"foo": "bar", "baz": "qux", "quux": "corge"})
-    indexes = collection.create_indexes([["foo", "baz"], ["quux"]])
+    indexes = collection.create_indexes(
+        [
+            neosqlite.IndexModel([("foo", 1), ("baz", 1)]),
+            neosqlite.IndexModel("quux"),
+        ]
+    )
     assert "idx_foo_foo_baz" in indexes
     assert "idx_foo_quux" in indexes
     assert len(indexes) == 2
@@ -143,7 +150,10 @@ def test_create_indexes_with_compound_keys(collection):
 def test_create_indexes_with_dict_specifications(collection):
     collection.insert_one({"foo": "bar", "baz": "qux"})
     indexes = collection.create_indexes(
-        [{"key": "foo"}, {"key": ["baz"], "unique": True}]
+        [
+            neosqlite.IndexModel("foo"),
+            neosqlite.IndexModel("baz", unique=True),
+        ]
     )
     assert "idx_foo_foo" in indexes
     assert "idx_foo_baz" in indexes
@@ -152,25 +162,11 @@ def test_create_indexes_with_dict_specifications(collection):
     assert "idx_foo_baz" in collection.list_indexes()
 
 
-def test_create_indexes_with_mixed_specifications(collection):
-    collection.insert_one({"foo": "bar", "baz": "qux", "quux": "corge"})
-    indexes = collection.create_indexes(
-        ["foo", ["baz", "quux"], {"key": "quux", "unique": True}]
-    )
-    assert "idx_foo_foo" in indexes
-    assert "idx_foo_baz_quux" in indexes
-    assert "idx_foo_quux" in indexes
-    assert len(indexes) == 3
-    assert "idx_foo_foo" in collection.list_indexes()
-    assert "idx_foo_baz_quux" in collection.list_indexes()
-    assert "idx_foo_quux" in collection.list_indexes()
-
-
 def test_create_indexes_on_nested_keys(collection):
     collection.insert_many(
         [{"foo": {"bar": "zzz"}, "bok": "bak"}, {"a": 1, "b": 2}]
     )
-    indexes = collection.create_indexes(["foo.bar"])
+    indexes = collection.create_indexes([neosqlite.IndexModel("foo.bar")])
     assert "idx_foo_foo_bar" in indexes
     assert len(indexes) == 1
     assert "idx_foo_foo_bar" in collection.list_indexes()
@@ -233,6 +229,91 @@ def test_create_index_with_tuple_format_non_text(collection):
     # Verify index was created
     indexes = collection.list_indexes()
     assert any("score" in idx for idx in indexes)
+
+
+def test_create_compound_index_with_pymongo_tuple_format():
+    """Test compound index creation with PyMongo-style tuple format."""
+    with neosqlite.Connection(":memory:") as db:
+        collection = db.test_collection
+
+        # Insert test data
+        docs = []
+        for i in range(50):
+            docs.append(
+                {
+                    "name": f"user_{i}",
+                    "age": 20 + (i % 30),
+                    "city": ["NYC", "LA", "Chicago"][i % 3],
+                    "score": i * 1.5,
+                }
+            )
+        collection.insert_many(docs)
+
+        # Create compound index using PyMongo tuple format
+        collection.create_index(
+            [("city", neosqlite.ASCENDING), ("age", neosqlite.DESCENDING)]
+        )
+
+        # Verify index was created
+        indexes = collection.list_indexes()
+        assert any("city" in idx and "age" in idx for idx in indexes)
+
+        # Query using compound index fields
+        results = list(collection.find({"city": "NYC", "age": {"$gte": 25}}))
+        assert len(results) > 0
+        assert all(r["city"] == "NYC" and r["age"] >= 25 for r in results)
+
+        # Create 3-field compound index
+        collection.create_index(
+            [
+                ("city", neosqlite.ASCENDING),
+                ("age", neosqlite.DESCENDING),
+                ("score", neosqlite.ASCENDING),
+            ]
+        )
+
+        # Query using all 3 fields
+        results_3 = list(
+            collection.find(
+                {"city": "LA", "age": {"$gte": 30}, "score": {"$gt": 20}}
+            )
+        )
+        assert len(results_3) > 0
+        assert all(
+            r["city"] == "LA" and r["age"] >= 30 and r["score"] > 20
+            for r in results_3
+        )
+
+
+def test_compound_index_with_multiple_tuple_formats():
+    """Test that compound indexes work with multiple tuple-format indexes."""
+    with neosqlite.Connection(":memory:") as db:
+        collection = db.test_collection
+
+        collection.insert_many(
+            [
+                {"a": 1, "b": 2, "c": 3},
+                {"a": 1, "b": 3, "c": 4},
+                {"a": 2, "b": 2, "c": 5},
+            ]
+        )
+
+        # Tuple format
+        collection.create_index([("a", 1), ("b", 1)])
+        tuple_indexes = collection.list_indexes()
+        assert any("a" in idx and "b" in idx for idx in tuple_indexes)
+
+        # Second compound index with tuple format
+        collection.create_index([("a", 1), ("c", 1)])
+        string_indexes = collection.list_indexes()
+        assert any("a" in idx and "c" in idx for idx in string_indexes)
+
+        # Both should work for queries
+        results_tuple = list(collection.find({"a": 1, "b": 2}))
+        assert len(results_tuple) == 1
+
+        results_string = list(collection.find({"a": 1, "c": 3}))
+        assert len(results_string) == 1
 
 
 # ================================
@@ -312,7 +393,7 @@ def test_index_information_nested_key_index(collection):
 
 def test_index_information_compound_index(collection):
     """Test index_information with a compound index."""
-    collection.create_index(["foo", "bar"])
+    collection.create_index([("foo", 1), ("bar", 1)])
     info = collection.index_information()
 
     # Should have one index
@@ -339,7 +420,7 @@ def test_index_information_multiple_indexes(collection):
     """Test index_information with multiple indexes."""
     collection.create_index("foo")
     collection.create_index("bar", unique=True)
-    collection.create_index(["baz", "qux"])
+    collection.create_index([("baz", 1), ("qux", 1)])
 
     info = collection.index_information()
 
@@ -453,7 +534,7 @@ def test_compound_index_usage(collection):
     )
 
     # Create a compound index
-    collection.create_index(["age", "city"])
+    collection.create_index([("age", 1), ("city", 1)])
 
     # Verify the index exists
     assert "idx_foo_age_city" in collection.list_indexes()
@@ -535,7 +616,7 @@ def test_drop_compound_index():
     collection = db["test"]
 
     # Create a compound index
-    collection.create_index(["foo", "bar"])
+    collection.create_index([("foo", 1), ("bar", 1)])
 
     # Verify index exists
     indexes = collection.list_indexes()
@@ -685,7 +766,10 @@ def test_nested_unwind_with_indexed_field():
                         {
                             "orderId": f"Order{i}_2",
                             "items": [
-                                {"product": f"Product{j+2}", "quantity": j + 3}
+                                {
+                                    "product": f"Product{j + 2}",
+                                    "quantity": j + 3,
+                                }
                                 for j in range(2)
                             ],
                         },
@@ -920,8 +1004,8 @@ def test_compound_index_functionality(collection):
         ]
     )
 
-    # Create compound index using the correct API (list of strings)
-    collection.create_index(["category", "subcategory"])
+    # Create compound index using PyMongo tuple format
+    collection.create_index([("category", 1), ("subcategory", 1)])
 
     # Verify the compound index exists
     indexes = collection.list_indexes()

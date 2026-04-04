@@ -56,8 +56,8 @@ print(f"Proper indexing can provide {improvement_factor:.1f}x performance improv
 collection.create_index("timestamp")
 
 # For complex queries, create composite indexes
-collection.create_index(["timestamp", "category"])
-collection.create_index(["timestamp", "user_id", "status"])
+collection.create_index([("timestamp", 1), ("category", 1)])
+collection.create_index([("timestamp", 1), ("user_id", 1), ("status", 1)])
 ```
 
 #### 2. **Time-Based Partitioning**

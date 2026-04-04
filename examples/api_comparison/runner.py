@@ -22,6 +22,7 @@ from .bulk_operations import compare_bulk_operations
 from .change_streams import compare_change_streams
 from .collection_methods import compare_collection_methods
 from .collection_methods_additional import compare_additional_collection_methods
+from .compound_indexes import compare_compound_indexes
 
 # Import all comparison functions
 from .crud import compare_crud_operations
@@ -92,6 +93,7 @@ COMPARISON_FUNCTIONS = [
     ("Aggregation Cursor", compare_aggregation_cursor_methods),
     # Indexing
     ("Index Operations", compare_index_operations),
+    ("Compound Index Operations", compare_compound_indexes),
     ("Search Index", compare_search_index_operations),
     ("Reindex", compare_reindex_operation),
     # Bulk Operations

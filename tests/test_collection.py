@@ -1164,7 +1164,7 @@ def test_insert_auto_index(collection):
 def test_create_compound_index(collection):
     """Test creating a compound index."""
     collection.insert_one({"foo": "bar", "far": "boo"})
-    collection.create_index(["foo", "far"])
+    collection.create_index([("foo", 1), ("far", 1)])
     assert "idx_foo_foo_far" in collection.list_indexes()
 
 

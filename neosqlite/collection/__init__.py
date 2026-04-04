@@ -9,6 +9,7 @@ from neosqlite.collection.json_helpers import neosqlite_json_loads
 from .._sqlite import sqlite3
 from ..bulk_operations import BulkOperationExecutor
 from ..changestream import ChangeStream
+from ..index_model import IndexModel
 from ..objectid import ObjectId
 from ..results import (
     BulkWriteResult,
@@ -1026,7 +1027,7 @@ class Collection:
     # --- Indexing methods delegated to IndexManager ---
     def create_index(
         self,
-        key: str | List[str],
+        key: str | List[str] | List[Tuple[str, int]],
         reindex: bool = True,
         sparse: bool = False,
         unique: bool = False,
@@ -1055,7 +1056,7 @@ class Collection:
 
     def create_indexes(
         self,
-        indexes: List[str | List[str] | List[Tuple[str, int]] | Dict[str, Any]],
+        indexes: List[IndexModel],
     ) -> List[str]:
         """
         This is a delegating method. For implementation details, see the

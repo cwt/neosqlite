@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List, Literal, Tuple, overload
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Tuple, overload
 
 from .._sqlite import sqlite3
 from ..sql_utils import quote_identifier, quote_table_name
@@ -10,6 +10,9 @@ from .jsonb_support import (
     supports_jsonb,
     supports_jsonb_each,
 )
+
+if TYPE_CHECKING:
+    from ..index_model import IndexModel
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +40,7 @@ class IndexManager:
 
     def create_index(
         self,
-        key: str | List[str],
+        key: str | List[str] | List[Tuple[str, int]],
         reindex: bool = True,
         sparse: bool = False,
         unique: bool = False,
@@ -111,17 +114,87 @@ class IndexManager:
                     )
                 )
         else:
-            # For compound indexes, we still need to handle them differently
-            # This is a simplified implementation - we could expand on this later
-            index_name = "_".join(key).replace(".", "_")
+            # Compound indexes: must use PyMongo tuple format
+            # [("field1", 1), ("field2", -1)]
+            fields: List[str]
+            if (
+                isinstance(key, list)
+                and len(key) > 0
+                and isinstance(key[0], tuple)
+            ):
+                fields = [k[0] for k in key]
+            elif (
+                isinstance(key, list)
+                and len(key) == 1
+                and isinstance(key[0], str)
+            ):
+                # Single-element list like ["field"] - treat as single-field index
+                fields = key  # type: ignore[assignment]
+            else:
+                raise ValueError(
+                    "Compound indexes must use PyMongo tuple format: "
+                    f'[("field1", 1), ("field2", -1)]. Got: {key}'
+                )
+
+            index_name = "_".join(fields).replace(".", "_")
 
             # Determine which function to use based on JSONB support
             func_prefix = _get_json_function_prefix(self._jsonb_supported)
 
             # Create the compound index using multiple JSON/JSONB extract calls
             index_columns = ", ".join(
-                f"{func_prefix}_extract(data, '{parse_json_path(k)}')"
-                for k in key
+                f"{func_prefix}_extract(data, '{parse_json_path(f)}')"
+                for f in fields
+            )
+            self.collection.db.execute(
+                (
+                    f"CREATE {'UNIQUE ' if unique else ''}INDEX "
+                    f"IF NOT EXISTS {quote_identifier(f'idx_{self.collection.name}_{index_name}')} "
+                    f"ON {quote_table_name(self.collection.name)}({index_columns})"
+                )
+            )
+
+            index_name = "_".join(fields).replace(".", "_")
+
+            # Determine which function to use based on JSONB support
+            func_prefix = _get_json_function_prefix(self._jsonb_supported)
+
+            # Create the compound index using multiple JSON/JSONB extract calls
+            index_columns = ", ".join(
+                f"{func_prefix}_extract(data, '{parse_json_path(f)}')"
+                for f in fields
+            )
+            self.collection.db.execute(
+                (
+                    f"CREATE {'UNIQUE ' if unique else ''}INDEX "
+                    f"IF NOT EXISTS {quote_identifier(f'idx_{self.collection.name}_{index_name}')} "
+                    f"ON {quote_table_name(self.collection.name)}({index_columns})"
+                )
+            )
+
+            index_name = "_".join(fields).replace(".", "_")
+
+            # Determine which function to use based on JSONB support
+            func_prefix = _get_json_function_prefix(self._jsonb_supported)
+
+            # Create the compound index using multiple JSON/JSONB extract calls
+            index_columns = ", ".join(
+                f"{func_prefix}_extract(data, '{parse_json_path(f)}')"
+                for f in fields
+            )
+            self.collection.db.execute(
+                (
+                    f"CREATE {'UNIQUE ' if unique else ''}INDEX "
+                    f"IF NOT EXISTS {quote_identifier(f'idx_{self.collection.name}_{index_name}')} "
+                    f"ON {quote_table_name(self.collection.name)}({index_columns})"
+                )
+            )
+            self.collection.db.execute(
+                (
+                    f"CREATE {'UNIQUE ' if unique else ''}INDEX "
+                    f"IF NOT EXISTS {quote_identifier(f'idx_{self.collection.name}_{index_name}')} "
+                    f"ON {quote_table_name(self.collection.name)}({index_columns})"
+                )
             )
             self.collection.db.execute(
                 (
@@ -277,92 +350,88 @@ class IndexManager:
 
     def create_indexes(
         self,
-        indexes: List[str | List[str] | List[Tuple[str, int]] | Dict[str, Any]],
+        indexes: List["IndexModel"],
     ) -> List[str]:
         """
         Create multiple indexes at once.
 
-        This method provides a convenient way to create several indexes in a single call.
-        It supports various formats for specifying indexes, including simple strings for
-        single-field indexes, lists for compound indexes, and dictionaries for indexes
-        with additional options.
+        This method accepts a list of IndexModel objects, matching the
+        PyMongo API.
 
         Args:
-            indexes: A list of index specifications in various formats:
-                    - str: Simple single-field index
-                    - List[str]: Compound index with multiple fields
-                    - List[Tuple[str, int]]: Compound index with field names and sort directions
-                    - Dict: Index with additional options like unique, sparse, fts
+            indexes: A list of IndexModel objects.
 
         Returns:
             List[str]: A list of the names of the indexes that were created.
         """
         created_indexes = []
-        for index_spec in indexes:
-            match index_spec:
-                # Handle dict format with options
-                case dict():
-                    key: str | List[str] | None = index_spec.get("key")
-                    unique: bool = bool(index_spec.get("unique", False))
-                    sparse: bool = bool(index_spec.get("sparse", False))
-                    fts: bool = bool(index_spec.get("fts", False))
-                    tokenizer: str | None = index_spec.get("tokenizer")
+        for index_model in indexes:
+            doc = index_model.document
+            key = doc.get("key")
+            if key is None:
+                continue
 
-                    if key is not None:
+            unique: bool = bool(doc.get("unique", False))
+            sparse: bool = bool(doc.get("sparse", False))
+            fts: bool = bool(doc.get("fts", False))
+            tokenizer: str | None = doc.get("tokenizer")
+
+            # Convert key dict to the format expected by create_index
+            match key:
+                case dict():
+                    if len(key) == 1:
+                        field = list(key.keys())[0]
                         self.create_index(
-                            key,
+                            field,
                             unique=unique,
                             sparse=sparse,
                             fts=fts,
                             tokenizer=tokenizer,
                         )
-                        if isinstance(key, str):
-                            index_name = key.replace(".", "_")
-                        else:
-                            index_name = "_".join(str(k) for k in key).replace(
-                                ".", "_"
-                            )
-                        created_indexes.append(
-                            f"idx_{quote_table_name(self.collection.name)}_{index_name}"
-                        )
-
-                # Handle string format
-                case str():
-                    # Simple string key
-                    self.create_index(index_spec)
-                    index_name = index_spec.replace(".", "_")
-                    created_indexes.append(
-                        f"idx_{quote_table_name(self.collection.name)}_{index_name}"
-                    )
-                case list():
-                    # List of keys for compound index
-                    # Handle both ['name', 'age'] and [('name', 1), ('age', -1)] formats
-                    if index_spec and isinstance(index_spec[0], tuple):  # type: ignore
-                        # Format [('name', 1), ('age', -1)] - extract just the field names
-                        key_list: List[str] = []
-                        # Type assertion: we know this is List[Tuple[str, int]] at this point
-                        tuple_list: List[Tuple[str, int]] = index_spec  # type: ignore
-                        for k, _ in tuple_list:
-                            key_list.append(k)
-                        self.create_index(key_list)
-                        # Join the key list with underscores
-                        str_keys: List[str] = []
-                        for k in key_list:
-                            str_keys.append(str(k))
-                        index_name = "_".join(str_keys).replace(".", "_")
+                        index_name = field.replace(".", "_")
                     else:
-                        # Format ['name', 'age']
-                        # Type check: we know this is List[str] at this point
-                        str_list: List[str] = index_spec  # type: ignore
-                        self.create_index(str_list)
-                        # Join the string list with underscores
-                        str_keys2: List[str] = []
-                        for k in str_list:
-                            str_keys2.append(str(k))
-                        index_name = "_".join(str_keys2).replace(".", "_")
-                    created_indexes.append(
-                        f"idx_{quote_table_name(self.collection.name)}_{index_name}"
+                        tuple_key = [(f, d) for f, d in key.items()]
+                        self.create_index(
+                            tuple_key,
+                            unique=unique,
+                            sparse=sparse,
+                            fts=fts,
+                            tokenizer=tokenizer,
+                        )
+                        index_name = "_".join(key.keys()).replace(".", "_")
+                case str():
+                    self.create_index(
+                        key,
+                        unique=unique,
+                        sparse=sparse,
+                        fts=fts,
+                        tokenizer=tokenizer,
                     )
+                    index_name = key.replace(".", "_")
+                case [str()]:
+                    self.create_index(
+                        key[0],
+                        unique=unique,
+                        sparse=sparse,
+                        fts=fts,
+                        tokenizer=tokenizer,
+                    )
+                    index_name = key[0].replace(".", "_")
+                case list() if isinstance(key[0], tuple):
+                    self.create_index(
+                        key,
+                        unique=unique,
+                        sparse=sparse,
+                        fts=fts,
+                        tokenizer=tokenizer,
+                    )
+                    index_name = "_".join(k[0] for k in key).replace(".", "_")
+                case _:
+                    raise ValueError(f"Invalid key specification: {key}")
+
+            created_indexes.append(
+                f"idx_{quote_table_name(self.collection.name)}_{index_name}"
+            )
 
         return created_indexes
 
