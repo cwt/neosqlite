@@ -77,40 +77,43 @@ conn.close()
         ) as tmp_file:
             db_path = tmp_file.name
 
-        # Load custom tokenizer when creating connection
-        conn = neosqlite.Connection(
-            db_path, tokenizers=[("icu", tokenizer_path)]
-        )
+        try:
+            # Load custom tokenizer when creating connection
+            conn = neosqlite.Connection(
+                db_path, tokenizers=[("icu", tokenizer_path)]
+            )
 
-        # Create a collection
-        articles = conn["articles"]
+            # Create a collection
+            articles = conn["articles"]
 
-        # Insert sample documents with multilingual text
-        articles.insert_many(
-            [
-                {
-                    "title": "English Article",
-                    "content": "This is an English text for searching.",
-                },
-                {
-                    "title": "Mixed Language",
-                    "content": "甜蜜蜜, you smile so sweetly - หวานปานน้ำผึ้ง, your smile is as sweet as honey",
-                },
-            ]
-        )
+            # Insert sample documents with multilingual text
+            articles.insert_many(
+                [
+                    {
+                        "title": "English Article",
+                        "content": "This is an English text for searching.",
+                    },
+                    {
+                        "title": "Mixed Language",
+                        "content": "甜蜜蜜, you smile so sweetly - หวานปานน้ำผึ้ง, your smile is as sweet as honey",
+                    },
+                ]
+            )
 
-        # Create FTS index with custom tokenizer
-        articles.create_index("content", fts=True, tokenizer="icu")
+            # Create FTS index with custom tokenizer
+            articles.create_index("content", fts=True, tokenizer="icu")
 
-        # Perform text search - this will now work better with mixed languages
-        results = list(articles.find({"$text": {"$search": "甜蜜蜜"}}))
-        print(f"Found {len(results)} documents containing '甜蜜蜜'")
+            # Perform text search - this will now work better with mixed languages
+            results = list(articles.find({"$text": {"$search": "甜蜜蜜"}}))
+            print(f"Found {len(results)} documents containing '甜蜜蜜'")
 
-        # Clean up
-        conn.close()
-        os.unlink(db_path)
+            # Clean up
+            conn.close()
 
-        print("✓ Custom tokenizer example completed successfully!")
+            print("Custom tokenizer example completed successfully!")
+        finally:
+            if os.path.exists(db_path):
+                os.unlink(db_path)
 
     except Exception as e:
         print(f"Error using custom tokenizer: {e}")
@@ -125,27 +128,25 @@ def example_without_tokenizer():
     print("------------------")
 
     # Create connection without custom tokenizer
-    conn = neosqlite.Connection(":memory:")
-    articles = conn["articles"]
+    with neosqlite.Connection(":memory:") as conn:
+        articles = conn["articles"]
 
-    # Insert sample document
-    articles.insert_one(
-        {
-            "title": "Multilingual Content",
-            "content": "Python programming 甜蜜蜜 甜甜甜",
-        }
-    )
+        # Insert sample document
+        articles.insert_one(
+            {
+                "title": "Multilingual Content",
+                "content": "Python programming 甜蜜蜜 甜甜甜",
+            }
+        )
 
-    # Create FTS index with default tokenizer
-    articles.create_index("content", fts=True)
+        # Create FTS index with default tokenizer
+        articles.create_index("content", fts=True)
 
-    print("Created FTS index with default tokenizer")
+        print("Created FTS index with default tokenizer")
 
-    # Show index information
-    indexes = articles.list_indexes()
-    print(f"Available indexes: {indexes}")
-
-    conn.close()
+        # Show index information
+        indexes = articles.list_indexes()
+        print(f"Available indexes: {indexes}")
 
 
 if __name__ == "__main__":

@@ -52,11 +52,14 @@ def main():
         try:
             iterations = int(args.benchmark)
         except ValueError:
-            print(f"Error: Invalid iteration count: {args.benchmark}")
+            print(
+                f"Error: Invalid iteration count: {args.benchmark}",
+                file=sys.stderr,
+            )
             sys.exit(1)
 
         if iterations < 1:
-            print("Error: Iteration count must be at least 1")
+            print("Error: Iteration count must be at least 1", file=sys.stderr)
             sys.exit(1)
 
         run_benchmark(iterations=iterations, silent=args.silent)

@@ -50,9 +50,12 @@ def main():
         print("\nPerformance comparison:")
         print(f"$contains: {contains_time:.4f} seconds")
         print(f"$regex: {regex_time:.4f} seconds")
-        print(
-            f"$contains is {regex_time/contains_time:.2f}x faster than $regex"
-        )
+        if contains_time > 0:
+            print(
+                f"$contains is {regex_time / contains_time:.2f}x faster than $regex"
+            )
+        else:
+            print("$contains completed in negligible time")
 
         # Test with simpler regex pattern
         print("\nTesting $regex operator with simpler pattern...")
@@ -68,9 +71,12 @@ def main():
         print("\nWith simpler regex pattern:")
         print(f"$contains: {contains_time:.4f} seconds")
         print(f"$regex (simple): {simple_regex_time:.4f} seconds")
-        print(
-            f"$contains is {simple_regex_time/contains_time:.2f}x faster than simple $regex"
-        )
+        if contains_time > 0:
+            print(
+                f"$contains is {simple_regex_time / contains_time:.2f}x faster than simple $regex"
+            )
+        else:
+            print("$contains completed in negligible time")
 
 
 if __name__ == "__main__":

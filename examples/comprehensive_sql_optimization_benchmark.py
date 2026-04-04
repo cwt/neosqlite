@@ -52,7 +52,7 @@ def benchmark_feature(
     query_helper.set_force_fallback(False)
 
     # Verify results are identical (for simple counts)
-    result_count_match = len(result_optimized) == len(result_fallback)
+    result_count_match = result_optimized == result_fallback
 
     speedup = (
         avg_fallback / avg_optimized if avg_optimized > 0 else float("inf")
@@ -318,16 +318,12 @@ def main():
         print(f"  Optimized: {optimized_time:.4f}s")
         print(f"  Fallback:  {fallback_time:.4f}s")
         print(f"  Speedup:   {speedup:.1f}x faster")
-        print(
-            f"  Results match: {len(result_lookup_opt) == len(result_lookup_fallback)}"
-        )
+        print(f"  Results match: {result_lookup_opt == result_lookup_fallback}")
         results["$lookup (simple)"] = {
             "optimized_time": optimized_time,
             "fallback_time": fallback_time,
             "speedup": speedup,
-            "results_match": (
-                len(result_lookup_opt) == len(result_lookup_fallback)
-            ),
+            "results_match": (result_lookup_opt == result_lookup_fallback),
         }
 
         # 14. Advanced $unwind with includeArrayIndex (fallback only)
@@ -413,16 +409,14 @@ def main():
         print(f"  Fallback:  {reorder_fallback_time:.4f}s")
         print(f"  Speedup:   {reorder_speedup:.1f}x faster")
         print(
-            f"  Results match: {len(result_reorder_opt) == len(result_reorder_fallback)}"
+            f"  Results match: {result_reorder_opt == result_reorder_fallback}"
         )
 
         results["Pipeline Reordering"] = {
             "optimized_time": reorder_optimized_time,
             "fallback_time": reorder_fallback_time,
             "speedup": reorder_speedup,
-            "results_match": (
-                len(result_reorder_opt) == len(result_reorder_fallback)
-            ),
+            "results_match": (result_reorder_opt == result_reorder_fallback),
         }
 
         # 17. Memory-constrained processing with quez

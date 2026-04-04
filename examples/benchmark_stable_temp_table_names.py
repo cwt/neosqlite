@@ -2,81 +2,116 @@
 """
 Benchmark script to verify performance benefits of stable, predictable,
 and repeatable temporary table naming system with query parameters.
+
+This benchmark measures the end-to-end performance including SQLite
+query plan caching, which is the real benefit of deterministic naming.
 """
 
 import hashlib
+import sqlite3
 import statistics
 import time
-from typing import Any, Dict, List
+import uuid
+from typing import Any, Dict
 
 
 class DeterministicTempTableManager:
     """Manager for deterministic temporary table names."""
 
-    def __init__(self):
-        self.pipeline_counter = 0
+    def __init__(self, pipeline_id: str):
+        self.pipeline_id = pipeline_id
 
-    def make_pipeline_id(self) -> str:
-        """Generate a unique pipeline ID."""
-        self.pipeline_counter += 1
-        return f"agg_{self.pipeline_counter:06d}"
-
-    def make_temp_table_name(
-        self, pipeline_id: str, stage: Dict[str, Any]
-    ) -> str:
+    def make_temp_table_name(self, stage: Dict[str, Any]) -> str:
         """Generate a deterministic temp table name."""
         stage_key = str(sorted(stage.items()))
         suffix = hashlib.sha256(stage_key.encode()).hexdigest()[:6]
         stage_type = next(iter(stage.keys())).lstrip("$")
-        return f"temp_{pipeline_id}_{stage_type}_{suffix}"
+        return f"temp_{self.pipeline_id}_{stage_type}_{suffix}"
 
 
-def benchmark_temp_table_naming(num_runs: int = 10000) -> Dict[str, float]:
-    """Benchmark the performance of deterministic temp table naming."""
-    print(f"=== Benchmarking Temp Table Naming ({num_runs:,} runs) ===\n")
+def benchmark_query_plan_caching(num_runs: int = 5000) -> Dict[str, float]:
+    """Benchmark SQLite query plan caching with deterministic vs random names."""
+    print(f"=== Benchmarking Query Plan Caching ({num_runs:,} runs) ===\n")
 
-    # Test data
-    pipeline: List[Dict[str, Any]] = [
-        {"$match": {"status": "active", "age": {"$gte": 25}}},
-        {"$unwind": "$tags"},
-        {"$sort": {"tags": 1}},
-        {"$limit": 10},
+    # Test data - same query template reused
+    query_template = (
+        "SELECT id, name, category FROM test_data WHERE category = ? "
+        "AND value > ? ORDER BY value DESC LIMIT ?"
+    )
+    params = ("Category 5", 250.0, 10)
+
+    # Setup: Create a base table with data
+    conn = sqlite3.connect(":memory:")
+    conn.execute("""
+        CREATE TABLE test_data (
+            id INTEGER PRIMARY KEY,
+            name TEXT,
+            category TEXT,
+            value REAL
+        )
+    """)
+    data = [
+        (i, f"Item {i}", f"Category {i % 10}", float(i * 10))
+        for i in range(1000)
     ]
+    conn.executemany("INSERT INTO test_data VALUES (?, ?, ?, ?)", data)
+    conn.commit()
 
-    # Create manager
-    manager = DeterministicTempTableManager()
-
-    # Benchmark deterministic naming
+    # Benchmark with deterministic names (same SQL template reused)
+    print("Testing with deterministic naming (query plan cache friendly)...")
     deterministic_times = []
     for _ in range(num_runs):
+        pipeline_id = "agg_001"  # Same pipeline ID for all runs
+        manager = DeterministicTempTableManager(pipeline_id)
+        table_name = manager.make_temp_table_name(
+            {"$match": {"status": "active"}}
+        )
+
         start_time = time.perf_counter()
-        pipeline_id = manager.make_pipeline_id()
-        names = []
-        for stage in pipeline:
-            name = manager.make_temp_table_name(pipeline_id, stage)
-            names.append(name)
+
+        # Create temp table with deterministic name
+        conn.execute(f"DROP TABLE IF EXISTS {table_name}")
+        conn.execute(
+            f"CREATE TEMP TABLE {table_name} AS {query_template}", params
+        )
+        conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()
+        conn.execute(f"DROP TABLE IF EXISTS {table_name}")
+
         end_time = time.perf_counter()
         deterministic_times.append(end_time - start_time)
 
-    # Benchmark random naming (for comparison)
+    # Benchmark with random names (query plan cache unfriendly)
+    print("Testing with random naming (query plan cache unfriendly)...")
     random_times = []
     for _ in range(num_runs):
-        start_time = time.perf_counter()
-        import uuid
+        table_name = f"temp_{uuid.uuid4().hex[:12]}"
 
-        pipeline_id = f"agg_{uuid.uuid4().hex[:6]}"
-        names = []
-        for stage in pipeline:
-            name = f"temp_{pipeline_id}_{uuid.uuid4().hex[:6]}"
-            names.append(name)
+        start_time = time.perf_counter()
+
+        # Create temp table with random name
+        conn.execute(f"DROP TABLE IF EXISTS {table_name}")
+        conn.execute(
+            f"CREATE TEMP TABLE {table_name} AS {query_template}", params
+        )
+        conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()
+        conn.execute(f"DROP TABLE IF EXISTS {table_name}")
+
         end_time = time.perf_counter()
         random_times.append(end_time - start_time)
 
+    conn.close()
+
     # Calculate statistics
     deterministic_avg = statistics.mean(deterministic_times)
-    deterministic_stdev = statistics.stdev(deterministic_times)
+    deterministic_stdev = (
+        statistics.stdev(deterministic_times)
+        if len(deterministic_times) > 1
+        else 0.0
+    )
     random_avg = statistics.mean(random_times)
-    random_stdev = statistics.stdev(random_times)
+    random_stdev = (
+        statistics.stdev(random_times) if len(random_times) > 1 else 0.0
+    )
 
     # Calculate speedup
     speedup = (
@@ -85,15 +120,15 @@ def benchmark_temp_table_naming(num_runs: int = 10000) -> Dict[str, float]:
         else float("inf")
     )
 
-    print("  Deterministic naming:")
-    print(f"    Average time: {deterministic_avg*1000000:.2f} μs")
-    print(f"    Std dev:      {deterministic_stdev*1000000:.2f} μs")
+    print("\n  Deterministic naming:")
+    print(f"    Average time: {deterministic_avg * 1000000:.2f} us")
+    print(f"    Std dev:      {deterministic_stdev * 1000000:.2f} us")
 
     print("  Random naming:")
-    print(f"    Average time: {random_avg*1000000:.2f} μs")
-    print(f"    Std dev:      {random_stdev*1000000:.2f} μs")
+    print(f"    Average time: {random_avg * 1000000:.2f} us")
+    print(f"    Std dev:      {random_stdev * 1000000:.2f} us")
 
-    print(f"  Speedup: {speedup:.2f}x faster")
+    print(f"\n  Speedup: {speedup:.2f}x faster")
 
     return {
         "deterministic_avg": deterministic_avg,
@@ -110,20 +145,23 @@ def main():
     print("=" * 50)
     print()
 
-    # Run naming performance benchmark with 100,000 runs
-    naming_results = benchmark_temp_table_naming(100000)
+    # Run query plan caching benchmark
+    results = benchmark_query_plan_caching(5000)
     print()
 
     # Summary
     print("=== Benchmark Summary ===")
-    print(f"  Name generation speedup: {naming_results['speedup']:.2f}x")
+    print(f"  Query plan caching speedup: {results['speedup']:.2f}x")
     print()
     print("Benefits of deterministic temp table naming:")
-    print("  ✓ Faster name generation")
-    print("  ✓ Better query plan caching")
-    print("  ✓ Predictable execution paths")
-    print("  ✓ Easier debugging and tracing")
-    print("  ✓ Reduced memory overhead")
+    print("  - Better SQLite query plan caching")
+    print("  - Predictable execution paths")
+    print("  - Easier debugging and tracing")
+    print("  - Reduced query compilation overhead")
+    print()
+    print("Note: Name generation (SHA-256 vs UUID) is not the bottleneck.")
+    print("The real benefit is SQLite reusing compiled query plans when")
+    print("the same SQL statements are executed repeatedly.")
 
 
 if __name__ == "__main__":

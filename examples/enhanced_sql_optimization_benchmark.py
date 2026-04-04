@@ -54,7 +54,7 @@ def benchmark_feature(
     query_helper.set_force_fallback(False)
 
     # Verify results are identical (for simple counts)
-    result_count_match = len(result_optimized) == len(result_fallback)
+    result_count_match = result_optimized == result_fallback
 
     speedup = (
         avg_fallback / avg_optimized if avg_optimized > 0 else float("inf")
@@ -487,16 +487,12 @@ def main():
         print(f"  Optimized: {optimized_time:.4f}s")
         print(f"  Fallback:  {fallback_time:.4f}s")
         print(f"  Speedup:   {speedup:.1f}x faster")
-        print(
-            f"  Results match: {len(result_lookup_opt) == len(result_lookup_fallback)}"
-        )
+        print(f"  Results match: {result_lookup_opt == result_lookup_fallback}")
         results["$lookup (simple)"] = {
             "optimized_time": optimized_time,
             "fallback_time": fallback_time,
             "speedup": speedup,
-            "results_match": (
-                len(result_lookup_opt) == len(result_lookup_fallback)
-            ),
+            "results_match": (result_lookup_opt == result_lookup_fallback),
         }
 
         # 14. Advanced $unwind with includeArrayIndex (fallback only)
@@ -582,16 +578,14 @@ def main():
         print(f"  Fallback:  {reorder_fallback_time:.4f}s")
         print(f"  Speedup:   {reorder_speedup:.1f}x faster")
         print(
-            f"  Results match: {len(result_reorder_opt) == len(result_reorder_fallback)}"
+            f"  Results match: {result_reorder_opt == result_reorder_fallback}"
         )
 
         results["Pipeline Reordering"] = {
             "optimized_time": reorder_optimized_time,
             "fallback_time": reorder_fallback_time,
             "speedup": reorder_speedup,
-            "results_match": (
-                len(result_reorder_opt) == len(result_reorder_fallback)
-            ),
+            "results_match": (result_reorder_opt == result_reorder_fallback),
         }
 
         # 17. Memory-constrained processing with quez
@@ -794,18 +788,14 @@ def main():
         print(f"  Optimized: {range_optimized_time:.4f}s")
         print(f"  Fallback:  {range_fallback_time:.4f}s")
         print(f"  Speedup:   {range_speedup:.1f}x faster")
-        print(
-            f"  Results match: {len(result_range_opt) == len(result_range_fallback)}"
-        )
+        print(f"  Results match: {result_range_opt == result_range_fallback}")
         print(f"  Result count: {len(result_range_opt):,}")
 
         results["Range Query (Multiple Operators)"] = {
             "optimized_time": range_optimized_time,
             "fallback_time": range_fallback_time,
             "speedup": range_speedup,
-            "results_match": (
-                len(result_range_opt) == len(result_range_fallback)
-            ),
+            "results_match": (result_range_opt == result_range_fallback),
         }
 
         # 23. Complex unwind + group operations (bug fix validation)
@@ -858,7 +848,7 @@ def main():
         print(f"  Fallback:  {complex_fallback_time:.4f}s")
         print(f"  Speedup:   {complex_speedup:.1f}x faster")
         print(
-            f"  Results match: {len(result_complex_opt) == len(result_complex_fallback)}"
+            f"  Results match: {result_complex_opt == result_complex_fallback}"
         )
         print(f"  Result count: {len(result_complex_opt):,}")
 
@@ -866,9 +856,7 @@ def main():
             "optimized_time": complex_optimized_time,
             "fallback_time": complex_fallback_time,
             "speedup": complex_speedup,
-            "results_match": (
-                len(result_complex_opt) == len(result_complex_fallback)
-            ),
+            "results_match": (result_complex_opt == result_complex_fallback),
         }
 
         # 24. Nested array operations performance
@@ -916,18 +904,14 @@ def main():
         print(f"  Optimized: {nested_optimized_time:.4f}s")
         print(f"  Fallback:  {nested_fallback_time:.4f}s")
         print(f"  Speedup:   {nested_speedup:.1f}x faster")
-        print(
-            f"  Results match: {len(result_nested_opt) == len(result_nested_fallback)}"
-        )
+        print(f"  Results match: {result_nested_opt == result_nested_fallback}")
         print(f"  Result count: {len(result_nested_opt):,}")
 
         results["Nested Array Operations"] = {
             "optimized_time": nested_optimized_time,
             "fallback_time": nested_fallback_time,
             "speedup": nested_speedup,
-            "results_match": (
-                len(result_nested_opt) == len(result_nested_fallback)
-            ),
+            "results_match": (result_nested_opt == result_nested_fallback),
         }
 
         # Summary

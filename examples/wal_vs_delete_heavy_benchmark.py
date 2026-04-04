@@ -49,8 +49,9 @@ def heavy_benchmark(mode, num_writers=1, num_readers=5, write_ops=200):
                     res = reader_db["test"].find_one()
                     if res:
                         read_counts[idx] += 1
-                except Exception:
+                except Exception as e:
                     read_errors[idx] += 1
+                    print(f"Reader {idx} error: {e}")
                 # Small sleep to prevent tight loop if needed, but we want to see concurrency
                 # time.sleep(0.001)
 

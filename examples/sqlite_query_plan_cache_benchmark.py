@@ -107,9 +107,15 @@ def benchmark_query_plan_cache(num_runs: int = 10000) -> dict:
 
     # Calculate statistics
     deterministic_avg = statistics.mean(deterministic_times)
-    deterministic_stdev = statistics.stdev(deterministic_times)
+    deterministic_stdev = (
+        statistics.stdev(deterministic_times)
+        if len(deterministic_times) > 1
+        else 0.0
+    )
     random_avg = statistics.mean(random_times)
-    random_stdev = statistics.stdev(random_times)
+    random_stdev = (
+        statistics.stdev(random_times) if len(random_times) > 1 else 0.0
+    )
 
     # Calculate speedup
     speedup = (
@@ -119,12 +125,12 @@ def benchmark_query_plan_cache(num_runs: int = 10000) -> dict:
     )
 
     print("  Deterministic naming:")
-    print(f"    Average time: {deterministic_avg*1000000:.2f} μs")
-    print(f"    Std dev:      {deterministic_stdev*1000000:.2f} μs")
+    print(f"    Average time: {deterministic_avg * 1000000:.2f} μs")
+    print(f"    Std dev:      {deterministic_stdev * 1000000:.2f} μs")
 
     print("  Random naming:")
-    print(f"    Average time: {random_avg*1000000:.2f} μs")
-    print(f"    Std dev:      {random_stdev*1000000:.2f} μs")
+    print(f"    Average time: {random_avg * 1000000:.2f} μs")
+    print(f"    Std dev:      {random_stdev * 1000000:.2f} μs")
 
     print(f"  Speedup: {speedup:.2f}x faster")
 
