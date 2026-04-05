@@ -148,6 +148,192 @@ class QueryBuilderMixin:
             return " AND ".join(clauses), params
         return "", params
 
+    def _categorize_ids(
+        self, ids: list[Any]
+    ) -> tuple[list[int], list[str]] | None:
+        """
+        Categorize a list of ID values into integer IDs and string IDs.
+
+        Args:
+            ids: List of ID values (ints, ObjectIds, or strings)
+
+        Returns:
+            Tuple of (int_ids, string_ids) or None if unsupported types found
+        """
+        from ...objectid import ObjectId
+
+        int_ids: list[int] = []
+        string_ids: list[str] = []
+
+        for item in ids:
+            if isinstance(item, int):
+                int_ids.append(item)
+            elif isinstance(item, ObjectId):
+                string_ids.append(str(item))
+            elif isinstance(item, str):
+                # Check if it's a valid ObjectId string
+                try:
+                    obj_id = ObjectId(item)
+                    string_ids.append(str(obj_id))
+                except ValueError:
+                    # Try as integer
+                    try:
+                        int_id = int(item)
+                        int_ids.append(int_id)
+                    except ValueError:
+                        string_ids.append(item)
+            else:
+                return None  # Unsupported type
+
+        return int_ids, string_ids
+
+    def _build_id_operator_clause(
+        self, value: dict
+    ) -> tuple[str, list[Any]] | None:
+        """
+        Build a WHERE clause for _id field with operators like $in, $nin, $ne, etc.
+
+        Args:
+            value: Dictionary containing operators like $in, $nin, $ne, etc.
+
+        Returns:
+            Tuple of (SQL clause, parameters) or None for Python fallback
+        """
+        table = quote_table_name(self.collection.name)
+        clauses: list[str] = []
+        params: list[Any] = []
+
+        for op, op_val in value.items():
+            if op == "$in":
+                if not isinstance(op_val, list) or len(op_val) == 0:
+                    return None
+
+                result = self._categorize_ids(op_val)
+                if result is None:
+                    return None
+                int_ids, string_ids = result
+
+                # Build IN clauses for both id and _id columns
+                if int_ids and string_ids:
+                    int_ph = ", ".join("?" for _ in int_ids)
+                    str_ph = ", ".join("?" for _ in string_ids)
+                    clauses.append(
+                        f"({table}.id IN ({int_ph}) OR {table}._id IN ({str_ph}))"
+                    )
+                    params.extend(int_ids)
+                    params.extend(string_ids)
+                elif int_ids:
+                    ph = ", ".join("?" for _ in int_ids)
+                    clauses.append(f"{table}.id IN ({ph})")
+                    params.extend(int_ids)
+                elif string_ids:
+                    ph = ", ".join("?" for _ in string_ids)
+                    clauses.append(f"{table}._id IN ({ph})")
+                    params.extend(string_ids)
+
+            elif op == "$nin":
+                if not isinstance(op_val, list) or len(op_val) == 0:
+                    return None
+
+                result = self._categorize_ids(op_val)
+                if result is None:
+                    return None
+                int_ids, string_ids = result
+
+                # Build NOT IN clauses - must exclude from BOTH columns
+                if int_ids and string_ids:
+                    int_ph = ", ".join("?" for _ in int_ids)
+                    str_ph = ", ".join("?" for _ in string_ids)
+                    clauses.append(
+                        f"({table}.id NOT IN ({int_ph}) AND {table}._id NOT IN ({str_ph}))"
+                    )
+                    params.extend(int_ids)
+                    params.extend(string_ids)
+                elif int_ids:
+                    ph = ", ".join("?" for _ in int_ids)
+                    clauses.append(f"{table}.id NOT IN ({ph})")
+                    params.extend(int_ids)
+                elif string_ids:
+                    ph = ", ".join("?" for _ in string_ids)
+                    clauses.append(f"{table}._id NOT IN ({ph})")
+                    params.extend(string_ids)
+
+            elif op == "$ne":
+                # For $ne, we must exclude the value from BOTH columns
+                # to be strictly correct with the dual-column approach.
+                # An int value could match id (as int) or _id (as string).
+                int_id, str_id = self._categorize_id_value(op_val)
+                if int_id is not None:
+                    clauses.append(f"{table}.id != ?")
+                    params.append(int_id)
+                    # Also exclude the string representation in _id column
+                    clauses.append(f"{table}._id != ?")
+                    params.append(str(int_id))
+                if str_id is not None:
+                    clauses.append(f"{table}._id != ?")
+                    params.append(str_id)
+                    # Try to also exclude as int in id column
+                    try:
+                        int_val = int(str_id)
+                        clauses.append(f"{table}.id != ?")
+                        params.append(int_val)
+                    except ValueError:
+                        pass  # Not convertible to int, skip
+                if int_id is None and str_id is None:
+                    return None  # Unsupported type
+
+            elif op in ("$gt", "$gte", "$lt", "$lte"):
+                # Support range queries on _id
+                # - int values target the id column
+                # - ObjectId/string values target the _id column (lexicographic comparison)
+
+                int_id, str_id = self._categorize_id_value(op_val)
+                op_map = {"$gt": ">", "$gte": ">=", "$lt": "<", "$lte": "<="}
+                sql_op = op_map[op]
+
+                if int_id is not None:
+                    clauses.append(f"{table}.id {sql_op} ?")
+                    params.append(int_id)
+                elif str_id is not None:
+                    clauses.append(f"{table}._id {sql_op} ?")
+                    params.append(str_id)
+                else:
+                    return None  # Unsupported type for range queries
+            else:
+                return None  # Fall back to Python for unsupported operators
+
+        if clauses:
+            return " AND ".join(clauses), params
+        return None  # Fall back to Python if no clauses generated
+
+    def _categorize_id_value(self, value: Any) -> tuple[int | None, str | None]:
+        """
+        Categorize a single ID value into either an int ID or a string ID.
+
+        Returns:
+            Tuple of (int_value, string_value) where only one is non-None.
+        """
+        from ...objectid import ObjectId
+
+        if isinstance(value, int):
+            return value, None
+        elif isinstance(value, ObjectId):
+            return None, str(value)
+        elif isinstance(value, str):
+            # Try as ObjectId first
+            try:
+                obj_id = ObjectId(value)
+                return None, str(obj_id)
+            except ValueError:
+                # Try as integer
+                try:
+                    int_id = int(value)
+                    return int_id, None
+                except ValueError:
+                    # Treat as plain string _id
+                    return None, value
+        return None, None
+
     def _build_field_clause(
         self, field: str, value: Any
     ) -> tuple[str, List[Any]] | None:
@@ -168,7 +354,10 @@ class QueryBuilderMixin:
 
         if field == "_id":
             # Handle _id field specially
-            if isinstance(value, ObjectId):
+            if isinstance(value, dict):
+                # Handle operator-based queries on _id
+                return self._build_id_operator_clause(value)
+            elif isinstance(value, ObjectId):
                 return f"{quote_table_name(self.collection.name)}._id = ?", [
                     str(value)
                 ]
@@ -299,8 +488,16 @@ class QueryBuilderMixin:
                 # For backward compatibility, we need to check both the _id column and the auto-increment id column
                 from ...objectid import ObjectId
 
+                # Handle operator-based queries on _id using the dedicated method
+                if isinstance(value, dict):
+                    result = self._build_id_operator_clause(value)
+                    if result is None:
+                        return None
+                    clause, field_params = result
+                    clauses.append(clause)
+                    params.extend(field_params)
                 # Convert the value to the appropriate format for storage
-                if isinstance(value, ObjectId):
+                elif isinstance(value, ObjectId):
                     param_value = str(value)
                     # Query the _id column
                     clauses.append(

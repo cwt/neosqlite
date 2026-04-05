@@ -416,9 +416,6 @@ def test_fill_operator(collection):
         assert d["val"] == -1
 
 
-@pytest.mark.xfail(
-    reason="There is a bug with _id queries causing ProgrammingError."
-)
 def test_query_with_id(collection):
     """Test queries specifically targeting the _id field."""
     collection.insert_many(
