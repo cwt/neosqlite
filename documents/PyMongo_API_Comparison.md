@@ -650,15 +650,16 @@ These operators now provide clear error messages suggesting alternatives, matchi
 1. `watch()` (change streams) - **Fully implemented** via SQLite triggers; MongoDB requires replica set
 2. `watch()` (collection methods) - Same as above
 3. `$log2` - **NeoSQLite extension** using SQLite's native `log2()` (raises `UserWarning`)
-4. `where()` - **NeoSQLite implementation** using Python function filter; MongoDB uses JavaScript `$where`
-5. `options` - MongoDB returns `{}` (backend-specific)
-6. `db_path` (collection) - NeoSQLite specific extension
-7. `db_path` (database) - NeoSQLite specific extension
-8. `initialize_ordered_bulk_op` - Deprecated in PyMongo 4.x
-9. `initialize_unordered_bulk_op` - Deprecated in PyMongo 4.x
-10. `transaction_commit` - MongoDB requires replica set for transactions
-11. `transaction_abort` - MongoDB requires replica set for transactions
-12. `with_transaction` - MongoDB requires replica set for transactions
+4. `$text` after `$unwind` - **NeoSQLite extension** using `json_tree` and temporary FTS5 indexes (raises `UserWarning`); MongoDB only supports `$text` as the first stage.
+5. `where()` - **NeoSQLite implementation** using Python function filter; MongoDB uses JavaScript `$where`
+6. `options` - MongoDB returns `{}` (backend-specific)
+7. `db_path` (collection) - NeoSQLite specific extension
+8. `db_path` (database) - NeoSQLite specific extension
+9. `initialize_ordered_bulk_op` - Deprecated in PyMongo 4.x
+10. `initialize_unordered_bulk_op` - Deprecated in PyMongo 4.x
+11. `transaction_commit` - MongoDB requires replica set for transactions
+12. `transaction_abort` - MongoDB requires replica set for transactions
+13. `with_transaction` - MongoDB requires replica set for transactions
 
 ### 3.2 API Coverage by Category
 

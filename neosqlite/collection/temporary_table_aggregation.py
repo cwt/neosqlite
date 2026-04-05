@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import uuid
+import warnings
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, List, Tuple
 
@@ -277,6 +278,10 @@ class TemporaryTableAggregationProcessor:
         )
         # Track if pipeline has $sort stage (for $first/$last limitation)
         self._has_sort_stage = False
+        # Track if we've warned about $text on temp tables (FTS after $unwind)
+        self._text_on_temp_table_warned = False
+        # Track if $unwind has been processed in the current pipeline
+        self._has_unwind_in_pipeline = False
 
     def process_pipeline(
         self,
@@ -319,6 +324,8 @@ class TemporaryTableAggregationProcessor:
         """
         # Reset sort stage tracking for this pipeline
         self._has_sort_stage = False
+        self._has_unwind_in_pipeline = False
+        self._text_on_temp_table_warned = False
 
         # Check if pipeline ends with $count for optimization
         if (
@@ -370,6 +377,7 @@ class TemporaryTableAggregationProcessor:
                         current_table = self._process_unwind_stages(
                             create_temp, current_table, unwind_stages
                         )
+                        self._has_unwind_in_pipeline = True
                         i = j  # Skip processed stages
 
                     case "$lookup":
@@ -2324,6 +2332,12 @@ class TemporaryTableAggregationProcessor:
         detected from the existing FTS index on the collection to ensure consistent
         behavior.
 
+        Note:
+            When $text is used after $unwind (or other stages that create temp tables),
+            the search operates on the unwound elements in the temp table, not on the
+            original collection documents. This differs from MongoDB's semantics where
+            $text always uses the collection-level text index on original documents.
+
         Args:
             create_temp (Callable): Function to create temporary tables
             current_table (str): Name of the current temporary table containing input data
@@ -2337,6 +2351,19 @@ class TemporaryTableAggregationProcessor:
             ValueError: If the $text operator specification is invalid or the search
                         term is not a string
         """
+        # Warn about NeoSQLite extension (different semantics from MongoDB)
+        # Only warn if $text is used AFTER $unwind (i.e., on a temp table with unwound data)
+        if self._has_unwind_in_pipeline and not self._text_on_temp_table_warned:
+            warnings.warn(
+                "$text search after $unwind is a NeoSQLite extension using FTS5 on "
+                "temporary tables, which searches unwound elements directly. "
+                "This differs from MongoDB where $text can only be the first stage. "
+                "For MongoDB compatibility, place the $text stage at the beginning of the pipeline.",
+                UserWarning,
+                stacklevel=4,
+            )
+            self._text_on_temp_table_warned = True
+
         # Extract and validate search term
         if "$text" not in match_spec or "$search" not in match_spec["$text"]:
             raise ValueError("Invalid $text operator specification")

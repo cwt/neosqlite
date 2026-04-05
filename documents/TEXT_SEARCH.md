@@ -73,9 +73,9 @@ results = list(collection.find({
 }))
 ```
 
-## Integration with $unwind (json_each)
+## Integration with Aggregation Pipelines ($unwind and Temp Tables)
 
-For text searching within arrays, NeoSQLite provides a powerful optimization that combines `$unwind` and `$text` search at the SQL level.
+NeoSQLite provides a unique extension allowing the `$text` operator to be used *anywhere* in an aggregation pipeline, even after stages like `$unwind` that create temporary tables.
 
 ```python
 pipeline = [
@@ -84,7 +84,19 @@ pipeline = [
 ]
 ```
 
-This pipeline is converted into a single, efficient SQL query using `json_each()`, which can be 10-100x faster than processing in Python.
+### How it works (v1.14.0+)
+
+1. **Recursive Extraction**: NeoSQLite uses `json_tree` (or `jsonb_tree`) to recursively extract ALL string values from the JSON data in the current stage's temporary table.
+2. **On-the-fly FTS Indexing**: It creates a temporary FTS5 virtual table and populates it with the extracted text content.
+3. **SQL-Tier Search**: The search is performed directly in SQLite using `MATCH`, making it significantly faster than Python processing.
+
+### Semantic Differences from MongoDB
+
+- **Extension**: In standard MongoDB, `$text` can **only** be used as the first stage of a pipeline. NeoSQLite's ability to use it later is an extension.
+- **Search Target**: In MongoDB, `$text` always uses the collection-level text index. In NeoSQLite, when used after an `$unwind`, it searches the *unwound* elements (the objects inside the array).
+- **Warning**: NeoSQLite will issue a `UserWarning` when `$text` is used after `$unwind` to alert users to these semantic differences.
+
+For standard MongoDB behavior, place the `$text` stage at the very beginning of your pipeline.
 
 ## PyMongo Compatibility
 

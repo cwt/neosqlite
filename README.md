@@ -33,20 +33,21 @@
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
-## Latest Release: v1.13.11
+## Latest Release: v1.14.0
 
-NeoSQLite v1.13.11 is a **bug fix and code quality release** that resolves critical JSONB function mismatches affecting sort and min/max clause builders, fixes multiple SQL generation errors in temporary table aggregation pipelines, adds comprehensive debug logging for observability, and modernizes code with Python 3.10 pattern matching.
+NeoSQLite v1.14.0 is a **major performance and API alignment release** that introduces native SQL-tier support for the `$project` aggregation stage and complex `_id` field operators. It also brings a breaking change to the compound index API to strictly align with PyMongo's `(field, direction)` tuple format.
 
-**Important:** The bugs fixed in this release **did not affect result correctness**. When SQL generation failed, NeoSQLite automatically fell back to the Python implementation, ensuring results were always correct. These fixes improve **performance** by keeping more operations in the fast SQL tier.
+**Important:** By migrating `$project` and `_id` filtering directly into the SQL layer, this release significantly reduces data transfer overhead and improves performance for large datasets.
 
-### Key Fixes
+### Key Features & Fixes
 
-- **JSONB Function Mismatch**: Fixed 3 places using wrong JSON functions regardless of JSONB support (improves SQL tier hit rate)
-- **Aggregation Pipeline SQL Errors**: Resolved multiple SQL generation issues in `$setWindowFields`, `$graphLookup`, `$bucket`, `$bucketAuto`, and window functions (all previously fell back to Python correctly)
-- **Observability**: Added comprehensive debug logging across 11+ modules for improved troubleshooting
-- **Code Quality**: Python 3.10 pattern matching modernization and elimination of 21 duplicated code blocks
+- **SQL-Tier `$project`**: Native database-level projection support (inclusion, exclusion, aliasing).
+- **Advanced `_id` SQL Filtering**: Native SQL support for `$in`, `$nin`, `$ne`, and range queries on `_id`.
+- **FTS Extension**: Native SQL `$text` search on unwound data (after `$unwind`) via recursive `json_tree` extraction.
+- **API Alignment**: `create_index` now strictly requires the PyMongo tuple format for compound indexes.
+- **Parity Verified**: 100% bit-for-bit result parity between SQL and Python tiers.
 
-For full details, see [documents/releases/v1.13.11.md](documents/releases/v1.13.11.md).
+For full details, see [documents/releases/v1.14.0.md](documents/releases/v1.14.0.md).
 
 ## Installation
 
@@ -126,9 +127,9 @@ collection.insert_one({"name": "test"})  # Works!
 
 | Metric | Result |
 |--------|--------|
-| **Total Tests** | 377 |
-| **Passed** | 360 |
-| **Skipped** | 17 (architectural differences) |
+| **Total Tests** | 386 |
+| **Passed** | 368 |
+| **Skipped** | 18 (architectural differences) |
 | **Failed** | 0 |
 | **Compatibility** | **100%** |
 
