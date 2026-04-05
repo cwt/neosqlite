@@ -21,6 +21,7 @@ from .jsonb_support import (
     _get_json_each_function,
     _get_json_function_prefix,
     _get_json_group_array_function,
+    _get_json_tree_function,
     json_data_column,
     supports_jsonb,
     supports_jsonb_each,
@@ -2165,58 +2166,20 @@ class TemporaryTableAggregationProcessor:
         """)
 
         # Step 2: Populate FTS5 table with text content from current table
-        # Extract text from common patterns and concatenate with space separator
-        # This handles various unwind scenarios:
-        # - Direct text field: $.text
-        # - String arrays (unwind): $.comments, $.tags, $.values
-        # - Object arrays (unwind): $.comments.text, $.value.text, $.content.text
-        # - Common fields: $.description, $.name
-        # Detect which JSON functions to use based on jsonb_each availability
-        # Use jsonb_* functions only if BOTH jsonb AND jsonb_each are supported
-        use_jsonb = self._jsonb_supported and self._jsonb_each_supported
-        json_func_prefix = _get_json_function_prefix(use_jsonb)
-        json_extract_func = f"{json_func_prefix}_extract"
-        # When using jsonb_extract, we need to wrap with json() to get text output
-        json_wrapper = "json(" if use_jsonb else ""
+        # Use json_tree/jsonb_tree to recursively extract ALL string values from
+        # the JSON object at any depth, then concatenate them for FTS indexing.
+        # This handles any unwound object/array structure without hardcoded paths.
+        json_tree_func = _get_json_tree_function(
+            self._jsonb_supported, self._jsonb_each_supported
+        )
 
         self.db.execute(f"""
             INSERT INTO {fts_table_name}(src_rowid, id, content)
             SELECT c.rowid, c.id,
-                   TRIM(COALESCE(
-                       {json_wrapper}{json_extract_func}(data, '$.text') || ' ',
-                       ''
-                   ) || COALESCE(
-                       {json_wrapper}{json_extract_func}(data, '$.comments') || ' ',
-                       ''
-                   ) || COALESCE(
-                       {json_wrapper}{json_extract_func}(data, '$.comments.text') || ' ',
-                       ''
-                   ) || COALESCE(
-                       {json_wrapper}{json_extract_func}(data, '$.tags') || ' ',
-                       ''
-                   ) || COALESCE(
-                       {json_wrapper}{json_extract_func}(data, '$.value.text') || ' ',
-                       ''
-                   ) || COALESCE(
-                       {json_wrapper}{json_extract_func}(data, '$.value') || ' ',
-                       ''
-                   ) || COALESCE(
-                       {json_wrapper}{json_extract_func}(data, '$.content.text') || ' ',
-                       ''
-                   ) || COALESCE(
-                       {json_wrapper}{json_extract_func}(data, '$.content') || ' ',
-                       ''
-                   ) || COALESCE(
-                       {json_wrapper}{json_extract_func}(data, '$.description') || ' ',
-                       ''
-                   ) || COALESCE(
-                       {json_wrapper}{json_extract_func}(data, '$.name') || ' ',
-                       ''
-                   ) || COALESCE(
-                       {json_wrapper}{json_extract_func}(data, '$.reviews') || ' ',
-                       ''
-                   )) as content
-            FROM {current_table} c
+                   GROUP_CONCAT(t.value, ' ') as content
+            FROM {current_table} c, {json_tree_func}(c.data) t
+            WHERE t.type = 'text'
+            GROUP BY c.rowid
         """)
 
         # Step 3: Query FTS5 and create result table with matching documents

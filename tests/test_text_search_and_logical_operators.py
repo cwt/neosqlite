@@ -1298,9 +1298,6 @@ def test_text_search_on_unwound_simple_strings(collection):
     assert "Bob" in names
 
 
-@pytest.mark.xfail(
-    reason="Object array with FTS index not yet implemented - falls back to Python"
-)
 def test_text_search_on_unwound_objects_basic(collection):
     """Test text search on object arrays without projections (basic case)."""
     # Insert documents with object arrays
@@ -1356,14 +1353,18 @@ def test_text_search_on_unwound_objects_basic(collection):
     ]
 
     results = list(collection.aggregate(pipeline))
-    assert len(results) == 2  # Should find posts with "performance" in content
+    assert (
+        len(results) == 2
+    )  # Should find posts with "performance" in any field
 
-    # Verify the content contains the search term
+    # Verify the content or title contains the search term
     for doc in results:
-        # The unwound post should be in the 'posts' field
         assert "posts" in doc
-        post_content = doc["posts"]["content"]
-        assert "performance" in post_content.lower()
+        post = doc["posts"]
+        combined_text = (
+            post.get("content", "") + " " + post.get("title", "")
+        ).lower()
+        assert "performance" in combined_text
 
 
 def test_text_search_on_unwound_with_grouping(collection):
@@ -1865,9 +1866,6 @@ def test_text_search_on_unwound_nested_arrays(collection):
     assert any("performance" in comment.lower() for comment in comments)
 
 
-@pytest.mark.xfail(
-    reason="Multiple term search not yet implemented - falls back to Python"
-)
 def test_text_search_on_unwound_with_multiple_matches(collection):
     """Test text search that matches multiple terms within unwound elements."""
     # Insert documents
@@ -1909,9 +1907,6 @@ def test_text_search_on_unwound_with_multiple_matches(collection):
     assert found_performance and found_database
 
 
-@pytest.mark.xfail(
-    reason="FTS index integration with unwound elements not yet implemented - falls back to Python"
-)
 def test_text_search_on_unwound_case_insensitive(collection):
     """Test that text search on unwound arrays is case insensitive."""
     # Insert documents
