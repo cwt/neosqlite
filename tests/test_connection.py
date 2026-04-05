@@ -522,18 +522,22 @@ class TestDatabaseCommand:
         conn = neosqlite.Connection(str(db_path))
 
         conn.db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT)")
-        for batch in range(10):
-            for i in range(2000):
-                conn.db.execute(
-                    "INSERT INTO test (data) VALUES (?)", ("x" * 2048,)
-                )
-        conn.db.execute("DELETE FROM test WHERE id <= 10000")
+        conn.db.executemany(
+            "INSERT INTO test (data) VALUES (?)",
+            [("x" * 2048,) for _ in range(12000)],
+        )
+        conn.db.execute("DELETE FROM test WHERE id <= 10200")
         conn.db.commit()
 
         free_pages = conn.db.execute("PRAGMA freelist_count").fetchone()[0]
         page_size = conn.db.execute("PRAGMA page_size").fetchone()[0]
         free_mb = (free_pages * page_size) / (1024 * 1024)
         assert free_mb > 20, f"Free space: {free_mb} MB"
+
+        # Performance PRAGMAs for faster incremental_vacuum in tests
+        conn.db.execute("PRAGMA cache_size = -65536")  # 64MB cache
+        conn.db.execute("PRAGMA synchronous = OFF")
+        conn.db.execute("PRAGMA locking_mode = EXCLUSIVE")
 
         result = conn.command("compact", "test")
 
@@ -604,18 +608,22 @@ class TestDatabaseCommand:
         conn = neosqlite.Connection(str(db_path))
 
         conn.db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, data TEXT)")
-        for batch in range(10):
-            for i in range(2000):
-                conn.db.execute(
-                    "INSERT INTO test (data) VALUES (?)", ("x" * 100,)
-                )
-        conn.db.execute("DELETE FROM test WHERE id <= 10000")
+        conn.db.executemany(
+            "INSERT INTO test (data) VALUES (?)",
+            [("x" * 500,) for _ in range(6000)],
+        )
+        conn.db.execute("DELETE FROM test WHERE id <= 5500")
         conn.db.commit()
 
         free_pages = conn.db.execute("PRAGMA freelist_count").fetchone()[0]
         page_size = conn.db.execute("PRAGMA page_size").fetchone()[0]
         free_mb = (free_pages * page_size) / (1024 * 1024)
         assert free_mb > 1, f"Free space: {free_mb} MB"
+
+        # Performance PRAGMAs for faster incremental_vacuum in tests
+        conn.db.execute("PRAGMA cache_size = -65536")  # 64MB cache
+        conn.db.execute("PRAGMA synchronous = OFF")
+        conn.db.execute("PRAGMA locking_mode = EXCLUSIVE")
 
         result = conn.command("compact", "test", freeSpaceTargetMB=1)
 

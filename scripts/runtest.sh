@@ -1,6 +1,11 @@
 #!/bin/bash
 
-CPU_CORES=$(lscpu | awk '/^Core\(s\) per socket:/ {c=$4} /^Socket\(s\):/ {s=$2} END {print c * s}')
+CPU_CORES=$(
+  case "$(uname -s)" in
+    Darwin) sysctl -n hw.physicalcpu ;;
+         *) lscpu | awk '/^Core\(s\) per socket:/ {c=$4} /^Socket\(s\):/ {s=$2; sum += c * s} END {print sum}' ;;
+  esac
+)
 
 # cleanup
 rm -rf */__pycache__ .pytest_cache .coverage

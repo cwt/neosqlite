@@ -50,6 +50,7 @@ pytest-xdist = "^3.8.0"
 stubPath = "typings"
 
 [tool.pytest.ini_options]
+testpaths = ["tests", "packages"]
 filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::UserWarning",
