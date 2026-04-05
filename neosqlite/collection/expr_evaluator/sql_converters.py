@@ -425,7 +425,7 @@ class SqlConvertersMixin:
                 value_sql, value_params = self._convert_operand_to_sql(
                     operands[1]
                 )
-                sql = f"(SELECT key FROM {json_each}({array_sql}) WHERE value = {value_sql} LIMIT 1)"
+                sql = f"(SELECT COALESCE((SELECT key FROM {json_each}({array_sql}) WHERE value = {value_sql} LIMIT 1), -1))"
                 return sql, array_params + value_params
             case (
                 "$setEquals"
@@ -1285,7 +1285,10 @@ class SqlConvertersMixin:
         # Build the modifier
         if isinstance(amount, (int, float)):
             modifier = f"'{sign}{amount} {sqlite_unit}s'"
-            sql = f"datetime({date_sql}, {modifier})"
+            # Use strftime with 'T' separator and 'Z' suffix so
+            # neosqlite_json_loads recognizes the result as a UTC ISO
+            # date and converts it back to a timezone-aware datetime
+            sql = f"strftime('%Y-%m-%dT%H:%M:%SZ', {date_sql}, {modifier})"
             return sql, date_params
         else:
             # Amount is a field reference - need to use CASE or build dynamically
@@ -1296,7 +1299,10 @@ class SqlConvertersMixin:
             if sign == "-":
                 amount_sql = f"-({amount_sql})"
 
-            sql = f"datetime({date_sql}, printf('%+d {sqlite_unit}s', {amount_sql}))"
+            # Use strftime with 'T' separator and 'Z' suffix so
+            # neosqlite_json_loads recognizes the result as a UTC ISO
+            # date and converts it back to a timezone-aware datetime
+            sql = f"strftime('%Y-%m-%dT%H:%M:%SZ', {date_sql}, printf('%+d {sqlite_unit}s', {amount_sql}))"
             return sql, date_params + amount_params
 
     def _convert_date_diff_operator(
@@ -1338,6 +1344,18 @@ class SqlConvertersMixin:
         if not isinstance(unit, str) or unit not in valid_units:
             raise ValueError(f"$dateDiff unit must be one of: {valid_units}")
 
+        # For month and year, use SQLite strftime to extract components
+        # and compute the difference directly (julianday-based division
+        # is inaccurate for month/year units).
+        if unit in ("month", "year"):
+            sql = f"""(
+                (strftime('%Y', {date2_sql}) - strftime('%Y', {date1_sql})) * 12
+                + (strftime('%m', {date2_sql}) - strftime('%m', {date1_sql}))
+            )"""
+            if unit == "year":
+                sql = f"cast({sql} / 12 as integer)"
+            return sql, date2_params + date1_params
+
         # Base calculation: difference in days
         sql = f"(julianday({date2_sql}) - julianday({date1_sql}))"
 
@@ -1345,8 +1363,6 @@ class SqlConvertersMixin:
         unit_multipliers = {
             "day": 1,
             "week": 1.0 / 7,
-            "month": 1.0 / 30.4375,  # Average days per month
-            "year": 1.0 / 365.25,
             "hour": 24,
             "minute": 24 * 60,
             "second": 24 * 60 * 60,
@@ -1358,7 +1374,8 @@ class SqlConvertersMixin:
         else:
             sql = f"cast({sql} as integer)"
 
-        return sql, date1_params + date2_params
+        # Params must match placeholder order: date2 first, then date1
+        return sql, date2_params + date1_params
 
     def _convert_object_operator(
         self, operator: str, operands: Any

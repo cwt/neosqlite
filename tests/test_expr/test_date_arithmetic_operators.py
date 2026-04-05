@@ -21,7 +21,7 @@ class TestDateArithmeticSQL:
         expr = {"$dateAdd": ["$date", 5, "day"]}
         sql, params = evaluator._evaluate_sql_tier1(expr)
         assert sql is not None
-        assert "datetime" in sql
+        assert "strftime" in sql
         assert "+5 days" in sql
 
     def test_date_subtract_sql(self):
@@ -30,7 +30,7 @@ class TestDateArithmeticSQL:
         expr = {"$dateSubtract": ["$date", 3, "hour"]}
         sql, params = evaluator._evaluate_sql_tier1(expr)
         assert sql is not None
-        assert "datetime" in sql
+        assert "strftime" in sql
         assert "-3 hours" in sql
 
     def test_date_diff_sql(self):
@@ -284,7 +284,7 @@ class TestDateArithmeticDictFormat:
         }
         sql, params = evaluator._evaluate_sql_tier1(expr)
         assert sql is not None
-        assert "datetime" in sql
+        assert "strftime" in sql
         assert "+5 days" in sql
 
     def test_date_subtract_dict_format_sql(self):
@@ -299,7 +299,7 @@ class TestDateArithmeticDictFormat:
         }
         sql, params = evaluator._evaluate_sql_tier1(expr)
         assert sql is not None
-        assert "datetime" in sql
+        assert "strftime" in sql
         assert "-3 hours" in sql
 
     def test_date_diff_dict_format_sql(self):

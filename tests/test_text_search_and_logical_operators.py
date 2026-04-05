@@ -5,8 +5,6 @@ Consolidated tests for text search and logical operators functionality.
 import warnings
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 import neosqlite
 from neosqlite import Connection
 from neosqlite.query_operators import _contains
@@ -1719,13 +1717,6 @@ def test_simple_text_search_on_nested_array_field(collection):
     assert agg_ids == [1, 2], "Aggregate should find documents 1 and 2"
 
 
-# Tests that currently fall back to Python implementation due to projection complexity
-# These are documented limitations of the current implementation
-
-
-@pytest.mark.xfail(
-    reason="Projection support not yet implemented - falls back to Python. Hybrid approach possible as future enhancement."
-)
 def test_text_search_on_unwound_objects_with_fts(collection):
     """Test text search on object arrays with FTS index and projection."""
     # Insert documents with object arrays

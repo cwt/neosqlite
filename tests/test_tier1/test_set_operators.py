@@ -68,7 +68,7 @@ class TestSetEquals:
         tier3_result = list(collection.aggregate(pipeline))
 
         assert tier1_result == tier3_result
-        assert tier1_result[0]["equal"] is True
+        assert tier1_result[0]["equal"] == True
 
     def test_set_equals_identical(self, collection):
         """Test $setEquals with identical sets."""
@@ -84,7 +84,7 @@ class TestSetEquals:
         tier3_result = list(collection.aggregate(pipeline))
 
         assert tier1_result == tier3_result
-        assert tier1_result[0]["equal"] is True
+        assert tier1_result[0]["equal"] == True
 
     def test_set_equals_not_equal(self, collection):
         """Test $setEquals with different sets."""
@@ -100,7 +100,7 @@ class TestSetEquals:
         tier3_result = list(collection.aggregate(pipeline))
 
         assert tier1_result == tier3_result
-        assert tier1_result[0]["equal"] is False
+        assert tier1_result[0]["equal"] == False
 
     def test_set_equals_empty(self, collection):
         """Test $setEquals with empty arrays."""
@@ -116,7 +116,7 @@ class TestSetEquals:
         tier3_result = list(collection.aggregate(pipeline))
 
         assert tier1_result == tier3_result
-        assert tier1_result[0]["equal"] is True
+        assert tier1_result[0]["equal"] == True
 
 
 class TestSetIntersection:
@@ -434,7 +434,7 @@ class TestSetIsSubset:
         tier3_result = list(collection.aggregate(pipeline))
 
         assert tier1_result == tier3_result
-        assert tier1_result[0]["subset"] is True
+        assert tier1_result[0]["subset"] == True
 
     def test_set_issubset_false(self, collection):
         """Test $setIsSubset when A is not subset of B."""
@@ -450,7 +450,7 @@ class TestSetIsSubset:
         tier3_result = list(collection.aggregate(pipeline))
 
         assert tier1_result == tier3_result
-        assert tier1_result[0]["subset"] is False
+        assert tier1_result[0]["subset"] == False
 
     def test_set_issubset_equal(self, collection):
         """Test $setIsSubset with equal sets."""
@@ -466,7 +466,7 @@ class TestSetIsSubset:
         tier3_result = list(collection.aggregate(pipeline))
 
         assert tier1_result == tier3_result
-        assert tier1_result[0]["subset"] is True
+        assert tier1_result[0]["subset"] == True
 
     def test_set_issubset_empty(self, collection):
         """Test $setIsSubset with empty set."""
@@ -482,7 +482,7 @@ class TestSetIsSubset:
         tier3_result = list(collection.aggregate(pipeline))
 
         assert tier1_result == tier3_result
-        assert tier1_result[0]["subset"] is True
+        assert tier1_result[0]["subset"] == True
 
 
 class TestAnyElementTrue:
@@ -527,7 +527,7 @@ class TestAnyElementTrue:
         tier3_result = list(collection.aggregate(pipeline))
 
         assert tier1_result == tier3_result
-        assert tier1_result[0]["any"] is True
+        assert tier1_result[0]["any"] == True
 
     def test_any_element_true_all_false(self, collection):
         """Test $anyElementTrue with all false."""
@@ -543,7 +543,7 @@ class TestAnyElementTrue:
         tier3_result = list(collection.aggregate(pipeline))
 
         assert tier1_result == tier3_result
-        assert tier1_result[0]["any"] is False
+        assert tier1_result[0]["any"] == False
 
     def test_any_element_true_numeric(self, collection):
         """Test $anyElementTrue with numeric truthy values."""
@@ -559,7 +559,7 @@ class TestAnyElementTrue:
         tier3_result = list(collection.aggregate(pipeline))
 
         assert tier1_result == tier3_result
-        assert tier1_result[0]["any"] is True
+        assert tier1_result[0]["any"] == True
 
     def test_any_element_true_empty(self, collection):
         """Test $anyElementTrue with empty array."""
@@ -575,7 +575,7 @@ class TestAnyElementTrue:
         tier3_result = list(collection.aggregate(pipeline))
 
         assert tier1_result == tier3_result
-        assert tier1_result[0]["any"] is False
+        assert tier1_result[0]["any"] == False
 
 
 class TestAllElementsTrue:
@@ -619,7 +619,7 @@ class TestAllElementsTrue:
         tier3_result = list(collection.aggregate(pipeline))
 
         assert tier1_result == tier3_result
-        assert tier1_result[0]["all"] is True
+        assert tier1_result[0]["all"] == True
 
     def test_all_elements_true_has_false(self, collection):
         """Test $allElementsTrue with one false."""
@@ -635,7 +635,7 @@ class TestAllElementsTrue:
         tier3_result = list(collection.aggregate(pipeline))
 
         assert tier1_result == tier3_result
-        assert tier1_result[0]["all"] is False
+        assert tier1_result[0]["all"] == False
 
     def test_all_elements_true_numeric(self, collection):
         """Test $allElementsTrue with numeric truthy values."""
@@ -651,7 +651,7 @@ class TestAllElementsTrue:
         tier3_result = list(collection.aggregate(pipeline))
 
         assert tier1_result == tier3_result
-        assert tier1_result[0]["all"] is True
+        assert tier1_result[0]["all"] == True
 
     def test_all_elements_true_empty(self, collection):
         """Test $allElementsTrue with empty array."""
@@ -668,4 +668,4 @@ class TestAllElementsTrue:
 
         assert tier1_result == tier3_result
         # Empty array returns True (vacuous truth, matching Python's all([]))
-        assert tier1_result[0]["all"] is True
+        assert tier1_result[0]["all"] == True

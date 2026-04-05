@@ -14,7 +14,7 @@ from typing import Any, Callable, Dict, List, Tuple
 
 from .._sqlite import sqlite3
 from ..sql_utils import quote_table_name
-from .expr_evaluator import ExprEvaluator
+from .expr_evaluator import AggregationContext, ExprEvaluator, _is_expression
 from .json_path_utils import parse_json_path
 from .jsonb_support import (
     _contains_text_operator,
@@ -417,6 +417,12 @@ class TemporaryTableAggregationProcessor:
                     case "$addFields":
                         current_table = self._process_add_fields_stage(
                             create_temp, current_table, stage["$addFields"]
+                        )
+                        i += 1
+
+                    case "$project":
+                        current_table = self._process_project_stage(
+                            create_temp, current_table, stage["$project"]
                         )
                         i += 1
 
@@ -1490,6 +1496,195 @@ class TemporaryTableAggregationProcessor:
             params if params else None,
         )
         return new_table
+
+    def _process_project_stage(
+        self,
+        create_temp: Callable,
+        current_table: str,
+        project_spec: Dict[str, Any],
+    ) -> str:
+        """
+        Process a $project stage using temporary tables.
+
+        This method implements the $project aggregation stage which reshapes
+        each document in the stream, by adding new fields, removing existing
+        fields, or renaming fields. It reconstructs a unified ``data`` column
+        using ``json_object`` / ``jsonb_object`` so that downstream stages
+        (especially FTS5 text search via ``json_tree``) continue to work
+        without modification.
+
+        Supports:
+        - Simple inclusion: ``{"field": 1}``
+        - Exclusion: ``{"field": 0}``
+        - Field references: ``{"alias": "$some.path"}``
+        - Expression projections: ``{"alias": {$concat: [...]}}``
+        - ``_id`` inclusion/exclusion
+
+        Args:
+            create_temp (Callable): Function to create temporary tables
+            current_table (str): Name of the current temporary table
+            project_spec (Dict[str, Any]): The $project stage specification
+
+        Returns:
+            str: Name of the newly created temporary table
+        """
+        # Check kill switch FIRST — force Python fallback
+        from .query_helper import get_force_fallback
+
+        if get_force_fallback():
+            raise NotImplementedError(
+                "Force fallback - use Tier 3 Python evaluation"
+            )
+
+        include_id = project_spec.get("_id", 1) == 1
+
+        # Determine mode: inclusion vs exclusion
+        # Inclusion mode if any value == 1 or is an expression/field ref
+        # Exclusion mode if all non-_id values are 0
+        non_id_values = {k: v for k, v in project_spec.items() if k != "_id"}
+        is_exclusion_mode = all(v == 0 for v in non_id_values.values())
+
+        if is_exclusion_mode:
+            # Exclusion mode: use json_remove to strip fields
+            return self._process_project_exclusion(
+                create_temp, current_table, project_spec, include_id
+            )
+        else:
+            # Inclusion mode: reconstruct data via json_object
+            return self._process_project_inclusion(
+                create_temp, current_table, project_spec, include_id
+            )
+
+    def _process_project_exclusion(
+        self,
+        create_temp: Callable,
+        current_table: str,
+        project_spec: Dict[str, Any],
+        include_id: bool,
+    ) -> str:
+        """Handle exclusion-mode projection by removing fields via json_remove."""
+        fields_to_remove = [
+            k
+            for k, v in project_spec.items()
+            if v == 0 and k != "_id"  # _id is a separate column, not in data
+        ]
+
+        select_cols = ["id"]
+        if include_id:
+            select_cols.append("_id")
+
+        if fields_to_remove:
+            json_remove = f"{self._json_function_prefix}_remove"
+            # SQLite's json_remove supports multiple paths in a single call:
+            #   json_remove(data, p1, p2, ...)  -- more efficient than nesting
+            path_args = ", ".join(
+                f"'{parse_json_path(f)}'" for f in fields_to_remove
+            )
+            data_expr = f"{json_remove}(data, {path_args})"
+        else:
+            data_expr = "data"
+
+        select_cols.append(
+            f"{json_data_column(self._jsonb_supported, data_expr)} AS data"
+        )
+
+        sql = f"SELECT {', '.join(select_cols)} FROM {current_table}"
+        project_stage = {"$project": project_spec}
+        return create_temp(project_stage, sql)
+
+    def _process_project_inclusion(
+        self,
+        create_temp: Callable,
+        current_table: str,
+        project_spec: Dict[str, Any],
+        include_id_default: bool,
+    ) -> str:
+        """Handle inclusion-mode projection by reconstructing data via json_object.
+
+        Handles:
+        - Simple inclusion: ``{"field": 1}``
+        - Field references: ``{"alias": "$some.path"}``
+        - Expression projections: ``{"alias": {$concat: [...]}}``
+        """
+        jsonb = self._jsonb_supported
+        json_obj_func = "jsonb_object" if jsonb else "json_object"
+        json_extract_func = f"{self._json_function_prefix}_extract"
+
+        # Determine if projection uses expressions or field references.
+        # When it does, _id is only included if explicitly specified
+        # (matches Python _apply_projection behavior).
+        # For simple inclusion ({field: 1}), _id is included by default.
+        has_expressions_or_refs = any(
+            _is_expression(value)
+            or (isinstance(value, str) and value.startswith("$"))
+            for value in project_spec.values()
+        )
+
+        if has_expressions_or_refs:
+            # Expression/field reference mode: _id only if explicitly listed
+            include_id = "_id" in project_spec and project_spec["_id"] != 0
+        else:
+            # Simple inclusion mode: _id included by default
+            include_id = include_id_default
+
+        # Build key-value pairs for json_object
+        json_parts = []
+        all_params: List[Any] = []
+
+        for field, value in project_spec.items():
+            if field == "_id":
+                continue
+
+            if _is_expression(value):
+                # Expression projection: use ExprEvaluator
+                agg_ctx = AggregationContext()
+                expr_sql, expr_params = (
+                    self.expr_evaluator.build_select_expression(
+                        value, context=agg_ctx
+                    )
+                )
+                all_params.extend(expr_params)
+                json_parts.append(f"'{field}'")
+                json_parts.append(expr_sql)
+
+            elif isinstance(value, str) and value.startswith("$"):
+                # Field reference: "$some.path"
+                source_field = value[1:]
+                if source_field == "_id":
+                    json_parts.append(f"'{field}'")
+                    json_parts.append("_id")
+                else:
+                    json_parts.append(f"'{field}'")
+                    json_parts.append(
+                        f"{json_extract_func}(data, '{parse_json_path(source_field)}')"
+                    )
+
+            elif value == 1:
+                # Simple inclusion: copy field from data
+                json_parts.append(f"'{field}'")
+                json_parts.append(
+                    f"{json_extract_func}(data, '{parse_json_path(field)}')"
+                )
+
+            # value == 0 is exclusion — skip in inclusion mode
+
+        # Build the reconstructed data column
+        if json_parts:
+            data_expr = f"{json_obj_func}({', '.join(json_parts)})"
+        else:
+            # No fields projected — empty object
+            data_expr = f"{json_obj_func}()"
+
+        select_cols = ["id"]
+        if include_id:
+            select_cols.append("_id")
+        select_cols.append(f"{json_data_column(jsonb, data_expr)} AS data")
+
+        sql = f"SELECT {', '.join(select_cols)} FROM {current_table}"
+        project_stage = {"$project": project_spec}
+        return create_temp(
+            project_stage, sql, all_params if all_params else None
+        )
 
     def _process_replace_root_stage(
         self,
@@ -3208,6 +3403,7 @@ def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
         "$limit",
         "$lookup",
         "$match",
+        "$project",
         "$replaceRoot",
         "$replaceWith",
         "$sample",

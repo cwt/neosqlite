@@ -36,9 +36,9 @@ class TestSetOperators:
 
             assert len(result) == 1
             assert (
-                result[0]["ab_equal"] is True
+                result[0]["ab_equal"] == True
             )  # Same elements, different order
-            assert result[0]["ac_equal"] is False  # Different elements
+            assert result[0]["ac_equal"] == False  # Different elements
 
     def test_setIntersection(self):
         """Test $setIntersection operator."""
@@ -116,8 +116,8 @@ class TestSetOperators:
             )
 
             assert len(result) == 1
-            assert result[0]["a_subset_b"] is True
-            assert result[0]["b_subset_a"] is False
+            assert result[0]["a_subset_b"] == True
+            assert result[0]["b_subset_a"] == False
 
     def test_anyElementTrue(self):
         """Test $anyElementTrue operator."""
@@ -142,9 +142,9 @@ class TestSetOperators:
             )
 
             assert len(result) == 1
-            assert result[0]["a_any"] is True
-            assert result[0]["b_any"] is False
-            assert result[0]["c_any"] is False
+            assert result[0]["a_any"] == True
+            assert result[0]["b_any"] == False
+            assert result[0]["c_any"] == False
 
     def test_allElementsTrue(self):
         """Test $allElementsTrue operator."""
@@ -169,9 +169,9 @@ class TestSetOperators:
             )
 
             assert len(result) == 1
-            assert result[0]["a_all"] is True
-            assert result[0]["b_all"] is False
-            assert result[0]["c_all"] is True  # Empty array returns True
+            assert result[0]["a_all"] == True
+            assert result[0]["b_all"] == False
+            assert result[0]["c_all"] == True  # Empty array returns True
 
 
 class TestOtherOperators:

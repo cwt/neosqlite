@@ -51,6 +51,7 @@ from .object_operators import compare_object_operators
 from .object_operators_extended import compare_object_operators_extended
 from .objectid_ops import compare_objectid_operations
 from .options_classes import compare_options_classes
+from .project_unwind_fts import compare_project_unwind_fts
 from .pullall_operator import compare_pullall_operator
 from .query_operators import compare_query_operators
 from .raw_batches import compare_raw_batch_operations
@@ -127,6 +128,7 @@ COMPARISON_FUNCTIONS = [
     ("Raw Batches", compare_raw_batch_operations),
     ("Change Streams", compare_change_streams),
     ("Text Search", compare_text_search),
+    ("$project with $unwind+FTS", compare_project_unwind_fts),
     ("GridFS", compare_gridfs_operations),
     ("Window Functions", compare_window_functions),
     ("Window Math", compare_window_math),
