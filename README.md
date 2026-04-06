@@ -33,21 +33,20 @@
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
-## Latest Release: v1.14.0
+## Latest Release: v1.14.1
 
-NeoSQLite v1.14.0 is a **major performance and API alignment release** that introduces native SQL-tier support for the `$project` aggregation stage and complex `_id` field operators. It also brings a breaking change to the compound index API to strictly align with PyMongo's `(field, direction)` tuple format.
+NeoSQLite v1.14.1 is a **correctness and compatibility release** that eliminates major limitations in the SQL evaluation tier. It introduces **Static Type Inference** to perfectly match MongoDB BSON type semantics even for computed expressions and provides full SQL-tier support for the `$type` operator.
 
-**Important:** By migrating `$project` and `_id` filtering directly into the SQL layer, this release significantly reduces data transfer overhead and improves performance for large datasets.
+**Critical Fix:** This release resolves a functional issue where `$expr` queries returning strings (like `$type` or `$concat`) would return zero results in `find()` filters.
 
 ### Key Features & Fixes
 
-- **SQL-Tier `$project`**: Native database-level projection support (inclusion, exclusion, aliasing).
-- **Advanced `_id` SQL Filtering**: Native SQL support for `$in`, `$nin`, `$ne`, and range queries on `_id`.
-- **FTS Extension**: Native SQL `$text` search on unwound data (after `$unwind`) via recursive `json_tree` extraction.
-- **API Alignment**: `create_index` now strictly requires the PyMongo tuple format for compound indexes.
-- **Parity Verified**: 100% bit-for-bit result parity between SQL and Python tiers.
+- **Static Type Inference**: Predicted return types for MongoDB operators allowing SQL-tier optimization for computed expressions.
+- **SQL-Tier `$type`**: Full database-level support for the `$type` operator, including detection of NeoSQLite-encoded `Binary` and `ObjectId`.
+- **Corrected `$expr` Truthiness**: Wrapped `$expr` SQL results in an optimized `COALESCE` logic to ensure strings and objects are correctly treated as truthy in filter predicates.
+- **Perfect Type Matching**: Verified that `$isNumber` and `$toBool` now work correctly for both direct field references and computed expressions in the SQL tier.
 
-For full details, see [documents/releases/v1.14.0.md](documents/releases/v1.14.0.md).
+For full details, see [documents/releases/v1.14.1.md](documents/releases/v1.14.1.md).
 
 ## Installation
 

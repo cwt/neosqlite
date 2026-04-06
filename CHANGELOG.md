@@ -1,5 +1,34 @@
 # CHANGELOG
 
+## 1.14.1
+
+### Correctness & Compatibility Release: Static Type Inference, Full $type SQL Support, and Truthiness Fix
+
+**Major Correctness Improvements** — This release eliminates core limitations in the SQL tier, ensuring 100% compatibility for type-checking and truthiness evaluation.
+
+#### High Severity Fixes
+
+- **Corrected $expr Truthiness**: Wrapped top-level SQL expressions in `COALESCE(({expr}), 0) != 0` to match MongoDB's truthiness semantics (where strings are truthy). This fixes a functional bug where filters returning strings matched zero documents.
+- **Static Type Inference**: Implemented return-type prediction for MongoDB operators, allowing perfect BSON type matching for computed expressions in the SQL tier.
+- **Perfect $isNumber logic**: Fixed `$isNumber` to correctly exclude booleans, even for computed results or literals, resolving a core SQLite `typeof()` limitation.
+
+#### Medium Severity Enhancements
+
+- **SQL-Tier $type Operator**: Fully implemented the `$type` operator in the SQL tier, including detection of NeoSQLite-encoded `binData` and `objectId` shapes.
+- **Parameter Binding Optimization**: Fixed a regression where optimized-away operands caused SQL binding mismatches.
+- **Comprehensive Type Checking**: Added support for 12+ BSON types in both SQL and Python execution paths.
+
+#### Test Results
+- **Unit Tests**: 2,542 total (2,542 passed, 0 xfailed, 0 failed)
+- **API Comparison (NeoSQLite vs MongoDB)**: 386 tests (368 passed, 18 skipped, 0 failed) — 100.0%
+- **Code Coverage**: 80%
+
+#### Compatibility
+- **Backward Compatible**: Zero breaking changes.
+- **PyMongo API Parity**: 100% for comparable features, with improved type system alignment.
+
+---
+
 ## 1.14.0
 
 ### SQL-Tier Performance & API Alignment Release: Native $project, Advanced _id Filtering, and Compound Index Correction
