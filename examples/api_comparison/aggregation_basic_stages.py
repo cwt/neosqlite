@@ -209,7 +209,7 @@ def compare_aggregation_stages():
     # Record comparisons
     for pipeline, op_name in pipelines:
         reporter.record_comparison(
-            "Aggregation Stages",
+            "Aggregation (Basic Stages)",
             op_name,
             neo_results.get(op_name),
             mongo_results.get(op_name),

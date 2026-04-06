@@ -225,28 +225,28 @@ def compare_additional_aggregation_stages_extended():
             client.close()
 
     reporter.record_comparison(
-        "Aggregation Stages Extended",
+        "Aggregation (Root & Count Stages)",
         "$replaceRoot",
         neo_replaceroot if neo_replaceroot else "FAIL",
         mongo_replaceroot if mongo_replaceroot else None,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
-        "Aggregation Stages Extended",
+        "Aggregation (Root & Count Stages)",
         "$replaceWith",
         neo_replacewith if neo_replacewith else "FAIL",
         mongo_replacewith if mongo_replacewith else None,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
-        "Aggregation Stages Extended",
+        "Aggregation (Root & Count Stages)",
         "$unset",
         neo_unset if neo_unset else "FAIL",
         mongo_unset if mongo_unset else None,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
-        "Aggregation Stages Extended",
+        "Aggregation (Root & Count Stages)",
         "$count",
         neo_count if neo_count else "FAIL",
         mongo_count if mongo_count else None,

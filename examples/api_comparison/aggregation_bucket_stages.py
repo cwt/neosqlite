@@ -92,7 +92,7 @@ def compare_bucket_aggregation():
         client.close()
 
     reporter.record_comparison(
-        "Bucket Aggregation",
+        "Aggregation (Complex Stages)",
         "$bucket",
         neo_bucket,
         mongo_bucket,

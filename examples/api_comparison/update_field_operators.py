@@ -115,7 +115,7 @@ def compare_update_operators():
 
                 for op_name in neo_results:
                     reporter.record_comparison(
-                        "Update Operators",
+                        "Update (Field Operators)",
                         op_name,
                         neo_results[op_name],
                         mongo_results.get(op_name),
@@ -127,7 +127,7 @@ def compare_update_operators():
         # MongoDB not available, record NeoSQLite results as skipped
         for op_name in neo_results:
             reporter.record_comparison(
-                "Update Operators",
+                "Update (Field Operators)",
                 op_name,
                 neo_results[op_name],
                 None,

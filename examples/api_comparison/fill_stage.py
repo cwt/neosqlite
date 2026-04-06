@@ -108,7 +108,7 @@ def compare_fill_stage():
     # Record comparisons
     for name in pipelines:
         reporter.record_comparison(
-            "Fill Stage",
+            "$fill Stage",
             f"$fill ({name})",
             neo_results.get(name),
             mongo_results.get(name),

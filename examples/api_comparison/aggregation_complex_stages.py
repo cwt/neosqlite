@@ -554,7 +554,7 @@ def compare_additional_aggregation_stages():
 
     for stage_label, key in stages:
         reporter.record_comparison(
-            "Aggregation Stages",
+            "Aggregation (Complex Stages)",
             stage_label,
             neo_results.get(key),
             mongo_results.get(key),

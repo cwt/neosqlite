@@ -1,4 +1,4 @@
-"""Module for comparing array/set operators between NeoSQLite and PyMongo"""
+"""Module for comparing object/document operators between NeoSQLite and PyMongo"""
 
 import warnings
 
@@ -19,28 +19,27 @@ warnings.filterwarnings(
 )
 
 
-def compare_array_operators_extended():
-    """Compare array/set operators ($setIntersection, $firstN)"""
-    print("\n=== Array Operators Comparison ===")
+def compare_object_operators_extended():
+    """Compare object/document operators ($mergeObjects, $bsonSize)"""
+    print("\n=== Object Operators Comparison ===")
 
     # Initialize results
     neo_results = {}
     mongo_results = {}
 
     with neosqlite.Connection(":memory:") as neo_conn:
-        neo_collection = neo_conn.test_array_ops
+        neo_collection = neo_conn.test_object_ops
         neo_collection.insert_one(
             {
                 "_id": 1,
-                "arr": [1, 2, 3, 4, 5],
-                "set1": [1, 2, 3],
-                "set2": [3, 4, 5],
+                "obj1": {"a": 1, "b": 2},
+                "obj2": {"b": 3, "c": 4},
             }
         )
 
         set_accumulation_mode(True)
 
-        # Test $firstN
+        # Test $mergeObjects
         try:
             start_neo_timing()
             try:
@@ -50,8 +49,8 @@ def compare_array_operators_extended():
                             {"$match": {"_id": 1}},
                             {
                                 "$project": {
-                                    "first2": {
-                                        "$firstN": {"input": "$arr", "n": 2}
+                                    "merged": {
+                                        "$mergeObjects": ["$obj1", "$obj2"]
                                     }
                                 }
                             },
@@ -60,20 +59,20 @@ def compare_array_operators_extended():
                 )
             except Exception as e:
                 result = []
-                neo_results["$firstN"] = f"Error: {e}"
-                print(f"Neo $firstN: Error - {e}")
+                neo_results["$mergeObjects"] = f"Error: {e}"
+                print(f"Neo $mergeObjects: Error - {e}")
             finally:
                 end_neo_timing()
 
-            if "$firstN" not in neo_results:
-                neo_results["$firstN"] = (
-                    result[0].get("first2") if result else None
+            if "$mergeObjects" not in neo_results:
+                neo_results["$mergeObjects"] = (
+                    result[0].get("merged") if result else None
                 )
-            print(f"Neo $firstN: {neo_results['$firstN']}")
+                print(f"Neo $mergeObjects: {neo_results['$mergeObjects']}")
         except Exception:
             pass
 
-        # Test $setIntersection
+        # Test $bsonSize
         try:
             start_neo_timing()
             try:
@@ -81,28 +80,23 @@ def compare_array_operators_extended():
                     neo_collection.aggregate(
                         [
                             {"$match": {"_id": 1}},
-                            {
-                                "$project": {
-                                    "intersection": {
-                                        "$setIntersection": ["$set1", "$set2"]
-                                    }
-                                }
-                            },
+                            {"$project": {"size": {"$bsonSize": "$$ROOT"}}},
                         ]
                     )
                 )
             except Exception as e:
                 result = []
-                neo_results["$setIntersection"] = f"Error: {e}"
-                print(f"Neo $setIntersection: Error - {e}")
+                neo_results["$bsonSize"] = f"Error: {e}"
+                print(f"Neo $bsonSize: Error - {e}")
             finally:
                 end_neo_timing()
 
-            if "$setIntersection" not in neo_results:
-                neo_results["$setIntersection"] = (
-                    result[0].get("intersection") if result else None
+            if "$bsonSize" not in neo_results:
+                val = result[0].get("size") if result else None
+                neo_results["$bsonSize"] = (
+                    "valid" if isinstance(val, int) and val > 0 else "invalid"
                 )
-            print(f"Neo $setIntersection: {neo_results['$setIntersection']}")
+                print(f"Neo $bsonSize: {val} bytes")
         except Exception:
             pass
 
@@ -111,18 +105,19 @@ def compare_array_operators_extended():
     if client:
         try:
             mongo_db = client.test_database
-            mongo_collection = mongo_db.test_array_ops
+            mongo_collection = mongo_db.test_object_ops
             mongo_collection.delete_many({})
             mongo_collection.insert_one(
                 {
                     "_id": 1,
-                    "arr": [1, 2, 3, 4, 5],
-                    "set1": [1, 2, 3],
-                    "set2": [3, 4, 5],
+                    "obj1": {"a": 1, "b": 2},
+                    "obj2": {"b": 3, "c": 4},
                 }
             )
 
-            # Test $firstN
+            set_accumulation_mode(True)
+
+            # Test $mergeObjects
             try:
                 start_mongo_timing()
                 try:
@@ -132,8 +127,8 @@ def compare_array_operators_extended():
                                 {"$match": {"_id": 1}},
                                 {
                                     "$project": {
-                                        "first2": {
-                                            "$firstN": {"input": "$arr", "n": 2}
+                                        "merged": {
+                                            "$mergeObjects": ["$obj1", "$obj2"]
                                         }
                                     }
                                 },
@@ -142,20 +137,22 @@ def compare_array_operators_extended():
                     )
                 except Exception as e:
                     result = []
-                    mongo_results["$firstN"] = f"Error: {e}"
-                    print(f"Mongo $firstN: Error - {e}")
+                    mongo_results["$mergeObjects"] = f"Error: {e}"
+                    print(f"Mongo $mergeObjects: Error - {e}")
                 finally:
                     end_mongo_timing()
 
-                if "$firstN" not in mongo_results:
-                    mongo_results["$firstN"] = (
-                        result[0].get("first2") if result else None
+                if "$mergeObjects" not in mongo_results:
+                    mongo_results["$mergeObjects"] = (
+                        result[0].get("merged") if result else None
                     )
-                print(f"Mongo $firstN: {mongo_results['$firstN']}")
+                    print(
+                        f"Mongo $mergeObjects: {mongo_results['$mergeObjects']}"
+                    )
             except Exception:
                 pass
 
-            # Test $setIntersection
+            # Test $bsonSize
             try:
                 start_mongo_timing()
                 try:
@@ -163,42 +160,34 @@ def compare_array_operators_extended():
                         mongo_collection.aggregate(
                             [
                                 {"$match": {"_id": 1}},
-                                {
-                                    "$project": {
-                                        "intersection": {
-                                            "$setIntersection": [
-                                                "$set1",
-                                                "$set2",
-                                            ]
-                                        }
-                                    }
-                                },
+                                {"$project": {"size": {"$bsonSize": "$$ROOT"}}},
                             ]
                         )
                     )
                 except Exception as e:
                     result = []
-                    mongo_results["$setIntersection"] = f"Error: {e}"
-                    print(f"Mongo $setIntersection: Error - {e}")
+                    mongo_results["$bsonSize"] = f"Error: {e}"
+                    print(f"Mongo $bsonSize: Error - {e}")
                 finally:
                     end_mongo_timing()
 
-                if "$setIntersection" not in mongo_results:
-                    mongo_results["$setIntersection"] = (
-                        result[0].get("intersection") if result else None
+                if "$bsonSize" not in mongo_results:
+                    val = result[0].get("size") if result else None
+                    mongo_results["$bsonSize"] = (
+                        "valid"
+                        if isinstance(val, int) and val > 0
+                        else "invalid"
                     )
-                print(
-                    f"Mongo $setIntersection: {mongo_results['$setIntersection']}"
-                )
+                    print(f"Mongo $bsonSize: {val} bytes")
             except Exception:
                 pass
         finally:
             client.close()
 
-    for op_name in ["$firstN", "$setIntersection"]:
+    for op_name in ["$mergeObjects", "$bsonSize"]:
         if op_name in neo_results:
             reporter.record_comparison(
-                "Array Operators",
+                "Object (Inspection)",
                 op_name,
                 neo_results[op_name],
                 mongo_results.get(op_name) if mongo_results else None,

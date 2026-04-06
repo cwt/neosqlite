@@ -307,14 +307,14 @@ def compare_additional_collection_methods():
 
     # Record comparisons - only for operations that were actually timed
     reporter.record_comparison(
-        "Collection Methods",
+        "Collection (Additional)",
         "drop",
         neo_drop if neo_drop else "FAIL",
         mongo_drop if mongo_drop else None,
         skip_reason="MongoDB not available" if not mongo_available else None,
     )
     reporter.record_comparison(
-        "Collection Methods",
+        "Collection (Additional)",
         "database_property",
         neo_db_ok if neo_db_ok else "FAIL",
         mongo_db_ok if mongo_db_ok else None,
@@ -326,7 +326,7 @@ def compare_additional_collection_methods():
     if mongo_watch:
         # Both implement watch() - mark as compatible
         reporter.record_comparison(
-            "Collection Methods",
+            "Collection (Additional)",
             "watch",
             "OK",
             "OK",
@@ -336,7 +336,7 @@ def compare_additional_collection_methods():
         # MongoDB doesn't support watch (no replica set) - skip
         skip_reason = "NeoSQLite: Implemented via SQLite triggers; MongoDB: Requires replica set (not available in standalone test)"
         reporter.record_comparison(
-            "Collection Methods",
+            "Collection (Additional)",
             "watch",
             "OK" if neo_watch else "FAIL",
             None,
@@ -349,28 +349,28 @@ def compare_additional_collection_methods():
     )
 
     reporter.record_comparison(
-        "Collection Methods",
+        "Collection (Additional)",
         "full_name",
         neo_coll_name if neo_full_name_ok else "FAIL",
         mongo_coll_name if mongo_full_name_ok else None,
         skip_reason="MongoDB not available" if not mongo_available else None,
     )
     reporter.record_comparison(
-        "Collection Methods",
+        "Collection (Additional)",
         "client",
         neo_client_prop if neo_client_prop else "FAIL",
         mongo_client_prop if mongo_client_prop else None,
         skip_reason="MongoDB not available" if not mongo_available else None,
     )
     reporter.record_comparison(
-        "Collection Methods",
+        "Collection (Additional)",
         "db_path",
         neo_db_path_prop if neo_db_path_prop else "FAIL",
         None,
         skip_reason="NeoSQLite specific (SQLite database path) - not timed in benchmark",
     )
     reporter.record_comparison(
-        "Collection Methods",
+        "Collection (Additional)",
         "with_options",
         neo_with_options if neo_with_options else "FAIL",
         mongo_with_options if mongo_with_options else None,

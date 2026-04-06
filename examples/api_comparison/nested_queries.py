@@ -73,7 +73,7 @@ def compare_nested_field_queries():
         client.close()
 
     reporter.record_comparison(
-        "Nested Field Queries",
+        "Nested Queries",
         "dot_notation",
         neo_result,
         mongo_result if mongo_result is not None else None,

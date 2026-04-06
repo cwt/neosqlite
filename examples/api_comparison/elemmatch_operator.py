@@ -140,7 +140,7 @@ def compare_elemmatch_operator():
     # 3. Record results
     for label, _ in test_cases:
         reporter.record_comparison(
-            "$elemMatch Operator",
+            "$elemMatch",
             f"$elemMatch ({label})",
             neo_results.get(label),
             mongo_results.get(label),

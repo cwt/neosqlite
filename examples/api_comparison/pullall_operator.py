@@ -241,7 +241,7 @@ def compare_pullall_operator():
         mongo_res = mongo_results.get(test_name)
 
         reporter.record_comparison(
-            "Update Operators",
+            "$pullAll Operator",
             f"$pullAll ({test_name})",
             neo_res,
             mongo_res,

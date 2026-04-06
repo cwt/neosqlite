@@ -216,7 +216,7 @@ def compare_expr_operator():
     # Record comparisons
     for query, op_name in expr_queries:
         reporter.record_comparison(
-            "$expr Operator",
+            "$expr (Core Operators)",
             op_name,
             neo_results[op_name],
             mongo_results.get(op_name),

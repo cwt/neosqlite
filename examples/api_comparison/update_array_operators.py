@@ -280,7 +280,7 @@ def compare_additional_update_operators():
 
     for op_name, neo_res, mongo_res in ops:
         reporter.record_comparison(
-            "Update Operators",
+            "Update (Array Operators)",
             op_name,
             neo_res,
             mongo_res,

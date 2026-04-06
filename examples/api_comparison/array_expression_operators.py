@@ -613,63 +613,63 @@ def compare_array_operators():
 
     # Record comparisons
     reporter.record_comparison(
-        "Array Operators",
+        "Array (Expression Operators)",
         "$first",
         neo_first,
         mongo_first,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
-        "Array Operators",
+        "Array (Expression Operators)",
         "$last",
         neo_last,
         mongo_last,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
-        "Array Operators",
+        "Array (Expression Operators)",
         "$filter",
         neo_filter,
         mongo_filter,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
-        "Array Operators",
+        "Array (Expression Operators)",
         "$map",
         neo_map,
         mongo_map,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
-        "Array Operators",
+        "Array (Expression Operators)",
         "$reduce",
         neo_reduce,
         mongo_reduce,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
-        "Array Operators",
+        "Array (Expression Operators)",
         "$slice",
         neo_slice,
         mongo_slice,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
-        "Array Operators",
+        "Array (Expression Operators)",
         "$indexOfArray",
         neo_indexofarray,
         mongo_indexofarray,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
-        "Array Operators",
+        "Array (Expression Operators)",
         "$sortArray",
         neo_sortarray,
         mongo_sortarray,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
-        "Array Operators",
+        "Array (Expression Operators)",
         "$minN / $maxN",
         neo_minmax_n,
         mongo_minmax_n,

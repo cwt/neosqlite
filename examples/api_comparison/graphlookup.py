@@ -154,7 +154,7 @@ def compare_graph_lookup():
                 )
 
         reporter.record_comparison(
-            "Graph Lookup",
+            "$graphLookup",
             f"$graphLookup ({name})",
             neo_res,
             mongo_res,

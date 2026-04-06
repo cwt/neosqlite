@@ -19,7 +19,7 @@ warnings.filterwarnings(
 )
 
 
-def compare_additional_expr_success_stories():
+def compare_expr_type_conversion():
     """Compare additional $expr operators that are working correctly"""
     print("\n=== Additional $expr Operators (Success Stories) ===")
     print(
@@ -573,63 +573,63 @@ def compare_additional_expr_success_stories():
         client.close()
 
     reporter.record_comparison(
-        "Additional $expr Operators",
+        "$expr (Type & Conversion Operators)",
         "$elemMatch",
         neo_elemMatch,
         mongo_elemMatch,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
-        "Additional $expr Operators",
+        "$expr (Type & Conversion Operators)",
         "$expr $not",
         neo_not,
         mongo_not,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
-        "Additional $expr Operators",
+        "$expr (Type & Conversion Operators)",
         "$expr $concat",
         neo_concat,
         mongo_concat,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
-        "Additional $expr Operators",
+        "$expr (Type & Conversion Operators)",
         "$expr $ifNull",
         neo_ifnull,
         mongo_ifnull,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
-        "Additional $expr Operators",
+        "$expr (Type & Conversion Operators)",
         "$expr $isArray",
         neo_isarray,
         mongo_isarray,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
-        "Additional $expr Operators",
+        "$expr (Type & Conversion Operators)",
         "$expr $round",
         neo_round,
         mongo_round,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
-        "Additional $expr Operators",
+        "$expr (Type & Conversion Operators)",
         "$expr $exp",
         neo_exp,
         mongo_exp,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
-        "Additional $expr Operators",
+        "$expr (Type & Conversion Operators)",
         "$expr $degreesToRadians",
         neo_deg2rad,
         mongo_deg2rad,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
-        "Additional $expr Operators",
+        "$expr (Type & Conversion Operators)",
         "$expr $radiansToDegrees",
         neo_rad2deg,
         mongo_rad2deg,

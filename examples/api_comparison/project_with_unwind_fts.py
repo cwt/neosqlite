@@ -375,7 +375,7 @@ def compare_project_unwind_fts():
 
     # Record comparisons
     reporter.record_comparison(
-        "$project Simple Inclusion",
+        "$project with $unwind+FTS",
         "field inclusion",
         (
             neo_project_simple_result
@@ -391,7 +391,7 @@ def compare_project_unwind_fts():
     )
 
     reporter.record_comparison(
-        "$project Field Reference",
+        "$project with $unwind+FTS",
         "field reference with alias",
         (
             neo_project_field_ref_result
@@ -407,7 +407,7 @@ def compare_project_unwind_fts():
     )
 
     reporter.record_comparison(
-        "$project Exclusion",
+        "$project with $unwind+FTS",
         "field exclusion",
         (
             neo_project_exclusion_result
@@ -423,7 +423,7 @@ def compare_project_unwind_fts():
     )
 
     reporter.record_comparison(
-        "$project after $unwind",
+        "$project with $unwind+FTS",
         "project following unwind",
         (
             neo_project_after_unwind_result
@@ -439,7 +439,7 @@ def compare_project_unwind_fts():
     )
 
     reporter.record_comparison(
-        "$project after $unwind+$text (FTS)",
+        "$project with $unwind+FTS",
         "project following unwind and text search",
         (
             neo_project_unwind_fts_result

@@ -184,28 +184,28 @@ def compare_binary_support():
             client.close()
 
     reporter.record_comparison(
-        "Binary Support",
+        "Binary Data",
         "Binary",
         neo_has_binary if neo_has_binary else "FAIL",
         mongo_has_binary if mongo_has_binary is not None else None,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
-        "Binary Support",
+        "Binary Data",
         "from_uuid",
         neo_from_uuid if neo_from_uuid else "FAIL",
         mongo_from_uuid if mongo_from_uuid is not None else None,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
-        "Binary Support",
+        "Binary Data",
         "as_uuid",
         neo_as_uuid if neo_as_uuid else "FAIL",
         mongo_as_uuid if mongo_as_uuid is not None else None,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
-        "Binary Support",
+        "Binary Data",
         "subtypes",
         neo_subtypes if neo_subtypes else "FAIL",
         mongo_subtypes if mongo_subtypes is not None else None,

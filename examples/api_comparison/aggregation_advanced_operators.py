@@ -254,7 +254,7 @@ def compare_additional_aggregation():
         client.close()
 
     reporter.record_comparison(
-        "Additional Aggregation",
+        "Aggregation (Advanced Operators)",
         "$unwind",
         neo_unwind if not isinstance(neo_unwind, str) else neo_unwind,
         mongo_unwind if mongo_unwind is not None else None,
@@ -263,7 +263,7 @@ def compare_additional_aggregation():
 
     # Report $unwind advanced options
     reporter.record_comparison(
-        "Additional Aggregation",
+        "Aggregation (Advanced Operators)",
         "$unwind (advanced)",
         (
             neo_unwind_advanced_result
@@ -279,7 +279,7 @@ def compare_additional_aggregation():
     )
 
     reporter.record_comparison(
-        "Additional Aggregation",
+        "Aggregation (Advanced Operators)",
         "$group $push",
         neo_push_result if neo_push_result else neo_push,
         mongo_push_result if mongo_push_result else mongo_push,
@@ -287,7 +287,7 @@ def compare_additional_aggregation():
     )
 
     reporter.record_comparison(
-        "Additional Aggregation",
+        "Aggregation (Advanced Operators)",
         "$switch",
         neo_switch_result if neo_switch_result else neo_switch,
         mongo_switch_result if mongo_switch_result else mongo_switch,

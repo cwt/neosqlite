@@ -94,7 +94,7 @@ def compare_reindex_operation():
 
     # Record comparison
     reporter.record_comparison(
-        "Reindex Operation",
+        "Reindex",
         "reindex",
         "OK" if neo_reindex_ok else "FAIL",
         "OK" if mongo_reindex_ok else ("FAIL" if client else None),

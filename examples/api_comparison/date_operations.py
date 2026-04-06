@@ -336,7 +336,7 @@ def compare_date_expr_operators():
 
     # $dateAdd
     reporter.record_comparison(
-        "Date Expression Operators",
+        "Date Operations",
         "$dateAdd",
         neo_dateadd,
         mongo_dateadd,
@@ -345,7 +345,7 @@ def compare_date_expr_operators():
 
     # $dateSubtract
     reporter.record_comparison(
-        "Date Expression Operators",
+        "Date Operations",
         "$dateSubtract",
         neo_datesubtract,
         mongo_datesubtract,
@@ -354,7 +354,7 @@ def compare_date_expr_operators():
 
     # $dateDiff
     reporter.record_comparison(
-        "Date Expression Operators",
+        "Date Operations",
         "$dateDiff",
         neo_datediff,
         mongo_datediff,
@@ -364,7 +364,7 @@ def compare_date_expr_operators():
     # Other operators
     for op_name, _ in date_operators:
         reporter.record_comparison(
-            "Date Expression Operators",
+            "Date Operations",
             op_name,
             neo_results.get(op_name),
             mongo_results.get(op_name) if client else None,

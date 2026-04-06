@@ -86,7 +86,7 @@ def compare_raw_batch_operations():
         skip_reason = None
 
     reporter.record_result(
-        "Raw Batch Operations",
+        "Raw Batches",
         "find_raw_batches",
         passed=(
             neo_raw_batches == mongo_raw_batches

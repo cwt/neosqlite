@@ -333,35 +333,35 @@ def compare_object_operators():
             client.close()
 
     reporter.record_comparison(
-        "Object Operators",
+        "Object (Field Operators)",
         "$mergeObjects",
         neo_mergeobjects if neo_mergeobjects else "FAIL",
         mongo_mergeobjects,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
-        "Object Operators",
+        "Object (Field Operators)",
         "$getField",
         neo_getfield if neo_getfield else "FAIL",
         mongo_getfield,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
-        "Object Operators",
+        "Object (Field Operators)",
         "$setField",
         neo_setfield if neo_setfield else "FAIL",
         mongo_setfield,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
-        "Object Operators",
+        "Object (Field Operators)",
         "$unsetField",
         neo_unsetfield if neo_unsetfield else "FAIL",
         mongo_unsetfield,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
-        "Object Operators",
+        "Object (Field Operators)",
         "$objectToArray",
         neo_objecttoarray if neo_objecttoarray else "FAIL",
         mongo_objecttoarray,

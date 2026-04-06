@@ -19,7 +19,7 @@ warnings.filterwarnings(
 )
 
 
-def compare_additional_expr_operators():
+def compare_expr_array_object():
     """Compare additional aggregation expression operators"""
     print("\n=== Additional Aggregation Expression Operators Comparison ===")
 
@@ -307,7 +307,7 @@ def compare_additional_expr_operators():
 
     for op in ["$arrayElemAt", "$concat", "$objectToArray", "$switch"]:
         reporter.record_comparison(
-            "Aggregation Expressions",
+            "$expr (Array & Object Operators)",
             op,
             neo_results.get(op),
             mongo_results.get(op),

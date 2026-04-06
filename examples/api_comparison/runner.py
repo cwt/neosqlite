@@ -4,67 +4,67 @@ Test Runner - Orchestrates running all comparison tests
 
 import time
 
-from .aggregation_additional import compare_additional_aggregation
-from .aggregation_bucket import compare_bucket_aggregation
-from .aggregation_cursor import compare_aggregation_cursor_methods
-from .aggregation_stages import compare_aggregation_stages
-from .aggregation_stages_additional import compare_additional_aggregation_stages
-from .aggregation_stages_extended import (
+from .aggregation_advanced_operators import compare_additional_aggregation
+from .aggregation_basic_stages import compare_aggregation_stages
+from .aggregation_bucket_stages import compare_bucket_aggregation
+from .aggregation_complex_stages import compare_additional_aggregation_stages
+from .aggregation_cursor_properties import compare_aggregation_cursor_methods
+from .aggregation_root_count_stages import (
     compare_additional_aggregation_stages_extended,
 )
-from .array_operators import compare_array_operators
-from .array_operators_extended import compare_array_operators_extended
-from .binary_operations import compare_binary_support
+from .array_expression_operators import compare_array_operators
+from .array_set_sampling import compare_array_operators_extended
+from .binary_data import compare_binary_support
 from .binary_operators import compare_binary_operators
 from .bitwise_operators import compare_bitwise_operators
 from .bulk_executors import compare_bulk_operation_executors
 from .bulk_operations import compare_bulk_operations
 from .change_streams import compare_change_streams
+from .collection_additional import compare_additional_collection_methods
 from .collection_methods import compare_collection_methods
-from .collection_methods_additional import compare_additional_collection_methods
-from .compound_indexes import compare_compound_indexes
+from .compound_index_operations import compare_compound_indexes
 
 # Import all comparison functions
-from .crud import compare_crud_operations
+from .crud_operations import compare_crud_operations
 from .cursor_methods import compare_cursor_methods
 from .cursor_operations import compare_cursor_operations
 from .database_methods import compare_database_methods
-from .date_operators import compare_date_expr_operators
+from .date_operations import compare_date_expr_operators
 from .distinct import compare_distinct
-from .elemmatch import compare_elemmatch_operator
-from .expr_additional import compare_additional_expr_operators
-from .expr_complete import compare_additional_expr_operators_complete
-from .expr_extended import compare_additional_expr_operators_extended
-from .expr_operators import compare_expr_operator
-from .expr_success import compare_additional_expr_success_stories
+from .elemmatch_operator import compare_elemmatch_operator
+from .expr_array_object_operators import compare_expr_array_object
+from .expr_comprehensive import compare_expr_comprehensive
+from .expr_core_operators import compare_expr_operator
+from .expr_math_conditional import compare_expr_math_conditional
+from .expr_type_conversion_operators import compare_expr_type_conversion
 from .expression_operators import compare_expression_operators
 from .fill_stage import compare_fill_stage
-from .find_modify import compare_find_and_modify
-from .graph_lookup import compare_graph_lookup
-from .gridfs_operations import compare_gridfs_operations
+from .find_and_modify import compare_find_and_modify
+from .graphlookup import compare_graph_lookup
+from .gridfs import compare_gridfs_operations
 from .index_operations import compare_index_operations
 from .json_schema import compare_json_schema
 from .math_operators import compare_math_operators
 from .mod_operator import compare_mod_operator
 from .nested_queries import compare_nested_field_queries
-from .object_operators import compare_object_operators
-from .object_operators_extended import compare_object_operators_extended
-from .objectid_ops import compare_objectid_operations
+from .object_field_operators import compare_object_operators
+from .object_inspection import compare_object_operators_extended
+from .objectid import compare_objectid_operations
 from .options_classes import compare_options_classes
-from .project_unwind_fts import compare_project_unwind_fts
+from .project_with_unwind_fts import compare_project_unwind_fts
 from .pullall_operator import compare_pullall_operator
 from .query_operators import compare_query_operators
 from .raw_batches import compare_raw_batch_operations
 from .reindex import compare_reindex_operation
 from .search_index import compare_search_index_operations
-from .session_methods import compare_session_methods
+from .session_transactions import compare_session_methods
 from .string_operators import compare_string_operators
 from .text_search import compare_text_search
 from .type_operator import compare_type_operator
 from .type_operators import compare_type_operators
-from .update_additional import compare_additional_update_operators
-from .update_modifiers import compare_update_modifiers
-from .update_operators import compare_update_operators
+from .update_array_modifiers import compare_update_modifiers
+from .update_array_operators import compare_additional_update_operators
+from .update_field_operators import compare_update_operators
 from .utils import (
     clear_tier_changes,
     disable_tier_tracking,
@@ -81,17 +81,17 @@ COMPARISON_FUNCTIONS = [
     # Core Operations
     ("CRUD Operations", compare_crud_operations),
     ("Query Operators", compare_query_operators),
-    ("$expr Operator", compare_expr_operator),
-    ("Update Operators", compare_update_operators),
+    ("$expr (Core Operators)", compare_expr_operator),
+    ("Update (Field Operators)", compare_update_operators),
     # Aggregation
-    ("Aggregation Stages", compare_aggregation_stages),
-    ("Aggregation (Additional)", compare_additional_aggregation),
+    ("Aggregation (Basic Stages)", compare_aggregation_stages),
+    ("Aggregation (Advanced Operators)", compare_additional_aggregation),
+    ("Aggregation (Complex Stages)", compare_additional_aggregation_stages),
     (
-        "Aggregation Stages (Extended)",
+        "Aggregation (Root & Count Stages)",
         compare_additional_aggregation_stages_extended,
     ),
-    ("Aggregation (Extended)", compare_additional_aggregation_stages),
-    ("Aggregation Cursor", compare_aggregation_cursor_methods),
+    ("Aggregation (Cursor Properties)", compare_aggregation_cursor_methods),
     # Indexing
     ("Index Operations", compare_index_operations),
     ("Compound Index Operations", compare_compound_indexes),
@@ -118,12 +118,12 @@ COMPARISON_FUNCTIONS = [
     # Aggregation Operators
     ("Math Operators", compare_math_operators),
     ("String Operators", compare_string_operators),
-    ("Array Operators", compare_array_operators),
-    ("Object Operators", compare_object_operators),
-    ("$expr (Additional)", compare_additional_expr_operators),
-    ("$expr (Extended)", compare_additional_expr_operators_extended),
-    ("$expr (Complete)", compare_additional_expr_operators_complete),
-    ("$expr (Success Cases)", compare_additional_expr_success_stories),
+    ("Array (Expression Operators)", compare_array_operators),
+    ("Object (Field Operators)", compare_object_operators),
+    ("$expr (Array & Object Operators)", compare_expr_array_object),
+    ("$expr (Math & Conditional)", compare_expr_math_conditional),
+    ("$expr (Comprehensive)", compare_expr_comprehensive),
+    ("$expr (Type & Conversion Operators)", compare_expr_type_conversion),
     # Advanced Features
     ("Raw Batches", compare_raw_batch_operations),
     ("Change Streams", compare_change_streams),
@@ -135,11 +135,11 @@ COMPARISON_FUNCTIONS = [
     ("$graphLookup", compare_graph_lookup),
     ("$fill Stage", compare_fill_stage),
     ("JSON Schema", compare_json_schema),
-    ("Bucket Aggregation", compare_bucket_aggregation),
+    ("Aggregation (Complex Stages)", compare_bucket_aggregation),
     # Update Operations
     ("$mod Operator", compare_mod_operator),
-    ("Update (Additional)", compare_additional_update_operators),
-    ("Update Modifiers", compare_update_modifiers),
+    ("Update (Array Operators)", compare_additional_update_operators),
+    ("Update (Array Modifiers)", compare_update_modifiers),
     ("Bitwise Operators", compare_bitwise_operators),
     ("$pullAll Operator", compare_pullall_operator),
     # Collection & Database
@@ -149,8 +149,8 @@ COMPARISON_FUNCTIONS = [
     # Additional Operators
     ("Type Operators", compare_type_operators),
     ("Expression Operators", compare_expression_operators),
-    ("Object Operators (Extended)", compare_object_operators_extended),
-    ("Array Operators (Extended)", compare_array_operators_extended),
+    ("Object (Inspection)", compare_object_operators_extended),
+    ("Array (Set & Sampling)", compare_array_operators_extended),
     ("Binary Operators", compare_binary_operators),
     # Utility
     ("Options Classes", compare_options_classes),
@@ -246,6 +246,12 @@ def run_benchmark(iterations: int = 10, silent: bool = False):
 
     try:
         for category, func in COMPARISON_FUNCTIONS:
+            # Skip categories that are compatibility-only (no timing)
+            if category == "Options Classes":
+                if not silent:
+                    print(f"\nSkipping: {category} (compatibility-only)")
+                continue
+
             if not silent:
                 print(f"\nBenchmarking: {category}")
             bench_reporter.start_category(category)

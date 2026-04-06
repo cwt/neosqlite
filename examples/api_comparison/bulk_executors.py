@@ -116,7 +116,7 @@ def compare_bulk_operation_executors():
         client.close()
 
     reporter.record_result(
-        "Bulk Operation Executors",
+        "Bulk Executors",
         "initialize_ordered_bulk_op",
         neo_ordered_ok,
         neo_ordered_ok,
@@ -124,7 +124,7 @@ def compare_bulk_operation_executors():
         skip_reason="Deprecated/removed in PyMongo 4.x (use bulk_write)",
     )
     reporter.record_result(
-        "Bulk Operation Executors",
+        "Bulk Executors",
         "initialize_unordered_bulk_op",
         neo_unordered_ok,
         neo_unordered_ok,

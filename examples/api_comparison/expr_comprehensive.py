@@ -23,7 +23,7 @@ warnings.filterwarnings(
 IS_NX27017_BACKEND = os.environ.get("NX27017_BACKEND", "").lower() == "true"
 
 
-def compare_additional_expr_operators_complete():
+def compare_expr_comprehensive():
     """Compare all remaining $expr operators not yet tested"""
     print("\n=== Additional $expr Operators (Complete Coverage) ===")
 
@@ -1128,7 +1128,7 @@ def compare_additional_expr_operators_complete():
             skip_reason = "NeoSQLite extension not in MongoDB"
 
         reporter.record_comparison(
-            "Additional $expr Operators",
+            "$expr (Comprehensive)",
             op_label,
             neo_status if neo_status else "FAIL",
             (

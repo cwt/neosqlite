@@ -19,7 +19,7 @@ warnings.filterwarnings(
 )
 
 
-def compare_additional_expr_operators_extended():
+def compare_expr_math_conditional():
     """Compare additional expression operators"""
     print("\n=== Additional Expression Operators (Extended) Comparison ===")
 
@@ -421,7 +421,7 @@ def compare_additional_expr_operators_extended():
         "$ifNull",
     ]:
         reporter.record_comparison(
-            "Expression Operators Extended",
+            "$expr (Math & Conditional)",
             op,
             neo_results.get(op),
             mongo_results.get(op),

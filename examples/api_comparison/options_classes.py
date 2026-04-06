@@ -6,12 +6,6 @@ import neosqlite
 from neosqlite import CodecOptions, ReadConcern, ReadPreference, WriteConcern
 
 from .reporter import reporter
-from .timing import (
-    end_mongo_timing,
-    end_neo_timing,
-    start_mongo_timing,
-    start_neo_timing,
-)
 from .utils import test_pymongo_connection
 
 warnings.filterwarnings(
@@ -25,40 +19,32 @@ def compare_options_classes():
 
     # Test NeoSQLite
     with neosqlite.Connection(":memory:") as _:
-        start_neo_timing()
-        try:
-            # 1. WriteConcern
-            neo_wc = WriteConcern(w=1, j=True)
-            neo_wc_repr = repr(neo_wc)
+        # 1. WriteConcern
+        neo_wc = WriteConcern(w=1, j=True)
+        neo_wc_repr = repr(neo_wc)
 
-            # Verify it affects NeoSQLite behavior (PRAGMA synchronous)
-            # We use a fresh connection to verify constructor-applied write concern
-            # j=True -> synchronous=FULL (2)
-            with neosqlite.Connection(
-                ":memory:", write_concern=neo_wc
-            ) as neo_conn_wc:
-                cursor = neo_conn_wc.db.execute("PRAGMA synchronous")
-                neo_sync_mode = cursor.fetchone()[0]
+        # Verify it affects NeoSQLite behavior (PRAGMA synchronous)
+        # We use a fresh connection to verify constructor-applied write concern
+        # j=True -> synchronous=FULL (2)
+        with neosqlite.Connection(
+            ":memory:", write_concern=neo_wc
+        ) as neo_conn_wc:
+            cursor = neo_conn_wc.db.execute("PRAGMA synchronous")
+            neo_sync_mode = cursor.fetchone()[0]
 
-            # 2. ReadPreference
-            neo_rp = ReadPreference(ReadPreference.SECONDARY_PREFERRED)
+        # 2. ReadPreference
+        neo_rp = ReadPreference(ReadPreference.SECONDARY_PREFERRED)
 
-            # 3. ReadConcern
-            neo_rc = ReadConcern(level="majority")
+        # 3. ReadConcern
+        neo_rc = ReadConcern(level="majority")
 
-            # 4. CodecOptions
-            neo_co = CodecOptions(tz_aware=True)
-
-            # Test MongoDB
-        finally:
-
-            end_neo_timing()
+        # 4. CodecOptions
+        neo_co = CodecOptions(tz_aware=True)
 
     client = test_pymongo_connection()
     mongo_wc_repr = None
 
     if client:
-        start_mongo_timing()
         try:
             from pymongo import WriteConcern as MongoWriteConcern
 
@@ -66,11 +52,9 @@ def compare_options_classes():
             mongo_wc = MongoWriteConcern(w=1, j=True)
             mongo_wc_repr = repr(mongo_wc)
         finally:
+            client.close()
 
-            end_mongo_timing()
-        client.close()
-
-    # Record results
+    # Record results (compatibility-only, no timing)
     reporter.record_result(
         "Options Classes",
         "WriteConcern behavior",

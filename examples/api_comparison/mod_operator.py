@@ -84,7 +84,7 @@ def compare_mod_operator():
             client.close()
 
     reporter.record_comparison(
-        "Query Operators",
+        "$mod Operator",
         "$mod",
         neo_mod_result,
         mongo_mod_result,
