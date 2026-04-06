@@ -550,7 +550,8 @@ class NeoSQLiteHandler:
                 tokenizer = index_spec.get("tokenizer")
 
                 if isinstance(key, dict):
-                    keys_list = list(key.keys())
+                    # Convert {"field": 1, "field2": -1} to [("field", 1), ("field2", -1)]
+                    keys_list = [(k, v) for k, v in key.items()]
                 else:
                     keys_list = key
 
@@ -615,7 +616,8 @@ class NeoSQLiteHandler:
             coll = db[coll_name]
 
             if isinstance(key, dict):
-                keys_list = list(key.keys())
+                # Convert {"field": 1, "field2": -1} to [("field", 1), ("field2", -1)]
+                keys_list = [(k, v) for k, v in key.items()]
             else:
                 keys_list = key
 

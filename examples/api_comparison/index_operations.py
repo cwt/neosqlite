@@ -54,7 +54,10 @@ def compare_index_operations():
             start_neo_timing()
             try:
                 neo_collection.create_indexes(
-                    ["age", [("name", ASCENDING), ("age", DESCENDING)]]
+                    [
+                        IndexModel("age"),
+                        IndexModel([("name", ASCENDING), ("age", DESCENDING)]),
+                    ]
                 )
             finally:
                 end_neo_timing()
