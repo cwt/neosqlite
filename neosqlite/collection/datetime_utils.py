@@ -55,12 +55,24 @@ def is_datetime_value(value: Any) -> bool:
         return True
 
     if isinstance(value, str):
+        stripped_value = value.strip()
+        # Quick exit for strings that are too short to be dates (YYYY-MM-DD is 10 chars)
+        if len(stripped_value) < 10:
+            return False
+        # Quick exit for strings that don't start with a digit
+        if not stripped_value[0].isdigit():
+            return False
+
         for pattern in COMPILED_DATETIME_PATTERNS:
-            if pattern.match(value.strip()):
+            if pattern.match(stripped_value):
                 return True
 
     # If it's a dict, check nested values
     if isinstance(value, dict):
+        # Optimization: Special case for MongoDB $date helper
+        if "$date" in value:
+            return is_datetime_value(value["$date"])
+        # Otherwise, recursive check for all values (required by some tests)
         for v in value.values():
             if is_datetime_value(v):
                 return True

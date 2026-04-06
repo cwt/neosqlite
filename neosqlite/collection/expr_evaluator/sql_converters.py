@@ -1583,50 +1583,122 @@ class SqlConvertersMixin:
         match operator:
             # Operators returning numbers
             case (
-                "$add" | "$subtract" | "$multiply" | "$divide" | "$mod" |
-                "$abs" | "$ceil" | "$floor" | "$round" | "$trunc" |
-                "$pow" | "$sqrt" | "$ln" | "$log" | "$log10" | "$log2" | "$exp" |
-                "$sin" | "$cos" | "$tan" | "$asin" | "$acos" | "$atan" | "$atan2" |
-                "$sinh" | "$cosh" | "$tanh" | "$asinh" | "$acosh" | "$atanh" |
-                "$size" | "$indexOfArray" | "$sum" | "$avg" | "$min" | "$max" |
-                "$strLenBytes" | "$strLenCP" | "$indexOfBytes" | "$indexOfCP" |
-                "$year" | "$month" | "$dayOfMonth" | "$hour" | "$minute" | "$second" |
-                "$millisecond" | "$dayOfWeek" | "$dayOfYear" | "$week" |
-                "$isoDayOfWeek" | "$isoWeek" | "$dateDiff" |
-                "$binarySize" | "$bsonSize" |
-                "$toInt" | "$toDouble" | "$toLong" | "$toDecimal"
+                "$add"
+                | "$subtract"
+                | "$multiply"
+                | "$divide"
+                | "$mod"
+                | "$abs"
+                | "$ceil"
+                | "$floor"
+                | "$round"
+                | "$trunc"
+                | "$pow"
+                | "$sqrt"
+                | "$ln"
+                | "$log"
+                | "$log10"
+                | "$log2"
+                | "$exp"
+                | "$sin"
+                | "$cos"
+                | "$tan"
+                | "$asin"
+                | "$acos"
+                | "$atan"
+                | "$atan2"
+                | "$sinh"
+                | "$cosh"
+                | "$tanh"
+                | "$asinh"
+                | "$acosh"
+                | "$atanh"
+                | "$size"
+                | "$indexOfArray"
+                | "$sum"
+                | "$avg"
+                | "$min"
+                | "$max"
+                | "$strLenBytes"
+                | "$strLenCP"
+                | "$indexOfBytes"
+                | "$indexOfCP"
+                | "$year"
+                | "$month"
+                | "$dayOfMonth"
+                | "$hour"
+                | "$minute"
+                | "$second"
+                | "$millisecond"
+                | "$dayOfWeek"
+                | "$dayOfYear"
+                | "$week"
+                | "$isoDayOfWeek"
+                | "$isoWeek"
+                | "$dateDiff"
+                | "$binarySize"
+                | "$bsonSize"
+                | "$toInt"
+                | "$toDouble"
+                | "$toLong"
+                | "$toDecimal"
             ):
                 return "number"
 
             # Operators returning booleans
             case (
-                "$eq" | "$ne" | "$gt" | "$gte" | "$lt" | "$lte" |
-                "$and" | "$or" | "$not" | "$nor" |
-                "$in" | "$isArray" | "$setEquals" | "$setIsSubset" |
-                "$anyElementTrue" | "$allElementsTrue" |
-                "$regexMatch" | "$isNumber" | "$toBool"
+                "$eq"
+                | "$ne"
+                | "$gt"
+                | "$gte"
+                | "$lt"
+                | "$lte"
+                | "$and"
+                | "$or"
+                | "$not"
+                | "$nor"
+                | "$in"
+                | "$isArray"
+                | "$setEquals"
+                | "$setIsSubset"
+                | "$anyElementTrue"
+                | "$allElementsTrue"
+                | "$regexMatch"
+                | "$isNumber"
+                | "$toBool"
             ):
                 return "bool"
 
             # Operators returning strings
             case (
-                "$concat" | "$toLower" | "$toUpper" | "$substr" | "$substrBytes" |
-                "$trim" | "$ltrim" | "$rtrim" | "$replaceAll" | "$replaceOne" |
-                "$toString" | "$type"
+                "$concat"
+                | "$toLower"
+                | "$toUpper"
+                | "$substr"
+                | "$substrBytes"
+                | "$trim"
+                | "$ltrim"
+                | "$rtrim"
+                | "$replaceAll"
+                | "$replaceOne"
+                | "$toString"
+                | "$type"
             ):
                 return "string"
 
             # Operators returning arrays
             case (
-                "$slice" | "$setIntersection" | "$setUnion" | "$setDifference" |
-                "$split" | "$objectToArray"
+                "$slice"
+                | "$setIntersection"
+                | "$setUnion"
+                | "$setDifference"
+                | "$split"
+                | "$objectToArray"
             ):
                 return "array"
 
             # Operators returning objects
-            case (
-                "$mergeObjects" | "$getField" | "$setField" | "$unsetField"
-            ):
+            case "$mergeObjects" | "$getField" | "$setField" | "$unsetField":
                 return "object"
 
             case _:
@@ -1719,7 +1791,9 @@ class SqlConvertersMixin:
                     if isinstance(operand, dict) and len(operand) == 1:
                         op_name = next(iter(operand.keys()))
                         if op_name.startswith("$"):
-                            inferred_type = self._get_operator_return_type(op_name)
+                            inferred_type = self._get_operator_return_type(
+                                op_name
+                            )
                     else:
                         inferred_type = self._get_literal_bson_type(operand)
 
@@ -1760,16 +1834,16 @@ class SqlConvertersMixin:
 
                     json_path = parse_json_path(field_path)
                     type_expr = f"json_type({self.data_column}, '{json_path}')"
-                    sql = (
-                        f"CASE WHEN {type_expr} IN ('integer', 'real') THEN 1 ELSE 0 END"
-                    )
+                    sql = f"CASE WHEN {type_expr} IN ('integer', 'real') THEN 1 ELSE 0 END"
                 else:
                     # Computed expression or literal - try to infer type
                     inferred_type = None
                     if isinstance(operand, dict) and len(operand) == 1:
                         op_name = next(iter(operand.keys()))
                         if op_name.startswith("$"):
-                            inferred_type = self._get_operator_return_type(op_name)
+                            inferred_type = self._get_operator_return_type(
+                                op_name
+                            )
                     else:
                         inferred_type = self._get_literal_bson_type(operand)
 
@@ -1812,7 +1886,9 @@ class SqlConvertersMixin:
                     if isinstance(operand, dict) and len(operand) == 1:
                         op_name = next(iter(operand.keys()))
                         if op_name.startswith("$"):
-                            inferred_type = self._get_operator_return_type(op_name)
+                            inferred_type = self._get_operator_return_type(
+                                op_name
+                            )
                     else:
                         inferred_type = self._get_literal_bson_type(operand)
 

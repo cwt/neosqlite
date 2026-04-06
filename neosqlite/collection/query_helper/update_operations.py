@@ -292,34 +292,39 @@ class UpdateOperationsMixin:
         # Get integer ID for the document
         int_doc_id = self._get_integer_id_for_oid(doc_id)
 
-        # Execute the SQL updates
-        sql_params = []
+        # Execute the SQL updates using a single consolidated UPDATE statement if possible
+        # This significantly reduces disk I/O and transaction overhead
+        current_data = "data"
+        all_params = []
+
         if unset_clauses:
             # Handle $unset operations with json_remove
             func_name = _get_json_function("remove", self._jsonb_supported)
-            cmd = (
-                f"UPDATE {quote_table_name(self.collection.name)} "
-                f"SET data = {func_name}(data, {', '.join(unset_clauses)}) "
-                "WHERE id = ?"
+            current_data = (
+                f"{func_name}({current_data}, {', '.join(unset_clauses)})"
             )
-            sql_params = unset_params + [int_doc_id]
-            self.collection.db.execute(cmd, sql_params)
+            all_params.extend(unset_params)
 
         if set_clauses:
             # Handle other operations with json_set
             func_name = _get_json_function("set", self._jsonb_supported)
+            current_data = (
+                f"{func_name}({current_data}, {', '.join(set_clauses)})"
+            )
+            all_params.extend(set_params)
+
+        if current_data != "data":
             cmd = (
                 f"UPDATE {quote_table_name(self.collection.name)} "
-                f"SET data = {func_name}(data, {', '.join(set_clauses)}) "
+                f"SET data = {current_data} "
                 "WHERE id = ?"
             )
-            sql_params = set_params + [int_doc_id]
-            cursor = self.collection.db.execute(cmd, sql_params)
+            cursor = self.collection.db.execute(cmd, all_params + [int_doc_id])
 
             # Check if any rows were updated
             if cursor.rowcount == 0:
                 raise RuntimeError(f"No rows updated for doc_id {doc_id}")
-        elif not unset_clauses:
+        else:
             # No operations to perform
             raise RuntimeError("No valid operations to perform")
 
@@ -673,42 +678,64 @@ class UpdateOperationsMixin:
                         set_clauses.extend(clauses)
                         set_params.extend(params)
 
-        # Execute updates in order
-        # Special handling for $rename: combine json_set and json_remove in single UPDATE
-        has_rename = any(op == "$rename" for op in update_spec.keys())
+        # Execute updates using a single consolidated UPDATE statement if possible
+        # This significantly reduces disk I/O and transaction overhead
 
+        # Combine all operations into a single nested data update
+        # We start with 'data' and wrap it with functions in order
+        current_data = "data"
+        all_params = []
+
+        # Special handling for $rename: combine json_set and json_remove logic
+        has_rename = any(op == "$rename" for op in update_spec.keys())
         if has_rename and set_clauses and unset_clauses:
-            # Combined UPDATE for $rename: json_remove(json_set(data, ...), ...)
             set_func = _get_json_function("set", self._jsonb_supported)
             remove_func = _get_json_function("remove", self._jsonb_supported)
-            # First apply json_set, then wrap with json_remove
-            nested_cmd = f"UPDATE {quote_table_name(self.collection.name)} SET data = {remove_func}({set_func}(data, {', '.join(set_clauses)}), {', '.join(unset_clauses)}) WHERE id = ?"
-            self.collection.db.execute(nested_cmd, set_params + [int_doc_id])
-            # Clear the clauses so they don't get executed again
+            current_data = f"{remove_func}({set_func}({current_data}, {', '.join(set_clauses)}), {', '.join(unset_clauses)})"
+            all_params.extend(set_params)
+            # Clear them so we don't process them again below
             set_clauses = []
             unset_clauses = []
 
+        # Process remaining clauses in order to build a single nested expression
         if unset_clauses:
             func_name = _get_json_function("remove", self._jsonb_supported)
-            cmd = f"UPDATE {quote_table_name(self.collection.name)} SET data = {func_name}(data, {', '.join(unset_clauses)}) WHERE id = ?"
-            self.collection.db.execute(cmd, unset_params + [int_doc_id])
+            current_data = (
+                f"{func_name}({current_data}, {', '.join(unset_clauses)})"
+            )
+            all_params.extend(unset_params)
 
         if insert_clauses:
             func_name = _get_json_function("insert", self._jsonb_supported)
-            cmd = f"UPDATE {quote_table_name(self.collection.name)} SET data = {func_name}(data, {', '.join(insert_clauses)}) WHERE id = ?"
-            self.collection.db.execute(cmd, insert_params + [int_doc_id])
+            current_data = (
+                f"{func_name}({current_data}, {', '.join(insert_clauses)})"
+            )
+            all_params.extend(insert_params)
 
         if replace_clauses:
             func_name = _get_json_function("replace", self._jsonb_supported)
-            cmd = f"UPDATE {quote_table_name(self.collection.name)} SET data = {func_name}(data, {', '.join(replace_clauses)}) WHERE id = ?"
-            self.collection.db.execute(cmd, replace_params + [int_doc_id])
+            current_data = (
+                f"{func_name}({current_data}, {', '.join(replace_clauses)})"
+            )
+            all_params.extend(replace_params)
 
         if set_clauses:
             func_name = _get_json_function("set", self._jsonb_supported)
-            cmd = f"UPDATE {quote_table_name(self.collection.name)} SET data = {func_name}(data, {', '.join(set_clauses)}) WHERE id = ?"
-            cursor = self.collection.db.execute(cmd, set_params + [int_doc_id])
+            current_data = (
+                f"{func_name}({current_data}, {', '.join(set_clauses)})"
+            )
+            all_params.extend(set_params)
+
+        if current_data != "data":
+            cmd = f"UPDATE {quote_table_name(self.collection.name)} SET data = {current_data} WHERE id = ?"
+            cursor = self.collection.db.execute(cmd, all_params + [int_doc_id])
             if cursor.rowcount == 0:
                 raise RuntimeError(f"No rows updated for doc_id {doc_id}")
+        elif (
+            not has_rename
+        ):  # If has_rename was True, it was already handled or clauses were cleared
+            # This check might be redundant if we ensured at least one op, but safe to keep
+            pass
 
         # Fetch updated document
         jsonb = self._jsonb_supported

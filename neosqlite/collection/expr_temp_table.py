@@ -468,7 +468,9 @@ class TempTableExprEvaluator:
 
         return query.strip(), params
 
-    def _build_expr_where_from_temp(self, expr: Dict[str, Any], temp_table: str) -> Tuple[str, List[Any]]:
+    def _build_expr_where_from_temp(
+        self, expr: Dict[str, Any], temp_table: str
+    ) -> Tuple[str, List[Any]]:
         """
         Build WHERE clause using temporary table columns.
 
@@ -480,7 +482,7 @@ class TempTableExprEvaluator:
             Tuple of (WHERE clause, parameters)
         """
         sql, params = self._convert_expr_to_temp_sql(expr, temp_table)
-        
+
         # MongoDB $expr truthiness: NOT (null, 0, false, undefined).
         # In SQLite, we use COALESCE and != 0 to return 1 for truthy and 0 for falsy.
         truthy_sql = f"COALESCE(({sql}), 0) != 0"

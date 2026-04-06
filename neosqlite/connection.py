@@ -104,6 +104,11 @@ class Connection:
         self.db.isolation_level = None
         self.db.execute(f"PRAGMA journal_mode={self.journal_mode}")
 
+        # Set synchronous mode to NORMAL for WAL mode by default if not specified by write concern
+        # This provides a good balance of performance and safety in WAL mode
+        if self.journal_mode == "WAL":
+            self.db.execute("PRAGMA synchronous = NORMAL")
+
         if hasattr(self, "_write_concern") and self._write_concern:
             self._apply_write_concern(self._write_concern)
 
@@ -174,6 +179,11 @@ class Connection:
         self.db.execute(f"PRAGMA auto_vacuum={self.auto_vacuum}")
         self.db.isolation_level = None
         self.db.execute(f"PRAGMA journal_mode={self.journal_mode}")
+
+        # Set synchronous mode to NORMAL for WAL mode by default if not specified by write concern
+        # This provides a good balance of performance and safety in WAL mode
+        if self.journal_mode == "WAL":
+            self.db.execute("PRAGMA synchronous = NORMAL")
 
         if hasattr(self, "_write_concern") and self._write_concern:
             self._apply_write_concern(self._write_concern)

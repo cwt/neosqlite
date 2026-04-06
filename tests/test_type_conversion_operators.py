@@ -61,7 +61,7 @@ class TestIsNumberOperator:
 
     def test_is_number_with_boolean(self):
         """Test $isNumber with boolean value.
-        
+
         MongoDB $isNumber returns False for booleans because they are
         a separate BSON type, not numeric types.
         """
@@ -162,7 +162,7 @@ class TestIsNumberOperator:
 
         This verifies the bug fix where {"$isNumber": "$value"} failed with
         "requires exactly 1 operand" error in SQL tier.
-        
+
         Now uses json_type() for perfect BSON type detection instead of typeof().
         """
         from neosqlite.collection.expr_evaluator import ExprEvaluator
@@ -219,16 +219,16 @@ class TestIsNumberOperator:
 
     def test_is_number_with_all_bson_types(self):
         """Test $isNumber with all BSON types for perfect MongoDB compatibility.
-        
+
         MongoDB $isNumber returns true ONLY for numeric BSON types:
         int, long, double, decimal
         Returns false for: bool, string, array, object, null, date, objectId, binary
         """
         from datetime import datetime
-        
+
         with neosqlite.Connection(":memory:") as conn:
             coll = conn.test_collection
-            
+
             # Insert documents with different BSON types
             test_docs = [
                 {"_id": "int", "value": 42},
@@ -244,9 +244,9 @@ class TestIsNumberOperator:
                 {"_id": "empty_object", "value": {}},
                 {"_id": "date", "value": datetime(2024, 1, 1)},
             ]
-            
+
             coll.insert_many(test_docs)
-            
+
             result = list(
                 coll.aggregate(
                     [
@@ -260,15 +260,15 @@ class TestIsNumberOperator:
                     ]
                 )
             )
-            
+
             # Verify each type
             results_by_id = {r["_id"]: r["is_num"] for r in result}
-            
+
             # Numeric types should be True
             assert results_by_id["int"] == True
             assert results_by_id["long"] == True
             assert results_by_id["double"] == True
-            
+
             # Non-numeric types should be False
             assert results_by_id["bool_true"] == False
             assert results_by_id["bool_false"] == False
@@ -354,7 +354,7 @@ class TestExistingTypeConversionOperators:
 
     def test_toBool_with_all_bson_types(self):
         """Test $toBool with all BSON types for perfect MongoDB compatibility.
-        
+
         MongoDB $toBool truthiness:
         - null: false
         - booleans: as-is (true->true, false->false)
@@ -363,10 +363,10 @@ class TestExistingTypeConversionOperators:
         - arrays: true (even empty [])
         - objects: true (even empty {})
         """
-        
+
         with neosqlite.Connection(":memory:") as conn:
             coll = conn.test_collection
-            
+
             # Insert documents with different BSON types
             test_docs = [
                 {"_id": "null", "value": None},
@@ -383,9 +383,9 @@ class TestExistingTypeConversionOperators:
                 {"_id": "object_empty", "value": {}},
                 {"_id": "object_nonempty", "value": {"key": "value"}},
             ]
-            
+
             coll.insert_many(test_docs)
-            
+
             result = list(
                 coll.aggregate(
                     [
@@ -399,31 +399,31 @@ class TestExistingTypeConversionOperators:
                     ]
                 )
             )
-            
+
             # Verify each type
             results_by_id = {r["_id"]: r["bool_val"] for r in result}
-            
+
             # null -> false
             assert results_by_id["null"] == False
-            
+
             # booleans -> as-is
             assert results_by_id["bool_true"] == True
             assert results_by_id["bool_false"] == False
-            
+
             # numbers -> non-zero is true
             assert results_by_id["int_zero"] == False
             assert results_by_id["int_nonzero"] == True
             assert results_by_id["float_zero"] == False
             assert results_by_id["float_nonzero"] == True
-            
+
             # strings -> non-empty is true
             assert results_by_id["string_empty"] == False
             assert results_by_id["string_nonempty"] == True
-            
+
             # arrays -> always true (even empty)
             assert results_by_id["array_empty"] == True
             assert results_by_id["array_nonempty"] == True
-            
+
             # objects -> always true (even empty)
             assert results_by_id["object_empty"] == True
             assert results_by_id["object_nonempty"] == True

@@ -24,7 +24,7 @@ def compare_options_classes():
     print("\n=== Options Classes Comparison ===")
 
     # Test NeoSQLite
-    with neosqlite.Connection(":memory:") as neo_conn:
+    with neosqlite.Connection(":memory:") as _:
         start_neo_timing()
         try:
             # 1. WriteConcern
@@ -32,10 +32,13 @@ def compare_options_classes():
             neo_wc_repr = repr(neo_wc)
 
             # Verify it affects NeoSQLite behavior (PRAGMA synchronous)
+            # We use a fresh connection to verify constructor-applied write concern
             # j=True -> synchronous=FULL (2)
-            neo_conn_wc = neo_conn.with_options(write_concern=neo_wc)
-            cursor = neo_conn_wc.db.execute("PRAGMA synchronous")
-            neo_sync_mode = cursor.fetchone()[0]
+            with neosqlite.Connection(
+                ":memory:", write_concern=neo_wc
+            ) as neo_conn_wc:
+                cursor = neo_conn_wc.db.execute("PRAGMA synchronous")
+                neo_sync_mode = cursor.fetchone()[0]
 
             # 2. ReadPreference
             neo_rp = ReadPreference(ReadPreference.SECONDARY_PREFERRED)
