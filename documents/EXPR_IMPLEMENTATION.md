@@ -327,11 +327,11 @@ collection.find({
 
 | Operator | Description | SQL Support | Python Support |
 |----------|-------------|-------------|----------------|
-| `$type` | Get BSON type | ❌ | ✅ |
-| `$toString` | Convert to string | ❌ | ✅ |
-| `$toInt` | Convert to int | ❌ | ✅ |
-| `$toDouble` | Convert to double | ❌ | ✅ |
-| `$toBool` | Convert to boolean | ❌ | ✅ |
+| `$type` | Get BSON type | ✅ | ✅ |
+| `$toString` | Convert to string | ✅ | ✅ |
+| `$toInt` | Convert to int | ✅ | ✅ |
+| `$toDouble` | Convert to double | ✅ | ✅ |
+| `$toBool` | Convert to boolean | ✅ | ✅ |
 | `$toLong` | Convert to long | ✅ | ✅ |
 | `$toDecimal` | Convert to decimal | ❌ | ✅ |
 | `$toObjectId` | Convert to ObjectId | ❌ | ✅ |
@@ -345,20 +345,29 @@ collection.find({
     "$expr": {"$eq": [{"$toInt": ["$strField"]}, 42]}
 })
 
-# Convert to ObjectId
+# Get BSON type
 collection.find({
-    "$expr": {
-        "$eq": [{"$toObjectId": "$hex_string"}, ObjectId("507f1f77bcf86cd799439011")]
-    }
-})
-
-# General conversion
-collection.find({
-    "$expr": {
-        "$eq": [{"$convert": {"input": "$str", "to": "int"}}, 42]
-    }
+    "$expr": {"$eq": [{"$type": "$field"}, "string"]}
 })
 ```
+
+## Advanced SQL Optimization: Static Type Inference
+
+To achieve 100% MongoDB compatibility in the SQL tier, NeoSQLite uses **Static Type Inference**. This system predicts the BSON return type of MongoDB operators during SQL generation.
+
+### How it Works
+1. **Operator Mapping**: Operators like `$add` are known to always return numbers, while `$eq` always returns booleans.
+2. **Literal Checking**: Python literal types are inspected (e.g., `True` is identified as a boolean literal).
+3. **Deterministic SQL**: For expressions like `{"$isNumber": {"$add": ["$a", 1]}}`, the SQL generator immediately produces `1` (True) without needing `typeof()` checks.
+
+### MongoDB Truthiness Wrapping
+MongoDB's `$expr` truthiness rules differ from SQLite (e.g., non-empty strings are truthy). NeoSQLite wraps top-level expressions in a robust truthiness check:
+
+```sql
+COALESCE(({expr}), 0) != 0
+```
+
+This ensures that strings, non-zero numbers, and objects are correctly treated as truthy in `find()` queries, while evaluating the expression only once.
 
 ### Other Operators (1/2 - 50%)
 

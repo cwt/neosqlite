@@ -376,7 +376,11 @@ class QueryHelper(
             Tuple of (WHERE clause, parameters, tables) or None for Python fallback
         """
         # Build WHERE clause starting with $expr
-        where_parts = [f"({sql_expr})"]
+        # MongoDB $expr truthiness: NOT (null, 0, false, undefined).
+        # In SQLite, we use COALESCE and != 0 to return 1 for truthy and 0 for falsy.
+        # This handles strings, numbers, and nulls correctly while evaluating once.
+        truthy_expr = f"COALESCE(({sql_expr}), 0) != 0"
+        where_parts = [f"({truthy_expr})"]
         all_params: List[Any] = list(params)
 
         # Process other query fields (excluding $expr)

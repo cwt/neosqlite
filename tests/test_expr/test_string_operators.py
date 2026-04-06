@@ -146,6 +146,26 @@ class TestStringOperatorsPython:
         # For Unicode, code points may differ from bytes
         assert evaluator._evaluate_expr_python(expr, {"text": "你好"}) == 2
 
+    def test_strLenCP_single_value_format_sql(self):
+        """Test $strLenCP with single-value operand format in SQL tier.
+
+        This verifies the bug fix where {"$strLenCP": "$text"} failed with
+        "requires exactly 1 operand" error in SQL tier.
+        """
+        evaluator = ExprEvaluator()
+        expr = {"$strLenCP": "$text"}  # Single-value format, not list
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "length" in sql
+
+    def test_strLenCP_list_format_sql(self):
+        """Test $strLenCP with list operand format in SQL tier."""
+        evaluator = ExprEvaluator()
+        expr = {"$strLenCP": ["$text"]}  # List format
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "length" in sql
+
     def test_indexOfCP_operator(self):
         """Test $indexOfCP operator."""
         evaluator = ExprEvaluator()
@@ -187,6 +207,44 @@ class TestStringIntegration:
                 assert len(results) == 1
             finally:
                 set_force_fallback(False)
+
+    def test_strLenCP_in_project_uses_sql_tier(self):
+        """Test that $strLenCP in $project uses SQL tier (not Python fallback).
+
+        This is an integration test to ensure the SQL tier optimization works
+        with single-value operand format.
+        """
+        with neosqlite.Connection(":memory:") as conn:
+            collection = conn["test"]
+            collection.insert_many(
+                [
+                    {"text": "hello"},
+                    {"text": "你好"},
+                    {"text": ""},
+                ]
+            )
+
+            # Don't force fallback - let it use SQL tier
+            result = list(
+                collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "length": {"$strLenCP": "$text"},
+                                "text": 1,
+                            }
+                        }
+                    ]
+                )
+            )
+
+            assert len(result) == 3
+            # "hello" has 5 code points
+            assert result[0]["length"] == 5
+            # "你好" has 2 code points
+            assert result[1]["length"] == 2
+            # "" has 0 code points
+            assert result[2]["length"] == 0
 
     def test_replaceOne_integration(self):
         """Test $replaceOne with database."""

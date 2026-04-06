@@ -27,7 +27,7 @@ class TestIsNumberOperator:
             )
 
             assert len(result) == 1
-            assert result[0]["is_num"] == 1  # SQLite returns 1 for true
+            assert result[0]["is_num"] == True  # SQLite returns 1 for true
 
     def test_is_number_with_float(self):
         """Test $isNumber with float value."""
@@ -42,7 +42,7 @@ class TestIsNumberOperator:
             )
 
             assert len(result) == 1
-            assert result[0]["is_num"] == 1
+            assert result[0]["is_num"] == True
 
     def test_is_number_with_string(self):
         """Test $isNumber with string value."""
@@ -57,10 +57,14 @@ class TestIsNumberOperator:
             )
 
             assert len(result) == 1
-            assert result[0]["is_num"] == 0  # SQLite returns 0 for false
+            assert result[0]["is_num"] == False  # SQLite returns 0 for false
 
     def test_is_number_with_boolean(self):
-        """Test $isNumber with boolean value."""
+        """Test $isNumber with boolean value.
+        
+        MongoDB $isNumber returns False for booleans because they are
+        a separate BSON type, not numeric types.
+        """
         with neosqlite.Connection(":memory:") as conn:
             coll = conn.test_collection
             coll.insert_one({"value": True})
@@ -72,7 +76,8 @@ class TestIsNumberOperator:
             )
 
             assert len(result) == 1
-            assert result[0]["is_num"] == 0  # Booleans are not numbers
+            # MongoDB: booleans are NOT numbers (separate BSON type)
+            assert result[0]["is_num"] == False
 
     def test_is_number_with_null(self):
         """Test $isNumber with null value."""
@@ -87,7 +92,7 @@ class TestIsNumberOperator:
             )
 
             assert len(result) == 1
-            assert result[0]["is_num"] == 0
+            assert result[0]["is_num"] == False
 
     def test_is_number_with_array(self):
         """Test $isNumber with array value."""
@@ -102,7 +107,7 @@ class TestIsNumberOperator:
             )
 
             assert len(result) == 1
-            assert result[0]["is_num"] == 0
+            assert result[0]["is_num"] == False
 
     def test_is_number_with_object(self):
         """Test $isNumber with object value."""
@@ -117,7 +122,7 @@ class TestIsNumberOperator:
             )
 
             assert len(result) == 1
-            assert result[0]["is_num"] == 0
+            assert result[0]["is_num"] == False
 
     def test_is_number_with_kill_switch(self):
         """Test $isNumber with kill switch enabled."""
@@ -144,13 +149,136 @@ class TestIsNumberOperator:
 
                 assert len(result) == 4
                 # First doc (42) should be True
-                assert result[0]["is_num"] is True
+                assert result[0]["is_num"] == True
                 # Others should be False
-                assert result[1]["is_num"] is False
-                assert result[2]["is_num"] is False
-                assert result[3]["is_num"] is False
+                assert result[1]["is_num"] == False
+                assert result[2]["is_num"] == False
+                assert result[3]["is_num"] == False
             finally:
                 set_force_fallback(original_state)
+
+    def test_is_number_sql_tier_single_value_format(self):
+        """Test $isNumber SQL tier with single-value operand format.
+
+        This verifies the bug fix where {"$isNumber": "$value"} failed with
+        "requires exactly 1 operand" error in SQL tier.
+        
+        Now uses json_type() for perfect BSON type detection instead of typeof().
+        """
+        from neosqlite.collection.expr_evaluator import ExprEvaluator
+
+        evaluator = ExprEvaluator()
+        expr = {"$isNumber": "$value"}  # Single-value format, not list
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "json_type" in sql
+
+    def test_is_number_sql_tier_list_format(self):
+        """Test $isNumber SQL tier with list operand format."""
+        from neosqlite.collection.expr_evaluator import ExprEvaluator
+
+        evaluator = ExprEvaluator()
+        expr = {"$isNumber": ["$value"]}  # List format
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "json_type" in sql
+
+    def test_is_number_in_project_uses_sql_tier(self):
+        """Test that $isNumber in $project uses SQL tier (not Python fallback).
+
+        This is an integration test to ensure the SQL tier optimization works
+        and doesn't fall back to Python evaluation.
+        """
+        with neosqlite.Connection(":memory:") as conn:
+            coll = conn.test_collection
+            coll.insert_many(
+                [
+                    {"value": 42},
+                    {"value": 3.14},
+                    {"value": "not a number"},
+                    {"value": None},
+                ]
+            )
+
+            # Don't force fallback - let it use SQL tier
+            result = list(
+                coll.aggregate(
+                    [{"$project": {"is_num": {"$isNumber": "$value"}}}]
+                )
+            )
+
+            assert len(result) == 4
+            # Integer should be a number
+            assert result[0]["is_num"] == True
+            # Float should be a number
+            assert result[1]["is_num"] == True
+            # String should not be a number
+            assert result[2]["is_num"] == False
+            # Null should not be a number
+            assert result[3]["is_num"] == False
+
+    def test_is_number_with_all_bson_types(self):
+        """Test $isNumber with all BSON types for perfect MongoDB compatibility.
+        
+        MongoDB $isNumber returns true ONLY for numeric BSON types:
+        int, long, double, decimal
+        Returns false for: bool, string, array, object, null, date, objectId, binary
+        """
+        from datetime import datetime
+        
+        with neosqlite.Connection(":memory:") as conn:
+            coll = conn.test_collection
+            
+            # Insert documents with different BSON types
+            test_docs = [
+                {"_id": "int", "value": 42},
+                {"_id": "long", "value": 9999999999999},
+                {"_id": "double", "value": 3.14},
+                {"_id": "bool_true", "value": True},
+                {"_id": "bool_false", "value": False},
+                {"_id": "string", "value": "hello"},
+                {"_id": "null", "value": None},
+                {"_id": "array", "value": [1, 2, 3]},
+                {"_id": "empty_array", "value": []},
+                {"_id": "object", "value": {"key": "value"}},
+                {"_id": "empty_object", "value": {}},
+                {"_id": "date", "value": datetime(2024, 1, 1)},
+            ]
+            
+            coll.insert_many(test_docs)
+            
+            result = list(
+                coll.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "_id": 1,
+                                "is_num": {"$isNumber": "$value"},
+                            }
+                        },
+                        {"$sort": {"_id": 1}},
+                    ]
+                )
+            )
+            
+            # Verify each type
+            results_by_id = {r["_id"]: r["is_num"] for r in result}
+            
+            # Numeric types should be True
+            assert results_by_id["int"] == True
+            assert results_by_id["long"] == True
+            assert results_by_id["double"] == True
+            
+            # Non-numeric types should be False
+            assert results_by_id["bool_true"] == False
+            assert results_by_id["bool_false"] == False
+            assert results_by_id["string"] == False
+            assert results_by_id["null"] == False
+            assert results_by_id["array"] == False
+            assert results_by_id["empty_array"] == False
+            assert results_by_id["object"] == False
+            assert results_by_id["empty_object"] == False
+            assert results_by_id["date"] == False
 
 
 class TestExistingTypeConversionOperators:
@@ -220,9 +348,85 @@ class TestExistingTypeConversionOperators:
                 coll.aggregate([{"$project": {"bool": {"$toBool": "$value"}}}])
             )
 
-            assert result[0]["bool"] is False  # 0 -> False
-            assert result[1]["bool"] is True  # 1 -> True
-            assert result[2]["bool"] is True  # non-zero -> True
+            assert result[0]["bool"] == False  # 0 -> False
+            assert result[1]["bool"] == True  # 1 -> True
+            assert result[2]["bool"] == True  # non-zero -> True
+
+    def test_toBool_with_all_bson_types(self):
+        """Test $toBool with all BSON types for perfect MongoDB compatibility.
+        
+        MongoDB $toBool truthiness:
+        - null: false
+        - booleans: as-is (true->true, false->false)
+        - numbers: non-zero is true, zero is false
+        - strings: non-empty is true, empty is false
+        - arrays: true (even empty [])
+        - objects: true (even empty {})
+        """
+        
+        with neosqlite.Connection(":memory:") as conn:
+            coll = conn.test_collection
+            
+            # Insert documents with different BSON types
+            test_docs = [
+                {"_id": "null", "value": None},
+                {"_id": "bool_true", "value": True},
+                {"_id": "bool_false", "value": False},
+                {"_id": "int_zero", "value": 0},
+                {"_id": "int_nonzero", "value": 42},
+                {"_id": "float_zero", "value": 0.0},
+                {"_id": "float_nonzero", "value": 3.14},
+                {"_id": "string_empty", "value": ""},
+                {"_id": "string_nonempty", "value": "hello"},
+                {"_id": "array_empty", "value": []},
+                {"_id": "array_nonempty", "value": [1, 2, 3]},
+                {"_id": "object_empty", "value": {}},
+                {"_id": "object_nonempty", "value": {"key": "value"}},
+            ]
+            
+            coll.insert_many(test_docs)
+            
+            result = list(
+                coll.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "_id": 1,
+                                "bool_val": {"$toBool": "$value"},
+                            }
+                        },
+                        {"$sort": {"_id": 1}},
+                    ]
+                )
+            )
+            
+            # Verify each type
+            results_by_id = {r["_id"]: r["bool_val"] for r in result}
+            
+            # null -> false
+            assert results_by_id["null"] == False
+            
+            # booleans -> as-is
+            assert results_by_id["bool_true"] == True
+            assert results_by_id["bool_false"] == False
+            
+            # numbers -> non-zero is true
+            assert results_by_id["int_zero"] == False
+            assert results_by_id["int_nonzero"] == True
+            assert results_by_id["float_zero"] == False
+            assert results_by_id["float_nonzero"] == True
+            
+            # strings -> non-empty is true
+            assert results_by_id["string_empty"] == False
+            assert results_by_id["string_nonempty"] == True
+            
+            # arrays -> always true (even empty)
+            assert results_by_id["array_empty"] == True
+            assert results_by_id["array_nonempty"] == True
+            
+            # objects -> always true (even empty)
+            assert results_by_id["object_empty"] == True
+            assert results_by_id["object_nonempty"] == True
 
     def test_toBool_with_string(self):
         """Test $toBool with string values."""
@@ -239,8 +443,8 @@ class TestExistingTypeConversionOperators:
                 coll.aggregate([{"$project": {"bool": {"$toBool": "$value"}}}])
             )
 
-            assert result[0]["bool"] is False  # empty string -> False
-            assert result[1]["bool"] is True  # non-empty -> True
+            assert result[0]["bool"] == False  # empty string -> False
+            assert result[1]["bool"] == True  # non-empty -> True
 
     def test_toLong(self):
         """Test $toLong operator."""
@@ -352,8 +556,8 @@ class TestTypeConversionKillSwitch:
                 assert result[0]["to_str"] == "42"
                 assert result[0]["to_int"] == 3
                 assert result[0]["to_double"] == 42.0
-                assert result[0]["to_bool"] is True
-                assert result[0]["is_num_num"] is True
-                assert result[0]["is_num_str"] is False
+                assert result[0]["to_bool"] == True
+                assert result[0]["is_num_num"] == True
+                assert result[0]["is_num_str"] == False
             finally:
                 set_force_fallback(original_state)

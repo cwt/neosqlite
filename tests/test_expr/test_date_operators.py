@@ -84,12 +84,118 @@ class TestDateOperatorsSQL:
         expr = {"$week": ["$date"]}
         sql, params = evaluator._evaluate_sql_tier1(expr)
         assert sql is not None
-        assert "%W" in sql
+        assert "%U" in sql
 
     def test_millisecond_sql(self):
         """Test $millisecond SQL conversion."""
         evaluator = ExprEvaluator()
         expr = {"$millisecond": ["$date"]}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "%f" in sql
+
+
+class TestDateOperatorsSingleValueFormat:
+    """Test date operators with single-value operand format (bug fix verification).
+
+    These tests verify that date operators work with the single-value format
+    {"$year": "$date"} which is the common MongoDB API pattern, not just
+    the list format {"$year": ["$date"]}.
+
+    This was a bug where SQL converters failed to normalize single-value operands.
+    """
+
+    def test_year_single_value_format_sql(self):
+        """Test $year with single-value operand format in SQL tier."""
+        evaluator = ExprEvaluator()
+        expr = {"$year": "$date"}  # Single-value format, not list
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "strftime" in sql
+        assert "%Y" in sql
+
+    def test_month_single_value_format_sql(self):
+        """Test $month with single-value operand format in SQL tier."""
+        evaluator = ExprEvaluator()
+        expr = {"$month": "$date"}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "%m" in sql
+
+    def test_day_of_month_single_value_format_sql(self):
+        """Test $dayOfMonth with single-value operand format in SQL tier."""
+        evaluator = ExprEvaluator()
+        expr = {"$dayOfMonth": "$date"}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "%d" in sql
+
+    def test_hour_single_value_format_sql(self):
+        """Test $hour with single-value operand format in SQL tier."""
+        evaluator = ExprEvaluator()
+        expr = {"$hour": "$date"}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "%H" in sql
+
+    def test_minute_single_value_format_sql(self):
+        """Test $minute with single-value operand format in SQL tier."""
+        evaluator = ExprEvaluator()
+        expr = {"$minute": "$date"}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "%M" in sql
+
+    def test_second_single_value_format_sql(self):
+        """Test $second with single-value operand format in SQL tier."""
+        evaluator = ExprEvaluator()
+        expr = {"$second": "$date"}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "%S" in sql
+
+    def test_day_of_week_single_value_format_sql(self):
+        """Test $dayOfWeek with single-value operand format in SQL tier."""
+        evaluator = ExprEvaluator()
+        expr = {"$dayOfWeek": "$date"}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "%w" in sql
+
+    def test_day_of_year_single_value_format_sql(self):
+        """Test $dayOfYear with single-value operand format in SQL tier."""
+        evaluator = ExprEvaluator()
+        expr = {"$dayOfYear": "$date"}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "%j" in sql
+
+    def test_week_single_value_format_sql(self):
+        """Test $week with single-value operand format in SQL tier."""
+        evaluator = ExprEvaluator()
+        expr = {"$week": "$date"}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "%U" in sql
+
+    def test_iso_day_of_week_single_value_format_sql(self):
+        """Test $isoDayOfWeek with single-value operand format in SQL tier."""
+        evaluator = ExprEvaluator()
+        expr = {"$isoDayOfWeek": "$date"}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+
+    def test_iso_week_single_value_format_sql(self):
+        """Test $isoWeek with single-value operand format in SQL tier."""
+        evaluator = ExprEvaluator()
+        expr = {"$isoWeek": "$date"}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+
+    def test_millisecond_single_value_format_sql(self):
+        """Test $millisecond with single-value operand format in SQL tier."""
+        evaluator = ExprEvaluator()
+        expr = {"$millisecond": "$date"}
         sql, params = evaluator._evaluate_sql_tier1(expr)
         assert sql is not None
         assert "%f" in sql

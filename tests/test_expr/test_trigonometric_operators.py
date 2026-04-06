@@ -315,3 +315,103 @@ class TestSigmoidOperator:
         result = evaluator._evaluate_expr_python(expr, {"value": 0})
         assert result is not None
         assert abs(result - 0.5) < 0.0001
+
+    def test_sigmoid_single_value_format_sql(self):
+        """Test $sigmoid with single-value operand format in SQL tier.
+
+        This verifies the bug fix where {"$sigmoid": "$value"} failed with
+        "requires exactly 1 operand" error.
+        """
+        from neosqlite.collection.expr_evaluator import ExprEvaluator
+
+        evaluator = ExprEvaluator()
+        expr = {"$sigmoid": "$value"}  # Single-value format, not list
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "exp" in sql
+        # Should contain sigmoid formula: 1 / (1 + exp(-x))
+        assert "1.0" in sql
+
+    def test_sigmoid_list_format_sql(self):
+        """Test $sigmoid with list operand format in SQL tier."""
+        from neosqlite.collection.expr_evaluator import ExprEvaluator
+
+        evaluator = ExprEvaluator()
+        expr = {"$sigmoid": ["$value"]}  # List format
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "exp" in sql
+
+    def test_sigmoid_object_format_sql(self):
+        """Test $sigmoid with object operand format in SQL tier."""
+        from neosqlite.collection.expr_evaluator import ExprEvaluator
+
+        evaluator = ExprEvaluator()
+        expr = {"$sigmoid": {"input": "$value", "onNull": 0.5}}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "exp" in sql
+        assert "CASE" in sql  # Should have CASE for onNull handling
+
+    def test_sigmoid_in_aggregation_pipeline(self):
+        """Test $sigmoid in aggregation $project stage with SQL tier."""
+        import neosqlite
+
+        with neosqlite.Connection(":memory:") as conn:
+            coll = conn.test_sigmoid
+            coll.insert_many(
+                [
+                    {"_id": 1, "value": 0},
+                    {"_id": 2, "value": 2},
+                    {"_id": 3, "value": -2},
+                ]
+            )
+
+            result = list(
+                coll.aggregate(
+                    [{"$project": {"sigmoid_val": {"$sigmoid": "$value"}}}]
+                )
+            )
+
+            assert len(result) == 3
+            # sigmoid(0) = 0.5
+            assert abs(result[0]["sigmoid_val"] - 0.5) < 0.0001
+            # sigmoid(2) ≈ 0.8808
+            assert abs(result[1]["sigmoid_val"] - 0.8808) < 0.001
+            # sigmoid(-2) ≈ 0.1192
+            assert abs(result[2]["sigmoid_val"] - 0.1192) < 0.001
+
+    def test_sigmoid_with_onNull_in_aggregation(self):
+        """Test $sigmoid with onNull in aggregation pipeline."""
+        import neosqlite
+
+        with neosqlite.Connection(":memory:") as conn:
+            coll = conn.test_sigmoid_onnull
+            coll.insert_many(
+                [
+                    {"_id": 1, "value": 0},
+                    {"_id": 2, "value": None},
+                ]
+            )
+
+            result = list(
+                coll.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "sigmoid_val": {
+                                    "$sigmoid": {
+                                        "input": "$value",
+                                        "onNull": 0.5,
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+
+            assert len(result) == 2
+            assert abs(result[0]["sigmoid_val"] - 0.5) < 0.0001
+            # When value is None, should return onNull value (0.5)
+            assert result[1]["sigmoid_val"] == 0.5
