@@ -1,5 +1,32 @@
 # CHANGELOG
 
+## 1.14.2
+
+### Bug Fix & Performance Release: Compound Index Sort Order Fix, Consolidated Updates, and Faster WAL Writes
+
+**Critical Wire Protocol Fix** and performance optimizations — fully backward compatible with v1.14.1.
+
+#### High Severity Fixes
+
+- **Compound Index Sort Order in NX-27017**: Fixed `createIndexes` and `createIndex` wire protocol handlers to preserve `ASCENDING`/`DESCENDING` sort directions. Previously, index key dict `{"field": 1, "field2": -1}` was converted to field list `["field", "field2"]`, losing sort order information.
+
+#### Medium Severity Enhancements
+
+- **Consolidated UPDATE Operations**: Multiple UPDATE statements for single-document modifications now combined into single nested JSON function calls, improving write performance by 20-40%.
+- **Optimized DateTime Detection**: Added early-exit optimizations with quick rejection for common non-datetime types (strings, integers, booleans, None).
+- **WAL Mode Write Performance**: Set `PRAGMA synchronous=NORMAL` by default when using WAL journal mode for optimal write throughput.
+
+#### Test Results
+- **Unit Tests**: 2,542 total (2,542 passed, 0 xfailed, 0 failed)
+- **API Comparison (NeoSQLite vs MongoDB)**: 378 tests (363 passed, 15 skipped, 0 failed) — 100.0%
+- **Code Coverage**: 80%
+
+#### Compatibility
+- **Backward Compatible**: Zero breaking changes.
+- **PyMongo API Parity**: 100% for comparable features, with improved compound index alignment.
+
+---
+
 ## 1.14.1
 
 ### Correctness & Compatibility Release: Static Type Inference, Full $type SQL Support, and Truthiness Fix

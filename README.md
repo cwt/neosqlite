@@ -33,20 +33,20 @@
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
-## Latest Release: v1.14.1
+## Latest Release: v1.14.2
 
-NeoSQLite v1.14.1 is a **correctness and compatibility release** that eliminates major limitations in the SQL evaluation tier. It introduces **Static Type Inference** to perfectly match MongoDB BSON type semantics even for computed expressions and provides full SQL-tier support for the `$type` operator.
+NeoSQLite v1.14.2 is a **bug fix and performance optimization release** that resolves compound index sort order issues in the NX-27017 wire protocol and improves write performance through consolidated UPDATE statements.
 
-**Critical Fix:** This release resolves a functional issue where `$expr` queries returning strings (like `$type` or `$concat`) would return zero results in `find()` filters.
+**Critical Fix:** This release resolves a functional issue where compound indexes with mixed `ASCENDING`/`DESCENDING` fields lost their sort order when created via the NX-27017 wire protocol.
 
 ### Key Features & Fixes
 
-- **Static Type Inference**: Predicted return types for MongoDB operators allowing SQL-tier optimization for computed expressions.
-- **SQL-Tier `$type`**: Full database-level support for the `$type` operator, including detection of NeoSQLite-encoded `Binary` and `ObjectId`.
-- **Corrected `$expr` Truthiness**: Wrapped `$expr` SQL results in an optimized `COALESCE` logic to ensure strings and objects are correctly treated as truthy in filter predicates.
-- **Perfect Type Matching**: Verified that `$isNumber` and `$toBool` now work correctly for both direct field references and computed expressions in the SQL tier.
+- **Compound Index Sort Order**: NX-27017 now preserves `ASCENDING`/`DESCENDING` sort directions for compound indexes via wire protocol.
+- **Consolidated UPDATE Operations**: Multiple field updates combined into single nested JSON function calls for 20-40% faster writes.
+- **WAL Mode Performance**: Automatic `PRAGMA synchronous=NORMAL` for optimal WAL write throughput.
+- **DateTime Detection**: Early-exit optimizations for faster query processing.
 
-For full details, see [documents/releases/v1.14.1.md](documents/releases/v1.14.1.md).
+For full details, see [documents/releases/v1.14.2.md](documents/releases/v1.14.2.md).
 
 ## Installation
 

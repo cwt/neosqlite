@@ -807,15 +807,15 @@ files = [
 
 [[package]]
 name = "nx-27017"
-version = "0.6.1"
+version = "0.6.2"
 description = "NeoSQLite Experimental Project 27017 - MongoDB Wire Protocol Server"
 optional = true
 python-versions = "<3.15,>=3.10"
 groups = ["main"]
 markers = "extra == \"nx27017\" or extra == \"nx27017-speed\""
 files = [
-    {file = "nx_27017-0.6.1-py3-none-any.whl", hash = "sha256:d92bce1cf35f46b77e1912861b59e8bdb3a6fc1279140e2cfbaa96743f8ad61c"},
-    {file = "nx_27017-0.6.1.tar.gz", hash = "sha256:ca60355107e6add18202fa373e7bf7bb381e531dab3aa463210a06595943c9ff"},
+    {file = "nx_27017-0.6.2-py3-none-any.whl", hash = "sha256:0b8f98d05909493d483c164809605fd5fe3744c81fce6a2bf0ada56382e2df6c"},
+    {file = "nx_27017-0.6.2.tar.gz", hash = "sha256:b5453b52788a302af4a5b0a1371535a68fcabaac95cc3f7b981fd291efc121af"},
 ]
 
 [package.dependencies]
