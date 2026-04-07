@@ -9,6 +9,8 @@ import pytest
 
 from neosqlite import AutoVacuumMode
 from neosqlite.migration import (
+    checkpoint_and_prepare_for_migration,
+    get_journal_mode,
     migrate_autovacuum,
     needs_migration,
     should_migrate,
@@ -327,4 +329,163 @@ class TestMigrateAutovacuum:
         )
         data = conn.execute("SELECT * FROM test ORDER BY id").fetchall()
         assert data == [(1, "hello"), (2, "world")]
+        conn.close()
+
+
+class TestGetJournalMode:
+    """Tests for get_journal_mode function."""
+
+    def test_get_journal_mode_delete(self, tmp_path):
+        """Test getting DELETE journal mode."""
+        db_path = str(tmp_path / "test.db")
+        create_database(db_path, "DELETE", AutoVacuumMode.NONE)
+
+        conn = sqlite3.connect(db_path)
+        journal_mode = get_journal_mode(conn)
+        assert journal_mode.lower() == "delete"
+        conn.close()
+
+    def test_get_journal_mode_wal(self, tmp_path):
+        """Test getting WAL journal mode."""
+        db_path = str(tmp_path / "test.db")
+        create_database(db_path, "WAL", AutoVacuumMode.NONE)
+
+        conn = sqlite3.connect(db_path)
+        journal_mode = get_journal_mode(conn)
+        assert journal_mode.lower() == "wal"
+        conn.close()
+
+        if os.path.exists(db_path + "-wal"):
+            os.remove(db_path + "-wal")
+        if os.path.exists(db_path + "-shm"):
+            os.remove(db_path + "-shm")
+
+    def test_get_journal_mode_memory(self, tmp_path):
+        """Test getting MEMORY journal mode."""
+        db_path = str(tmp_path / "test.db")
+        db = sqlite3.connect(db_path)
+        db.execute("PRAGMA journal_mode=MEMORY")
+        # Check immediately before closing
+        journal_mode = db.execute("PRAGMA journal_mode").fetchone()[0]
+        assert journal_mode.lower() == "memory"
+        db.close()
+
+
+class TestCheckpointAndPrepareForMigration:
+    """Tests for checkpoint_and_prepare_for_migration function."""
+
+    def test_checkpoint_with_wal(self, tmp_path):
+        """Test checkpoint with WAL mode database."""
+        db_path = str(tmp_path / "test.db")
+        create_database(db_path, "WAL", AutoVacuumMode.NONE)
+
+        conn = sqlite3.connect(db_path)
+        files = checkpoint_and_prepare_for_migration(conn)
+        assert isinstance(files, list)
+        conn.close()
+
+        if os.path.exists(db_path + "-wal"):
+            os.remove(db_path + "-wal")
+        if os.path.exists(db_path + "-shm"):
+            os.remove(db_path + "-shm")
+
+    def test_checkpoint_with_delete_mode(self, tmp_path):
+        """Test checkpoint with DELETE journal mode."""
+        db_path = str(tmp_path / "test.db")
+        create_database(db_path, "DELETE", AutoVacuumMode.NONE)
+
+        conn = sqlite3.connect(db_path)
+        files = checkpoint_and_prepare_for_migration(conn)
+        assert isinstance(files, list)
+        assert files == []
+        conn.close()
+
+    def test_checkpoint_with_pending_transaction(self, tmp_path):
+        """Test checkpoint with pending transaction."""
+        db_path = str(tmp_path / "test.db")
+        create_database(db_path, "WAL", AutoVacuumMode.NONE)
+
+        conn = sqlite3.connect(db_path)
+        # Start a transaction but don't commit
+        conn.execute("BEGIN")
+        conn.execute("INSERT INTO test VALUES (3, 'pending')")
+
+        files = checkpoint_and_prepare_for_migration(conn)
+        assert isinstance(files, list)
+        conn.close()
+
+        if os.path.exists(db_path + "-wal"):
+            os.remove(db_path + "-wal")
+        if os.path.exists(db_path + "-shm"):
+            os.remove(db_path + "-shm")
+
+
+class TestMigrationEdgeCases:
+    """Edge case tests for migration."""
+
+    def test_migrate_with_wal_files_present(self, tmp_path):
+        """Test migration when WAL files exist."""
+        db_path = str(tmp_path / "test.db")
+        create_database(db_path, "WAL", AutoVacuumMode.NONE)
+
+        # Create some WAL activity
+        conn = sqlite3.connect(db_path)
+        conn.execute("INSERT INTO test VALUES (3, 'wal_data')")
+        conn.commit()
+        conn.close()
+
+        # Don't checkpoint - let migration handle it
+        result = migrate_autovacuum(db_path, AutoVacuumMode.FULL)
+        assert result is True
+
+        conn = sqlite3.connect(db_path)
+        assert (
+            conn.execute("PRAGMA auto_vacuum").fetchone()[0]
+            == AutoVacuumMode.FULL
+        )
+        data = conn.execute("SELECT * FROM test ORDER BY id").fetchall()
+        assert len(data) == 3
+        conn.close()
+
+        # Clean up WAL files if they exist
+        if os.path.exists(db_path + "-wal"):
+            os.remove(db_path + "-wal")
+        if os.path.exists(db_path + "-shm"):
+            os.remove(db_path + "-shm")
+
+    def test_migrate_all_mode_combinations(self, tmp_path):
+        """Test migration across all source/target auto_vacuum combinations."""
+        for source_av in [0, 1, 2]:
+            for target_av in [0, 1, 2]:
+                db_path = str(tmp_path / f"test_{source_av}_{target_av}.db")
+                create_database(db_path, "DELETE", source_av)
+
+                migrate_autovacuum(db_path, target_av)
+
+                conn = sqlite3.connect(db_path)
+                assert (
+                    conn.execute("PRAGMA auto_vacuum").fetchone()[0]
+                    == target_av
+                )
+                data = conn.execute("SELECT * FROM test ORDER BY id").fetchall()
+                assert data == [(1, "hello"), (2, "world")]
+                conn.close()
+
+    def test_migrate_with_extra_conn_kwargs(self, tmp_path):
+        """Test migration with extra connection kwargs."""
+        db_path = str(tmp_path / "test.db")
+        create_database(db_path, "DELETE", AutoVacuumMode.NONE)
+
+        result = migrate_autovacuum(
+            db_path,
+            AutoVacuumMode.FULL,
+            extra_conn_kwargs={"timeout": 30},
+        )
+        assert result is True
+
+        conn = sqlite3.connect(db_path)
+        assert (
+            conn.execute("PRAGMA auto_vacuum").fetchone()[0]
+            == AutoVacuumMode.FULL
+        )
         conn.close()
