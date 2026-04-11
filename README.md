@@ -209,6 +209,32 @@ db = Connection("app.db", journal_mode=JournalMode.WAL)  # Default
 | NX-27017 Server | [packages/nx_27017/README.md](packages/nx_27017/README.md) |
 | API Comparison | [examples/api_comparison/README.md](examples/api_comparison/README.md) |
 
+## Contributing
+
+Clone the repository:
+
+```bash
+git clone https://github.com/cwt/neosqlite.git
+cd neosqlite
+```
+
+Create and activate a virtual environment:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+Then run the test script, which installs all required dependencies automatically:
+
+```bash
+./scripts/runtest.sh
+```
+
+### Shell Script Compatibility
+
+All shell scripts in this project target **bash 3.2+** for compatibility with macOS, which still ships with bash 3.2.x. Please ensure any contributions to shell scripts remain compatible.
+
 ## Contribution and License
 
 This project was originally developed as [shaunduncan/nosqlite](https://github.com/shaunduncan/nosqlite) and was later forked as [plutec/nosqlite](https://github.com/plutec/nosqlite) before becoming NeoSQLite. It is now maintained by Chaiwat Suttipongsakul and is licensed under the MIT license.

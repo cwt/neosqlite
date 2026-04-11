@@ -1,11 +1,11 @@
 #!/bin/bash
 
-CPU_CORES=$(
-  case "$(uname -s)" in
-    Darwin) sysctl -n hw.physicalcpu ;;
-         *) lscpu | awk '/^Core\(s\) per socket:/ {c=$4} /^Socket\(s\):/ {s=$2; sum += c * s} END {print sum}' ;;
-  esac
-)
+OS_NAME=$(uname -s)
+case "$OS_NAME" in
+  Darwin)  CPU_CORES=$(sysctl -n hw.physicalcpu);;
+  Linux)   CPU_CORES=$(lscpu | awk '/^Core\(s\) per socket:/ {c=$4} /^Socket\(s\):/ {s=$2; sum += c * s} END {print sum}');;
+  *)       CPU_CORES=$(python3 -c "import multiprocessing; print(multiprocessing.cpu_count())");;
+esac
 
 # cleanup
 rm -rf */__pycache__ .pytest_cache .coverage
