@@ -2,6 +2,14 @@
 
 This directory contains the documentation for the NeoSQLite project, built using Sphinx.
 
+## Running Tests
+
+To run the tests, execute:
+
+```bash
+./scripts/runtest.sh
+```
+
 ## Building the Documentation
 
 To regenerate the documentation, run:
