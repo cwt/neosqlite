@@ -1432,6 +1432,7 @@ class TemporaryTableAggregationProcessor:
         # We'll construct a nested json_set call for each field
         data_expr = "data"  # Start with the original data
         params: list[Any] = []
+        has_complex_expression = False
 
         # Process each field to add
         for new_field, source_field in add_fields_spec.items():
@@ -1467,10 +1468,9 @@ class TemporaryTableAggregationProcessor:
                             f"ELSE {json_extract}(data, '{parse_json_path(input_field)}') END)"
                         )
                     else:
-                        # For non-field input, fall back to Python
-                        raise NotImplementedError(
-                            "$replaceOne with non-field input requires Python fallback"
-                        )
+                        # For non-field input, use Python hybrid approach
+                        has_complex_expression = True
+                        break
 
             # Handle simple field copying (e.g., {"newField": "$existingField"})
             elif isinstance(source_field, str) and source_field.startswith("$"):
@@ -1490,20 +1490,194 @@ class TemporaryTableAggregationProcessor:
                 json_set_func = f"{self._json_function_prefix}_set"
                 data_expr = f"{json_set_func}({data_expr}, '{parse_json_path(new_field)}', json(?))"
                 params.append(source_field)
-            # For other complex expressions, fall back to Python
-            # (This is handled by raising NotImplementedError)
+
+            # Handle complex expressions (dict with operators like $filter, $map, etc.)
+            elif isinstance(source_field, dict):
+                # Check if it's a supported operator
+                supported_operators = {"$replaceOne"}
+                has_supported_op = any(
+                    op in supported_operators for op in source_field.keys()
+                )
+
+                if not has_supported_op:
+                    # Complex expression like $filter, $map, $reduce, etc.
+                    # Use Python hybrid approach to stay in Tier 2
+                    has_complex_expression = True
+                    break
+
+            # For other complex expressions, use Python hybrid approach
+            else:
+                has_complex_expression = True
+                break
+
+        # If we have complex expressions, use Python hybrid approach
+        # This loads from temp table, processes in Python, and creates a new temp table
+        # This keeps us in Tier 2 (temp tables) rather than falling back to Tier 3
+        if has_complex_expression:
+            return self._process_add_fields_stage_python_hybrid(
+                create_temp, current_table, add_fields_spec
+            )
 
         # Create addFields temporary table
         add_fields_stage = {"$addFields": add_fields_spec}
 
+        # Check what columns the current table has (similar to _process_sort_skip_limit_stage)
+        columns = self.db.execute(
+            f"PRAGMA table_info({quote_table_name(current_table)})"
+        ).fetchall()
+        column_names = {col[1] for col in columns}
+        has_id = "id" in column_names
+        has_underscore_id = "_id" in column_names
+
+        # Build SELECT clause based on available columns
+        if has_id and has_underscore_id:
+            select_cols = "id, _id"
+        elif has_id:
+            select_cols = "id"
+        elif has_underscore_id:
+            select_cols = "_id"
+        else:
+            select_cols = ""
+
         # When using JSONB, we need to convert final output to text JSON for Python
         jsonb = self._jsonb_supported
+        if select_cols:
+            query = f"SELECT {select_cols}, {json_data_column(jsonb, data_expr)} as data FROM {current_table}"
+        else:
+            query = f"SELECT {json_data_column(jsonb, data_expr)} as data FROM {current_table}"
+
         new_table = create_temp(
             add_fields_stage,
-            f"SELECT id, _id, {json_data_column(jsonb, data_expr)} as data FROM {current_table}",
+            query,
             params if params else None,
         )
         return new_table
+
+    def _process_add_fields_stage_python_hybrid(
+        self,
+        create_temp: Callable,
+        current_table: str,
+        add_fields_spec: dict[str, Any],
+    ) -> str:
+        """
+        Process $addFields stage with complex expressions using Python hybrid approach.
+
+        This method loads documents from the current temp table, applies the $addFields
+        expressions in Python (using ExprEvaluator), and creates a new temp table.
+        This allows us to stay in Tier 2 (temp tables) while still supporting complex
+        expressions like $filter, $map, $reduce, etc.
+
+        Args:
+            create_temp (Callable): Function to create temporary tables
+            current_table (str): Name of the current temporary table
+            add_fields_spec (dict[str, Any]): The $addFields stage specification
+
+        Returns:
+            str: Name of the newly created temporary table with added fields
+        """
+        from neosqlite.collection.expr_evaluator import (
+            AggregationContext,
+            ExprEvaluator,
+        )
+        from neosqlite.collection.json_helpers import (
+            neosqlite_json_dumps,
+            neosqlite_json_loads,
+        )
+
+        # Check what columns the current table has
+        columns = self.db.execute(
+            f"PRAGMA table_info({quote_table_name(current_table)})"
+        ).fetchall()
+        column_names = {col[1] for col in columns}
+        has_id = "id" in column_names
+        has_underscore_id = "_id" in column_names
+
+        # Load all documents from the current temp table
+        select_clause = "id"
+        if has_underscore_id:
+            select_clause += ", _id"
+        select_clause += ", data"
+
+        cursor = self.db.execute(f"SELECT {select_clause} FROM {current_table}")
+        rows = cursor.fetchall()
+
+        # Process each document with $addFields
+        processed_docs = []
+        evaluator = ExprEvaluator(data_column="data", db_connection=self.db)
+
+        for row in rows:
+            doc_id = row[0]
+            doc_underscore_id = row[1] if has_underscore_id else None
+            doc_data = row[-1]
+
+            # Parse the document
+            doc = neosqlite_json_loads(doc_data)
+
+            # Ensure _id is in the document
+            if "_id" not in doc and doc_underscore_id is not None:
+                doc["_id"] = doc_underscore_id
+            elif "_id" not in doc and has_id:
+                doc["_id"] = doc_id
+
+            # Create context for expression evaluation
+            ctx = AggregationContext()
+            ctx.bind_document(doc.copy())  # $$ROOT
+            ctx.update_current(doc.copy())  # $$CURRENT
+
+            # Apply each field in the addFields spec
+            for new_field, expr in add_fields_spec.items():
+                if self._is_expression(expr):
+                    # Evaluate expression in Python
+                    value = evaluator._evaluate_expr_python(expr, doc)
+                    doc[new_field] = value
+                elif isinstance(expr, str) and expr.startswith("$"):
+                    if expr.startswith("$$"):
+                        # Aggregation variable
+                        if expr == "$$ROOT":
+                            doc[new_field] = doc.copy()
+                        elif expr == "$$CURRENT":
+                            doc[new_field] = doc.copy()
+                        else:
+                            doc[new_field] = None
+                    else:
+                        # Regular field reference
+                        source_field_name = expr[1:]
+                        doc[new_field] = self.collection._get_val(
+                            doc, source_field_name
+                        )
+                else:
+                    # Literal value
+                    doc[new_field] = expr
+
+            processed_docs.append((doc_id, doc_underscore_id, doc))
+
+        # Create a new temp table with the processed documents
+        add_fields_stage = {"$addFields": add_fields_spec}
+
+        # Use CREATE TABLE with proper schema, then INSERT
+        new_table = create_temp(
+            add_fields_stage,
+            "SELECT 1 as id, 1 as _id, '{}' as data WHERE 0",
+        )
+
+        # Insert processed documents
+        for doc_id, doc_underscore_id, doc in processed_docs:
+            self.db.execute(
+                f"INSERT INTO {new_table} (id, _id, data) VALUES (?, ?, ?)",
+                (doc_id, doc_underscore_id, neosqlite_json_dumps(doc)),
+            )
+
+        return new_table
+
+    def _is_expression(self, expr: Any) -> bool:
+        """Check if an expression is a complex expression (not a simple field reference or literal)."""
+        if isinstance(expr, dict):
+            # Check if it looks like an expression (has operators starting with $)
+            if len(expr) == 1:
+                key = next(iter(expr.keys()))
+                return key.startswith("$")
+            return True
+        return False
 
     def _process_project_stage(
         self,

@@ -2441,6 +2441,16 @@ class PythonEvaluatorsMixin:
                 if field_path.startswith("$"):
                     # $$var syntax - check for special variables
                     var_name = "$" + field_path  # Reconstruct $$var
+
+                    # Check if there's a field path after the variable name
+                    # e.g., $$comment.comment_author should split into var_name="$$comment" and field_parts=["comment_author"]
+                    if "." in var_name:
+                        # Split on first dot: "$$comment.comment_author" -> "$$comment" and "comment_author"
+                        var_name, field_suffix = var_name.split(".", 1)
+                        field_parts = field_suffix.split(".")
+                    else:
+                        field_parts = []
+
                     if var_name == "$$REMOVE":
                         # Special sentinel for field removal in $project
                         return REMOVE_SENTINEL
@@ -2448,19 +2458,28 @@ class PythonEvaluatorsMixin:
                     if var_name == "$$ROOT" or var_name == "$$CURRENT":
                         # If not explicitly in document context, the document itself
                         # is the root/current context
-                        return document.get(var_name, document)
+                        value = document.get(var_name, document)
+                    else:
+                        # Otherwise look up directly in document context
+                        value = document.get(var_name)
 
-                    # Otherwise look up directly in document context
-                    return document.get(var_name)
+                    # Navigate the field path within the variable value
+                    for key in field_parts:
+                        if isinstance(value, dict):
+                            value = value.get(key)
+                        else:
+                            return None
+                    return value
 
+                # Regular field navigation (not a variable)
                 keys = field_path.split(".")
-                value: Any | None = document
+                current: Any | None = document
                 for key in keys:
-                    if isinstance(value, dict):
-                        value = value.get(key)
+                    if isinstance(current, dict):
+                        current = current.get(key)
                     else:
                         return None
-                return value
+                return current
 
             case dict():
                 # Check if it's an expression (single key starting with $) or literal dict
