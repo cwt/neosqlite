@@ -154,56 +154,6 @@ class IndexManager:
                 )
             )
 
-            index_name = "_".join(fields).replace(".", "_")
-
-            # Determine which function to use based on JSONB support
-            func_prefix = _get_json_function_prefix(self._jsonb_supported)
-
-            # Create the compound index using multiple JSON/JSONB extract calls
-            index_columns = ", ".join(
-                f"{func_prefix}_extract(data, '{parse_json_path(f)}')"
-                for f in fields
-            )
-            self.collection.db.execute(
-                (
-                    f"CREATE {'UNIQUE ' if unique else ''}INDEX "
-                    f"IF NOT EXISTS {quote_identifier(f'idx_{self.collection.name}_{index_name}')} "
-                    f"ON {quote_table_name(self.collection.name)}({index_columns})"
-                )
-            )
-
-            index_name = "_".join(fields).replace(".", "_")
-
-            # Determine which function to use based on JSONB support
-            func_prefix = _get_json_function_prefix(self._jsonb_supported)
-
-            # Create the compound index using multiple JSON/JSONB extract calls
-            index_columns = ", ".join(
-                f"{func_prefix}_extract(data, '{parse_json_path(f)}')"
-                for f in fields
-            )
-            self.collection.db.execute(
-                (
-                    f"CREATE {'UNIQUE ' if unique else ''}INDEX "
-                    f"IF NOT EXISTS {quote_identifier(f'idx_{self.collection.name}_{index_name}')} "
-                    f"ON {quote_table_name(self.collection.name)}({index_columns})"
-                )
-            )
-            self.collection.db.execute(
-                (
-                    f"CREATE {'UNIQUE ' if unique else ''}INDEX "
-                    f"IF NOT EXISTS {quote_identifier(f'idx_{self.collection.name}_{index_name}')} "
-                    f"ON {quote_table_name(self.collection.name)}({index_columns})"
-                )
-            )
-            self.collection.db.execute(
-                (
-                    f"CREATE {'UNIQUE ' if unique else ''}INDEX "
-                    f"IF NOT EXISTS {quote_identifier(f'idx_{self.collection.name}_{index_name}')} "
-                    f"ON {quote_table_name(self.collection.name)}({index_columns})"
-                )
-            )
-
     def _create_fts_index(self, field: str, tokenizer: str | None = None):
         """
         Creates an FTS5 index on the specified field for text search.
