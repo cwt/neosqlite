@@ -2,7 +2,7 @@ import json
 import logging
 import re
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any
 
 from neosqlite.binary import Binary
 
@@ -95,7 +95,7 @@ def neosqlite_json_loads(s: str, **kwargs) -> Any:
         Deserialized object
     """
 
-    def object_hook(dct: Dict[str, Any]) -> Any:
+    def object_hook(dct: dict[str, Any]) -> Any:
         """
         Decodes Binary objects, ObjectId objects, and ISO date strings from JSON deserialization.
 

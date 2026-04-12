@@ -11,7 +11,7 @@ They are re-exported here for backward compatibility.
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 # Import type checking helpers from shared module
 # These are re-exported for backward compatibility
@@ -43,7 +43,7 @@ class AggregationContext:
 
     def __init__(self) -> None:
         """Initialize aggregation context with default variables."""
-        self.variables: Dict[str, Any] = {
+        self.variables: dict[str, Any] = {
             "$$ROOT": None,  # Original document
             "$$CURRENT": None,  # Current document (may be modified)
             "$$REMOVE": None,  # Sentinel for field removal
@@ -52,7 +52,7 @@ class AggregationContext:
         self.current_field: str | None = None
         self.pipeline_id: str | None = None
 
-    def bind_document(self, doc: Dict[str, Any]) -> None:
+    def bind_document(self, doc: dict[str, Any]) -> None:
         """
         Bind document to context.
 
@@ -65,7 +65,7 @@ class AggregationContext:
         self.variables["$$ROOT"] = doc
         self.variables["$$CURRENT"] = doc
 
-    def update_current(self, doc: Dict[str, Any]) -> None:
+    def update_current(self, doc: dict[str, Any]) -> None:
         """
         Update current document after stage processing.
 

@@ -1,4 +1,4 @@
-from typing import Any, Dict, List
+from typing import Any
 
 # Import sqlite3 for type hints and potential direct usage
 from ..._sqlite import sqlite3 as sqlite3  # noqa: F401
@@ -129,7 +129,7 @@ class QueryHelper(
         if hasattr(self, "tier2_evaluator"):
             self.tier2_evaluator.cleanup_temp_tables()
 
-    def _normalize_id_query(self, query: Dict[str, Any]) -> Dict[str, Any]:
+    def _normalize_id_query(self, query: dict[str, Any]) -> dict[str, Any]:
         """
         Normalize ID types in a query dictionary to correct common mismatches.
 
@@ -181,8 +181,8 @@ class QueryHelper(
         return _get_json_error_position(self.collection.db, json_str)
 
     def _build_expr_where_clause(
-        self, query: Dict[str, Any]
-    ) -> tuple[str, List[Any], List[str]] | None:
+        self, query: dict[str, Any]
+    ) -> tuple[str, list[Any], list[str]] | None:
         """
         Build a SQL WHERE clause for $expr queries using the 3-tier approach.
         Also handles other query fields combined with $expr.
@@ -269,8 +269,8 @@ class QueryHelper(
             )
 
     def _build_other_fields_clause(
-        self, query: Dict[str, Any], expr: Dict[str, Any]
-    ) -> tuple[str, List[Any]] | None:
+        self, query: dict[str, Any], expr: dict[str, Any]
+    ) -> tuple[str, list[Any]] | None:
         """Helper to build WHERE clause for non-$expr fields."""
         where_parts = []
         all_params = []
@@ -290,7 +290,7 @@ class QueryHelper(
             return "", []
         return " AND ".join(where_parts), all_params
 
-    def _analyze_expr_complexity(self, expr: Dict[str, Any]) -> int:
+    def _analyze_expr_complexity(self, expr: dict[str, Any]) -> int:
         """
         Analyze expression complexity to determine appropriate tier.
 
@@ -359,10 +359,10 @@ class QueryHelper(
     def _combine_expr_with_other_fields(
         self,
         sql_expr: str,
-        params: List[Any],
-        query: Dict[str, Any],
-        expr: Dict[str, Any],
-    ) -> tuple[str, List[Any], List[str]] | None:
+        params: list[Any],
+        query: dict[str, Any],
+        expr: dict[str, Any],
+    ) -> tuple[str, list[Any], list[str]] | None:
         """
         Combine $expr SQL with other query fields.
 
@@ -381,7 +381,7 @@ class QueryHelper(
         # This handles strings, numbers, and nulls correctly while evaluating once.
         truthy_expr = f"COALESCE(({sql_expr}), 0) != 0"
         where_parts = [f"({truthy_expr})"]
-        all_params: List[Any] = list(params)
+        all_params: list[Any] = list(params)
 
         # Process other query fields (excluding $expr)
         for field, value in query.items():

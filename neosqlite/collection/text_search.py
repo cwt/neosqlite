@@ -6,7 +6,7 @@ import logging
 import re
 import unicodedata
 from functools import lru_cache
-from typing import Any, Dict
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,7 @@ class TextSearchOptimizer:
             return None
 
 
-def unified_text_search(document: Dict[str, Any], search_term: str) -> bool:
+def unified_text_search(document: dict[str, Any], search_term: str) -> bool:
     """
     Unified text search function that works with both simple queries and aggregation pipelines.
 
@@ -140,7 +140,7 @@ def unified_text_search(document: Dict[str, Any], search_term: str) -> bool:
             case _:
                 return False
 
-    def search_in_document(doc: Dict[str, Any], term: str) -> bool:
+    def search_in_document(doc: dict[str, Any], term: str) -> bool:
         """
         Recursively search for the term in a document.
 

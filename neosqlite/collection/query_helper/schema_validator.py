@@ -5,7 +5,7 @@ Provides MongoDB-compatible $jsonSchema evaluation.
 
 import logging
 import re
-from typing import Any, Dict
+from typing import Any
 
 from ...binary import Binary
 from ...objectid import ObjectId
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 def matches_json_schema(
-    document: Dict[str, Any], schema: Dict[str, Any]
+    document: dict[str, Any], schema: dict[str, Any]
 ) -> bool:
     """
     Check if a document matches the provided JSON Schema.

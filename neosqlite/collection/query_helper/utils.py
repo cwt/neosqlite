@@ -1,7 +1,7 @@
 """Utility functions for query helper operations."""
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
 from ..._sqlite import sqlite3
 from ...binary import Binary
@@ -18,7 +18,7 @@ from ..type_utils import _is_numeric_value as _is_numeric_value
 logger = logging.getLogger(__name__)
 
 # Global cache for SQLite features
-_SQLITE_FEATURES: Dict[str, bool | None] = {
+_SQLITE_FEATURES: dict[str, bool | None] = {
     "relative_indexing": None,
     "returning_clause": None,
 }

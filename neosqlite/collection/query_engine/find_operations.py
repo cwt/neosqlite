@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, List, Tuple
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ..client_session import ClientSession
@@ -23,8 +23,8 @@ class FindOperationsMixin(QueryEngineProtocol):
 
     def find(
         self,
-        filter: Dict[str, Any] | None = None,
-        projection: Dict[str, Any] | None = None,
+        filter: dict[str, Any] | None = None,
+        projection: dict[str, Any] | None = None,
         hint: str | None = None,
         session: ClientSession | None = None,
     ) -> Cursor:
@@ -32,8 +32,8 @@ class FindOperationsMixin(QueryEngineProtocol):
         Query the database and retrieve documents matching the provided filter.
 
         Args:
-            filter (Dict[str, Any] | None): A dictionary specifying the query criteria.
-            projection (Dict[str, Any] | None): A dictionary specifying which fields to return.
+            filter (dict[str, Any] | None): A dictionary specifying the query criteria.
+            projection (dict[str, Any] | None): A dictionary specifying which fields to return.
             hint (str | None): A string specifying the index to use.
             session (ClientSession, optional): A ClientSession for transactions.
 
@@ -50,8 +50,8 @@ class FindOperationsMixin(QueryEngineProtocol):
 
     def find_raw_batches(
         self,
-        filter: Dict[str, Any] | None = None,
-        projection: Dict[str, Any] | None = None,
+        filter: dict[str, Any] | None = None,
+        projection: dict[str, Any] | None = None,
         hint: str | None = None,
         batch_size: int = 100,
         session: ClientSession | None = None,
@@ -67,8 +67,8 @@ class FindOperationsMixin(QueryEngineProtocol):
         individual documents.
 
         Args:
-            filter (Dict[str, Any] | None): A dictionary specifying the query criteria.
-            projection (Dict[str, Any] | None): A dictionary specifying which fields to return.
+            filter (dict[str, Any] | None): A dictionary specifying the query criteria.
+            projection (dict[str, Any] | None): A dictionary specifying which fields to return.
             hint (str | None): A string specifying the index to use.
             batch_size (int): The number of documents to include in each batch.
             session (ClientSession, optional): A ClientSession for transactions.
@@ -88,22 +88,22 @@ class FindOperationsMixin(QueryEngineProtocol):
 
     def find_one(
         self,
-        filter: Dict[str, Any] | None = None,
-        projection: Dict[str, Any] | None = None,
+        filter: dict[str, Any] | None = None,
+        projection: dict[str, Any] | None = None,
         hint: str | None = None,
         session: ClientSession | None = None,
-    ) -> Dict[str, Any] | None:
+    ) -> dict[str, Any] | None:
         """
         Find a single document matching the filter.
 
         Args:
-            filter (Dict[str, Any]): A dictionary specifying the filter conditions.
-            projection (Dict[str, Any]): A dictionary specifying which fields to return.
+            filter (dict[str, Any]): A dictionary specifying the filter conditions.
+            projection (dict[str, Any]): A dictionary specifying which fields to return.
             hint (str): A string specifying the index to use (not used in SQLite).
             session (ClientSession, optional): A ClientSession for transactions.
 
         Returns:
-            Dict[str, Any]: A dictionary representing the found document,
+            dict[str, Any]: A dictionary representing the found document,
                             or None if no document matches.
         """
         validate_session(session, self.collection._database)
@@ -123,24 +123,24 @@ class FindOperationsMixin(QueryEngineProtocol):
 
     def find_one_and_delete(
         self,
-        filter: Dict[str, Any],
-        projection: Dict[str, Any] | None = None,
-        sort: List[Tuple[str, int]] | None = None,
+        filter: dict[str, Any],
+        projection: dict[str, Any] | None = None,
+        sort: list[tuple[str, int]] | None = None,
         session: ClientSession | None = None,
         **kwargs: Any,
-    ) -> Dict[str, Any] | None:
+    ) -> dict[str, Any] | None:
         """
         Find a single document and delete it.
 
         Args:
-            filter (Dict[str, Any]): A dictionary specifying the filter criteria.
-            projection (Dict[str, Any]): A dictionary specifying which fields to return.
-            sort (List[Tuple[str, int]]): A list of (key, direction) pairs for sorting.
+            filter (dict[str, Any]): A dictionary specifying the filter criteria.
+            projection (dict[str, Any]): A dictionary specifying which fields to return.
+            sort (list[tuple[str, int]]): A list of (key, direction) pairs for sorting.
             session (ClientSession, optional): A ClientSession for transactions.
             **kwargs: Additional keyword arguments.
 
         Returns:
-            Dict[str, Any] | None: The document before it was deleted,
+            dict[str, Any] | None: The document before it was deleted,
                                  or None if not found.
         """
         validate_session(session, self.collection._database)
@@ -216,30 +216,30 @@ class FindOperationsMixin(QueryEngineProtocol):
 
     def find_one_and_replace(
         self,
-        filter: Dict[str, Any],
-        replacement: Dict[str, Any],
-        projection: Dict[str, Any] | None = None,
-        sort: List[Tuple[str, int]] | None = None,
+        filter: dict[str, Any],
+        replacement: dict[str, Any],
+        projection: dict[str, Any] | None = None,
+        sort: list[tuple[str, int]] | None = None,
         upsert: bool = False,
         return_document: bool = False,
         session: ClientSession | None = None,
         **kwargs: Any,
-    ) -> Dict[str, Any] | None:
+    ) -> dict[str, Any] | None:
         """
         Find a single document and replace it.
 
         Args:
-            filter (Dict[str, Any]): A dictionary specifying the filter criteria.
-            replacement (Dict[str, Any]): The replacement document.
-            projection (Dict[str, Any]): A dictionary specifying which fields to return.
-            sort (List[Tuple[str, int]]): A list of (key, direction) pairs for sorting.
+            filter (dict[str, Any]): A dictionary specifying the filter criteria.
+            replacement (dict[str, Any]): The replacement document.
+            projection (dict[str, Any]): A dictionary specifying which fields to return.
+            sort (list[tuple[str, int]]): A list of (key, direction) pairs for sorting.
             upsert (bool): If True, perform an upsert if no document matches.
             return_document (bool): If True, return the updated document.
             session (ClientSession, optional): A ClientSession for transactions.
             **kwargs: Additional keyword arguments.
 
         Returns:
-            Dict[str, Any] | None: The document before or after replacement,
+            dict[str, Any] | None: The document before or after replacement,
                                    or None if not found.
         """
         validate_session(session, self.collection._database)
@@ -368,32 +368,32 @@ class FindOperationsMixin(QueryEngineProtocol):
 
     def find_one_and_update(
         self,
-        filter: Dict[str, Any],
-        update: Dict[str, Any],
-        projection: Dict[str, Any] | None = None,
-        sort: List[Tuple[str, int]] | None = None,
+        filter: dict[str, Any],
+        update: dict[str, Any],
+        projection: dict[str, Any] | None = None,
+        sort: list[tuple[str, int]] | None = None,
         upsert: bool = False,
         return_document: bool = False,
-        array_filters: List[Dict[str, Any]] | None = None,
+        array_filters: list[dict[str, Any]] | None = None,
         session: ClientSession | None = None,
         **kwargs: Any,
-    ) -> Dict[str, Any] | None:
+    ) -> dict[str, Any] | None:
         """
         Find and update a single document.
 
         Args:
-            filter (Dict[str, Any]): A dictionary specifying the filter criteria.
-            update (Dict[str, Any]): A dictionary specifying the update operations.
-            projection (Dict[str, Any]): A dictionary specifying which fields to return.
-            sort (List[Tuple[str, int]]): A list of (key, direction) pairs for sorting.
+            filter (dict[str, Any]): A dictionary specifying the filter criteria.
+            update (dict[str, Any]): A dictionary specifying the update operations.
+            projection (dict[str, Any]): A dictionary specifying which fields to return.
+            sort (list[tuple[str, int]]): A list of (key, direction) pairs for sorting.
             upsert (bool): If True, perform an upsert if no document matches.
             return_document (bool): If True, return the updated document.
-            array_filters (List[Dict[str, Any]]): Filters for array updates.
+            array_filters (list[dict[str, Any]]): Filters for array updates.
             session (ClientSession, optional): A ClientSession for transactions.
             **kwargs: Additional keyword arguments.
 
         Returns:
-            Dict[str, Any] | None: The original document (before update),
+            dict[str, Any] | None: The original document (before update),
                                    or None if no document was found and updated.
         """
         validate_session(session, self.collection._database)

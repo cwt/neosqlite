@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import warnings
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Tuple, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 from neosqlite.collection.json_helpers import neosqlite_json_loads
 
@@ -81,7 +81,7 @@ class Collection:
     # --- Collection helper methods ---
     def _load(
         self, id: int, data: str | bytes, stored_id: Any = None
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Deserialize and load a document from its ID and JSON data.
 
@@ -94,11 +94,11 @@ class Collection:
             stored_id (Any, optional): The stored _id value if already retrieved.
 
         Returns:
-            Dict[str, Any]: The deserialized document with the _id field added.
+            dict[str, Any]: The deserialized document with the _id field added.
         """
         if isinstance(data, bytes):
             data = data.decode("utf-8")
-        document: Dict[str, Any] = neosqlite_json_loads(data)
+        document: dict[str, Any] = neosqlite_json_loads(data)
 
         # If stored_id is provided, parse it. Otherwise look it up or use the auto-increment id
         final_id = (
@@ -146,7 +146,7 @@ class Collection:
 
     def _load_with_stored_id(
         self, id_val: int, data: str | bytes, stored_id_val
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Deserialize and load a document with the stored _id value.
 
@@ -156,11 +156,11 @@ class Collection:
             stored_id_val: The stored _id value from the _id column.
 
         Returns:
-            Dict[str, Any]: The deserialized document with the _id field added.
+            dict[str, Any]: The deserialized document with the _id field added.
         """
         if isinstance(data, bytes):
             data = data.decode("utf-8")
-        document: Dict[str, Any] = neosqlite_json_loads(data)
+        document: dict[str, Any] = neosqlite_json_loads(data)
 
         # Use the stored _id value if available, otherwise fall back to the auto-increment id
         _id: ObjectId | Any
@@ -222,13 +222,13 @@ class Collection:
             )
             return None
 
-    def _get_val(self, item: Dict[str, Any], key: Any) -> Any:
+    def _get_val(self, item: dict[str, Any], key: Any) -> Any:
         """
         Retrieves a value from a dictionary using a key, handling nested keys and
         optional prefixes.
 
         Args:
-            item (Dict[str, Any]): The dictionary to search.
+            item (dict[str, Any]): The dictionary to search.
             key (Any): The key to retrieve. If a string, may include nested keys
                        separated by dots or be prefixed with '$'. If non-string,
                        returns the key itself (for literal values like $group _id).
@@ -247,13 +247,13 @@ class Collection:
             val = val.get(k)
         return val
 
-    def _set_val(self, item: Dict[str, Any], key: str, value: Any) -> None:
+    def _set_val(self, item: dict[str, Any], key: str, value: Any) -> None:
         """
         Sets a value in a dictionary using a key, handling nested keys and
         optional prefixes.
 
         Args:
-            item (Dict[str, Any]): The dictionary to modify.
+            item (dict[str, Any]): The dictionary to modify.
             key (str): The key to set, may include nested keys separated by dots
                        or may be prefixed with \'$.
             value (Any): The value to set.
@@ -396,7 +396,7 @@ class Collection:
         # Update the collection name
         self.name = new_name
 
-    def options(self) -> Dict[str, Any]:
+    def options(self) -> dict[str, Any]:
         """
         Retrieves options set on this collection.
 
@@ -405,7 +405,7 @@ class Collection:
                 including the table's name, columns, indexes, and count of documents.
         """
         # For SQLite, we can provide information about the table structure
-        options: Dict[str, Any] = {
+        options: dict[str, Any] = {
             "name": self.name,
         }
 
@@ -444,7 +444,7 @@ class Collection:
 
     # --- Querying methods delegated to QueryEngine ---
     def insert_one(
-        self, document: Dict[str, Any], session: ClientSession | None = None
+        self, document: dict[str, Any], session: ClientSession | None = None
     ) -> InsertOneResult:
         """
         This is a delegating method. For implementation details, see the
@@ -454,7 +454,7 @@ class Collection:
 
     def insert_many(
         self,
-        documents: List[Dict[str, Any]],
+        documents: list[dict[str, Any]],
         ordered: bool = True,
         session: ClientSession | None = None,
     ) -> InsertManyResult:
@@ -468,10 +468,10 @@ class Collection:
 
     def update_one(
         self,
-        filter: Dict[str, Any],
-        update: Dict[str, Any],
+        filter: dict[str, Any],
+        update: dict[str, Any],
         upsert: bool = False,
-        array_filters: List[Dict[str, Any]] | None = None,
+        array_filters: list[dict[str, Any]] | None = None,
         session: ClientSession | None = None,
     ) -> UpdateResult:
         """
@@ -488,10 +488,10 @@ class Collection:
 
     def update_many(
         self,
-        filter: Dict[str, Any],
-        update: Dict[str, Any],
+        filter: dict[str, Any],
+        update: dict[str, Any],
         upsert: bool = False,
-        array_filters: List[Dict[str, Any]] | None = None,
+        array_filters: list[dict[str, Any]] | None = None,
         session: ClientSession | None = None,
     ) -> UpdateResult:
         """
@@ -508,8 +508,8 @@ class Collection:
 
     def replace_one(
         self,
-        filter: Dict[str, Any],
-        replacement: Dict[str, Any],
+        filter: dict[str, Any],
+        replacement: dict[str, Any],
         upsert: bool = False,
         session: ClientSession | None = None,
     ) -> UpdateResult:
@@ -522,7 +522,7 @@ class Collection:
         )
 
     def delete_one(
-        self, filter: Dict[str, Any], session: ClientSession | None = None
+        self, filter: dict[str, Any], session: ClientSession | None = None
     ) -> DeleteResult:
         """
         Delete a single document.
@@ -544,7 +544,7 @@ class Collection:
 
         return self.query_engine.delete_one(filter, session=session)
 
-    def _delete_one_as_gridfs(self, filter: Dict[str, Any]):
+    def _delete_one_as_gridfs(self, filter: dict[str, Any]):
         """
         Delete a single document from a GridFS system collection using GridFSBucket API.
 
@@ -587,7 +587,7 @@ class Collection:
         return DeleteResult(1)
 
     def delete_many(
-        self, filter: Dict[str, Any], session: ClientSession | None = None
+        self, filter: dict[str, Any], session: ClientSession | None = None
     ) -> DeleteResult:
         """
         Delete multiple documents.
@@ -609,7 +609,7 @@ class Collection:
 
         return self.query_engine.delete_many(filter, session=session)
 
-    def _delete_many_as_gridfs(self, filter: Dict[str, Any]):
+    def _delete_many_as_gridfs(self, filter: dict[str, Any]):
         """
         Delete multiple documents from a GridFS system collection using GridFSBucket API.
 
@@ -655,8 +655,8 @@ class Collection:
 
     def find(
         self,
-        filter: Dict[str, Any] | None = None,
-        projection: Dict[str, Any] | None = None,
+        filter: dict[str, Any] | None = None,
+        projection: dict[str, Any] | None = None,
         hint: str | None = None,
         session: ClientSession | None = None,
         **kwargs: Any,
@@ -732,7 +732,7 @@ class Collection:
 
     def _find_as_gridfs(
         self,
-        filter: Dict[str, Any] | None = None,
+        filter: dict[str, Any] | None = None,
         session: ClientSession | None = None,
     ):
         """
@@ -768,8 +768,8 @@ class Collection:
 
     def find_raw_batches(
         self,
-        filter: Dict[str, Any] | None = None,
-        projection: Dict[str, Any] | None = None,
+        filter: dict[str, Any] | None = None,
+        projection: dict[str, Any] | None = None,
         hint: str | None = None,
         batch_size: int = 100,
         session: ClientSession | None = None,
@@ -784,11 +784,11 @@ class Collection:
 
     def find_one(
         self,
-        filter: Dict[str, Any] | None = None,
-        projection: Dict[str, Any] | None = None,
+        filter: dict[str, Any] | None = None,
+        projection: dict[str, Any] | None = None,
         hint: str | None = None,
         session: ClientSession | None = None,
-    ) -> Dict[str, Any] | None:
+    ) -> dict[str, Any] | None:
         """
         Find a single document.
 
@@ -815,7 +815,7 @@ class Collection:
         return self.query_engine.find_one(filter, projection, hint)
 
     def count_documents(
-        self, filter: Dict[str, Any], session: ClientSession | None = None
+        self, filter: dict[str, Any], session: ClientSession | None = None
     ) -> int:
         """
         This is a delegating method. For implementation details, see the
@@ -825,7 +825,7 @@ class Collection:
 
     def estimated_document_count(
         self,
-        options: Dict[str, Any] | None = None,
+        options: dict[str, Any] | None = None,
         session: ClientSession | None = None,
     ) -> int:
         """
@@ -835,7 +835,7 @@ class Collection:
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.estimated_document_count`.
 
         Args:
-            options (Dict[str, Any], optional): Options for the count operation.
+            options (dict[str, Any], optional): Options for the count operation.
                 Supported options (for PyMongo API compatibility):
                 - maxTimeMS: Maximum execution time in milliseconds (ignored in NeoSQLite)
                 - hint: Index to use for the count (ignored in NeoSQLite)
@@ -856,12 +856,12 @@ class Collection:
 
     def find_one_and_delete(
         self,
-        filter: Dict[str, Any],
-        projection: Dict[str, Any] | None = None,
-        sort: List[Tuple[str, int]] | None = None,
+        filter: dict[str, Any],
+        projection: dict[str, Any] | None = None,
+        sort: list[tuple[str, int]] | None = None,
         session: ClientSession | None = None,
         **kwargs: Any,
-    ) -> Dict[str, Any] | None:
+    ) -> dict[str, Any] | None:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.find_one_and_delete`.
@@ -872,15 +872,15 @@ class Collection:
 
     def find_one_and_replace(
         self,
-        filter: Dict[str, Any],
-        replacement: Dict[str, Any],
-        projection: Dict[str, Any] | None = None,
-        sort: List[Tuple[str, int]] | None = None,
+        filter: dict[str, Any],
+        replacement: dict[str, Any],
+        projection: dict[str, Any] | None = None,
+        sort: list[tuple[str, int]] | None = None,
         upsert: bool = False,
         return_document: bool = False,
         session: ClientSession | None = None,
         **kwargs: Any,
-    ) -> Dict[str, Any] | None:
+    ) -> dict[str, Any] | None:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.find_one_and_replace`.
@@ -898,16 +898,16 @@ class Collection:
 
     def find_one_and_update(
         self,
-        filter: Dict[str, Any],
-        update: Dict[str, Any],
-        projection: Dict[str, Any] | None = None,
-        sort: List[Tuple[str, int]] | None = None,
+        filter: dict[str, Any],
+        update: dict[str, Any],
+        projection: dict[str, Any] | None = None,
+        sort: list[tuple[str, int]] | None = None,
         upsert: bool = False,
         return_document: bool = False,
-        array_filters: List[Dict[str, Any]] | None = None,
+        array_filters: list[dict[str, Any]] | None = None,
         session: ClientSession | None = None,
         **kwargs: Any,
-    ) -> Dict[str, Any] | None:
+    ) -> dict[str, Any] | None:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.find_one_and_update`.
@@ -926,7 +926,7 @@ class Collection:
 
     def aggregate(
         self,
-        pipeline: List[Dict[str, Any]],
+        pipeline: list[dict[str, Any]],
         allowDiskUse: bool | None = None,
         batchSize: int | None = None,
         session: ClientSession | None = None,
@@ -957,7 +957,7 @@ class Collection:
 
     def aggregate_raw_batches(
         self,
-        pipeline: List[Dict[str, Any]],
+        pipeline: list[dict[str, Any]],
         batch_size: int = 100,
         session: ClientSession | None = None,
     ) -> RawBatchCursor:
@@ -972,9 +972,9 @@ class Collection:
     def distinct(
         self,
         key: str,
-        filter: Dict[str, Any] | None = None,
+        filter: dict[str, Any] | None = None,
         session: ClientSession | None = None,
-    ) -> List[Any]:
+    ) -> list[Any]:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.distinct`.
@@ -984,7 +984,7 @@ class Collection:
     # --- Bulk Write methods delegated to QueryEngine ---
     def bulk_write(
         self,
-        requests: List[Any],
+        requests: list[Any],
         ordered: bool = True,
         session: ClientSession | None = None,
     ) -> BulkWriteResult:
@@ -1027,7 +1027,7 @@ class Collection:
     # --- Indexing methods delegated to IndexManager ---
     def create_index(
         self,
-        key: str | List[str] | List[Tuple[str, int]],
+        key: str | list[str] | list[tuple[str, int]],
         reindex: bool = True,
         sparse: bool = False,
         unique: bool = False,
@@ -1056,8 +1056,8 @@ class Collection:
 
     def create_indexes(
         self,
-        indexes: List[IndexModel],
-    ) -> List[str]:
+        indexes: list[IndexModel],
+    ) -> list[str]:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.create_indexes`.
@@ -1066,8 +1066,8 @@ class Collection:
 
     def create_search_indexes(
         self,
-        indexes: List[str],
-    ) -> List[str]:
+        indexes: list[str],
+    ) -> list[str]:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.create_search_indexes`.
@@ -1078,7 +1078,7 @@ class Collection:
         self,
         table: str,
         sparse: bool = False,
-        documents: List[Dict[str, Any]] | None = None,
+        documents: list[dict[str, Any]] | None = None,
     ):
         """
         This is a delegating method. For implementation details, see the
@@ -1087,13 +1087,13 @@ class Collection:
         self.indexes.reindex(table, sparse, documents)
 
     @overload
-    def list_indexes(self, as_keys: Literal[True]) -> List[List[str]]: ...
+    def list_indexes(self, as_keys: Literal[True]) -> list[list[str]]: ...
     @overload
-    def list_indexes(self, as_keys: Literal[False] = False) -> List[str]: ...
+    def list_indexes(self, as_keys: Literal[False] = False) -> list[str]: ...
     def list_indexes(
         self,
         as_keys: bool = False,
-    ) -> List[str] | List[List[str]]:
+    ) -> list[str] | list[list[str]]:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.list_indexes`.
@@ -1106,7 +1106,7 @@ class Collection:
             # Inside this block, Mypy knows 'as_keys' is Literal[False].
             return self.indexes.list_indexes(as_keys)
 
-    def list_search_indexes(self) -> List[str]:
+    def list_search_indexes(self) -> list[str]:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.list_search_indexes`.
@@ -1141,7 +1141,7 @@ class Collection:
         """
         self.indexes.drop_indexes()
 
-    def index_information(self) -> Dict[str, Any]:
+    def index_information(self) -> dict[str, Any]:
         """
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.index_information`.
@@ -1332,15 +1332,15 @@ class Collection:
 
     def watch(
         self,
-        pipeline: List[Dict[str, Any]] | None = None,
+        pipeline: list[dict[str, Any]] | None = None,
         full_document: str | None = None,
-        resume_after: Dict[str, Any] | None = None,
+        resume_after: dict[str, Any] | None = None,
         max_await_time_ms: int | None = None,
         batch_size: int | None = None,
-        collation: Dict[str, Any] | None = None,
+        collation: dict[str, Any] | None = None,
         start_at_operation_time: Any | None = None,
         session: ClientSession | None = None,
-        start_after: Dict[str, Any] | None = None,
+        start_after: dict[str, Any] | None = None,
     ) -> ChangeStream:
         """
         Monitor changes on this collection using SQLite's change tracking features.
@@ -1351,15 +1351,15 @@ class Collection:
         SQLite's built-in change tracking mechanisms to provide similar functionality.
 
         Args:
-            pipeline (List[Dict[str, Any]]): Aggregation pipeline stages to apply to change events.
+            pipeline (list[dict[str, Any]]): Aggregation pipeline stages to apply to change events.
             full_document (str): Determines how the 'fullDocument' field is populated in change events.
-            resume_after (Dict[str, Any]): Logical starting point for the change stream.
+            resume_after (dict[str, Any]): Logical starting point for the change stream.
             max_await_time_ms (int): Maximum time to wait for new documents in milliseconds.
             batch_size (int): Number of documents to return per batch.
-            collation (Dict[str, Any]): Collation settings for the operation.
+            collation (dict[str, Any]): Collation settings for the operation.
             start_at_operation_time (Any): Operation time to start monitoring from.
             session (ClientSession): Client session for the operation.
-            start_after (Dict[str, Any]): Logical starting point for the change stream.
+            start_after (dict[str, Any]): Logical starting point for the change stream.
 
         Returns:
             ChangeStream: A change stream object that can be iterated over to receive change events.

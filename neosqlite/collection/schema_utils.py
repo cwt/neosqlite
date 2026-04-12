@@ -6,12 +6,12 @@ database schemas, avoiding code duplication across multiple modules.
 """
 
 import logging
-from typing import Any, Dict, Set
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def get_table_columns(db_connection: Any, table_name: str) -> Set[str]:
+def get_table_columns(db_connection: Any, table_name: str) -> set[str]:
     """
     Get set of column names for a table.
 
@@ -112,7 +112,7 @@ def create_unique_index_on_id(
         return False
 
 
-def get_table_info(db_connection: Any, table_name: str) -> Dict[str, Any]:
+def get_table_info(db_connection: Any, table_name: str) -> dict[str, Any]:
     """
     Get detailed information about a table.
 

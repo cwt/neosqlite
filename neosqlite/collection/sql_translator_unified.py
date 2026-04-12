@@ -7,7 +7,7 @@ temporary table generation.
 """
 
 import logging
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -15,22 +15,22 @@ from .cursor import DESCENDING
 from .jsonb_support import should_use_json_functions
 
 
-def _empty_result() -> Tuple[str, List[Any]]:
+def _empty_result() -> tuple[str, list[Any]]:
     """
     Return an empty result tuple for fallback cases.
 
     Returns:
-        Tuple[str, List[Any]]: A tuple containing an empty string and an empty list.
+        tuple[str, list[Any]]: A tuple containing an empty string and an empty list.
     """
     return "", []
 
 
-def _text_search_fallback() -> Tuple[None, List[Any]]:
+def _text_search_fallback() -> tuple[None, list[Any]]:
     """
     Return a text search result tuple for fallback cases.
 
     Returns:
-        Tuple[None, List[Any]]: A tuple containing None and an empty list.
+        tuple[None, list[Any]]: A tuple containing None and an empty list.
     """
     return None, []
 
@@ -226,7 +226,7 @@ class SQLOperatorTranslator:
 
     def translate_operator(
         self, field_access: str, operator: str, value: Any
-    ) -> Tuple[str | None, List[Any]]:
+    ) -> tuple[str | None, list[Any]]:
         """
         Translate a MongoDB operator to SQL.
 
@@ -249,7 +249,7 @@ class SQLOperatorTranslator:
         """
         # default `sql` and `params`
         sql: str | None = None
-        params: List[Any] = []
+        params: list[Any] = []
 
         # Serialize Binary objects for SQL comparisons using compact format
         if isinstance(value, bytes) and hasattr(value, "encode_for_storage"):
@@ -472,9 +472,9 @@ class SQLClauseBuilder:
     def _build_logical_condition(
         self,
         operator: str,
-        conditions: List[Dict[str, Any]],
+        conditions: list[dict[str, Any]],
         context: str = "direct",
-    ) -> Tuple[str | None, List[Any]]:
+    ) -> tuple[str | None, list[Any]]:
         """
         Build a logical condition ($and, $or, $nor, $not).
 
@@ -492,12 +492,12 @@ class SQLClauseBuilder:
         """
         # default `sql` and `params`
         sql: str | None = None
-        params: List[Any] = []
+        params: list[Any] = []
 
         if not isinstance(conditions, list):
             return sql, params
 
-        clauses: List[str] = []
+        clauses: list[str] = []
 
         for condition in conditions:
             if isinstance(condition, dict):
@@ -536,11 +536,11 @@ class SQLClauseBuilder:
 
     def build_where_clause(
         self,
-        query: Dict[str, Any],
+        query: dict[str, Any],
         context: str = "direct",
         is_nested: bool = False,
         query_param: dict | None = None,
-    ) -> Tuple[str | None, List[Any]]:
+    ) -> tuple[str | None, list[Any]]:
         """
         Build a WHERE clause from a MongoDB-style query.
 
@@ -559,9 +559,9 @@ class SQLClauseBuilder:
         """
         # default `sql` and `params`
         sql: str | None = None
-        params: List[Any] = []
+        params: list[Any] = []
         # default `clauses`
-        clauses: List[str] = []
+        clauses: list[str] = []
 
         for field, value in query.items():
             if field == "$where":
@@ -652,7 +652,7 @@ class SQLClauseBuilder:
         return where_clause, params
 
     def build_order_by_clause(
-        self, sort_spec: Dict[str, Any], context: str = "direct"
+        self, sort_spec: dict[str, Any], context: str = "direct"
     ) -> str:
         """
         Build an ORDER BY clause from a sort specification.
@@ -749,8 +749,8 @@ class SQLTranslator:
         )
 
     def translate_match(
-        self, match_spec: Dict[str, Any], context: str = "direct"
-    ) -> Tuple[str | None, List[Any]]:
+        self, match_spec: dict[str, Any], context: str = "direct"
+    ) -> tuple[str | None, list[Any]]:
         """
         Translate a $match stage to SQL WHERE clause.
 
@@ -786,7 +786,7 @@ class SQLTranslator:
             match_spec, context, query_param=match_spec
         )
 
-    def _contains_text_operator(self, query: Dict[str, Any]) -> bool:
+    def _contains_text_operator(self, query: dict[str, Any]) -> bool:
         """
         Check if a query contains any $text operators, including nested in logical operators.
 
@@ -804,7 +804,7 @@ class SQLTranslator:
         return _contains_text_operator(query)
 
     def translate_sort(
-        self, sort_spec: Dict[str, Any], context: str = "direct"
+        self, sort_spec: dict[str, Any], context: str = "direct"
     ) -> str:
         """
         Translate a $sort stage to SQL ORDER BY clause.
@@ -867,11 +867,11 @@ class SQLTranslator:
 
     def translate_sort_skip_limit(
         self,
-        sort_spec: Dict[str, Any] | None,
+        sort_spec: dict[str, Any] | None,
         skip_value: int = 0,
         limit_value: int | None = None,
         context: str = "direct",
-    ) -> Tuple[str, str, str]:
+    ) -> tuple[str, str, str]:
         """
         Translate sort/skip/limit stages to SQL clauses.
 

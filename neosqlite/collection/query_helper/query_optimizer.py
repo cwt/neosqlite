@@ -5,7 +5,7 @@ This module provides a mixin class with methods for query cost estimation,
 index analysis, and pipeline optimization.
 """
 
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any
 
 from ...sql_utils import quote_table_name
 
@@ -27,12 +27,12 @@ class QueryOptimizerMixin:
     _jsonb_supported: bool
     _json_function_prefix: str
 
-    def _get_indexed_fields(self) -> List[str]:
+    def _get_indexed_fields(self) -> list[str]:
         """
         Get a list of indexed fields for this collection.
 
         Returns:
-            List[str]: A list of field names that have indexes.
+            list[str]: A list of field names that have indexes.
         """
         # Get indexes that match our naming convention
         cmd = (
@@ -57,7 +57,7 @@ class QueryOptimizerMixin:
 
         return indexed_fields
 
-    def _estimate_result_size(self, pipeline: List[Dict[str, Any]]) -> int:
+    def _estimate_result_size(self, pipeline: list[dict[str, Any]]) -> int:
         """
         Estimate the size of the aggregation result in bytes.
 
@@ -111,14 +111,14 @@ class QueryOptimizerMixin:
 
         return estimated_count * estimated_avg_doc_size
 
-    def _estimate_query_cost(self, query: Dict[str, Any]) -> float:
+    def _estimate_query_cost(self, query: dict[str, Any]) -> float:
         """
         Estimate the cost of executing a query based on index availability.
 
         Lower cost values indicate more efficient queries.
 
         Args:
-            query (Dict[str, Any]): A dictionary representing the query criteria.
+            query (dict[str, Any]): A dictionary representing the query criteria.
 
         Returns:
             float: Estimated cost of the query (lower is better).
@@ -151,7 +151,7 @@ class QueryOptimizerMixin:
 
         return cost
 
-    def _estimate_pipeline_cost(self, pipeline: List[Dict[str, Any]]) -> float:
+    def _estimate_pipeline_cost(self, pipeline: list[dict[str, Any]]) -> float:
         """
         Estimate the total cost of executing an aggregation pipeline.
 
@@ -159,7 +159,7 @@ class QueryOptimizerMixin:
         This method considers data flow - earlier stages affect more documents.
 
         Args:
-            pipeline (List[Dict[str, Any]]): A list of aggregation pipeline stages.
+            pipeline (list[dict[str, Any]]): A list of aggregation pipeline stages.
 
         Returns:
             float: Estimated cost of the pipeline (lower is better).
@@ -237,8 +237,8 @@ class QueryOptimizerMixin:
         return total_cost
 
     def _optimize_match_pushdown(
-        self, pipeline: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        self, pipeline: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """
         Optimize pipeline by pushing $match stages down to earlier positions when beneficial.
 
@@ -249,10 +249,10 @@ class QueryOptimizerMixin:
         $unwind stages, as the text search semantics depend on the unwound data.
 
         Args:
-            pipeline (List[Dict[str, Any]]): The pipeline stages to optimize.
+            pipeline (list[dict[str, Any]]): The pipeline stages to optimize.
 
         Returns:
-            List[Dict[str, Any]]: The optimized pipeline.
+            list[dict[str, Any]]: The optimized pipeline.
         """
         if len(pipeline) < 2:
             return pipeline
@@ -316,8 +316,8 @@ class QueryOptimizerMixin:
         return cursor.fetchone() is not None
 
     def _reorder_pipeline_for_indexes(
-        self, pipeline: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        self, pipeline: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """
         Reorder pipeline stages to optimize performance based on index availability.
 
@@ -325,10 +325,10 @@ class QueryOptimizerMixin:
         to take advantage of index-based filtering.
 
         Args:
-            pipeline (List[Dict[str, Any]]): The original pipeline stages.
+            pipeline (list[dict[str, Any]]): The original pipeline stages.
 
         Returns:
-            List[Dict[str, Any]]: The reordered pipeline stages.
+            list[dict[str, Any]]: The reordered pipeline stages.
         """
         if not pipeline:
             return pipeline

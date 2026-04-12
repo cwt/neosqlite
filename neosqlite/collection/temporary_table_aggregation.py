@@ -11,7 +11,7 @@ import logging
 import uuid
 import warnings
 from contextlib import contextmanager
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable
 
 from .._sqlite import sqlite3
 from ..sql_utils import quote_table_name
@@ -56,12 +56,12 @@ class DeterministicTempTableManager:
         """
         self.pipeline_id = pipeline_id
         self.stage_counter = 0
-        self.name_counter: Dict[str, int] = (
+        self.name_counter: dict[str, int] = (
             {}
         )  # Track how many times each name has been used
 
     def make_temp_table_name(
-        self, stage: Dict[str, Any], name_suffix: str = ""
+        self, stage: dict[str, Any], name_suffix: str = ""
     ) -> str:
         """
         Generate a deterministic temporary table name based on the pipeline stage
@@ -74,7 +74,7 @@ class DeterministicTempTableManager:
         4. Ensuring uniqueness by tracking name usage within the pipeline
 
         Args:
-            stage (Dict[str, Any]): The pipeline stage dictionary used to generate
+            stage (dict[str, Any]): The pipeline stage dictionary used to generate
                                     the table name
             name_suffix (str, optional): An additional suffix to append to the
                                          table name. Defaults to "".
@@ -157,9 +157,9 @@ def aggregation_pipeline_context(db_connection, pipeline_id: str | None = None):
     temp_manager = DeterministicTempTableManager(pipeline_id)
 
     def create_temp_table(
-        stage_or_suffix: Any,  # Can be Dict[str, Any] for new usage or str for backward compatibility
+        stage_or_suffix: Any,  # Can be dict[str, Any] for new usage or str for backward compatibility
         query: str,
-        params: List[Any] | None = None,
+        params: list[Any] | None = None,
         name_suffix: str = "",  # Used only for backward compatibility
     ) -> str:
         """
@@ -183,7 +183,7 @@ def aggregation_pipeline_context(db_connection, pipeline_id: str | None = None):
                                    old approach, this should be a string suffix
                                    for the table name.
             query (str): The SQL query used to populate the temporary table
-            params (List[Any] | None, optional): Parameters for the SQL query.
+            params (list[Any] | None, optional): Parameters for the SQL query.
                                                  Defaults to None.
             name_suffix (str, optional): Additional suffix for table name (used
                                          only in backward compatibility mode).
@@ -285,11 +285,11 @@ class TemporaryTableAggregationProcessor:
 
     def process_pipeline(
         self,
-        pipeline: List[Dict[str, Any]],
+        pipeline: list[dict[str, Any]],
         is_count: bool = False,
         count_field: str | None = None,
         batch_size: int = 101,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Process an aggregation pipeline using temporary tables for intermediate results.
 
@@ -312,11 +312,11 @@ class TemporaryTableAggregationProcessor:
         - $count: For counting documents (optimized to use SQL COUNT)
 
         Args:
-            pipeline (List[Dict[str, Any]]): A list of aggregation pipeline stages
+            pipeline (list[dict[str, Any]]): A list of aggregation pipeline stages
                                              to process
 
         Returns:
-            List[Dict[str, Any]]: A list of result documents after processing the
+            list[dict[str, Any]]: A list of result documents after processing the
                                   pipeline
 
         Raises:
@@ -573,7 +573,7 @@ class TemporaryTableAggregationProcessor:
         self,
         create_temp: Callable,
         current_table: str,
-        match_spec: Dict[str, Any],
+        match_spec: dict[str, Any],
     ) -> str:
         """
         Process a $match stage using temporary tables.
@@ -595,7 +595,7 @@ class TemporaryTableAggregationProcessor:
             create_temp (Callable): Function to create temporary tables
             current_table (str): Name of the current temporary table containing
                                  input data
-            match_spec (Dict[str, Any]): The $match stage specification
+            match_spec (dict[str, Any]): The $match stage specification
 
         Returns:
             str: Name of the newly created temporary table with matched documents
@@ -639,7 +639,7 @@ class TemporaryTableAggregationProcessor:
         return new_table
 
     def _process_unwind_stages(
-        self, create_temp: Callable, current_table: str, unwind_specs: List[Any]
+        self, create_temp: Callable, current_table: str, unwind_specs: list[Any]
     ) -> str:
         """
         Process one or more consecutive $unwind stages using temporary tables.
@@ -667,7 +667,7 @@ class TemporaryTableAggregationProcessor:
             create_temp (Callable): Function to create temporary tables
             current_table (str): Name of the current temporary table containing
                                  input data
-            unwind_specs (List[Any]): List of $unwind stage specifications to
+            unwind_specs (list[Any]): List of $unwind stage specifications to
                                       process consecutively
 
         Returns:
@@ -833,7 +833,7 @@ class TemporaryTableAggregationProcessor:
                 )
 
             # Create the unwind stage spec for naming
-            unwind_stage: Dict[str, Any] = {"$unwind": field_path}
+            unwind_stage: dict[str, Any] = {"$unwind": field_path}
             if preserve_null:
                 unwind_stage["preserveNullAndEmptyArrays"] = True
             if include_index:
@@ -847,8 +847,8 @@ class TemporaryTableAggregationProcessor:
         self,
         from_collection: str,
         foreign_field: str | None,
-        pipeline: List[Dict[str, Any]] | None = None,
-    ) -> Tuple[str, str]:
+        pipeline: list[dict[str, Any]] | None = None,
+    ) -> tuple[str, str]:
         """
         Create a hash table (temp table with index) from a foreign collection
         for efficient hash join lookup.
@@ -1009,7 +1009,7 @@ class TemporaryTableAggregationProcessor:
     def _should_use_hash_join(
         self,
         from_collection: str,
-        pipeline: List[Dict[str, Any]] | None = None,
+        pipeline: list[dict[str, Any]] | None = None,
     ) -> bool:
         """
         Decide whether to use hash join or correlated subquery for $lookup.
@@ -1035,7 +1035,7 @@ class TemporaryTableAggregationProcessor:
             logger.debug(f"Failed during _should_use_hash_join check: {e}")
             return True
 
-    def _extract_field_value(self, doc: Dict[str, Any], field: str) -> Any:
+    def _extract_field_value(self, doc: dict[str, Any], field: str) -> Any:
         """Extract field value from document, supporting dot notation."""
         parts = field.split(".")
         val: Any = doc
@@ -1050,7 +1050,7 @@ class TemporaryTableAggregationProcessor:
         self,
         create_temp: Callable,
         current_table: str,
-        lookup_spec: Dict[str, Any],
+        lookup_spec: dict[str, Any],
     ) -> str:
         """
         Process a $lookup stage using hash join for O(n+m) complexity.
@@ -1066,7 +1066,7 @@ class TemporaryTableAggregationProcessor:
         Args:
             create_temp (Callable): Function to create temporary tables
             current_table (str): Name of the current temporary table containing input data
-            lookup_spec (Dict[str, Any]): The $lookup stage specification containing:
+            lookup_spec (dict[str, Any]): The $lookup stage specification containing:
                 - "from": The name of the collection to join with
                 - "localField": The field from the input documents
                 - "foreignField": The field from the documents of the "from" collection
@@ -1094,7 +1094,7 @@ class TemporaryTableAggregationProcessor:
         self,
         create_temp: Callable,
         current_table: str,
-        lookup_spec: Dict[str, Any],
+        lookup_spec: dict[str, Any],
     ) -> str:
         """
         Process $lookup using correlated subquery (O(n*m) but low memory).
@@ -1237,7 +1237,7 @@ class TemporaryTableAggregationProcessor:
         self,
         create_temp: Callable,
         current_table: str,
-        lookup_spec: Dict[str, Any],
+        lookup_spec: dict[str, Any],
     ) -> str:
         """
         Process $lookup using hash join (O(n+m) but uses more memory).
@@ -1317,7 +1317,7 @@ class TemporaryTableAggregationProcessor:
         self,
         create_temp: Callable,
         current_table: str,
-        sort_spec: Dict[str, Any] | None,
+        sort_spec: dict[str, Any] | None,
         skip_value: int = 0,
         limit_value: int | None = None,
     ) -> str:
@@ -1339,7 +1339,7 @@ class TemporaryTableAggregationProcessor:
         Args:
             create_temp (Callable): Function to create temporary tables
             current_table (str): Name of the current temporary table containing input data
-            sort_spec (Dict[str, Any] | None): The $sort stage specification, mapping
+            sort_spec (dict[str, Any] | None): The $sort stage specification, mapping
                                               field names to sort directions (1
                                               for ascending, -1 for descending)
             skip_value (int): The number of documents to skip (from $skip stage)
@@ -1373,7 +1373,7 @@ class TemporaryTableAggregationProcessor:
         )
 
         # Create a stage spec for naming (use the first non-null stage type)
-        stage_spec: Dict[str, Any] = {}
+        stage_spec: dict[str, Any] = {}
         if sort_spec:
             stage_spec["$sort"] = sort_spec
         elif skip_value > 0:
@@ -1406,7 +1406,7 @@ class TemporaryTableAggregationProcessor:
         self,
         create_temp: Callable,
         current_table: str,
-        add_fields_spec: Dict[str, Any],
+        add_fields_spec: dict[str, Any],
     ) -> str:
         """
         Process an $addFields stage using temporary tables.
@@ -1422,7 +1422,7 @@ class TemporaryTableAggregationProcessor:
         Args:
             create_temp (Callable): Function to create temporary tables
             current_table (str): Name of the current temporary table containing input data
-            add_fields_spec (Dict[str, Any]): The $addFields stage specification mapping
+            add_fields_spec (dict[str, Any]): The $addFields stage specification mapping
                                               new field names to source field paths
 
         Returns:
@@ -1431,7 +1431,7 @@ class TemporaryTableAggregationProcessor:
         # Build json_set expressions for each field to add
         # We'll construct a nested json_set call for each field
         data_expr = "data"  # Start with the original data
-        params: List[Any] = []
+        params: list[Any] = []
 
         # Process each field to add
         for new_field, source_field in add_fields_spec.items():
@@ -1509,7 +1509,7 @@ class TemporaryTableAggregationProcessor:
         self,
         create_temp: Callable,
         current_table: str,
-        project_spec: Dict[str, Any],
+        project_spec: dict[str, Any],
     ) -> str:
         """
         Process a $project stage using temporary tables.
@@ -1531,7 +1531,7 @@ class TemporaryTableAggregationProcessor:
         Args:
             create_temp (Callable): Function to create temporary tables
             current_table (str): Name of the current temporary table
-            project_spec (Dict[str, Any]): The $project stage specification
+            project_spec (dict[str, Any]): The $project stage specification
 
         Returns:
             str: Name of the newly created temporary table
@@ -1567,7 +1567,7 @@ class TemporaryTableAggregationProcessor:
         self,
         create_temp: Callable,
         current_table: str,
-        project_spec: Dict[str, Any],
+        project_spec: dict[str, Any],
         include_id: bool,
     ) -> str:
         """Handle exclusion-mode projection by removing fields via json_remove."""
@@ -1604,7 +1604,7 @@ class TemporaryTableAggregationProcessor:
         self,
         create_temp: Callable,
         current_table: str,
-        project_spec: Dict[str, Any],
+        project_spec: dict[str, Any],
         include_id_default: bool,
     ) -> str:
         """Handle inclusion-mode projection by reconstructing data via json_object.
@@ -1637,7 +1637,7 @@ class TemporaryTableAggregationProcessor:
 
         # Build key-value pairs for json_object
         json_parts = []
-        all_params: List[Any] = []
+        all_params: list[Any] = []
 
         for field, value in project_spec.items():
             if field == "_id":
@@ -1749,7 +1749,7 @@ class TemporaryTableAggregationProcessor:
         self,
         create_temp: Callable,
         current_table: str,
-        group_spec: Dict[str, Any],
+        group_spec: dict[str, Any],
     ) -> str:
         """
         Process a $group stage using temporary tables.
@@ -1773,7 +1773,7 @@ class TemporaryTableAggregationProcessor:
         Args:
             create_temp (Callable): Function to create temporary tables
             current_table (str): Name of the current temporary table containing input data
-            group_spec (Dict[str, Any]): The $group stage specification
+            group_spec (dict[str, Any]): The $group stage specification
 
         Returns:
             str: Name of the newly created temporary table with grouped results
@@ -2077,7 +2077,7 @@ class TemporaryTableAggregationProcessor:
 
         return new_table
 
-    def _id_to_json_object_args(self, select_parts: List[str]) -> str:
+    def _id_to_json_object_args(self, select_parts: list[str]) -> str:
         """
         Convert SELECT parts to json_object arguments.
 
@@ -2106,7 +2106,7 @@ class TemporaryTableAggregationProcessor:
         is_count: bool = False,
         count_field: str | None = None,
         batch_size: int = 101,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Get results from a temporary table.
 
@@ -2123,7 +2123,7 @@ class TemporaryTableAggregationProcessor:
             count_field (str | None): The field name for the count if is_count is True
 
         Returns:
-            List[Dict[str, Any]]: List of documents retrieved from the temporary table,
+            list[dict[str, Any]]: List of documents retrieved from the temporary table,
                                   with each document represented as a dictionary
         """
         if is_count and count_field:
@@ -2273,7 +2273,7 @@ class TemporaryTableAggregationProcessor:
         return results
 
     def _matches_text_search(
-        self, document: Dict[str, Any], search_term: str
+        self, document: dict[str, Any], search_term: str
     ) -> bool:
         """
         Apply Python-based text search to a document.
@@ -2284,7 +2284,7 @@ class TemporaryTableAggregationProcessor:
         unwound elements or complex text search operations.
 
         Args:
-            document (Dict[str, Any]): The document to search in
+            document (dict[str, Any]): The document to search in
             search_term (str): The term to search for
 
         Returns:
@@ -2296,7 +2296,7 @@ class TemporaryTableAggregationProcessor:
         return unified_text_search(document, search_term)
 
     def _batch_insert_documents(
-        self, table_name: str, documents: List[tuple]
+        self, table_name: str, documents: list[tuple]
     ) -> None:
         """
         Insert multiple documents into a temporary table efficiently.
@@ -2308,7 +2308,7 @@ class TemporaryTableAggregationProcessor:
 
         Args:
             table_name (str): The name of the table to insert into
-            documents (List[tuple]): List of (id, data) tuples to insert
+            documents (list[tuple]): List of (id, data) tuples to insert
         """
         if not documents:
             return
@@ -2322,7 +2322,7 @@ class TemporaryTableAggregationProcessor:
         self,
         create_temp: Callable,
         current_table: str,
-        match_spec: Dict[str, Any],
+        match_spec: dict[str, Any],
     ) -> str:
         """
         Process a $text search stage using FTS5 on temporary table.
@@ -2341,7 +2341,7 @@ class TemporaryTableAggregationProcessor:
         Args:
             create_temp (Callable): Function to create temporary tables
             current_table (str): Name of the current temporary table containing input data
-            match_spec (Dict[str, Any]): The $match stage specification containing the
+            match_spec (dict[str, Any]): The $match stage specification containing the
                                         $text operator with a $search term
 
         Returns:
@@ -2882,17 +2882,17 @@ class TemporaryTableAggregationProcessor:
 
     def _process_set_window_fields_stage(
         self,
-        create_temp: Callable[[Dict[str, Any], str, List[Any]], str],
+        create_temp: Callable[[dict[str, Any], str, list[Any]], str],
         current_table: str,
-        spec: Dict[str, Any],
+        spec: dict[str, Any],
     ) -> str:
         """
         Process $setWindowFields stage.
         """
         partition_by = spec.get("partitionBy")
-        sort_by: Dict[str, int] = spec.get("sortBy", {})
-        output: Dict[str, Any] = spec.get("output", {})
-        all_params: List[Any] = []
+        sort_by: dict[str, int] = spec.get("sortBy", {})
+        output: dict[str, Any] = spec.get("output", {})
+        all_params: list[Any] = []
 
         # Check what columns the current table has
         columns = self.db.execute(
@@ -3038,7 +3038,7 @@ class TemporaryTableAggregationProcessor:
 
     def _map_window_operator_to_sql(
         self, op_name: str, op_val: Any
-    ) -> Tuple[str | None, str, List[Any]]:
+    ) -> tuple[str | None, str, list[Any]]:
         """Map MongoDB window operator to SQL function and operand."""
         match op_name:
             case "$rank":
@@ -3087,7 +3087,7 @@ class TemporaryTableAggregationProcessor:
                 return None, "", []
 
     def _build_window_frame_sql(
-        self, window_spec: Dict[str, Any] | None
+        self, window_spec: dict[str, Any] | None
     ) -> str:
         """Build SQL window frame clause (ROWS BETWEEN ...)."""
         if not window_spec:
@@ -3125,9 +3125,9 @@ class TemporaryTableAggregationProcessor:
 
     def _process_graph_lookup_stage(
         self,
-        create_temp: Callable[[Dict[str, Any], str, List[Any]], str],
+        create_temp: Callable[[dict[str, Any], str, list[Any]], str],
         current_table: str,
-        spec: Dict[str, Any],
+        spec: dict[str, Any],
     ) -> str:
         """
         Process $graphLookup stage.
@@ -3152,7 +3152,7 @@ class TemporaryTableAggregationProcessor:
         ):
             return current_table
 
-        all_params: List[Any] = []
+        all_params: list[Any] = []
 
         # 1. Build startWith expression
         start_with_sql, start_with_params = (
@@ -3277,17 +3277,17 @@ class TemporaryTableAggregationProcessor:
 
     def _process_fill_stage(
         self,
-        create_temp: Callable[[Dict[str, Any], str, List[Any]], str],
+        create_temp: Callable[[dict[str, Any], str, list[Any]], str],
         current_table: str,
-        spec: Dict[str, Any],
+        spec: dict[str, Any],
     ) -> str:
         """
         Process $fill stage.
         """
         partition_by = spec.get("partitionBy")
-        sort_by: Dict[str, int] = spec.get("sortBy", {})
-        output: Dict[str, Any] = spec.get("output", {})
-        all_params: List[Any] = []
+        sort_by: dict[str, int] = spec.get("sortBy", {})
+        output: dict[str, Any] = spec.get("output", {})
+        all_params: list[Any] = []
 
         # Check for 'linear' method
         for fill_spec in output.values():
@@ -3396,7 +3396,7 @@ class TemporaryTableAggregationProcessor:
         return create_temp({"$fill": spec}, stage_sql, all_params)
 
 
-def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
+def can_process_with_temporary_tables(pipeline: list[dict[str, Any]]) -> bool:
     """
     Determine if a pipeline can be processed with temporary tables.
 
@@ -3410,7 +3410,7 @@ def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
     - Complex nested unwinds (multiple unwinds or dotted paths) fall back to Python
 
     Args:
-        pipeline (List[Dict[str, Any]]): List of aggregation pipeline stages to check
+        pipeline (list[dict[str, Any]]): List of aggregation pipeline stages to check
 
     Returns:
         bool: True if all stages in the pipeline are supported and can be processed
@@ -3478,7 +3478,7 @@ def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
     return True
 
 
-def _contains_text_search(match_spec: Dict[str, Any]) -> bool:
+def _contains_text_search(match_spec: dict[str, Any]) -> bool:
     """
     Check if a match specification contains text search operations.
 
@@ -3486,7 +3486,7 @@ def _contains_text_search(match_spec: Dict[str, Any]) -> bool:
     to ensure consistent text search detection across all NeoSQLite components.
 
     Args:
-        match_spec (Dict[str, Any]): The match specification to check for text search operations
+        match_spec (dict[str, Any]): The match specification to check for text search operations
 
     Returns:
         bool: True if the match specification contains text search operations, False otherwise
@@ -3496,9 +3496,9 @@ def _contains_text_search(match_spec: Dict[str, Any]) -> bool:
 
 def execute_2nd_tier_aggregation(
     query_engine,
-    pipeline: List[Dict[str, Any]],
+    pipeline: list[dict[str, Any]],
     batch_size: int = 101,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Execute aggregation pipeline using temporary table approach for complex pipelines.
 
@@ -3512,11 +3512,11 @@ def execute_2nd_tier_aggregation(
 
     Args:
         query_engine: The NeoSQLite QueryEngine instance to use for processing
-        pipeline (List[Dict[str, Any]]): List of aggregation pipeline stages to process
+        pipeline (list[dict[str, Any]]): List of aggregation pipeline stages to process
         batch_size (int): Batch size for fetching results from temporary tables
 
     Returns:
-        List[Dict[str, Any]]: List of result documents after processing the pipeline
+        list[dict[str, Any]]: List of result documents after processing the pipeline
     """
     # Check if we should force fallback for benchmarking/debugging
     from .query_helper import get_force_fallback

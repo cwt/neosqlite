@@ -10,7 +10,7 @@ using CTEs (Common Table Expressions) for multi-stage pipelines.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Set, Tuple, cast
+from typing import Any, cast
 
 from .._sqlite import sqlite3
 from ..sql_utils import quote_identifier, quote_table_name
@@ -35,8 +35,8 @@ class PipelineContext:
 
     def __init__(self) -> None:
         """Initialize pipeline context with default state."""
-        self.computed_fields: Dict[str, str] = {}
-        self.removed_fields: Set[str] = set()
+        self.computed_fields: dict[str, str] = {}
+        self.removed_fields: set[str] = set()
         self.stage_index: int = 0
         self.has_root: bool = False
         self.has_computed: bool = False
@@ -161,7 +161,7 @@ class SQLTierAggregator:
         """Get JSON set function with correct prefix."""
         return f"{self._json_function_prefix}_set"
 
-    def can_optimize_pipeline(self, pipeline: List[Dict[str, Any]]) -> bool:
+    def can_optimize_pipeline(self, pipeline: list[dict[str, Any]]) -> bool:
         """Check if pipeline can be optimized in SQL tier."""
         from .query_helper import get_force_fallback
 
@@ -197,7 +197,7 @@ class SQLTierAggregator:
 
         return True
 
-    def _can_optimize_stage_expressions(self, stage: Dict[str, Any]) -> bool:
+    def _can_optimize_stage_expressions(self, stage: dict[str, Any]) -> bool:
         """Check if all expressions in a stage can be optimized in SQL."""
         stage_name = next(iter(stage.keys()))
         spec = stage[stage_name]
@@ -223,8 +223,8 @@ class SQLTierAggregator:
         return True
 
     def build_pipeline_sql(
-        self, pipeline: List[Dict[str, Any]]
-    ) -> Tuple[str | None, List[Any]]:
+        self, pipeline: list[dict[str, Any]]
+    ) -> tuple[str | None, list[Any]]:
         """Build optimized SQL query for entire pipeline using CTEs."""
         if not pipeline or not self.can_optimize_pipeline(pipeline):
             return None, []
@@ -245,7 +245,7 @@ class SQLTierAggregator:
             return None, []
 
         # Use cast to help type checker
-        sql_template, all_params = cast(Tuple[str, List[Any]], sql_result)
+        sql_template, all_params = cast(tuple[str, list[Any]], sql_result)
 
         # Cache the template - extract param names from pipeline for robustness
         param_names = tuple(self._extract_param_names_from_pipeline(pipeline))
@@ -254,11 +254,11 @@ class SQLTierAggregator:
         return sql_template, all_params
 
     def _build_sql_template(
-        self, pipeline: List[Dict[str, Any]]
-    ) -> Tuple[str | None, List[Any]]:
+        self, pipeline: list[dict[str, Any]]
+    ) -> tuple[str | None, list[Any]]:
         """Build SQL template and return (template, params)."""
-        cte_parts: List[str] = []
-        all_params: List[Any] = []
+        cte_parts: list[str] = []
+        all_params: list[Any] = []
         prev_stage = f"(SELECT id, _id, data FROM {quote_table_name(self.collection.name)})"
         context = PipelineContext()
 
@@ -300,8 +300,8 @@ class SQLTierAggregator:
         return final_sql, all_params
 
     def _extract_param_values(
-        self, pipeline: List[Dict[str, Any]], param_names: tuple[str, ...]
-    ) -> List[Any]:
+        self, pipeline: list[dict[str, Any]], param_names: tuple[str, ...]
+    ) -> list[Any]:
         """Extract actual parameter values from pipeline for given field paths."""
         # Map placeholder names to their values in pipeline
         placeholder_values = self._get_placeholder_values(pipeline)
@@ -321,7 +321,7 @@ class SQLTierAggregator:
         return params
 
     def _get_placeholder_values(
-        self, pipeline: List[Dict[str, Any]]
+        self, pipeline: list[dict[str, Any]]
     ) -> dict[str, Any]:
         """Extract values for placeholder parameters from pipeline."""
         values = {}
@@ -470,7 +470,7 @@ class SQLTierAggregator:
         return placeholder_idx
 
     def _extract_param_names_from_pipeline(
-        self, pipeline: List[Dict[str, Any]]
+        self, pipeline: list[dict[str, Any]]
     ) -> list[str]:
         """Extract parameter names from pipeline structure directly.
 
@@ -704,7 +704,7 @@ class SQLTierAggregator:
         return paths
 
     def _get_value_at_path(
-        self, pipeline: List[Dict[str, Any]], field_path: str
+        self, pipeline: list[dict[str, Any]], field_path: str
     ) -> Any:
         """Get value from pipeline at given field path."""
         for stage in pipeline:
@@ -806,14 +806,14 @@ class SQLTierAggregator:
         """Resize the cache."""
         self._translation_cache.resize(new_size)
 
-    def _pipeline_needs_root(self, pipeline: List[Dict[str, Any]]) -> bool:
+    def _pipeline_needs_root(self, pipeline: list[dict[str, Any]]) -> bool:
         """Check if pipeline uses $$ROOT variable."""
         for stage in pipeline:
             if self._stage_uses_root(stage):
                 return True
         return False
 
-    def _stage_uses_root(self, stage: Dict[str, Any]) -> bool:
+    def _stage_uses_root(self, stage: dict[str, Any]) -> bool:
         """Check if a stage uses $$ROOT variable."""
         stage_name = next(iter(stage.keys()))
         spec = stage[stage_name]
@@ -838,7 +838,7 @@ class SQLTierAggregator:
         prev_stage: str,
         context: PipelineContext,
         preserve_root: bool = False,
-    ) -> Tuple[str | None, List[Any]]:
+    ) -> tuple[str | None, list[Any]]:
         """Build SQL for a single pipeline stage."""
         match stage_name:
             case "$addFields":

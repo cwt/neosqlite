@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ..client_session import ClientSession
@@ -24,13 +24,13 @@ class QueryMethodsMixin(QueryEngineProtocol):
     """Mixin class providing query methods for QueryEngine."""
 
     def count_documents(
-        self, filter: Dict[str, Any], session: ClientSession | None = None
+        self, filter: dict[str, Any], session: ClientSession | None = None
     ) -> int:
         """
         Return the count of documents that match the given filter.
 
         Args:
-            filter (Dict[str, Any]): A dictionary specifying the query filter.
+            filter (dict[str, Any]): A dictionary specifying the query filter.
             session (ClientSession, optional): A ClientSession for transactions.
 
         Returns:
@@ -68,26 +68,26 @@ class QueryMethodsMixin(QueryEngineProtocol):
     def distinct(
         self,
         key: str,
-        filter: Dict[str, Any] | None = None,
+        filter: dict[str, Any] | None = None,
         session: ClientSession | None = None,
-    ) -> List[Any]:
+    ) -> list[Any]:
         """
         Return a list of distinct values from the specified key in the documents
         of this collection, optionally filtered by a query.
 
         Args:
             key (str): The field name to extract distinct values from.
-            filter (Dict[str, Any] | None): An optional query filter to apply to the documents.
+            filter (dict[str, Any] | None): An optional query filter to apply to the documents.
             session (ClientSession, optional): A ClientSession for transactions.
 
         Returns:
-            List[Any]: A list containing the distinct values from the specified key.
+            list[Any]: A list containing the distinct values from the specified key.
         """
         validate_session(session, self.collection._database)
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         if filter is not None:
             filter = self.helpers._normalize_id_query(filter)
-        params: List[Any] = []
+        params: list[Any] = []
         where_clause: str = ""
 
         if filter:

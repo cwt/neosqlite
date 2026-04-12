@@ -7,7 +7,7 @@ building and executing MongoDB-like aggregation pipelines using SQL.
 
 import logging
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any
 
 from ...sql_utils import quote_table_name
 from ..cursor import DESCENDING
@@ -70,8 +70,8 @@ class AggregationMixin:
 
     def _build_aggregation_query(
         self,
-        pipeline: List[Dict[str, Any]],
-    ) -> tuple[str, List[Any], List[str] | None] | None:
+        pipeline: list[dict[str, Any]],
+    ) -> tuple[str, list[Any], list[str] | None] | None:
         """
         Builds a SQL query for the given MongoDB-like aggregation pipeline.
 
@@ -81,10 +81,10 @@ class AggregationMixin:
         returns a tuple containing the SQL command and a list of parameters.
 
         Args:
-            pipeline (List[Dict[str, Any]]): A list of aggregation pipeline stages.
+            pipeline (list[dict[str, Any]]): A list of aggregation pipeline stages.
 
         Returns:
-            tuple[str, List[Any]] | None: A tuple containing the SQL command and
+            tuple[str, list[Any]] | None: A tuple containing the SQL command and
                                           a list of parameters, or None if the
                                           pipeline contains unsupported stages
                                           or complex queries.
@@ -112,13 +112,13 @@ class AggregationMixin:
         effective_pipeline = self._optimize_match_pushdown(effective_pipeline)
 
         where_clause = ""
-        params: List[Any] = []
+        params: list[Any] = []
         order_by = ""
         limit = ""
         offset = ""
         group_by = ""
         select_clause = "SELECT id, data"
-        output_fields: List[str] | None = None
+        output_fields: list[str] | None = None
 
         for i, stage in enumerate(effective_pipeline):
             stage_name = next(iter(stage.keys()))
@@ -296,8 +296,8 @@ class AggregationMixin:
         return cmd, params, output_fields
 
     def _optimize_unwind_group_pattern(
-        self, group_stage_index: int, pipeline: List[Dict[str, Any]]
-    ) -> tuple[str, List[Any], List[str]] | None:
+        self, group_stage_index: int, pipeline: list[dict[str, Any]]
+    ) -> tuple[str, list[Any], list[str]] | None:
         """
         Optimize $unwind + $group pattern with SQL-based processing.
 
@@ -311,7 +311,7 @@ class AggregationMixin:
             pipeline: The complete aggregation pipeline
 
         Returns:
-            tuple[str, List[Any], List[str]] | None: SQL command, params, and output fields
+            tuple[str, list[Any], list[str]] | None: SQL command, params, and output fields
             if optimization is possible, None otherwise
         """
         # Check if this is a $unwind + $group pattern we can optimize
@@ -386,9 +386,9 @@ class AggregationMixin:
     def _build_unwind_query(
         self,
         pipeline_index: int,
-        pipeline: List[Dict[str, Any]],
-        unwind_stages: List[str],
-    ) -> tuple[str, List[Any], List[str] | None] | None:
+        pipeline: list[dict[str, Any]],
+        unwind_stages: list[str],
+    ) -> tuple[str, list[Any], list[str] | None] | None:
         """
         Builds a SQL query for a sequence of $unwind stages.
 
@@ -400,12 +400,12 @@ class AggregationMixin:
 
         Args:
             pipeline_index (int): The index of the first $unwind stage in the pipeline.
-            pipeline (List[Dict[str, Any]]): The full aggregation pipeline.
-            unwind_stages (List[str]): A list of field paths to unwind,
+            pipeline (list[dict[str, Any]]): The full aggregation pipeline.
+            unwind_stages (list[str]): A list of field paths to unwind,
                                        each prefixed with '$'.
 
         Returns:
-            tuple[str, List[Any], List[str] | None] | None: A tuple containing:
+            tuple[str, list[Any], list[str] | None] | None: A tuple containing:
                 - The constructed SQL command string.
                 - A list of parameters for the SQL query.
                 - A list of output field names (None if not applicable).
@@ -439,7 +439,7 @@ class AggregationMixin:
 
         # Handle $match stage and array type checks
         all_where_clauses = []
-        params: List[Any] = []
+        params: list[Any] = []
         if pipeline_index == 1 and "$match" in pipeline[0]:
             match_query = pipeline[0]["$match"]
             where_result = self._build_simple_where_clause(match_query)
@@ -478,8 +478,8 @@ class AggregationMixin:
         return cmd, params, None
 
     def _build_unwind_from_clause(
-        self, field_names: List[str]
-    ) -> tuple[str, Dict[str, str]]:
+        self, field_names: list[str]
+    ) -> tuple[str, dict[str, str]]:
         """
         Builds the FROM clause for a SQL query with one or more $unwind stages.
 
@@ -490,11 +490,11 @@ class AggregationMixin:
         identifying parent-child relationships between fields.
 
         Args:
-            field_names (List[str]): A list of field paths to unwind. Each path
+            field_names (list[str]): A list of field paths to unwind. Each path
                                      should be a string without the leading '$'.
 
         Returns:
-            tuple[str, Dict[str, str]]: A tuple containing:
+            tuple[str, dict[str, str]]: A tuple containing:
                 - The constructed FROM clause as a string.
                 - A dictionary mapping each unwound field path to its corresponding
                   alias (e.g., 'je1', 'je2').
@@ -505,20 +505,20 @@ class AggregationMixin:
         return from_clause, unwound_fields
 
     def _build_unwind_from_clause_impl(
-        self, field_names: List[str]
-    ) -> tuple[str, Dict[str, str]]:
+        self, field_names: list[str]
+    ) -> tuple[str, dict[str, str]]:
         """
         Internal implementation for building the FROM clause.
 
         Args:
-            field_names (List[str]): A list of field paths to unwind.
+            field_names (list[str]): A list of field paths to unwind.
 
         Returns:
-            tuple[str, Dict[str, str]]: A tuple containing the FROM clause and
+            tuple[str, dict[str, str]]: A tuple containing the FROM clause and
                                         unwound fields mapping.
         """
         from_parts = [f"FROM {quote_table_name(self.collection.name)}"]
-        unwound_fields: Dict[str, str] = {}
+        unwound_fields: dict[str, str] = {}
 
         for i, field_name in enumerate(field_names):
             je_alias = f"je{i + 1}"
@@ -540,7 +540,7 @@ class AggregationMixin:
         return " ".join(from_parts), unwound_fields
 
     def _find_parent_unwind(
-        self, field_name: str, unwound_fields: Dict[str, str]
+        self, field_name: str, unwound_fields: dict[str, str]
     ) -> tuple[str | None, str | None]:
         """
         Find the parent unwind field for a nested unwind.
@@ -551,7 +551,7 @@ class AggregationMixin:
 
         Args:
             field_name (str): The field name to find the parent for.
-            unwound_fields (Dict[str, str]): A dictionary mapping field paths to
+            unwound_fields (dict[str, str]): A dictionary mapping field paths to
                                              their aliases.
 
         Returns:
@@ -574,10 +574,10 @@ class AggregationMixin:
 
     def _build_sort_skip_limit_clauses(
         self,
-        pipeline: List[Dict[str, Any]],
+        pipeline: list[dict[str, Any]],
         start_index: int,
         end_index: int,
-        unwound_fields: Dict[str, str],
+        unwound_fields: dict[str, str],
     ) -> tuple[str, str, str]:
         """
         Build ORDER BY, LIMIT, and OFFSET clauses for aggregation queries.
@@ -588,10 +588,10 @@ class AggregationMixin:
         for nested array elements.
 
         Args:
-            pipeline (List[Dict[str, Any]]): The aggregation pipeline stages.
+            pipeline (list[dict[str, Any]]): The aggregation pipeline stages.
             start_index (int): The starting index in the pipeline to process stages from.
             end_index (int): The ending index in the pipeline to process stages to.
-            unwound_fields (Dict[str, str]): A mapping of field names to their aliases
+            unwound_fields (dict[str, str]): A mapping of field names to their aliases
                                              for unwound fields.
 
         Returns:
@@ -655,8 +655,8 @@ class AggregationMixin:
         return local_order_by, local_limit, local_offset
 
     def _build_group_query(
-        self, group_spec: Dict[str, Any]
-    ) -> tuple[str, str, List[str]] | None:
+        self, group_spec: dict[str, Any]
+    ) -> tuple[str, str, list[str]] | None:
         """
         Builds the SELECT and GROUP BY clauses for a $group stage.
 
@@ -666,13 +666,13 @@ class AggregationMixin:
         $avg, $min, $max, $count, $push, and $addToSet.
 
         Args:
-            group_spec (Dict[str, Any]): A dictionary representing the $group stage
+            group_spec (dict[str, Any]): A dictionary representing the $group stage
                                          specification. It should contain an "_id"
                                          field for grouping and accumulator operations
                                          for other fields.
 
         Returns:
-            tuple[str, str, List[str]] | None: A tuple containing:
+            tuple[str, str, list[str]] | None: A tuple containing:
                 - The SELECT clause string with all required expressions
                 - The GROUP BY clause string
                 - A list of output field names
@@ -761,9 +761,9 @@ class AggregationMixin:
 
     def _process_group_stage(
         self,
-        group_query: Dict[str, Any],
-        docs: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
+        group_query: dict[str, Any],
+        docs: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         """
         Process the $group stage of an aggregation pipeline.
 
@@ -771,16 +771,16 @@ class AggregationMixin:
         accumulator operations on other fields.
 
         Args:
-            group_query (Dict[str, Any]): A dictionary representing the $group
+            group_query (dict[str, Any]): A dictionary representing the $group
                                           stage of the aggregation pipeline.
-            docs (List[Dict[str, Any]]): A list of documents to be grouped.
+            docs (list[dict[str, Any]]): A list of documents to be grouped.
 
         Returns:
-            List[Dict[str, Any]]: A list of grouped documents with applied
+            list[dict[str, Any]]: A list of grouped documents with applied
                                   accumulator operations.
         """
 
-        grouped_docs: Dict[Any, Dict[str, Any]] = {}
+        grouped_docs: dict[Any, dict[str, Any]] = {}
         group_id_key = group_query.get("_id")
 
         # Create a copy of group_query without _id for processing accumulator operations
@@ -1039,8 +1039,8 @@ class AggregationMixin:
 
     def _run_subpipeline(
         self,
-        sub_pipeline: List[Dict[str, Any]],
-        docs: List[Dict[str, Any]],
+        sub_pipeline: list[dict[str, Any]],
+        docs: list[dict[str, Any]],
         batch_size: int = 101,
     ) -> str:
         """
@@ -1135,20 +1135,20 @@ class AggregationMixin:
 
     def _apply_projection(
         self,
-        projection: Dict[str, Any],
-        document: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        projection: dict[str, Any],
+        document: dict[str, Any],
+    ) -> dict[str, Any]:
         """
         Applies the projection to the document, selecting or excluding fields
         based on the projection criteria.
 
         Args:
-            projection (Dict[str, Any]): A dictionary specifying which fields to
+            projection (dict[str, Any]): A dictionary specifying which fields to
                                          include or exclude.
-            document (Dict[str, Any]): The document to apply the projection to.
+            document (dict[str, Any]): The document to apply the projection to.
 
         Returns:
-            Dict[str, Any]: The document with fields applied based on the projection.
+            dict[str, Any]: The document with fields applied based on the projection.
         """
         from ..expr_evaluator import (
             REMOVE_SENTINEL,
@@ -1158,7 +1158,7 @@ class AggregationMixin:
             return document
 
         doc = deepcopy(document)
-        projected_doc: Dict[str, Any] = {}
+        projected_doc: dict[str, Any] = {}
         include_id = projection.get("_id", 1) == 1
 
         # Check if this is an inclusion projection with expressions or aggregation variables

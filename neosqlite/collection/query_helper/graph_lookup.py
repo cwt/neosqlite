@@ -3,15 +3,15 @@ Python implementation of MongoDB $graphLookup aggregation stage.
 """
 
 from copy import deepcopy
-from typing import Any, Dict, List, Set
+from typing import Any
 
 
 def process_graph_lookup(
-    docs_with_context: List[Dict[str, Any]],
-    spec: Dict[str, Any],
+    docs_with_context: list[dict[str, Any]],
+    spec: dict[str, Any],
     collection: Any,
     evaluator: Any,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Python fallback implementation of $graphLookup.
 
@@ -59,8 +59,8 @@ def process_graph_lookup(
         else:
             search_queue = [(v, 0) for v in start_val]
 
-        visited_ids: Set[Any] = set()
-        results: List[Dict[str, Any]] = []
+        visited_ids: set[Any] = set()
+        results: list[dict[str, Any]] = []
 
         # 2. Recursive search
         while search_queue:

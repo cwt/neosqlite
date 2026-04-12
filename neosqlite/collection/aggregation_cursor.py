@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List
+from typing import TYPE_CHECKING, Any, Iterator
 
 if TYPE_CHECKING:
     from ..client_session import ClientSession
@@ -33,7 +33,7 @@ class AggregationCursor:
     def __init__(
         self,
         collection: Collection,
-        pipeline: List[Dict[str, Any]],
+        pipeline: list[dict[str, Any]],
         allowDiskUse: bool | None = None,
         batchSize: int | None = None,
         session: ClientSession | None = None,
@@ -52,7 +52,7 @@ class AggregationCursor:
         """
         self._collection = collection
         self.pipeline = pipeline
-        self._results: List[Dict[str, Any]] | CompressedQueue | None = None
+        self._results: list[dict[str, Any]] | CompressedQueue | None = None
         self._position = 0
         self._executed = False
         # Memory constraint settings
@@ -132,7 +132,7 @@ class AggregationCursor:
         """
         return 0
 
-    def __iter__(self) -> Iterator[Dict[str, Any]]:
+    def __iter__(self) -> Iterator[dict[str, Any]]:
         """
         Return the iterator object.
 
@@ -147,7 +147,7 @@ class AggregationCursor:
         self._position = 0
         return self
 
-    def __next__(self) -> Dict[str, Any]:
+    def __next__(self) -> dict[str, Any]:
         """
         Get the next document in the aggregation result.
 
@@ -211,7 +211,7 @@ class AggregationCursor:
 
         return 0
 
-    def __getitem__(self, index: int) -> Dict[str, Any]:
+    def __getitem__(self, index: int) -> dict[str, Any]:
         """
         Get a document by index.
 
@@ -316,7 +316,7 @@ class AggregationCursor:
             self.pipeline
         )
 
-    def next(self) -> Dict[str, Any]:
+    def next(self) -> dict[str, Any]:
         """
         Get the next document in the aggregation result.
 
@@ -328,7 +328,7 @@ class AggregationCursor:
         """
         return self.__next__()
 
-    def to_list(self) -> List[Dict[str, Any]]:
+    def to_list(self) -> list[dict[str, Any]]:
         """
         Convert the cursor to a list of documents.
 
@@ -466,7 +466,7 @@ class AggregationCursor:
             0,
         )
 
-    def get_quez_stats(self) -> Dict[str, Any] | None:
+    def get_quez_stats(self) -> dict[str, Any] | None:
         """
         Get quez compression statistics if quez is being used.
 

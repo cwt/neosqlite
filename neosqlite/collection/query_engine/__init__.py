@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib.util
 import logging
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Tuple
+from typing import TYPE_CHECKING, Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -122,10 +122,10 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
 
     def aggregate(
         self,
-        pipeline: List[Dict[str, Any]],
+        pipeline: list[dict[str, Any]],
         batch_size: int = 101,
         session: ClientSession | None = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Applies a list of aggregation pipeline stages to the collection.
 
@@ -135,12 +135,12 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         processing mechanism.
 
         Args:
-            pipeline (List[Dict[str, Any]]): A list of aggregation pipeline stages to apply.
+            pipeline (list[dict[str, Any]]): A list of aggregation pipeline stages to apply.
             batch_size (int): The batch size for fetching results from database.
             session (ClientSession, optional): A ClientSession for transactions.
 
         Returns:
-            List[Dict[str, Any]]: The list of documents after applying the aggregation pipeline.
+            list[dict[str, Any]]: The list of documents after applying the aggregation pipeline.
         """
         validate_session(session, self.collection._database)
         return self.aggregate_with_constraints(
@@ -149,22 +149,22 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
 
     def aggregate_with_constraints(
         self,
-        pipeline: List[Dict[str, Any]],
+        pipeline: list[dict[str, Any]],
         batch_size: int = 101,
         memory_constrained: bool = False,
         session: ClientSession | None = None,
-    ) -> List[Dict[str, Any]] | "CompressedQueue":
+    ) -> list[dict[str, Any]] | "CompressedQueue":
         """
         Applies a list of aggregation pipeline stages with memory constraints.
 
         Args:
-            pipeline (List[Dict[str, Any]]): A list of aggregation pipeline stages to apply.
+            pipeline (list[dict[str, Any]]): A list of aggregation pipeline stages to apply.
             batch_size (int): The batch size for processing large result sets.
             memory_constrained (bool): Whether to use memory-constrained processing.
             session (ClientSession, optional): A ClientSession for transactions.
 
         Returns:
-            List[Dict[str, Any]] | CompressedQueue: The results as either a list or compressed queue.
+            list[dict[str, Any]] | CompressedQueue: The results as either a list or compressed queue.
         """
         validate_session(session, self.collection._database)
         # If memory_constrained is True and quez is available, use quez for processing
@@ -348,7 +348,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
             # For more complex pipelines, fall back to Python
 
         # Fallback to old method for complex queries (Python implementation)
-        docs: List[Dict[str, Any]] = list(self.find(session=session))
+        docs: list[dict[str, Any]] = list(self.find(session=session))
 
         # Store original documents for $$ROOT variable support
         # Each document is wrapped with metadata for variable scoping
@@ -748,7 +748,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                     )
                 case "$facet":
                     facet_spec = stage["$facet"]
-                    facet_tables: Dict[str, str] = {}
+                    facet_tables: dict[str, str] = {}
 
                     # Get input documents
                     sub_docs = [dc["__doc__"] for dc in docs_with_context]
@@ -761,7 +761,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                         facet_tables[facet_name] = result_table
 
                     # Load all results from temp tables and combine
-                    facet_results: Dict[str, Any] = {}
+                    facet_results: dict[str, Any] = {}
                     for facet_name, table_name in facet_tables.items():
                         cursor = self.collection.db.execute(
                             f"SELECT data FROM {table_name}"
@@ -813,7 +813,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
 
                     # Group documents by bucket
                     # MongoDB uses the lower boundary value as _id, not a string label
-                    buckets: Dict[Any, List[Dict[str, Any]]] = {}
+                    buckets: dict[Any, list[dict[str, Any]]] = {}
                     for dc in docs_with_context:
                         doc = dc["__doc__"]
                         val = self.collection._get_val(doc, group_by)
@@ -850,7 +850,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                     # Build output documents
                     new_docs = []
                     for bucket_id, bucket_docs in sorted(buckets.items()):
-                        output_doc: Dict[str, Any] = {"_id": bucket_id}
+                        output_doc: dict[str, Any] = {"_id": bucket_id}
                         for field_name, accumulator in output_spec.items():
                             if "$sum" in accumulator:
                                 sum_field = accumulator["$sum"]
@@ -934,8 +934,8 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
 
                     # Distribute into buckets
                     bucket_size = max(1, len(sorted_docs) // num_buckets)
-                    bucket_list: List[List[Dict[str, Any]]] = []
-                    bucket_bounds: List[Tuple[Any, Any]] = []
+                    bucket_list: list[list[dict[str, Any]]] = []
+                    bucket_bounds: list[tuple[Any, Any]] = []
                     current_bucket = []
                     current_min = None
                     for dc in sorted_docs:
@@ -968,7 +968,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                     # Build output documents
                     new_docs = []
                     for i, bucket_docs in enumerate(bucket_list):
-                        output_doc2: Dict[str, Any] = {
+                        output_doc2: dict[str, Any] = {
                             "_id": {
                                 "min": bucket_bounds[i][0],
                                 "max": bucket_bounds[i][1],
@@ -1283,7 +1283,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                         is_date = unit is not None
 
                         # Group documents by partition fields
-                        partitions: Dict[tuple, List[Dict[str, Any]]] = {}
+                        partitions: dict[tuple, list[dict[str, Any]]] = {}
                         for dc in docs_with_context:
                             doc = dc["__doc__"]
 
@@ -1453,7 +1453,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
 
                     storage_size = 0
                     total_index_size = 0
-                    index_sizes: Dict[str, int] = {}
+                    index_sizes: dict[str, int] = {}
 
                     try:
                         db.execute(
@@ -1487,7 +1487,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                         if self.collection._database
                         else "unknown"
                     )
-                    stats_result: Dict[str, Any] = {
+                    stats_result: dict[str, Any] = {
                         "ns": f"{db_name}.{table_name}",
                         "count": count,
                         "size": size,
@@ -1524,18 +1524,18 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
 
     def explain_aggregation(
         self,
-        pipeline: List[Dict[str, Any]],
+        pipeline: list[dict[str, Any]],
         session: ClientSession | None = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Explain the execution plan for an aggregation pipeline.
 
         Args:
-            pipeline (List[Dict[str, Any]]): The aggregation pipeline to explain.
+            pipeline (list[dict[str, Any]]): The aggregation pipeline to explain.
             session (ClientSession, optional): A ClientSession for transactions.
 
         Returns:
-            Dict[str, Any]: The execution plan explanation.
+            dict[str, Any]: The execution plan explanation.
         """
         # 1. Try SQL Tier 1 optimization
         if self.sql_tier_aggregator.can_optimize_pipeline(pipeline):
@@ -1589,7 +1589,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
 
     def aggregate_raw_batches(
         self,
-        pipeline: List[Dict[str, Any]],
+        pipeline: list[dict[str, Any]],
         batch_size: int = 100,
         session: ClientSession | None = None,
     ) -> RawBatchCursor:
@@ -1604,7 +1604,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         individual documents.
 
         Args:
-            pipeline (List[Dict[str, Any]]): A list of aggregation pipeline stages to apply.
+            pipeline (list[dict[str, Any]]): A list of aggregation pipeline stages to apply.
             batch_size (int): The number of documents to include in each batch.
             session (ClientSession, optional): A ClientSession for transactions.
 
@@ -1625,7 +1625,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
     # --- Bulk Write methods ---
     def bulk_write(
         self,
-        requests: List[Any],
+        requests: list[Any],
         ordered: bool = True,
         session: ClientSession | None = None,
     ) -> BulkWriteResult:
@@ -1689,13 +1689,13 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         )
 
     def _aggregate_with_quez(
-        self, pipeline: List[Dict[str, Any]], batch_size: int = 101
+        self, pipeline: list[dict[str, Any]], batch_size: int = 101
     ) -> CompressedQueue:
         """
         Process aggregation pipeline with quez compressed queue for memory efficiency.
 
         Args:
-            pipeline (List[Dict[str, Any]]): A list of aggregation pipeline stages to apply.
+            pipeline (list[dict[str, Any]]): A list of aggregation pipeline stages to apply.
             batch_size (int): The batch size for quez queue processing.
 
         Returns:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ..client_session import ClientSession
@@ -32,13 +32,13 @@ class CRUDOperationsMixin(QueryEngineProtocol):
     """Mixin class providing CRUD operations for QueryEngine."""
 
     def insert_one(
-        self, document: Dict[str, Any], session: ClientSession | None = None
+        self, document: dict[str, Any], session: ClientSession | None = None
     ) -> InsertOneResult:
         """
         Insert a single document into the collection.
 
         Args:
-            document (Dict[str, Any]): The document to insert.
+            document (dict[str, Any]): The document to insert.
             session (ClientSession, optional): A ClientSession for transactions.
 
         Returns:
@@ -50,7 +50,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
 
     def insert_many(
         self,
-        documents: List[Dict[str, Any]],
+        documents: list[dict[str, Any]],
         ordered: bool = True,
         session: ClientSession | None = None,
     ) -> InsertManyResult:
@@ -58,7 +58,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         Insert multiple documents into the collection.
 
         Args:
-            documents (List[Dict[str, Any]]): List of documents to insert.
+            documents (list[dict[str, Any]]): List of documents to insert.
             ordered (bool, optional): If True, insert documents in the order they
                                       appear in the list. If an error occurs,
                                       the operation will stop. If False, the
@@ -75,10 +75,10 @@ class CRUDOperationsMixin(QueryEngineProtocol):
 
     def update_one(
         self,
-        filter: Dict[str, Any],
-        update: Dict[str, Any],
+        filter: dict[str, Any],
+        update: dict[str, Any],
         upsert: bool = False,
-        array_filters: List[Dict[str, Any]] | None = None,
+        array_filters: list[dict[str, Any]] | None = None,
         session: ClientSession | None = None,
     ) -> UpdateResult:
         """
@@ -86,10 +86,10 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         and update operations.
 
         Args:
-            filter (Dict[str, Any]): A dictionary specifying the query criteria for finding the document to update.
-            update (Dict[str, Any]): A dictionary specifying the update operations to apply to the document.
+            filter (dict[str, Any]): A dictionary specifying the query criteria for finding the document to update.
+            update (dict[str, Any]): A dictionary specifying the update operations to apply to the document.
             upsert (bool, optional): If True, inserts a new document if no document matches the filter. Defaults to False.
-            array_filters (List[Dict[str, Any]], optional): A list of filter documents for array positional operators.
+            array_filters (list[dict[str, Any]], optional): A list of filter documents for array positional operators.
             session (ClientSession, optional): A ClientSession for transactions.
 
         Returns:
@@ -160,7 +160,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             # For upsert, we need to create a document that includes:
             # 1. The filter fields (as base document)
             # 2. Apply the update operations to that document
-            new_doc: Dict[str, Any] = dict(filter)  # Start with filter fields
+            new_doc: dict[str, Any] = dict(filter)  # Start with filter fields
             updated_doc, _ = self.helpers._internal_update(
                 0, update, new_doc, array_filters, filter
             )  # Apply updates
@@ -173,8 +173,8 @@ class CRUDOperationsMixin(QueryEngineProtocol):
 
     def _update_gridfs_file(
         self,
-        filter: Dict[str, Any],
-        update: Dict[str, Any],
+        filter: dict[str, Any],
+        update: dict[str, Any],
         upsert: bool = False,
     ) -> UpdateResult:
         """Handle updates for GridFS files collections."""
@@ -298,8 +298,8 @@ class CRUDOperationsMixin(QueryEngineProtocol):
 
     def _try_fast_update_one(
         self,
-        filter: Dict[str, Any],
-        update: Dict[str, Any],
+        filter: dict[str, Any],
+        update: dict[str, Any],
     ) -> UpdateResult | None:
         """
         Try to use a fast SQL UPDATE without fetching the document first.
@@ -415,10 +415,10 @@ class CRUDOperationsMixin(QueryEngineProtocol):
 
     def update_many(
         self,
-        filter: Dict[str, Any],
-        update: Dict[str, Any],
+        filter: dict[str, Any],
+        update: dict[str, Any],
         upsert: bool = False,
-        array_filters: List[Dict[str, Any]] | None = None,
+        array_filters: list[dict[str, Any]] | None = None,
         session: ClientSession | None = None,
     ) -> UpdateResult:
         """
@@ -428,10 +428,10 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         using the specified update.
 
         Args:
-            filter (Dict[str, Any]): A dictionary representing the filter to select documents to update.
-            update (Dict[str, Any]): A dictionary representing the updates to apply.
+            filter (dict[str, Any]): A dictionary representing the filter to select documents to update.
+            update (dict[str, Any]): A dictionary representing the updates to apply.
             upsert (bool, optional): If True, inserts a new document if no document matches the filter. Defaults to False.
-            array_filters (List[Dict[str, Any]], optional): A list of filter documents for array positional operators.
+            array_filters (list[dict[str, Any]], optional): A list of filter documents for array positional operators.
             session (ClientSession, optional): A ClientSession for transactions.
 
         Returns:
@@ -494,13 +494,13 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         )
 
     def delete_one(
-        self, filter: Dict[str, Any], session: ClientSession | None = None
+        self, filter: dict[str, Any], session: ClientSession | None = None
     ) -> DeleteResult:
         """
         Delete a single document matching the filter.
 
         Args:
-            filter (Dict[str, Any]): A dictionary specifying the filter conditions
+            filter (dict[str, Any]): A dictionary specifying the filter conditions
                                      for the document to delete.
             session (ClientSession, optional): A ClientSession for transactions.
 
@@ -540,13 +540,13 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         return DeleteResult(deleted_count=0)
 
     def delete_many(
-        self, filter: Dict[str, Any], session: ClientSession | None = None
+        self, filter: dict[str, Any], session: ClientSession | None = None
     ) -> DeleteResult:
         """
         Deletes multiple documents in the collection that match the provided filter.
 
         Args:
-            filter (Dict[str, Any]): A dictionary specifying the query criteria
+            filter (dict[str, Any]): A dictionary specifying the query criteria
                                      for finding the documents to delete.
             session (ClientSession, optional): A ClientSession for transactions.
 
@@ -602,8 +602,8 @@ class CRUDOperationsMixin(QueryEngineProtocol):
 
     def replace_one(
         self,
-        filter: Dict[str, Any],
-        replacement: Dict[str, Any],
+        filter: dict[str, Any],
+        replacement: dict[str, Any],
         upsert: bool = False,
         session: ClientSession | None = None,
     ) -> UpdateResult:
@@ -612,8 +612,8 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         replacement document.
 
         Args:
-            filter (Dict[str, Any]): A query that matches the document to replace.
-            replacement (Dict[str, Any]): The new document that replaces the matched document.
+            filter (dict[str, Any]): A query that matches the document to replace.
+            replacement (dict[str, Any]): The new document that replaces the matched document.
             upsert (bool, optional): If true, inserts the replacement document if no document matches the filter.
                                      Default is False.
             session (ClientSession, optional): A ClientSession for transactions.

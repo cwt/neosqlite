@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .client_session import ClientSession
@@ -23,30 +23,30 @@ class ChangeStream:
     def __init__(
         self,
         collection: Collection,
-        pipeline: List[Dict[str, Any]] | None = None,
+        pipeline: list[dict[str, Any]] | None = None,
         full_document: str | None = None,
-        resume_after: Dict[str, Any] | None = None,
+        resume_after: dict[str, Any] | None = None,
         max_await_time_ms: int | None = None,
         batch_size: int | None = None,
-        collation: Dict[str, Any] | None = None,
+        collation: dict[str, Any] | None = None,
         start_at_operation_time: Any | None = None,
         session: ClientSession | None = None,
-        start_after: Dict[str, Any] | None = None,
+        start_after: dict[str, Any] | None = None,
     ):
         """
         Initialize a change stream for a specific collection.
 
         Args:
             collection (Collection): The collection to monitor for changes.
-            pipeline (List[Dict[str, Any]], optional): A pipeline of operations to apply to the change stream.
+            pipeline (list[dict[str, Any]], optional): A pipeline of operations to apply to the change stream.
             full_document (str, optional): Specifies whether to include the full document in change events.
-            resume_after (Dict[str, Any], optional): A resume token to start the change stream from a specific point.
+            resume_after (dict[str, Any], optional): A resume token to start the change stream from a specific point.
             max_await_time_ms (int, optional): The maximum time in milliseconds to wait for change events.
             batch_size (int, optional): The batch size for the change stream.
-            collation (Dict[str, Any], optional): Collation options to apply to change events.
+            collation (dict[str, Any], optional): Collation options to apply to change events.
             start_at_operation_time (Any, optional): Operation time to start the change stream from.
             session (Any, optional): The session to use for the change stream.
-            start_after (Dict[str, Any], optional): A document ID to start the change stream from.
+            start_after (dict[str, Any], optional): A document ID to start the change stream from.
         """
         self._collection = collection
         self._pipeline = pipeline or []
@@ -202,7 +202,7 @@ class ChangeStream:
         """
         return self
 
-    def __next__(self) -> Dict[str, Any]:
+    def __next__(self) -> dict[str, Any]:
         """
         Poll for and return the next change event from the change stream.
 
@@ -214,7 +214,7 @@ class ChangeStream:
         if no changes are detected within the timeout.
 
         Returns:
-            Dict[str, Any]: The next change event document, containing details
+            dict[str, Any]: The next change event document, containing details
                             such as the operation type, document ID, and data.
                             If full_document is set to "updateLookup", the full
                             document before and/or after the change operation is

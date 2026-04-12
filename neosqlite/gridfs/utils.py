@@ -10,12 +10,12 @@ from __future__ import annotations
 import ast
 import json
 import logging
-from typing import Any, Dict
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def serialize_metadata(metadata: Dict[str, Any] | None) -> str | None:
+def serialize_metadata(metadata: dict[str, Any] | None) -> str | None:
     """
     Serialize metadata dictionary to JSON string for storage.
 
@@ -41,7 +41,7 @@ def serialize_metadata(metadata: Dict[str, Any] | None) -> str | None:
 
 def deserialize_metadata(
     metadata_str: str | None,
-) -> Dict[str, Any] | None:
+) -> dict[str, Any] | None:
     """
     Deserialize metadata JSON string back to dictionary.
 
@@ -132,7 +132,7 @@ def deserialize_aliases(aliases_str: str | None) -> list[str] | None:
 
 def force_sync_if_needed(
     db_connection: Any,
-    write_concern: Dict[str, Any],
+    write_concern: dict[str, Any],
 ) -> None:
     """
     Force a SQLite WAL checkpoint if write concern requires durability.

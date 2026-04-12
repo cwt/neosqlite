@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, List, Tuple, Union
+from typing import Any
 
 from .collection.cursor import ASCENDING
 
@@ -22,7 +22,7 @@ class IndexModel:
 
     def __init__(
         self,
-        keys: Union[str, List[str], List[Tuple[str, int]]],
+        keys: str | list[str] | list[tuple[str, int]],
         **kwargs: Any,
     ):
         self._keys = keys

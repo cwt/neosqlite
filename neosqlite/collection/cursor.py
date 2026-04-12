@@ -4,7 +4,7 @@ import logging
 import time
 from copy import deepcopy
 from functools import partial
-from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, Iterator, List
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator
 
 from .json_path_utils import parse_json_path
 from .jsonb_support import _get_json_function_prefix, json_data_column
@@ -29,22 +29,22 @@ class Cursor:
     def __init__(
         self,
         collection: Collection,
-        filter: Dict[str, Any] | None = None,
-        projection: Dict[str, Any] | None = None,
+        filter: dict[str, Any] | None = None,
+        projection: dict[str, Any] | None = None,
         hint: str | None = None,
         session: ClientSession | None = None,
-        tables_to_cleanup: List[str] | None = None,
+        tables_to_cleanup: list[str] | None = None,
     ):
         """
         Initialize a new cursor instance.
 
         Args:
             collection (Collection): The collection to operate on.
-            filter (Dict[str, Any], optional): Filter criteria to apply to the documents.
-            projection (Dict[str, Any], optional): Projection criteria to specify which fields to include.
+            filter (dict[str, Any], optional): Filter criteria to apply to the documents.
+            projection (dict[str, Any], optional): Projection criteria to specify which fields to include.
             hint (str, optional): Hint for the database to improve query performance.
             session (ClientSession, optional): A ClientSession for transactions.
-            tables_to_cleanup (List[str], optional): List of temporary tables to drop when closed.
+            tables_to_cleanup (list[str], optional): List of temporary tables to drop when closed.
         """
         self._collection = collection
         self._query_helpers = collection.query_engine.helpers
@@ -52,13 +52,13 @@ class Cursor:
         self._projection = projection or {}
         self._hint: str | list[tuple[str, int]] | None = hint
         self._comment: str | None = None
-        self._min: Dict[str, Any] | None = None
-        self._max: Dict[str, Any] | None = None
-        self._collation: Dict[str, Any] | None = None
-        self._where_predicate: Callable[[Dict[str, Any]], bool] | None = None
+        self._min: dict[str, Any] | None = None
+        self._max: dict[str, Any] | None = None
+        self._collation: dict[str, Any] | None = None
+        self._where_predicate: Callable[[dict[str, Any]], bool] | None = None
         self._skip = 0
         self._limit: int | None = None
-        self._sort: Dict[str, int] | None = None
+        self._sort: dict[str, int] | None = None
         self._retrieved: int = 0
         self._batch_size = 101  # MongoDB-compatible default
         self._session = session
@@ -131,12 +131,12 @@ class Cursor:
         """
         return 0
 
-    def __iter__(self) -> Iterator[Dict[str, Any]]:
+    def __iter__(self) -> Iterator[dict[str, Any]]:
         """
         Return an iterator over the documents in the cursor.
 
         Returns:
-            Iterator[Dict[str, Any]]: An iterator yielding documents that match the filter,
+            Iterator[dict[str, Any]]: An iterator yielding documents that match the filter,
                                       projection, sorting, and pagination criteria.
         """
         return self._execute_query()
@@ -169,14 +169,14 @@ class Cursor:
 
     def sort(
         self,
-        key_or_list: str | List[tuple],
+        key_or_list: str | list[tuple],
         direction: int | None = None,
     ) -> Cursor:
         """
         Sort the documents returned by the cursor.
 
         Args:
-            key_or_list (str | List[tuple]): The key or list of keys to sort by.
+            key_or_list (str | list[tuple]): The key or list of keys to sort by.
             direction (int, optional): The sorting direction (ASCENDING or DESCENDING).
                                        Defaults to ASCENDING if None.
 
@@ -279,7 +279,7 @@ class Cursor:
         self._max = dict(max_spec)  # type: ignore[arg-type]
         return self
 
-    def collation(self, collation: Dict[str, Any]) -> Cursor:
+    def collation(self, collation: dict[str, Any]) -> Cursor:
         """
         Set the collation for the cursor.
 
@@ -287,7 +287,7 @@ class Cursor:
         comparison, such as rules for lettercase and accent marks.
 
         Args:
-            collation (Dict[str, Any]): A dictionary specifying collation options:
+            collation (dict[str, Any]): A dictionary specifying collation options:
                 - locale (str): Language locale (e.g., "en_US", "fr_FR", "de_DE")
                 - caseLevel (bool): Whether to include case comparison
                 - caseFirst (str): "upper", "lower", or "off"
@@ -313,7 +313,7 @@ class Cursor:
         self._collation = collation
         return self
 
-    def where(self, predicate: Callable[[Dict[str, Any]], bool]) -> Cursor:
+    def where(self, predicate: Callable[[dict[str, Any]], bool]) -> Cursor:
         """
         Filter cursor results using a Python predicate function.
 
@@ -321,7 +321,7 @@ class Cursor:
         function to filter documents after they are retrieved from the database.
 
         Args:
-            predicate (Callable[[Dict[str, Any]], bool]): A function that takes a document and returns
+            predicate (Callable[[dict[str, Any]], bool]): A function that takes a document and returns
                                  True if the document should be included.
 
         Returns:
@@ -360,7 +360,7 @@ class Cursor:
         self._comment = comment
         return self
 
-    def to_list(self, length: int | None = None) -> List[Dict[str, Any]]:
+    def to_list(self, length: int | None = None) -> list[dict[str, Any]]:
         """
         Convert the cursor to a list of documents.
 
@@ -372,7 +372,7 @@ class Cursor:
                                    If None, returns all documents.
 
         Returns:
-            List[Dict[str, Any]]: List of documents in the cursor
+            list[dict[str, Any]]: List of documents in the cursor
 
         Example:
             >>> cursor = collection.find({"age": {"$gte": 18}})
@@ -530,7 +530,7 @@ class Cursor:
         else:
             return (f"sqlite://{db_name}", 0)
 
-    def explain(self, verbosity: str = "queryPlanner") -> Dict[str, Any]:
+    def explain(self, verbosity: str = "queryPlanner") -> dict[str, Any]:
         """
         Return the query execution plan.
 
@@ -543,7 +543,7 @@ class Cursor:
                            Defaults to "queryPlanner".
 
         Returns:
-            Dict[str, Any]: Query execution plan with the following structure:
+            dict[str, Any]: Query execution plan with the following structure:
                 - queryPlanner: Information about the query plan
                     - winningPlan: List of plan stages
                     - indexUsage: Information about index usage
@@ -606,7 +606,7 @@ class Cursor:
                 if "USING INDEX" in detail or "USING COVERING INDEX" in detail:
                     index_usage.append({"detail": detail})
 
-            result: Dict[str, Any] = {
+            result: dict[str, Any] = {
                 "queryPlanner": {
                     "winningPlan": winning_plan,
                     "indexUsage": index_usage,
@@ -637,13 +637,13 @@ class Cursor:
                 "error": str(e),
             }
 
-    def _execute_query(self) -> Iterator[Dict[str, Any]]:
+    def _execute_query(self) -> Iterator[dict[str, Any]]:
         """
         Execute the query and yield the results after applying filters, sorting,
         pagination, and projection.
 
         Yields:
-            Dict[str, Any]: A dictionary representing each document in the result set.
+            dict[str, Any]: A dictionary representing each document in the result set.
         """
         validate_session(self._session, self._collection._database)
 
@@ -676,14 +676,14 @@ class Cursor:
         # Mark as exhausted
         self._exhausted = True
 
-    def _get_filtered_documents(self) -> Iterable[Dict[str, Any]]:
+    def _get_filtered_documents(self) -> Iterable[dict[str, Any]]:
         """
         Retrieve documents based on the filter criteria, applying SQL-based filtering
         where possible, or falling back to Python-based filtering for complex queries.
         For datetime queries, use the specialized datetime query processor.
 
         Returns:
-            Iterable[Dict[str, Any]]: An iterable of dictionaries representing
+            Iterable[dict[str, Any]]: An iterable of dictionaries representing
                                       the documents that match the filter criteria.
         """
         # Check if this is a datetime query that should use the specialized processor
@@ -707,7 +707,7 @@ class Cursor:
             self._filter
         )
 
-        docs: Iterable[Dict[str, Any]]
+        docs: Iterable[dict[str, Any]]
         if where_result is not None:
             # Use SQL-based filtering
             where_clause, params, tables = where_result
@@ -789,7 +789,7 @@ class Cursor:
 
         return docs
 
-    def _handle_python_fallback(self) -> Iterable[Dict[str, Any]]:
+    def _handle_python_fallback(self) -> Iterable[dict[str, Any]]:
         """Handle complex queries by filtering all documents in Python."""
         # Build sorting and pagination clauses for SQL
         # Even in fallback mode, we can still use SQL to sort if possible
@@ -849,7 +849,7 @@ class Cursor:
                 if apply(doc):
                     yield doc
 
-    def _handle_expr_query(self) -> Iterable[Dict[str, Any]]:
+    def _handle_expr_query(self) -> Iterable[dict[str, Any]]:
         """
         Handle $expr queries with SQL evaluation when possible, Python fallback otherwise.
 
@@ -919,7 +919,7 @@ class Cursor:
                 cmd = f"/* {safe_comment} */ {cmd}"
             db_cursor = self._collection.db.execute(cmd, params)
             # Use fetchmany for memory-efficient batch fetching
-            docs: List[Dict[str, Any]] = []
+            docs: list[dict[str, Any]] = []
             while True:
                 rows = db_cursor.fetchmany(self._batch_size)
                 if not rows:
@@ -963,7 +963,7 @@ class Cursor:
 
             db_cursor = self._collection.db.execute(cmd)
             # Use fetchmany for memory-efficient batch fetching
-            all_docs: List[Dict[str, Any]] = []
+            all_docs: list[dict[str, Any]] = []
             while True:
                 rows = db_cursor.fetchmany(self._batch_size)
                 if not rows:
@@ -971,7 +971,7 @@ class Cursor:
                 all_docs.extend(self._load_documents(rows))
 
             # Filter documents using $expr Python evaluation
-            def expr_filter(doc: Dict[str, Any]) -> bool:
+            def expr_filter(doc: dict[str, Any]) -> bool:
                 """
                 Evaluate the expression for a given document.
 
@@ -993,8 +993,8 @@ class Cursor:
         self,
         where_clause: str,
         params: tuple,
-        min_spec: Dict[str, Any] | None,
-        max_spec: Dict[str, Any] | None,
+        min_spec: dict[str, Any] | None,
+        max_spec: dict[str, Any] | None,
     ) -> tuple:
         """
         Build SQL clause for min/max index bounds.
@@ -1078,7 +1078,7 @@ class Cursor:
             # Case-sensitive comparison (default SQLite behavior)
             return ""
 
-    def _contains_datetime_operations(self, query: Dict[str, Any]) -> bool:
+    def _contains_datetime_operations(self, query: dict[str, Any]) -> bool:
         """
         Check if a query contains datetime operations that should use the datetime processor.
 
@@ -1162,7 +1162,7 @@ class Cursor:
 
         return is_datetime_regex(pattern)
 
-    def _load_documents(self, rows) -> Iterable[Dict[str, Any]]:
+    def _load_documents(self, rows) -> Iterable[dict[str, Any]]:
         """
         Load documents from rows returned by the database query, including handling both id and _id.
 
@@ -1170,7 +1170,7 @@ class Cursor:
             rows: Database result rows containing id, _id, and data
 
         Returns:
-            Iterable[Dict[str, Any]]: An iterable of loaded documents
+            Iterable[dict[str, Any]]: An iterable of loaded documents
         """
         for row in rows:
             id_val, stored_id_val, data_val = row
@@ -1181,16 +1181,16 @@ class Cursor:
             yield doc
 
     def _apply_sorting(
-        self, docs: Iterable[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        self, docs: Iterable[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """
         Sort the documents based on the specified sorting criteria.
 
         Args:
-            docs (Iterable[Dict[str, Any]]): The iterable of documents to sort.
+            docs (Iterable[dict[str, Any]]): The iterable of documents to sort.
 
         Returns:
-            List[Dict[str, Any]]: A list of dictionaries representing the documents
+            list[dict[str, Any]]: A list of dictionaries representing the documents
                                   sorted by the specified criteria.
         """
         if not self._sort:
@@ -1237,16 +1237,16 @@ class Cursor:
         return sorted_docs
 
     def _apply_pagination(
-        self, docs: Iterable[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        self, docs: Iterable[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """
         Apply skip and limit to the documents.
 
         Args:
-            docs (Iterable[Dict[str, Any]]): The iterable of documents to apply pagination to.
+            docs (Iterable[dict[str, Any]]): The iterable of documents to apply pagination to.
 
         Returns:
-            List[Dict[str, Any]]: A list of dictionaries representing the documents
+            list[dict[str, Any]]: A list of dictionaries representing the documents
                                   after applying skip and limit.
         """
         doc_list = list(docs)
@@ -1257,16 +1257,16 @@ class Cursor:
         return skipped_docs
 
     def _apply_projection(
-        self, docs: Iterable[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        self, docs: Iterable[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """
         Apply projection to the documents.
 
         Args:
-            docs (Iterable[Dict[str, Any]]): The iterable of documents to apply projection to.
+            docs (Iterable[dict[str, Any]]): The iterable of documents to apply projection to.
 
         Returns:
-            List[Dict[str, Any]]: A list of dictionaries representing the documents
+            list[dict[str, Any]]: A list of dictionaries representing the documents
                                   after applying the projection.
         """
         project = partial(

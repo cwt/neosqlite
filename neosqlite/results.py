@@ -1,4 +1,4 @@
-from typing import Any, List
+from typing import Any
 
 
 class InsertOneResult:
@@ -31,22 +31,22 @@ class InsertManyResult:
     Represents the result of a multiple insert operation.
     """
 
-    def __init__(self, inserted_ids: List[Any]):
+    def __init__(self, inserted_ids: list[Any]):
         """
         Initialize an InsertManyResult object.
 
         Args:
-            inserted_ids (List[Any]): The IDs of the inserted documents.
+            inserted_ids (list[Any]): The IDs of the inserted documents.
         """
         self._inserted_ids = inserted_ids
 
     @property
-    def inserted_ids(self) -> List[Any]:
+    def inserted_ids(self) -> list[Any]:
         """
         The IDs of the inserted documents.
 
         Returns:
-            List[Any]: The IDs of the inserted documents.
+            list[Any]: The IDs of the inserted documents.
         """
         return self._inserted_ids
 

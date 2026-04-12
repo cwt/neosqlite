@@ -5,7 +5,7 @@ Python implementation of MongoDB $setWindowFields operators.
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import TYPE_CHECKING, Any, Dict, List, Tuple
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .. import Collection
@@ -13,20 +13,20 @@ if TYPE_CHECKING:
 
 
 def process_set_window_fields(
-    docs_with_context: List[Dict[str, Any]],
-    spec: Dict[str, Any],
+    docs_with_context: list[dict[str, Any]],
+    spec: dict[str, Any],
     collection: Collection,
     evaluator: ExprEvaluator,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Python fallback implementation of $setWindowFields.
     """
     partition_by = spec.get("partitionBy")
-    sort_by: Dict[str, int] = spec.get("sortBy", {})
-    output: Dict[str, Dict[str, Any]] = spec.get("output", {})
+    sort_by: dict[str, int] = spec.get("sortBy", {})
+    output: dict[str, dict[str, Any]] = spec.get("output", {})
 
     # 1. Partitioning
-    partitions: Dict[Any, List[int]] = {}
+    partitions: dict[Any, list[int]] = {}
     for i, dc in enumerate(docs_with_context):
         if partition_by is None:
             key = None
@@ -62,8 +62,8 @@ def process_set_window_fields(
                 partition_docs.sort(key=get_sort_val, reverse=is_desc)
 
         # Pre-calculate ranks if needed
-        ranks: List[int] | None = None
-        dense_ranks: List[int] | None = None
+        ranks: list[int] | None = None
+        dense_ranks: list[int] | None = None
 
         # 3. Apply window operators
         for i, dc in enumerate(partition_docs):
@@ -110,9 +110,9 @@ def process_set_window_fields(
 
 def _get_window_frame(
     current_idx: int,
-    partition_docs: List[Dict[str, Any]],
-    window_spec: Dict[str, Any] | None,
-) -> List[int]:
+    partition_docs: list[dict[str, Any]],
+    window_spec: dict[str, Any] | None,
+) -> list[int]:
     if not window_spec:
         return list(range(len(partition_docs)))
 
@@ -142,11 +142,11 @@ def _apply_window_operator(
     op_name: str,
     op_val: Any,
     current_idx: int,
-    partition_docs: List[Dict[str, Any]],
-    frame_indices: List[int],
+    partition_docs: list[dict[str, Any]],
+    frame_indices: list[int],
     evaluator: ExprEvaluator,
     collection: Collection,
-    sort_by: Dict[str, int],
+    sort_by: dict[str, int],
 ) -> Any:
     # 1. Operators that don't use frames or use documents directly
     if op_name == "$documentNumber":
@@ -386,7 +386,7 @@ def _apply_window_operator(
         if op_name == "$push":
             return values
         if op_name == "$addToSet":
-            unique_values: List[Any] = []
+            unique_values: list[Any] = []
             for v in values:
                 if v not in unique_values:
                     unique_values.append(v)
@@ -408,17 +408,17 @@ def _apply_window_operator(
 
 
 def _get_sort_key(
-    doc: Dict[str, Any], sort_by: Dict[str, int], collection: Collection
-) -> Tuple:
+    doc: dict[str, Any], sort_by: dict[str, int], collection: Collection
+) -> tuple:
     return tuple(collection._get_val(doc, field) for field in sort_by)
 
 
 def _calculate_all_ranks(
-    partition_docs: List[Dict[str, Any]],
-    sort_by: Dict[str, int],
+    partition_docs: list[dict[str, Any]],
+    sort_by: dict[str, int],
     collection: Collection,
-) -> List[int]:
-    ranks: List[int] = []
+) -> list[int]:
+    ranks: list[int] = []
     current_rank = 1
     for i in range(len(partition_docs)):
         if i > 0:
@@ -433,11 +433,11 @@ def _calculate_all_ranks(
 
 
 def _calculate_all_dense_ranks(
-    partition_docs: List[Dict[str, Any]],
-    sort_by: Dict[str, int],
+    partition_docs: list[dict[str, Any]],
+    sort_by: dict[str, int],
     collection: Collection,
-) -> List[int]:
-    ranks: List[int] = []
+) -> list[int]:
+    ranks: list[int] = []
     current_rank = 1
     for i in range(len(partition_docs)):
         if i > 0:

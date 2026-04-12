@@ -3,11 +3,11 @@ SQL Compiler for JSON Schema validation.
 Translates MongoDB $jsonSchema rules into native SQLite SQL expressions.
 """
 
-from typing import Any, Dict
+from typing import Any
 
 
 def compile_schema_to_sql(
-    schema: Dict[str, Any], data_column: str = "data", jsonb: bool = False
+    schema: dict[str, Any], data_column: str = "data", jsonb: bool = False
 ) -> str:
     """
     Compile a JSON Schema into a SQL expression for use in a CHECK constraint.

@@ -2,7 +2,7 @@ import datetime
 import hashlib
 import io
 import logging
-from typing import Any, Dict
+from typing import Any
 
 from .._sqlite import sqlite3
 
@@ -44,7 +44,7 @@ class GridFSBucket:
         db: sqlite3.Connection,
         bucket_name: str = "fs",
         chunk_size_bytes: int = 255 * 1024,  # 255KB default chunk size
-        write_concern: Dict[str, Any] | None = None,
+        write_concern: dict[str, Any] | None = None,
         read_preference: Any | None = None,
         disable_md5: bool = False,
     ):
@@ -249,7 +249,7 @@ class GridFSBucket:
             pass
 
     def _serialize_metadata(
-        self, metadata: Dict[str, Any] | None
+        self, metadata: dict[str, Any] | None
     ) -> str | None:
         """
         Serialize metadata to JSON string.
@@ -264,7 +264,7 @@ class GridFSBucket:
 
     def _deserialize_metadata(
         self, metadata_str: str | None
-    ) -> Dict[str, Any] | None:
+    ) -> dict[str, Any] | None:
         """
         Deserialize metadata from JSON string.
 
@@ -285,7 +285,7 @@ class GridFSBucket:
         filename: str,
         source: bytes | io.IOBase,
         chunk_size_bytes: int | None = None,
-        metadata: Dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
         session: Any | None = None,
     ) -> ObjectId:
         """
@@ -590,7 +590,7 @@ class GridFSBucket:
             raise NoFile(f"File with id {file_id} not found")
 
     def find(
-        self, filter: Dict[str, Any] | None = None, session: Any | None = None
+        self, filter: dict[str, Any] | None = None, session: Any | None = None
     ) -> GridOutCursor:
         """
         Find and return the files collection documents that match filter.
@@ -613,7 +613,7 @@ class GridFSBucket:
         self,
         filename: str,
         chunk_size_bytes: int | None = None,
-        metadata: Dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
         session: Any | None = None,
     ) -> GridIn:
         """
@@ -646,7 +646,7 @@ class GridFSBucket:
         filename: str,
         source: bytes | io.IOBase,
         chunk_size_bytes: int | None = None,
-        metadata: Dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
         session: Any | None = None,
     ):
         """
@@ -763,7 +763,7 @@ class GridFSBucket:
         self,
         file_id: ObjectId | int,
         filename: str,
-        metadata: Dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
         content_type: str | None = None,
         aliases: list[str] | None = None,
     ) -> GridIn:

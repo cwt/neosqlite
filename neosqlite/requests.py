@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any
 
 
 class InsertOne:
@@ -6,12 +6,12 @@ class InsertOne:
     Represents an insert operation for a single document.
     """
 
-    def __init__(self, document: Dict[str, Any]):
+    def __init__(self, document: dict[str, Any]):
         """
         Initialize an InsertOne object.
 
         Args:
-            document (Dict[str, Any]): The document to be inserted.
+            document (dict[str, Any]): The document to be inserted.
         """
         self.document = document
 
@@ -23,16 +23,16 @@ class UpdateOne:
 
     def __init__(
         self,
-        filter: Dict[str, Any],
-        update: Dict[str, Any],
+        filter: dict[str, Any],
+        update: dict[str, Any],
         upsert: bool = False,
     ):
         """
         Initialize an UpdateOne object.
 
         Args:
-            filter (Dict[str, Any]): The filter criteria for selecting the document to update.
-            update (Dict[str, Any]): The update operations to apply to the selected document.
+            filter (dict[str, Any]): The filter criteria for selecting the document to update.
+            update (dict[str, Any]): The update operations to apply to the selected document.
             upsert (bool, optional): If True, insert the document if no document matches the filter criteria. Defaults to False.
         """
         self.filter = filter
@@ -45,11 +45,11 @@ class DeleteOne:
     Represents a delete operation for a single document.
     """
 
-    def __init__(self, filter: Dict[str, Any]):
+    def __init__(self, filter: dict[str, Any]):
         """
         Initialize a DeleteOne object.
 
         Args:
-            filter (Dict[str, Any]): The filter criteria for selecting the document to delete.
+            filter (dict[str, Any]): The filter criteria for selecting the document to delete.
         """
         self.filter = filter

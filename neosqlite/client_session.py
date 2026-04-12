@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Callable, Dict
+from typing import TYPE_CHECKING, Any, Callable
 
 from .exceptions import InvalidOperation
 
@@ -20,7 +20,7 @@ class ClientSession:
     """
 
     def __init__(
-        self, client: Connection, options: Dict[str, Any] | None = None
+        self, client: Connection, options: dict[str, Any] | None = None
     ):
         """
         Initialize a new ClientSession.
@@ -43,7 +43,7 @@ class ClientSession:
         """
         return self._in_transaction
 
-    def start_transaction(self, write_concern: Dict[str, Any] | None = None):
+    def start_transaction(self, write_concern: dict[str, Any] | None = None):
         """
         Start a new transaction.
 

@@ -10,7 +10,7 @@ This is designed as a mixin class to be composed into ExprEvaluator.
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, Any, Dict, List, Tuple
+from typing import TYPE_CHECKING, Any
 
 from ..json_path_utils import build_json_extract_expression, parse_json_path
 
@@ -43,8 +43,8 @@ class SqlConvertersMixin:
     _current_context: AggregationContext | None
 
     def _convert_expr_to_sql(
-        self, expr: Dict[str, Any]
-    ) -> Tuple[str, List[Any]]:
+        self, expr: dict[str, Any]
+    ) -> tuple[str, list[Any]]:
         """
         Convert a $expr expression to SQL.
 
@@ -198,7 +198,7 @@ class SqlConvertersMixin:
 
     def _convert_logical_operator(
         self, operator: str, operands: Any
-    ) -> Tuple[str, List[Any]]:
+    ) -> tuple[str, list[Any]]:
         """Convert logical operators ($and, $or, $not, $nor) to SQL."""
         # Normalize operands for $not to handle both formats:
         # {$not: {expression}} and {$not: [expression]}
@@ -239,8 +239,8 @@ class SqlConvertersMixin:
         return sql, all_params
 
     def _convert_comparison_operator(
-        self, operator: str, operands: List[Any]
-    ) -> Tuple[str, List[Any]]:
+        self, operator: str, operands: list[Any]
+    ) -> tuple[str, list[Any]]:
         """Convert comparison operators to SQL."""
         if len(operands) != 2:
             raise ValueError(f"{operator} requires exactly 2 operands")
@@ -256,8 +256,8 @@ class SqlConvertersMixin:
         )
 
     def _convert_cmp_operator(
-        self, operands: List[Any]
-    ) -> Tuple[str, List[Any]]:
+        self, operands: list[Any]
+    ) -> tuple[str, list[Any]]:
         """Convert $cmp operator to SQL CASE statement."""
         if len(operands) != 2:
             raise ValueError("$cmp requires exactly 2 operands")
@@ -269,8 +269,8 @@ class SqlConvertersMixin:
         return sql, left_params + right_params
 
     def _convert_arithmetic_operator(
-        self, operator: str, operands: List[Any]
-    ) -> Tuple[str, List[Any]]:
+        self, operator: str, operands: list[Any]
+    ) -> tuple[str, list[Any]]:
         """Convert arithmetic operators to SQL."""
         if len(operands) < 2:
             raise ValueError(f"{operator} requires at least 2 operands")
@@ -289,8 +289,8 @@ class SqlConvertersMixin:
         return sql, all_params
 
     def _convert_cond_operator(
-        self, operands: Dict[str, Any]
-    ) -> Tuple[str, List[Any]]:
+        self, operands: dict[str, Any]
+    ) -> tuple[str, list[Any]]:
         """Convert $cond operator to SQL CASE statement."""
         if not isinstance(operands, dict):
             raise ValueError("$cond requires a dictionary")
@@ -315,8 +315,8 @@ class SqlConvertersMixin:
         return sql, condition_params + then_params + else_params
 
     def _convert_ifNull_operator(
-        self, operands: List[Any]
-    ) -> Tuple[str, List[Any]]:
+        self, operands: list[Any]
+    ) -> tuple[str, list[Any]]:
         """Convert $ifNull operator to SQL COALESCE."""
         if not isinstance(operands, list) or len(operands) != 2:
             raise ValueError("$ifNull requires exactly 2 operands")
@@ -331,7 +331,7 @@ class SqlConvertersMixin:
 
     def _convert_array_operator(
         self, operator: str, operands: Any
-    ) -> Tuple[str, List[Any]]:
+    ) -> tuple[str, list[Any]]:
         """Convert array operators to SQL."""
         # Get the appropriate function names based on SQLite version
         json_each = self.json_each_function  # type: ignore[attr-defined]
@@ -444,7 +444,7 @@ class SqlConvertersMixin:
 
     def _convert_set_operator(
         self, operator: str, operands: Any
-    ) -> Tuple[str, List[Any]]:
+    ) -> tuple[str, list[Any]]:
         """Convert set operators to SQL using json_each."""
         # Get the appropriate json_each function based on SQLite version
         json_each = self.json_each_function  # type: ignore[attr-defined]
@@ -622,8 +622,8 @@ class SqlConvertersMixin:
                 )
 
     def _convert_string_operator(
-        self, operator: str, operands: List[Any]
-    ) -> Tuple[str, List[Any]]:
+        self, operator: str, operands: list[Any]
+    ) -> tuple[str, list[Any]]:
         """Convert string operators to SQL."""
         match operator:
             case "$concat":
@@ -961,7 +961,7 @@ class SqlConvertersMixin:
 
     def _convert_math_operator(
         self, operator: str, operands: Any
-    ) -> Tuple[str, List[Any]]:
+    ) -> tuple[str, list[Any]]:
         """Convert math operators to SQL."""
         # Normalize operands to handle both single values and lists
         # MongoDB allows both: {$exp: 1} and {$exp: [1]}
@@ -1096,7 +1096,7 @@ class SqlConvertersMixin:
 
     def _convert_trig_operator(
         self, operator: str, operands: Any
-    ) -> Tuple[str, List[Any]]:
+    ) -> tuple[str, list[Any]]:
         """Convert trigonometric and hyperbolic operators to SQL.
 
         Args:
@@ -1166,7 +1166,7 @@ class SqlConvertersMixin:
 
     def _convert_angle_operator(
         self, operator: str, operands: Any
-    ) -> Tuple[str, List[Any]]:
+    ) -> tuple[str, list[Any]]:
         """Convert angle conversion operators to SQL."""
         # Normalize operands to handle both single values and lists
         # MongoDB allows both: {$degreesToRadians: 180} and {$degreesToRadians: [180]}
@@ -1194,7 +1194,7 @@ class SqlConvertersMixin:
 
     def _convert_date_operator(
         self, operator: str, operands: Any
-    ) -> Tuple[str, List[Any]]:
+    ) -> tuple[str, list[Any]]:
         """Convert date operators to SQL using strftime."""
         # Normalize operands to handle both single values and lists
         if not isinstance(operands, list):
@@ -1250,8 +1250,8 @@ class SqlConvertersMixin:
         return sql, value_params
 
     def _convert_date_arithmetic_operator(
-        self, operator: str, operands: List[Any]
-    ) -> Tuple[str, List[Any]]:
+        self, operator: str, operands: list[Any]
+    ) -> tuple[str, list[Any]]:
         """Convert $dateAdd/$dateSubtract operators to SQL.
 
         MongoDB syntax: {$dateAdd: [date, amount, unit]} or
@@ -1327,8 +1327,8 @@ class SqlConvertersMixin:
             return sql, date_params + amount_params
 
     def _convert_date_diff_operator(
-        self, operands: List[Any]
-    ) -> Tuple[str, List[Any]]:
+        self, operands: list[Any]
+    ) -> tuple[str, list[Any]]:
         """Convert $dateDiff operator to SQL.
 
         MongoDB syntax: {$dateDiff: [date1, date2, unit]} or
@@ -1400,7 +1400,7 @@ class SqlConvertersMixin:
 
     def _convert_object_operator(
         self, operator: str, operands: Any
-    ) -> Tuple[str, List[Any]]:
+    ) -> tuple[str, list[Any]]:
         """Convert object operators to SQL.
 
         Note: json_patch() works with both JSON and JSONB data types.
@@ -1487,7 +1487,7 @@ class SqlConvertersMixin:
                     f"Object operator {operator} not supported in SQL tier"
                 )
 
-    def _convert_let_operator(self, operands: Any) -> Tuple[str, List[Any]]:
+    def _convert_let_operator(self, operands: Any) -> tuple[str, list[Any]]:
         """
         Convert $let operator to SQL by inlining variables.
 
@@ -1533,7 +1533,7 @@ class SqlConvertersMixin:
 
     def _convert_data_size_operator(
         self, operator: str, operands: Any
-    ) -> Tuple[str, List[Any]]:
+    ) -> tuple[str, list[Any]]:
         """Convert $binarySize and $bsonSize operators to SQL."""
         if not isinstance(operands, list):
             operands = [operands]
@@ -1728,7 +1728,7 @@ class SqlConvertersMixin:
 
     def _convert_type_operator(
         self, operator: str, operands: Any
-    ) -> Tuple[str, List[Any]]:
+    ) -> tuple[str, list[Any]]:
         """Convert type conversion operators to SQL."""
         # Normalize operands to handle both single values and lists
         # MongoDB allows both: {$isNumber: "$field"} and {$isNumber: ["$field"]}
@@ -1936,7 +1936,7 @@ class SqlConvertersMixin:
 
         return sql, value_params
 
-    def _convert_operand_to_sql(self, operand: Any) -> Tuple[str, List[Any]]:
+    def _convert_operand_to_sql(self, operand: Any) -> tuple[str, list[Any]]:
         """
         Convert an operand to SQL expression.
 

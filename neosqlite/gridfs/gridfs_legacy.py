@@ -1,6 +1,6 @@
 import io
 import logging
-from typing import Any, Dict
+from typing import Any
 
 from .._sqlite import sqlite3
 
@@ -140,7 +140,7 @@ class GridFS:
                 filenames.append(grid_out.filename)
         return filenames
 
-    def find(self, filter: Dict[str, Any] | None = None) -> GridOutCursor:
+    def find(self, filter: dict[str, Any] | None = None) -> GridOutCursor:
         """
         Find files in GridFS that match the filter.
 
@@ -152,7 +152,7 @@ class GridFS:
         """
         return self._bucket.find(filter or {})
 
-    def find_one(self, filter: Dict[str, Any] | None = None) -> GridOut | None:
+    def find_one(self, filter: dict[str, Any] | None = None) -> GridOut | None:
         """
         Find a single file in GridFS that matches the filter.
 

@@ -6,7 +6,6 @@ to avoid redundant database queries.
 """
 
 import logging
-from typing import Dict
 
 from .._sqlite import sqlite3
 
@@ -14,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Module-level cache for JSONB support detection results
 # Key: connection id (int), Value: dict with support flags
-_jsonb_support_cache: Dict[int, Dict[str, bool]] = {}
+_jsonb_support_cache: dict[int, dict[str, bool]] = {}
 
 
 def clear_jsonb_cache(db_connection=None) -> None:

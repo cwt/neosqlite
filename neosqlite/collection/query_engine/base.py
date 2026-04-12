@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, List, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from ..client_session import ClientSession
@@ -25,8 +25,8 @@ class QueryEngineProtocol(Protocol):
 
     def find(
         self,
-        filter: Dict[str, Any] | None = None,
-        projection: Dict[str, Any] | None = None,
+        filter: dict[str, Any] | None = None,
+        projection: dict[str, Any] | None = None,
         hint: str | None = None,
         session: ClientSession | None = None,
     ) -> "Cursor":
@@ -35,33 +35,33 @@ class QueryEngineProtocol(Protocol):
 
     def find_one(
         self,
-        filter: Dict[str, Any] | None = None,
-        projection: Dict[str, Any] | None = None,
+        filter: dict[str, Any] | None = None,
+        projection: dict[str, Any] | None = None,
         hint: str | None = None,
         session: ClientSession | None = None,
-    ) -> Dict[str, Any] | None:
+    ) -> dict[str, Any] | None:
         """Find a single document."""
         ...
 
     def insert_one(
-        self, document: Dict[str, Any], session: ClientSession | None = None
+        self, document: dict[str, Any], session: ClientSession | None = None
     ) -> Any:
         """Insert a single document."""
         ...
 
     def update_one(
         self,
-        filter: Dict[str, Any],
-        update: Dict[str, Any],
+        filter: dict[str, Any],
+        update: dict[str, Any],
         upsert: bool = False,
-        array_filters: List[Dict[str, Any]] | None = None,
+        array_filters: list[dict[str, Any]] | None = None,
         session: ClientSession | None = None,
     ) -> Any:
         """Update a single document."""
         ...
 
     def delete_one(
-        self, filter: Dict[str, Any], session: ClientSession | None = None
+        self, filter: dict[str, Any], session: ClientSession | None = None
     ) -> Any:
         """Delete a single document."""
         ...

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List
+from typing import TYPE_CHECKING, Any, Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +20,11 @@ class RawBatchCursor:
     def __init__(
         self,
         collection: Collection,
-        filter: Dict[str, Any] | None = None,
-        projection: Dict[str, Any] | None = None,
+        filter: dict[str, Any] | None = None,
+        projection: dict[str, Any] | None = None,
         hint: str | None = None,
         batch_size: int = 100,
-        pipeline: List[Dict[str, Any]] | None = None,
+        pipeline: list[dict[str, Any]] | None = None,
         session: ClientSession | None = None,
     ):
         """
@@ -32,11 +32,11 @@ class RawBatchCursor:
 
         Args:
             collection (Collection): The collection associated with this cursor.
-            filter (Dict[str, Any]): A dictionary representing the filter criteria for the documents.
-            projection (Dict[str, Any]): A dictionary representing the projection criteria for the documents.
+            filter (dict[str, Any]): A dictionary representing the filter criteria for the documents.
+            projection (dict[str, Any]): A dictionary representing the projection criteria for the documents.
             hint (str): A string hinting at the index to use for the query.
             batch_size (int): The number of documents to return in each batch.
-            pipeline (List[Dict[str, Any]]): An optional aggregation pipeline to execute.
+            pipeline (list[dict[str, Any]]): An optional aggregation pipeline to execute.
             session (ClientSession, optional): A ClientSession for transactions.
         """
         self._collection = collection
@@ -47,10 +47,10 @@ class RawBatchCursor:
         self._batch_size = batch_size
         self._skip = 0
         self._limit: int | None = None
-        self._sort: Dict[str, int] | None = None
+        self._sort: dict[str, int] | None = None
         self._pipeline = pipeline
         self._session = session
-        self._tables_to_cleanup: List[str] = []
+        self._tables_to_cleanup: list[str] = []
 
     def batch_size(self, batch_size: int) -> RawBatchCursor:
         """

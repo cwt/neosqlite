@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from abc import ABC
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import neosqlite
@@ -27,15 +27,15 @@ class BulkOperation(ABC):
 class InsertOperation(BulkOperation):
     """Represents an insert operation in a bulk operation."""
 
-    document: Dict[str, Any]
+    document: dict[str, Any]
 
 
 @dataclass
 class UpdateOperation(BulkOperation):
     """Represents an update operation in a bulk operation."""
 
-    filter: Dict[str, Any]
-    update: Dict[str, Any]
+    filter: dict[str, Any]
+    update: dict[str, Any]
     upsert: bool = False
     multi: bool = False
 
@@ -44,7 +44,7 @@ class UpdateOperation(BulkOperation):
 class DeleteOperation(BulkOperation):
     """Represents a delete operation in a bulk operation."""
 
-    filter: Dict[str, Any]
+    filter: dict[str, Any]
     multi: bool = False
 
 
@@ -52,7 +52,7 @@ class BulkOperationContext:
     """Context for bulk operations that supports find/update/delete operations."""
 
     def __init__(
-        self, bulk_operations: List[BulkOperation], filter: Dict[str, Any]
+        self, bulk_operations: list[BulkOperation], filter: dict[str, Any]
     ):
         """
         Initializes the BulkOperationContext.
@@ -78,7 +78,7 @@ class BulkOperationContext:
         self._upsert = True
         return self
 
-    def update_one(self, update: Dict[str, Any]):
+    def update_one(self, update: dict[str, Any]):
         """
         Add an update one operation to the bulk operations list.
 
@@ -87,7 +87,7 @@ class BulkOperationContext:
         the specified update and handle the upsert flag.
 
         Args:
-            update (Dict[str, Any]): The update dictionary containing the fields to be updated.
+            update (dict[str, Any]): The update dictionary containing the fields to be updated.
 
         Returns:
             BulkOperationContext: The current context object for chaining further operations.
@@ -103,7 +103,7 @@ class BulkOperationContext:
         self._upsert = False  # Reset upsert flag
         return self
 
-    def update_many(self, update: Dict[str, Any]):
+    def update_many(self, update: dict[str, Any]):
         """
         Add an update many operation to the bulk operations list.
 
@@ -112,7 +112,7 @@ class BulkOperationContext:
         specified update and handle the upsert flag.
 
         Args:
-            update (Dict[str, Any]): The update dictionary containing the fields to be updated.
+            update (dict[str, Any]): The update dictionary containing the fields to be updated.
 
         Returns:
             BulkOperationContext: The current context object for chaining further operations.
@@ -158,7 +158,7 @@ class BulkOperationContext:
         )
         return self
 
-    def replace_one(self, replacement: Dict[str, Any]):
+    def replace_one(self, replacement: dict[str, Any]):
         """
         Add a replace one operation to the bulk operations list.
 
@@ -204,7 +204,7 @@ class BulkOperationExecutor:
         """
         self._collection = collection
         self._ordered = ordered
-        self._operations: List[BulkOperation] = []
+        self._operations: list[BulkOperation] = []
 
     def add(self, operation):
         """
@@ -244,7 +244,7 @@ class BulkOperationExecutor:
             )
         return self
 
-    def insert(self, document: Dict[str, Any]):
+    def insert(self, document: dict[str, Any]):
         """
         Add an insert operation to the bulk operations list.
 
@@ -252,7 +252,7 @@ class BulkOperationExecutor:
         The operation will insert the specified document into the collection.
 
         Args:
-            document (Dict[str, Any]): The document to be inserted.
+            document (dict[str, Any]): The document to be inserted.
 
         Returns:
             BulkOperationContext: The current context object for chaining further operations.
@@ -260,7 +260,7 @@ class BulkOperationExecutor:
         self._operations.append(InsertOperation(document=document))
         return self
 
-    def find(self, filter: Dict[str, Any]):
+    def find(self, filter: dict[str, Any]):
         """
         Create a context for find-based operations.
 
@@ -268,7 +268,7 @@ class BulkOperationExecutor:
         with the given filter.
 
         Args:
-            filter (Dict[str, Any]): The filter to be used for find operations.
+            filter (dict[str, Any]): The filter to be used for find operations.
 
         Returns:
             BulkOperationContext: A new BulkOperationContext object for chaining find operations.

@@ -7,7 +7,7 @@ building SQL queries from MongoDB-like query specifications.
 
 import logging
 import re
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any
 
 from ... import query_operators
 from ...exceptions import MalformedQueryException
@@ -41,7 +41,7 @@ class QueryBuilderMixin:
     _json_function_prefix: str
     _build_expr_where_clause: Any
 
-    def _is_text_search_query(self, query: Dict[str, Any]) -> bool:
+    def _is_text_search_query(self, query: dict[str, Any]) -> bool:
         """
         Check if the query is a text search query (contains $text operator).
 
@@ -54,8 +54,8 @@ class QueryBuilderMixin:
         return "$text" in query
 
     def _build_text_search_query(
-        self, query: Dict[str, Any]
-    ) -> tuple[str, List[Any], List[str]] | None:
+        self, query: dict[str, Any]
+    ) -> tuple[str, list[Any], list[str]] | None:
         """
         Builds a SQL query for text search using FTS5.
 
@@ -63,7 +63,7 @@ class QueryBuilderMixin:
             query: A dictionary representing the text search query with $text operator.
 
         Returns:
-            tuple[str, List[Any], List[str]] | None: A tuple containing the SQL WHERE clause,
+            tuple[str, list[Any], list[str]] | None: A tuple containing the SQL WHERE clause,
                                                       a list of parameters, and an empty list of
                                                       tables to clean up, or None.
         """
@@ -114,8 +114,8 @@ class QueryBuilderMixin:
         return where_clause, params, []
 
     def _build_other_fields_clause(
-        self, query: Dict[str, Any], expr: Dict[str, Any]
-    ) -> tuple[str, List[Any]] | None:
+        self, query: dict[str, Any], expr: dict[str, Any]
+    ) -> tuple[str, list[Any]] | None:
         """
         Build WHERE clause for non-$expr fields.
 
@@ -126,8 +126,8 @@ class QueryBuilderMixin:
         Returns:
             Tuple of (WHERE clause, parameters) or None for Python fallback
         """
-        clauses: List[str] = []
-        params: List[Any] = []
+        clauses: list[str] = []
+        params: list[Any] = []
 
         for field, value in query.items():
             if field == "$expr":
@@ -336,7 +336,7 @@ class QueryBuilderMixin:
 
     def _build_field_clause(
         self, field: str, value: Any
-    ) -> tuple[str, List[Any]] | None:
+    ) -> tuple[str, list[Any]] | None:
         """
         Build a WHERE clause for a single field.
 
@@ -411,8 +411,8 @@ class QueryBuilderMixin:
 
     def _build_simple_where_clause(
         self,
-        query: Dict[str, Any],
-    ) -> tuple[str, List[Any], List[str]] | None:
+        query: dict[str, Any],
+    ) -> tuple[str, list[Any], list[str]] | None:
         """
         Builds a SQL WHERE clause for simple queries that can be handled with json_extract.
 
@@ -425,10 +425,10 @@ class QueryBuilderMixin:
         Python-based processing for benchmarking and debugging purposes.
 
         Args:
-            query (Dict[str, Any]): A dictionary representing the query criteria.
+            query (dict[str, Any]): A dictionary representing the query criteria.
 
         Returns:
-            tuple[str, List[Any], List[str]] | None: A tuple containing the SQL WHERE clause,
+            tuple[str, list[Any], list[str]] | None: A tuple containing the SQL WHERE clause,
                                                       a list of parameters, and a list of
                                                       temporary tables to clean up, or None.
         """
@@ -472,8 +472,8 @@ class QueryBuilderMixin:
                 "or post-process results in Python."
             )
 
-        clauses: List[str] = []
-        params: List[Any] = []
+        clauses: list[str] = []
+        params: list[Any] = []
 
         for field, value in query.items():
             # Handle logical operators by falling back to Python processing
@@ -558,8 +558,8 @@ class QueryBuilderMixin:
 
     def _build_sort_clause(
         self,
-        sort: Dict[str, int] | None,
-        collation: Dict[str, Any] | None = None,
+        sort: dict[str, int] | None,
+        collation: dict[str, Any] | None = None,
     ) -> str:
         """
         Builds a SQL ORDER BY clause from a sort dictionary.
@@ -633,9 +633,9 @@ class QueryBuilderMixin:
     def _build_operator_clause(
         self,
         json_path: str,
-        operators: Dict[str, Any],
+        operators: dict[str, Any],
         is_datetime_indexed: bool = False,
-    ) -> tuple[str | None, List[Any]]:
+    ) -> tuple[str | None, list[Any]]:
         """
         Builds a SQL clause for query operators.
 
@@ -647,11 +647,11 @@ class QueryBuilderMixin:
 
         Args:
             json_path (str): The JSON path to extract the value from.
-            operators (Dict[str, Any]): A dictionary of operators and their values.
+            operators (dict[str, Any]): A dictionary of operators and their values.
             is_datetime_indexed (bool): Whether the field has a datetime index that requires timezone normalization.
 
         Returns:
-            tuple[str | None, List[Any]]: A tuple containing the SQL clause and
+            tuple[str | None, list[Any]]: A tuple containing the SQL clause and
                                           parameters. If the operator is unsupported,
                                           returns (None, []).
         """
@@ -921,8 +921,8 @@ class QueryBuilderMixin:
 
     def _apply_query(
         self,
-        query: Dict[str, Any],
-        document: Dict[str, Any],
+        query: dict[str, Any],
+        document: dict[str, Any],
     ) -> bool:
         """
         Applies a query to a document to determine if it matches the query criteria.
@@ -931,24 +931,24 @@ class QueryBuilderMixin:
         Processes both simple equality checks and complex query operators.
 
         Args:
-            query (Dict[str, Any]): A dictionary representing the query criteria.
-            document (Dict[str, Any]): The document to apply the query to.
+            query (dict[str, Any]): A dictionary representing the query criteria.
+            document (dict[str, Any]): The document to apply the query to.
 
         Returns:
             bool: True if the document matches the query, False otherwise.
         """
         if document is None:
             return False
-        matches: List[bool] = []
+        matches: list[bool] = []
 
-        def reapply(q: Dict[str, Any]) -> bool:
+        def reapply(q: dict[str, Any]) -> bool:
             """
             Recursively apply the query to the document to determine if it matches
             the query criteria.
 
             Args:
-                q (Dict[str, Any]): The query to apply.
-                document (Dict[str, Any]): The document to apply the query to.
+                q (dict[str, Any]): The query to apply.
+                document (dict[str, Any]): The document to apply the query to.
 
             Returns:
                 bool: True if the document matches the query, False otherwise.
@@ -1089,7 +1089,7 @@ class QueryBuilderMixin:
                         else:
                             matches.append(True)
                     else:
-                        doc_value: Dict[str, Any] | None = document
+                        doc_value: dict[str, Any] | None = document
                         if doc_value and field in doc_value:
                             doc_value = doc_value.get(field, None)
                         else:

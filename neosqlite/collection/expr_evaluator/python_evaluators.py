@@ -15,7 +15,7 @@ import random
 import re
 import warnings
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ class PythonEvaluatorsMixin:
     _log2_warned: bool
 
     def evaluate_python(
-        self, expr: Dict[str, Any], document: Dict[str, Any]
+        self, expr: dict[str, Any], document: dict[str, Any]
     ) -> bool:
         """
         Python fallback evaluation for $expr.
@@ -78,7 +78,7 @@ class PythonEvaluatorsMixin:
         return bool(result)
 
     def _evaluate_expr_python(
-        self, expr: Dict[str, Any], document: Dict[str, Any]
+        self, expr: dict[str, Any], document: dict[str, Any]
     ) -> Any:
         """Recursively evaluate expression in Python."""
         if not isinstance(expr, dict) or len(expr) != 1:
@@ -268,7 +268,7 @@ class PythonEvaluatorsMixin:
                 )
 
     def _evaluate_logical_python(
-        self, operator: str, operands: List[Any], document: Dict[str, Any]
+        self, operator: str, operands: list[Any], document: dict[str, Any]
     ) -> bool:
         """Evaluate logical operators in Python."""
         if operator == "$not":
@@ -289,7 +289,7 @@ class PythonEvaluatorsMixin:
                 raise ValueError(f"Unknown logical operator: {operator}")
 
     def _evaluate_comparison_python(
-        self, operator: str, operands: List[Any], document: Dict[str, Any]
+        self, operator: str, operands: list[Any], document: dict[str, Any]
     ) -> bool:
         """Evaluate comparison operators in Python."""
         left = self._evaluate_operand_python(operands[0], document)
@@ -320,7 +320,7 @@ class PythonEvaluatorsMixin:
                 raise ValueError(f"Unknown comparison operator: {operator}")
 
     def _evaluate_cmp_python(
-        self, operands: List[Any], document: Dict[str, Any]
+        self, operands: list[Any], document: dict[str, Any]
     ) -> int:
         """Evaluate $cmp operator in Python."""
         if len(operands) != 2:
@@ -337,7 +337,7 @@ class PythonEvaluatorsMixin:
             return 0
 
     def _evaluate_arithmetic_python(
-        self, operator: str, operands: List[Any], document: Dict[str, Any]
+        self, operator: str, operands: list[Any], document: dict[str, Any]
     ) -> float | None:
         """Evaluate arithmetic operators in Python.
 
@@ -376,7 +376,7 @@ class PythonEvaluatorsMixin:
                 raise ValueError(f"Unknown arithmetic operator: {operator}")
 
     def _evaluate_math_python(
-        self, operator: str, operands: List[Any], document: Dict[str, Any]
+        self, operator: str, operands: list[Any], document: dict[str, Any]
     ) -> float | None:
         """Evaluate math operators in Python."""
         # Handle $log with custom base separately (requires 2 operands)
@@ -510,7 +510,7 @@ class PythonEvaluatorsMixin:
                 raise ValueError(f"Unknown math operator: {operator}")
 
     def _evaluate_pow_python(
-        self, operands: List[Any], document: Dict[str, Any]
+        self, operands: list[Any], document: dict[str, Any]
     ) -> float | None:
         """Evaluate $pow operator in Python."""
         if len(operands) != 2:
@@ -522,7 +522,7 @@ class PythonEvaluatorsMixin:
         return pow(base, exponent)
 
     def _evaluate_sqrt_python(
-        self, operands: List[Any], document: Dict[str, Any]
+        self, operands: list[Any], document: dict[str, Any]
     ) -> float | None:
         """Evaluate $sqrt operator in Python."""
         # Handle both list and single operand formats
@@ -535,7 +535,7 @@ class PythonEvaluatorsMixin:
         return math.sqrt(value) if value is not None and value >= 0 else None
 
     def _evaluate_trig_python(
-        self, operator: str, operands: List[Any], document: Dict[str, Any]
+        self, operator: str, operands: list[Any], document: dict[str, Any]
     ) -> float | None:
         """Evaluate trigonometric operators in Python."""
 
@@ -592,7 +592,7 @@ class PythonEvaluatorsMixin:
                 raise ValueError(f"Unknown trig operator: {operator}")
 
     def _evaluate_angle_python(
-        self, operator: str, operands: Any, document: Dict[str, Any]
+        self, operator: str, operands: Any, document: dict[str, Any]
     ) -> float | None:
         """Evaluate angle conversion operators in Python."""
 
@@ -618,7 +618,7 @@ class PythonEvaluatorsMixin:
                 raise ValueError(f"Unknown angle operator: {operator}")
 
     def _evaluate_cond_python(
-        self, operands: Dict[str, Any], document: Dict[str, Any]
+        self, operands: dict[str, Any], document: dict[str, Any]
     ) -> Any:
         """Evaluate $cond operator in Python."""
         if not isinstance(operands, dict):
@@ -643,7 +643,7 @@ class PythonEvaluatorsMixin:
             return None
 
     def _evaluate_ifNull_python(
-        self, operands: List[Any], document: Dict[str, Any]
+        self, operands: list[Any], document: dict[str, Any]
     ) -> Any:
         """Evaluate $ifNull operator in Python."""
         if not isinstance(operands, list) or len(operands) != 2:
@@ -655,7 +655,7 @@ class PythonEvaluatorsMixin:
         return self._evaluate_operand_python(operands[1], document)
 
     def _evaluate_switch_python(
-        self, operands: Dict[str, Any], document: Dict[str, Any]
+        self, operands: dict[str, Any], document: dict[str, Any]
     ) -> Any:
         """Evaluate $switch operator in Python."""
         if not isinstance(operands, dict):
@@ -677,7 +677,7 @@ class PythonEvaluatorsMixin:
         return None
 
     def _evaluate_array_python(
-        self, operator: str, operands: List[Any], document: Dict[str, Any]
+        self, operator: str, operands: list[Any], document: dict[str, Any]
     ) -> Any:
         """Evaluate array operators in Python."""
         match operator:
@@ -1013,7 +1013,7 @@ class PythonEvaluatorsMixin:
                 )
 
     def _evaluate_array_transform_python(
-        self, operator: str, operands: Any, document: Dict[str, Any]
+        self, operator: str, operands: Any, document: dict[str, Any]
     ) -> Any:
         """Evaluate $filter, $map, $reduce operators in Python.
 
@@ -1118,7 +1118,7 @@ class PythonEvaluatorsMixin:
                 )
 
     def _evaluate_string_python(
-        self, operator: str, operands: Any, document: Dict[str, Any]
+        self, operator: str, operands: Any, document: dict[str, Any]
     ) -> Any:
         """Evaluate string operators in Python.
 
@@ -1458,9 +1458,9 @@ class PythonEvaluatorsMixin:
                     flags |= re.VERBOSE
 
                 matches = list(re.finditer(regex, str(input_val), flags))
-                all_results: List[Dict[str, Any]] = []
+                all_results: list[dict[str, Any]] = []
                 for match_result in matches:
-                    match_obj: Dict[str, Any] = {
+                    match_obj: dict[str, Any] = {
                         "match": match_result.group(),
                         "idx": match_result.start(),
                         "captures": (
@@ -1477,7 +1477,7 @@ class PythonEvaluatorsMixin:
                 )
 
     def _evaluate_date_python(
-        self, operator: str, operands: List[Any], document: Dict[str, Any]
+        self, operator: str, operands: list[Any], document: dict[str, Any]
     ) -> int | None:
         """Evaluate date operators in Python.
 
@@ -1544,7 +1544,7 @@ class PythonEvaluatorsMixin:
                 )
 
     def _evaluate_date_arithmetic_python(
-        self, operator: str, operands: List[Any], document: Dict[str, Any]
+        self, operator: str, operands: list[Any], document: dict[str, Any]
     ) -> Any:
         """Evaluate $dateAdd, $dateSubtract, $dateDiff operators in Python."""
         match operator:
@@ -2060,7 +2060,7 @@ class PythonEvaluatorsMixin:
                 )
 
     def _evaluate_object_python(
-        self, operator: str, operands: Any, document: Dict[str, Any]
+        self, operator: str, operands: Any, document: dict[str, Any]
     ) -> Any:
         """Evaluate object operators in Python."""
         match operator:
@@ -2159,7 +2159,7 @@ class PythonEvaluatorsMixin:
                 )
 
     def _evaluate_data_size_python(
-        self, operator: str, operands: Any, document: Dict[str, Any]
+        self, operator: str, operands: Any, document: dict[str, Any]
     ) -> int:
         """Evaluate data size operators ($binarySize, $bsonSize) in Python."""
         if not isinstance(operands, list):
@@ -2210,7 +2210,7 @@ class PythonEvaluatorsMixin:
         raise NotImplementedError(f"Operator {operator} not supported")
 
     def _evaluate_type_python(
-        self, operator: str, operands: List[Any], document: Dict[str, Any]
+        self, operator: str, operands: list[Any], document: dict[str, Any]
     ) -> Any:
         """Evaluate type conversion operators in Python."""
         # Handle both list and single operand formats (but not for $convert which needs dict)
@@ -2422,14 +2422,14 @@ class PythonEvaluatorsMixin:
         return get_bson_type(value)
 
     def _evaluate_literal_python(
-        self, operands: Any, document: Dict[str, Any]
+        self, operands: Any, document: dict[str, Any]
     ) -> Any:
         """Evaluate $literal operator in Python."""
         # $literal just returns its argument as-is (used to escape special characters)
         return self._evaluate_operand_python(operands, document)
 
     def _evaluate_operand_python(
-        self, operand: Any, document: Dict[str, Any]
+        self, operand: Any, document: dict[str, Any]
     ) -> Any:
         """Evaluate an operand in Python context."""
         match operand:

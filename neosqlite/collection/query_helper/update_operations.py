@@ -8,7 +8,7 @@ SQL-based and Python-based update operations for NeoSQLite collections.
 import logging
 from copy import deepcopy
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, List, Set, Tuple
+from typing import TYPE_CHECKING, Any
 
 from ...binary import Binary
 from ...exceptions import MalformedQueryException
@@ -65,11 +65,11 @@ class UpdateOperationsMixin:
     def _internal_update(
         self,
         doc_id: Any,
-        update_spec: Dict[str, Any],
-        original_doc: Dict[str, Any],
-        array_filters: List[Dict[str, Any]] | None = None,
-        query_filter: Dict[str, Any] | None = None,
-    ) -> Tuple[Dict[str, Any], bool]:
+        update_spec: dict[str, Any],
+        original_doc: dict[str, Any],
+        array_filters: list[dict[str, Any]] | None = None,
+        query_filter: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], bool]:
         """
         Helper method for updating documents.
 
@@ -78,13 +78,13 @@ class UpdateOperationsMixin:
 
         Args:
             doc_id (Any): The ID of the document to update (can be ObjectId, int, etc.).
-            update_spec (Dict[str, Any]): The update specification.
-            original_doc (Dict[str, Any]): The original document before the update.
-            array_filters (List[Dict[str, Any]], optional): Filter documents for array positional operators.
-            query_filter (Dict[str, Any], optional): The query filter for $ operator.
+            update_spec (dict[str, Any]): The update specification.
+            original_doc (dict[str, Any]): The original document before the update.
+            array_filters (list[dict[str, Any]], optional): Filter documents for array positional operators.
+            query_filter (dict[str, Any], optional): The query filter for $ operator.
 
         Returns:
-            Tuple[Dict[str, Any], bool]: The updated document and whether it was modified.
+            tuple[dict[str, Any], bool]: The updated document and whether it was modified.
         """
         # Validate $inc and $mul operations before choosing implementation
         # This ensures consistent behavior between SQL and Python implementations
@@ -149,9 +149,9 @@ class UpdateOperationsMixin:
 
     def _can_use_sql_updates(
         self,
-        update_spec: Dict[str, Any],
+        update_spec: dict[str, Any],
         doc_id: int,
-        original_doc: Dict[str, Any] | None = None,
+        original_doc: dict[str, Any] | None = None,
     ) -> bool:
         """
         Check if all operations in the update spec can be handled with SQL.
@@ -161,7 +161,7 @@ class UpdateOperationsMixin:
         to iterating over each document and applying updates in Python.
 
         Args:
-            update_spec (Dict[str, Any]): The update operations to be checked.
+            update_spec (dict[str, Any]): The update operations to be checked.
             doc_id (int): The document ID, which is used to determine if the update
                           is an upsert.
 
@@ -250,8 +250,8 @@ class UpdateOperationsMixin:
     def _perform_sql_update(
         self,
         doc_id: int,
-        update_spec: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        update_spec: dict[str, Any],
+    ) -> dict[str, Any]:
         """
         Perform update operations using SQL JSON functions.
 
@@ -263,11 +263,11 @@ class UpdateOperationsMixin:
 
         Args:
             doc_id (int): The ID of the document to be updated.
-            update_spec (Dict[str, Any]): A dictionary specifying the update
+            update_spec (dict[str, Any]): A dictionary specifying the update
                                           operations to be performed.
 
         Returns:
-            Dict[str, Any]: The updated document.
+            dict[str, Any]: The updated document.
 
         Raises:
             RuntimeError: If no rows are updated or if an error occurs during the
@@ -345,9 +345,9 @@ class UpdateOperationsMixin:
     def _perform_enhanced_sql_update(
         self,
         doc_id: Any,
-        update_spec: Dict[str, Any],
-        original_doc: Dict[str, Any] | None = None,
-    ) -> Dict[str, Any]:
+        update_spec: dict[str, Any],
+        original_doc: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """
         Perform update operations using SQL JSON functions with field-level granularity.
 
@@ -357,14 +357,14 @@ class UpdateOperationsMixin:
 
         Args:
             doc_id (Any): The ID of the document to be updated.
-            update_spec (Dict[str, Any]): A dictionary specifying the update
+            update_spec (dict[str, Any]): A dictionary specifying the update
                                           operations to be performed.
-            original_doc (Dict[str, Any], optional): The original document before the update.
+            original_doc (dict[str, Any], optional): The original document before the update.
                                                      If provided, used to determine existing fields
                                                      instead of fetching again.
 
         Returns:
-            Dict[str, Any]: The updated document.
+            dict[str, Any]: The updated document.
 
         Raises:
             RuntimeError: If no rows are updated or if an error occurs during the
@@ -392,7 +392,7 @@ class UpdateOperationsMixin:
         set_clauses = []  # For backward compatibility with json_set
         set_params = []
         unset_clauses = []
-        unset_params: List[Any] = []
+        unset_params: list[Any] = []
 
         # Build SQL update clauses for each operation
         for op, value in update_spec.items():
@@ -748,7 +748,7 @@ class UpdateOperationsMixin:
             return self.collection._load(row[0], row[1])
         raise RuntimeError("Failed to fetch updated document")
 
-    def _get_document_fields(self, doc_id: Any) -> Set[str]:
+    def _get_document_fields(self, doc_id: Any) -> set[str]:
         """
         Get the set of field names in a document.
 
@@ -794,16 +794,16 @@ class UpdateOperationsMixin:
 
     def _build_update_clause(
         self,
-        update: Dict[str, Any],
-    ) -> tuple[str, List[Any]] | None:
+        update: dict[str, Any],
+    ) -> tuple[str, list[Any]] | None:
         """
         Build the SQL update clause based on the provided update operations.
 
         Args:
-            update (Dict[str, Any]): A dictionary containing update operations.
+            update (dict[str, Any]): A dictionary containing update operations.
 
         Returns:
-            tuple[str, List[Any]] | None: A tuple containing the SQL update clause
+            tuple[str, list[Any]] | None: A tuple containing the SQL update clause
                                           and parameters, or None if no update
                                           clauses are generated.
         """
@@ -1096,7 +1096,7 @@ class UpdateOperationsMixin:
         self,
         op: str,
         value: Any,
-    ) -> tuple[List[str], List[Any]]:
+    ) -> tuple[list[str], list[Any]]:
         """
         Build SQL update clause for a single operation.
 
@@ -1105,7 +1105,7 @@ class UpdateOperationsMixin:
             value (Any): The value associated with the update operation.
 
         Returns:
-            tuple[List[str], List[Any]]: A tuple containing the SQL update clauses
+            tuple[list[str], list[Any]]: A tuple containing the SQL update clauses
                                          and parameters.
         """
         clauses = []
@@ -1426,25 +1426,25 @@ class UpdateOperationsMixin:
     def _perform_python_update(
         self,
         doc_id: Any,
-        update_spec: Dict[str, Any],
-        original_doc: Dict[str, Any],
-        array_filters: List[Dict[str, Any]] | None = None,
-        query_filter: Dict[str, Any] | None = None,
-    ) -> Tuple[Dict[str, Any], bool]:
+        update_spec: dict[str, Any],
+        original_doc: dict[str, Any],
+        array_filters: list[dict[str, Any]] | None = None,
+        query_filter: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], bool]:
         """
         Perform update operations using Python-based logic.
 
         Args:
             doc_id (Any): The document ID of the document to update (can be ObjectId, int, etc.).
-            update_spec (Dict[str, Any]): A dictionary specifying the update
+            update_spec (dict[str, Any]): A dictionary specifying the update
                                           operations to perform.
-            original_doc (Dict[str, Any]): The original document before applying
+            original_doc (dict[str, Any]): The original document before applying
                                            the updates.
-            array_filters (List[Dict[str, Any]], optional): Filter documents for array positional operators.
-            query_filter (Dict[str, Any], optional): The query filter for $ operator.
+            array_filters (list[dict[str, Any]], optional): Filter documents for array positional operators.
+            query_filter (dict[str, Any], optional): The query filter for $ operator.
 
         Returns:
-            Tuple[Dict[str, Any], bool]: The updated document and whether it was modified.
+            tuple[dict[str, Any], bool]: The updated document and whether it was modified.
         """
         doc_to_update = deepcopy(original_doc)
 
@@ -1621,8 +1621,8 @@ class UpdateOperationsMixin:
         db: Any,
         collection_name: str,
         where_clause: str | None,
-        where_params: List[Any],
-        update: Dict[str, Any],
+        where_params: list[Any],
+        update: dict[str, Any],
         jsonb_supported: bool,
     ) -> bool:
         """

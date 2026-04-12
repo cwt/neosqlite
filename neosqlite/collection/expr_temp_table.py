@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ class TempTableExprEvaluator:
         self.db = db_connection
         self.data_column = data_column
         self._jsonb_supported = supports_jsonb(db_connection)
-        self._temp_tables: List[str] = []
+        self._temp_tables: list[str] = []
         if translation_cache_size is None:
             translation_cache_size = 100
         self._translation_cache = TranslationCache(
@@ -101,10 +101,10 @@ class TempTableExprEvaluator:
 
     def evaluate(
         self,
-        expr: Dict[str, Any],
+        expr: dict[str, Any],
         collection_name: str,
-        filter_expr: Dict[str, Any] | None = None,
-    ) -> Tuple[str | None, List[Any], List[str]]:
+        filter_expr: dict[str, Any] | None = None,
+    ) -> tuple[str | None, list[Any], list[str]]:
         """
         Evaluate a $expr expression using temporary tables.
 
@@ -161,7 +161,7 @@ class TempTableExprEvaluator:
             return None, [], []
         # Cleanup handled by Cursor
 
-    def _analyze_complexity(self, expr: Dict[str, Any]) -> int:
+    def _analyze_complexity(self, expr: dict[str, Any]) -> int:
         """
         Analyze expression complexity to determine if Tier 2 is appropriate.
 
@@ -215,7 +215,7 @@ class TempTableExprEvaluator:
 
         return score
 
-    def _make_expr_key(self, expr: Dict[str, Any]) -> str:
+    def _make_expr_key(self, expr: dict[str, Any]) -> str:
         """
         Create a cache key from expression structure.
 
@@ -227,10 +227,10 @@ class TempTableExprEvaluator:
 
     def _build_from_cache(
         self,
-        expr: Dict[str, Any],
+        expr: dict[str, Any],
         collection_name: str,
         cached: tuple[str, tuple[str, ...]],
-    ) -> Tuple[str, List[Any], List[str]]:
+    ) -> tuple[str, list[Any], list[str]]:
         """
         Build query from cached translation.
 
@@ -282,8 +282,8 @@ class TempTableExprEvaluator:
         return ""
 
     def _extract_param_values_from_expr(
-        self, expr: Dict[str, Any]
-    ) -> List[Any]:
+        self, expr: dict[str, Any]
+    ) -> list[Any]:
         """
         Extract actual parameter values from expression for cached query.
         Must follow the exact same traversal order as _convert_expr_to_temp_sql.
@@ -339,10 +339,10 @@ class TempTableExprEvaluator:
 
     def _build_tier2_query(
         self,
-        expr: Dict[str, Any],
+        expr: dict[str, Any],
         collection_name: str,
-        filter_expr: Dict[str, Any] | None = None,
-    ) -> Tuple[str, List[Any], List[str]]:
+        filter_expr: dict[str, Any] | None = None,
+    ) -> tuple[str, list[Any], list[str]]:
         """
         Build a Tier 2 query using temporary tables.
 
@@ -376,7 +376,7 @@ class TempTableExprEvaluator:
         return sql, params, [temp_table]
 
     def _create_temp_table(
-        self, temp_table: str, collection_name: str, fields: List[str]
+        self, temp_table: str, collection_name: str, fields: list[str]
     ) -> None:
         """
         Create a temporary table with extracted field values.
@@ -429,11 +429,11 @@ class TempTableExprEvaluator:
 
     def _build_main_query(
         self,
-        expr: Dict[str, Any],
+        expr: dict[str, Any],
         collection_name: str,
         temp_table: str,
-        filter_expr: Dict[str, Any] | None = None,
-    ) -> Tuple[str, List[Any]]:
+        filter_expr: dict[str, Any] | None = None,
+    ) -> tuple[str, list[Any]]:
         """
         Build the main query that uses the temporary table.
 
@@ -469,8 +469,8 @@ class TempTableExprEvaluator:
         return query.strip(), params
 
     def _build_expr_where_from_temp(
-        self, expr: Dict[str, Any], temp_table: str
-    ) -> Tuple[str, List[Any]]:
+        self, expr: dict[str, Any], temp_table: str
+    ) -> tuple[str, list[Any]]:
         """
         Build WHERE clause using temporary table columns.
 
@@ -489,8 +489,8 @@ class TempTableExprEvaluator:
         return truthy_sql, params
 
     def _convert_expr_to_temp_sql(
-        self, expr: Dict[str, Any], temp_table: str
-    ) -> Tuple[str, List[Any]]:
+        self, expr: dict[str, Any], temp_table: str
+    ) -> tuple[str, list[Any]]:
         """
         Convert expression to SQL using temporary table columns.
 
@@ -534,8 +534,8 @@ class TempTableExprEvaluator:
                 )
 
     def _convert_logical_to_temp_sql(
-        self, operator: str, operands: List[Any], temp_table: str
-    ) -> Tuple[str, List[Any]]:
+        self, operator: str, operands: list[Any], temp_table: str
+    ) -> tuple[str, list[Any]]:
         """Convert logical operators to SQL using temp table."""
         if not isinstance(operands, list):
             raise ValueError(f"{operator} requires a list of expressions")
@@ -574,8 +574,8 @@ class TempTableExprEvaluator:
         return sql, all_params
 
     def _convert_comparison_to_temp_sql(
-        self, operator: str, operands: List[Any], temp_table: str
-    ) -> Tuple[str, List[Any]]:
+        self, operator: str, operands: list[Any], temp_table: str
+    ) -> tuple[str, list[Any]]:
         """Convert comparison operators to SQL using temp table."""
         if len(operands) != 2:
             raise ValueError(f"{operator} requires exactly 2 operands")
@@ -603,8 +603,8 @@ class TempTableExprEvaluator:
         )
 
     def _convert_arithmetic_to_temp_sql(
-        self, operator: str, operands: List[Any], temp_table: str
-    ) -> Tuple[str, List[Any]]:
+        self, operator: str, operands: list[Any], temp_table: str
+    ) -> tuple[str, list[Any]]:
         """Convert arithmetic operators to SQL using temp table."""
         if len(operands) < 2:
             raise ValueError(f"{operator} requires at least 2 operands")
@@ -632,8 +632,8 @@ class TempTableExprEvaluator:
         return sql, all_params
 
     def _convert_cond_to_temp_sql(
-        self, operands: Dict[str, Any], temp_table: str
-    ) -> Tuple[str, List[Any]]:
+        self, operands: dict[str, Any], temp_table: str
+    ) -> tuple[str, list[Any]]:
         """Convert $cond operator to SQL CASE statement using temp table."""
         if not isinstance(operands, dict):
             raise ValueError("$cond requires a dictionary")
@@ -660,8 +660,8 @@ class TempTableExprEvaluator:
         return sql, condition_params + then_params + else_params
 
     def _convert_cmp_to_temp_sql(
-        self, operands: List[Any], temp_table: str
-    ) -> Tuple[str, List[Any]]:
+        self, operands: list[Any], temp_table: str
+    ) -> tuple[str, list[Any]]:
         """Convert $cmp operator to SQL CASE statement using temp table."""
         if len(operands) != 2:
             raise ValueError("$cmp requires exactly 2 operands")
@@ -677,8 +677,8 @@ class TempTableExprEvaluator:
         return sql, left_params + right_params
 
     def _convert_math_to_temp_sql(
-        self, operator: str, operands: List[Any], temp_table: str
-    ) -> Tuple[str, List[Any]]:
+        self, operator: str, operands: list[Any], temp_table: str
+    ) -> tuple[str, list[Any]]:
         """Convert math operators to SQL using temp table."""
         if len(operands) != 1:
             raise ValueError(f"{operator} requires exactly 1 operand")
@@ -704,7 +704,7 @@ class TempTableExprEvaluator:
 
     def _convert_operand_to_temp_sql(
         self, operand: Any, temp_table: str
-    ) -> Tuple[str, List[Any]]:
+    ) -> tuple[str, list[Any]]:
         """
         Convert operand to SQL using temporary table columns.
 
@@ -729,7 +729,7 @@ class TempTableExprEvaluator:
             # Literal value
             return "?", [operand]
 
-    def _extract_field_references(self, expr: Dict[str, Any]) -> List[str]:
+    def _extract_field_references(self, expr: dict[str, Any]) -> list[str]:
         """
         Extract all unique field references from an expression.
 
@@ -757,7 +757,7 @@ class TempTableExprEvaluator:
                 seen.add(f)
         return unique_fields
 
-    def _extract_field_references_from_operand(self, operand: Any) -> List[str]:
+    def _extract_field_references_from_operand(self, operand: Any) -> list[str]:
         """Extract field references from an operand."""
         fields = []
 

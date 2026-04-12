@@ -1,5 +1,5 @@
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Tuple, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
 from .._sqlite import sqlite3
 from ..sql_utils import quote_identifier, quote_table_name
@@ -40,7 +40,7 @@ class IndexManager:
 
     def create_index(
         self,
-        key: str | List[str] | List[Tuple[str, int]],
+        key: str | list[str] | list[tuple[str, int]],
         reindex: bool = True,
         sparse: bool = False,
         unique: bool = False,
@@ -116,7 +116,7 @@ class IndexManager:
         else:
             # Compound indexes: must use PyMongo tuple format
             # [("field1", 1), ("field2", -1)]
-            fields: List[str]
+            fields: list[str]
             if (
                 isinstance(key, list)
                 and len(key) > 0
@@ -350,8 +350,8 @@ class IndexManager:
 
     def create_indexes(
         self,
-        indexes: List["IndexModel"],
-    ) -> List[str]:
+        indexes: list["IndexModel"],
+    ) -> list[str]:
         """
         Create multiple indexes at once.
 
@@ -362,7 +362,7 @@ class IndexManager:
             indexes: A list of IndexModel objects.
 
         Returns:
-            List[str]: A list of the names of the indexes that were created.
+            list[str]: A list of the names of the indexes that were created.
         """
         created_indexes = []
         for index_model in indexes:
@@ -439,7 +439,7 @@ class IndexManager:
         self,
         table: str,
         sparse: bool = False,
-        documents: List[Dict[str, Any]] | None = None,
+        documents: list[dict[str, Any]] | None = None,
     ):
         """
         Reindex the collection.
@@ -450,20 +450,20 @@ class IndexManager:
         Args:
             table (str): The table name (not used in this implementation).
             sparse (bool): Whether the index should be sparse (not used in this implementation).
-            documents (List[Dict[str, Any]]): List of documents to reindex (not used in this implementation).
+            documents (list[dict[str, Any]]): List of documents to reindex (not used in this implementation).
         """
         # With native JSON indexing, reindexing is handled automatically by SQLite
         # This method is kept for API compatibility but does nothing
         pass
 
     @overload
-    def list_indexes(self, as_keys: Literal[True]) -> List[List[str]]: ...
+    def list_indexes(self, as_keys: Literal[True]) -> list[list[str]]: ...
     @overload
-    def list_indexes(self, as_keys: Literal[False] = False) -> List[str]: ...
+    def list_indexes(self, as_keys: Literal[False] = False) -> list[str]: ...
     def list_indexes(
         self,
         as_keys: bool = False,
-    ) -> List[str] | List[List[str]]:
+    ) -> list[str] | list[list[str]]:
         """
         Retrieve indexes for the collection. Indexes are identified by names following a specific pattern.
 
@@ -472,7 +472,7 @@ class IndexManager:
                             underscores to dots) instead of the full index names.
 
         Returns:
-            List[str] or List[List[str]]: List of index names or keys, depending on the as_keys parameter.
+            list[str] or list[list[str]]: List of index names or keys, depending on the as_keys parameter.
                 If as_keys is True, each entry is a list containing a single string (the key name).
         """
         # Get indexes that match our naming convention
@@ -553,7 +553,7 @@ class IndexManager:
             # Extract the actual index name from the full name
             self.collection.db.execute(f"DROP INDEX IF EXISTS {index}")
 
-    def index_information(self) -> Dict[str, Any]:
+    def index_information(self) -> dict[str, Any]:
         """
         Retrieves information on this collection's indexes.
 
@@ -565,7 +565,7 @@ class IndexManager:
         Returns:
             dict: A dictionary containing index information.
         """
-        info: Dict[str, Any] = {}
+        info: dict[str, Any] = {}
 
         try:
             # Get all indexes for this collection
@@ -584,7 +584,7 @@ class IndexManager:
                     continue
 
                 # Parse the index information
-                index_info: Dict[str, Any] = {
+                index_info: dict[str, Any] = {
                     "v": 2,  # Index version
                 }
 
@@ -649,8 +649,8 @@ class IndexManager:
 
     def create_search_indexes(
         self,
-        indexes: List[str],
-    ) -> List[str]:
+        indexes: list[str],
+    ) -> list[str]:
         """
         Create multiple search indexes at once for text search functionality.
 
@@ -661,7 +661,7 @@ class IndexManager:
             indexes: A list of strings representing the fields to index for text search.
 
         Returns:
-            List[str]: A list of the names of the search indexes that were created.
+            list[str]: A list of the names of the search indexes that were created.
         """
         created_indexes = []
         for key in indexes:
@@ -674,7 +674,7 @@ class IndexManager:
             )
         return created_indexes
 
-    def list_search_indexes(self) -> List[str]:
+    def list_search_indexes(self) -> list[str]:
         """
         List all search indexes for the collection.
 
@@ -682,7 +682,7 @@ class IndexManager:
         Note: This implementation scans for FTS virtual tables in the database schema.
 
         Returns:
-            List[str]: A list of search index names.
+            list[str]: A list of search index names.
         """
         # Get all FTS tables from sqlite_master
         # FTS tables have a specific naming pattern: {collection}_{field}_fts

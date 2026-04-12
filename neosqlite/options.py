@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 
 class WriteConcern:
@@ -27,7 +27,7 @@ class WriteConcern:
             self._document["fsync"] = fsync
 
     @property
-    def document(self) -> Dict[str, Any]:
+    def document(self) -> dict[str, Any]:
         return self._document
 
     @property
@@ -72,8 +72,8 @@ class ReadPreference:
         return self._mode
 
     @property
-    def document(self) -> Dict[str, Any]:
-        doc: Dict[str, Any] = {"mode": self._mode}
+    def document(self) -> dict[str, Any]:
+        doc: dict[str, Any] = {"mode": self._mode}
         if self._tag_sets:
             doc["tag_sets"] = self._tag_sets
         return doc
@@ -104,7 +104,7 @@ class ReadConcern:
         return self._level is None or self._level == "local"
 
     @property
-    def document(self) -> Dict[str, Any]:
+    def document(self) -> dict[str, Any]:
         if self._level:
             return {"level": self._level}
         return {}

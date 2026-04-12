@@ -16,7 +16,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import uuid
-from typing import Any, Dict, List
+from typing import Any
 
 from ..sql_utils import quote_table_name
 
@@ -104,8 +104,8 @@ class DateTimeQueryProcessor:
             return self._local_kill_switch
 
     def process_datetime_query(
-        self, query: Dict[str, Any], use_kill_switch: bool | None = None
-    ) -> List[Dict[str, Any]]:
+        self, query: dict[str, Any], use_kill_switch: bool | None = None
+    ) -> list[dict[str, Any]]:
         """
         Process a datetime query using the three-tier fallback mechanism.
 
@@ -155,7 +155,7 @@ class DateTimeQueryProcessor:
         # Fallback to Python tier
         return self._process_with_python_tier(query)
 
-    def _contains_datetime_operations(self, query: Dict[str, Any]) -> bool:
+    def _contains_datetime_operations(self, query: dict[str, Any]) -> bool:
         """
         Check if a query contains datetime operations.
 
@@ -236,8 +236,8 @@ class DateTimeQueryProcessor:
         return is_datetime_regex(pattern)
 
     def _process_with_sql_tier(
-        self, query: Dict[str, Any]
-    ) -> List[Dict[str, Any]] | None:
+        self, query: dict[str, Any]
+    ) -> list[dict[str, Any]] | None:
         """
         Process datetime query using SQL tier with json_* functions.
 
@@ -293,8 +293,8 @@ class DateTimeQueryProcessor:
             return None
 
     def _process_with_temp_table_tier(
-        self, query: Dict[str, Any]
-    ) -> List[Dict[str, Any]] | None:
+        self, query: dict[str, Any]
+    ) -> list[dict[str, Any]] | None:
         """
         Process datetime query using temporary table approach.
 
@@ -375,8 +375,8 @@ class DateTimeQueryProcessor:
             return None
 
     def _process_with_python_tier(
-        self, query: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+        self, query: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """
         Process datetime query using pure Python implementation.
 
@@ -413,7 +413,7 @@ class EnhancedDateTimeQueryProcessor(DateTimeQueryProcessor):
         super().__init__(collection, query_engine)
 
     def _apply_datetime_query(
-        self, query: Dict[str, Any], document: Dict[str, Any]
+        self, query: dict[str, Any], document: dict[str, Any]
     ) -> bool:
         """
         Apply datetime-specific query operations to a document.
@@ -430,8 +430,8 @@ class EnhancedDateTimeQueryProcessor(DateTimeQueryProcessor):
         return self.helpers._apply_query(query, document)
 
     def process_complex_datetime_query(
-        self, query: Dict[str, Any], use_kill_switch: bool | None = None
-    ) -> List[Dict[str, Any]]:
+        self, query: dict[str, Any], use_kill_switch: bool | None = None
+    ) -> list[dict[str, Any]]:
         """
         Process complex datetime queries with additional datetime-specific logic.
 
@@ -482,8 +482,8 @@ class EnhancedDateTimeQueryProcessor(DateTimeQueryProcessor):
         return self._process_with_enhanced_python_tier(query)
 
     def _process_with_enhanced_python_tier(
-        self, query: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+        self, query: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """
         Process datetime query using enhanced pure Python implementation.
 

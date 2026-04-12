@@ -2,15 +2,15 @@
 Python implementation of MongoDB $fill aggregation stage.
 """
 
-from typing import Any, Dict, List
+from typing import Any
 
 
 def process_fill(
-    docs_with_context: List[Dict[str, Any]],
-    spec: Dict[str, Any],
+    docs_with_context: list[dict[str, Any]],
+    spec: dict[str, Any],
     collection: Any,
     evaluator: Any,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Python fallback implementation of $fill.
     """
@@ -19,7 +19,7 @@ def process_fill(
     output = spec.get("output", {})
 
     # 1. Partitioning
-    partitions: Dict[Any, List[int]] = {}
+    partitions: dict[Any, list[int]] = {}
     for i, dc in enumerate(docs_with_context):
         if partition_by is None:
             key = None

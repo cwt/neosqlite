@@ -1,14 +1,14 @@
 """Positional update operations for array elements."""
 
-from typing import Any, Dict, List
+from typing import Any
 
 
 def _apply_positional_update(
-    doc: Dict[str, Any],
+    doc: dict[str, Any],
     field_path: str,
     value: Any,
-    array_filters: List[Dict[str, Any]] | None = None,
-    filter_doc: Dict[str, Any] | None = None,
+    array_filters: list[dict[str, Any]] | None = None,
+    filter_doc: dict[str, Any] | None = None,
 ) -> bool:
     """
     Apply an update to array elements using positional operators.
@@ -52,12 +52,12 @@ def _apply_positional_update(
 
 def _apply_positional_recursive(
     doc: Any,
-    parts: List[str],
+    parts: list[str],
     index: int,
     value: Any,
-    array_filters: List[Dict[str, Any]] | None = None,
-    filter_doc: Dict[str, Any] | None = None,
-    parent_array: List[Any] | None = None,  # Track parent array for $ operator
+    array_filters: list[dict[str, Any]] | None = None,
+    filter_doc: dict[str, Any] | None = None,
+    parent_array: list[Any] | None = None,  # Track parent array for $ operator
 ) -> bool:
     """
     Recursively apply positional update through nested structures.
@@ -284,7 +284,7 @@ def _apply_positional_recursive(
                 )
 
 
-def _matches_filter(elem: Any, filter_spec: Dict[str, Any]) -> bool:
+def _matches_filter(elem: Any, filter_spec: dict[str, Any]) -> bool:
     """
     Check if an array element matches a filter specification.
 
@@ -318,7 +318,7 @@ def _matches_filter(elem: Any, filter_spec: Dict[str, Any]) -> bool:
     return True
 
 
-def _matches_query_operators(value: Any, operators: Dict[str, Any]) -> bool:
+def _matches_query_operators(value: Any, operators: dict[str, Any]) -> bool:
     """
     Check if a value matches query operators.
 
@@ -359,7 +359,7 @@ def _matches_query_operators(value: Any, operators: Dict[str, Any]) -> bool:
     return True
 
 
-def _set_nested_field(doc: Dict[str, Any], field_path: str, value: Any) -> None:
+def _set_nested_field(doc: dict[str, Any], field_path: str, value: Any) -> None:
     """
     Set a nested field value using dot notation.
 

@@ -34,7 +34,7 @@ Note: NeoSQLite extends MongoDB with $log2 (base-2 log) operator.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, List, Tuple
+from typing import TYPE_CHECKING, Any
 
 from ..json_path_utils import (
     build_json_extract_expression as build_json_extract_expression,
@@ -225,8 +225,8 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
         return _get_json_group_array_function(self._jsonb_supported)
 
     def evaluate(
-        self, expr: Dict[str, Any], tier: int = 1, force_python: bool = False
-    ) -> Tuple[str | None, List[Any]]:
+        self, expr: dict[str, Any], tier: int = 1, force_python: bool = False
+    ) -> tuple[str | None, list[Any]]:
         """
         Evaluate a $expr expression.
 
@@ -250,8 +250,8 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
                 return None, []
 
     def _evaluate_sql_tier1(
-        self, expr: Dict[str, Any]
-    ) -> Tuple[str | None, List[Any]]:
+        self, expr: dict[str, Any]
+    ) -> tuple[str | None, list[Any]]:
         """
         Tier 1: Convert simple expressions to SQL WHERE clauses using JSON functions.
 
@@ -264,8 +264,8 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
             return None, []
 
     def _evaluate_sql_tier2(
-        self, expr: Dict[str, Any]
-    ) -> Tuple[str | None, List[Any]]:
+        self, expr: dict[str, Any]
+    ) -> tuple[str | None, list[Any]]:
         """
         Tier 2: Use temporary tables for complex expressions.
 
@@ -290,7 +290,7 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
         expr: Any,
         context: AggregationContext | None = None,
         as_alias: str | None = None,
-    ) -> Tuple[str, List[Any]]:
+    ) -> tuple[str, list[Any]]:
         """
         Evaluate expression for aggregation pipeline.
 
@@ -350,7 +350,7 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
 
     def _convert_operand_to_sql_agg(
         self, operand: Any, context: AggregationContext
-    ) -> Tuple[str, List[Any]]:
+    ) -> tuple[str, list[Any]]:
         """
         Convert an operand to SQL for aggregation context.
 
@@ -380,7 +380,7 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
 
     def _handle_aggregation_variable(
         self, var_name: str, context: AggregationContext
-    ) -> Tuple[str, List[Any]]:
+    ) -> tuple[str, list[Any]]:
         """
         Handle aggregation variable references.
 
@@ -436,7 +436,7 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
         expr: Any,
         alias: str | None = None,
         context: AggregationContext | None = None,
-    ) -> Tuple[str, List[Any]]:
+    ) -> tuple[str, list[Any]]:
         """
         Build SELECT clause expression for aggregation (SQL Tier 1 optimized).
 
@@ -498,7 +498,7 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
         self,
         expr: Any,
         context: AggregationContext | None = None,
-    ) -> Tuple[str, List[Any]]:
+    ) -> tuple[str, list[Any]]:
         """
         Build GROUP BY clause expression for aggregation (SQL Tier 1 optimized).
 
@@ -530,7 +530,7 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
         self,
         expr: Any,
         context: AggregationContext | None = None,
-    ) -> Tuple[str, List[Any]]:
+    ) -> tuple[str, list[Any]]:
         """
         Build HAVING clause expression for post-aggregation filtering.
 

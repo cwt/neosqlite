@@ -1,7 +1,7 @@
 """CRUD operations for QueryHelper."""
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict
+from typing import TYPE_CHECKING, Any
 
 from ..._sqlite import sqlite3
 from ...objectid import ObjectId
@@ -22,7 +22,7 @@ class CRUDOperationsMixin:
     _validate_json_document: Any
     _get_json_error_position: Any
 
-    def _internal_insert(self, document: Dict[str, Any]) -> Any:
+    def _internal_insert(self, document: dict[str, Any]) -> Any:
         """
         Inserts a document into the collection and returns the inserted document's _id.
 
@@ -126,13 +126,13 @@ class CRUDOperationsMixin:
 
         return generated_id
 
-    def _internal_replace(self, doc_id: Any, replacement: Dict[str, Any]):
+    def _internal_replace(self, doc_id: Any, replacement: dict[str, Any]):
         """
         Replaces an entire document in the collection.
 
         Args:
             doc_id (Any): The ID of the document to replace (can be ObjectId, int, etc.).
-            replacement (Dict[str, Any]): The new document to replace the existing one.
+            replacement (dict[str, Any]): The new document to replace the existing one.
         """
         # Convert the doc_id to integer ID for internal operations
         int_doc_id = self._get_integer_id_for_oid(doc_id)

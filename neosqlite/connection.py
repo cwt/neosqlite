@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
-from typing import Any, Dict, Iterator, List, Literal, Tuple
+from typing import Any, Iterator, Literal
 
 from ._sqlite import sqlite3
 from .client_session import ClientSession
@@ -44,8 +44,8 @@ class Connection:
                         If database has different auto_vacuum setting, migration may be triggered.
                       - translation_cache: SQL translation cache size (default: 100, 0 to disable)
         """
-        self._collections: Dict[str, Collection] = {}
-        self._tokenizers: List[Tuple[str, str]] = kwargs.pop("tokenizers", [])
+        self._collections: dict[str, Collection] = {}
+        self._tokenizers: list[tuple[str, str]] = kwargs.pop("tokenizers", [])
         self.debug: bool = kwargs.pop("debug", False)
         self._is_clone = kwargs.pop("_is_clone", False)
 
@@ -318,7 +318,7 @@ class Connection:
     def start_session(
         self,
         causal_consistency: bool | None = None,
-        default_transaction_options: Dict[str, Any] | None = None,
+        default_transaction_options: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> ClientSession:
         """
@@ -443,12 +443,12 @@ class Connection:
         self._collections[old_name].rename(new_name)
         self._collections[new_name] = self._collections.pop(old_name)
 
-    def list_collection_names(self) -> List[str]:
+    def list_collection_names(self) -> list[str]:
         """
         List all collection names in the database.
 
         Returns:
-            List[str]: A list of all collection names in the database,
+            list[str]: A list of all collection names in the database,
             excluding internal SQLite tables (sqlite_sequence, sqlite_stat*, etc.)
         """
         cursor = self.db.execute(
@@ -456,12 +456,12 @@ class Connection:
         )
         return [row[0] for row in cursor.fetchall()]
 
-    def list_collections(self) -> List[Dict[str, Any]]:
+    def list_collections(self) -> list[dict[str, Any]]:
         """
         Get detailed information about collections in the database.
 
         Returns:
-            List[Dict[str, Any]]: A list of dictionaries containing collection information.
+            list[dict[str, Any]]: A list of dictionaries containing collection information.
                                 Each dictionary has 'name' and 'options' keys.
         """
         cursor = self.db.execute(
@@ -472,8 +472,8 @@ class Connection:
         ]
 
     def command(
-        self, command: str | Dict[str, Any], value: Any = None, **kwargs: Any
-    ) -> Dict[str, Any]:
+        self, command: str | dict[str, Any], value: Any = None, **kwargs: Any
+    ) -> dict[str, Any]:
         """
         Issue a database command and return the response.
 
@@ -489,7 +489,7 @@ class Connection:
             **kwargs: Additional command arguments
 
         Returns:
-            Dict[str, Any]: Command response
+            dict[str, Any]: Command response
 
         Supported Commands:
             - "ping" or {"ping": 1} - Returns {"ok": 1}
@@ -1045,7 +1045,7 @@ class Connection:
             return {"ok": 0, "errmsg": str(e), "code": 1}
 
     def cursor_command(
-        self, command: str | Dict[str, Any], value: Any = None, **kwargs: Any
+        self, command: str | dict[str, Any], value: Any = None, **kwargs: Any
     ) -> AggregationCursor:
         """
         Execute a database command and return a cursor for its results.
@@ -1088,7 +1088,7 @@ class Connection:
         cursor._executed = True
         return cursor
 
-    def dereference(self, dbref: Dict[str, Any]) -> Dict[str, Any] | None:
+    def dereference(self, dbref: dict[str, Any]) -> dict[str, Any] | None:
         """
         Resolve a DBRef object.
 
@@ -1099,7 +1099,7 @@ class Connection:
             dbref: A dictionary representing a DBRef with '$ref' and '$id' keys.
 
         Returns:
-            Dict[str, Any] | None: The referenced document, or None if not found.
+            dict[str, Any] | None: The referenced document, or None if not found.
         """
         if not isinstance(dbref, dict):
             return None

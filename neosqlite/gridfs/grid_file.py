@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime
 import hashlib
 import logging
-from typing import Any, Dict
+from typing import Any
 
 from .._sqlite import sqlite3
 from ..collection.schema_utils import column_exists
@@ -35,10 +35,10 @@ class GridIn:
         bucket_name: str,
         chunk_size_bytes: int,
         filename: str,
-        metadata: Dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
         file_id: ObjectId | int | None = None,
         disable_md5: bool = False,
-        write_concern: Dict[str, Any] | None = None,
+        write_concern: dict[str, Any] | None = None,
         content_type: str | None = None,
         aliases: list[str] | None = None,
     ):
@@ -87,7 +87,7 @@ class GridIn:
         return serialize_aliases(self._aliases)
 
     def _serialize_metadata(
-        self, metadata: Dict[str, Any] | None
+        self, metadata: dict[str, Any] | None
     ) -> str | None:
         """
         Serialize metadata to JSON string.
@@ -102,7 +102,7 @@ class GridIn:
 
     def _deserialize_metadata(
         self, metadata_str: str | None
-    ) -> Dict[str, Any] | None:
+    ) -> dict[str, Any] | None:
         """
         Deserialize metadata from JSON string.
 
@@ -544,7 +544,7 @@ class GridOut:
 
     def _deserialize_metadata(
         self, metadata_str: str | None
-    ) -> Dict[str, Any] | None:
+    ) -> dict[str, Any] | None:
         """
         Deserialize metadata from JSON string.
 
@@ -672,7 +672,7 @@ class GridOut:
         return self._md5
 
     @property
-    def metadata(self) -> Dict[str, Any] | None:
+    def metadata(self) -> dict[str, Any] | None:
         """Get the metadata of the file."""
         return self._metadata
 
@@ -710,7 +710,7 @@ class GridOutCursor:
         self,
         db: sqlite3.Connection,
         bucket_name: str,
-        filter: Dict[str, Any],
+        filter: dict[str, Any],
     ):
         """
         Initialize a new GridOutCursor instance.
