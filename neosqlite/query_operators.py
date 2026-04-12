@@ -52,7 +52,7 @@ def _get_int_value(field: str, document: dict[str, Any]) -> int | None:
     try:
         return int(doc_value)
     except (TypeError, ValueError) as e:
-        logger.debug(f"Failed to get nested field '{field}': {e}")
+        logger.debug(f"{e=}")
         return None
 
 
@@ -82,7 +82,7 @@ def _convert_to_bitmask(value: Any) -> int | None:
                     bitmask |= 1 << int(bit_pos)
                 return bitmask
             except (TypeError, ValueError) as e:
-                logger.debug(f"Failed to convert bitmask: {e}")
+                logger.debug(f"{e=}")
                 return None
         case _ if hasattr(value, "__iter__") and not isinstance(
             value, (str, bytes)
@@ -93,13 +93,13 @@ def _convert_to_bitmask(value: Any) -> int | None:
                     bitmask |= 1 << int(bit_pos)
                 return bitmask
             except (TypeError, ValueError) as e:
-                logger.debug(f"Failed to convert bitmask: {e}")
+                logger.debug(f"{e=}")
                 return None
         case _:
             try:
                 return int(value)
             except (TypeError, ValueError) as e:
-                logger.debug(f"Failed to convert bitmask: {e}")
+                logger.debug(f"{e=}")
                 return None
 
 
@@ -510,7 +510,7 @@ def _apply_query_operators(operators: dict[str, Any], value: Any) -> bool:
                 if not op_func("_temp", operand, temp_doc):
                     return False
         except Exception as e:
-            logger.debug(f"Query operator evaluation failed: {e}")
+            logger.debug(f"{e=}")
             return False
 
     return True

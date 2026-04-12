@@ -628,7 +628,7 @@ class Cursor:
             return result
 
         except Exception as e:
-            logger.debug(f"Error getting query plan: {e}")
+            logger.debug(f"{e=}")
             return {
                 "queryPlanner": {
                     "winningPlan": [{"detail": f"Error getting plan: {e}"}],
@@ -1291,7 +1291,7 @@ class Cursor:
             self.close()
         except Exception as e:
             if logger is not None:
-                logger.debug(f"Error during Cursor.__del__: {e}")
+                logger.debug(f"{e=}")
             pass
 
     def __enter__(self) -> Cursor:

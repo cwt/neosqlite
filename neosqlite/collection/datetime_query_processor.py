@@ -136,7 +136,7 @@ class DateTimeQueryProcessor:
                     return result
             except Exception as e:
                 # If SQL/temp table tier fails, fall through to next tier
-                logger.debug(f"Datetime processing tier failed: {e}")
+                logger.debug(f"{e=}")
                 pass
 
         # Try temporary table tier
@@ -462,7 +462,7 @@ class EnhancedDateTimeQueryProcessor(DateTimeQueryProcessor):
                     return result
             except Exception as e:
                 # If SQL/temp table tier fails, fall through to next tier
-                logger.debug(f"Datetime processing tier failed: {e}")
+                logger.debug(f"{e=}")
                 pass
 
         # Try temporary table tier

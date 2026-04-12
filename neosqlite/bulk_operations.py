@@ -343,7 +343,7 @@ class BulkOperationExecutor:
             self._collection.db.execute("RELEASE SAVEPOINT bulk_operations")
             released = True
         except Exception as e:
-            logger.debug(f"Bulk operation execution failed: {e}")
+            logger.debug(f"{e=}")
             self._collection.db.execute("ROLLBACK TO SAVEPOINT bulk_operations")
             raise e
         finally:
@@ -422,7 +422,7 @@ class BulkOperationExecutor:
             self._collection.db.execute("RELEASE SAVEPOINT bulk_operations")
             released = True
         except Exception as e:
-            logger.debug(f"Bulk operation execution failed: {e}")
+            logger.debug(f"{e=}")
             self._collection.db.execute("ROLLBACK TO SAVEPOINT bulk_operations")
             raise e
         finally:

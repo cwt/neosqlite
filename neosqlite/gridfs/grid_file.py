@@ -423,7 +423,7 @@ class GridOut:
             )
         except (AttributeError, TypeError) as e:
             # Handle mocked databases in tests - assume old schema
-            logger.debug(f"Failed to check GridFS schema columns: {e}")
+            logger.debug(f"{e=}")
             pass
 
         # Build dynamic SELECT query based on available columns

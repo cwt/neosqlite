@@ -54,7 +54,7 @@ def _convert_to_bitmask(value: Any) -> int | None:
                 try:
                     bitmask |= 1 << int(bit_pos)
                 except (TypeError, ValueError) as e:
-                    logger.debug(f"Failed to convert item to bitmask: {e}")
+                    logger.debug(f"{e=}")
                     return None
             return bitmask
         case _ if hasattr(value, "__iter__") and not isinstance(
@@ -65,14 +65,14 @@ def _convert_to_bitmask(value: Any) -> int | None:
                 for bit_pos in value:
                     bitmask |= 1 << int(bit_pos)
             except (TypeError, ValueError) as e:
-                logger.debug(f"Failed to convert item to bitmask: {e}")
+                logger.debug(f"{e=}")
                 return None
             return bitmask
         case _:
             try:
                 return int(value)
             except (TypeError, ValueError) as e:
-                logger.debug(f"Failed to convert item to bitmask: {e}")
+                logger.debug(f"{e=}")
             return None
 
 

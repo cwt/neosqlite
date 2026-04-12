@@ -221,13 +221,13 @@ class Connection:
                     )
                     self.db.commit()
             except (sqlite3.ProgrammingError, sqlite3.OperationalError) as e:
-                logger.debug(f"Failed to commit transaction during close: {e}")
+                logger.debug(f"{e=}")
                 pass
 
             try:
                 self.db.close()
             except (sqlite3.ProgrammingError, sqlite3.OperationalError) as e:
-                logger.debug(f"Failed to close database: {e}")
+                logger.debug(f"{e=}")
                 pass
 
         self._closed = True
@@ -865,7 +865,7 @@ class Connection:
                                 index_sizes[idx_name] = idx_size
                                 total_index_size += idx_size
                     except Exception as e:
-                        logger.debug(f"Failed to calculate index sizes: {e}")
+                        logger.debug(f"{e=}")
                         pass
 
                     return {
@@ -971,7 +971,7 @@ class Connection:
                             if os.path.exists(shm_path):
                                 db_file_size += os.path.getsize(shm_path)
                         except OSError as e:
-                            logger.debug(f"Failed to get filesystem stats: {e}")
+                            logger.debug(f"{e=}")
                             pass
 
                     return {
@@ -1032,7 +1032,7 @@ class Connection:
                             ],
                         }
                     except Exception as e:
-                        logger.debug(f"PRAGMA command '{cmd_name}' failed: {e}")
+                        logger.debug(f"{e=}")
                         return {
                             "ok": 0,
                             "errmsg": f"Unknown command: {cmd_name}",
@@ -1040,7 +1040,7 @@ class Connection:
                         }
 
         except Exception as e:
-            logger.debug(f"Database command execution failed: {e}")
+            logger.debug(f"{e=}")
             return {"ok": 0, "errmsg": str(e), "code": 1}
 
     def cursor_command(
@@ -1244,5 +1244,5 @@ class Connection:
             self.close()
         except Exception as e:
             if logger is not None:
-                logger.debug(f"Error during Connection.__del__: {e}")
+                logger.debug(f"{e=}")
             pass

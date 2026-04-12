@@ -224,7 +224,7 @@ class GridFSBucket:
                 f"CREATE UNIQUE INDEX IF NOT EXISTS {quote_table_name(f'idx_{self._files_collection}_id')} ON {files_coll}(_id)"
             )
         except Exception as e:
-            logger.debug(f"Failed to check/create GridFS indexes: {e}")
+            logger.debug(f"{e=}")
             pass
 
     def _migrate_table_schema(self):
@@ -245,7 +245,7 @@ class GridFSBucket:
                     f"ALTER TABLE {files_coll} ADD COLUMN aliases {column_type}"
                 )
         except Exception as e:
-            logger.debug(f"Failed to migrate GridFS table schema: {e}")
+            logger.debug(f"{e=}")
             pass
 
     def _serialize_metadata(

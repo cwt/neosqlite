@@ -37,7 +37,7 @@ def _try_convert_to_int(value: str) -> int | str:
     try:
         return int(value)
     except ValueError as e:
-        logger.debug(f"Failed to convert '{value}' to int: {e}")
+        logger.debug(f"{e=}")
         return value
 
 

@@ -993,7 +993,7 @@ class TemporaryTableAggregationProcessor:
             sqlite_memory = page_size * cache_pages
             return int(sqlite_memory * 0.5)
         except Exception as e:
-            logger.debug(f"Failed to get SQLite memory info: {e}")
+            logger.debug(f"{e=}")
             pass
         try:
             import resource
@@ -1002,7 +1002,7 @@ class TemporaryTableAggregationProcessor:
             if soft != resource.RLIM_INFINITY:
                 return int(soft * 0.3)
         except Exception as e:
-            logger.debug(f"Failed to get system memory info: {e}")
+            logger.debug(f"{e=}")
             pass
         return HASH_JOIN_MEMORY_THRESHOLD
 

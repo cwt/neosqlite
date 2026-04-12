@@ -114,7 +114,7 @@ def neosqlite_json_loads(s: str, **kwargs) -> Any:
 
                     return ObjectId(dct["id"])
                 except (ValueError, ImportError, KeyError) as e:
-                    logger.debug(f"Failed to parse __neosqlite_objectid__: {e}")
+                    logger.debug(f"{e=}")
                     pass
 
         # Convert ISO date strings back to datetime for MongoDB compatibility
