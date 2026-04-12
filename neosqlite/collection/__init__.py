@@ -562,9 +562,9 @@ class Collection:
 
         # Extract bucket name from collection name
         if self.name.endswith("_files"):
-            bucket_name = self.name[:-6]
+            bucket_name = self.name.removesuffix("_files")
         elif self.name.endswith("_chunks"):
-            bucket_name = self.name[:-7]
+            bucket_name = self.name.removesuffix("_chunks")
         else:
             raise RuntimeError(
                 f"Invalid GridFS collection name: {quote_table_name(self.name)}"
@@ -627,9 +627,9 @@ class Collection:
 
         # Extract bucket name from collection name
         if self.name.endswith("_files"):
-            bucket_name = self.name[:-6]
+            bucket_name = self.name.removesuffix("_files")
         elif self.name.endswith("_chunks"):
-            bucket_name = self.name[:-7]
+            bucket_name = self.name.removesuffix("_chunks")
         else:
             raise RuntimeError(
                 f"Invalid GridFS collection name: {quote_table_name(self.name)}"
@@ -753,9 +753,9 @@ class Collection:
 
         # Extract bucket name from collection name (e.g., "fs_files" -> "fs")
         if self.name.endswith("_files"):
-            bucket_name = self.name[:-6]  # Remove "_files"
+            bucket_name = self.name.removesuffix("_files")
         elif self.name.endswith("_chunks"):
-            bucket_name = self.name[:-7]  # Remove "_chunks"
+            bucket_name = self.name.removesuffix("_chunks")
         else:
             # Should not happen if _is_gridfs_collection() is correct
             raise RuntimeError(
