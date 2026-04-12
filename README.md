@@ -33,19 +33,20 @@
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
-## Latest Release: v1.14.3
+## Latest Release: v1.14.4
 
-NeoSQLite v1.14.3 is a **bug fix and performance optimization release** that resolves SQL errors when using `$addFields` with complex expressions after `$lookup` in aggregation pipelines.
+NeoSQLite v1.14.4 is a **comprehensive bug fix release** that resolves 5 critical aggregation pipeline issues including `$lookup` returning incorrect types, ObjectId parameter binding failures, type mismatches in join operations, and unsupported operators after `$group` stages.
 
-**Critical Fix:** This release eliminates the `sqlite3.OperationalError: no such column: _id` error and implements a hybrid Python approach that keeps pipelines in Tier 2 (temporary tables) instead of falling back to Tier 3 (full Python).
+**Critical Fixes:** This release eliminates silent data corruption from `$lookup` returning string `"[]"` instead of empty lists, fixes `sqlite3.ProgrammingError` when using ObjectId objects in `$match` parameters, and enables `$ne` operator support after `$group` stages.
 
 ### Key Features & Fixes
 
-- **$addFields After $lookup**: Resolves SQL column mismatch and implements hybrid Python approach for 10-100x better performance.
-- **Variable Navigation Fix**: Correct `$$variable.field.path` evaluation in Python expression evaluator.
-- **Code Quality**: Python 3.9+ type hints, modernized debug logging, and removed duplicate operations.
+- **$lookup Empty Array Type**: Returns proper list `[]` not string `"[]"` for empty join results.
+- **ObjectId Parameter Binding**: ObjectId objects can now be used directly in `$match` aggregation stages.
+- **$lookup Type Coercion**: ObjectId-aware field extraction prevents silent empty results from type mismatches.
+- **$ne Operator Support**: `$ne` operator now works in `$match` stages after `$group`.
 
-For full details, see [documents/releases/v1.14.3.md](documents/releases/v1.14.3.md).
+For full details, see [documents/releases/v1.14.4.md](documents/releases/v1.14.4.md).
 
 ## Installation
 

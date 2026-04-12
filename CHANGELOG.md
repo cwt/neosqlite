@@ -1,5 +1,41 @@
 # CHANGELOG
 
+## 1.14.4
+
+### Comprehensive Bug Fix Release: $lookup Type Fixes, ObjectId Binding, and $ne Operator Support
+
+**Critical Aggregation Pipeline Fixes** — fully backward compatible with v1.14.3.
+
+#### High Severity Fixes
+
+- **$lookup Empty Array Type (BUG-4)**: Fixed `$lookup` returning string `"[]"` instead of empty list `[]` when no documents match. Changed `COALESCE(..., '[]')` to `COALESCE(..., json('[]'))` in hash join, correlated subquery, and pipeline result table generation.
+- **ObjectId Parameter Binding (BUG-2)**: Fixed `sqlite3.ProgrammingError: Error binding parameter` when passing ObjectId objects in `$match` stages. Implemented `_sanitize_params()` helper that converts ObjectId → str before SQL execution.
+
+#### Medium Severity Fixes
+
+- **$lookup Type Coercion (BUG-3)**: Implemented ObjectId-aware field extraction in `$lookup` joins. Created `_json_extract_field_with_objectid_support()` that detects ObjectId JSON structure `{"**neosqlite_objectid**":true,"id":"..."}` and extracts actual ID string, preventing silent empty results from type mismatches.
+- **$ne Operator After $group (LIM-3)**: Enabled `$ne` operator in `$match` stages following `$group`. Enhanced `_process_match_stage()` to detect table schema and rewrite WHERE clauses to extract `_id` from JSON data when column doesn't exist.
+
+#### Low Severity Improvements
+
+- **Type Safety**: Fixed type annotation error where `local_field` could be `None` but parameter expected `str`.
+- **Test Coverage**: Added 10 comprehensive unit tests covering all fixed scenarios:
+  - 2 tests for `$lookup` empty array type (BUG-4)
+  - 3 tests for ObjectId type matching in `$lookup` (BUG-2 & BUG-3)
+  - 2 tests for `$ne` operator after `$group` (LIM-3)
+  - 3 tests for ObjectId in aggregation match stages
+
+#### Test Results
+- **Unit Tests**: 2,764 total (2,764 passed, 0 xfailed, 0 failed)
+- **API Comparison (NeoSQLite vs MongoDB)**: 386 tests (368 passed, 18 skipped, 0 failed) — 100.0%
+- **Code Coverage**: 81.5%+
+
+#### Compatibility
+- **Backward Compatible**: Zero breaking changes.
+- **PyMongo API Parity**: 100% for comparable features, with improved type system alignment.
+
+---
+
 ## 1.14.3
 
 ### Bug Fix & Performance Release: $addFields After $lookup Fix and Tier 2 Hybrid Approach

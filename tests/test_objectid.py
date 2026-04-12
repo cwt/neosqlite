@@ -339,3 +339,98 @@ def test_objectid_index_usage():
         assert retrieved_doc is not None
         assert retrieved_doc["_id"] == oid
         assert retrieved_doc["name"] == f"doc_{i}"
+
+
+def test_objectid_in_aggregation_match():
+    """BUG-2: Test that ObjectId can be used in aggregation $match stage.
+
+    This tests the fix for the bug where passing ObjectId objects directly
+    in $match stages caused sqlite3.ProgrammingError: Error binding parameter.
+    """
+    import neosqlite
+    from neosqlite.objectid import ObjectId
+
+    db = neosqlite.Connection(":memory:")
+    collection = db.test_collection
+
+    # Insert documents with ObjectId
+    oid1 = ObjectId()
+    oid2 = ObjectId()
+    collection.insert_one({"_id": oid1, "name": "doc1"})
+    collection.insert_one({"_id": oid2, "name": "doc2"})
+
+    # BUG-2 FIX: ObjectId should be bindable as parameter in $match
+    pipeline = [
+        {"$match": {"_id": oid1}},
+    ]
+
+    result = list(collection.aggregate(pipeline))
+    assert len(result) == 1
+    assert result[0]["name"] == "doc1"
+    assert str(result[0]["_id"]) == str(oid1)
+
+
+def test_objectid_in_aggregation_with_lookup():
+    """BUG-2 & BUG-3: Test ObjectId in $match followed by $lookup.
+
+    This tests that ObjectId parameters work correctly through multiple
+    pipeline stages and that type matching works in $lookup joins.
+    """
+    import neosqlite
+    from neosqlite.objectid import ObjectId
+
+    db = neosqlite.Connection(":memory:")
+
+    post_oid = ObjectId("669abc123def456789012345")
+    db.posts.insert_one({"_id": post_oid, "title": "Test Post"})
+
+    # Comments with ObjectId reference (matching type)
+    db.comments.insert_one({"_id": 1, "text": "Great!", "post_id": post_oid})
+    db.comments.insert_one({"_id": 2, "text": "Thanks", "post_id": post_oid})
+
+    # Pipeline with ObjectId in $match followed by $lookup
+    pipeline = [
+        {"$match": {"_id": post_oid}},
+        {
+            "$lookup": {
+                "from": "comments",
+                "localField": "_id",
+                "foreignField": "post_id",
+                "as": "comments",
+            }
+        },
+    ]
+
+    result = list(db.posts.aggregate(pipeline))
+    assert len(result) == 1
+    assert result[0]["title"] == "Test Post"
+
+    # BUG-3 FIX: Comments should match (not empty due to type mismatch)
+    comments = result[0].get("comments")
+    assert isinstance(comments, list)
+    assert len(comments) == 2
+    assert {c["text"] for c in comments} == {"Great!", "Thanks"}
+
+
+def test_objectid_string_conversion_in_aggregation():
+    """Test that ObjectId string conversion works correctly in aggregation."""
+    import neosqlite
+    from neosqlite.objectid import ObjectId
+
+    db = neosqlite.Connection(":memory:")
+    collection = db.test_coll
+
+    oid = ObjectId()
+    collection.insert_one({"_id": oid, "value": 42})
+
+    # Match using ObjectId object
+    pipeline1 = [{"$match": {"_id": oid}}]
+    result1 = list(collection.aggregate(pipeline1))
+    assert len(result1) == 1
+    assert result1[0]["value"] == 42
+
+    # Match using string representation (should also work)
+    pipeline2 = [{"$match": {"_id": str(oid)}}]
+    result2 = list(collection.aggregate(pipeline2))
+    assert len(result2) == 1
+    assert result2[0]["value"] == 42

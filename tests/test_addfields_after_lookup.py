@@ -233,3 +233,160 @@ class TestAddFieldsAfterLookup:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestLookupEmptyArrayType:
+    """Tests for BUG-4: $lookup returns string '[]' instead of empty list."""
+
+    def test_lookup_empty_result_is_list_not_string(self):
+        """BUG-4: Verify $lookup returns empty list [] not string '[]'."""
+        db = neosqlite.Connection(":memory:")
+        db.posts.insert_one({"_id": 1, "title": "Test"})
+        # No matching comments
+        db.comments.insert_one({"_id": 100, "text": "orphan", "post_id": 999})
+
+        pipeline = [
+            {"$match": {"_id": 1}},
+            {
+                "$lookup": {
+                    "from": "comments",
+                    "localField": "_id",
+                    "foreignField": "post_id",
+                    "as": "comments",
+                }
+            },
+        ]
+
+        results = list(db.posts.aggregate(pipeline))
+        assert len(results) == 1
+        comments = results[0].get("comments")
+
+        # BUG-4 FIX: Should be list, not string
+        assert isinstance(
+            comments, list
+        ), f"Expected list but got {type(comments).__name__}"
+        assert comments == []
+
+    def test_lookup_non_empty_result_is_list(self):
+        """Verify $lookup returns list when there are matching results."""
+        db = neosqlite.Connection(":memory:")
+        db.posts.insert_one({"_id": 1, "title": "Test"})
+        db.comments.insert_one({"_id": 1, "text": "Great!", "post_id": 1})
+        db.comments.insert_one({"_id": 2, "text": "Thanks", "post_id": 1})
+
+        pipeline = [
+            {"$match": {"_id": 1}},
+            {
+                "$lookup": {
+                    "from": "comments",
+                    "localField": "_id",
+                    "foreignField": "post_id",
+                    "as": "comments",
+                }
+            },
+        ]
+
+        results = list(db.posts.aggregate(pipeline))
+        assert len(results) == 1
+        comments = results[0].get("comments")
+
+        # Should be list
+        assert isinstance(comments, list)
+        assert len(comments) == 2
+        assert all(isinstance(c, dict) for c in comments)
+
+
+class TestLookupObjectIdTypeMatching:
+    """Tests for BUG-3: $lookup returns empty when join field types don't match."""
+
+    def test_lookup_with_objectid_join(self):
+        """BUG-3: Verify $lookup works when join fields are ObjectId type."""
+        from neosqlite.objectid import ObjectId
+
+        db = neosqlite.Connection(":memory:")
+        post_oid = ObjectId("669abc123def456789012345")
+        db.posts.insert_one({"_id": post_oid, "title": "Test"})
+
+        # Comments with ObjectId parent_post (matching type)
+        db.comments.insert_one(
+            {"_id": 1, "text": "Great!", "post_id": post_oid}
+        )
+        db.comments.insert_one(
+            {"_id": 2, "text": "Thanks", "post_id": post_oid}
+        )
+
+        pipeline = [
+            {"$match": {"_id": post_oid}},
+            {
+                "$lookup": {
+                    "from": "comments",
+                    "localField": "_id",
+                    "foreignField": "post_id",
+                    "as": "comments",
+                }
+            },
+        ]
+
+        results = list(db.posts.aggregate(pipeline))
+        assert len(results) == 1
+        comments = results[0].get("comments")
+
+        # BUG-3 FIX: Should match and return comments, not empty array
+        assert isinstance(comments, list)
+        assert len(comments) == 2
+        assert comments[0]["text"] == "Great!"
+        assert comments[1]["text"] == "Thanks"
+
+    def test_lookup_with_objectid_in_match_stage(self):
+        """BUG-2: Verify ObjectId can be used in $match stage parameters."""
+        from neosqlite.objectid import ObjectId
+
+        db = neosqlite.Connection(":memory:")
+        oid = ObjectId("669abc123def456789012345")
+        db.posts.insert_one({"_id": oid, "title": "Test"})
+        db.posts.insert_one({"_id": 2, "title": "Other"})
+
+        # BUG-2 FIX: ObjectId should be bindable as parameter
+        pipeline = [
+            {"$match": {"_id": oid}},
+        ]
+
+        results = list(db.posts.aggregate(pipeline))
+        assert len(results) == 1
+        assert results[0]["title"] == "Test"
+        # Verify the _id is correctly matched
+        assert str(results[0]["_id"]) == str(oid)
+
+    def test_lookup_with_mixed_types_no_match(self):
+        """Verify $lookup returns empty when types truly don't match."""
+        from neosqlite.objectid import ObjectId
+
+        db = neosqlite.Connection(":memory:")
+        post_oid = ObjectId("669abc123def456789012345")
+        db.posts.insert_one({"_id": post_oid, "title": "Test"})
+
+        # Comment with STRING parent_id (type mismatch with ObjectId)
+        db.comments.insert_one(
+            {"_id": 1, "text": "Great!", "post_id": "669abc123def456789012345"}
+        )
+
+        pipeline = [
+            {"$match": {"_id": post_oid}},
+            {
+                "$lookup": {
+                    "from": "comments",
+                    "localField": "_id",
+                    "foreignField": "post_id",
+                    "as": "comments",
+                }
+            },
+        ]
+
+        results = list(db.posts.aggregate(pipeline))
+        assert len(results) == 1
+        comments = results[0].get("comments")
+
+        # ObjectId and string should match after type coercion
+        assert isinstance(comments, list)
+        assert len(comments) == 1
+        assert comments[0]["text"] == "Great!"

@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from typing import Any, Callable
 
 from .._sqlite import sqlite3
+from ..objectid import ObjectId
 from ..sql_utils import quote_table_name
 from .expr_evaluator import AggregationContext, ExprEvaluator, _is_expression
 from .json_path_utils import parse_json_path
@@ -32,6 +33,67 @@ from .sql_translator_unified import SQLTranslator
 logger = logging.getLogger(__name__)
 
 HASH_JOIN_MEMORY_THRESHOLD = 100 * 1024 * 1024  # 100 MB default threshold
+
+
+def _sanitize_params(params: list[Any] | None) -> list[Any] | None:
+    """
+    Sanitize SQL parameters by converting ObjectId instances to strings.
+
+    SQLite doesn't know how to bind ObjectId types, so we convert them to strings.
+
+    Args:
+        params: List of parameters or None
+
+    Returns:
+        Sanitized parameters with ObjectId converted to strings
+    """
+    if params is None:
+        return None
+
+    sanitized = []
+    for param in params:
+        if isinstance(param, ObjectId):
+            sanitized.append(str(param))
+        else:
+            sanitized.append(param)
+    return sanitized
+
+
+def _json_extract_field_with_objectid_support(
+    json_function_prefix: str,
+    field_name: str,
+    is_local_field: bool = True,
+) -> str:
+    """
+    Generate SQL expression to extract a field value with ObjectId support.
+
+    When a field contains an ObjectId (stored as {"__neosqlite_objectid__":true,"id":"..."}),
+    this extracts just the ID string instead of the full JSON object.
+
+    Args:
+        json_function_prefix: The JSON function prefix (json or jsonb)
+        field_name: The field name to extract
+        is_local_field: Whether this is a local field (True) or foreign field (False)
+
+    Returns:
+        SQL expression string
+    """
+    if field_name == "_id":
+        return "_id" if is_local_field else "_id"
+
+    json_extract = f"{json_function_prefix}_extract"
+    base_extract = f"{json_extract}(data, '$.{field_name}')"
+
+    # Check if the field is an ObjectId and extract the actual ID string
+    # ObjectId is stored as: {"__neosqlite_objectid__":true,"id":"<oid_string>"}
+    return (
+        f"CASE "
+        f"WHEN {base_extract} IS NULL THEN NULL "
+        f"WHEN json_extract({base_extract}, '$.__neosqlite_objectid__') = 1 THEN "
+        f"  json_extract({base_extract}, '$.id') "
+        f"ELSE CAST({base_extract} AS TEXT) "
+        f"END"
+    )
 
 
 class DeterministicTempTableManager:
@@ -623,19 +685,63 @@ class TemporaryTableAggregationProcessor:
             )
             return new_table
 
+        # Remove "WHERE " prefix if present for easier manipulation
+        if where_clause.startswith("WHERE "):
+            where_clause = where_clause[6:]
+
         # Create filtered temporary table for regular match operations
         match_stage = {"$match": match_spec}
         json_set_func = "jsonb_set" if self._jsonb_supported else "json_set"
 
-        # We must explicitly select columns and inject _id into JSON data
-        # to ensure it's available for subsequent stages (like $lookup or $graphLookup)
-        sql = (
-            f"SELECT id, _id, "
-            f"json({json_set_func}(data, '$._id', _id)) AS data "
-            f"FROM {current_table} {where_clause}"
-        )
+        # Check what columns the current table has (similar to _process_add_fields_stage)
+        columns = self.db.execute(
+            f"PRAGMA table_info({quote_table_name(current_table)})"
+        ).fetchall()
+        column_names = {col[1] for col in columns}
+        has_id = "id" in column_names
+        has_underscore_id = "_id" in column_names
+        has_data = "data" in column_names
 
-        new_table = create_temp(match_stage, sql, params)
+        # If table doesn't have _id column but has data column (e.g., after $group),
+        # rewrite WHERE clause to extract _id from JSON
+        if not has_underscore_id and has_data:
+            # Replace references to _id with json_extract(data, '$._id')
+            json_extract = f"{self._json_function_prefix}_extract"
+            import re
+
+            # Replace _id when it's used as a column reference (not inside a string)
+            where_clause = re.sub(
+                r"(?<!\.)\b_id\b(?!\s*=)",
+                f"{json_extract}(data, '$._id')",
+                where_clause,
+            )
+
+        # Build SELECT clause based on available columns
+        # After $group, tables have id and data (with _id embedded in JSON)
+        # Regular tables have id, _id, and data
+        if has_id and has_underscore_id and has_data:
+            # Standard table with _id column
+            sql = (
+                f"SELECT id, _id, "
+                f"json({json_set_func}(data, '$._id', _id)) AS data "
+                f"FROM {current_table} WHERE {where_clause}"
+            )
+        elif has_id and has_data:
+            # Table without _id column (e.g., after $group)
+            # Extract _id from JSON data for consistency
+            json_extract = f"{self._json_function_prefix}_extract"
+            sql = (
+                f"SELECT id, "
+                f"json({json_set_func}(data, '$._id', {json_extract}(data, '$._id'))) AS data "
+                f"FROM {current_table} WHERE {where_clause}"
+            )
+        else:
+            # Fallback: just select from the table
+            sql = f"SELECT * FROM {current_table} WHERE {where_clause}"
+
+        # Sanitize parameters to convert ObjectId to strings
+        sanitized_params = _sanitize_params(params)
+        new_table = create_temp(match_stage, sql, sanitized_params)
         return new_table
 
     def _process_unwind_stages(
@@ -928,10 +1034,17 @@ class TemporaryTableAggregationProcessor:
                         f"FROM {quote_table_name(from_collection)}"
                     )
                 else:
-                    json_extract = f"{self._json_function_prefix}_extract"
+                    # Use ObjectId-aware extraction for the foreign field
+                    foreign_extract_expr = (
+                        _json_extract_field_with_objectid_support(
+                            self._json_function_prefix,
+                            foreign_field,
+                            is_local_field=False,
+                        )
+                    )
                     self.db.execute(
                         f"CREATE TEMP TABLE {hash_table_name} AS "
-                        f"SELECT id, _id, data, CAST({json_extract}(data, '$.{foreign_field}') AS TEXT) as {join_key} "
+                        f"SELECT id, _id, data, {foreign_extract_expr} as {join_key} "
                         f"FROM {quote_table_name(from_collection)}"
                     )
 
@@ -1162,12 +1275,22 @@ class TemporaryTableAggregationProcessor:
                 if foreign_field == "_id":
                     foreign_extract = "related._id"
                 else:
-                    foreign_extract = f"{self._json_function_prefix}_extract(related.data, '{parse_json_path(foreign_field)}')"
+                    # Use ObjectId-aware extraction
+                    foreign_extract = _json_extract_field_with_objectid_support(
+                        self._json_function_prefix,
+                        foreign_field,
+                        is_local_field=False,
+                    )
 
                 if local_field == "_id":
                     local_extract = f"COALESCE({self._json_function_prefix}_extract(main_table.data, '$._id'), main_table.id)"
                 else:
-                    local_extract = f"{self._json_function_prefix}_extract(main_table.data, '{parse_json_path(local_field)}')"
+                    # Use ObjectId-aware extraction
+                    local_extract = _json_extract_field_with_objectid_support(
+                        self._json_function_prefix,
+                        local_field,
+                        is_local_field=True,
+                    )
 
                 select_clause = (
                     f"SELECT main_table.id, "
@@ -1177,7 +1300,7 @@ class TemporaryTableAggregationProcessor:
                     f"  FROM {pipeline_result_table} as related "
                     f"  WHERE {foreign_extract} = "
                     f"        {local_extract} "
-                    f"), '[]'))) as data"
+                    f"), json('[]')))) as data"
                 )
 
                 from_clause = f"FROM {current_table} as main_table"
@@ -1209,12 +1332,20 @@ class TemporaryTableAggregationProcessor:
         if foreign_field_str == "_id":
             foreign_extract = "related._id"
         else:
-            foreign_extract = f"{self._json_function_prefix}_extract(related.data, '{parse_json_path(foreign_field_str)}')"
+            # Use ObjectId-aware extraction
+            foreign_extract = _json_extract_field_with_objectid_support(
+                self._json_function_prefix,
+                foreign_field_str,
+                is_local_field=False,
+            )
 
         if local_field_str == "_id":
             local_extract = f"COALESCE({self._json_function_prefix}_extract(main_table.data, '$._id'), main_table.id)"
         else:
-            local_extract = f"{self._json_function_prefix}_extract(main_table.data, '{parse_json_path(local_field_str)}')"
+            # Use ObjectId-aware extraction
+            local_extract = _json_extract_field_with_objectid_support(
+                self._json_function_prefix, local_field_str, is_local_field=True
+            )
 
         select_clause = (
             f"SELECT main_table.id, "
@@ -1224,7 +1355,7 @@ class TemporaryTableAggregationProcessor:
             f"  FROM {from_collection} as related "
             f"  WHERE {foreign_extract} = "
             f"        {local_extract} "
-            f"), '[]'))) as data"
+            f"), json('[]')))) as data"
         )
 
         from_clause = f"FROM {current_table} as main_table"
@@ -1277,15 +1408,21 @@ class TemporaryTableAggregationProcessor:
             )
 
         try:
+            # Use ObjectId-aware extraction for local and foreign fields
+            # At this point, local_field is guaranteed to be str (validated above)
+            assert local_field is not None, "local_field should not be None"
+
             if local_field == "_id":
                 local_extract = f"CAST(COALESCE({self._json_function_prefix}_extract(main_table.data, '$._id'), main_table.id) AS TEXT)"
             else:
-                local_extract = f"CAST({self._json_function_prefix}_extract(main_table.data, '$.{local_field}') AS TEXT)"
+                local_extract = _json_extract_field_with_objectid_support(
+                    self._json_function_prefix, local_field, is_local_field=True
+                )
 
             select_clause = (
                 f"SELECT main_table.id, "
                 f"json({json_set_func}({json_set_func}(main_table.data, '$._id', main_table.id), '$.{as_field}', "
-                f"COALESCE(aggregated.results, '[]'))) as data "
+                f"COALESCE(aggregated.results, json('[]')))) as data "
             )
 
             from_clause = (

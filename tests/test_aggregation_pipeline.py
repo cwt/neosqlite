@@ -3492,3 +3492,68 @@ def test_accumulator_operator_raises_not_implemented(collection):
                 ]
             )
         )
+
+
+def test_match_after_group_with_ne_operator():
+    """LIM-3: Test $ne operator works in $match after $group stage.
+
+    This tests the fix for the limitation where $ne operator was not supported
+    in $match stages that follow $group stages.
+    """
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn["test_match_after_group"]
+
+        # Insert test data
+        docs = [
+            {"_id": 1, "status": "published", "tags": ["python", "neo4j"]},
+            {"_id": 2, "status": "published", "tags": ["python", "sqlite"]},
+            {"_id": 3, "status": "published", "tags": ["neo4j", "sqlite"]},
+            {"_id": 4, "status": "draft", "tags": ["python"]},
+        ]
+        collection.insert_many(docs)
+
+        # Test $match with $ne after $group
+        pipeline = [
+            {"$match": {"status": "published"}},
+            {"$unwind": "$tags"},
+            {"$group": {"_id": "$tags", "count": {"$sum": 1}}},
+            {"$match": {"_id": {"$ne": "excluded_tag"}}},
+            {"$sort": {"_id": 1}},
+        ]
+
+        result = list(collection.aggregate(pipeline))
+
+        # Should have 3 tags: neo4j (2), python (2), sqlite (2)
+        assert len(result) == 3
+        assert {"_id": "neo4j", "count": 2} in result
+        assert {"_id": "python", "count": 2} in result
+        assert {"_id": "sqlite", "count": 2} in result
+
+
+def test_match_after_group_filters_correctly():
+    """Test that $match after $group properly filters results."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn["test_match_group_filter"]
+
+        docs = [
+            {"category": "A", "value": 10},
+            {"category": "B", "value": 20},
+            {"category": "A", "value": 30},
+            {"category": "C", "value": 40},
+        ]
+        collection.insert_many(docs)
+
+        # Filter out category B after grouping
+        pipeline = [
+            {"$group": {"_id": "$category", "total": {"$sum": "$value"}}},
+            {"$match": {"_id": {"$ne": "B"}}},
+            {"$sort": {"_id": 1}},
+        ]
+
+        result = list(collection.aggregate(pipeline))
+
+        assert len(result) == 2
+        # Should have A and C, but not B
+        assert {"_id": "A", "total": 40} in result
+        assert {"_id": "C", "total": 40} in result
+        assert not any(r["_id"] == "B" for r in result)
