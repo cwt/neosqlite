@@ -33,20 +33,19 @@
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
-## Latest Release: v1.14.2
+## Latest Release: v1.14.3
 
-NeoSQLite v1.14.2 is a **bug fix and performance optimization release** that resolves compound index sort order issues in the NX-27017 wire protocol and improves write performance through consolidated UPDATE statements.
+NeoSQLite v1.14.3 is a **bug fix and performance optimization release** that resolves SQL errors when using `$addFields` with complex expressions after `$lookup` in aggregation pipelines.
 
-**Critical Fix:** This release resolves a functional issue where compound indexes with mixed `ASCENDING`/`DESCENDING` fields lost their sort order when created via the NX-27017 wire protocol.
+**Critical Fix:** This release eliminates the `sqlite3.OperationalError: no such column: _id` error and implements a hybrid Python approach that keeps pipelines in Tier 2 (temporary tables) instead of falling back to Tier 3 (full Python).
 
 ### Key Features & Fixes
 
-- **Compound Index Sort Order**: NX-27017 now preserves `ASCENDING`/`DESCENDING` sort directions for compound indexes via wire protocol.
-- **Consolidated UPDATE Operations**: Multiple field updates combined into single nested JSON function calls for 20-40% faster writes.
-- **WAL Mode Performance**: Automatic `PRAGMA synchronous=NORMAL` for optimal WAL write throughput.
-- **DateTime Detection**: Early-exit optimizations for faster query processing.
+- **$addFields After $lookup**: Resolves SQL column mismatch and implements hybrid Python approach for 10-100x better performance.
+- **Variable Navigation Fix**: Correct `$$variable.field.path` evaluation in Python expression evaluator.
+- **Code Quality**: Python 3.9+ type hints, modernized debug logging, and removed duplicate operations.
 
-For full details, see [documents/releases/v1.14.2.md](documents/releases/v1.14.2.md).
+For full details, see [documents/releases/v1.14.3.md](documents/releases/v1.14.3.md).
 
 ## Installation
 

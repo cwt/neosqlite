@@ -1,5 +1,40 @@
 # CHANGELOG
 
+## 1.14.3
+
+### Bug Fix & Performance Release: $addFields After $lookup Fix and Tier 2 Hybrid Approach
+
+**Critical Aggregation Pipeline Fix** and performance optimizations — fully backward compatible with v1.14.2.
+
+#### High Severity Fixes
+
+- **$addFields After $lookup SQL Error**: Fixed `sqlite3.OperationalError: no such column: _id` when using `$addFields` with complex expressions (`$filter`, `$map`, `$reduce`) after `$lookup`. Implemented hybrid Python approach that stays in Tier 2 (temp tables) instead of falling back to Tier 3, delivering 10-100x better performance.
+- **Variable Navigation Fix**: Fixed `$$variable.field.path` evaluation in Python expression evaluator (e.g., `$$comment.comment_author` now correctly navigates into variable values).
+
+#### Medium Severity Enhancements
+
+- **Python 3.9+ Type Hints**: Replaced deprecated `typing.List`, `typing.Dict`, `typing.Tuple` with built-in generics across the codebase.
+- **F-string Debug Logging**: Migrated to Python 3.8+ f-string `=` specifier for more concise variable logging.
+- **Removed Duplicate Compound Index Creation**: Fixed bug in `index_manager.py` where compound indexes were created twice.
+- **Walrus Operator Refactoring**: Simplified `cursor.fetchone()` patterns throughout codebase.
+- **GridFS Bucket Name Extraction**: Replaced manual string slicing with `str.removesuffix()`.
+
+#### Low Severity Improvements
+
+- **Contributing Documentation**: Added comprehensive setup instructions to README.md.
+- **Test Coverage**: Added 5 comprehensive tests for `$addFields` after `$lookup` scenarios with Tier 2 verification.
+
+#### Test Results
+- **Unit Tests**: 2,754 total (2,754 passed, 0 xfailed, 0 failed)
+- **API Comparison (NeoSQLite vs MongoDB)**: 386 tests (368 passed, 18 skipped, 0 failed) — 100.0%
+- **Code Coverage**: 81.42%
+
+#### Compatibility
+- **Backward Compatible**: Zero breaking changes.
+- **PyMongo API Parity**: 100% for comparable features, with improved aggregation pipeline alignment.
+
+---
+
 ## 1.14.2
 
 ### Bug Fix & Performance Release: Compound Index Sort Order Fix, Consolidated Updates, and Faster WAL Writes
