@@ -187,8 +187,7 @@ class FindOperationsMixin(QueryEngineProtocol):
                 f"RETURNING id, _id, {data_col} as data"
             )
             cursor = self.collection.db.execute(cmd, params)
-            row = cursor.fetchone()
-            if row:
+            if row := cursor.fetchone():
                 int_id, stored_id, data = row
                 return self.collection._load_with_stored_id(
                     int_id, data, stored_id
@@ -204,8 +203,7 @@ class FindOperationsMixin(QueryEngineProtocol):
                 f"{where_clause} {order_by} LIMIT 1"
             )
             cursor = self.collection.db.execute(cmd, params)
-            row = cursor.fetchone()
-            if row:
+            if row := cursor.fetchone():
                 int_id, stored_id, data = row
                 doc = self.collection._load_with_stored_id(
                     int_id, data, stored_id
@@ -294,8 +292,7 @@ class FindOperationsMixin(QueryEngineProtocol):
                 f"{where_clause} {order_by} LIMIT 1"
             )
             cursor = self.collection.db.execute(cmd, params)
-            row = cursor.fetchone()
-            if row:
+            if row := cursor.fetchone():
                 int_id, stored_id, data = row
                 original_doc = self.collection._load_with_stored_id(
                     int_id, data, stored_id
@@ -341,8 +338,7 @@ class FindOperationsMixin(QueryEngineProtocol):
                 f"{where_clause} {order_by} LIMIT 1"
             )
             cursor = self.collection.db.execute(cmd, params)
-            row = cursor.fetchone()
-            if row:
+            if row := cursor.fetchone():
                 int_id, stored_id, data = row
                 original_doc = self.collection._load_with_stored_id(
                     int_id, data, stored_id
@@ -467,8 +463,7 @@ class FindOperationsMixin(QueryEngineProtocol):
                 f"{where_clause} {order_by} LIMIT 1"
             )
             cursor = self.collection.db.execute(cmd, params)
-            row = cursor.fetchone()
-            if row:
+            if row := cursor.fetchone():
                 int_id, stored_id, data = row
                 original_doc = self.collection._load_with_stored_id(
                     int_id, data, stored_id
@@ -511,8 +506,7 @@ class FindOperationsMixin(QueryEngineProtocol):
                 f"{where_clause} {order_by} LIMIT 1"
             )
             cursor = self.collection.db.execute(cmd, params)
-            row = cursor.fetchone()
-            if row:
+            if row := cursor.fetchone():
                 int_id, stored_id, data = row
                 original_doc = self.collection._load_with_stored_id(
                     int_id, data, stored_id

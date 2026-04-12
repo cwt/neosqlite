@@ -896,8 +896,7 @@ class Connection:
                             "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
                             (coll_name,),
                         )
-                        row = cursor.fetchone()
-                        if not row:
+                        if not (row := cursor.fetchone()):
                             continue
                         sql = row[0] or ""
 

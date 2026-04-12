@@ -206,8 +206,7 @@ class Collection:
                     f"SELECT _id FROM {quote_table_name(self.name)} WHERE id = ?",
                     (doc_id,),
                 )
-                row = cursor.fetchone()
-                if row and row[0] is not None:
+                if (row := cursor.fetchone()) and row[0] is not None:
                     return self._parse_stored_id(row[0])
                 else:
                     # If no row is found or row[0] is None, return None

@@ -126,8 +126,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
                 f"FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
             )
             cursor = self.collection.db.execute(cmd, params)
-            row = cursor.fetchone()
-            if row:
+            if row := cursor.fetchone():
                 int_id, stored_id, data = row
                 # Load the document the normal way for the update processing
                 doc = self.collection._load_with_stored_id(
@@ -186,8 +185,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
 
         cmd = f"SELECT id FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
         cursor = self.collection.db.execute(cmd, params)
-        row = cursor.fetchone()
-        if not row:
+        if not (row := cursor.fetchone()):
             if upsert:
                 # For upsert, we would need to create a new file, but that's complex
                 # For now, just return no match
@@ -479,8 +477,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
                 f"FROM {quote_table_name(self.collection.name)} WHERE id = ?"
             )
             cursor = self.collection.db.execute(cmd, (int_doc_id,))
-            row = cursor.fetchone()
-            if row:
+            if row := cursor.fetchone():
                 int_id, stored_id, data = row
                 doc = self.collection._load_with_stored_id(
                     int_id, data, stored_id
@@ -526,8 +523,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         if where_clause:
             cmd = f"SELECT id FROM {table_name} {where_clause} LIMIT 1"
             cursor = self.collection.db.execute(cmd, params)
-            row = cursor.fetchone()
-            if row:
+            if row := cursor.fetchone():
                 int_id = row[0]
                 self.helpers._internal_delete(int_id)
                 return DeleteResult(deleted_count=1)
@@ -633,8 +629,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             else:
                 cmd = f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
             cursor = self.collection.db.execute(cmd, params)
-            row = cursor.fetchone()
-            if row:
+            if row := cursor.fetchone():
                 int_id, stored_id, data = row
                 self.helpers._internal_replace(int_id, replacement)
                 return UpdateResult(

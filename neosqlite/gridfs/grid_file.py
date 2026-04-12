@@ -285,8 +285,7 @@ class GridIn:
                 f"SELECT id FROM {self._files_collection} WHERE _id = ?",
                 (str(self._file_id),),
             )
-            row = cursor.fetchone()
-            if row is None:
+            if (row := cursor.fetchone()) is None:
                 raise RuntimeError(
                     f"File with ObjectId {self._file_id} not found in database"
                 )
@@ -300,8 +299,7 @@ class GridIn:
                 f"SELECT id FROM {self._files_collection} WHERE _id = ?",
                 (str(self._file_id),),
             )
-            row = cursor.fetchone()
-            if row is None:
+            if (row := cursor.fetchone()) is None:
                 raise RuntimeError(
                     f"File with ID {self._file_id} not found in database"
                 )
@@ -402,8 +400,7 @@ class GridOut:
                 f"SELECT id FROM {bucket_name}_files WHERE _id = ?",
                 (str(file_id),),
             )
-            row = cursor.fetchone()
-            if row is None:
+            if (row := cursor.fetchone()) is None:
                 raise RuntimeError(
                     f"File with ObjectId {file_id} not found in database"
                 )

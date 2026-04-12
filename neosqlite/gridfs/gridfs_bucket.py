@@ -446,8 +446,7 @@ class GridFSBucket:
                             f"SELECT id FROM {self._files_collection} WHERE _id = ?",
                             (file_id,),
                         )
-                        row = cursor.fetchone()
-                        return row[0] if row else None
+                        return row[0] if (row := cursor.fetchone()) else None
                     except ValueError as e:
                         logger.debug(
                             f"Invalid ObjectId hex string '{file_id}': {e}"
@@ -460,8 +459,7 @@ class GridFSBucket:
                         f"SELECT id FROM {self._files_collection} WHERE id = ?",
                         (int_file_id,),
                     )
-                    row = cursor.fetchone()
-                    return row[0] if row else None
+                    return row[0] if (row := cursor.fetchone()) else None
                 except ValueError as e:
                     logger.debug(
                         f"Invalid integer file ID string '{file_id}': {e}"
