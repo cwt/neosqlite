@@ -3495,7 +3495,7 @@ def test_accumulator_operator_raises_not_implemented(collection):
 
 
 def test_match_after_group_with_ne_operator():
-    """LIM-3: Test $ne operator works in $match after $group stage.
+    """Test $ne operator works in $match after $group stage.
 
     This tests the fix for the limitation where $ne operator was not supported
     in $match stages that follow $group stages.
@@ -3557,3 +3557,202 @@ def test_match_after_group_filters_correctly():
         assert {"_id": "A", "total": 40} in result
         assert {"_id": "C", "total": 40} in result
         assert not any(r["_id"] == "B" for r in result)
+
+
+def test_push_with_expressions():
+    """Test $push with expressions collects nested objects.
+
+    This tests the fix for the limitation where $push with expressions
+    like {'title': '$title', 'author': '$author'} returned empty arrays.
+    """
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn["test_push_expr"]
+
+        # Insert test data
+        docs = [
+            {
+                "_id": 1,
+                "category": "tech",
+                "title": "Post 1",
+                "author": "Alice",
+            },
+            {"_id": 2, "category": "tech", "title": "Post 2", "author": "Bob"},
+            {
+                "_id": 3,
+                "category": "science",
+                "title": "Post 3",
+                "author": "Charlie",
+            },
+        ]
+        collection.insert_many(docs)
+
+        # Test $push with expression
+        pipeline = [
+            {
+                "$group": {
+                    "_id": "$category",
+                    "items": {
+                        "$push": {"title": "$title", "author": "$author"}
+                    },
+                }
+            },
+            {"$sort": {"_id": 1}},
+        ]
+
+        result = list(collection.aggregate(pipeline))
+
+        # Should have 2 groups
+        assert len(result) == 2
+
+        # Science group should have 1 item
+        science = next(r for r in result if r["_id"] == "science")
+        assert len(science["items"]) == 1
+        assert science["items"][0] == {"title": "Post 3", "author": "Charlie"}
+
+        # Tech group should have 2 items
+        tech = next(r for r in result if r["_id"] == "tech")
+        assert len(tech["items"]) == 2
+        # Order may vary, so check both items
+        assert {"title": "Post 1", "author": "Alice"} in tech["items"]
+        assert {"title": "Post 2", "author": "Bob"} in tech["items"]
+
+
+def test_push_with_expression_and_literal():
+    """Test $push with expressions including literal values."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn["test_push_literal"]
+
+        docs = [
+            {"_id": 1, "category": "A", "name": "Item 1"},
+            {"_id": 2, "category": "A", "name": "Item 2"},
+        ]
+        collection.insert_many(docs)
+
+        # Test $push with literal value
+        pipeline = [
+            {
+                "$group": {
+                    "_id": "$category",
+                    "items": {
+                        "$push": {
+                            "name": "$name",
+                            "type": "product",  # Literal value
+                            "quantity": 10,  # Literal number
+                        }
+                    },
+                }
+            },
+        ]
+
+        result = list(collection.aggregate(pipeline))
+        assert len(result) == 1
+        assert len(result[0]["items"]) == 2
+
+        # Check that literal values are included
+        for item in result[0]["items"]:
+            assert item["type"] == "product"
+            assert item["quantity"] == 10
+            assert item["name"] in ["Item 1", "Item 2"]
+
+
+def test_addtoset_with_expression():
+    """Test $addToSet with expressions collects unique nested objects."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn["test_addtoset_expr"]
+
+        docs = [
+            {
+                "_id": 1,
+                "category": "tech",
+                "title": "Post 1",
+                "author": "Alice",
+            },
+            {
+                "_id": 2,
+                "category": "tech",
+                "title": "Post 1",
+                "author": "Alice",
+            },  # Duplicate
+            {"_id": 3, "category": "tech", "title": "Post 2", "author": "Bob"},
+        ]
+        collection.insert_many(docs)
+
+        # Test $addToSet with expression (should deduplicate)
+        pipeline = [
+            {
+                "$group": {
+                    "_id": "$category",
+                    "unique_items": {
+                        "$addToSet": {"title": "$title", "author": "$author"}
+                    },
+                }
+            },
+        ]
+
+        result = list(collection.aggregate(pipeline))
+        assert len(result) == 1
+
+        # Should have 2 unique items (duplicate removed)
+        unique_items = result[0]["unique_items"]
+        assert len(unique_items) == 2
+
+        # Check the unique items
+        assert {"title": "Post 1", "author": "Alice"} in unique_items
+        assert {"title": "Post 2", "author": "Bob"} in unique_items
+
+
+def test_push_expression_complex_pipeline():
+    """Test $push with expressions in a complex pipeline."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn["test_push_complex"]
+
+        docs = [
+            {
+                "_id": 1,
+                "status": "published",
+                "tags": ["python", "web"],
+                "title": "Post 1",
+            },
+            {
+                "_id": 2,
+                "status": "published",
+                "tags": ["python", "data"],
+                "title": "Post 2",
+            },
+            {
+                "_id": 3,
+                "status": "draft",
+                "tags": ["python"],
+                "title": "Post 3",
+            },
+        ]
+        collection.insert_many(docs)
+
+        # Complex pipeline: filter, unwind, group with $push
+        pipeline = [
+            {"$match": {"status": "published"}},
+            {"$unwind": "$tags"},
+            {
+                "$group": {
+                    "_id": "$tags",
+                    "posts": {
+                        "$push": {"title": "$title", "status": "$status"}
+                    },
+                    "count": {"$sum": 1},
+                }
+            },
+            {"$sort": {"_id": 1}},
+        ]
+
+        result = list(collection.aggregate(pipeline))
+
+        # Should have 3 unique tags
+        assert len(result) == 3
+
+        # Check each group has posts
+        for group in result:
+            assert len(group["posts"]) == group["count"]
+            # Each post should have title and status
+            for post in group["posts"]:
+                assert "title" in post
+                assert "status" in post

@@ -33,20 +33,19 @@
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
-## Latest Release: v1.14.4
+## Latest Release: v1.14.5
 
-NeoSQLite v1.14.4 is a **comprehensive bug fix release** that resolves 5 critical aggregation pipeline issues including `$lookup` returning incorrect types, ObjectId parameter binding failures, type mismatches in join operations, and unsupported operators after `$group` stages.
+NeoSQLite v1.14.5 is a **feature enhancement release** that adds native FTS5 BM25 text relevance scoring to aggregation pipelines and enables `$push`/`$addToSet` with nested object expressions in `$group` stages.
 
-**Critical Fixes:** This release eliminates silent data corruption from `$lookup` returning string `"[]"` instead of empty lists, fixes `sqlite3.ProgrammingError` when using ObjectId objects in `$match` parameters, and enables `$ne` operator support after `$group` stages.
+**Key Features:** Native text search relevance scoring via `$meta: "textScore"`, and full support for collecting nested objects during `$group` operations.
 
 ### Key Features & Fixes
 
-- **$lookup Empty Array Type**: Returns proper list `[]` not string `"[]"` for empty join results.
-- **ObjectId Parameter Binding**: ObjectId objects can now be used directly in `$match` aggregation stages.
-- **$lookup Type Coercion**: ObjectId-aware field extraction prevents silent empty results from type mismatches.
-- **$ne Operator Support**: `$ne` operator now works in `$match` stages after `$group`.
+- **$meta: textScore**: Native FTS5 BM25 relevance scoring in aggregation pipelines.
+- **$push/$addToSet with Expressions**: Collect nested objects during `$group` with `{'$push': {'title': '$title', 'author': '$author'}}`.
+- **Kill Switch Support**: Both features respect force fallback for debugging.
 
-For full details, see [documents/releases/v1.14.4.md](documents/releases/v1.14.4.md).
+For full details, see [documents/releases/v1.14.5.md](documents/releases/v1.14.5.md).
 
 ## Installation
 

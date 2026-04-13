@@ -1955,16 +1955,27 @@ class TemporaryTableAggregationProcessor:
                 continue
 
             if _is_expression(value):
-                # Expression projection: use ExprEvaluator
-                agg_ctx = AggregationContext()
-                expr_sql, expr_params = (
-                    self.expr_evaluator.build_select_expression(
-                        value, context=agg_ctx
+                # Check for $meta: "textScore" - native FTS5 BM25 relevance scoring
+                if (
+                    isinstance(value, dict)
+                    and "$meta" in value
+                    and value["$meta"] == "textScore"
+                ):
+                    # Use FTS5 bm25() function for relevance scoring
+                    bm25_score = self._generate_text_score_sql()
+                    json_parts.append(f"'{field}'")
+                    json_parts.append(bm25_score)
+                else:
+                    # Expression projection: use ExprEvaluator
+                    agg_ctx = AggregationContext()
+                    expr_sql, expr_params = (
+                        self.expr_evaluator.build_select_expression(
+                            value, context=agg_ctx
+                        )
                     )
-                )
-                all_params.extend(expr_params)
-                json_parts.append(f"'{field}'")
-                json_parts.append(expr_sql)
+                    all_params.extend(expr_params)
+                    json_parts.append(f"'{field}'")
+                    json_parts.append(expr_sql)
 
             elif isinstance(value, str) and value.startswith("$"):
                 # Field reference: "$some.path"
@@ -2004,6 +2015,20 @@ class TemporaryTableAggregationProcessor:
         return create_temp(
             project_stage, sql, all_params if all_params else None
         )
+
+    def _generate_text_score_sql(self) -> str:
+        """
+        Generate SQL for $meta: "textScore" using stored BM25 score.
+
+        During $text search stages, the FTS5 BM25 relevance score is captured
+        and stored in the document's JSON data as `_textScore`. This method
+        extracts that score for use in $project/$addFields stages.
+
+        Returns:
+            SQL expression that returns the BM25 relevance score (positive value)
+        """
+        json_extract = f"{self._json_function_prefix}_extract"
+        return f"COALESCE({json_extract}(data, '$._textScore'), 0.0)"
 
     def _process_replace_root_stage(
         self,
@@ -2187,6 +2212,12 @@ class TemporaryTableAggregationProcessor:
                 expr_field = expr[1:]
             elif isinstance(expr, (int, float)):
                 expr_field = None  # Literal value
+            elif isinstance(expr, dict):
+                # Expression object (e.g., {'title': '$title', 'author': '$author'})
+                # This is valid for $push and $addToSet
+                expr_field = (
+                    None  # Will be handled specially in the accumulator logic
+                )
             else:
                 # Complex expression - fall back to Python
                 raise NotImplementedError(
@@ -2315,7 +2346,41 @@ class TemporaryTableAggregationProcessor:
                     # Use json_group_array with DISTINCT
                     # Track this field for post-processing
                     array_fields.append(field)
-                    if expr_field:
+
+                    # Check if expr is a dict expression
+                    if isinstance(expr, dict):
+                        # Build json_object for the expression (same as $push)
+                        json_object_func = (
+                            f"{self._json_function_prefix}_object"
+                        )
+                        obj_args = []
+                        for key, val in expr.items():
+                            if isinstance(val, str) and val.startswith("$"):
+                                field_name = val[1:]
+                                if field_name == "_id":
+                                    obj_args.append(f"'{key}', _id")
+                                else:
+                                    obj_args.append(
+                                        f"'{key}', {json_extract}(data, '{parse_json_path(field_name)}')"
+                                    )
+                            elif isinstance(val, (int, float, str)):
+                                # Literal value - inline directly
+                                if isinstance(val, str):
+                                    escaped_val = val.replace("'", "''")
+                                    obj_args.append(
+                                        f"'{key}', json_quote('{escaped_val}')"
+                                    )
+                                else:
+                                    obj_args.append(f"'{key}', {val}")
+                            else:
+                                raise NotImplementedError(
+                                    f"$addToSet with complex expression {expr} requires Python fallback"
+                                )
+
+                        select_parts.append(
+                            f"{json_group_array}(DISTINCT {json_object_func}({', '.join(obj_args)})) AS {field}"
+                        )
+                    elif expr_field:
                         if expr_field == "_id":
                             select_parts.append(
                                 f"{json_group_array}(DISTINCT _id) AS {field}"
@@ -2329,7 +2394,44 @@ class TemporaryTableAggregationProcessor:
                     # Use json_group_array
                     # Track this field for post-processing
                     array_fields.append(field)
-                    if expr_field:
+
+                    # Check if expr is a dict expression (e.g., {'title': '$title', 'author': '$author'})
+                    if isinstance(expr, dict):
+                        # Build json_object for the expression
+                        json_object_func = (
+                            f"{self._json_function_prefix}_object"
+                        )
+                        obj_args = []
+                        for key, val in expr.items():
+                            if isinstance(val, str) and val.startswith("$"):
+                                field_name = val[1:]
+                                if field_name == "_id":
+                                    obj_args.append(f"'{key}', _id")
+                                else:
+                                    obj_args.append(
+                                        f"'{key}', {json_extract}(data, '{parse_json_path(field_name)}')"
+                                    )
+                            elif isinstance(val, (int, float, str)):
+                                # Literal value - inline directly (CREATE TABLE AS SELECT doesn't support params)
+                                if isinstance(val, str):
+                                    # Escape single quotes for SQL
+                                    escaped_val = val.replace("'", "''")
+                                    obj_args.append(
+                                        f"'{key}', json_quote('{escaped_val}')"
+                                    )
+                                else:
+                                    obj_args.append(f"'{key}', {val}")
+                            else:
+                                raise NotImplementedError(
+                                    f"$push with complex expression {expr} requires Python fallback"
+                                )
+
+                        select_parts.append(
+                            f"{json_group_array}({json_object_func}({', '.join(obj_args)})) AS {field}"
+                        )
+                        # Store literal values as params (though they can't be used in CREATE TABLE AS SELECT)
+                        # For now, we inline literal values
+                    elif expr_field:
                         if expr_field == "_id":
                             select_parts.append(
                                 f"{json_group_array}(_id) AS {field}"
@@ -2718,11 +2820,14 @@ class TemporaryTableAggregationProcessor:
         # Step 3: Query FTS5 and create result table with matching documents
         # Join on source rowid to get exact matching rows
         # Also preserve _id column for proper sorting support
+        # Store bm25 score in JSON data for $meta: textScore support
+        json_set_func = f"{self._json_function_prefix}_set"
         self.db.execute(f"DROP TABLE IF EXISTS {result_table_name}")
         self.db.execute(
             f"""
             CREATE TEMP TABLE {result_table_name} AS
-            SELECT c.id, c._id, c.data
+            SELECT c.id, c._id,
+                   json({json_set_func}(c.data, '$._textScore', -bm25({fts_table_name}))) as data
             FROM {current_table} c
             INNER JOIN {fts_table_name} f ON c.rowid = f.src_rowid
             WHERE {fts_table_name} MATCH ?

@@ -236,10 +236,10 @@ if __name__ == "__main__":
 
 
 class TestLookupEmptyArrayType:
-    """Tests for BUG-4: $lookup returns string '[]' instead of empty list."""
+    """Tests for $lookup returning string '[]' instead of empty list."""
 
     def test_lookup_empty_result_is_list_not_string(self):
-        """BUG-4: Verify $lookup returns empty list [] not string '[]'."""
+        """Verify $lookup returns empty list [] not string '[]'."""
         db = neosqlite.Connection(":memory:")
         db.posts.insert_one({"_id": 1, "title": "Test"})
         # No matching comments
@@ -261,7 +261,7 @@ class TestLookupEmptyArrayType:
         assert len(results) == 1
         comments = results[0].get("comments")
 
-        # BUG-4 FIX: Should be list, not string
+        # Should be list, not string
         assert isinstance(
             comments, list
         ), f"Expected list but got {type(comments).__name__}"
@@ -297,10 +297,10 @@ class TestLookupEmptyArrayType:
 
 
 class TestLookupObjectIdTypeMatching:
-    """Tests for BUG-3: $lookup returns empty when join field types don't match."""
+    """Tests for $lookup with ObjectId type matching in join fields."""
 
     def test_lookup_with_objectid_join(self):
-        """BUG-3: Verify $lookup works when join fields are ObjectId type."""
+        """Verify $lookup works when join fields are ObjectId type."""
         from neosqlite.objectid import ObjectId
 
         db = neosqlite.Connection(":memory:")
@@ -331,14 +331,14 @@ class TestLookupObjectIdTypeMatching:
         assert len(results) == 1
         comments = results[0].get("comments")
 
-        # BUG-3 FIX: Should match and return comments, not empty array
+        # Should match and return comments with ObjectId type
         assert isinstance(comments, list)
         assert len(comments) == 2
         assert comments[0]["text"] == "Great!"
         assert comments[1]["text"] == "Thanks"
 
     def test_lookup_with_objectid_in_match_stage(self):
-        """BUG-2: Verify ObjectId can be used in $match stage parameters."""
+        """Verify ObjectId can be used in $match stage parameters."""
         from neosqlite.objectid import ObjectId
 
         db = neosqlite.Connection(":memory:")
@@ -346,7 +346,7 @@ class TestLookupObjectIdTypeMatching:
         db.posts.insert_one({"_id": oid, "title": "Test"})
         db.posts.insert_one({"_id": 2, "title": "Other"})
 
-        # BUG-2 FIX: ObjectId should be bindable as parameter
+        # ObjectId should be bindable as parameter
         pipeline = [
             {"$match": {"_id": oid}},
         ]

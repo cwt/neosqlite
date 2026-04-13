@@ -2430,3 +2430,140 @@ def test_text_with_logical_operators_fallback(collection):
     titles = [doc["title"] for doc in results]
     assert "Python Programming" in titles
     assert "JavaScript Basics" in titles
+
+
+class TestMetaTextScore:
+    """Tests for $meta: textScore support in aggregation pipelines."""
+
+    def test_meta_textscore_basic(self):
+        """Test $meta: textScore returns relevance scores."""
+        import neosqlite
+
+        db = neosqlite.Connection(":memory:")
+        db.posts.insert_many(
+            [
+                {
+                    "_id": 1,
+                    "title": "Python programming",
+                    "body": "Learn Python",
+                },
+                {
+                    "_id": 2,
+                    "title": "Advanced Python",
+                    "body": "Python decorators",
+                },
+                {
+                    "_id": 3,
+                    "title": "JavaScript guide",
+                    "body": "Learn JavaScript",
+                },
+            ]
+        )
+
+        # Create FTS index
+        db.posts.create_index("title", fts=True)
+
+        # Test $meta: textScore
+        pipeline = [
+            {"$match": {"$text": {"$search": "Python"}}},
+            {"$project": {"title": 1, "score": {"$meta": "textScore"}}},
+            {"$sort": {"score": -1}},
+        ]
+
+        results = list(db.posts.aggregate(pipeline))
+
+        # Should have 2 results with scores
+        assert len(results) == 2
+        assert all("score" in r for r in results)
+        # Scores should be positive
+        assert all(r["score"] > 0 for r in results)
+        # Results should be sorted by score (descending)
+        assert results[0]["score"] >= results[1]["score"]
+
+    def test_meta_textscore_with_addfields(self):
+        """Test $meta: textScore in $addFields stage."""
+        import neosqlite
+
+        db = neosqlite.Connection(":memory:")
+        db.articles.insert_many(
+            [
+                {"_id": 1, "title": "Machine Learning", "author": "Alice"},
+                {"_id": 2, "title": "Deep Learning", "author": "Bob"},
+            ]
+        )
+
+        db.articles.create_index("title", fts=True)
+
+        # Test $addFields with $meta: textScore
+        pipeline = [
+            {"$match": {"$text": {"$search": "Learning"}}},
+            {"$addFields": {"relevance": {"$meta": "textScore"}}},
+        ]
+
+        results = list(db.articles.aggregate(pipeline))
+        assert len(results) == 2
+        assert all("relevance" in r for r in results)
+        assert all(r["relevance"] > 0 for r in results)
+
+    def test_meta_textscore_no_fts_index(self):
+        """Test $meta: textScore without FTS index returns 0.0."""
+        import neosqlite
+
+        db = neosqlite.Connection(":memory:")
+        db.docs.insert_many(
+            [
+                {"_id": 1, "title": "Python programming"},
+                {"_id": 2, "title": "Python advanced"},
+            ]
+        )
+
+        # No FTS index created - should still work with score 0.0
+        pipeline = [
+            {"$match": {"title": {"$regex": "Python"}}},
+            {"$project": {"title": 1, "score": {"$meta": "textScore"}}},
+        ]
+
+        results = list(db.docs.aggregate(pipeline))
+        assert len(results) == 2
+        # Without FTS, score should be 0.0
+        assert all(r["score"] == 0.0 for r in results)
+
+    def test_meta_textscore_multiple_fields(self):
+        """Test $meta: textScore with multiple FTS indexes."""
+        import neosqlite
+
+        db = neosqlite.Connection(":memory:")
+        db.posts.insert_many(
+            [
+                {
+                    "_id": 1,
+                    "title": "Python basics",
+                    "content": "Introduction to Python",
+                },
+                {
+                    "_id": 2,
+                    "title": "JavaScript intro",
+                    "content": "Learn Python and JavaScript",
+                },
+            ]
+        )
+
+        # Create multiple FTS indexes
+        db.posts.create_index("title", fts=True)
+        db.posts.create_index("content", fts=True)
+
+        # Test that $meta: textScore works with multiple indexes
+        pipeline = [
+            {"$match": {"$text": {"$search": "Python"}}},
+            {
+                "$project": {
+                    "title": 1,
+                    "content": 1,
+                    "score": {"$meta": "textScore"},
+                }
+            },
+        ]
+
+        results = list(db.posts.aggregate(pipeline))
+        assert len(results) == 2
+        assert all("score" in r for r in results)

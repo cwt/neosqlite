@@ -161,6 +161,15 @@ class PythonEvaluatorsMixin:
                 | "$allElementsTrue"
             ):
                 return self._evaluate_array_python(operator, operands, document)
+            case "$meta":
+                # Handle $meta: "textScore" for FTS relevance scoring
+                if operands == "textScore":
+                    # Extract stored text score from document
+                    return document.get("_textScore", 0.0)
+                else:
+                    raise NotImplementedError(
+                        f"$meta with '{operands}' not supported"
+                    )
             case "$filter" | "$map" | "$reduce":
                 return self._evaluate_array_transform_python(
                     operator, operands, document

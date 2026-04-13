@@ -342,7 +342,7 @@ def test_objectid_index_usage():
 
 
 def test_objectid_in_aggregation_match():
-    """BUG-2: Test that ObjectId can be used in aggregation $match stage.
+    """Test that ObjectId can be used in aggregation $match stage.
 
     This tests the fix for the bug where passing ObjectId objects directly
     in $match stages caused sqlite3.ProgrammingError: Error binding parameter.
@@ -359,7 +359,7 @@ def test_objectid_in_aggregation_match():
     collection.insert_one({"_id": oid1, "name": "doc1"})
     collection.insert_one({"_id": oid2, "name": "doc2"})
 
-    # BUG-2 FIX: ObjectId should be bindable as parameter in $match
+    # ObjectId should be bindable as parameter in $match
     pipeline = [
         {"$match": {"_id": oid1}},
     ]
@@ -371,7 +371,7 @@ def test_objectid_in_aggregation_match():
 
 
 def test_objectid_in_aggregation_with_lookup():
-    """BUG-2 & BUG-3: Test ObjectId in $match followed by $lookup.
+    """Test ObjectId in $match followed by $lookup.
 
     This tests that ObjectId parameters work correctly through multiple
     pipeline stages and that type matching works in $lookup joins.
@@ -405,7 +405,7 @@ def test_objectid_in_aggregation_with_lookup():
     assert len(result) == 1
     assert result[0]["title"] == "Test Post"
 
-    # BUG-3 FIX: Comments should match (not empty due to type mismatch)
+    # Comments should match (not empty due to type mismatch)
     comments = result[0].get("comments")
     assert isinstance(comments, list)
     assert len(comments) == 2
