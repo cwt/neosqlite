@@ -33,22 +33,17 @@
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
-## Latest Release: v1.14.7
+## Latest Release: v1.14.8
 
-NeoSQLite v1.14.7 is a **bug fix release** that resolves critical aggregation pipeline failures, SQL binding errors, and adds `$rand` SQL tier support.
+NeoSQLite v1.14.8 is a **bug fix release** that resolves a critical `$facet` stage failure when JSONB is enabled.
 
-**Key Fixes:** Aggregation pipelines now gracefully handle corrupted documents and complex expressions without crashing. `sqlite3.ProgrammingError` binding errors are eliminated for `$project`, `$addFields`, `$setEquals`, and `$split`. `$rand` now runs natively in SQL tier.
+**Key Fix:** `$facet` now correctly handles JSONB binary format when extracting documents from temporary tables. Without this fix, pipelines with `$unwind` + `$group` sub-pipelines would skip all documents due to UTF-8 decode errors on JSONB binary data.
 
 ### Key Fixes
 
-- **$facet UTF-8 Decode Error**: Fixed `UnicodeDecodeError` when `$facet` encounters non-UTF8 bytes in temporary table data column.
-- **$sort Missing Column Error**: Fixed `OperationalError: no such column: _id` when `$sort` processes intermediate tables without `_id` column.
-- **$lookup Malformed JSON Error**: Fixed `OperationalError: malformed JSON` when `$lookup` builds hash tables from collections with corrupted data.
-- **SQL Binding Errors Eliminated**: Fixed `sqlite3.ProgrammingError` in `$project`, `$addFields`, `$setEquals`, and `$split` stages.
-- **$rand SQL Tier Support**: `$rand` now runs natively using SQLite's `RANDOM()` function.
-- **Tier Fallback Logging**: Unsupported operators now log at WARNING level (visible in API comparison) instead of ERROR with traceback.
+- **$facet JSONB Decode Error**: Fixed false `UnicodeDecodeError` when `$facet` extracts documents from JSONB temporary tables. Documents are now properly extracted using `json(data)` conversion.
 
-For full details, see [documents/releases/v1.14.7.md](documents/releases/v1.14.7.md).
+For full details, see [documents/releases/v1.14.8.md](documents/releases/v1.14.8.md).
 
 ## Installation
 

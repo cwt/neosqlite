@@ -3370,7 +3370,14 @@ class TemporaryTableAggregationProcessor:
 
         # Extract input documents from current temp table
         # IMPORTANT: _id is stored as a separate column, not in the data JSON
-        cursor = self.db.execute(f"SELECT _id, data FROM {current_table}")
+        # When JSONB is supported, data column stores JSONB BLOB — convert to text
+        if self._jsonb_supported:
+            cursor = self.db.execute(
+                f"SELECT _id, json(data) FROM {current_table}"
+            )
+        else:
+            cursor = self.db.execute(f"SELECT _id, data FROM {current_table}")
+
         input_docs = []
         skipped_count = 0
         for row in cursor.fetchall():

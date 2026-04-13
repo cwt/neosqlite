@@ -1,5 +1,29 @@
 # CHANGELOG
 
+## 1.14.8
+
+### Bug Fix Release: $facet JSONB Binary Compatibility
+
+**Critical Aggregation Pipeline Fix** — fully backward compatible with v1.14.7.
+
+#### High Severity Fixes
+
+- **$facet JSONB Decode Error**: Fixed false `UnicodeDecodeError` when `$facet` extracts documents from temporary tables where JSONB is stored as binary BLOB. When JSONB is supported, temporary tables store `data` as JSONB binary format (type indicator byte like `0xdc`), not TEXT. Fixed by using `json(data)` to convert JSONB to TEXT before parsing.
+
+**Before:** `$facet` with `$unwind` + `$group` → all documents skipped as "corrupted" → empty results
+**After:** Documents properly extracted from JSONB temp tables → correct facet results
+
+#### Test Results
+- **Unit Tests**: 2,793 total (2,793 passed, 0 xfailed, 0 failed)
+- **API Comparison (NeoSQLite vs MongoDB)**: 386 tests (368 passed, 18 skipped, 0 failed) — 100.0%
+- **Code Coverage**: 81.5%+
+
+#### Compatibility
+- **Backward Compatible**: Zero breaking changes.
+- **PyMongo API Parity**: 100% for comparable features.
+
+---
+
 ## 1.14.7
 
 ### Bug Fix Release: Aggregation Pipeline Resilience, SQL Binding Errors, and $rand Support
