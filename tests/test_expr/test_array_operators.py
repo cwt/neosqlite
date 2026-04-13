@@ -19,6 +19,15 @@ class TestArrayOperatorsPython:
         assert evaluator._evaluate_expr_python(expr, {"items": [1, 2, 3]}) == 3
         assert evaluator._evaluate_expr_python(expr, {"items": []}) == 0
 
+    def test_size_operator_single_operand(self):
+        """Test $size operator with single operand (MongoDB format)."""
+        evaluator = ExprEvaluator()
+        # MongoDB format: {$size: "$field"} without list wrapper
+        expr = {"$size": "$items"}
+        assert evaluator._evaluate_expr_python(expr, {"items": [1, 2, 3]}) == 3
+        assert evaluator._evaluate_expr_python(expr, {"items": []}) == 0
+        assert evaluator._evaluate_expr_python(expr, {"items": ["a", "b"]}) == 2
+
     def test_in_operator(self):
         """Test $in operator."""
         evaluator = ExprEvaluator()
@@ -107,6 +116,15 @@ class TestArrayOperatorsSQL:
         assert sql is not None
         assert "json_array_length" in sql
 
+    def test_size_single_operand_sql(self):
+        """Test $size SQL conversion with single operand (MongoDB format)."""
+        evaluator = ExprEvaluator()
+        # MongoDB format: {$size: "$field"} without list wrapper
+        expr = {"$size": "$items"}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "json_array_length" in sql
+
     def test_in_sql(self):
         """Test $in SQL conversion."""
         evaluator = ExprEvaluator()
@@ -164,6 +182,25 @@ class TestArrayIntegration:
             results = list(collection.find(expr))
             assert len(results) == 1
             assert len(results[0]["items"]) == 3
+
+    def test_size_single_operand_integration(self):
+        """Test $size with single operand in $expr (MongoDB format)."""
+        with neosqlite.Connection(":memory:") as conn:
+            collection = conn["test"]
+            collection.insert_many(
+                [
+                    {"tags": ["a", "b", "c"]},
+                    {"tags": ["x", "y"]},
+                    {"tags": ["single"]},
+                    {"tags": []},
+                ]
+            )
+
+            # MongoDB format: {$size: "$field"} without list wrapper
+            expr = {"$expr": {"$gt": [{"$size": "$tags"}, 1]}}
+            results = list(collection.find(expr))
+            assert len(results) == 2
+            assert all(len(r["tags"]) > 1 for r in results)
 
     def test_in_integration(self):
         """Test $in with database."""

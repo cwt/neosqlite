@@ -683,21 +683,29 @@ class TemporaryTableAggregationProcessor:
             )
 
         # Try to use SQLTranslator to build WHERE clause
-        # If it returns (None, []), it means text search is involved and we should fall back
+        # If it returns (None, []), it means an unsupported operator is involved
         where_clause, params = self.sql_translator.translate_match(match_spec)
 
-        # Check if text search is involved (SQLTranslator returns None for text search)
+        # Check if translation failed (SQLTranslator returns None for unsupported operators)
         if where_clause is None:
-            # For text search on unwound elements, we currently fall back to
-            # returning all documents from the temporary table.
-            # This preserves the behavior where text search falls back to Python
-            # processing when it can't be handled efficiently with SQL.
-            # A future enhancement could implement proper text search on temporary tables.
-            match_stage = {"$match": match_spec}
-            new_table = create_temp(
-                match_stage, f"SELECT * FROM {current_table}"
-            )
-            return new_table
+            # Check if it's text search (which has special handling)
+            if _contains_text_search(match_spec):
+                # For text search on unwound elements, we currently fall back to
+                # returning all documents from the temporary table.
+                # This preserves the behavior where text search falls back to Python
+                # processing when it can't be handled efficiently with SQL.
+                # A future enhancement could implement proper text search on temporary tables.
+                match_stage = {"$match": match_spec}
+                new_table = create_temp(
+                    match_stage, f"SELECT * FROM {current_table}"
+                )
+                return new_table
+            else:
+                # Unsupported operator (e.g., $elemMatch, $in on arrays)
+                # Raise NotImplementedError to trigger Python fallback
+                raise NotImplementedError(
+                    f"$match stage contains unsupported operators: {match_spec}"
+                )
 
         # Remove "WHERE " prefix if present for easier manipulation
         if where_clause.startswith("WHERE "):

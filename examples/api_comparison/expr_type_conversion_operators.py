@@ -33,6 +33,7 @@ def compare_expr_type_conversion():
     neo_concat = None
     neo_ifnull = None
     neo_isarray = None
+    neo_size_single_operand = None
     neo_round = None
     neo_exp = None
     neo_deg2rad = None
@@ -43,6 +44,7 @@ def compare_expr_type_conversion():
     mongo_concat = None
     mongo_ifnull = None
     mongo_isarray = None
+    mongo_size_single_operand = None
     mongo_round = None
     mongo_exp = None
     mongo_deg2rad = None
@@ -148,6 +150,35 @@ def compare_expr_type_conversion():
         except Exception as e:
             neo_isarray = f"Error: {e}"
             print(f"Neo $expr $isArray: Error - {e}")
+        finally:
+            end_neo_timing()
+
+        # Test $expr $size with single operand (MongoDB format, not list-wrapped)
+        # Bug report: {"$expr": {"$gt": [{"$size": "$tags"}, 1]}} raised
+        # "ValueError: $size requires exactly 1 operand"
+        neo_collection.delete_many({})
+        neo_collection.insert_many(
+            [
+                {"tags": ["a", "b", "c"]},
+                {"tags": ["x", "y"]},
+                {"tags": ["single"]},
+                {"tags": []},
+            ]
+        )
+        start_neo_timing()
+        try:
+            neo_result = list(
+                neo_collection.find({"$expr": {"$gt": [{"$size": "$tags"}, 1]}})
+            )
+            neo_size_single_operand = sorted(
+                [len(r["tags"]) for r in neo_result]
+            )
+            print(
+                f"Neo $expr $size (single operand): {neo_size_single_operand}"
+            )
+        except Exception as e:
+            neo_size_single_operand = f"Error: {e}"
+            print(f"Neo $expr $size (single operand): Error - {e}")
         finally:
             end_neo_timing()
 
@@ -416,6 +447,35 @@ def compare_expr_type_conversion():
         finally:
             end_mongo_timing()
 
+        # Test $expr $size with single operand (MongoDB format, not list-wrapped)
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many(
+            [
+                {"tags": ["a", "b", "c"]},
+                {"tags": ["x", "y"]},
+                {"tags": ["single"]},
+                {"tags": []},
+            ]
+        )
+        start_mongo_timing()
+        try:
+            mongo_result = list(
+                mongo_collection.find(
+                    {"$expr": {"$gt": [{"$size": "$tags"}, 1]}}
+                )
+            )
+            mongo_size_single_operand = sorted(
+                [len(r["tags"]) for r in mongo_result]
+            )
+            print(
+                f"Mongo $expr $size (single operand): {mongo_size_single_operand}"
+            )
+        except Exception as e:
+            mongo_size_single_operand = f"Error: {e}"
+            print(f"Mongo $expr $size (single operand): Error - {e}")
+        finally:
+            end_mongo_timing()
+
         # Test $expr $round
         mongo_collection.delete_many({})
         mongo_collection.insert_one({"value": 3.14159})
@@ -605,6 +665,13 @@ def compare_expr_type_conversion():
         "$expr $isArray",
         neo_isarray,
         mongo_isarray,
+        skip_reason="MongoDB not available" if not client else None,
+    )
+    reporter.record_comparison(
+        "$expr (Type & Conversion Operators)",
+        "$expr $size (single operand)",
+        neo_size_single_operand,
+        mongo_size_single_operand,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(

@@ -33,17 +33,22 @@
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
-## Latest Release: v1.14.8
+## Latest Release: v1.14.9
 
-NeoSQLite v1.14.8 is a **bug fix release** that resolves a critical `$facet` stage failure when JSONB is enabled.
+NeoSQLite v1.14.9 is a **bug fix release** that resolves two critical aggregation pipeline bugs and improves `$expr` operator compatibility with MongoDB.
 
-**Key Fix:** `$facet` now correctly handles JSONB binary format when extracting documents from temporary tables. Without this fix, pipelines with `$unwind` + `$group` sub-pipelines would skip all documents due to UTF-8 decode errors on JSONB binary data.
+**Key Fixes:**
+1. **`$elemMatch` in `$match` stage** — Aggregation pipelines now correctly filter documents using `$elemMatch`, matching `find()` behavior.
+2. **`$in` on array fields in `$match` stage** — Aggregation pipelines now properly handle `$in` operator on array fields via Python fallback.
+3. **`$size` single operand in `$expr`** — The MongoDB-compatible syntax `{"$size": "$field"}` (without list wrapper) now works correctly in `$expr` contexts.
 
 ### Key Fixes
 
-- **$facet JSONB Decode Error**: Fixed false `UnicodeDecodeError` when `$facet` extracts documents from JSONB temporary tables. Documents are now properly extracted using `json(data)` conversion.
+- **$elemMatch Aggregation Bug**: Fixed `$match` stage returning unfiltered results when using `$elemMatch`. Now properly falls back to Python filtering.
+- **$in Array Fields Aggregation Bug**: Fixed `$match` stage returning 0 results for `$in` on array fields. Now uses Python fallback with array-aware logic.
+- **$expr $size Single Operand**: Fixed `ValueError` when using `{"$size": "$field"}` syntax. Now normalizes operands to match MongoDB behavior.
 
-For full details, see [documents/releases/v1.14.8.md](documents/releases/v1.14.8.md).
+For full details, see [documents/releases/v1.14.9.md](documents/releases/v1.14.9.md).
 
 ## Installation
 

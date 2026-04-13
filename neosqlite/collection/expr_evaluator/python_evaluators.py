@@ -689,6 +689,17 @@ class PythonEvaluatorsMixin:
         self, operator: str, operands: list[Any], document: dict[str, Any]
     ) -> Any:
         """Evaluate array operators in Python."""
+        # Normalize operands for operators that accept single values
+        if operator in (
+            "$size",
+            "$isArray",
+            "$sum",
+            "$avg",
+            "$min",
+            "$max",
+        ) and not isinstance(operands, list):
+            operands = [operands]
+
         match operator:
             case "$size":
                 if len(operands) != 1:

@@ -1,5 +1,32 @@
 # CHANGELOG
 
+## 1.14.9
+
+### Bug Fix Release: Aggregation Pipeline Correctness ($elemMatch, $in) and $expr $size Fix
+
+**Critical Aggregation Pipeline Fixes** — fully backward compatible with v1.14.8.
+
+#### High Severity Fixes
+
+- **$elemMatch Returning Unfiltered Results**: Fixed `$match` stage with `$elemMatch` returning all documents instead of filtering by array element match. Tier 2 (temporary table aggregation) was treating SQL translation failures as "text search" and creating unfiltered temporary tables. Now raises `NotImplementedError` to trigger Python fallback with correct `_elemMatch` implementation.
+
+- **$in on Array Fields Returning 0 Results**: Fixed `$match` stage with `$in` on array fields returning empty results. SQL translation generates simple `IN` clause that doesn't work for JSON arrays. Now falls back to Python filtering with array-aware `_in()` logic.
+
+#### Medium Severity Fixes
+
+- **$size Single Operand in $expr**: Fixed `ValueError: $size requires exactly 1 operand` when using MongoDB-compatible syntax `{"$size": "$field"}` (without list wrapper). Added operand normalization in Python evaluator to match SQL converter behavior.
+
+#### Test Results
+- **Unit Tests**: 2,799 total (2,799 passed, 0 xfailed, 0 failed)
+- **API Comparison (NeoSQLite vs MongoDB)**: 387 tests (369 passed, 18 skipped, 0 failed) — 100.0%
+- **Code Coverage**: 81.5%+
+
+#### Compatibility
+- **Backward Compatible**: Zero breaking changes.
+- **PyMongo API Parity**: 100% for comparable features.
+
+---
+
 ## 1.14.8
 
 ### Bug Fix Release: $facet JSONB Binary Compatibility
