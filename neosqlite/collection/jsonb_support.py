@@ -234,5 +234,21 @@ def json_data_column(jsonb_supported: bool, source: str = "data") -> str:
 
     When JSONB is supported, wraps the source with json() to convert
     JSONB to text.  Otherwise returns the source unchanged.
+
+    When JSONB is supported, also handles malformed JSON gracefully by
+    checking json_valid() first for text values. This prevents the entire
+    query from failing when a single row has corrupted data. JSONB blobs
+    are always passed through json() since they're stored in SQLite's
+    binary JSON format.
     """
-    return f"json({source})" if jsonb_supported else source
+    if jsonb_supported:
+        # Handle three cases:
+        # 1. JSONB blobs (typeof='blob'): always valid, convert with json()
+        # 2. Valid JSON text: convert with json() for consistency
+        # 3. Malformed text or other types: return as-is (Python handles errors)
+        return (
+            f"CASE WHEN typeof({source})='blob' THEN json({source}) "
+            f"WHEN typeof({source})='text' AND json_valid({source}) "
+            f"THEN json({source}) ELSE {source} END"
+        )
+    return source

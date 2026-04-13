@@ -158,30 +158,51 @@ class Collection:
         Returns:
             dict[str, Any]: The deserialized document with the _id field added.
         """
-        if isinstance(data, bytes):
-            data = data.decode("utf-8")
-        document: dict[str, Any] = neosqlite_json_loads(data)
+        try:
+            if isinstance(data, bytes):
+                data = data.decode("utf-8")
+            document: dict[str, Any] = neosqlite_json_loads(data)
+        except (UnicodeDecodeError, ValueError, TypeError) as e:
+            logger.warning(f"Skipping corrupted document (id={id_val}): {e}")
+            # Return a minimal document with just the _id to allow processing to continue
+            # The document won't match most filters anyway
+            _id = self._resolve_stored_id(stored_id_val, id_val)
+            return {"_id": _id, "__neosqlite_corrupted__": True}
 
         # Use the stored _id value if available, otherwise fall back to the auto-increment id
-        _id: ObjectId | Any
+        _id = self._resolve_stored_id(stored_id_val, id_val)
+
+        document["_id"] = _id
+        return document
+
+    def _resolve_stored_id(
+        self, stored_id_val: Any, fallback_id: int
+    ) -> ObjectId | Any:
+        """
+        Resolve the stored _id value, attempting to parse as ObjectId.
+
+        Args:
+            stored_id_val: The stored _id value from the _id column.
+            fallback_id: Fallback auto-increment ID if stored_id_val is None.
+
+        Returns:
+            ObjectId or the original stored_id_val, or fallback_id.
+        """
         if stored_id_val is not None:
             # Try to decode as ObjectId if it looks like one
             if isinstance(stored_id_val, str) and len(stored_id_val) == 24:
                 try:
-                    _id = ObjectId(stored_id_val)
+                    return ObjectId(stored_id_val)
                 except ValueError as e:
                     logger.debug(
                         f"Failed to parse stored _id value '{stored_id_val}' as ObjectId: {e}"
                     )
-                    _id = stored_id_val
+                    return stored_id_val
             else:
-                _id = stored_id_val
+                return stored_id_val
         else:
             # Fallback to the auto-increment ID for backward compatibility
-            _id = id_val
-
-        document["_id"] = _id
-        return document
+            return fallback_id
 
     def _get_stored_id(self, doc_id: int) -> ObjectId | int | str | None:
         """

@@ -259,6 +259,8 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
         """
         try:
             sql_expr, params = self._convert_expr_to_sql(expr)
+            if sql_expr is None:
+                return None, []
             return f"({sql_expr})", params
         except (NotImplementedError, ValueError):
             return None, []

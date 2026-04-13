@@ -385,13 +385,17 @@ class TestStringOperatorsSQL:
         assert sql is not None
         assert "instr" in sql
 
-    def test_regexMatch_sql(self):
-        """Test $regexMatch SQL conversion."""
+    def test_regexMatch_fallback(self):
+        """Test $regexMatch always falls back to Python (no REGEXP in SQLite).
+
+        SQLite has no built-in REGEXP function unless a user-defined function
+        is registered. Since we can't guarantee it exists, $regexMatch always
+        returns None from SQL conversion, triggering Python fallback.
+        """
         evaluator = ExprEvaluator()
         expr = {"$regexMatch": {"input": "$text", "regex": "^[A-Z]"}}
         sql, params = evaluator._evaluate_sql_tier1(expr)
-        assert sql is not None
-        assert "REGEXP" in sql
+        assert sql is None  # Forces Python fallback
 
     def test_replaceAll_sql(self):
         """Test $replaceAll SQL conversion."""

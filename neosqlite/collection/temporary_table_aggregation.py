@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import uuid
 import warnings
 from contextlib import contextmanager
@@ -283,6 +284,13 @@ def aggregation_pipeline_context(db_connection, pipeline_id: str | None = None):
 
     try:
         yield create_temp_table
+    except NotImplementedError as e:
+        # Expected fallback for operators not yet translated to SQL —
+        # log at WARNING so it's visible during development/comparison
+        # runs, but without the noisy traceback
+        db_connection.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name}")
+        logger.warning(f"Temporary table aggregation SQL fallback: {e}")
+        raise
     except Exception as e:
         # Rollback on error
         db_connection.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name}")
@@ -614,15 +622,15 @@ class TemporaryTableAggregationProcessor:
                         i += 1
 
                     case "$merge":
-                        # $merge requires Python fallback for full functionality
+                        # $merge not supported in SQL tier for full functionality
                         raise NotImplementedError(
-                            "$merge requires Python fallback - use force_fallback or simplify pipeline"
+                            "$merge not supported in SQL tier - use force_fallback or simplify pipeline"
                         )
 
                     case "$redact":
-                        # $redact requires Python fallback for full functionality
+                        # $redact not supported in SQL tier for full functionality
                         raise NotImplementedError(
-                            "$redact requires Python fallback - use force_fallback or simplify pipeline"
+                            "$redact not supported in SQL tier - use force_fallback or simplify pipeline"
                         )
 
                     case _:
@@ -1048,11 +1056,31 @@ class TemporaryTableAggregationProcessor:
                             is_local_field=False,
                         )
                     )
-                    self.db.execute(
-                        f"CREATE TEMP TABLE {hash_table_name} AS "
-                        f"SELECT id, _id, data, {foreign_extract_expr} as {join_key} "
-                        f"FROM {quote_table_name(from_collection)}"
-                    )
+                    # Try efficient SQL approach first
+                    try:
+                        self.db.execute(
+                            f"CREATE TEMP TABLE {hash_table_name} AS "
+                            f"SELECT id, _id, data, {foreign_extract_expr} as {join_key} "
+                            f"FROM {quote_table_name(from_collection)}"
+                        )
+                    except sqlite3.OperationalError as e:
+                        if (
+                            "malformed JSON" in str(e)
+                            or "json" in str(e).lower()
+                        ):
+                            # Fall back to Python processing to skip corrupted documents
+                            logger.warning(
+                                f"Hash table creation for '{from_collection}' encountered "
+                                f"malformed JSON, falling back to row-by-row processing"
+                            )
+                            self._create_lookup_hash_table_fallback(
+                                hash_table_name,
+                                from_collection,
+                                foreign_field,
+                                join_key,
+                            )
+                        else:
+                            raise
 
             self.db.execute(
                 f"CREATE INDEX {hash_table_name}_idx ON {hash_table_name}({join_key})"
@@ -1066,6 +1094,85 @@ class TemporaryTableAggregationProcessor:
             )
             self.db.execute(f"DROP TABLE IF EXISTS {hash_table_name}")
             raise
+
+    def _create_lookup_hash_table_fallback(
+        self,
+        hash_table_name: str,
+        from_collection: str,
+        foreign_field: str,
+        join_key: str,
+    ) -> None:
+        """
+        Fallback method to create hash table by reading documents one by one.
+
+        Used when the SQL approach fails due to malformed JSON in the data column.
+        This method skips corrupted documents gracefully.
+
+        Args:
+            hash_table_name: Name of the hash table to create
+            from_collection: Source collection name
+            foreign_field: Field to use as join key
+            join_key: Name of the join key column
+        """
+        from .json_helpers import neosqlite_json_dumps, neosqlite_json_loads
+
+        # Create the hash table structure
+        self.db.execute(
+            f"CREATE TEMP TABLE {hash_table_name} "
+            f"(id INTEGER PRIMARY KEY, _id TEXT, data TEXT, {join_key} TEXT)"
+        )
+
+        # Read documents one by one
+        cursor = self.db.execute(
+            f"SELECT id, _id, data FROM {quote_table_name(from_collection)}"
+        )
+
+        inserted_count = 0
+        skipped_count = 0
+
+        for row in cursor.fetchall():
+            doc_id, doc_underscore_id, doc_data = row
+
+            try:
+                # Parse the JSON data
+                doc = neosqlite_json_loads(doc_data)
+
+                # Extract the foreign field value
+                if foreign_field == "_id":
+                    key_val = (
+                        str(doc_underscore_id) if doc_underscore_id else None
+                    )
+                else:
+                    # Navigate nested field path
+                    key_val = self._extract_field_value(doc, foreign_field)
+                    key_val = str(key_val) if key_val is not None else None
+
+                # Insert into hash table
+                self.db.execute(
+                    f"INSERT INTO {hash_table_name} "
+                    f"(id, _id, data, {join_key}) VALUES (?, ?, ?, ?)",
+                    (
+                        doc_id,
+                        doc_underscore_id,
+                        neosqlite_json_dumps(doc),
+                        key_val,
+                    ),
+                )
+                inserted_count += 1
+
+            except (UnicodeDecodeError, ValueError, TypeError, KeyError) as e:
+                skipped_count += 1
+                logger.warning(
+                    f"Skipping corrupted document in $lookup hash table "
+                    f"(collection='{from_collection}', id={doc_id}): {e}"
+                )
+
+        if skipped_count > 0:
+            logger.warning(
+                f"$lookup hash table creation skipped {skipped_count} "
+                f"corrupted document(s) out of {inserted_count + skipped_count} "
+                f"total from '{from_collection}'"
+            )
 
     def _estimate_collection_size(self, collection_name: str) -> int:
         """
@@ -1504,11 +1611,27 @@ class TemporaryTableAggregationProcessor:
         order_clause = ""
         if sort_spec:
             order_clause = self.sql_translator.translate_sort(sort_spec)
-            # If sorting by _id but table doesn't have _id column, use id instead
-            if "_id" in sort_spec and not has_underscore_id and has_id:
-                order_clause = order_clause.replace(
-                    "ORDER BY _id", "ORDER BY id"
-                )
+            # If sorting by _id but table doesn't have _id column, fix references
+            if "_id" in sort_spec and not has_underscore_id:
+                if has_id:
+                    # Replace ORDER BY _id with ORDER BY id
+                    # Handle various forms: "_id ASC", "_id DESC", "._id", etc.
+                    order_clause = re.sub(r"\b_id\b", "id", order_clause)
+                else:
+                    # Neither id nor _id column exists - extract _id from JSON
+                    # Replace references to _id with json_extract(data, '$._id')
+                    json_func = self._json_function_prefix
+                    order_clause = order_clause.replace(
+                        "_id ASC", f"{json_func}_extract(data, '$._id') ASC"
+                    )
+                    order_clause = order_clause.replace(
+                        "_id DESC", f"{json_func}_extract(data, '$._id') DESC"
+                    )
+                    # Handle case without explicit direction
+                    order_clause = order_clause.replace(
+                        "ORDER BY _id",
+                        f"ORDER BY {json_func}_extract(data, '$._id')",
+                    )
 
         # Use SQLTranslator to build LIMIT/OFFSET clause
         limit_clause = self.sql_translator.translate_skip_limit(
@@ -1684,10 +1807,24 @@ class TemporaryTableAggregationProcessor:
 
         # When using JSONB, we need to convert final output to text JSON for Python
         jsonb = self._jsonb_supported
-        if select_cols:
-            query = f"SELECT {select_cols}, {json_data_column(jsonb, data_expr)} as data FROM {current_table}"
+
+        # If we have parameters, use a subquery to avoid duplicating
+        # placeholder expressions in json_data_column()'s CASE statement.
+        if params:
+            if select_cols:
+                inner_query = f"SELECT {select_cols}, {data_expr} as data FROM {current_table}"
+            else:
+                inner_query = f"SELECT {data_expr} as data FROM {current_table}"
+            outer_data = json_data_column(jsonb, "data")
+            if select_cols:
+                query = f"SELECT {select_cols}, {outer_data} as data FROM ({inner_query})"
+            else:
+                query = f"SELECT {outer_data} as data FROM ({inner_query})"
         else:
-            query = f"SELECT {json_data_column(jsonb, data_expr)} as data FROM {current_table}"
+            if select_cols:
+                query = f"SELECT {select_cols}, {json_data_column(jsonb, data_expr)} as data FROM {current_table}"
+            else:
+                query = f"SELECT {json_data_column(jsonb, data_expr)} as data FROM {current_table}"
 
         new_table = create_temp(
             add_fields_stage,
@@ -1979,6 +2116,12 @@ class TemporaryTableAggregationProcessor:
                             value, context=agg_ctx
                         )
                     )
+                    # If expr_sql is None, the operator can't be translated to SQL
+                    # — trigger Python fallback
+                    if expr_sql is None:
+                        raise NotImplementedError(
+                            f"Expression {value} not supported in SQL tier"
+                        )
                     all_params.extend(expr_params)
                     json_parts.append(f"'{field}'")
                     json_parts.append(expr_sql)
@@ -2014,9 +2157,26 @@ class TemporaryTableAggregationProcessor:
         select_cols = ["id"]
         if include_id:
             select_cols.append("_id")
-        select_cols.append(f"{json_data_column(jsonb, data_expr)} AS data")
 
-        sql = f"SELECT {', '.join(select_cols)} FROM {current_table}"
+        # If we have parameters, use a subquery to avoid duplicating
+        # placeholder expressions in json_data_column()'s CASE statement.
+        # json_data_column() may wrap data_expr in CASE WHEN typeof(...)='blob'...
+        # which would duplicate the expression (and its placeholders) multiple times.
+        if all_params:
+            # Subquery: compute the data column once, then apply json_data_column wrapper
+            inner_cols = select_cols.copy()
+            inner_cols.append(f"{data_expr} AS data")
+            inner_sql = f"SELECT {', '.join(inner_cols)} FROM {current_table}"
+            # Outer query: apply json_data_column wrapper to the pre-computed data
+            outer_data = json_data_column(jsonb, "data")
+            sql = (
+                f"SELECT id{', _id' if include_id else ''}, {outer_data} AS data "
+                f"FROM ({inner_sql})"
+            )
+        else:
+            select_cols.append(f"{json_data_column(jsonb, data_expr)} AS data")
+            sql = f"SELECT {', '.join(select_cols)} FROM {current_table}"
+
         project_stage = {"$project": project_spec}
         return create_temp(
             project_stage, sql, all_params if all_params else None
@@ -2084,7 +2244,7 @@ class TemporaryTableAggregationProcessor:
             # For complex expressions, fall back to Python evaluation
             # This handles cases like {$replaceRoot: {newRoot: {$mergeObjects: [...]}}}
             raise NotImplementedError(
-                f"$replaceRoot with expression {new_root_expr} requires Python fallback"
+                f"$replaceRoot with expression {new_root_expr} not supported in SQL tier"
             )
 
     def _process_group_stage(
@@ -2139,7 +2299,7 @@ class TemporaryTableAggregationProcessor:
                     )  # Get the key (operator name), not value
                     if op in ("$first", "$last"):
                         raise NotImplementedError(
-                            "$first/$last with preceding $sort requires Python fallback for correctness"
+                            "$first/$last with preceding $sort not supported in SQL tier for correctness"
                         )
 
         group_id_expr = group_spec.get("_id")
@@ -2181,16 +2341,16 @@ class TemporaryTableAggregationProcessor:
                     self._group_key_params = key_params
                 else:
                     raise NotImplementedError(
-                        f"$group with expression key {group_id_expr} requires Python fallback"
+                        f"$group with expression key {group_id_expr} not supported in SQL tier"
                     )
             except NotImplementedError:
                 raise
             except Exception as e:
                 logger.debug(
-                    f"$group with expression key {group_id_expr} requires Python fallback: {e}"
+                    f"$group with expression key {group_id_expr} not supported in SQL tier: {e}"
                 )
                 raise NotImplementedError(
-                    f"$group with expression key {group_id_expr} requires Python fallback: {e}"
+                    f"$group with expression key {group_id_expr} not supported in SQL tier: {e}"
                 )
 
         # Handle accumulators
@@ -2227,7 +2387,7 @@ class TemporaryTableAggregationProcessor:
             else:
                 # Complex expression - fall back to Python
                 raise NotImplementedError(
-                    f"$group accumulator {op} with expression {expr} requires Python fallback"
+                    f"$group accumulator {op} with expression {expr} not supported in SQL tier"
                 )
 
             # Map accumulator to SQL
@@ -2380,7 +2540,7 @@ class TemporaryTableAggregationProcessor:
                                     obj_args.append(f"'{key}', {val}")
                             else:
                                 raise NotImplementedError(
-                                    f"$addToSet with complex expression {expr} requires Python fallback"
+                                    f"$addToSet with complex expression {expr} not supported in SQL tier"
                                 )
 
                         select_parts.append(
@@ -2429,7 +2589,7 @@ class TemporaryTableAggregationProcessor:
                                     obj_args.append(f"'{key}', {val}")
                             else:
                                 raise NotImplementedError(
-                                    f"$push with complex expression {expr} requires Python fallback"
+                                    f"$push with complex expression {expr} not supported in SQL tier"
                                 )
 
                         select_parts.append(
@@ -2450,7 +2610,7 @@ class TemporaryTableAggregationProcessor:
                 case _:
                     # Unsupported accumulator
                     raise NotImplementedError(
-                        f"$group accumulator ${op} requires Python fallback"
+                        f"$group accumulator ${op} not supported in SQL tier"
                     )
 
         # Build GROUP BY clause
@@ -2478,7 +2638,7 @@ class TemporaryTableAggregationProcessor:
             # This is a limitation - for now, fall back to Python if params are needed
             # A future enhancement could use a different approach (e.g., CTEs)
             raise NotImplementedError(
-                "$group with parameterized expression key requires Python fallback"
+                "$group with parameterized expression key not supported in SQL tier"
             )
 
         new_table = create_temp(
@@ -3212,12 +3372,26 @@ class TemporaryTableAggregationProcessor:
         # IMPORTANT: _id is stored as a separate column, not in the data JSON
         cursor = self.db.execute(f"SELECT _id, data FROM {current_table}")
         input_docs = []
+        skipped_count = 0
         for row in cursor.fetchall():
             doc_id, doc_data = row
-            doc = neosqlite_json_loads(doc_data)
-            # Merge _id from the column into the document
-            doc["_id"] = doc_id
-            input_docs.append(doc)
+            try:
+                doc = neosqlite_json_loads(doc_data)
+                # Merge _id from the column into the document
+                doc["_id"] = doc_id
+                input_docs.append(doc)
+            except (UnicodeDecodeError, ValueError, TypeError) as e:
+                skipped_count += 1
+                logger.warning(
+                    f"Skipping corrupted document in $facet stage "
+                    f"(id={doc_id}): {e}"
+                )
+
+        if skipped_count > 0:
+            logger.warning(
+                f"$facet stage skipped {skipped_count} corrupted document(s) "
+                f"out of {skipped_count + len(input_docs)} total"
+            )
 
         # Process each sub-pipeline and store results
         facet_results = {}
@@ -3507,7 +3681,7 @@ class TemporaryTableAggregationProcessor:
             if sql_func is None:
                 # Fall back to Python if operator not supported in SQL
                 raise NotImplementedError(
-                    f"Window operator {op_name} not supported in SQL"
+                    f"Window operator {op_name} not supported in SQL tier"
                 )
 
             all_params.extend(sql_params)
@@ -3829,7 +4003,7 @@ class TemporaryTableAggregationProcessor:
         for fill_spec in output.values():
             if fill_spec.get("method") == "linear":
                 raise NotImplementedError(
-                    "$fill method 'linear' requires Python fallback"
+                    "$fill method 'linear' not supported in SQL tier"
                 )
 
         # 1. Build PARTITION BY and ORDER BY clauses

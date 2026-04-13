@@ -197,7 +197,7 @@ class UpdateOperationsMixin:
             for val in op.values()
         )
 
-        # Check for positional operators in field paths (requires Python fallback)
+        # Check for positional operators in field paths (not supported in SQL tier)
         has_positional_operators = False
         for op, value in update_spec.items():
             if isinstance(value, dict):

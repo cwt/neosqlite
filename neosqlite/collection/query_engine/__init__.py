@@ -228,6 +228,10 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                                 )
                     self._notify_tier_change("tier1", pipeline)
                     return results
+        except NotImplementedError as e:
+            # Operator not yet translated to SQL — log at WARNING for visibility
+            # during development/comparison runs, then fall back to next tier
+            logger.warning("SQL tier 1 aggregation fallback: %s", e)
         except Exception as e:
             # If SQL tier optimization fails, continue to next approach
             logger.debug("SQL tier 1 aggregation optimization failed: %s", e)
@@ -320,10 +324,10 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
             if result is not None:
                 self._notify_tier_change("tier2", pipeline)
                 return result
-        except NotImplementedError:
-            # If temporary table approach indicates it needs Python fallback,
-            # continue to fallback below
-            pass
+        except NotImplementedError as e:
+            # Operator not yet translated to SQL — log at WARNING for visibility
+            # during development/comparison runs, then fall back to Python tier
+            logger.warning("SQL tier 2 aggregation fallback: %s", e)
         except Exception as e:
             # If temporary table approach fails for other reasons,
             # continue to fallback below

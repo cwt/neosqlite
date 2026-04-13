@@ -33,19 +33,22 @@
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
-## Latest Release: v1.14.6
+## Latest Release: v1.14.7
 
-NeoSQLite v1.14.6 is a **bug fix release** that resolves a critical `$facet` aggregation stage failure in the Tier 2 (temporary table) processing path.
+NeoSQLite v1.14.7 is a **bug fix release** that resolves critical aggregation pipeline failures, SQL binding errors, and adds `$rand` SQL tier support.
 
-**Key Fix:** `$facet` stage now properly executes sub-pipelines using Tier 1/2/3 optimization instead of raising `NotImplementedError`. Each sub-pipeline runs independently on its best tier, then results are merged.
+**Key Fixes:** Aggregation pipelines now gracefully handle corrupted documents and complex expressions without crashing. `sqlite3.ProgrammingError` binding errors are eliminated for `$project`, `$addFields`, `$setEquals`, and `$split`. `$rand` now runs natively in SQL tier.
 
 ### Key Fixes
 
-- **$facet Tier 2 Support**: Fixed missing case handler causing `NotImplementedError` in temporary table processing.
-- **_id Preservation**: Sub-pipelines correctly preserve original document `_id` values.
-- **Empty Collection Handling**: Matches Tier 3 Python fallback behavior for empty collections.
+- **$facet UTF-8 Decode Error**: Fixed `UnicodeDecodeError` when `$facet` encounters non-UTF8 bytes in temporary table data column.
+- **$sort Missing Column Error**: Fixed `OperationalError: no such column: _id` when `$sort` processes intermediate tables without `_id` column.
+- **$lookup Malformed JSON Error**: Fixed `OperationalError: malformed JSON` when `$lookup` builds hash tables from collections with corrupted data.
+- **SQL Binding Errors Eliminated**: Fixed `sqlite3.ProgrammingError` in `$project`, `$addFields`, `$setEquals`, and `$split` stages.
+- **$rand SQL Tier Support**: `$rand` now runs natively using SQLite's `RANDOM()` function.
+- **Tier Fallback Logging**: Unsupported operators now log at WARNING level (visible in API comparison) instead of ERROR with traceback.
 
-For full details, see [documents/releases/v1.14.6.md](documents/releases/v1.14.6.md).
+For full details, see [documents/releases/v1.14.7.md](documents/releases/v1.14.7.md).
 
 ## Installation
 

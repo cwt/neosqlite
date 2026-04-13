@@ -1,5 +1,53 @@
 # CHANGELOG
 
+## 1.14.7
+
+### Bug Fix Release: Aggregation Pipeline Resilience, SQL Binding Errors, and $rand Support
+
+**Critical Aggregation Pipeline Fixes** — fully backward compatible with v1.14.6.
+
+#### High Severity Fixes
+
+- **$facet UTF-8 Decode Error**: Fixed `UnicodeDecodeError` when `$facet` encounters non-UTF8 bytes in temporary table data column. Wrapped `neosqlite_json_loads` in try/except — corrupted documents are skipped with warning log instead of crashing the pipeline.
+
+- **$sort Missing Column Error**: Fixed `OperationalError: no such column: _id` when `$sort` processes intermediate tables without `_id` column. Enhanced column detection with three-tier fallback: (1) rewrite ORDER BY to use `id` via regex if `_id` missing, (2) extract `_id` from JSON via `json_extract` when both columns absent.
+
+- **$lookup Malformed JSON Error**: Fixed `OperationalError: malformed JSON` when `$lookup` builds hash tables from collections with corrupted data. Three-layer defense: SQL fallback to row-by-row processing, `json_valid()` check in cursor JSONB handling, and corruption-aware document loading.
+
+- **SQL Binding Errors Eliminated**: Fixed `sqlite3.ProgrammingError: Incorrect number of bindings supplied` in `$project`, `$addFields`, `$setEquals`, and `$split`. Used subquery pattern to evaluate expressions once before applying `json_data_column()` wrapper, and moved placeholder-duplicating operators (`$setEquals`, `$split`) to Python fallback.
+
+#### Medium Severity Enhancements
+
+- **$rand SQL Tier Support**: `$rand` now runs natively using SQLite's `RANDOM()` function (`ABS(RANDOM()) / 2^63` → `[0, 1)`).
+
+- **Unified Document Loading**: Extracted `_resolve_stored_id()` helper to centralize `_id` resolution logic. Moved `bytes.decode("utf-8")` inside try/except in `_load_with_stored_id()`, returning minimal placeholder for corrupted documents.
+
+- **Tier Fallback Logging**: `NotImplementedError` for unsupported operators now logs at WARNING level (visible in API comparison runs) instead of ERROR with traceback.
+
+- **Consistent Error Messages**: All unsupported operator messages standardized to "not supported in SQL tier" format.
+
+- **_evaluate_sql_tier1 None Guard**: Fixed `None` being wrapped as `"(None)"` string instead of proper `None` propagation.
+
+#### Low Severity Improvements
+
+- **Test Coverage**: Added 20 comprehensive unit tests covering corruption resilience:
+  - 4 tests for $facet UTF-8 error (normal Binary, nested Binary, corrupted data, raw binary)
+  - 5 tests for $sort missing column (after $facet, skip/limit, missing _id, direct method, mismatch)
+  - 3 tests for $lookup malformed JSON (valid data, ObjectId joins, nested fields)
+  - 2 tests for combined errors ($facet+$sort+Binary, Binary in lookup target)
+  - 6 edge case tests (empty input, sort/skip/limit, self-join, direct malformed JSON, Binary fields, ObjectId hash table)
+
+#### Test Results
+- **Unit Tests**: 2,795 total (2,795 passed, 0 xfailed, 0 failed)
+- **API Comparison (NeoSQLite vs MongoDB)**: 386 tests (368 passed, 18 skipped, 0 failed) — 100.0%
+- **Code Coverage**: 81.6%+
+
+#### Compatibility
+- **Backward Compatible**: Zero breaking changes.
+- **PyMongo API Parity**: 100% for comparable features, with improved corruption resilience and SQL binding reliability.
+
+---
+
 ## 1.14.6
 
 ### Bug Fix Release: $facet Tier 2 Implementation and _id Preservation
