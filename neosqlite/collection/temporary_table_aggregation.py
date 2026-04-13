@@ -607,6 +607,12 @@ class TemporaryTableAggregationProcessor:
                         )
                         i += 1
 
+                    case "$facet":
+                        current_table = self._process_facet_stage(
+                            create_temp, current_table, stage["$facet"]
+                        )
+                        i += 1
+
                     case "$merge":
                         # $merge requires Python fallback for full functionality
                         raise NotImplementedError(
@@ -3175,6 +3181,120 @@ class TemporaryTableAggregationProcessor:
                     f"Failed to drop series table '{series_table}': {e}"
                 )
                 pass
+
+    def _process_facet_stage(self, create_temp, current_table, facet_spec):
+        """
+        Process $facet stage - processes multiple sub-pipelines and combines results.
+
+        MongoDB syntax:
+        {
+          $facet: {
+            <output_field1>: [<pipeline stages>],
+            <output_field2>: [<pipeline stages>],
+            ...
+          }
+        }
+
+        This method:
+        1. Extracts input documents from the current temp table
+        2. For each sub-pipeline, executes it using normal aggregation (Tier 1/2/3)
+        3. Combines all results into a single document with facet fields
+        4. Returns a temp table containing that combined result
+        """
+        import uuid
+
+        from neosqlite.collection.json_helpers import (
+            neosqlite_json_dumps,
+            neosqlite_json_loads,
+        )
+
+        # Extract input documents from current temp table
+        # IMPORTANT: _id is stored as a separate column, not in the data JSON
+        cursor = self.db.execute(f"SELECT _id, data FROM {current_table}")
+        input_docs = []
+        for row in cursor.fetchall():
+            doc_id, doc_data = row
+            doc = neosqlite_json_loads(doc_data)
+            # Merge _id from the column into the document
+            doc["_id"] = doc_id
+            input_docs.append(doc)
+
+        # Process each sub-pipeline and store results
+        facet_results = {}
+        result_tables = []
+
+        try:
+            for facet_name, sub_pipeline in facet_spec.items():
+                # If no input documents, sub-pipeline results should be empty
+                # (to match Tier 3 Python fallback behavior)
+                if not input_docs:
+                    facet_results[facet_name] = []
+                    continue
+
+                # Create a temporary in-memory collection for this sub-pipeline
+                temp_collection_name = f"_facet_sub_{uuid.uuid4().hex[:12]}"
+                from .. import Collection
+
+                temp_collection = Collection(
+                    db=self.collection.db,
+                    name=temp_collection_name,
+                    create=True,
+                    database=self.collection._database,
+                )
+
+                try:
+                    # Insert input documents into temp collection, preserving _id
+                    if input_docs:
+                        # Use insert_many which should preserve _id if present
+                        temp_collection.insert_many(input_docs)
+
+                    # Run sub-pipeline through normal aggregation (uses Tier 1/2/3)
+                    sub_results = list(temp_collection.aggregate(sub_pipeline))
+
+                    # Store results
+                    facet_results[facet_name] = sub_results
+
+                finally:
+                    # Clean up temp collection table
+                    try:
+                        self.db.execute(
+                            f"DROP TABLE IF EXISTS {temp_collection_name}"
+                        )
+                    except Exception as e:
+                        logger.debug(
+                            f"Failed to drop facet temp table '{temp_collection_name}': {e}"
+                        )
+                        pass
+
+            # Create a single result document with all facet fields
+            result_doc = facet_results
+
+            # Create a temp table with the combined result
+            result_table_name = f"_facet_combined_{uuid.uuid4().hex[:12]}"
+            self.db.execute(f"""
+                CREATE TEMP TABLE {result_table_name} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    _id INTEGER,
+                    data TEXT
+                )
+            """)
+
+            # Insert the result document
+            self.db.execute(
+                f"INSERT INTO {result_table_name} (_id, data) VALUES (?, ?)",
+                (0, neosqlite_json_dumps(result_doc)),
+            )
+
+            return result_table_name
+
+        except Exception as e:
+            # Clean up any result tables on error
+            for table_name in result_tables:
+                try:
+                    self.db.execute(f"DROP TABLE IF EXISTS {table_name}")
+                except Exception:
+                    pass
+            raise e
 
     def _process_union_with_stage(self, create_temp, current_table, union_spec):
         """

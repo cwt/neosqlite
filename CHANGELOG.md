@@ -1,5 +1,39 @@
 # CHANGELOG
 
+## 1.14.6
+
+### Bug Fix Release: $facet Tier 2 Implementation and _id Preservation
+
+**Critical Aggregation Pipeline Fix** — fully backward compatible with v1.14.5.
+
+#### High Severity Fixes
+
+- **$facet Missing Tier 2 Implementation**: Fixed `NotImplementedError` when `$facet` stage required temporary table processing. Added `_process_facet_stage()` method that implements split-execute-merge pattern: extracts input documents, runs each sub-pipeline on its best tier (Tier 1/2/3), then merges results into single document.
+
+#### Medium Severity Fixes
+
+- **_id Column Preservation**: Fixed document `_id` loss when extracting from temporary tables. Modified extraction to `SELECT _id, data` and merge `_id` into extracted documents, preserving document identity through temporary table operations.
+
+#### Low Severity Improvements
+
+- **Empty Collection Handling**: `$facet` with empty input now matches Tier 3 Python fallback behavior (returns empty lists for all facet fields).
+- **Test Coverage**: Added 3 comprehensive unit tests for Tier 2 `$facet` scenarios:
+  - `test_facet_tier2_with_unwind` - Tests `$facet` with `$unwind` and `$group`
+  - `test_facet_tier2_complex_pipeline` - Tests `$facet` with `$lookup` + `$unwind`
+  - `test_facet_tier2_with_match_and_group` - Tests `$facet` with filtering and aggregation
+- **Test Bug Fix**: Corrected `collection.collection.database` to `collection._database` in test setup.
+
+#### Test Results
+- **Unit Tests**: 2,775 total (2,775 passed, 0 xfailed, 0 failed)
+- **API Comparison (NeoSQLite vs MongoDB)**: 386 tests (368 passed, 18 skipped, 0 failed) — 100.0%
+- **Code Coverage**: 81.6%+
+
+#### Compatibility
+- **Backward Compatible**: Zero breaking changes.
+- **PyMongo API Parity**: 100% for comparable features, with improved `$facet` reliability.
+
+---
+
 ## 1.14.5
 
 ### Feature Enhancement Release: Native FTS5 BM25 Scoring and Nested Object Collection

@@ -33,19 +33,19 @@
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
-## Latest Release: v1.14.5
+## Latest Release: v1.14.6
 
-NeoSQLite v1.14.5 is a **feature enhancement release** that adds native FTS5 BM25 text relevance scoring to aggregation pipelines and enables `$push`/`$addToSet` with nested object expressions in `$group` stages.
+NeoSQLite v1.14.6 is a **bug fix release** that resolves a critical `$facet` aggregation stage failure in the Tier 2 (temporary table) processing path.
 
-**Key Features:** Native text search relevance scoring via `$meta: "textScore"`, and full support for collecting nested objects during `$group` operations.
+**Key Fix:** `$facet` stage now properly executes sub-pipelines using Tier 1/2/3 optimization instead of raising `NotImplementedError`. Each sub-pipeline runs independently on its best tier, then results are merged.
 
-### Key Features & Fixes
+### Key Fixes
 
-- **$meta: textScore**: Native FTS5 BM25 relevance scoring in aggregation pipelines.
-- **$push/$addToSet with Expressions**: Collect nested objects during `$group` with `{'$push': {'title': '$title', 'author': '$author'}}`.
-- **Kill Switch Support**: Both features respect force fallback for debugging.
+- **$facet Tier 2 Support**: Fixed missing case handler causing `NotImplementedError` in temporary table processing.
+- **_id Preservation**: Sub-pipelines correctly preserve original document `_id` values.
+- **Empty Collection Handling**: Matches Tier 3 Python fallback behavior for empty collections.
 
-For full details, see [documents/releases/v1.14.5.md](documents/releases/v1.14.5.md).
+For full details, see [documents/releases/v1.14.6.md](documents/releases/v1.14.6.md).
 
 ## Installation
 

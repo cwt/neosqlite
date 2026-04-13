@@ -237,3 +237,160 @@ class TestFacetTierOptimization:
         tier12_avg = tier12_result[0]["stats"][0]["avg"]
         tier3_avg = tier3_result[0]["stats"][0]["avg"]
         assert abs(tier12_avg - tier3_avg) < 1e-10
+
+    def test_facet_tier2_with_unwind(self, collection):
+        """Verify $facet with $unwind sub-pipeline forces Tier 2 (temp tables).
+
+        $unwind in sub-pipelines prevents Tier 1 SQL optimization,
+        so this tests Tier 2 temporary table handling.
+        """
+        # Clear fixture data and insert fresh data with arrays
+        collection.delete_many({})
+        collection.insert_many(
+            [
+                {"_id": 1, "item": "A", "sizes": ["S", "M", "L"]},
+                {"_id": 2, "item": "B", "sizes": ["M", "L"]},
+                {"_id": 3, "item": "C", "sizes": ["S"]},
+            ]
+        )
+
+        pipeline = [
+            {
+                "$facet": {
+                    "unwind_sizes": [
+                        {"$unwind": "$sizes"},
+                        {"$group": {"_id": "$sizes", "count": {"$sum": 1}}},
+                    ],
+                    "items": [
+                        {"$sort": {"item": 1}},
+                    ],
+                }
+            }
+        ]
+
+        set_force_fallback(False)
+        tier12_result = list(collection.aggregate(pipeline))
+
+        set_force_fallback(True)
+        tier3_result = list(collection.aggregate(pipeline))
+
+        # Compare unwind_sizes (normalize order)
+        tier12_unwind = self._normalize_result(tier12_result[0]["unwind_sizes"])
+        tier3_unwind = self._normalize_result(tier3_result[0]["unwind_sizes"])
+        assert tier12_unwind == tier3_unwind
+
+        # Compare items
+        assert tier12_result[0]["items"] == tier3_result[0]["items"]
+
+    def test_facet_tier2_complex_pipeline(self, collection):
+        """Verify $facet with complex sub-pipelines that force Tier 2.
+
+        This test uses a pipeline structure that Tier 1 SQL can't optimize
+        (e.g., $unwind with $lookup), forcing Tier 2 temp table processing.
+        """
+        # Create a second collection for lookup
+        other_coll = collection._database["test_facet_categories"]
+        other_coll.insert_many(
+            [
+                {"_id": "X", "name": "Category X", "multiplier": 2},
+                {"_id": "Y", "name": "Category Y", "multiplier": 3},
+                {"_id": "Z", "name": "Category Z", "multiplier": 4},
+            ]
+        )
+
+        # Clear and re-insert main collection data
+        collection.delete_many({})
+        collection.insert_many(
+            [
+                {"_id": 1, "value": 10, "category": "X"},
+                {"_id": 2, "value": 20, "category": "X"},
+                {"_id": 3, "value": 30, "category": "Y"},
+            ]
+        )
+
+        pipeline = [
+            {
+                "$facet": {
+                    "with_lookup": [
+                        {
+                            "$lookup": {
+                                "from": "test_facet_categories",
+                                "localField": "category",
+                                "foreignField": "_id",
+                                "as": "cat_info",
+                            }
+                        },
+                        {"$unwind": "$cat_info"},
+                        {
+                            "$project": {
+                                "value": 1,
+                                "multiplier": "$cat_info.multiplier",
+                            }
+                        },
+                    ],
+                    "simple_count": [
+                        {"$count": "total"},
+                    ],
+                }
+            }
+        ]
+
+        set_force_fallback(False)
+        tier12_result = list(collection.aggregate(pipeline))
+
+        set_force_fallback(True)
+        tier3_result = list(collection.aggregate(pipeline))
+
+        # Compare simple_count
+        assert (
+            tier12_result[0]["simple_count"] == tier3_result[0]["simple_count"]
+        )
+
+        # Compare with_lookup (normalize)
+        tier12_lookup = sorted(
+            tier12_result[0]["with_lookup"], key=lambda x: x.get("_id", 0)
+        )
+        tier3_lookup = sorted(
+            tier3_result[0]["with_lookup"], key=lambda x: x.get("_id", 0)
+        )
+        assert tier12_lookup == tier3_lookup
+
+    def test_facet_tier2_with_match_and_group(self, collection):
+        """Verify $facet with $match and $group in sub-pipelines at Tier 2."""
+        pipeline = [
+            {
+                "$facet": {
+                    "filtered_groups": [
+                        {"$match": {"a": {"$gte": 2}}},
+                        {
+                            "$group": {
+                                "_id": "$category",
+                                "total_value": {"$sum": "$value"},
+                                "avg_a": {"$avg": "$a"},
+                            }
+                        },
+                    ],
+                    "all_count": [
+                        {"$count": "total"},
+                    ],
+                }
+            }
+        ]
+
+        set_force_fallback(False)
+        tier12_result = list(collection.aggregate(pipeline))
+
+        set_force_fallback(True)
+        tier3_result = list(collection.aggregate(pipeline))
+
+        # Compare all_count
+        assert tier12_result[0]["all_count"] == tier3_result[0]["all_count"]
+
+        # Compare filtered_groups (normalize order)
+        tier12_groups = self._normalize_result(
+            tier12_result[0]["filtered_groups"]
+        )
+        tier3_groups = self._normalize_result(
+            tier3_result[0]["filtered_groups"]
+        )
+        assert tier12_groups == tier3_groups
