@@ -33,22 +33,23 @@
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
-## Latest Release: v1.14.9
+## Latest Release: v1.14.10
 
-NeoSQLite v1.14.9 is a **bug fix release** that resolves two critical aggregation pipeline bugs and improves `$expr` operator compatibility with MongoDB.
+NeoSQLite v1.14.10 is a **bug fix release** that resolves the `$in`/`$nin` operator bug for both `find()` and aggregation pipelines, adds proper MongoDB array semantics for comparison operators, and introduces dynamic `__version__` attribute.
 
 **Key Fixes:**
-1. **`$elemMatch` in `$match` stage** — Aggregation pipelines now correctly filter documents using `$elemMatch`, matching `find()` behavior.
-2. **`$in` on array fields in `$match` stage** — Aggregation pipelines now properly handle `$in` operator on array fields via Python fallback.
-3. **`$size` single operand in `$expr`** — The MongoDB-compatible syntax `{"$size": "$field"}` (without list wrapper) now works correctly in `$expr` contexts.
+1. **`$in`/`$nin` on array fields** — Both `find()` and aggregation pipelines now properly handle `$in`/`$nin` operators on array fields via Python fallback. Previously returned 0 results due to incorrect SQL translation.
+2. **Array value query support** — Operators `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte` now detect array query values and fall back to Python with correct MongoDB array semantics (ANY element matches).
+3. **MongoDB array semantics** — Python fallback operators now correctly handle array document fields following MongoDB semantics.
+4. **Dynamic `__version__`** — `neosqlite.__version__` now returns version from `pyproject.toml` without hardcoding.
 
 ### Key Fixes
 
-- **$elemMatch Aggregation Bug**: Fixed `$match` stage returning unfiltered results when using `$elemMatch`. Now properly falls back to Python filtering.
-- **$in Array Fields Aggregation Bug**: Fixed `$match` stage returning 0 results for `$in` on array fields. Now uses Python fallback with array-aware logic.
-- **$expr $size Single Operand**: Fixed `ValueError` when using `{"$size": "$field"}` syntax. Now normalizes operands to match MongoDB behavior.
+- **$in/$nin Array Fields Bug**: Fixed `$in`/`$nin` on array fields returning 0 results in both `find()` and aggregation pipelines. Now uses Python fallback with array-aware logic.
+- **Array Value Queries**: Queries with array values no longer crash with SQL binding errors; now fall back to Python.
+- **MongoDB Array Semantics**: Python fallback operators (`_eq`, `_ne`, `$gt`, `_lt`, `_gte`, `_lte`, `_mod`, `_nin`) now follow MongoDB array semantics.
 
-For full details, see [documents/releases/v1.14.9.md](documents/releases/v1.14.9.md).
+For full details, see [documents/releases/v1.14.10.md](documents/releases/v1.14.10.md).
 
 ## Installation
 

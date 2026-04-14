@@ -297,14 +297,28 @@ class SQLOperatorTranslator:
                     params = [value]
                 case "$in":
                     if isinstance(value, (list, tuple)):
-                        placeholders = ", ".join("datetime(?)" for _ in value)
-                        sql = f"{datetime_field_access} IN ({placeholders})"
-                        params = list(value)
+                        # For _id field, SQL IN works correctly (scalar comparison)
+                        # For other fields, fall back to Python for array-aware semantics
+                        if field_access == "_id":
+                            placeholders = ", ".join(
+                                "datetime(?)" for _ in value
+                            )
+                            sql = f"{datetime_field_access} IN ({placeholders})"
+                            params = list(value)
+                        else:
+                            return None, []
                 case "$nin":
                     if isinstance(value, (list, tuple)):
-                        placeholders = ", ".join("datetime(?)" for _ in value)
-                        sql = f"{datetime_field_access} NOT IN ({placeholders})"
-                        params = list(value)
+                        # For _id field, SQL NOT IN works correctly (scalar comparison)
+                        # For other fields, fall back to Python for array-aware semantics
+                        if field_access == "_id":
+                            placeholders = ", ".join(
+                                "datetime(?)" for _ in value
+                            )
+                            sql = f"{datetime_field_access} NOT IN ({placeholders})"
+                            params = list(value)
+                        else:
+                            return None, []
                 case _:
                     # For unsupported operators with datetime values, fall back to regular processing
                     is_datetime_comparison = False
@@ -313,59 +327,83 @@ class SQLOperatorTranslator:
             # Regular processing for non-datetime values
             match operator:
                 case "$eq":
+                    # Array values need Python for correct semantics
+                    if isinstance(value, (list, tuple)):
+                        return None, []
                     sql = f"{field_access} = ?"
                     params = [value]
                 case "$gt":
+                    # Array values need Python for correct semantics
+                    if isinstance(value, (list, tuple)):
+                        return None, []
                     sql = f"{field_access} > ?"
                     params = [value]
                 case "$lt":
+                    # Array values need Python for correct semantics
+                    if isinstance(value, (list, tuple)):
+                        return None, []
                     sql = f"{field_access} < ?"
                     params = [value]
                 case "$gte":
+                    # Array values need Python for correct semantics
+                    if isinstance(value, (list, tuple)):
+                        return None, []
                     sql = f"{field_access} >= ?"
                     params = [value]
                 case "$lte":
+                    # Array values need Python for correct semantics
+                    if isinstance(value, (list, tuple)):
+                        return None, []
                     sql = f"{field_access} <= ?"
                     params = [value]
                 case "$ne":
+                    # Array values need Python for correct semantics
+                    if isinstance(value, (list, tuple)):
+                        return None, []
                     sql = f"{field_access} != ?"
                     params = [value]
                 case "$in":
                     if isinstance(value, (list, tuple)):
-                        # For $in operator, check if all values are datetime to decide whether to use datetime() wrapper
-                        # Only consider it as datetime if there are values AND all values are datetime strings
-                        if len(value) > 0 and all(
-                            isinstance(v, str) and self._is_datetime_value(v)
-                            for v in value
-                        ):
-                            placeholders = ", ".join(
-                                "datetime(?)" for _ in value
-                            )
-                            sql = (
-                                f"datetime({field_access}) IN ({placeholders})"
-                            )
+                        # For _id field, SQL IN works correctly (scalar comparison)
+                        # For other fields, fall back to Python for array-aware semantics
+                        if field_access == "_id":
+                            # Check if all values are datetime for proper wrapper
+                            if len(value) > 0 and all(
+                                isinstance(v, str)
+                                and self._is_datetime_value(v)
+                                for v in value
+                            ):
+                                placeholders = ", ".join(
+                                    "datetime(?)" for _ in value
+                                )
+                                sql = f"datetime({field_access}) IN ({placeholders})"
+                            else:
+                                placeholders = ", ".join("?" for _ in value)
+                                sql = f"{field_access} IN ({placeholders})"
                             params = list(value)
                         else:
-                            placeholders = ", ".join("?" for _ in value)
-                            sql = f"{field_access} IN ({placeholders})"
-                            params = list(value)
+                            return None, []
                 case "$nin":
                     if isinstance(value, (list, tuple)):
-                        # For $nin operator, check if all values are datetime to decide whether to use datetime() wrapper
-                        # Only consider it as datetime if there are values AND all values are datetime strings
-                        if len(value) > 0 and all(
-                            isinstance(v, str) and self._is_datetime_value(v)
-                            for v in value
-                        ):
-                            placeholders = ", ".join(
-                                "datetime(?)" for _ in value
-                            )
-                            sql = f"datetime({field_access}) NOT IN ({placeholders})"
+                        # For _id field, SQL NOT IN works correctly (scalar comparison)
+                        # For other fields, fall back to Python for array-aware semantics
+                        if field_access == "_id":
+                            # Check if all values are datetime for proper wrapper
+                            if len(value) > 0 and all(
+                                isinstance(v, str)
+                                and self._is_datetime_value(v)
+                                for v in value
+                            ):
+                                placeholders = ", ".join(
+                                    "datetime(?)" for _ in value
+                                )
+                                sql = f"datetime({field_access}) NOT IN ({placeholders})"
+                            else:
+                                placeholders = ", ".join("?" for _ in value)
+                                sql = f"{field_access} NOT IN ({placeholders})"
                             params = list(value)
                         else:
-                            placeholders = ", ".join("?" for _ in value)
-                            sql = f"{field_access} NOT IN ({placeholders})"
-                            params = list(value)
+                            return None, []
                 case "$exists":
                     # Handle boolean value for $exists
                     if value is True:

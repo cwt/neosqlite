@@ -115,20 +115,20 @@ class TestBuildOperatorClause:
         assert params == ["Alice"]
 
     def test_in_operator(self, query_helper):
-        """Test $in operator clause generation."""
+        """Test $in operator falls back to Python for array-aware semantics."""
         clause, params = query_helper._build_operator_clause(
             "'$.name'", {"$in": ["Alice", "Bob"]}
         )
-        assert "extract(data, '$.name') IN (?, ?)" in clause
-        assert params == ["Alice", "Bob"]
+        assert clause is None
+        assert params == []
 
     def test_nin_operator(self, query_helper):
-        """Test $nin operator clause generation."""
+        """Test $nin operator falls back to Python for array-aware semantics."""
         clause, params = query_helper._build_operator_clause(
             "'$.name'", {"$nin": ["Alice", "Bob"]}
         )
-        assert "extract(data, '$.name') NOT IN (?, ?)" in clause
-        assert params == ["Alice", "Bob"]
+        assert clause is None
+        assert params == []
 
     def test_exists_true(self, query_helper):
         """Test $exists: true operator clause."""
@@ -526,13 +526,11 @@ class TestBuildSimpleWhereClause:
         assert params == [25]
 
     def test_with_in_operator(self, query_helper):
-        """Test with $in operator."""
+        """Test with $in operator triggers Python fallback."""
         result = query_helper._build_simple_where_clause(
             {"name": {"$in": ["Alice", "Bob"]}}
         )
-        assert result is not None
-        clause, params, tables = result
-        assert "IN" in clause
+        assert result is None
 
     def test_with_exists_operator(self, query_helper):
         """Test with $exists operator."""

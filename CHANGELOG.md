@@ -1,5 +1,41 @@
 # CHANGELOG
 
+## 1.14.10
+
+### Bug Fix Release: $in/$nin Array Fields Fix, Array Semantics, and Dynamic __version__
+
+**Critical Query Correctness Fixes** — fully backward compatible with v1.14.9.
+
+#### High Severity Fixes
+
+- **$in/$nin on Array Fields Returning 0 Results**: Fixed `$in` and `$nin` on array fields returning empty results in both `find()` and aggregation pipelines. SQL translation generates simple `IN`/`NOT IN` clauses that don't work for JSON arrays. Now falls back to Python filtering with array-aware `_in()` and `_nin()` logic.
+
+#### Medium Severity Fixes
+
+- **Array Value Query Support**: Queries with array values (e.g., `{"$eq": [1, 2, 3]}`) now detect and fall back to Python instead of crashing with SQL binding errors. Operators `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte` check `isinstance(value, (list, tuple))` and trigger Python fallback.
+
+- **MongoDB Array Semantics**: Python fallback operators (`_eq`, `_ne`, `_gt`, `_lt`, `_gte`, `_lte`, `_mod`, `_nin`) now correctly handle array document fields following MongoDB semantics:
+  - `$eq`: array-to-array exact equality, array-contains-scalar, scalar equality
+  - `$ne`: inverse of `$eq`
+  - `$gt`/`$lt`/`$gte`/`$lte`: "ANY element satisfies" for arrays
+  - `$mod`: "ANY element satisfies" for arrays
+  - `$nin`: "NONE of the elements are in the query list" for arrays
+
+#### Low Severity Improvements
+
+- **Dynamic __version__**: `neosqlite.__version__` now returns version from `pyproject.toml` using `importlib.metadata.version()` instead of hardcoding.
+
+#### Test Results
+- **Unit Tests**: 2,801 total (2,801 passed, 0 xfailed, 0 failed)
+- **API Comparison (NeoSQLite vs MongoDB)**: 387 tests (369 passed, 18 skipped, 0 failed) — 100.0%
+- **Code Coverage**: 81.5%+
+
+#### Compatibility
+- **Backward Compatible**: Zero breaking changes.
+- **PyMongo API Parity**: 100% for comparable features.
+
+---
+
 ## 1.14.9
 
 ### Bug Fix Release: Aggregation Pipeline Correctness ($elemMatch, $in) and $expr $size Fix

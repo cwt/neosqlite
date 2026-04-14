@@ -1,6 +1,13 @@
 from __future__ import annotations
 
 import importlib.util
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("neosqlite")
+except PackageNotFoundError:
+    # Package is not installed (e.g., development mode)
+    __version__ = "dev"
 
 from .binary import Binary
 from .bulk_operations import BulkOperationExecutor

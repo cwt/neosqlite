@@ -234,40 +234,52 @@ class TestSQLOperatorTranslator:
         assert result == ("field != ?", ["value"])
 
     def test_translate_operator_in(self):
-        """Test translation of $in operator."""
+        """Test translation of $in operator falls back to Python."""
         translator = SQLOperatorTranslator()
         result = translator.translate_operator("field", "$in", [1, 2, 3])
-        assert result == ("field IN (?, ?, ?)", [1, 2, 3])
+        assert result == (None, [])
 
     def test_translate_operator_in_empty_list(self):
         """Test translation of $in operator with empty list."""
         translator = SQLOperatorTranslator()
         result = translator.translate_operator("field", "$in", [])
-        assert result == ("field IN ()", [])
+        assert result == (None, [])
 
     def test_translate_operator_in_tuple(self):
         """Test translation of $in operator with tuple."""
         translator = SQLOperatorTranslator()
         result = translator.translate_operator("field", "$in", (1, 2, 3))
-        assert result == ("field IN (?, ?, ?)", [1, 2, 3])
+        assert result == (None, [])
+
+    def test_translate_operator_in_id_field(self):
+        """Test translation of $in operator on _id field generates SQL."""
+        translator = SQLOperatorTranslator()
+        result = translator.translate_operator("_id", "$in", [1, 2, 3])
+        assert result == ("_id IN (?, ?, ?)", [1, 2, 3])
 
     def test_translate_operator_nin(self):
-        """Test translation of $nin operator."""
+        """Test translation of $nin operator falls back to Python."""
         translator = SQLOperatorTranslator()
         result = translator.translate_operator("field", "$nin", [1, 2, 3])
-        assert result == ("field NOT IN (?, ?, ?)", [1, 2, 3])
+        assert result == (None, [])
 
     def test_translate_operator_nin_empty_list(self):
         """Test translation of $nin operator with empty list."""
         translator = SQLOperatorTranslator()
         result = translator.translate_operator("field", "$nin", [])
-        assert result == ("field NOT IN ()", [])
+        assert result == (None, [])
 
     def test_translate_operator_nin_tuple(self):
         """Test translation of $nin operator with tuple."""
         translator = SQLOperatorTranslator()
         result = translator.translate_operator("field", "$nin", (1, 2, 3))
-        assert result == ("field NOT IN (?, ?, ?)", [1, 2, 3])
+        assert result == (None, [])
+
+    def test_translate_operator_nin_id_field(self):
+        """Test translation of $nin operator on _id field generates SQL."""
+        translator = SQLOperatorTranslator()
+        result = translator.translate_operator("_id", "$nin", [1, 2, 3])
+        assert result == ("_id NOT IN (?, ?, ?)", [1, 2, 3])
 
     def test_translate_operator_exists_true(self):
         """Test translation of $exists operator with true value."""

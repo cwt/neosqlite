@@ -667,8 +667,10 @@ class QueryBuilderMixin:
 
             match op:
                 case "$eq":
+                    # Array values need Python for correct semantics
+                    if isinstance(op_val, (list, tuple)):
+                        return None, []
                     if is_datetime_indexed:
-                        # For datetime-indexed fields, wrap the value with datetime() for proper timezone normalization
                         clauses.append(
                             f"{self._json_function_prefix}_extract(data, {json_path}) = datetime(?)"
                         )
@@ -679,8 +681,10 @@ class QueryBuilderMixin:
                         )
                         params.append(op_val)
                 case "$gt":
+                    # Array values need Python for correct semantics
+                    if isinstance(op_val, (list, tuple)):
+                        return None, []
                     if is_datetime_indexed:
-                        # For datetime-indexed fields, wrap the value with datetime() for proper timezone normalization
                         clauses.append(
                             f"{self._json_function_prefix}_extract(data, {json_path}) > datetime(?)"
                         )
@@ -691,8 +695,10 @@ class QueryBuilderMixin:
                         )
                         params.append(op_val)
                 case "$lt":
+                    # Array values need Python for correct semantics
+                    if isinstance(op_val, (list, tuple)):
+                        return None, []
                     if is_datetime_indexed:
-                        # For datetime-indexed fields, wrap the value with datetime() for proper timezone normalization
                         clauses.append(
                             f"{self._json_function_prefix}_extract(data, {json_path}) < datetime(?)"
                         )
@@ -703,8 +709,9 @@ class QueryBuilderMixin:
                         )
                         params.append(op_val)
                 case "$gte":
+                    if isinstance(op_val, (list, tuple)):
+                        return None, []
                     if is_datetime_indexed:
-                        # For datetime-indexed fields, wrap the value with datetime() for proper timezone normalization
                         clauses.append(
                             f"{self._json_function_prefix}_extract(data, {json_path}) >= datetime(?)"
                         )
@@ -715,8 +722,9 @@ class QueryBuilderMixin:
                         )
                         params.append(op_val)
                 case "$lte":
+                    if isinstance(op_val, (list, tuple)):
+                        return None, []
                     if is_datetime_indexed:
-                        # For datetime-indexed fields, wrap the value with datetime() for proper timezone normalization
                         clauses.append(
                             f"{self._json_function_prefix}_extract(data, {json_path}) <= datetime(?)"
                         )
@@ -727,8 +735,10 @@ class QueryBuilderMixin:
                         )
                         params.append(op_val)
                 case "$ne":
+                    # Array values need Python for correct semantics
+                    if isinstance(op_val, (list, tuple)):
+                        return None, []
                     if is_datetime_indexed:
-                        # For datetime-indexed fields, wrap the value with datetime() for proper timezone normalization
                         clauses.append(
                             f"{self._json_function_prefix}_extract(data, {json_path}) != datetime(?)"
                         )
@@ -739,33 +749,13 @@ class QueryBuilderMixin:
                         )
                         params.append(op_val)
                 case "$in":
-                    if is_datetime_indexed:
-                        # For datetime-indexed fields, wrap the values with datetime() for proper timezone normalization
-                        placeholders = ", ".join("datetime(?)" for _ in op_val)
-                        clauses.append(
-                            f"{self._json_function_prefix}_extract(data, {json_path}) IN ({placeholders})"
-                        )
-                        params.extend(op_val)
-                    else:
-                        placeholders = ", ".join("?" for _ in op_val)
-                        clauses.append(
-                            f"{self._json_function_prefix}_extract(data, {json_path}) IN ({placeholders})"
-                        )
-                        params.extend(op_val)
+                    # $in on non-_id fields requires array-aware semantics
+                    # Fall back to Python which has correct array handling
+                    return None, []
                 case "$nin":
-                    if is_datetime_indexed:
-                        # For datetime-indexed fields, wrap the values with datetime() for proper timezone normalization
-                        placeholders = ", ".join("datetime(?)" for _ in op_val)
-                        clauses.append(
-                            f"{self._json_function_prefix}_extract(data, {json_path}) NOT IN ({placeholders})"
-                        )
-                        params.extend(op_val)
-                    else:
-                        placeholders = ", ".join("?" for _ in op_val)
-                        clauses.append(
-                            f"{self._json_function_prefix}_extract(data, {json_path}) NOT IN ({placeholders})"
-                        )
-                        params.extend(op_val)
+                    # $nin on non-_id fields requires array-aware semantics
+                    # Fall back to Python which has correct array handling
+                    return None, []
                 case "$exists":
                     # Handle boolean value for $exists
                     if op_val is True:

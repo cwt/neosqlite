@@ -108,6 +108,10 @@ def _eq(field: str, value: Any, document: dict[str, Any]) -> bool:
     """
     Compare a field value with a given value using the equals operator.
 
+    MongoDB semantics: {field: {$eq: value}} matches if:
+    - The field value equals the value (scalar-to-scalar or array-to-array)
+    - The field is an array containing the value (array contains element)
+
     Args:
         field (str): The document field to compare.
         value (Any): The value to compare against.
@@ -118,6 +122,13 @@ def _eq(field: str, value: Any, document: dict[str, Any]) -> bool:
     """
     try:
         doc_value = _get_nested_field(field, document)
+        # Both are arrays: exact array equality
+        if isinstance(doc_value, list) and isinstance(value, list):
+            return doc_value == value
+        # Doc is array, value is scalar: check if value is in array
+        if isinstance(doc_value, list):
+            return value in doc_value
+        # Scalar semantics: exact equality
         return doc_value == value
     except (TypeError, AttributeError) as e:
         logger.debug(f"Equality comparison failed for field '{field}': {e}")
@@ -127,6 +138,8 @@ def _eq(field: str, value: Any, document: dict[str, Any]) -> bool:
 def _gt(field: str, value: Any, document: dict[str, Any]) -> bool:
     """
     Compare a field value with a given value using the greater than operator.
+
+    MongoDB semantics: match if ANY array element satisfies the condition.
 
     Args:
         field (str): The document field to compare.
@@ -138,6 +151,11 @@ def _gt(field: str, value: Any, document: dict[str, Any]) -> bool:
     """
     try:
         doc_value = _get_nested_field(field, document)
+        # MongoDB array semantics: match if ANY element satisfies
+        if isinstance(doc_value, list):
+            return any(
+                isinstance(x, (int, float)) and x > value for x in doc_value
+            )
         return doc_value > value
     except TypeError as e:
         logger.debug(f"Operator evaluation failed due to TypeError: {e}")
@@ -147,6 +165,8 @@ def _gt(field: str, value: Any, document: dict[str, Any]) -> bool:
 def _lt(field: str, value: Any, document: dict[str, Any]) -> bool:
     """
     Compare a field value with a given value using the less than operator.
+
+    MongoDB semantics: match if ANY array element satisfies the condition.
 
     Args:
         field (str): The document field to compare.
@@ -158,6 +178,11 @@ def _lt(field: str, value: Any, document: dict[str, Any]) -> bool:
     """
     try:
         doc_value = _get_nested_field(field, document)
+        # MongoDB array semantics: match if ANY element satisfies
+        if isinstance(doc_value, list):
+            return any(
+                isinstance(x, (int, float)) and x < value for x in doc_value
+            )
         return doc_value < value
     except TypeError as e:
         logger.debug(f"Operator evaluation failed due to TypeError: {e}")
@@ -167,6 +192,8 @@ def _lt(field: str, value: Any, document: dict[str, Any]) -> bool:
 def _gte(field: str, value: Any, document: dict[str, Any]) -> bool:
     """
     Compare a field value with a given value using the greater than or equal to operator.
+
+    MongoDB semantics: match if ANY array element satisfies the condition.
 
     Args:
         field (str): The document field to compare.
@@ -178,6 +205,11 @@ def _gte(field: str, value: Any, document: dict[str, Any]) -> bool:
     """
     try:
         doc_value = _get_nested_field(field, document)
+        # MongoDB array semantics: match if ANY element satisfies
+        if isinstance(doc_value, list):
+            return any(
+                isinstance(x, (int, float)) and x >= value for x in doc_value
+            )
         return doc_value >= value
     except TypeError as e:
         logger.debug(f"Operator evaluation failed due to TypeError: {e}")
@@ -187,6 +219,8 @@ def _gte(field: str, value: Any, document: dict[str, Any]) -> bool:
 def _lte(field: str, value: Any, document: dict[str, Any]) -> bool:
     """
     Compare a field value with a given value using the less than or equal to operator.
+
+    MongoDB semantics: match if ANY array element satisfies the condition.
 
     Args:
         field (str): The document field to compare.
@@ -198,6 +232,11 @@ def _lte(field: str, value: Any, document: dict[str, Any]) -> bool:
     """
     try:
         doc_value = _get_nested_field(field, document)
+        # MongoDB array semantics: match if ANY element satisfies
+        if isinstance(doc_value, list):
+            return any(
+                isinstance(x, (int, float)) and x <= value for x in doc_value
+            )
         return doc_value <= value
     except TypeError as e:
         logger.debug(f"Operator evaluation failed due to TypeError: {e}")
@@ -262,6 +301,10 @@ def _ne(field: str, value: Any, document: dict[str, Any]) -> bool:
     """
     Compare a field value with a given value using the not equal operator.
 
+    MongoDB semantics: {field: {$ne: value}} matches if:
+    - The field value does not equal the value (scalar-to-scalar or array-to-array)
+    - The field is an array NOT containing the value (array does not contain element)
+
     Args:
         field (str): The document field to compare.
         value (Any): The value to compare against.
@@ -271,6 +314,10 @@ def _ne(field: str, value: Any, document: dict[str, Any]) -> bool:
         bool: True if the field value is not equal to the given value, False otherwise.
     """
     doc_value = _get_nested_field(field, document)
+    # MongoDB array semantics: check if value is NOT in array
+    if isinstance(doc_value, list):
+        return value not in doc_value
+    # Scalar semantics: not equal
     return doc_value != value
 
 
@@ -294,7 +341,13 @@ def _nin(field: str, value: list[Any], document: dict[str, Any]) -> bool:
         )
         raise MalformedQueryException("'$nin' must accept an iterable")
     doc_value = _get_nested_field(field, document)
-    return doc_value not in values
+
+    # If the field value is a list, check if none of the elements are in the provided list
+    if isinstance(doc_value, list):
+        return not any(item in value for item in doc_value)
+    else:
+        # If the field value is not a list, check if it's not in the provided list
+        return doc_value not in values
 
 
 def _mod(field: str, value: list[int], document: dict[str, Any]) -> bool:
@@ -319,10 +372,17 @@ def _mod(field: str, value: list[int], document: dict[str, Any]) -> bool:
             "'$mod' must accept an iterable: [divisor, remainder]"
         )
     try:
-        val = document.get(field)
-        if val is None:
+        doc_value = _get_nested_field(field, document)
+        # $mod only works on scalar values, not arrays
+        if isinstance(doc_value, list):
+            # MongoDB: $mod on arrays matches if ANY element satisfies
+            return any(
+                isinstance(x, (int, float)) and int(x) % divisor == remainder
+                for x in doc_value
+            )
+        if doc_value is None:
             return False
-        return int(val) % divisor == remainder
+        return int(doc_value) % divisor == remainder
     except (TypeError, ValueError) as e:
         logger.debug(f"Modulo comparison failed for field '{field}': {e}")
         return False
@@ -565,7 +625,7 @@ def _type(field: str, value: Any, document: dict[str, Any]) -> bool:
 
     Args:
         field (str): The document field to check.
-        value (Any): The type to check against (as a number or type object).
+        value (Any): The type to check against (as a number, type object, or string name).
         document (dict[str, Any]): The document to check the field value from.
 
     Returns:
@@ -573,7 +633,7 @@ def _type(field: str, value: Any, document: dict[str, Any]) -> bool:
     """
     doc_value = _get_nested_field(field, document)
 
-    # MongoDB type mapping
+    # MongoDB type mapping (numeric codes)
     type_mapping = {
         1: float,
         2: str,
@@ -586,10 +646,28 @@ def _type(field: str, value: Any, document: dict[str, Any]) -> bool:
         19: int,
     }
 
-    # If value is a number, get the corresponding type from mapping
-    # Otherwise, use the value directly as a type
+    # MongoDB string type aliases
+    string_type_mapping: dict[str, type | tuple[type, ...]] = {
+        "double": float,
+        "string": str,
+        "object": dict,
+        "array": list,
+        "bool": bool,
+        "null": type(None),
+        "int": int,
+        "long": int,
+        "decimal": int,
+        "number": (int, float),
+    }
+
+    # Determine expected type based on value format
+    expected_type: type | tuple[type, ...] | None
     if isinstance(value, int):
         expected_type = type_mapping.get(value)
+        if expected_type is None:
+            return False
+    elif isinstance(value, str):
+        expected_type = string_type_mapping.get(value.lower())
         if expected_type is None:
             return False
     else:
