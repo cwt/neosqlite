@@ -3756,3 +3756,115 @@ def test_push_expression_complex_pipeline():
             for post in group["posts"]:
                 assert "title" in post
                 assert "status" in post
+
+
+def test_match_with_regexMatch_stays_in_sql_tier():
+    """Test $match with $regexMatch stays in SQL tier (no Python fallback)."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn["test_regex_sql"]
+        collection.insert_many(
+            [
+                {"_id": 1, "name": "Alice", "email": "alice@example.com"},
+                {"_id": 2, "name": "Bob", "email": "bob@test.org"},
+                {"_id": 3, "name": "Charlie", "email": "charlie@example.com"},
+                {"_id": 4, "name": "David", "email": "invalid-email"},
+            ]
+        )
+
+        # Test $regexMatch in $expr - should stay in SQL tier
+        pipeline = [
+            {
+                "$match": {
+                    "$expr": {
+                        "$regexMatch": {
+                            "input": "$email",
+                            "regex": "@example\\.com$",
+                        }
+                    }
+                }
+            }
+        ]
+        results = list(collection.aggregate(pipeline))
+
+        assert len(results) == 2
+        names = {r["name"] for r in results}
+        assert names == {"Alice", "Charlie"}
+
+
+def test_match_with_regexMatch_with_options():
+    """Test $regexMatch with options stays in SQL tier."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn["test_regex_options"]
+        collection.insert_many(
+            [
+                {"_id": 1, "name": "Alice", "status": "active"},
+                {"_id": 2, "name": "Bob", "status": "Active"},
+                {"_id": 3, "name": "Charlie", "status": "ACTIVE"},
+                {"_id": 4, "name": "David", "status": "inactive"},
+            ]
+        )
+
+        # Test case-insensitive regex with options
+        pipeline = [
+            {
+                "$match": {
+                    "$expr": {
+                        "$regexMatch": {
+                            "input": "$status",
+                            "regex": "^active$",
+                            "options": "i",
+                        }
+                    }
+                }
+            }
+        ]
+        results = list(collection.aggregate(pipeline))
+
+        assert len(results) == 3
+        names = {r["name"] for r in results}
+        assert names == {"Alice", "Bob", "Charlie"}
+
+
+def test_regex_in_find_stays_in_sql_tier():
+    """Test $regex in find() stays in SQL tier."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn["test_regex_find"]
+        collection.insert_many(
+            [
+                {"_id": 1, "name": "Alice", "email": "alice@example.com"},
+                {"_id": 2, "name": "Bob", "email": "bob@test.org"},
+                {"_id": 3, "name": "Charlie", "email": "charlie@example.com"},
+            ]
+        )
+
+        # Test $regex operator - should stay in SQL tier
+        results = list(
+            collection.find({"email": {"$regex": "@example\\.com$"}})
+        )
+
+        assert len(results) == 2
+        names = {r["name"] for r in results}
+        assert names == {"Alice", "Charlie"}
+
+
+def test_regex_with_options_in_find():
+    """Test $regex with $options in find() stays in SQL tier."""
+    with neosqlite.Connection(":memory:") as conn:
+        collection = conn["test_regex_find_options"]
+        collection.insert_many(
+            [
+                {"_id": 1, "name": "Alice", "tag": "PYTHON"},
+                {"_id": 2, "name": "Bob", "tag": "python"},
+                {"_id": 3, "name": "Charlie", "tag": "Python"},
+                {"_id": 4, "name": "David", "tag": "JAVA"},
+            ]
+        )
+
+        # Test case-insensitive regex with $options
+        results = list(
+            collection.find({"tag": {"$regex": "^python$", "$options": "i"}})
+        )
+
+        assert len(results) == 3
+        names = {r["name"] for r in results}
+        assert names == {"Alice", "Bob", "Charlie"}

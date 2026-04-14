@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 from .._sqlite import sqlite3
-from ..sql_utils import quote_identifier, quote_table_name
+from ..sql_utils import quote_table_name
 from .expr_evaluator import (
     AggregationContext,
     ExprEvaluator,
@@ -952,6 +952,13 @@ class SQLTierAggregator:
     def _build_project_sql(self, spec, prev_stage, context, preserve_root):
         all_params = []
         select_parts = ["id"]
+
+        has_expressions_or_refs = any(
+            _is_expression(value)
+            or (isinstance(value, str) and value.startswith("$"))
+            for value in spec.values()
+        )
+
         include_id = spec.get("_id", 1) == 1
         if include_id:
             select_parts.append("_id")
@@ -961,25 +968,54 @@ class SQLTierAggregator:
         elif context.has_root:
             select_parts.append("root_data")
 
+        if has_expressions_or_refs:
+            include_id = "_id" in spec and spec["_id"] != 0
+        else:
+            include_id = spec.get("_id", 1) == 1
+
+        json_extract_func = f"{self._json_function_prefix}_extract"
+        json_obj_func = f"{self._json_function_prefix}_object"
+
+        json_parts = []
+
         for field, value in spec.items():
             if field == "_id":
                 continue
-            if _is_expression(value) or (
-                isinstance(value, str) and value.startswith("$")
-            ):
+
+            if _is_expression(value):
                 agg_ctx = AggregationContext()
                 agg_ctx.stage_index = context.stage_index
                 expr_sql, expr_params = self.evaluator.build_select_expression(
                     value, context=agg_ctx
                 )
+                if expr_sql is None:
+                    return None, []
                 all_params.extend(expr_params)
-                select_parts.append(f"{expr_sql} AS {quote_identifier(field)}")
+                json_parts.append(f"'{field}'")
+                json_parts.append(expr_sql)
                 context.add_computed_field(field, expr_sql)
+            elif isinstance(value, str) and value.startswith("$"):
+                source_field = value[1:]
+                if source_field == "_id":
+                    json_parts.append(f"'{field}'")
+                    json_parts.append("_id")
+                else:
+                    json_parts.append(f"'{field}'")
+                    json_parts.append(
+                        f"{json_extract_func}(data, '{parse_json_path(source_field)}')"
+                    )
             elif value == 1:
-                json_extract_func = f"{self._json_function_prefix}_extract"
-                select_parts.append(
-                    f"{json_extract_func}(data, '{parse_json_path(field)}') AS {quote_identifier(field)}"
+                json_parts.append(f"'{field}'")
+                json_parts.append(
+                    f"{json_extract_func}(data, '{parse_json_path(field)}')"
                 )
+
+        if json_parts:
+            data_expr = f"json({json_obj_func}({', '.join(json_parts)}))"
+        else:
+            data_expr = "json({})"
+
+        select_parts.append(f"{data_expr} AS data")
 
         return f"SELECT {', '.join(select_parts)} FROM {prev_stage}", all_params
 
@@ -1457,13 +1493,19 @@ class SQLTierAggregator:
     def _build_match_sql(self, spec, prev_stage, context):
         all_params = []
         where_clauses = []
+
+        def _wrap_for_where(expr_sql):
+            """Wrap expression to work in WHERE clause if it returns JSON booleans."""
+            if "json('true')" in expr_sql or 'json("true")' in expr_sql:
+                return f"({expr_sql} = json('true'))"
+            return expr_sql
+
         for field, value in spec.items():
             if field == "$expr":
-                expr_sql, expr_params = self.evaluator.evaluate_for_aggregation(
-                    value
-                )
+                expr_sql, expr_params = self.evaluator.evaluate(value)
                 if not expr_sql:
                     return None, []
+                expr_sql = _wrap_for_where(expr_sql)
                 where_clauses.append(expr_sql)
                 all_params.extend(expr_params)
             elif field.startswith("$") and _is_expression({field: value}):
@@ -1473,6 +1515,7 @@ class SQLTierAggregator:
                 )
                 if not expr_sql:
                     return None, []
+                expr_sql = _wrap_for_where(expr_sql)
                 where_clauses.append(expr_sql)
                 all_params.extend(expr_params)
             else:

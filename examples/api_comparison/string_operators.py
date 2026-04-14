@@ -587,8 +587,37 @@ def compare_string_operators():
             ),
             skip_reason="MongoDB not available" if not client else None,
         )
-        print(f"Neo {op}: {'OK' if not isinstance(neo_res, str) else 'FAIL'}")
+        neo_ok = not isinstance(neo_res, str)
+        mongo_ok = client and not isinstance(mongo_res, str)
+
+        def normalize_docs(docs):
+            """Normalize documents for comparison: sort keys, convert ObjectId to str."""
+            if not isinstance(docs, list):
+                docs = [docs]
+            result = []
+            for doc in docs:
+                if isinstance(doc, dict):
+                    normalized = {}
+                    for k, v in sorted(doc.items(), key=lambda x: str(x[0])):
+                        if hasattr(v, "__str__") and "ObjectId" in str(type(v)):
+                            normalized[k] = str(v)
+                        elif isinstance(v, dict):
+                            normalized[k] = normalize_docs([v])[0]
+                        elif isinstance(v, list):
+                            normalized[k] = normalize_docs(v)
+                        else:
+                            normalized[k] = v
+                    result.append(normalized)
+                else:
+                    result.append(doc)
+            return result
+
+        neo_normalized = normalize_docs(neo_res)
+        print(f"Neo {op}: {'OK' if neo_ok else 'FAIL'} {neo_normalized}")
         if client:
+            mongo_normalized = normalize_docs(mongo_res)
             print(
-                f"Mongo {op}: {'OK' if not isinstance(mongo_res, str) else 'FAIL'}"
+                f"Mongo {op}: {'OK' if mongo_ok else 'FAIL'} {mongo_normalized}"
             )
+            if neo_ok and mongo_ok and neo_normalized != mongo_normalized:
+                print("  >>> MISMATCH!")

@@ -385,17 +385,30 @@ class TestStringOperatorsSQL:
         assert sql is not None
         assert "instr" in sql
 
-    def test_regexMatch_fallback(self):
-        """Test $regexMatch always falls back to Python (no REGEXP in SQLite).
+    def test_regexMatch_sql_tier(self):
+        """Test $regexMatch now uses SQL tier with REGEXP UDF.
 
-        SQLite has no built-in REGEXP function unless a user-defined function
-        is registered. Since we can't guarantee it exists, $regexMatch always
-        returns None from SQL conversion, triggering Python fallback.
+        Since we register a REGEXP user-defined function in SQLite,
+        $regexMatch can now stay in the SQL tier instead of falling back
+        to Python. The SQL uses REGEXP operator with inline flags.
         """
         evaluator = ExprEvaluator()
         expr = {"$regexMatch": {"input": "$text", "regex": "^[A-Z]"}}
         sql, params = evaluator._evaluate_sql_tier1(expr)
-        assert sql is None  # Forces Python fallback
+        assert sql is not None  # Now stays in SQL tier
+        assert "REGEXP" in sql
+        assert params == ["^[A-Z]"]
+
+    def test_regexMatch_with_options(self):
+        """Test $regexMatch with options uses inline flags."""
+        evaluator = ExprEvaluator()
+        expr = {
+            "$regexMatch": {"input": "$text", "regex": "^hello", "options": "i"}
+        }
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "REGEXP" in sql
+        assert params == ["(?i)^hello"]
 
     def test_replaceAll_sql(self):
         """Test $replaceAll SQL conversion."""

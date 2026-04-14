@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+import re
 from contextlib import contextmanager
 from typing import Any, Iterator, Literal
 
@@ -103,6 +105,7 @@ class Connection:
         self.db.execute(f"PRAGMA auto_vacuum={self.auto_vacuum}")
         self.db.isolation_level = None
         self.db.execute(f"PRAGMA journal_mode={self.journal_mode}")
+        self._register_custom_functions()
 
         # Set synchronous mode to NORMAL for WAL mode by default if not specified by write concern
         # This provides a good balance of performance and safety in WAL mode
@@ -118,6 +121,57 @@ class Connection:
                 self.db.execute(f"SELECT load_extension('{path}')")
 
         self._check_and_migrate_autovacuum(*args, **kwargs)
+
+    def _register_custom_functions(self) -> None:
+        """Register custom SQLite functions, including regex operators."""
+
+        def _regexp(pattern, text):
+            if text is None:
+                return 0
+            return 1 if re.search(str(pattern), str(text)) is not None else 0
+
+        def _regexp_find(pattern, text):
+            if text is None or pattern is None:
+                return None
+            match = re.search(str(pattern), str(text))
+            if match:
+                return json.dumps(
+                    {
+                        "match": match.group(0),
+                        "idx": match.start(),
+                        "captures": list(match.groups()),
+                    }
+                )
+            return None
+
+        def _regexp_find_all(pattern, text):
+            if text is None or pattern is None:
+                return "[]"
+            matches = []
+            for match in re.finditer(str(pattern), str(text)):
+                matches.append(
+                    {
+                        "match": match.group(0),
+                        "idx": match.start(),
+                        "captures": list(match.groups()),
+                    }
+                )
+            return json.dumps(matches)
+
+        def _regexp_replace(text, pattern, replacement, count=0):
+            if text is None:
+                return None
+            if pattern is None or replacement is None:
+                return text
+            # count=0 in re.sub means replace all
+            return re.sub(
+                str(pattern), str(replacement), str(text), count=int(count)
+            )
+
+        self.db.create_function("REGEXP", 2, _regexp)
+        self.db.create_function("REGEXP_FIND", 2, _regexp_find)
+        self.db.create_function("REGEXP_FIND_ALL", 2, _regexp_find_all)
+        self.db.create_function("REGEXP_REPLACE", 4, _regexp_replace)
 
     def _check_and_migrate_autovacuum(self, *args: Any, **kwargs: Any) -> None:
         """
@@ -179,6 +233,7 @@ class Connection:
         self.db.execute(f"PRAGMA auto_vacuum={self.auto_vacuum}")
         self.db.isolation_level = None
         self.db.execute(f"PRAGMA journal_mode={self.journal_mode}")
+        self._register_custom_functions()
 
         # Set synchronous mode to NORMAL for WAL mode by default if not specified by write concern
         # This provides a good balance of performance and safety in WAL mode

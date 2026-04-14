@@ -118,6 +118,8 @@ class SqlConvertersMixin:
                 | "$rtrim"
                 | "$indexOfBytes"
                 | "$regexMatch"
+                | "$regexFind"
+                | "$regexFindAll"
                 | "$split"
                 | "$replaceAll"
                 | "$replaceOne"
@@ -598,6 +600,16 @@ class SqlConvertersMixin:
                     f"Set operator {operator} not supported in SQL tier"
                 )
 
+    def _build_pattern_with_options(self, regex: str, options: str) -> str:
+        """Build regex pattern with inline flags."""
+        if not options:
+            return regex
+        flag_str = ""
+        for char in options.lower():
+            if char in "imsx":
+                flag_str += char
+        return f"(?{flag_str}){regex}" if flag_str else regex
+
     def _convert_string_operator(
         self, operator: str, operands: list[Any]
     ) -> tuple[str, list[Any]]:
@@ -742,10 +754,49 @@ class SqlConvertersMixin:
                 sql = f"substr({str_sql}, {start_sql} + 1, {len_sql})"
                 return sql, str_params + start_params + len_params
             case "$regexMatch":
-                # SQLite has no built-in REGEXP function unless registered by user.
-                raise NotImplementedError(
-                    "Operator $regexMatch not supported in SQL tier"
+                # $regexMatch format: {input, regex, options?}
+                if not isinstance(operands, dict) or "input" not in operands:
+                    raise ValueError("$regexMatch requires 'input' and 'regex'")
+
+                input_sql, input_params = self._convert_operand_to_sql(
+                    operands["input"]
                 )
+                regex = operands.get("regex", "")
+                options = operands.get("options", "")
+                pattern = self._build_pattern_with_options(regex, options)
+
+                sql = f"CASE WHEN {input_sql} REGEXP ? THEN json('true') ELSE json('false') END"
+                return sql, input_params + [pattern]
+            case "$regexFind":
+                # $regexFind format: {input, regex, options?}
+                if not isinstance(operands, dict) or "input" not in operands:
+                    raise ValueError("$regexFind requires 'input' and 'regex'")
+
+                input_sql, input_params = self._convert_operand_to_sql(
+                    operands["input"]
+                )
+                regex = operands.get("regex", "")
+                options = operands.get("options", "")
+                pattern = self._build_pattern_with_options(regex, options)
+
+                sql = f"json(REGEXP_FIND(?, {input_sql}))"
+                return sql, input_params + [pattern]
+            case "$regexFindAll":
+                # $regexFindAll format: {input, regex, options?}
+                if not isinstance(operands, dict) or "input" not in operands:
+                    raise ValueError(
+                        "$regexFindAll requires 'input' and 'regex'"
+                    )
+
+                input_sql, input_params = self._convert_operand_to_sql(
+                    operands["input"]
+                )
+                regex = operands.get("regex", "")
+                options = operands.get("options", "")
+                pattern = self._build_pattern_with_options(regex, options)
+
+                sql = f"json(REGEXP_FIND_ALL(?, {input_sql}))"
+                return sql, input_params + [pattern]
             case "$split":
                 # Recursive CTE duplicates ? placeholders causing param mismatch.
                 raise NotImplementedError(
@@ -770,6 +821,22 @@ class SqlConvertersMixin:
                 string_sql, string_params = self._convert_operand_to_sql(
                     string_operand
                 )
+
+                # Check if it's a regex replace (MongoDB 4.4+)
+                # MongoDB doesn't natively support regex in $replaceAll (it uses $replaceOne/$replaceAll for strings)
+                # but we can support it if the find operand is a regex expression
+                if isinstance(find_operand, dict) and "$regex" in find_operand:
+                    regex = find_operand["$regex"]
+                    options = find_operand.get("$options", "")
+                    pattern = self._build_pattern_with_options(regex, options)
+
+                    replace_sql, replace_params = self._convert_operand_to_sql(
+                        replace_operand
+                    )
+                    # count=0 for replaceAll
+                    sql = f"REGEXP_REPLACE({string_sql}, ?, {replace_sql}, 0)"
+                    return sql, string_params + [pattern] + replace_params
+
                 find_sql, find_params = self._convert_operand_to_sql(
                     find_operand
                 )
@@ -796,6 +863,20 @@ class SqlConvertersMixin:
                 string_sql, string_params = self._convert_operand_to_sql(
                     string_operand
                 )
+
+                # Check for regex replace
+                if isinstance(find_operand, dict) and "$regex" in find_operand:
+                    regex = find_operand["$regex"]
+                    options = find_operand.get("$options", "")
+                    pattern = self._build_pattern_with_options(regex, options)
+
+                    replace_sql, replace_params = self._convert_operand_to_sql(
+                        replace_operand
+                    )
+                    # count=1 for replaceOne
+                    sql = f"REGEXP_REPLACE({string_sql}, ?, {replace_sql}, 1)"
+                    return sql, string_params + [pattern] + replace_params
+
                 find_sql, find_params = self._convert_operand_to_sql(
                     find_operand
                 )
@@ -1132,7 +1213,6 @@ class SqlConvertersMixin:
             case "$isoWeek":
                 fmt = "%V"
             case "$millisecond":
-
                 fmt = "%f"
             case _:
                 raise NotImplementedError(

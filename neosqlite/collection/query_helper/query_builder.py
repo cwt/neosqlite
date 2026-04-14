@@ -395,7 +395,11 @@ class QueryBuilderMixin:
 
             if isinstance(value, dict):
                 # Handle operators like $eq, $gt, etc.
-                clause, params = self._build_operator_clause(json_path, value)
+                # Extract $options for $regex if present
+                options = value.get("$options", "")
+                clause, params = self._build_operator_clause(
+                    json_path, value, regex_options=options
+                )
                 if clause is None:
                     return None
                 return f"{clause}", params
@@ -635,6 +639,7 @@ class QueryBuilderMixin:
         json_path: str,
         operators: dict[str, Any],
         is_datetime_indexed: bool = False,
+        regex_options: str = "",
     ) -> tuple[str | None, list[Any]]:
         """
         Builds a SQL clause for query operators.
@@ -872,6 +877,31 @@ class QueryBuilderMixin:
                         f"EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) WHERE {where_inner})"
                     )
                     params.extend(inner_params)
+                case "$regex":
+                    # Handle regex with optional options
+                    if not isinstance(op_val, str):
+                        return None, []
+
+                    # Build pattern with inline regex flags for SQLite REGEXP
+                    # Convert MongoDB options to Python inline regex flags
+                    if regex_options:
+                        flag_str = ""
+                        if "i" in regex_options.lower():
+                            flag_str += "i"
+                        if "m" in regex_options.lower():
+                            flag_str += "m"
+                        if "s" in regex_options.lower():
+                            flag_str += "s"
+                        if "x" in regex_options.lower():
+                            flag_str += "x"
+                        pattern = f"(?{flag_str}){op_val}"
+                    else:
+                        pattern = op_val
+
+                    clauses.append(
+                        f"{self._json_function_prefix}_extract(data, {json_path}) REGEXP ?"
+                    )
+                    params.append(pattern)
                 case _:
                     # Unsupported operator, fallback to Python
                     return None, []

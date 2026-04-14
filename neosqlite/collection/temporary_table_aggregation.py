@@ -2091,8 +2091,11 @@ class TemporaryTableAggregationProcessor:
         )
 
         if has_expressions_or_refs:
-            # Expression/field reference mode: _id only if explicitly listed
-            include_id = "_id" in project_spec and project_spec["_id"] != 0
+            # Expression/field reference mode: _id included by default unless explicitly excluded
+            # (matches MongoDB behavior)
+            include_id = (
+                "_id" not in project_spec or project_spec.get("_id") != 0
+            )
         else:
             # Simple inclusion mode: _id included by default
             include_id = include_id_default
@@ -3398,8 +3401,7 @@ class TemporaryTableAggregationProcessor:
             except (UnicodeDecodeError, ValueError, TypeError) as e:
                 skipped_count += 1
                 logger.warning(
-                    f"Skipping corrupted document in $facet stage "
-                    f"(id={doc_id}): {e}"
+                    f"Skipping corrupted document in $facet stage (id={doc_id}): {e}"
                 )
 
         if skipped_count > 0:

@@ -1217,6 +1217,9 @@ class AggregationMixin:
                         projected_doc[key] = doc[key]
                 # value == 0 is exclusion, skip it
 
+            if include_id and "_id" in doc:
+                projected_doc["_id"] = doc["_id"]
+
             return projected_doc
 
         # Inclusion mode (no expressions)
