@@ -835,7 +835,7 @@ def test_internal_update_sql_path():
     assert modified
     assert result["name"] == "Bob"
     assert result["age"] == 35
-    assert result["score"] == 110  # 100 * 1.1
+    assert result["score"] == pytest.approx(110.0)  # 100 * 1.1
 
 
 def test_internal_update_python_path():
