@@ -115,20 +115,22 @@ class TestBuildOperatorClause:
         assert params == ["Alice"]
 
     def test_in_operator(self, query_helper):
-        """Test $in operator falls back to Python for array-aware semantics."""
+        """Test $in operator uses CTE for array-aware semantics."""
         clause, params = query_helper._build_operator_clause(
             "'$.name'", {"$in": ["Alice", "Bob"]}
         )
-        assert clause is None
-        assert params == []
+        assert clause is not None
+        assert "EXISTS (SELECT 1 FROM json_each" in clause
+        assert params == ["Alice", "Bob"]
 
     def test_nin_operator(self, query_helper):
-        """Test $nin operator falls back to Python for array-aware semantics."""
+        """Test $nin operator uses CTE for array-aware semantics."""
         clause, params = query_helper._build_operator_clause(
             "'$.name'", {"$nin": ["Alice", "Bob"]}
         )
-        assert clause is None
-        assert params == []
+        assert clause is not None
+        assert "NOT EXISTS (SELECT 1 FROM json_each" in clause
+        assert params == ["Alice", "Bob"]
 
     def test_exists_true(self, query_helper):
         """Test $exists: true operator clause."""
@@ -526,11 +528,15 @@ class TestBuildSimpleWhereClause:
         assert params == [25]
 
     def test_with_in_operator(self, query_helper):
-        """Test with $in operator triggers Python fallback."""
+        """Test $in operator works with CTE in SQL."""
         result = query_helper._build_simple_where_clause(
             {"name": {"$in": ["Alice", "Bob"]}}
         )
-        assert result is None
+        assert result is not None
+        clause, params, tables = result
+        assert "EXISTS" in clause
+        assert "json_each" in clause
+        assert params == ["Alice", "Bob"]
 
     def test_with_exists_operator(self, query_helper):
         """Test with $exists operator."""

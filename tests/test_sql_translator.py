@@ -234,10 +234,13 @@ class TestSQLOperatorTranslator:
         assert result == ("field != ?", ["value"])
 
     def test_translate_operator_in(self):
-        """Test translation of $in operator falls back to Python."""
+        """Test translation of $in operator uses CTE for array fields."""
         translator = SQLOperatorTranslator()
         result = translator.translate_operator("field", "$in", [1, 2, 3])
-        assert result == (None, [])
+        assert result == (
+            "EXISTS (SELECT 1 FROM json_each(field) WHERE json_each.value IN (?, ?, ?))",
+            [1, 2, 3],
+        )
 
     def test_translate_operator_in_empty_list(self):
         """Test translation of $in operator with empty list."""
@@ -246,10 +249,13 @@ class TestSQLOperatorTranslator:
         assert result == (None, [])
 
     def test_translate_operator_in_tuple(self):
-        """Test translation of $in operator with tuple."""
+        """Test translation of $in operator with tuple uses CTE."""
         translator = SQLOperatorTranslator()
         result = translator.translate_operator("field", "$in", (1, 2, 3))
-        assert result == (None, [])
+        assert result == (
+            "EXISTS (SELECT 1 FROM json_each(field) WHERE json_each.value IN (?, ?, ?))",
+            [1, 2, 3],
+        )
 
     def test_translate_operator_in_id_field(self):
         """Test translation of $in operator on _id field generates SQL."""
@@ -258,10 +264,13 @@ class TestSQLOperatorTranslator:
         assert result == ("_id IN (?, ?, ?)", [1, 2, 3])
 
     def test_translate_operator_nin(self):
-        """Test translation of $nin operator falls back to Python."""
+        """Test translation of $nin operator uses CTE for array fields."""
         translator = SQLOperatorTranslator()
         result = translator.translate_operator("field", "$nin", [1, 2, 3])
-        assert result == (None, [])
+        assert result == (
+            "NOT EXISTS (SELECT 1 FROM json_each(field) WHERE json_each.value IN (?, ?, ?))",
+            [1, 2, 3],
+        )
 
     def test_translate_operator_nin_empty_list(self):
         """Test translation of $nin operator with empty list."""
@@ -270,10 +279,13 @@ class TestSQLOperatorTranslator:
         assert result == (None, [])
 
     def test_translate_operator_nin_tuple(self):
-        """Test translation of $nin operator with tuple."""
+        """Test translation of $nin operator with tuple uses CTE."""
         translator = SQLOperatorTranslator()
         result = translator.translate_operator("field", "$nin", (1, 2, 3))
-        assert result == (None, [])
+        assert result == (
+            "NOT EXISTS (SELECT 1 FROM json_each(field) WHERE json_each.value IN (?, ?, ?))",
+            [1, 2, 3],
+        )
 
     def test_translate_operator_nin_id_field(self):
         """Test translation of $nin operator on _id field generates SQL."""

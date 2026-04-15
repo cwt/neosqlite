@@ -754,13 +754,49 @@ class QueryBuilderMixin:
                         )
                         params.append(op_val)
                 case "$in":
-                    # $in on non-_id fields requires array-aware semantics
-                    # Fall back to Python which has correct array handling
-                    return None, []
+                    json_each_func = getattr(
+                        self, "_json_each_function", "json_each"
+                    )
+                    if isinstance(op_val, (list, tuple)):
+                        placeholders = ", ".join("?" for _ in op_val)
+                        if json_path == "value":
+                            clauses.append(f"value IN ({placeholders})")
+                        else:
+                            clauses.append(
+                                f"EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) WHERE json_each.value IN ({placeholders}))"
+                            )
+                        params.extend(op_val)
+                    else:
+                        return None, []
                 case "$nin":
-                    # $nin on non-_id fields requires array-aware semantics
-                    # Fall back to Python which has correct array handling
-                    return None, []
+                    json_each_func = getattr(
+                        self, "_json_each_function", "json_each"
+                    )
+                    if isinstance(op_val, (list, tuple)):
+                        placeholders = ", ".join("?" for _ in op_val)
+                        if json_path == "value":
+                            clauses.append(f"value NOT IN ({placeholders})")
+                        else:
+                            clauses.append(
+                                f"NOT EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) WHERE json_each.value IN ({placeholders}))"
+                            )
+                        params.extend(op_val)
+                    else:
+                        return None, []
+                case "$all":
+                    json_each_func = getattr(
+                        self, "_json_each_function", "json_each"
+                    )
+                    if isinstance(op_val, (list, tuple)):
+                        if len(op_val) == 0:
+                            return None, []
+                        for v in op_val:
+                            clauses.append(
+                                f"EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) WHERE json_each.value = ?)"
+                            )
+                            params.append(v)
+                    else:
+                        return None, []
                 case "$exists":
                     # Handle boolean value for $exists
                     if op_val is True:
@@ -831,6 +867,12 @@ class QueryBuilderMixin:
                             c = c.replace(
                                 f"{self._json_function_prefix}_extract(data, value)",
                                 "value",
+                            )
+                            # Also fix json_each(data, value) -> json_each(data, "value")
+                            # This handles $in and $nin inside $elemMatch
+                            c = c.replace(
+                                "json_each(data, value)",
+                                'json_each(data, "value")',
                             )
                             inner_clauses.append(c)
                             inner_params.extend(p)

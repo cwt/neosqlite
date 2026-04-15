@@ -297,8 +297,6 @@ class SQLOperatorTranslator:
                     params = [value]
                 case "$in":
                     if isinstance(value, (list, tuple)):
-                        # For _id field, SQL IN works correctly (scalar comparison)
-                        # For other fields, fall back to Python for array-aware semantics
                         if field_access == "_id":
                             placeholders = ", ".join(
                                 "datetime(?)" for _ in value
@@ -306,11 +304,14 @@ class SQLOperatorTranslator:
                             sql = f"{datetime_field_access} IN ({placeholders})"
                             params = list(value)
                         else:
-                            return None, []
+                            # For array fields with datetime values, use json_each
+                            placeholders = ", ".join(
+                                "datetime(?)" for _ in value
+                            )
+                            sql = f"EXISTS (SELECT 1 FROM json_each({datetime_field_access}) WHERE json_each.value IN ({placeholders}))"
+                            params = list(value)
                 case "$nin":
                     if isinstance(value, (list, tuple)):
-                        # For _id field, SQL NOT IN works correctly (scalar comparison)
-                        # For other fields, fall back to Python for array-aware semantics
                         if field_access == "_id":
                             placeholders = ", ".join(
                                 "datetime(?)" for _ in value
@@ -318,7 +319,12 @@ class SQLOperatorTranslator:
                             sql = f"{datetime_field_access} NOT IN ({placeholders})"
                             params = list(value)
                         else:
-                            return None, []
+                            # For array fields with datetime values, use json_each
+                            placeholders = ", ".join(
+                                "datetime(?)" for _ in value
+                            )
+                            sql = f"NOT EXISTS (SELECT 1 FROM json_each({datetime_field_access}) WHERE json_each.value IN ({placeholders}))"
+                            params = list(value)
                 case _:
                     # For unsupported operators with datetime values, fall back to regular processing
                     is_datetime_comparison = False
@@ -364,10 +370,10 @@ class SQLOperatorTranslator:
                     params = [value]
                 case "$in":
                     if isinstance(value, (list, tuple)):
-                        # For _id field, SQL IN works correctly (scalar comparison)
-                        # For other fields, fall back to Python for array-aware semantics
+                        if len(value) == 0:
+                            return None, []
                         if field_access == "_id":
-                            # Check if all values are datetime for proper wrapper
+                            # For _id field, SQL IN works correctly (scalar comparison)
                             if len(value) > 0 and all(
                                 isinstance(v, str)
                                 and self._is_datetime_value(v)
@@ -382,13 +388,27 @@ class SQLOperatorTranslator:
                                 sql = f"{field_access} IN ({placeholders})"
                             params = list(value)
                         else:
-                            return None, []
+                            # For array fields, use json_each to expand the array
+                            # and check if any element matches the query values
+                            if len(value) > 0 and all(
+                                isinstance(v, str)
+                                and self._is_datetime_value(v)
+                                for v in value
+                            ):
+                                placeholders = ", ".join(
+                                    "datetime(?)" for _ in value
+                                )
+                                sql = f"EXISTS (SELECT 1 FROM json_each({field_access}) WHERE json_each.value IN ({placeholders}))"
+                            else:
+                                placeholders = ", ".join("?" for _ in value)
+                                sql = f"EXISTS (SELECT 1 FROM json_each({field_access}) WHERE json_each.value IN ({placeholders}))"
+                            params = list(value)
                 case "$nin":
                     if isinstance(value, (list, tuple)):
-                        # For _id field, SQL NOT IN works correctly (scalar comparison)
-                        # For other fields, fall back to Python for array-aware semantics
+                        if len(value) == 0:
+                            return None, []
                         if field_access == "_id":
-                            # Check if all values are datetime for proper wrapper
+                            # For _id field, SQL NOT IN works correctly (scalar comparison)
                             if len(value) > 0 and all(
                                 isinstance(v, str)
                                 and self._is_datetime_value(v)
@@ -403,7 +423,32 @@ class SQLOperatorTranslator:
                                 sql = f"{field_access} NOT IN ({placeholders})"
                             params = list(value)
                         else:
+                            # For array fields, use json_each to expand the array
+                            # and check that NO element matches the query values
+                            if len(value) > 0 and all(
+                                isinstance(v, str)
+                                and self._is_datetime_value(v)
+                                for v in value
+                            ):
+                                placeholders = ", ".join(
+                                    "datetime(?)" for _ in value
+                                )
+                                sql = f"NOT EXISTS (SELECT 1 FROM json_each({field_access}) WHERE json_each.value IN ({placeholders}))"
+                            else:
+                                placeholders = ", ".join("?" for _ in value)
+                                sql = f"NOT EXISTS (SELECT 1 FROM json_each({field_access}) WHERE json_each.value IN ({placeholders}))"
+                            params = list(value)
+                case "$all":
+                    if isinstance(value, (list, tuple)):
+                        if len(value) == 0:
                             return None, []
+                        exists_clauses = []
+                        for v in value:
+                            exists_clauses.append(
+                                f"EXISTS (SELECT 1 FROM json_each({field_access}) WHERE json_each.value = ?)"
+                            )
+                            params.append(v)
+                        sql = " AND ".join(exists_clauses)
                 case "$exists":
                     # Handle boolean value for $exists
                     if value is True:

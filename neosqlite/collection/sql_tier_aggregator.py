@@ -22,7 +22,9 @@ from .expr_evaluator import (
 )
 from .json_path_utils import parse_json_path
 from .jsonb_support import (
+    _get_json_each_function,
     supports_jsonb,
+    supports_jsonb_each,
 )
 from .query_helper.translation_cache import TranslationCache
 from .query_helper.utils import _get_json_function
@@ -139,6 +141,14 @@ class SQLTierAggregator:
         self.collection = collection
         self.evaluator = expr_evaluator or ExprEvaluator(
             data_column="data", db_connection=collection.db
+        )
+        self._jsonb_supported = supports_jsonb(collection.db)
+        self._jsonb_each_supported = supports_jsonb_each(collection.db)
+        self._json_function_prefix = (
+            "jsonb" if self._jsonb_supported else "json"
+        )
+        self._json_each_function = _get_json_each_function(
+            self._jsonb_supported, self._jsonb_each_supported
         )
         self._jsonb_supported = supports_jsonb(collection.db)
         self._json_function_prefix = (
@@ -1548,6 +1558,35 @@ class SQLTierAggregator:
                             case "$ne":
                                 where_clauses.append(f"{field_sql} != ?")
                                 all_params.append(arg)
+                            case "$in":
+                                if isinstance(arg, (list, tuple)):
+                                    placeholders = ", ".join("?" for _ in arg)
+                                    where_clauses.append(
+                                        f"EXISTS (SELECT 1 FROM {self._json_each_function}({field_sql}) WHERE json_each.value IN ({placeholders}))"
+                                    )
+                                    all_params.extend(arg)
+                                else:
+                                    return None, []
+                            case "$nin":
+                                if isinstance(arg, (list, tuple)):
+                                    placeholders = ", ".join("?" for _ in arg)
+                                    where_clauses.append(
+                                        f"NOT EXISTS (SELECT 1 FROM {self._json_each_function}({field_sql}) WHERE json_each.value IN ({placeholders}))"
+                                    )
+                                    all_params.extend(arg)
+                                else:
+                                    return None, []
+                            case "$all":
+                                if isinstance(arg, (list, tuple)):
+                                    if len(arg) == 0:
+                                        return None, []
+                                    for v in arg:
+                                        where_clauses.append(
+                                            f"EXISTS (SELECT 1 FROM {self._json_each_function}({field_sql}) WHERE json_each.value = ?)"
+                                        )
+                                        all_params.append(v)
+                                else:
+                                    return None, []
                             case _:
                                 return None, []
                 else:
