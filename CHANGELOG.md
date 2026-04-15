@@ -1,5 +1,39 @@
 # CHANGELOG
 
+## 1.14.11
+
+### Performance & Correctness Release: CTE Array Operators, Native Regex, Boolean Type Fix
+
+**Performance Improvements and Correctness Fixes** — fully backward compatible with v1.14.10.
+
+#### High Severity Improvements
+
+- **CTE-based Array Operators**: `$in`, `$nin`, `$all` now use efficient SQLite CTE patterns with `jsonb_each` for 10-100x speedup when SQLite 3.51.0+ is available. Replaces Python fallback with native SQL:
+  - `$in`: `EXISTS (SELECT 1 FROM json_each WHERE value IN (...))`
+  - `$nin`: `NOT EXISTS (SELECT 1 FROM json_each WHERE value IN (...))`
+  - `$all`: `AND EXISTS (SELECT 1 FROM json_each WHERE value = ?)` for each value
+
+- **Native Regex Operators**: Implemented `$regexMatch`, `$regexFind`, `$regexFindAll`, and `$regex` in SQL tier using custom SQLite functions (REGEXP, REGEXP_FIND, REGEXP_FIND_ALL, REGEXP_REPLACE). Supports MongoDB options: `i`, `m`, `s`, `x`.
+
+#### Medium Severity Fixes
+
+- **Boolean Type Consistency**: Fixed `$isNumber`, `$isArray`, `$toBool` to return JSON booleans (`json('true')`/`json('false')`) instead of integers (1/0). This fixes `$expr` queries using these operators in WHERE clauses.
+
+- **$elemMatch Path Alias Fix**: Fixed `$elemMatch` with nested `$in/$nin` using wrong path alias (`json_each(data, value)` instead of `json_each(data, "value")`).
+
+- **_id Projection Default**: Fixed `_id` field exclusion in inclusion projections. `_id` is now properly included by default matching MongoDB behavior.
+
+#### Test Results
+- **Unit Tests**: 2,806 total (2,806 passed, 0 xfailed, 0 failed)
+- **API Comparison (NeoSQLite vs MongoDB)**: 387 tests (369 passed, 18 skipped, 0 failed) — 100.0%
+- **Code Coverage**: 81.1%
+
+#### Compatibility
+- **Backward Compatible**: Zero breaking changes.
+- **PyMongo API Parity**: 100% for comparable features.
+
+---
+
 ## 1.14.10
 
 ### Bug Fix Release: $in/$nin Array Fields Fix, Array Semantics, and Dynamic __version__

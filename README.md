@@ -33,23 +33,23 @@
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
-## Latest Release: v1.14.10
+## Latest Release: v1.14.11
 
-NeoSQLite v1.14.10 is a **bug fix release** that resolves the `$in`/`$nin` operator bug for both `find()` and aggregation pipelines, adds proper MongoDB array semantics for comparison operators, and introduces dynamic `__version__` attribute.
+NeoSQLite v1.14.11 is a **performance and correctness release** that adds efficient CTE-based SQL support for array operators (`$in`, `$nin`, `$all`), implements native regex operators, and ensures boolean type consistency with MongoDB.
 
-**Key Fixes:**
-1. **`$in`/`$nin` on array fields** — Both `find()` and aggregation pipelines now properly handle `$in`/`$nin` operators on array fields via Python fallback. Previously returned 0 results due to incorrect SQL translation.
-2. **Array value query support** — Operators `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte` now detect array query values and fall back to Python with correct MongoDB array semantics (ANY element matches).
-3. **MongoDB array semantics** — Python fallback operators now correctly handle array document fields following MongoDB semantics.
-4. **Dynamic `__version__`** — `neosqlite.__version__` now returns version from `pyproject.toml` without hardcoding.
+**Key Improvements:**
+1. **CTE-based Array Operators** — `$in`, `$nin`, `$all` now use efficient SQLite CTE patterns with `jsonb_each` for 10-100x speedup when SQLite 3.51.0+ is available.
+2. **Native Regex Operators** — `$regexMatch`, `$regexFind`, `$regexFindAll`, and `$regex` with options (`i`, `m`, `s`, `x`) now work natively in the SQL tier.
+3. **Boolean Type Consistency** — `$isNumber`, `$isArray`, `$toBool` now return proper JSON booleans (`json('true')`/`json('false')`) matching MongoDB's native boolean type.
+4. **Fixed `$elemMatch` with nested `$in/$nin`** — Correctly handles the `"value"` path alias.
 
-### Key Fixes
+### Key Improvements
 
-- **$in/$nin Array Fields Bug**: Fixed `$in`/`$nin` on array fields returning 0 results in both `find()` and aggregation pipelines. Now uses Python fallback with array-aware logic.
-- **Array Value Queries**: Queries with array values no longer crash with SQL binding errors; now fall back to Python.
-- **MongoDB Array Semantics**: Python fallback operators (`_eq`, `_ne`, `$gt`, `_lt`, `_gte`, `_lte`, `_mod`, `_nin`) now follow MongoDB array semantics.
+- **CTE Array Operators**: Array operators now execute 10-100x faster with native SQL CTE patterns instead of Python fallback.
+- **Native Regex Support**: `$regexMatch`, `$regexFind`, `$regexFindAll` implemented natively in SQL tier with full options support.
+- **Boolean Type Correctness**: `$isNumber`, `$isArray`, `$toBool` return JSON booleans for proper `$expr` evaluation.
 
-For full details, see [documents/releases/v1.14.10.md](documents/releases/v1.14.10.md).
+For full details, see [documents/releases/v1.14.11.md](documents/releases/v1.14.11.md).
 
 ## Installation
 
