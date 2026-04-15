@@ -12,7 +12,9 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 from .cursor import DESCENDING
-from .jsonb_support import should_use_json_functions
+from .jsonb_support import (
+    should_use_json_functions,
+)
 
 
 def _empty_result() -> tuple[str, list[Any]]:
@@ -57,9 +59,7 @@ def _convert_to_bitmask(value: Any) -> int | None:
                     logger.debug(f"{e=}")
                     return None
             return bitmask
-        case _ if hasattr(value, "__iter__") and not isinstance(
-            value, (str, bytes)
-        ):
+        case _ if hasattr(value, "__iter__") and not isinstance(value, (str, bytes)):
             bitmask = 0
             try:
                 for bit_pos in value:
@@ -214,15 +214,22 @@ class SQLOperatorTranslator:
     field access expressions for different contexts.
     """
 
-    def __init__(self, field_accessor: SQLFieldAccessor | None = None):
+    def __init__(
+        self,
+        field_accessor: SQLFieldAccessor | None = None,
+        json_each_function: str | None = None,
+    ):
         """
         Initialize the SQLOperatorTranslator with an optional field accessor.
 
         Args:
             field_accessor: An SQLFieldAccessor instance to use for field access expressions.
                             If None, a default SQLFieldAccessor will be created.
+            json_each_function: The json_each function to use ('jsonb_each' or 'json_each').
+                               If None, defaults to 'json_each'.
         """
         self.field_accessor = field_accessor or SQLFieldAccessor()
+        self._json_each_function = json_each_function or "json_each"
 
     def translate_operator(
         self, field_access: str, operator: str, value: Any
@@ -267,9 +274,7 @@ class SQLOperatorTranslator:
             operator in ("$in", "$nin")
             and isinstance(value, (list, tuple))
             and len(value) > 0  # Only if there are elements to check
-            and all(
-                isinstance(v, str) and self._is_datetime_value(v) for v in value
-            )
+            and all(isinstance(v, str) and self._is_datetime_value(v) for v in value)
         )
 
         # If it's a datetime comparison, wrap both field and value with datetime() to match indexing strategy
@@ -298,32 +303,24 @@ class SQLOperatorTranslator:
                 case "$in":
                     if isinstance(value, (list, tuple)):
                         if field_access == "_id":
-                            placeholders = ", ".join(
-                                "datetime(?)" for _ in value
-                            )
+                            placeholders = ", ".join("datetime(?)" for _ in value)
                             sql = f"{datetime_field_access} IN ({placeholders})"
                             params = list(value)
                         else:
                             # For array fields with datetime values, use json_each
-                            placeholders = ", ".join(
-                                "datetime(?)" for _ in value
-                            )
-                            sql = f"EXISTS (SELECT 1 FROM json_each({datetime_field_access}) WHERE json_each.value IN ({placeholders}))"
+                            placeholders = ", ".join("datetime(?)" for _ in value)
+                            sql = f"EXISTS (SELECT 1 FROM {self._json_each_function}({datetime_field_access}) WHERE json_each.value IN ({placeholders}))"
                             params = list(value)
                 case "$nin":
                     if isinstance(value, (list, tuple)):
                         if field_access == "_id":
-                            placeholders = ", ".join(
-                                "datetime(?)" for _ in value
-                            )
+                            placeholders = ", ".join("datetime(?)" for _ in value)
                             sql = f"{datetime_field_access} NOT IN ({placeholders})"
                             params = list(value)
                         else:
                             # For array fields with datetime values, use json_each
-                            placeholders = ", ".join(
-                                "datetime(?)" for _ in value
-                            )
-                            sql = f"NOT EXISTS (SELECT 1 FROM json_each({datetime_field_access}) WHERE json_each.value IN ({placeholders}))"
+                            placeholders = ", ".join("datetime(?)" for _ in value)
+                            sql = f"NOT EXISTS (SELECT 1 FROM {self._json_each_function}({datetime_field_access}) WHERE json_each.value IN ({placeholders}))"
                             params = list(value)
                 case _:
                     # For unsupported operators with datetime values, fall back to regular processing
@@ -375,13 +372,10 @@ class SQLOperatorTranslator:
                         if field_access == "_id":
                             # For _id field, SQL IN works correctly (scalar comparison)
                             if len(value) > 0 and all(
-                                isinstance(v, str)
-                                and self._is_datetime_value(v)
+                                isinstance(v, str) and self._is_datetime_value(v)
                                 for v in value
                             ):
-                                placeholders = ", ".join(
-                                    "datetime(?)" for _ in value
-                                )
+                                placeholders = ", ".join("datetime(?)" for _ in value)
                                 sql = f"datetime({field_access}) IN ({placeholders})"
                             else:
                                 placeholders = ", ".join("?" for _ in value)
@@ -391,17 +385,14 @@ class SQLOperatorTranslator:
                             # For array fields, use json_each to expand the array
                             # and check if any element matches the query values
                             if len(value) > 0 and all(
-                                isinstance(v, str)
-                                and self._is_datetime_value(v)
+                                isinstance(v, str) and self._is_datetime_value(v)
                                 for v in value
                             ):
-                                placeholders = ", ".join(
-                                    "datetime(?)" for _ in value
-                                )
-                                sql = f"EXISTS (SELECT 1 FROM json_each({field_access}) WHERE json_each.value IN ({placeholders}))"
+                                placeholders = ", ".join("datetime(?)" for _ in value)
+                                sql = f"EXISTS (SELECT 1 FROM {self._json_each_function}({field_access}) WHERE json_each.value IN ({placeholders}))"
                             else:
                                 placeholders = ", ".join("?" for _ in value)
-                                sql = f"EXISTS (SELECT 1 FROM json_each({field_access}) WHERE json_each.value IN ({placeholders}))"
+                                sql = f"EXISTS (SELECT 1 FROM {self._json_each_function}({field_access}) WHERE json_each.value IN ({placeholders}))"
                             params = list(value)
                 case "$nin":
                     if isinstance(value, (list, tuple)):
@@ -410,14 +401,13 @@ class SQLOperatorTranslator:
                         if field_access == "_id":
                             # For _id field, SQL NOT IN works correctly (scalar comparison)
                             if len(value) > 0 and all(
-                                isinstance(v, str)
-                                and self._is_datetime_value(v)
+                                isinstance(v, str) and self._is_datetime_value(v)
                                 for v in value
                             ):
-                                placeholders = ", ".join(
-                                    "datetime(?)" for _ in value
+                                placeholders = ", ".join("datetime(?)" for _ in value)
+                                sql = (
+                                    f"datetime({field_access}) NOT IN ({placeholders})"
                                 )
-                                sql = f"datetime({field_access}) NOT IN ({placeholders})"
                             else:
                                 placeholders = ", ".join("?" for _ in value)
                                 sql = f"{field_access} NOT IN ({placeholders})"
@@ -426,17 +416,14 @@ class SQLOperatorTranslator:
                             # For array fields, use json_each to expand the array
                             # and check that NO element matches the query values
                             if len(value) > 0 and all(
-                                isinstance(v, str)
-                                and self._is_datetime_value(v)
+                                isinstance(v, str) and self._is_datetime_value(v)
                                 for v in value
                             ):
-                                placeholders = ", ".join(
-                                    "datetime(?)" for _ in value
-                                )
-                                sql = f"NOT EXISTS (SELECT 1 FROM json_each({field_access}) WHERE json_each.value IN ({placeholders}))"
+                                placeholders = ", ".join("datetime(?)" for _ in value)
+                                sql = f"NOT EXISTS (SELECT 1 FROM {self._json_each_function}({field_access}) WHERE json_each.value IN ({placeholders}))"
                             else:
                                 placeholders = ", ".join("?" for _ in value)
-                                sql = f"NOT EXISTS (SELECT 1 FROM json_each({field_access}) WHERE json_each.value IN ({placeholders}))"
+                                sql = f"NOT EXISTS (SELECT 1 FROM {self._json_each_function}({field_access}) WHERE json_each.value IN ({placeholders}))"
                             params = list(value)
                 case "$all":
                     if isinstance(value, (list, tuple)):
@@ -445,7 +432,7 @@ class SQLOperatorTranslator:
                         exists_clauses = []
                         for v in value:
                             exists_clauses.append(
-                                f"EXISTS (SELECT 1 FROM json_each({field_access}) WHERE json_each.value = ?)"
+                                f"EXISTS (SELECT 1 FROM {self._json_each_function}({field_access}) WHERE json_each.value = ?)"
                             )
                             params.append(v)
                         sql = " AND ".join(exists_clauses)
@@ -537,6 +524,7 @@ class SQLClauseBuilder:
         self,
         field_accessor: SQLFieldAccessor | None = None,
         operator_translator: SQLOperatorTranslator | None = None,
+        json_each_function: str | None = None,
     ):
         """
         Initialize the SQLClauseBuilder with optional field accessor and operator translator.
@@ -546,11 +534,19 @@ class SQLClauseBuilder:
                             If None, a default SQLFieldAccessor will be created.
             operator_translator: An SQLOperatorTranslator instance to use for operator translations.
                                  If None, a default SQLOperatorTranslator will be created.
+            json_each_function: The json_each function to use ('jsonb_each' or 'json_each').
+                               If provided and operator_translator is None, a new SQLOperatorTranslator
+                               will be created with this function.
         """
         self.field_accessor = field_accessor or SQLFieldAccessor()
-        self.operator_translator = (
-            operator_translator or SQLOperatorTranslator()
-        )
+        if operator_translator is not None:
+            self.operator_translator = operator_translator
+        elif json_each_function is not None:
+            self.operator_translator = SQLOperatorTranslator(
+                field_accessor, json_each_function
+            )
+        else:
+            self.operator_translator = SQLOperatorTranslator()
 
     def _build_logical_condition(
         self,
@@ -807,6 +803,7 @@ class SQLTranslator:
         data_column: str = "data",
         id_column: str = "id",
         jsonb_supported: bool = False,
+        json_each_function: str | None = None,
     ):
         """
         Initialize the SQLTranslator with table and column names.
@@ -816,17 +813,20 @@ class SQLTranslator:
             data_column: The name of the column containing JSON data (default: "data")
             id_column: The name of the column containing document IDs (default: "id")
             jsonb_supported: Whether JSONB functions are supported (default: False)
+            json_each_function: The json_each function to use ('jsonb_each' or 'json_each').
+                              If None, defaults to 'json_each'.
         """
         self.table_name = table_name or "collection"
         self.data_column = data_column
         self.id_column = id_column
         self.jsonb_supported = jsonb_supported
+        self._json_each_function = json_each_function or "json_each"
 
         # Initialize components
-        self.field_accessor = SQLFieldAccessor(
-            data_column, id_column, jsonb_supported
+        self.field_accessor = SQLFieldAccessor(data_column, id_column, jsonb_supported)
+        self.operator_translator = SQLOperatorTranslator(
+            self.field_accessor, self._json_each_function
         )
-        self.operator_translator = SQLOperatorTranslator(self.field_accessor)
         self.clause_builder = SQLClauseBuilder(
             self.field_accessor, self.operator_translator
         )
@@ -886,9 +886,7 @@ class SQLTranslator:
 
         return _contains_text_operator(query)
 
-    def translate_sort(
-        self, sort_spec: dict[str, Any], context: str = "direct"
-    ) -> str:
+    def translate_sort(self, sort_spec: dict[str, Any], context: str = "direct") -> str:
         """
         Translate a $sort stage to SQL ORDER BY clause.
 
@@ -923,13 +921,9 @@ class SQLTranslator:
         Returns:
             LIMIT and OFFSET clauses
         """
-        return self.clause_builder.build_limit_offset_clause(
-            limit_value, skip_value
-        )
+        return self.clause_builder.build_limit_offset_clause(limit_value, skip_value)
 
-    def translate_field_access(
-        self, field: str, context: str = "direct"
-    ) -> str:
+    def translate_field_access(self, field: str, context: str = "direct") -> str:
         """
         Translate field access for a given field and context.
 
