@@ -377,9 +377,13 @@ class QueryHelper(
         """
         # Build WHERE clause starting with $expr
         # MongoDB $expr truthiness: NOT (null, 0, false, undefined).
-        # In SQLite, we use COALESCE and != 0 to return 1 for truthy and 0 for falsy.
-        # This handles strings, numbers, and nulls correctly while evaluating once.
-        truthy_expr = f"COALESCE(({sql_expr}), 0) != 0"
+        # Handle both integer booleans (0/1) and JSON booleans (json('true')/json('false')).
+        if "json('true')" in sql_expr or 'json("true")' in sql_expr:
+            # Expression returns JSON booleans - compare to json('true')
+            truthy_expr = f"({sql_expr} = json('true'))"
+        else:
+            # Expression returns integers - use != 0
+            truthy_expr = f"COALESCE(({sql_expr}), 0) != 0"
         where_parts = [f"({truthy_expr})"]
         all_params: list[Any] = list(params)
 

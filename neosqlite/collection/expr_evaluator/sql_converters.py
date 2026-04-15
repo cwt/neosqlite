@@ -377,13 +377,13 @@ class SqlConvertersMixin:
                 operand = operands[0]
                 if isinstance(operand, str) and operand.startswith("$"):
                     field_path = operand[1:]
-                    sql = f"json_type({self.data_column}, '{parse_json_path(field_path)}') = 'array'"
+                    sql = f"CASE WHEN json_type({self.data_column}, '{parse_json_path(field_path)}') = 'array' THEN json('true') ELSE json('false') END"
                     return sql, []
                 else:
                     value_sql, value_params = self._convert_operand_to_sql(
                         operand
                     )
-                    sql = f"json_type({value_sql}) = 'array'"
+                    sql = f"CASE WHEN json_type({value_sql}) = 'array' THEN json('true') ELSE json('false') END"
                     return sql, value_params
             case "$sum" | "$avg" | "$min" | "$max":
                 if len(operands) != 1:
@@ -1748,25 +1748,22 @@ class SqlConvertersMixin:
                     f"THEN CAST({value_sql} AS INTEGER) ELSE NULL END"
                 )
             case "$toBool":
-                # Convert to boolean with MongoDB truthiness semantics
                 if isinstance(operand, str) and operand.startswith("$"):
-                    # Direct field reference - we can use json_type on the data column
                     field_path = operand[1:]
                     from ..json_path_utils import parse_json_path
 
                     json_path = parse_json_path(field_path)
                     type_expr = f"json_type({self.data_column}, '{json_path}')"
                     sql = (
-                        f"CASE WHEN {type_expr} = 'null' THEN 0 "
-                        f"WHEN {type_expr} = 'false' THEN 0 "
-                        f"WHEN {type_expr} = 'true' THEN 1 "
-                        f"WHEN {type_expr} IN ('integer', 'real') THEN {value_sql} != 0 "
-                        f"WHEN {type_expr} = 'text' THEN length({value_sql}) > 0 "
-                        f"WHEN {type_expr} IN ('array', 'object') THEN 1 "
-                        f"ELSE 0 END"
+                        f"CASE WHEN {type_expr} = 'null' THEN json('false') "
+                        f"WHEN {type_expr} = 'false' THEN json('false') "
+                        f"WHEN {type_expr} = 'true' THEN json('true') "
+                        f"WHEN {type_expr} IN ('integer', 'real') THEN CASE WHEN {value_sql} != 0 THEN json('true') ELSE json('false') END "
+                        f"WHEN {type_expr} = 'text' THEN CASE WHEN length({value_sql}) > 0 THEN json('true') ELSE json('false') END "
+                        f"WHEN {type_expr} IN ('array', 'object') THEN json('true') "
+                        f"ELSE json('false') END"
                     )
                 else:
-                    # Computed expression or literal - try to infer type
                     inferred_type = None
                     if isinstance(operand, dict) and len(operand) == 1:
                         op_name = next(iter(operand.keys()))
@@ -1780,21 +1777,20 @@ class SqlConvertersMixin:
                     if inferred_type == "bool":
                         sql = f"{value_sql}"
                     elif inferred_type == "number":
-                        sql = f"{value_sql} != 0"
+                        sql = f"CASE WHEN {value_sql} != 0 THEN json('true') ELSE json('false') END"
                     elif inferred_type == "string":
-                        sql = f"length({value_sql}) > 0"
+                        sql = f"CASE WHEN length({value_sql}) > 0 THEN json('true') ELSE json('false') END"
                     elif inferred_type in ("array", "object"):
-                        sql = "1"
+                        sql = "json('true')"
                         value_params = []
                     elif inferred_type == "null":
-                        sql = "0"
+                        sql = "json('false')"
                         value_params = []
                     else:
-                        # Fallback to typeof
                         sql = (
-                            f"CASE WHEN typeof({value_sql}) = 'text' THEN length({value_sql}) > 0 "
-                            f"WHEN typeof({value_sql}) = 'null' THEN 0 "
-                            f"ELSE {value_sql} != 0 END"
+                            f"CASE WHEN typeof({value_sql}) = 'text' THEN CASE WHEN length({value_sql}) > 0 THEN json('true') ELSE json('false') END "
+                            f"WHEN typeof({value_sql}) = 'null' THEN json('false') "
+                            f"ELSE CASE WHEN {value_sql} != 0 THEN json('true') ELSE json('false') END END"
                         )
             case "$toDecimal":
                 # SQLite doesn't have native Decimal128, use REAL
@@ -1814,7 +1810,7 @@ class SqlConvertersMixin:
 
                     json_path = parse_json_path(field_path)
                     type_expr = f"json_type({self.data_column}, '{json_path}')"
-                    sql = f"CASE WHEN {type_expr} IN ('integer', 'real') THEN 1 ELSE 0 END"
+                    sql = f"CASE WHEN {type_expr} IN ('integer', 'real') THEN json('true') ELSE json('false') END"
                 else:
                     # Computed expression or literal - try to infer type
                     inferred_type = None
@@ -1828,14 +1824,12 @@ class SqlConvertersMixin:
                         inferred_type = self._get_literal_bson_type(operand)
 
                     if inferred_type == "number":
-                        sql = "1"
+                        sql = "json('true')"
                         value_params = []
                     elif inferred_type is not None:
-                        # Known non-number type (bool, string, array, object, null)
-                        sql = "0"
+                        sql = "json('false')"
                         value_params = []
                     else:
-                        # Truly ambiguous, fall back to Python
                         raise NotImplementedError(
                             "Ambiguous type for $isNumber in SQL tier"
                         )
