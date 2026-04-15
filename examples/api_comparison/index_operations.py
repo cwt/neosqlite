@@ -32,11 +32,11 @@ IS_NX27017_BACKEND = os.environ.get("NX27017_BACKEND", "").lower() == "true"
 
 
 def compare_index_operations():
-    """Compare index operations between NeoSQLite and PyMongo via NX-27017"""
+    """Compare index operations between NeoSQLite and PyMongo"""
     print("\n=== Index Operations Comparison ===")
 
     neo_ok = False
-    nx27017_ok = False
+    mongo_ok = False
 
     with neosqlite.Connection(":memory:") as neo_conn:
         set_accumulation_mode(True)
@@ -98,102 +98,85 @@ def compare_index_operations():
         except Exception as e:
             print(f"NeoSQLite (direct): Error - {e}")
 
-    if IS_NX27017_BACKEND:
-        client = test_pymongo_connection()
-        if client:
-            set_accumulation_mode(True)
+    # Test MongoDB via PyMongo (works with both real MongoDB and NX-27017)
+    client = test_pymongo_connection()
+    if client:
+        set_accumulation_mode(True)
+        try:
+            mongo_db = client.test_database
+            mongo_collection = mongo_db.test_collection
+
+            # Insert a document first to create the collection
+            mongo_collection.insert_one({"name": "init"})
+
+            # create_index
+            start_mongo_timing()
             try:
-                nx27017_db = client.test_database
-                nx27017_collection = nx27017_db.test_collection
-
-                # Insert a document first to create the collection
-                nx27017_collection.insert_one({"name": "init"})
-
-                # create_index
-                start_mongo_timing()
-                try:
-                    nx27017_collection.create_index("name")
-                finally:
-                    end_mongo_timing()
-
-                # create_indexes
-                start_mongo_timing()
-                try:
-                    nx27017_collection.create_indexes(
-                        [
-                            IndexModel([("age", MONGO_ASCENDING)]),
-                            IndexModel(
-                                [
-                                    ("name", MONGO_ASCENDING),
-                                    ("age", MONGO_DESCENDING),
-                                ]
-                            ),
-                        ]
-                    )
-                finally:
-                    end_mongo_timing()
-
-                # list_indexes
-                start_mongo_timing()
-                try:
-                    _ = list(nx27017_collection.list_indexes())
-                finally:
-                    end_mongo_timing()
-
-                # index_information
-                start_mongo_timing()
-                try:
-                    _ = nx27017_collection.index_information()
-                finally:
-                    end_mongo_timing()
-
-                # drop_index
-                start_mongo_timing()
-                try:
-                    nx27017_collection.drop_index("name_1")
-                finally:
-                    end_mongo_timing()
-
-                # drop_indexes
-                start_mongo_timing()
-                try:
-                    nx27017_collection.drop_indexes()
-                finally:
-                    end_mongo_timing()
-
-                print(
-                    "NX-27017 (wire protocol): create_index, create_indexes, list_indexes, index_information, drop_index, drop_indexes"
-                )
-                nx27017_ok = True
-            except Exception as e:
-                print(f"NX-27017 (wire protocol): Error - {e}")
+                mongo_collection.create_index("name")
             finally:
-                client.close()
-        else:
-            print("NX-27017: Failed to connect")
+                end_mongo_timing()
 
-    if IS_NX27017_BACKEND:
-        reporter.record_comparison(
-            "Index Operations",
-            "createIndexes/dropIndexes via wire protocol",
-            "OK" if neo_ok else "FAIL",
-            "OK" if nx27017_ok else "FAIL",
-        )
-    else:
-        for op in [
-            "create_index",
-            "create_indexes",
-            "list_indexes",
-            "index_information",
-            "drop_index",
-            "drop_indexes",
-        ]:
-            reporter.record_comparison("Index Operations", op, "OK", "OK")
+            # create_indexes
+            start_mongo_timing()
+            try:
+                mongo_collection.create_indexes(
+                    [
+                        IndexModel([("age", MONGO_ASCENDING)]),
+                        IndexModel(
+                            [
+                                ("name", MONGO_ASCENDING),
+                                ("age", MONGO_DESCENDING),
+                            ]
+                        ),
+                    ]
+                )
+            finally:
+                end_mongo_timing()
 
-        from .reporter import benchmark_reporter
+            # list_indexes
+            start_mongo_timing()
+            try:
+                _ = list(mongo_collection.list_indexes())
+            finally:
+                end_mongo_timing()
 
-        if benchmark_reporter:
-            benchmark_reporter.mark_mongo_skipped(
-                "Index Operations",
-                "Index operations only compared via NX-27017 wire protocol",
+            # index_information
+            start_mongo_timing()
+            try:
+                _ = mongo_collection.index_information()
+            finally:
+                end_mongo_timing()
+
+            # drop_index
+            start_mongo_timing()
+            try:
+                mongo_collection.drop_index("name_1")
+            finally:
+                end_mongo_timing()
+
+            # drop_indexes
+            start_mongo_timing()
+            try:
+                mongo_collection.drop_indexes()
+            finally:
+                end_mongo_timing()
+
+            backend_name = "NX-27017" if IS_NX27017_BACKEND else "MongoDB"
+            print(
+                f"{backend_name} (PyMongo): create_index, create_indexes, list_indexes, index_information, drop_index, drop_indexes"
             )
+            mongo_ok = True
+        except Exception as e:
+            backend_name = "NX-27017" if IS_NX27017_BACKEND else "MongoDB"
+            print(f"{backend_name} (PyMongo): Error - {e}")
+        finally:
+            client.close()
+    else:
+        print("MongoDB: Failed to connect")
+
+    reporter.record_comparison(
+        "Index Operations",
+        "createIndexes/dropIndexes via PyMongo",
+        "OK" if neo_ok else "FAIL",
+        "OK" if mongo_ok else "FAIL",
+    )
