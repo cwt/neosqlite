@@ -33,23 +33,18 @@
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
-## Latest Release: v1.14.11
+## Latest Release: v1.14.12
 
-NeoSQLite v1.14.11 is a **performance and correctness release** that adds efficient CTE-based SQL support for array operators (`$in`, `$nin`, `$all`), implements native regex operators, and ensures boolean type consistency with MongoDB.
+NeoSQLite v1.14.12 is a **bug fix release** that corrects the CTE-based array operators implementation introduced in v1.14.11, fixing a "malformed JSON" error when using `$in`, `$nin`, or `$all` operators.
 
-**Key Improvements:**
-1. **CTE-based Array Operators** — `$in`, `$nin`, `$all` now use efficient SQLite CTE patterns with `jsonb_each` for 10-100x speedup when SQLite 3.51.0+ is available.
-2. **Native Regex Operators** — `$regexMatch`, `$regexFind`, `$regexFindAll`, and `$regex` with options (`i`, `m`, `s`, `x`) now work natively in the SQL tier.
-3. **Boolean Type Consistency** — `$isNumber`, `$isArray`, `$toBool` now return proper JSON booleans (`json('true')`/`json('false')`) matching MongoDB's native boolean type.
-4. **Fixed `$elemMatch` with nested `$in/$nin`** — Correctly handles the `"value"` path alias.
+**Key Fix:**
+- **Fixed malformed JSON error** — The `json_each()` function requires `json_each(data, '$.field')` syntax. The v1.14.11 implementation incorrectly passed `json_each(json_extract(data, '$.field'))`, causing `sqlite3.OperationalError: malformed JSON` in aggregation pipelines.
 
-### Key Improvements
+### Key Fixes
 
-- **CTE Array Operators**: Array operators now execute 10-100x faster with native SQL CTE patterns instead of Python fallback.
-- **Native Regex Support**: `$regexMatch`, `$regexFind`, `$regexFindAll` implemented natively in SQL tier with full options support.
-- **Boolean Type Correctness**: `$isNumber`, `$isArray`, `$toBool` return JSON booleans for proper `$expr` evaluation.
+- **Array Operator Bug Fix**: Fixed `sqlite3.OperationalError: malformed JSON` when using `$in`, `$nin`, or `$all` on array fields in aggregation pipelines.
 
-For full details, see [documents/releases/v1.14.11.md](documents/releases/v1.14.11.md).
+For full details, see [documents/releases/v1.14.12.md](documents/releases/v1.14.12.md).
 
 ## Installation
 

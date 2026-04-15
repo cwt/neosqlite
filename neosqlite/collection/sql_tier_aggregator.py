@@ -1560,18 +1560,20 @@ class SQLTierAggregator:
                                 all_params.append(arg)
                             case "$in":
                                 if isinstance(arg, (list, tuple)):
+                                    json_path = parse_json_path(field)
                                     placeholders = ", ".join("?" for _ in arg)
                                     where_clauses.append(
-                                        f"EXISTS (SELECT 1 FROM {self._json_each_function}({field_sql}) WHERE json_each.value IN ({placeholders}))"
+                                        f"EXISTS (SELECT 1 FROM {self._json_each_function}(data, '{json_path}') WHERE json_each.value IN ({placeholders}))"
                                     )
                                     all_params.extend(arg)
                                 else:
                                     return None, []
                             case "$nin":
                                 if isinstance(arg, (list, tuple)):
+                                    json_path = parse_json_path(field)
                                     placeholders = ", ".join("?" for _ in arg)
                                     where_clauses.append(
-                                        f"NOT EXISTS (SELECT 1 FROM {self._json_each_function}({field_sql}) WHERE json_each.value IN ({placeholders}))"
+                                        f"NOT EXISTS (SELECT 1 FROM {self._json_each_function}(data, '{json_path}') WHERE json_each.value IN ({placeholders}))"
                                     )
                                     all_params.extend(arg)
                                 else:
@@ -1580,9 +1582,10 @@ class SQLTierAggregator:
                                 if isinstance(arg, (list, tuple)):
                                     if len(arg) == 0:
                                         return None, []
+                                    json_path = parse_json_path(field)
                                     for v in arg:
                                         where_clauses.append(
-                                            f"EXISTS (SELECT 1 FROM {self._json_each_function}({field_sql}) WHERE json_each.value = ?)"
+                                            f"EXISTS (SELECT 1 FROM {self._json_each_function}(data, '{json_path}') WHERE json_each.value = ?)"
                                         )
                                         all_params.append(v)
                                 else:

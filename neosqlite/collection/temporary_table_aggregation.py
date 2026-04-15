@@ -119,11 +119,13 @@ class DeterministicTempTableManager:
         """
         self.pipeline_id = pipeline_id
         self.stage_counter = 0
-        self.name_counter: dict[
-            str, int
-        ] = {}  # Track how many times each name has been used
+        self.name_counter: dict[str, int] = (
+            {}
+        )  # Track how many times each name has been used
 
-    def make_temp_table_name(self, stage: dict[str, Any], name_suffix: str = "") -> str:
+    def make_temp_table_name(
+        self, stage: dict[str, Any], name_suffix: str = ""
+    ) -> str:
         """
         Generate a deterministic temporary table name based on the pipeline stage
         and pipeline ID.
@@ -152,7 +154,9 @@ class DeterministicTempTableManager:
         stage_type = next(iter(stage.keys())).lstrip("$")
 
         # Create a base name
-        base_name = f"temp_{self.pipeline_id}_{stage_type}_{hash_suffix}{name_suffix}"
+        base_name = (
+            f"temp_{self.pipeline_id}_{stage_type}_{hash_suffix}{name_suffix}"
+        )
 
         # Ensure uniqueness by tracking usage
         if base_name in self.name_counter:
@@ -257,7 +261,9 @@ def aggregation_pipeline_context(db_connection, pipeline_id: str | None = None):
         # Check if we're using the new approach (stage is a dict) or old approach (stage is a string)
         if isinstance(stage_or_suffix, dict):
             # New approach - deterministic naming
-            table_name = temp_manager.make_temp_table_name(stage_or_suffix, name_suffix)
+            table_name = temp_manager.make_temp_table_name(
+                stage_or_suffix, name_suffix
+            )
         else:
             # Old approach - backward compatibility
             if isinstance(stage_or_suffix, str):
@@ -268,7 +274,9 @@ def aggregation_pipeline_context(db_connection, pipeline_id: str | None = None):
             table_name = f"temp_{suffix}_{uuid.uuid4().hex}"
 
         if params is not None:
-            db_connection.execute(f"CREATE TEMP TABLE {table_name} AS {query}", params)
+            db_connection.execute(
+                f"CREATE TEMP TABLE {table_name} AS {query}", params
+            )
         else:
             db_connection.execute(f"CREATE TEMP TABLE {table_name} AS {query}")
         temp_tables.append(table_name)
@@ -296,7 +304,9 @@ def aggregation_pipeline_context(db_connection, pipeline_id: str | None = None):
             try:
                 db_connection.execute(f"DROP TABLE IF EXISTS {table_name}")
             except Exception as drop_error:
-                logger.debug(f"Failed to drop temp table '{table_name}': {drop_error}")
+                logger.debug(
+                    f"Failed to drop temp table '{table_name}': {drop_error}"
+                )
                 pass
 
 
@@ -336,7 +346,9 @@ class TemporaryTableAggregationProcessor:
             self._json_each_function,
         )
         # Set appropriate JSON function prefixes and names based on support
-        self._json_function_prefix = _get_json_function_prefix(self._jsonb_supported)
+        self._json_function_prefix = _get_json_function_prefix(
+            self._jsonb_supported
+        )
         self._json_each_function = _get_json_each_function(
             self._jsonb_supported, self._jsonb_each_supported
         )
@@ -395,7 +407,11 @@ class TemporaryTableAggregationProcessor:
         self._text_on_temp_table_warned = False
 
         # Check if pipeline ends with $count for optimization
-        if pipeline and isinstance(pipeline[-1], dict) and "$count" in pipeline[-1]:
+        if (
+            pipeline
+            and isinstance(pipeline[-1], dict)
+            and "$count" in pipeline[-1]
+        ):
             count_field = pipeline[-1]["$count"]
             # Process pipeline without the $count stage
             intermediate_pipeline = pipeline[:-1]
@@ -555,9 +571,13 @@ class TemporaryTableAggregationProcessor:
                         for field in unset_fields:
                             json_path = parse_json_path(field)
                             if self._jsonb_supported:
-                                data_expr = f"jsonb_remove({data_expr}, '{json_path}')"
+                                data_expr = (
+                                    f"jsonb_remove({data_expr}, '{json_path}')"
+                                )
                             else:
-                                data_expr = f"json_remove({data_expr}, '{json_path}')"
+                                data_expr = (
+                                    f"json_remove({data_expr}, '{json_path}')"
+                                )
                         unset_stage = {"$unset": unset_spec}
                         new_table = create_temp(
                             unset_stage,
@@ -685,7 +705,9 @@ class TemporaryTableAggregationProcessor:
                 # processing when it can't be handled efficiently with SQL.
                 # A future enhancement could implement proper text search on temporary tables.
                 match_stage = {"$match": match_spec}
-                new_table = create_temp(match_stage, f"SELECT * FROM {current_table}")
+                new_table = create_temp(
+                    match_stage, f"SELECT * FROM {current_table}"
+                )
                 return new_table
             else:
                 # Unsupported operator (e.g., $elemMatch, $in on arrays)
@@ -814,7 +836,9 @@ class TemporaryTableAggregationProcessor:
             else:
                 raise ValueError(f"Invalid unwind specification: {unwind_spec}")
 
-            if not isinstance(field_path, str) or not field_path.startswith("$"):
+            if not isinstance(field_path, str) or not field_path.startswith(
+                "$"
+            ):
                 raise ValueError(f"Invalid unwind path: {field_path}")
 
             field_name = field_path[1:]  # Remove leading $
@@ -941,7 +965,9 @@ class TemporaryTableAggregationProcessor:
                     f"  '{parse_json_path(field_name)}'"
                     f")) = 'array'"
                 )
-                unwind_query = f"SELECT {select_clause} {from_clause} {where_clause}"
+                unwind_query = (
+                    f"SELECT {select_clause} {from_clause} {where_clause}"
+                )
 
             # Create the unwind stage spec for naming
             unwind_stage: dict[str, Any] = {"$unwind": field_path}
@@ -976,17 +1002,19 @@ class TemporaryTableAggregationProcessor:
         """
         if foreign_field is None:
             foreign_field = "_id"
-        stage_key = (
-            f"{from_collection}:{foreign_field}:{str(pipeline) if pipeline else ''}"
-        )
+        stage_key = f"{from_collection}:{foreign_field}:{str(pipeline) if pipeline else ''}"
         hash_suffix = hashlib.sha256(stage_key.encode()).hexdigest()[:8]
         hash_table_name = f"_lookup_hash_{hash_suffix}"
         join_key = "_join_key"
 
         try:
             if pipeline:
-                target_coll = self.collection.database.get_collection(from_collection)
-                processor = TemporaryTableAggregationProcessor(target_coll, None)
+                target_coll = self.collection.database.get_collection(
+                    from_collection
+                )
+                processor = TemporaryTableAggregationProcessor(
+                    target_coll, None
+                )
                 pipeline_result = processor.process_pipeline(pipeline)
 
                 if not pipeline_result:
@@ -1013,14 +1041,20 @@ class TemporaryTableAggregationProcessor:
                             )
                     else:
                         for doc in pipeline_result:
-                            key_val = self._extract_field_value(doc, foreign_field)
+                            key_val = self._extract_field_value(
+                                doc, foreign_field
+                            )
                             self.db.execute(
                                 f"INSERT INTO {hash_table_name} (id, _id, data, {join_key}) VALUES (?, ?, ?, ?)",
                                 (
                                     doc.get("id", 0),
                                     doc.get("_id"),
                                     neosqlite_json_dumps(doc),
-                                    (str(key_val) if key_val is not None else None),
+                                    (
+                                        str(key_val)
+                                        if key_val is not None
+                                        else None
+                                    ),
                                 ),
                             )
             else:
@@ -1032,10 +1066,12 @@ class TemporaryTableAggregationProcessor:
                     )
                 else:
                     # Use ObjectId-aware extraction for the foreign field
-                    foreign_extract_expr = _json_extract_field_with_objectid_support(
-                        self._json_function_prefix,
-                        foreign_field,
-                        is_local_field=False,
+                    foreign_extract_expr = (
+                        _json_extract_field_with_objectid_support(
+                            self._json_function_prefix,
+                            foreign_field,
+                            is_local_field=False,
+                        )
                     )
                     # Try efficient SQL approach first
                     try:
@@ -1045,7 +1081,10 @@ class TemporaryTableAggregationProcessor:
                             f"FROM {quote_table_name(from_collection)}"
                         )
                     except sqlite3.OperationalError as e:
-                        if "malformed JSON" in str(e) or "json" in str(e).lower():
+                        if (
+                            "malformed JSON" in str(e)
+                            or "json" in str(e).lower()
+                        ):
                             # Fall back to Python processing to skip corrupted documents
                             logger.warning(
                                 f"Hash table creation for '{from_collection}' encountered "
@@ -1067,7 +1106,9 @@ class TemporaryTableAggregationProcessor:
             return hash_table_name, join_key
 
         except Exception as e:
-            logger.debug(f"Failed to create hash table '{hash_table_name}': {e}")
+            logger.debug(
+                f"Failed to create hash table '{hash_table_name}': {e}"
+            )
             self.db.execute(f"DROP TABLE IF EXISTS {hash_table_name}")
             raise
 
@@ -1115,7 +1156,9 @@ class TemporaryTableAggregationProcessor:
 
                 # Extract the foreign field value
                 if foreign_field == "_id":
-                    key_val = str(doc_underscore_id) if doc_underscore_id else None
+                    key_val = (
+                        str(doc_underscore_id) if doc_underscore_id else None
+                    )
                 else:
                     # Navigate nested field path
                     key_val = self._extract_field_value(doc, foreign_field)
@@ -1167,7 +1210,9 @@ class TemporaryTableAggregationProcessor:
             if result and result[0]:
                 count, avg_size = result
                 avg_size = avg_size or 0
-                row_size = int(avg_size) + 50  # Add overhead for id, _id columns
+                row_size = (
+                    int(avg_size) + 50
+                )  # Add overhead for id, _id columns
                 return count * row_size
         except Exception as e:
             logger.debug(
@@ -1325,11 +1370,15 @@ class TemporaryTableAggregationProcessor:
                 TemporaryTableAggregationProcessor,
             )
 
-            target_coll = self.collection.database.get_collection(from_collection)
+            target_coll = self.collection.database.get_collection(
+                from_collection
+            )
             processor = TemporaryTableAggregationProcessor(target_coll, None)
 
             pipeline_key = f"{from_collection}:{str(pipeline)}"
-            pipeline_hash = hashlib.sha256(pipeline_key.encode()).hexdigest()[:8]
+            pipeline_hash = hashlib.sha256(pipeline_key.encode()).hexdigest()[
+                :8
+            ]
             pipeline_result_table = f"_lookup_pipeline_{pipeline_hash}"
             try:
                 pipeline_result = processor.process_pipeline(pipeline)
@@ -1387,7 +1436,9 @@ class TemporaryTableAggregationProcessor:
                 from_clause = f"FROM {current_table} as main_table"
 
                 lookup_stage = {"$lookup": lookup_spec}
-                new_table = create_temp(lookup_stage, f"{select_clause} {from_clause}")
+                new_table = create_temp(
+                    lookup_stage, f"{select_clause} {from_clause}"
+                )
                 return new_table
             finally:
                 try:
@@ -1401,7 +1452,9 @@ class TemporaryTableAggregationProcessor:
                     pass
 
         if not all([from_collection, local_field, foreign_field, as_field]):
-            raise ValueError("$lookup requires from, localField, foreignField, and as")
+            raise ValueError(
+                "$lookup requires from, localField, foreignField, and as"
+            )
 
         local_field_str: str = local_field  # type: ignore[assignment]
         foreign_field_str: str = foreign_field  # type: ignore[assignment]
@@ -1512,13 +1565,19 @@ class TemporaryTableAggregationProcessor:
             )
 
             lookup_stage = {"$lookup": lookup_spec}
-            new_table = create_temp(lookup_stage, f"{select_clause} {from_clause}")
+            new_table = create_temp(
+                lookup_stage, f"{select_clause} {from_clause}"
+            )
             return new_table
         finally:
             try:
-                self.collection.db.execute(f"DROP TABLE IF EXISTS {hash_table_name}")
+                self.collection.db.execute(
+                    f"DROP TABLE IF EXISTS {hash_table_name}"
+                )
             except Exception as e:
-                logger.debug(f"Failed to drop hash table '{hash_table_name}': {e}")
+                logger.debug(
+                    f"Failed to drop hash table '{hash_table_name}': {e}"
+                )
                 pass
 
     def _process_sort_skip_limit_stage(
@@ -1592,7 +1651,9 @@ class TemporaryTableAggregationProcessor:
                     )
 
         # Use SQLTranslator to build LIMIT/OFFSET clause
-        limit_clause = self.sql_translator.translate_skip_limit(limit_value, skip_value)
+        limit_clause = self.sql_translator.translate_skip_limit(
+            limit_value, skip_value
+        )
 
         # Create a stage spec for naming (use the first non-null stage type)
         stage_spec: dict[str, Any] = {}
@@ -1673,7 +1734,9 @@ class TemporaryTableAggregationProcessor:
                     # Build SQL for $replaceOne using instr() and substr()
                     json_extract = f"{self._json_function_prefix}_extract"
                     json_set_func = f"{self._json_function_prefix}_set"
-                    if isinstance(input_expr, str) and input_expr.startswith("$"):
+                    if isinstance(input_expr, str) and input_expr.startswith(
+                        "$"
+                    ):
                         input_field = input_expr[1:]
                         # SQL: substr(data, 1, instr-1) || replacement || substr(data, instr+len(find))
                         data_expr = (
@@ -1766,16 +1829,12 @@ class TemporaryTableAggregationProcessor:
         # placeholder expressions in json_data_column()'s CASE statement.
         if params:
             if select_cols:
-                inner_query = (
-                    f"SELECT {select_cols}, {data_expr} as data FROM {current_table}"
-                )
+                inner_query = f"SELECT {select_cols}, {data_expr} as data FROM {current_table}"
             else:
                 inner_query = f"SELECT {data_expr} as data FROM {current_table}"
             outer_data = json_data_column(jsonb, "data")
             if select_cols:
-                query = (
-                    f"SELECT {select_cols}, {outer_data} as data FROM ({inner_query})"
-                )
+                query = f"SELECT {select_cols}, {outer_data} as data FROM ({inner_query})"
             else:
                 query = f"SELECT {outer_data} as data FROM ({inner_query})"
         else:
@@ -1952,7 +2011,9 @@ class TemporaryTableAggregationProcessor:
         from .query_helper import get_force_fallback
 
         if get_force_fallback():
-            raise NotImplementedError("Force fallback - use Tier 3 Python evaluation")
+            raise NotImplementedError(
+                "Force fallback - use Tier 3 Python evaluation"
+            )
 
         include_id = project_spec.get("_id", 1) == 1
 
@@ -1995,7 +2056,9 @@ class TemporaryTableAggregationProcessor:
             json_remove = f"{self._json_function_prefix}_remove"
             # SQLite's json_remove supports multiple paths in a single call:
             #   json_remove(data, p1, p2, ...)  -- more efficient than nesting
-            path_args = ", ".join(f"'{parse_json_path(f)}'" for f in fields_to_remove)
+            path_args = ", ".join(
+                f"'{parse_json_path(f)}'" for f in fields_to_remove
+            )
             data_expr = f"{json_remove}(data, {path_args})"
         else:
             data_expr = "data"
@@ -2031,14 +2094,17 @@ class TemporaryTableAggregationProcessor:
         # (matches Python _apply_projection behavior).
         # For simple inclusion ({field: 1}), _id is included by default.
         has_expressions_or_refs = any(
-            _is_expression(value) or (isinstance(value, str) and value.startswith("$"))
+            _is_expression(value)
+            or (isinstance(value, str) and value.startswith("$"))
             for value in project_spec.values()
         )
 
         if has_expressions_or_refs:
             # Expression/field reference mode: _id included by default unless explicitly excluded
             # (matches MongoDB behavior)
-            include_id = "_id" not in project_spec or project_spec.get("_id") != 0
+            include_id = (
+                "_id" not in project_spec or project_spec.get("_id") != 0
+            )
         else:
             # Simple inclusion mode: _id included by default
             include_id = include_id_default
@@ -2065,8 +2131,10 @@ class TemporaryTableAggregationProcessor:
                 else:
                     # Expression projection: use ExprEvaluator
                     agg_ctx = AggregationContext()
-                    expr_sql, expr_params = self.expr_evaluator.build_select_expression(
-                        value, context=agg_ctx
+                    expr_sql, expr_params = (
+                        self.expr_evaluator.build_select_expression(
+                            value, context=agg_ctx
+                        )
                     )
                     # If expr_sql is None, the operator can't be translated to SQL
                     # — trigger Python fallback
@@ -2130,7 +2198,9 @@ class TemporaryTableAggregationProcessor:
             sql = f"SELECT {', '.join(select_cols)} FROM {current_table}"
 
         project_stage = {"$project": project_spec}
-        return create_temp(project_stage, sql, all_params if all_params else None)
+        return create_temp(
+            project_stage, sql, all_params if all_params else None
+        )
 
     def _generate_text_score_sql(self) -> str:
         """
@@ -2234,7 +2304,9 @@ class TemporaryTableAggregationProcessor:
         from .query_helper import get_force_fallback
 
         if get_force_fallback():
-            raise NotImplementedError("Force fallback - use Tier 3 Python evaluation")
+            raise NotImplementedError(
+                "Force fallback - use Tier 3 Python evaluation"
+            )
 
         # Check for $first/$last with preceding $sort - fall back to Python
         if self._has_sort_stage:
@@ -2279,8 +2351,8 @@ class TemporaryTableAggregationProcessor:
             # This allows grouping by computed fields like {$concat: ["$firstName", " ", "$lastName"]}
             try:
                 # Use ExprEvaluator to build the SQL expression
-                key_expr, key_params = self.expr_evaluator.build_select_expression(
-                    group_id_expr
+                key_expr, key_params = (
+                    self.expr_evaluator.build_select_expression(group_id_expr)
                 )
                 if key_expr:
                     select_parts.append(f"{key_expr} AS _id")
@@ -2329,7 +2401,9 @@ class TemporaryTableAggregationProcessor:
             elif isinstance(expr, dict):
                 # Expression object (e.g., {'title': '$title', 'author': '$author'})
                 # This is valid for $push and $addToSet
-                expr_field = None  # Will be handled specially in the accumulator logic
+                expr_field = (
+                    None  # Will be handled specially in the accumulator logic
+                )
             else:
                 # Complex expression - fall back to Python
                 raise NotImplementedError(
@@ -2462,7 +2536,9 @@ class TemporaryTableAggregationProcessor:
                     # Check if expr is a dict expression
                     if isinstance(expr, dict):
                         # Build json_object for the expression (same as $push)
-                        json_object_func = f"{self._json_function_prefix}_object"
+                        json_object_func = (
+                            f"{self._json_function_prefix}_object"
+                        )
                         obj_args = []
                         for key, val in expr.items():
                             if isinstance(val, str) and val.startswith("$"):
@@ -2508,7 +2584,9 @@ class TemporaryTableAggregationProcessor:
                     # Check if expr is a dict expression (e.g., {'title': '$title', 'author': '$author'})
                     if isinstance(expr, dict):
                         # Build json_object for the expression
-                        json_object_func = f"{self._json_function_prefix}_object"
+                        json_object_func = (
+                            f"{self._json_function_prefix}_object"
+                        )
                         obj_args = []
                         for key, val in expr.items():
                             if isinstance(val, str) and val.startswith("$"):
@@ -2541,7 +2619,9 @@ class TemporaryTableAggregationProcessor:
                         # For now, we inline literal values
                     elif expr_field:
                         if expr_field == "_id":
-                            select_parts.append(f"{json_group_array}(_id) AS {field}")
+                            select_parts.append(
+                                f"{json_group_array}(_id) AS {field}"
+                            )
                         else:
                             select_parts.append(
                                 f"{json_group_array}({json_extract}(data, '{parse_json_path(expr_field)}')) AS {field}"
@@ -2673,8 +2753,12 @@ class TemporaryTableAggregationProcessor:
 
         if not is_standard_table:
             # Non-standard table - return rows as dictionaries with column names as keys
-            select_clause = ", ".join(quote_table_name(col) for col in column_names)
-            cursor = self.db.execute(f"SELECT {select_clause} FROM {table_name}")
+            select_clause = ", ".join(
+                quote_table_name(col) for col in column_names
+            )
+            cursor = self.db.execute(
+                f"SELECT {select_clause} FROM {table_name}"
+            )
             results = []
             while True:
                 rows = cursor.fetchmany(batch_size)
@@ -2701,7 +2785,9 @@ class TemporaryTableAggregationProcessor:
                 has_underscore_id_column = False
             elif has_data_column:
                 # Only data column available
-                cursor = self.db.execute(f"SELECT json(data) as data FROM {table_name}")
+                cursor = self.db.execute(
+                    f"SELECT json(data) as data FROM {table_name}"
+                )
                 has_id_column = False
                 has_underscore_id_column = False
             else:
@@ -2710,7 +2796,9 @@ class TemporaryTableAggregationProcessor:
                 return []
         else:
             if has_id_column and has_underscore_id_column and has_data_column:
-                cursor = self.db.execute(f"SELECT id, _id, data FROM {table_name}")
+                cursor = self.db.execute(
+                    f"SELECT id, _id, data FROM {table_name}"
+                )
             elif has_id_column and has_data_column:
                 cursor = self.db.execute(f"SELECT id, data FROM {table_name}")
                 has_underscore_id_column = False
@@ -2783,7 +2871,9 @@ class TemporaryTableAggregationProcessor:
                 results.append(doc)
         return results
 
-    def _matches_text_search(self, document: dict[str, Any], search_term: str) -> bool:
+    def _matches_text_search(
+        self, document: dict[str, Any], search_term: str
+    ) -> bool:
         """
         Apply Python-based text search to a document.
 
@@ -2804,7 +2894,9 @@ class TemporaryTableAggregationProcessor:
 
         return unified_text_search(document, search_term)
 
-    def _batch_insert_documents(self, table_name: str, documents: list[tuple]) -> None:
+    def _batch_insert_documents(
+        self, table_name: str, documents: list[tuple]
+    ) -> None:
         """
         Insert multiple documents into a temporary table efficiently.
 
@@ -2883,9 +2975,7 @@ class TemporaryTableAggregationProcessor:
         tokenizer_clause = self._detect_fts_tokenizer()
 
         # Generate deterministic table names
-        fts_table_name = (
-            f"temp_text_fts_{hashlib.sha256(str(match_spec).encode()).hexdigest()[:8]}"
-        )
+        fts_table_name = f"temp_text_fts_{hashlib.sha256(str(match_spec).encode()).hexdigest()[:8]}"
         result_table_name = f"temp_text_filtered_{hashlib.sha256(str(match_spec).encode()).hexdigest()[:8]}"
 
         # Step 1: Create FTS5 virtual table with detected tokenizer
@@ -3062,7 +3152,9 @@ class TemporaryTableAggregationProcessor:
             return f"CAST({json_extract}(data, '{json_path}') AS REAL)"
         return "1"
 
-    def _process_bucket_auto_stage(self, create_temp, current_table, bucket_auto_spec):
+    def _process_bucket_auto_stage(
+        self, create_temp, current_table, bucket_auto_spec
+    ):
         """
         Process $bucketAuto stage - auto-sized buckets.
 
@@ -3124,10 +3216,10 @@ class TemporaryTableAggregationProcessor:
 
         # Group by bucket and create the _id object with min/max using json_object
         # Wrap with json() to ensure text output (not JSONB binary)
-        json_set_func = "jsonb_object" if self._jsonb_supported else "json_object"
-        select_clause = (
-            f"json({json_set_func}('min', MIN(s.val), 'max', MAX(s.val))) AS _id"
+        json_set_func = (
+            "jsonb_object" if self._jsonb_supported else "json_object"
         )
+        select_clause = f"json({json_set_func}('min', MIN(s.val), 'max', MAX(s.val))) AS _id"
         if agg_fields:
             select_clause += ", " + ", ".join(agg_fields)
 
@@ -3180,7 +3272,9 @@ class TemporaryTableAggregationProcessor:
             )
 
         if partition_by:
-            print("DEBUG DENSIFY: partition_by is truthy, raising NotImplementedError")
+            print(
+                "DEBUG DENSIFY: partition_by is truthy, raising NotImplementedError"
+            )
             raise NotImplementedError(
                 "$densify with partitionBy not supported - use force_fallback"
             )
@@ -3231,7 +3325,9 @@ class TemporaryTableAggregationProcessor:
             return current_table
 
         try:
-            self.collection.db.execute(f"CREATE TEMP TABLE {series_table} (val REAL)")
+            self.collection.db.execute(
+                f"CREATE TEMP TABLE {series_table} (val REAL)"
+            )
             self.collection.db.execute(
                 f"INSERT INTO {series_table} (val) VALUES "
                 + "("
@@ -3257,9 +3353,13 @@ class TemporaryTableAggregationProcessor:
             return new_table
         finally:
             try:
-                self.collection.db.execute(f"DROP TABLE IF EXISTS {series_table}")
+                self.collection.db.execute(
+                    f"DROP TABLE IF EXISTS {series_table}"
+                )
             except Exception as e:
-                logger.debug(f"Failed to drop series table '{series_table}': {e}")
+                logger.debug(
+                    f"Failed to drop series table '{series_table}': {e}"
+                )
                 pass
 
     def _process_facet_stage(self, create_temp, current_table, facet_spec):
@@ -3292,7 +3392,9 @@ class TemporaryTableAggregationProcessor:
         # IMPORTANT: _id is stored as a separate column, not in the data JSON
         # When JSONB is supported, data column stores JSONB BLOB — convert to text
         if self._jsonb_supported:
-            cursor = self.db.execute(f"SELECT _id, json(data) FROM {current_table}")
+            cursor = self.db.execute(
+                f"SELECT _id, json(data) FROM {current_table}"
+            )
         else:
             cursor = self.db.execute(f"SELECT _id, data FROM {current_table}")
 
@@ -3355,7 +3457,9 @@ class TemporaryTableAggregationProcessor:
                 finally:
                     # Clean up temp collection table
                     try:
-                        self.db.execute(f"DROP TABLE IF EXISTS {temp_collection_name}")
+                        self.db.execute(
+                            f"DROP TABLE IF EXISTS {temp_collection_name}"
+                        )
                     except Exception as e:
                         logger.debug(
                             f"Failed to drop facet temp table '{temp_collection_name}': {e}"
@@ -3436,7 +3540,9 @@ class TemporaryTableAggregationProcessor:
             other_columns.append("_id")
         other_columns.append("data")
 
-        other_select_cols = ", ".join(other_columns) if other_columns else "data"
+        other_select_cols = (
+            ", ".join(other_columns) if other_columns else "data"
+        )
 
         if pipeline:
             # If pipeline specified, process it
@@ -3546,7 +3652,9 @@ class TemporaryTableAggregationProcessor:
                     # Can't partition by _id if column doesn't exist
                     partition_by = None
             else:
-                sql, params = self.expr_evaluator.build_select_expression(partition_by)
+                sql, params = self.expr_evaluator.build_select_expression(
+                    partition_by
+                )
                 partition_parts.append(sql)
                 all_params.extend(params)
 
@@ -3593,8 +3701,8 @@ class TemporaryTableAggregationProcessor:
             op_val = op_spec[op_name]
             window_spec = op_spec.get("window")
 
-            sql_func, sql_operand, sql_params = self._map_window_operator_to_sql(
-                op_name, op_val
+            sql_func, sql_operand, sql_params = (
+                self._map_window_operator_to_sql(op_name, op_val)
             )
             if sql_func is None:
                 # Fall back to Python if operator not supported in SQL
@@ -3676,10 +3784,14 @@ class TemporaryTableAggregationProcessor:
             case "$documentNumber":
                 return "ROW_NUMBER", "", []
             case "$first":
-                sql, params = self.expr_evaluator.build_select_expression(op_val)
+                sql, params = self.expr_evaluator.build_select_expression(
+                    op_val
+                )
                 return "FIRST_VALUE", sql, params
             case "$last":
-                sql, params = self.expr_evaluator.build_select_expression(op_val)
+                sql, params = self.expr_evaluator.build_select_expression(
+                    op_val
+                )
                 return "LAST_VALUE", sql, params
             case "$shift":
                 output_expr = op_val.get("output")
@@ -3693,20 +3805,26 @@ class TemporaryTableAggregationProcessor:
                     func = "LAG"
                     offset = -by
 
-                sql, params = self.expr_evaluator.build_select_expression(output_expr)
+                sql, params = self.expr_evaluator.build_select_expression(
+                    output_expr
+                )
                 if default is not None:
                     return f"{func}", f"{sql}, {offset}, ?", params + [default]
                 return f"{func}", f"{sql}, {offset}", params
 
             case "$sum" | "$avg" | "$min" | "$max":
                 func = op_name[1:].upper()
-                sql, params = self.expr_evaluator.build_select_expression(op_val)
+                sql, params = self.expr_evaluator.build_select_expression(
+                    op_val
+                )
                 return func, sql, params
 
             case _:
                 return None, "", []
 
-    def _build_window_frame_sql(self, window_spec: dict[str, Any] | None) -> str:
+    def _build_window_frame_sql(
+        self, window_spec: dict[str, Any] | None
+    ) -> str:
         """Build SQL window frame clause (ROWS BETWEEN ...)."""
         if not window_spec:
             return ""
@@ -3716,7 +3834,11 @@ class TemporaryTableAggregationProcessor:
 
             def map_bound(val: Any, is_upper: bool = False) -> str:
                 if val == "unbounded":
-                    return "UNBOUNDED FOLLOWING" if is_upper else "UNBOUNDED PRECEDING"
+                    return (
+                        "UNBOUNDED FOLLOWING"
+                        if is_upper
+                        else "UNBOUNDED PRECEDING"
+                    )
                 if val == "current":
                     return "CURRENT ROW"
                 if isinstance(val, int):
@@ -3769,8 +3891,8 @@ class TemporaryTableAggregationProcessor:
         all_params: list[Any] = []
 
         # 1. Build startWith expression
-        start_with_sql, start_with_params = self.expr_evaluator.build_select_expression(
-            start_with
+        start_with_sql, start_with_params = (
+            self.expr_evaluator.build_select_expression(start_with)
         )
         # Prefix with p. to avoid ambiguity during JOIN
         start_with_sql = start_with_sql.replace(
@@ -3787,7 +3909,9 @@ class TemporaryTableAggregationProcessor:
         if restrict_search:
             from .query_helper import QueryHelper
 
-            target_coll = self.collection.database.get_collection(from_collection)
+            target_coll = self.collection.database.get_collection(
+                from_collection
+            )
             helper = QueryHelper(target_coll)
             query_result = helper._build_simple_where_clause(restrict_search)
             if query_result:
@@ -3796,8 +3920,12 @@ class TemporaryTableAggregationProcessor:
                 r_sql = r_sql.strip()
                 if r_sql.upper().startswith("WHERE "):
                     r_sql = r_sql[6:]  # Remove "WHERE " prefix
-                r_sql = r_sql.replace("json_extract(data", "json_extract(t.data")
-                r_sql = r_sql.replace("jsonb_extract(data", "jsonb_extract(t.data")
+                r_sql = r_sql.replace(
+                    "json_extract(data", "json_extract(t.data"
+                )
+                r_sql = r_sql.replace(
+                    "jsonb_extract(data", "jsonb_extract(t.data"
+                )
                 restrict_where = f"AND ({r_sql})"
                 restrict_params = (
                     r_params * 2
@@ -3834,7 +3962,9 @@ class TemporaryTableAggregationProcessor:
             WHERE 1=1 {restrict_where}
         """
 
-        max_depth_cond = f"AND r.depth < {max_depth}" if max_depth is not None else ""
+        max_depth_cond = (
+            f"AND r.depth < {max_depth}" if max_depth is not None else ""
+        )
         recursive_step_sql = f"""
             SELECT
                 r.original_id,
@@ -3905,18 +4035,24 @@ class TemporaryTableAggregationProcessor:
         # 1. Build PARTITION BY and ORDER BY clauses
         partition_parts = []
         if partition_by is not None:
-            sql, params = self.expr_evaluator.build_select_expression(partition_by)
+            sql, params = self.expr_evaluator.build_select_expression(
+                partition_by
+            )
             partition_parts.append(sql)
             all_params.extend(params)
         partition_clause = (
-            f"PARTITION BY {', '.join(partition_parts)}" if partition_parts else ""
+            f"PARTITION BY {', '.join(partition_parts)}"
+            if partition_parts
+            else ""
         )
 
         sort_parts = []
         if sort_by:
             for field, direction in sort_by.items():
                 order = "ASC" if direction == 1 else "DESC"
-                sql, params = self.expr_evaluator.build_select_expression(f"${field}")
+                sql, params = self.expr_evaluator.build_select_expression(
+                    f"${field}"
+                )
                 sort_parts.append(f"{sql} {order}")
                 all_params.extend(params)
         sort_clause = f"ORDER BY {', '.join(sort_parts)}" if sort_parts else ""
@@ -3930,8 +4066,8 @@ class TemporaryTableAggregationProcessor:
             json_set_args = []
             for field, fill_spec in output.items():
                 value = fill_spec.get("value")
-                field_sql, field_params = self.expr_evaluator.build_select_expression(
-                    f"${field}"
+                field_sql, field_params = (
+                    self.expr_evaluator.build_select_expression(f"${field}")
                 )
                 all_params.extend(field_params)
 
@@ -3950,7 +4086,9 @@ class TemporaryTableAggregationProcessor:
         block_id_selects = ["id", "_id", "data"]
         for field, fill_spec in output.items():
             if fill_spec.get("method") == "locf":
-                field_sql, _ = self.expr_evaluator.build_select_expression(f"${field}")
+                field_sql, _ = self.expr_evaluator.build_select_expression(
+                    f"${field}"
+                )
                 block_id_selects.append(
                     f"COUNT({field_sql}) OVER ({partition_clause} {sort_clause}) AS block_id_{parse_json_path(field).replace('.', '_')}"
                 )
@@ -3960,21 +4098,23 @@ class TemporaryTableAggregationProcessor:
         for field, fill_spec in output.items():
             field_path = parse_json_path(field)
             if fill_spec.get("method") == "locf":
-                field_sql, _ = self.expr_evaluator.build_select_expression(f"${field}")
+                field_sql, _ = self.expr_evaluator.build_select_expression(
+                    f"${field}"
+                )
                 block_col = f"block_id_{field_path.replace('.', '_')}"
                 block_partition = (
                     f"PARTITION BY {', '.join(partition_parts + [block_col])}"
                     if partition_parts
                     else f"PARTITION BY {block_col}"
                 )
-                locf_expr = (
-                    f"FIRST_VALUE({field_sql}) OVER ({block_partition} {sort_clause})"
-                )
+                locf_expr = f"FIRST_VALUE({field_sql}) OVER ({block_partition} {sort_clause})"
                 final_json_args.append(f"'{field_path}'")
                 final_json_args.append(locf_expr)
             else:
                 value = fill_spec.get("value")
-                field_sql, _ = self.expr_evaluator.build_select_expression(f"${field}")
+                field_sql, _ = self.expr_evaluator.build_select_expression(
+                    f"${field}"
+                )
                 final_json_args.append(f"'{field_path}'")
                 final_json_args.append(f"COALESCE({field_sql}, ?)")
                 all_params.append(value)
@@ -4130,10 +4270,14 @@ def execute_2nd_tier_aggregation(
             )
             return processor.process_pipeline(pipeline, batch_size=batch_size)
         except Exception as e:
-            logger.debug(f"Temporary table aggregation failed, fallback required: {e}")
+            logger.debug(
+                f"Temporary table aggregation failed, fallback required: {e}"
+            )
             raise NotImplementedError(
                 f"Temporary table aggregation failed, fallback required: {e}"
             )
 
     # If we can't process with temporary tables, signal for fallback.
-    raise NotImplementedError("Pipeline not supported by temporary table aggregation.")
+    raise NotImplementedError(
+        "Pipeline not supported by temporary table aggregation."
+    )

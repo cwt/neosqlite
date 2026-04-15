@@ -1,5 +1,30 @@
 # CHANGELOG
 
+## 1.14.12
+
+### Bug Fix Release: CTE Array Operators Malformed JSON Fix
+
+**Critical Bug Fix** — fully backward compatible with v1.14.11.
+
+#### High Severity Fixes
+
+- **Fixed malformed JSON Error**: The `json_each()` function requires `json_each(data, '$.field')` syntax, not `json_each(json_extract(data, '$.field'))`. The v1.14.11 implementation incorrectly passed a `json_extract()` expression to `json_each()`, causing `sqlite3.OperationalError: malformed JSON` when using `$in`, `$nin`, or `$all` operators on array fields in aggregation pipelines.
+
+- **sql_tier_aggregator.py**: Fixed by extracting the JSON path properly using `parse_json_path(field)` and constructing `json_each(data, '$.field')` with the correct syntax.
+
+- **sql_translator_unified.py**: Reverted to Python fallback for non-`_id` fields since the translator only has access to the computed expression, not the raw field name and path separately.
+
+#### Test Results
+- **Unit Tests**: 2,806 total (2,806 passed, 0 xfailed, 0 failed)
+- **API Comparison (NeoSQLite vs MongoDB)**: 387 tests (369 passed, 18 skipped, 0 failed) — 100.0%
+- **Code Coverage**: 81.1%
+
+#### Compatibility
+- **Backward Compatible**: Zero breaking changes.
+- **PyMongo API Parity**: 100% for comparable features.
+
+---
+
 ## 1.14.11
 
 ### Performance & Correctness Release: CTE Array Operators, Native Regex, Boolean Type Fix
