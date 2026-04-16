@@ -1,5 +1,36 @@
 # CHANGELOG
 
+## 1.14.13
+
+### Bug Fix & Maintenance: Modern SQLite Compatibility & Benchmark Restoration
+
+**Compatibility and Observability Update** — fully backward compatible with v1.14.12.
+
+#### High Severity Fixes
+
+- **Fixed SQLite 3.45.0+ Compatibility**: Corrected a `no such column: json_each.value` error occurring on systems where NeoSQLite dynamically selects `jsonb_each()`. By adding explicit `AS json_each` aliases to table-valued function calls, column references remain valid regardless of whether the underlying function is `json_each` or `jsonb_each`.
+
+- **Query Builder Aliasing**: Added `AS json_each` to all `json_each`/`jsonb_each` table calls for `$in`, `$nin`, `$all`, and `$elemMatch` operators.
+
+#### Medium Severity Improvements
+
+- **Restored Index Operations Comparison**: Re-added and enhanced the index and compound index operations comparison and benchmark in the API comparison suite.
+
+- **Improved PyMongo Connection Logic**: Enhanced connection reliability for comparison scripts to work across different environment setups (real MongoDB and NX-27017).
+
+- **Robust Unit Tests**: Updated unit test assertions in `test_query_builder.py` to be more version-agnostic regarding generated SQL, ensuring stability across different SQLite versions.
+
+#### Test Results
+- **Unit Tests**: 2,806 total (2,806 passed, 0 xfailed, 0 failed)
+- **API Comparison (NeoSQLite vs MongoDB)**: 379 tests (361 passed, 18 skipped, 0 failed) — 100.0%
+- **Code Coverage**: 81.1%
+
+#### Compatibility
+- **Backward Compatible**: Zero breaking changes.
+- **PyMongo API Parity**: 100% for comparable features.
+
+---
+
 ## 1.14.12
 
 ### Bug Fix Release: CTE Array Operators Malformed JSON Fix
@@ -44,7 +75,7 @@
 
 - **Boolean Type Consistency**: Fixed `$isNumber`, `$isArray`, `$toBool` to return JSON booleans (`json('true')`/`json('false')`) instead of integers (1/0). This fixes `$expr` queries using these operators in WHERE clauses.
 
-- **$elemMatch Path Alias Fix**: Fixed `$elemMatch` with nested `$in/$nin` using wrong path alias (`json_each(data, value)` instead of `json_each(data, "value")`).
+- **$elemMatch Path Alias Fix**: Fixed `$elemMatch` with nested `$in/$nin`using wrong path alias (`json_each(data, value)` instead of `json_each(data, "value")`).
 
 - **_id Projection Default**: Fixed `_id` field exclusion in inclusion projections. `_id` is now properly included by default matching MongoDB behavior.
 
@@ -61,7 +92,7 @@
 
 ## 1.14.10
 
-### Bug Fix Release: $in/$nin Array Fields Fix, Array Semantics, and Dynamic __version__
+### Bug Fix Release: $in/$nin Array Fields Fix, Array Semantics, and Dynamic **version**
 
 **Critical Query Correctness Fixes** — fully backward compatible with v1.14.9.
 
@@ -82,7 +113,7 @@
 
 #### Low Severity Improvements
 
-- **Dynamic __version__**: `neosqlite.__version__` now returns version from `pyproject.toml` using `importlib.metadata.version()` instead of hardcoding.
+- **Dynamic **version****: `neosqlite.__version__` now returns version from `pyproject.toml` using `importlib.metadata.version()` instead of hardcoding.
 
 #### Test Results
 - **Unit Tests**: 2,801 total (2,801 passed, 0 xfailed, 0 failed)
@@ -130,7 +161,7 @@
 
 #### High Severity Fixes
 
-- **$facet JSONB Decode Error**: Fixed false `UnicodeDecodeError` when `$facet` extracts documents from temporary tables where JSONB is stored as binary BLOB. When JSONB is supported, temporary tables store `data` as JSONB binary format (type indicator byte like `0xdc`), not TEXT. Fixed by using `json(data)` to convert JSONB to TEXT before parsing.
+- **$facet JSONB Decode Error**: Fixed false `UnicodeDecodeError` when `$facet` extracts documents from temporary tables where JSONB is stored as binary BLOB. When JSONB is supported, temporary tables store `data` as JSONB binary format (type indicator byte like `0xdc`), not TEXT. Fixed by using`json(data)` to convert JSONB to TEXT before parsing.
 
 **Before:** `$facet` with `$unwind` + `$group` → all documents skipped as "corrupted" → empty results
 **After:** Documents properly extracted from JSONB temp tables → correct facet results
@@ -164,7 +195,7 @@
 
 #### Medium Severity Enhancements
 
-- **$rand SQL Tier Support**: `$rand` now runs natively using SQLite's `RANDOM()` function (`ABS(RANDOM()) / 2^63` → `[0, 1)`).
+- **$rand SQL Tier Support**: `$rand` now runs natively using SQLite's `RANDOM()`function (`ABS(RANDOM()) / 2^63` → `[0, 1)`).
 
 - **Unified Document Loading**: Extracted `_resolve_stored_id()` helper to centralize `_id` resolution logic. Moved `bytes.decode("utf-8")` inside try/except in `_load_with_stored_id()`, returning minimal placeholder for corrupted documents.
 

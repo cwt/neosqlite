@@ -33,18 +33,15 @@
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
-## Latest Release: v1.14.12
+## Latest Release: v1.14.13
 
-NeoSQLite v1.14.12 is a **bug fix release** that corrects the CTE-based array operators implementation introduced in v1.14.11, fixing a "malformed JSON" error when using `$in`, `$nin`, or `$all` operators.
+NeoSQLite v1.14.13 is a **bug fix and maintenance release** that ensures compatibility with newer SQLite versions (3.45.0+) and restores the full index comparison suite in the API benchmarks.
 
-**Key Fix:**
-- **Fixed malformed JSON error** — The `json_each()` function requires `json_each(data, '$.field')` syntax. The v1.14.11 implementation incorrectly passed `json_each(json_extract(data, '$.field'))`, causing `sqlite3.OperationalError: malformed JSON` in aggregation pipelines.
+**Key Fixes:**
+- **SQLite 3.45.0+ Compatibility** — Fixed a `no such column: json_each.value` error on systems where `jsonb_each()` is dynamically selected.
+- **Restored Index Benchmarks** — Re-added the index and compound index operations comparison in the API comparison suite.
 
-### Key Fixes
-
-- **Array Operator Bug Fix**: Fixed `sqlite3.OperationalError: malformed JSON` when using `$in`, `$nin`, or `$all` on array fields in aggregation pipelines.
-
-For full details, see [documents/releases/v1.14.12.md](documents/releases/v1.14.12.md).
+For full details, see [documents/releases/v1.14.13.md](documents/releases/v1.14.13.md).
 
 ## Installation
 
