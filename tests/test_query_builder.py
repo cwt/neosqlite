@@ -120,7 +120,9 @@ class TestBuildOperatorClause:
             "'$.name'", {"$in": ["Alice", "Bob"]}
         )
         assert clause is not None
-        assert "EXISTS (SELECT 1 FROM json_each" in clause
+        assert "EXISTS" in clause
+        assert "json_each" in clause
+        assert "json_each.value" in clause
         assert params == ["Alice", "Bob"]
 
     def test_nin_operator(self, query_helper):
@@ -129,7 +131,9 @@ class TestBuildOperatorClause:
             "'$.name'", {"$nin": ["Alice", "Bob"]}
         )
         assert clause is not None
-        assert "NOT EXISTS (SELECT 1 FROM json_each" in clause
+        assert "NOT EXISTS" in clause
+        assert "json_each" in clause
+        assert "json_each.value" in clause
         assert params == ["Alice", "Bob"]
 
     def test_exists_true(self, query_helper):
@@ -536,6 +540,7 @@ class TestBuildSimpleWhereClause:
         clause, params, tables = result
         assert "EXISTS" in clause
         assert "json_each" in clause
+        assert "json_each.value" in clause
         assert params == ["Alice", "Bob"]
 
     def test_with_exists_operator(self, query_helper):

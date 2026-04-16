@@ -763,7 +763,7 @@ class QueryBuilderMixin:
                             clauses.append(f"value IN ({placeholders})")
                         else:
                             clauses.append(
-                                f"EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) WHERE json_each.value IN ({placeholders}))"
+                                f"EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each WHERE json_each.value IN ({placeholders}))"
                             )
                         params.extend(op_val)
                     else:
@@ -778,7 +778,7 @@ class QueryBuilderMixin:
                             clauses.append(f"value NOT IN ({placeholders})")
                         else:
                             clauses.append(
-                                f"NOT EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) WHERE json_each.value IN ({placeholders}))"
+                                f"NOT EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each WHERE json_each.value IN ({placeholders}))"
                             )
                         params.extend(op_val)
                     else:
@@ -792,7 +792,7 @@ class QueryBuilderMixin:
                             return None, []
                         for v in op_val:
                             clauses.append(
-                                f"EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) WHERE json_each.value = ?)"
+                                f"EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each WHERE json_each.value = ?)"
                             )
                             params.append(v)
                     else:
@@ -916,7 +916,7 @@ class QueryBuilderMixin:
                     # Use json_type check to ensure it only matches arrays (MongoDB semantics)
                     clauses.append(
                         f"json_type(data, {json_path}) = 'array' AND "
-                        f"EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) WHERE {where_inner})"
+                        f"EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each WHERE {where_inner})"
                     )
                     params.extend(inner_params)
                 case "$regex":
