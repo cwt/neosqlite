@@ -13,7 +13,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -28,10 +28,8 @@ def compare_additional_collection_methods():
     print("\n=== Additional Collection Methods Comparison ===")
 
     # Check MongoDB availability FIRST to determine which operations to benchmark
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     mongo_available = client is not None
-    if client:
-        client.close()
 
     # Initialize NeoSQLite result variables
     neo_drop = False
@@ -178,7 +176,7 @@ def compare_additional_collection_methods():
         print(f"Neo with_options(): {'OK' if neo_with_options else 'FAIL'}")
 
     if mongo_available:
-        client = test_pymongo_connection()
+        client = get_mongo_client()
         if client:
             mongo_db = client.test_database
             set_accumulation_mode(True)
@@ -302,8 +300,6 @@ def compare_additional_collection_methods():
             print(
                 f"Mongo with_options(): {'OK' if mongo_with_options else 'FAIL'}"
             )
-
-            client.close()
 
     # Record comparisons - only for operations that were actually timed
     reporter.record_comparison(

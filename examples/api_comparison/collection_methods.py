@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -70,58 +70,55 @@ def compare_collection_methods():
             except Exception:
                 pass
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     # Initialize MongoDB result variables
     mongo_options = None
     mongo_options_ok = False
     mongo_rename = False
 
     if client:
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_collection
+        mongo_collection.delete_many({})
+        mongo_collection.insert_one({"name": "test"})
+
+        set_accumulation_mode(True)
+
+        # Test options()
+        start_mongo_timing()
         try:
-            mongo_db = client.test_database
-            mongo_collection = mongo_db.test_collection
-            mongo_collection.delete_many({})
-            mongo_collection.insert_one({"name": "test"})
-
-            set_accumulation_mode(True)
-
-            # Test options()
-            start_mongo_timing()
-            try:
-                mongo_options = mongo_collection.options()
-                mongo_options_ok = isinstance(mongo_options, dict)
-            except Exception as e:
-                mongo_options_ok = False
-                print(f"Mongo options(): Error - {e}")
-            finally:
-                end_mongo_timing()
-            print(
-                f"Mongo options(): {'OK' if mongo_options_ok else 'FAIL'} (returns dict)"
-            )
-
-            # Test rename()
-            start_mongo_timing()
-            try:
-                mongo_collection.rename("renamed_collection")
-                mongo_rename = (
-                    "renamed_collection" in mongo_db.list_collection_names()
-                )
-            except Exception as e:
-                mongo_rename = False
-                print(f"Mongo rename(): Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            print(f"Mongo rename(): {'OK' if mongo_rename else 'FAIL'}")
-
-            # Rename back for cleanup
-            if mongo_rename:
-                try:
-                    mongo_db.renamed_collection.rename("test_collection")
-                except Exception:
-                    pass
+            mongo_options = mongo_collection.options()
+            mongo_options_ok = isinstance(mongo_options, dict)
+        except Exception as e:
+            mongo_options_ok = False
+            print(f"Mongo options(): Error - {e}")
         finally:
-            client.close()
+            end_mongo_timing()
+        print(
+            f"Mongo options(): {'OK' if mongo_options_ok else 'FAIL'} (returns dict)"
+        )
+
+        # Test rename()
+        start_mongo_timing()
+        try:
+            mongo_collection.rename("renamed_collection")
+            mongo_rename = (
+                "renamed_collection" in mongo_db.list_collection_names()
+            )
+        except Exception as e:
+            mongo_rename = False
+            print(f"Mongo rename(): Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        print(f"Mongo rename(): {'OK' if mongo_rename else 'FAIL'}")
+
+        # Rename back for cleanup
+        if mongo_rename:
+            try:
+                mongo_db.renamed_collection.rename("test_collection")
+            except Exception:
+                pass
 
     reporter.record_comparison(
         "Collection Methods",

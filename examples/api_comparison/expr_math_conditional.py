@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -205,209 +205,187 @@ def compare_expr_math_conditional():
         finally:
             end_neo_timing()
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     if client:
+        set_accumulation_mode(True)
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_expr_ext
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many(
+            [
+                {
+                    "name": "A",
+                    "value": 16,
+                    "arr": [1, 2, 3],
+                    "str": "hello",
+                    "dt": {"$date": "2024-01-15T10:30:00Z"},
+                    "meta": {"city": "NYC"},
+                },
+                {
+                    "name": "B",
+                    "value": 25,
+                    "arr": [4, 5],
+                    "str": "world",
+                    "dt": {"$date": "2023-06-20T15:45:00Z"},
+                    "meta": {"city": "LA"},
+                },
+            ]
+        )
+
+        # Test $cmp
+        start_mongo_timing()
         try:
-            set_accumulation_mode(True)
-            mongo_db = client.test_database
-            mongo_collection = mongo_db.test_expr_ext
-            mongo_collection.delete_many({})
-            mongo_collection.insert_many(
-                [
-                    {
-                        "name": "A",
-                        "value": 16,
-                        "arr": [1, 2, 3],
-                        "str": "hello",
-                        "dt": {"$date": "2024-01-15T10:30:00Z"},
-                        "meta": {"city": "NYC"},
-                    },
-                    {
-                        "name": "B",
-                        "value": 25,
-                        "arr": [4, 5],
-                        "str": "world",
-                        "dt": {"$date": "2023-06-20T15:45:00Z"},
-                        "meta": {"city": "LA"},
-                    },
-                ]
+            res = list(
+                mongo_collection.find(
+                    {"$expr": {"$eq": [{"$cmp": ["$value", 20]}, -1]}}
+                )
             )
-
-            # Test $cmp
-            start_mongo_timing()
-            try:
-                res = list(
-                    mongo_collection.find(
-                        {"$expr": {"$eq": [{"$cmp": ["$value", 20]}, -1]}}
-                    )
-                )
-                mongo_results["$cmp"] = res
-                print(f"Mongo $cmp: {len(res)} matches")
-            except Exception as e:
-                mongo_results["$cmp"] = f"Error: {e}"
-                print(f"Mongo $cmp: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # Test $pow
-            start_mongo_timing()
-            try:
-                res = list(
-                    mongo_collection.aggregate(
-                        [{"$project": {"squared": {"$pow": ["$value", 2]}}}]
-                    )
-                )
-                mongo_results["$pow"] = res
-                print("Mongo $pow: OK")
-            except Exception as e:
-                mongo_results["$pow"] = f"Error: {e}"
-                print(f"Mongo $pow: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # Test $sqrt
-            start_mongo_timing()
-            try:
-                res = list(
-                    mongo_collection.aggregate(
-                        [{"$project": {"root": {"$sqrt": "$value"}}}]
-                    )
-                )
-                mongo_results["$sqrt"] = res
-                print("Mongo $sqrt: OK")
-            except Exception as e:
-                mongo_results["$sqrt"] = f"Error: {e}"
-                print(f"Mongo $sqrt: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # Test $arrayElemAt
-            start_mongo_timing()
-            try:
-                res = list(
-                    mongo_collection.aggregate(
-                        [{"$project": {"first": {"$arrayElemAt": ["$arr", 0]}}}]
-                    )
-                )
-                mongo_results["$arrayElemAt"] = res
-                print("Mongo $arrayElemAt: OK")
-            except Exception as e:
-                mongo_results["$arrayElemAt"] = f"Error: {e}"
-                print(f"Mongo $arrayElemAt: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # Test $concat
-            start_mongo_timing()
-            try:
-                res = list(
-                    mongo_collection.aggregate(
-                        [
-                            {
-                                "$project": {
-                                    "greeting": {
-                                        "$concat": ["$str", "!", "$str"]
-                                    }
-                                }
-                            }
-                        ]
-                    )
-                )
-                mongo_results["$concat"] = res
-                print("Mongo $concat: OK")
-            except Exception as e:
-                mongo_results["$concat"] = f"Error: {e}"
-                print(f"Mongo $concat: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # Test $objectToArray
-            start_mongo_timing()
-            try:
-                res = list(
-                    mongo_collection.aggregate(
-                        [
-                            {
-                                "$project": {
-                                    "meta_arr": {"$objectToArray": "$meta"}
-                                }
-                            }
-                        ]
-                    )
-                )
-                mongo_results["$objectToArray"] = res
-                print("Mongo $objectToArray: OK")
-            except Exception as e:
-                mongo_results["$objectToArray"] = f"Error: {e}"
-                print(f"Mongo $objectToArray: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # Test $switch
-            start_mongo_timing()
-            try:
-                res = list(
-                    mongo_collection.aggregate(
-                        [
-                            {
-                                "$project": {
-                                    "category": {
-                                        "$switch": {
-                                            "branches": [
-                                                {
-                                                    "case": {
-                                                        "$lt": ["$value", 20]
-                                                    },
-                                                    "then": "small",
-                                                },
-                                                {
-                                                    "case": {
-                                                        "$lt": ["$value", 30]
-                                                    },
-                                                    "then": "medium",
-                                                },
-                                            ],
-                                            "default": "large",
-                                        }
-                                    }
-                                }
-                            }
-                        ]
-                    )
-                )
-                mongo_results["$switch"] = res
-                print("Mongo $switch: OK")
-            except Exception as e:
-                mongo_results["$switch"] = f"Error: {e}"
-                print(f"Mongo $switch: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # Test $ifNull
-            mongo_collection.insert_one({"name": "C", "value": None})
-            start_mongo_timing()
-            try:
-                res = list(
-                    mongo_collection.aggregate(
-                        [
-                            {
-                                "$project": {
-                                    "val": {"$ifNull": ["$value", "default"]}
-                                }
-                            }
-                        ]
-                    )
-                )
-                mongo_results["$ifNull"] = res
-                print("Mongo $ifNull: OK")
-            except Exception as e:
-                mongo_results["$ifNull"] = f"Error: {e}"
-                print(f"Mongo $ifNull: Error - {e}")
-            finally:
-                end_mongo_timing()
-
+            mongo_results["$cmp"] = res
+            print(f"Mongo $cmp: {len(res)} matches")
+        except Exception as e:
+            mongo_results["$cmp"] = f"Error: {e}"
+            print(f"Mongo $cmp: Error - {e}")
         finally:
-            client.close()
+            end_mongo_timing()
+
+        # Test $pow
+        start_mongo_timing()
+        try:
+            res = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"squared": {"$pow": ["$value", 2]}}}]
+                )
+            )
+            mongo_results["$pow"] = res
+            print("Mongo $pow: OK")
+        except Exception as e:
+            mongo_results["$pow"] = f"Error: {e}"
+            print(f"Mongo $pow: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # Test $sqrt
+        start_mongo_timing()
+        try:
+            res = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"root": {"$sqrt": "$value"}}}]
+                )
+            )
+            mongo_results["$sqrt"] = res
+            print("Mongo $sqrt: OK")
+        except Exception as e:
+            mongo_results["$sqrt"] = f"Error: {e}"
+            print(f"Mongo $sqrt: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # Test $arrayElemAt
+        start_mongo_timing()
+        try:
+            res = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"first": {"$arrayElemAt": ["$arr", 0]}}}]
+                )
+            )
+            mongo_results["$arrayElemAt"] = res
+            print("Mongo $arrayElemAt: OK")
+        except Exception as e:
+            mongo_results["$arrayElemAt"] = f"Error: {e}"
+            print(f"Mongo $arrayElemAt: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # Test $concat
+        start_mongo_timing()
+        try:
+            res = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "greeting": {"$concat": ["$str", "!", "$str"]}
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_results["$concat"] = res
+            print("Mongo $concat: OK")
+        except Exception as e:
+            mongo_results["$concat"] = f"Error: {e}"
+            print(f"Mongo $concat: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # Test $objectToArray
+        start_mongo_timing()
+        try:
+            res = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"meta_arr": {"$objectToArray": "$meta"}}}]
+                )
+            )
+            mongo_results["$objectToArray"] = res
+            print("Mongo $objectToArray: OK")
+        except Exception as e:
+            mongo_results["$objectToArray"] = f"Error: {e}"
+            print(f"Mongo $objectToArray: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # Test $switch
+        start_mongo_timing()
+        try:
+            res = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "category": {
+                                    "$switch": {
+                                        "branches": [
+                                            {
+                                                "case": {"$lt": ["$value", 20]},
+                                                "then": "small",
+                                            },
+                                            {
+                                                "case": {"$lt": ["$value", 30]},
+                                                "then": "medium",
+                                            },
+                                        ],
+                                        "default": "large",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_results["$switch"] = res
+            print("Mongo $switch: OK")
+        except Exception as e:
+            mongo_results["$switch"] = f"Error: {e}"
+            print(f"Mongo $switch: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # Test $ifNull
+        mongo_collection.insert_one({"name": "C", "value": None})
+        start_mongo_timing()
+        try:
+            res = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"val": {"$ifNull": ["$value", "default"]}}}]
+                )
+            )
+            mongo_results["$ifNull"] = res
+            print("Mongo $ifNull: OK")
+        except Exception as e:
+            mongo_results["$ifNull"] = f"Error: {e}"
+            print(f"Mongo $ifNull: Error - {e}")
+        finally:
+            end_mongo_timing()
 
     # Record results
     for op in [

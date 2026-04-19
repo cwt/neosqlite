@@ -13,7 +13,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -550,7 +550,7 @@ def compare_expr_comprehensive():
         finally:
             end_neo_timing()
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     if client:
         set_accumulation_mode(True)
         mongo_db = client.test_database
@@ -1077,8 +1077,6 @@ def compare_expr_comprehensive():
             print(f"Mongo $convert: Error - {e}")
         finally:
             end_mongo_timing()
-
-        client.close()
 
     def check_res(res, op):
         if op == "nor":

@@ -21,7 +21,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -117,7 +117,7 @@ def compare_compound_indexes():
             traceback.print_exc()
 
     # Test MongoDB via PyMongo (works with both real MongoDB and NX-27017)
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     if client:
         set_accumulation_mode(True)
         try:
@@ -210,8 +210,6 @@ def compare_compound_indexes():
             import traceback
 
             traceback.print_exc()
-        finally:
-            client.close()
     else:
         print("MongoDB: Failed to connect")
 

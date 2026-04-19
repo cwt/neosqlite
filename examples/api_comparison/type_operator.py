@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -70,58 +70,55 @@ def compare_type_operator():
                 neo_results[op_name] = f"Error: {e}"
                 print(f"Neo {op_name}: Error - {e}")
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     mongo_results = {}
 
     if client:
-        try:
-            mongo_db = client.test_database
-            mongo_collection = mongo_db.test_collection
-            mongo_collection.delete_many({})
-            mongo_collection.insert_many(
-                [
-                    {
-                        "name": "Alice",
-                        "age": 30,
-                        "active": True,
-                        "items": [1, 2],
-                        "data": {"key": "val"},
-                        "nothing": None,
-                    },
-                    {
-                        "name": 123,
-                        "age": "thirty",
-                        "active": "yes",
-                        "items": "not array",
-                        "data": "not object",
-                        "nothing": "something",
-                    },
-                ]
-            )
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_collection
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many(
+            [
+                {
+                    "name": "Alice",
+                    "age": 30,
+                    "active": True,
+                    "items": [1, 2],
+                    "data": {"key": "val"},
+                    "nothing": None,
+                },
+                {
+                    "name": 123,
+                    "age": "thirty",
+                    "active": "yes",
+                    "items": "not array",
+                    "data": "not object",
+                    "nothing": "something",
+                },
+            ]
+        )
 
-            set_accumulation_mode(True)
-            for query, op_name in type_tests:
+        set_accumulation_mode(True)
+        for query, op_name in type_tests:
+            try:
+                start_mongo_timing()
                 try:
-                    start_mongo_timing()
-                    try:
-                        result = list(mongo_collection.find(query))
-                        mongo_results[op_name] = result
-                        print(f"Mongo {op_name}: {len(result)}")
-                    finally:
-                        end_mongo_timing()
-                except Exception as e:
-                    mongo_results[op_name] = f"Error: {e}"
-                    print(f"Mongo {op_name}: Error - {e}")
+                    result = list(mongo_collection.find(query))
+                    mongo_results[op_name] = result
+                    print(f"Mongo {op_name}: {len(result)}")
+                finally:
+                    end_mongo_timing()
+            except Exception as e:
+                mongo_results[op_name] = f"Error: {e}"
+                print(f"Mongo {op_name}: Error - {e}")
 
-                reporter.record_comparison(
-                    "$type Operator",
-                    op_name,
-                    neo_results.get(op_name),
-                    mongo_results.get(op_name),
-                    skip_reason=None,
-                )
-        finally:
-            client.close()
+            reporter.record_comparison(
+                "$type Operator",
+                op_name,
+                neo_results.get(op_name),
+                mongo_results.get(op_name),
+                skip_reason=None,
+            )
     else:
         # MongoDB not available, record NeoSQLite results as skipped
         for query, op_name in type_tests:

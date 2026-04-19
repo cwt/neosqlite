@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -24,10 +24,8 @@ def compare_find_and_modify():
     print("\n=== Find and Modify Operations Comparison ===")
 
     # Check MongoDB availability FIRST to determine if we should time operations
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     mongo_available = client is not None
-    if client:
-        client.close()
 
     with neosqlite.Connection(":memory:") as neo_conn:
         neo_collection = neo_conn.test_collection
@@ -85,7 +83,7 @@ def compare_find_and_modify():
     mongo_foau = None
 
     if mongo_available:
-        client = test_pymongo_connection()
+        client = get_mongo_client()
         if client:
             mongo_db = client.test_database
             mongo_collection = mongo_db.test_collection
@@ -129,7 +127,6 @@ def compare_find_and_modify():
             print(
                 f"PyMongo: find_one_and_delete={mongo_foad}, find_one_and_replace={mongo_foar}, find_one_and_update={mongo_foau}"
             )
-            client.close()
 
     reporter.record_comparison(
         "Find & Modify",

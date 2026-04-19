@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -140,7 +140,7 @@ def compare_additional_aggregation():
         finally:
             end_neo_timing()
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     mongo_collection = None
     mongo_db = None
     mongo_push = None
@@ -250,8 +250,6 @@ def compare_additional_aggregation():
             print(f"Mongo $switch: Error - {e}")
         finally:
             end_mongo_timing()
-
-        client.close()
 
     reporter.record_comparison(
         "Aggregation (Advanced Operators)",

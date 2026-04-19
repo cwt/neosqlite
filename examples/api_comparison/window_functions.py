@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -202,50 +202,47 @@ def compare_window_functions():
         finally:
             end_neo_timing()
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     mongo_results = {}
     mongo_explain_ok = False
 
     if client:
-        try:
-            mongo_db = client.test_database
-            mongo_collection = mongo_db.test_window
-            mongo_collection.delete_many({})
-            mongo_collection.insert_many(test_data)
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_window
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many(test_data)
 
-            set_accumulation_mode(True)
-            for name, pipeline in pipelines.items():
-                start_mongo_timing()
-                try:
-                    result = list(mongo_collection.aggregate(pipeline))
-                    mongo_results[name] = result
-                    print(f"Mongo $setWindowFields ({name}): OK")
-                except Exception as e:
-                    mongo_results[name] = f"Error: {e}"
-                    print(f"Mongo $setWindowFields ({name}): Error - {e}")
-                finally:
-                    end_mongo_timing()
-
-            # Test explain() on MongoDB
+        set_accumulation_mode(True)
+        for name, pipeline in pipelines.items():
             start_mongo_timing()
             try:
-                explanation = mongo_db.command(
-                    "aggregate",
-                    "test_window",
-                    pipeline=pipelines["rank"],
-                    explain=True,
-                )
-                mongo_explain_ok = isinstance(explanation, dict)
-                print(
-                    f"Mongo AggregationCursor.explain(): {'OK' if mongo_explain_ok else 'FAIL'}"
-                )
+                result = list(mongo_collection.aggregate(pipeline))
+                mongo_results[name] = result
+                print(f"Mongo $setWindowFields ({name}): OK")
             except Exception as e:
-                mongo_explain_ok = False
-                print(f"Mongo AggregationCursor.explain(): Error - {e}")
+                mongo_results[name] = f"Error: {e}"
+                print(f"Mongo $setWindowFields ({name}): Error - {e}")
             finally:
                 end_mongo_timing()
+
+        # Test explain() on MongoDB
+        start_mongo_timing()
+        try:
+            explanation = mongo_db.command(
+                "aggregate",
+                "test_window",
+                pipeline=pipelines["rank"],
+                explain=True,
+            )
+            mongo_explain_ok = isinstance(explanation, dict)
+            print(
+                f"Mongo AggregationCursor.explain(): {'OK' if mongo_explain_ok else 'FAIL'}"
+            )
+        except Exception as e:
+            mongo_explain_ok = False
+            print(f"Mongo AggregationCursor.explain(): Error - {e}")
         finally:
-            client.close()
+            end_mongo_timing()
 
     # Record comparisons
     for name in pipelines:

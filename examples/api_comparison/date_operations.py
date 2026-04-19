@@ -13,7 +13,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -190,146 +190,141 @@ def compare_date_expr_operators():
                 neo_results[op_name] = f"Error: {e}"
                 print(f"Neo {op_name}: Error - {e}")
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     mongo_dateadd = None
     mongo_datesubtract = None
     mongo_datediff = None
     mongo_results = {}
 
     if client:
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_collection
+        mongo_collection.delete_many({})
+        # MongoDB requires actual datetime objects
+        mongo_collection.insert_many(
+            [
+                {
+                    "event": "A",
+                    "date": datetime(
+                        2024, 6, 15, 14, 30, 0, tzinfo=timezone.utc
+                    ),
+                },
+                {
+                    "event": "B",
+                    "date": datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+                },
+            ]
+        )
+
+        set_accumulation_mode(True)
+
+        # Test $dateAdd for MongoDB
         try:
-            mongo_db = client.test_database
-            mongo_collection = mongo_db.test_collection
-            mongo_collection.delete_many({})
-            # MongoDB requires actual datetime objects
-            mongo_collection.insert_many(
-                [
-                    {
-                        "event": "A",
-                        "date": datetime(
-                            2024, 6, 15, 14, 30, 0, tzinfo=timezone.utc
-                        ),
-                    },
-                    {
-                        "event": "B",
-                        "date": datetime(
-                            2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc
-                        ),
-                    },
-                ]
-            )
+            start_mongo_timing()
+            try:
+                result = list(
+                    mongo_collection.aggregate(
+                        [
+                            {
+                                "$project": {
+                                    "plus_one_day": {
+                                        "$dateAdd": {
+                                            "startDate": "$date",
+                                            "amount": 1,
+                                            "unit": "day",
+                                        }
+                                    }
+                                }
+                            }
+                        ]
+                    )
+                )
+                mongo_dateadd = result
+                print(f"Mongo $dateAdd: OK ({len(result)} results)")
+            finally:
+                end_mongo_timing()
+        except Exception as e:
+            print(f"Mongo $dateAdd: Error - {e}")
 
-            set_accumulation_mode(True)
+        # Test $dateSubtract for MongoDB
+        try:
+            start_mongo_timing()
+            try:
+                result = list(
+                    mongo_collection.aggregate(
+                        [
+                            {
+                                "$project": {
+                                    "minus_one_day": {
+                                        "$dateSubtract": {
+                                            "startDate": "$date",
+                                            "amount": 1,
+                                            "unit": "day",
+                                        }
+                                    }
+                                }
+                            }
+                        ]
+                    )
+                )
+                mongo_datesubtract = result
+                print(f"Mongo $dateSubtract: OK ({len(result)} results)")
+            finally:
+                end_mongo_timing()
+        except Exception as e:
+            print(f"Mongo $dateSubtract: Error - {e}")
 
-            # Test $dateAdd for MongoDB
+        # Test $dateDiff for MongoDB
+        try:
+            start_mongo_timing()
+            try:
+                result = list(
+                    mongo_collection.aggregate(
+                        [
+                            {
+                                "$project": {
+                                    "days_diff": {
+                                        "$dateDiff": {
+                                            "startDate": "$date",
+                                            "endDate": {
+                                                "$dateAdd": {
+                                                    "startDate": "$date",
+                                                    "amount": 1,
+                                                    "unit": "day",
+                                                }
+                                            },
+                                            "unit": "day",
+                                        }
+                                    }
+                                }
+                            }
+                        ]
+                    )
+                )
+                mongo_datediff = result
+                print(f"Mongo $dateDiff: OK ({len(result)} results)")
+            finally:
+                end_mongo_timing()
+        except Exception as e:
+            print(f"Mongo $dateDiff: Error - {e}")
+
+        # Loop over other date operators for MongoDB
+        for op_name, op_expr in date_operators:
             try:
                 start_mongo_timing()
                 try:
                     result = list(
                         mongo_collection.aggregate(
-                            [
-                                {
-                                    "$project": {
-                                        "plus_one_day": {
-                                            "$dateAdd": {
-                                                "startDate": "$date",
-                                                "amount": 1,
-                                                "unit": "day",
-                                            }
-                                        }
-                                    }
-                                }
-                            ]
+                            [{"$project": {"val": op_expr}}]
                         )
                     )
-                    mongo_dateadd = result
-                    print(f"Mongo $dateAdd: OK ({len(result)} results)")
+                    mongo_results[op_name] = result
+                    print(f"Mongo {op_name}: OK ({len(result)} results)")
                 finally:
                     end_mongo_timing()
             except Exception as e:
-                print(f"Mongo $dateAdd: Error - {e}")
-
-            # Test $dateSubtract for MongoDB
-            try:
-                start_mongo_timing()
-                try:
-                    result = list(
-                        mongo_collection.aggregate(
-                            [
-                                {
-                                    "$project": {
-                                        "minus_one_day": {
-                                            "$dateSubtract": {
-                                                "startDate": "$date",
-                                                "amount": 1,
-                                                "unit": "day",
-                                            }
-                                        }
-                                    }
-                                }
-                            ]
-                        )
-                    )
-                    mongo_datesubtract = result
-                    print(f"Mongo $dateSubtract: OK ({len(result)} results)")
-                finally:
-                    end_mongo_timing()
-            except Exception as e:
-                print(f"Mongo $dateSubtract: Error - {e}")
-
-            # Test $dateDiff for MongoDB
-            try:
-                start_mongo_timing()
-                try:
-                    result = list(
-                        mongo_collection.aggregate(
-                            [
-                                {
-                                    "$project": {
-                                        "days_diff": {
-                                            "$dateDiff": {
-                                                "startDate": "$date",
-                                                "endDate": {
-                                                    "$dateAdd": {
-                                                        "startDate": "$date",
-                                                        "amount": 1,
-                                                        "unit": "day",
-                                                    }
-                                                },
-                                                "unit": "day",
-                                            }
-                                        }
-                                    }
-                                }
-                            ]
-                        )
-                    )
-                    mongo_datediff = result
-                    print(f"Mongo $dateDiff: OK ({len(result)} results)")
-                finally:
-                    end_mongo_timing()
-            except Exception as e:
-                print(f"Mongo $dateDiff: Error - {e}")
-
-            # Loop over other date operators for MongoDB
-            for op_name, op_expr in date_operators:
-                try:
-                    start_mongo_timing()
-                    try:
-                        result = list(
-                            mongo_collection.aggregate(
-                                [{"$project": {"val": op_expr}}]
-                            )
-                        )
-                        mongo_results[op_name] = result
-                        print(f"Mongo {op_name}: OK ({len(result)} results)")
-                    finally:
-                        end_mongo_timing()
-                except Exception as e:
-                    mongo_results[op_name] = f"Error: {e}"
-                    print(f"Mongo {op_name}: Error - {e}")
-        finally:
-            client.close()
+                mongo_results[op_name] = f"Error: {e}"
+                print(f"Mongo {op_name}: Error - {e}")
 
     # Record comparison results with actual values
     skip_reason = "MongoDB not available" if not client else None

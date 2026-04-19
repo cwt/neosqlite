@@ -11,7 +11,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -53,7 +53,7 @@ def compare_reindex_operation():
         print(f"NeoSQLite Error: {e}")
 
     # MongoDB
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     if client:
         try:
             mongo_db = client.test_database
@@ -87,8 +87,6 @@ def compare_reindex_operation():
                 end_mongo_timing()
         except Exception as e:
             print(f"MongoDB Error: {e}")
-        finally:
-            client.close()
     else:
         print("MongoDB not available, skipping Mongo reindex test")
 

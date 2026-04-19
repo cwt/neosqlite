@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -174,163 +174,149 @@ def compare_object_operators():
             end_neo_timing()
         print(f"Neo $objectToArray: {'OK' if neo_objecttoarray else 'FAIL'}")
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     if client:
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_collection
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many(
+            [
+                {
+                    "name": "A",
+                    "meta": {"city": "NYC", "zip": 10001},
+                    "extra": {"country": "USA"},
+                },
+                {
+                    "name": "B",
+                    "meta": {"city": "LA", "zip": 90001},
+                    "extra": {"country": "USA"},
+                },
+            ]
+        )
+
+        set_accumulation_mode(True)
+
+        # Test $mergeObjects
+        start_mongo_timing()
         try:
-            mongo_db = client.test_database
-            mongo_collection = mongo_db.test_collection
-            mongo_collection.delete_many({})
-            mongo_collection.insert_many(
-                [
-                    {
-                        "name": "A",
-                        "meta": {"city": "NYC", "zip": 10001},
-                        "extra": {"country": "USA"},
-                    },
-                    {
-                        "name": "B",
-                        "meta": {"city": "LA", "zip": 90001},
-                        "extra": {"country": "USA"},
-                    },
-                ]
+            result = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "merged": {"$mergeObjects": ["$meta", "$extra"]}
+                            }
+                        }
+                    ]
+                )
             )
-
-            set_accumulation_mode(True)
-
-            # Test $mergeObjects
-            start_mongo_timing()
-            try:
-                result = list(
-                    mongo_collection.aggregate(
-                        [
-                            {
-                                "$project": {
-                                    "merged": {
-                                        "$mergeObjects": ["$meta", "$extra"]
-                                    }
-                                }
-                            }
-                        ]
-                    )
-                )
-                mongo_mergeobjects = len(result) == 2
-            except Exception as e:
-                print(f"Mongo $mergeObjects: Error - {e}")
-                mongo_mergeobjects = False
-            finally:
-                end_mongo_timing()
-            print(
-                f"Mongo $mergeObjects: {'OK' if mongo_mergeobjects else 'FAIL'}"
-            )
-
-            # Test $getField
-            start_mongo_timing()
-            try:
-                result = list(
-                    mongo_collection.aggregate(
-                        [
-                            {
-                                "$project": {
-                                    "city": {
-                                        "$getField": {
-                                            "field": "city",
-                                            "input": "$meta",
-                                        }
-                                    }
-                                }
-                            }
-                        ]
-                    )
-                )
-                mongo_getfield = len(result) == 2
-            except Exception as e:
-                print(f"Mongo $getField: Error - {e}")
-                mongo_getfield = False
-            finally:
-                end_mongo_timing()
-            print(f"Mongo $getField: {'OK' if mongo_getfield else 'FAIL'}")
-
-            # Test $setField
-            start_mongo_timing()
-            try:
-                result = list(
-                    mongo_collection.aggregate(
-                        [
-                            {
-                                "$project": {
-                                    "with_field": {
-                                        "$setField": {
-                                            "field": "newField",
-                                            "input": "$meta",
-                                            "value": "newValue",
-                                        }
-                                    }
-                                }
-                            }
-                        ]
-                    )
-                )
-                mongo_setfield = len(result) == 2
-            except Exception as e:
-                print(f"Mongo $setField: Error - {e}")
-                mongo_setfield = False
-            finally:
-                end_mongo_timing()
-            print(f"Mongo $setField: {'OK' if mongo_setfield else 'FAIL'}")
-
-            # Test $unsetField
-            start_mongo_timing()
-            try:
-                result = list(
-                    mongo_collection.aggregate(
-                        [
-                            {
-                                "$project": {
-                                    "without_zip": {
-                                        "$unsetField": {
-                                            "field": "zip",
-                                            "input": "$meta",
-                                        }
-                                    }
-                                }
-                            }
-                        ]
-                    )
-                )
-                mongo_unsetfield = len(result) == 2
-            except Exception as e:
-                print(f"Mongo $unsetField: Error - {e}")
-                mongo_unsetfield = False
-            finally:
-                end_mongo_timing()
-            print(f"Mongo $unsetField: {'OK' if mongo_unsetfield else 'FAIL'}")
-
-            # Test $objectToArray
-            start_mongo_timing()
-            try:
-                result = list(
-                    mongo_collection.aggregate(
-                        [
-                            {
-                                "$project": {
-                                    "as_array": {"$objectToArray": "$meta"}
-                                }
-                            }
-                        ]
-                    )
-                )
-                mongo_objecttoarray = len(result) == 2
-            except Exception as e:
-                print(f"Mongo $objectToArray: Error - {e}")
-                mongo_objecttoarray = False
-            finally:
-                end_mongo_timing()
-            print(
-                f"Mongo $objectToArray: {'OK' if mongo_objecttoarray else 'FAIL'}"
-            )
-
+            mongo_mergeobjects = len(result) == 2
+        except Exception as e:
+            print(f"Mongo $mergeObjects: Error - {e}")
+            mongo_mergeobjects = False
         finally:
-            client.close()
+            end_mongo_timing()
+        print(f"Mongo $mergeObjects: {'OK' if mongo_mergeobjects else 'FAIL'}")
+
+        # Test $getField
+        start_mongo_timing()
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "city": {
+                                    "$getField": {
+                                        "field": "city",
+                                        "input": "$meta",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_getfield = len(result) == 2
+        except Exception as e:
+            print(f"Mongo $getField: Error - {e}")
+            mongo_getfield = False
+        finally:
+            end_mongo_timing()
+        print(f"Mongo $getField: {'OK' if mongo_getfield else 'FAIL'}")
+
+        # Test $setField
+        start_mongo_timing()
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "with_field": {
+                                    "$setField": {
+                                        "field": "newField",
+                                        "input": "$meta",
+                                        "value": "newValue",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_setfield = len(result) == 2
+        except Exception as e:
+            print(f"Mongo $setField: Error - {e}")
+            mongo_setfield = False
+        finally:
+            end_mongo_timing()
+        print(f"Mongo $setField: {'OK' if mongo_setfield else 'FAIL'}")
+
+        # Test $unsetField
+        start_mongo_timing()
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "without_zip": {
+                                    "$unsetField": {
+                                        "field": "zip",
+                                        "input": "$meta",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_unsetfield = len(result) == 2
+        except Exception as e:
+            print(f"Mongo $unsetField: Error - {e}")
+            mongo_unsetfield = False
+        finally:
+            end_mongo_timing()
+        print(f"Mongo $unsetField: {'OK' if mongo_unsetfield else 'FAIL'}")
+
+        # Test $objectToArray
+        start_mongo_timing()
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"as_array": {"$objectToArray": "$meta"}}}]
+                )
+            )
+            mongo_objecttoarray = len(result) == 2
+        except Exception as e:
+            print(f"Mongo $objectToArray: Error - {e}")
+            mongo_objecttoarray = False
+        finally:
+            end_mongo_timing()
+        print(
+            f"Mongo $objectToArray: {'OK' if mongo_objecttoarray else 'FAIL'}"
+        )
 
     reporter.record_comparison(
         "Object (Field Operators)",

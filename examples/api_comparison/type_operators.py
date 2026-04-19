@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -56,46 +56,41 @@ def compare_type_operators():
             neo_is_number = f"Error: {e}"
             print(f"Neo $isNumber: Error - {e}")
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     mongo_is_number = None
 
     if client:
-        try:
-            mongo_db = client.test_database
-            mongo_collection = mongo_db.test_type_ops
-            mongo_collection.delete_many({})
-            mongo_collection.insert_one(
-                {
-                    "_id": 1,
-                    "num": 42,
-                    "str": "hello",
-                    "arr": [1, 2, 3],
-                }
-            )
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_type_ops
+        mongo_collection.delete_many({})
+        mongo_collection.insert_one(
+            {
+                "_id": 1,
+                "num": 42,
+                "str": "hello",
+                "arr": [1, 2, 3],
+            }
+        )
 
-            set_accumulation_mode(True)
+        set_accumulation_mode(True)
+        try:
+            start_mongo_timing()
             try:
-                start_mongo_timing()
-                try:
-                    result = list(
-                        mongo_collection.aggregate(
-                            [
-                                {"$match": {"_id": 1}},
-                                {"$project": {"is_num": {"$isNumber": "$num"}}},
-                            ]
-                        )
+                result = list(
+                    mongo_collection.aggregate(
+                        [
+                            {"$match": {"_id": 1}},
+                            {"$project": {"is_num": {"$isNumber": "$num"}}},
+                        ]
                     )
-                    mongo_is_number = (
-                        result[0].get("is_num") if result else None
-                    )
-                    print(f"Mongo $isNumber: {mongo_is_number}")
-                finally:
-                    end_mongo_timing()
-            except Exception as e:
-                mongo_is_number = f"Error: {e}"
-                print(f"Mongo $isNumber: Error - {e}")
-        finally:
-            client.close()
+                )
+                mongo_is_number = result[0].get("is_num") if result else None
+                print(f"Mongo $isNumber: {mongo_is_number}")
+            finally:
+                end_mongo_timing()
+        except Exception as e:
+            mongo_is_number = f"Error: {e}"
+            print(f"Mongo $isNumber: Error - {e}")
 
     reporter.record_comparison(
         "Type Operators",

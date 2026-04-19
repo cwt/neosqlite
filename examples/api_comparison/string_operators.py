@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import sanitize_for_mongodb, test_pymongo_connection
+from .utils import get_mongo_client, sanitize_for_mongodb
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -300,276 +300,256 @@ def compare_string_operators():
         finally:
             end_neo_timing()
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     if client:
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_collection
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many(sanitize_for_mongodb(test_data))
+
+        set_accumulation_mode(True)
+
+        # $substr
+        start_mongo_timing()
         try:
-            mongo_db = client.test_database
-            mongo_collection = mongo_db.test_collection
-            mongo_collection.delete_many({})
-            mongo_collection.insert_many(sanitize_for_mongodb(test_data))
-
-            set_accumulation_mode(True)
-
-            # $substr
-            start_mongo_timing()
-            try:
-                mongo_results["$substr"] = list(
-                    mongo_collection.aggregate(
-                        [{"$project": {"short": {"$substr": ["$name", 2, 3]}}}]
-                    )
+            mongo_results["$substr"] = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"short": {"$substr": ["$name", 2, 3]}}}]
                 )
-            except Exception as e:
-                mongo_results["$substr"] = f"Error: {e}"
-            finally:
-                end_mongo_timing()
-
-            # $trim
-            start_mongo_timing()
-            try:
-                mongo_results["$trim"] = list(
-                    mongo_collection.aggregate(
-                        [
-                            {
-                                "$project": {
-                                    "trimmed": {"$trim": {"input": "$name"}}
-                                }
-                            }
-                        ]
-                    )
-                )
-            except Exception as e:
-                mongo_results["$trim"] = f"Error: {e}"
-            finally:
-                end_mongo_timing()
-
-            # $split
-            start_mongo_timing()
-            try:
-                mongo_results["$split"] = list(
-                    mongo_collection.aggregate(
-                        [{"$project": {"parts": {"$split": ["$city", " "]}}}]
-                    )
-                )
-            except Exception as e:
-                mongo_results["$split"] = f"Error: {e}"
-            finally:
-                end_mongo_timing()
-
-            # $replaceAll
-            start_mongo_timing()
-            try:
-                mongo_results["$replaceAll"] = list(
-                    mongo_collection.aggregate(
-                        [
-                            {
-                                "$project": {
-                                    "replaced": {
-                                        "$replaceAll": {
-                                            "input": "$city",
-                                            "find": " ",
-                                            "replacement": "-",
-                                        }
-                                    }
-                                }
-                            }
-                        ]
-                    )
-                )
-            except Exception as e:
-                mongo_results["$replaceAll"] = f"Error: {e}"
-            finally:
-                end_mongo_timing()
-
-            # $ltrim
-            start_mongo_timing()
-            try:
-                mongo_results["$ltrim"] = list(
-                    mongo_collection.aggregate(
-                        [
-                            {
-                                "$project": {
-                                    "left_trimmed": {
-                                        "$ltrim": {"input": "$name"}
-                                    }
-                                }
-                            }
-                        ]
-                    )
-                )
-            except Exception as e:
-                mongo_results["$ltrim"] = f"Error: {e}"
-            finally:
-                end_mongo_timing()
-
-            # $rtrim
-            start_mongo_timing()
-            try:
-                mongo_results["$rtrim"] = list(
-                    mongo_collection.aggregate(
-                        [
-                            {
-                                "$project": {
-                                    "right_trimmed": {
-                                        "$rtrim": {"input": "$name"}
-                                    }
-                                }
-                            }
-                        ]
-                    )
-                )
-            except Exception as e:
-                mongo_results["$rtrim"] = f"Error: {e}"
-            finally:
-                end_mongo_timing()
-
-            # $strLenCP
-            start_mongo_timing()
-            try:
-                mongo_results["$strLenCP"] = list(
-                    mongo_collection.aggregate(
-                        [{"$project": {"name_len": {"$strLenCP": "$name"}}}]
-                    )
-                )
-            except Exception as e:
-                mongo_results["$strLenCP"] = f"Error: {e}"
-            finally:
-                end_mongo_timing()
-
-            # $regexFind
-            start_mongo_timing()
-            try:
-                mongo_results["$regexFind"] = list(
-                    mongo_collection.aggregate(
-                        [
-                            {
-                                "$project": {
-                                    "match": {
-                                        "$regexFind": {
-                                            "input": "$name",
-                                            "regex": "alice",
-                                            "options": "i",
-                                        }
-                                    }
-                                }
-                            }
-                        ]
-                    )
-                )
-            except Exception as e:
-                mongo_results["$regexFind"] = f"Error: {e}"
-            finally:
-                end_mongo_timing()
-
-            # $regexMatch
-            start_mongo_timing()
-            try:
-                mongo_results["$regexMatch"] = list(
-                    mongo_collection.aggregate(
-                        [
-                            {
-                                "$project": {
-                                    "match_i": {
-                                        "$regexMatch": {
-                                            "input": "$name",
-                                            "regex": "ALICE",
-                                            "options": "i",
-                                        }
-                                    },
-                                    "match_m": {
-                                        "$regexMatch": {
-                                            "input": "$text",
-                                            "regex": "^Line 2",
-                                            "options": "m",
-                                        }
-                                    },
-                                    "match_s": {
-                                        "$regexMatch": {
-                                            "input": "$text",
-                                            "regex": "Line 1.Line 2",
-                                            "options": "s",
-                                        }
-                                    },
-                                }
-                            }
-                        ]
-                    )
-                )
-            except Exception as e:
-                mongo_results["$regexMatch"] = f"Error: {e}"
-            finally:
-                end_mongo_timing()
-
-            # $replaceOne
-            start_mongo_timing()
-            try:
-                mongo_results["$replaceOne"] = list(
-                    mongo_collection.aggregate(
-                        [
-                            {
-                                "$project": {
-                                    "replaced": {
-                                        "$replaceOne": {
-                                            "input": "$city",
-                                            "find": " ",
-                                            "replacement": "-",
-                                        }
-                                    }
-                                }
-                            }
-                        ]
-                    )
-                )
-            except Exception as e:
-                mongo_results["$replaceOne"] = f"Error: {e}"
-            finally:
-                end_mongo_timing()
-
-            # $indexOfCP
-            start_mongo_timing()
-            try:
-                mongo_results["$indexOfCP"] = list(
-                    mongo_collection.aggregate(
-                        [
-                            {
-                                "$project": {
-                                    "index": {"$indexOfCP": ["$name", "ice"]}
-                                }
-                            }
-                        ]
-                    )
-                )
-            except Exception as e:
-                mongo_results["$indexOfCP"] = f"Error: {e}"
-            finally:
-                end_mongo_timing()
-
-            # $regexFindAll
-            start_mongo_timing()
-            try:
-                mongo_results["$regexFindAll"] = list(
-                    mongo_collection.aggregate(
-                        [
-                            {
-                                "$project": {
-                                    "matches": {
-                                        "$regexFindAll": {
-                                            "input": "$name",
-                                            "regex": "O",
-                                            "options": "i",
-                                        }
-                                    }
-                                }
-                            }
-                        ]
-                    )
-                )
-            except Exception as e:
-                mongo_results["$regexFindAll"] = f"Error: {e}"
-            finally:
-                end_mongo_timing()
-
+            )
+        except Exception as e:
+            mongo_results["$substr"] = f"Error: {e}"
         finally:
-            client.close()
+            end_mongo_timing()
+
+        # $trim
+        start_mongo_timing()
+        try:
+            mongo_results["$trim"] = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"trimmed": {"$trim": {"input": "$name"}}}}]
+                )
+            )
+        except Exception as e:
+            mongo_results["$trim"] = f"Error: {e}"
+        finally:
+            end_mongo_timing()
+
+        # $split
+        start_mongo_timing()
+        try:
+            mongo_results["$split"] = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"parts": {"$split": ["$city", " "]}}}]
+                )
+            )
+        except Exception as e:
+            mongo_results["$split"] = f"Error: {e}"
+        finally:
+            end_mongo_timing()
+
+        # $replaceAll
+        start_mongo_timing()
+        try:
+            mongo_results["$replaceAll"] = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "replaced": {
+                                    "$replaceAll": {
+                                        "input": "$city",
+                                        "find": " ",
+                                        "replacement": "-",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+        except Exception as e:
+            mongo_results["$replaceAll"] = f"Error: {e}"
+        finally:
+            end_mongo_timing()
+
+        # $ltrim
+        start_mongo_timing()
+        try:
+            mongo_results["$ltrim"] = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "left_trimmed": {"$ltrim": {"input": "$name"}}
+                            }
+                        }
+                    ]
+                )
+            )
+        except Exception as e:
+            mongo_results["$ltrim"] = f"Error: {e}"
+        finally:
+            end_mongo_timing()
+
+        # $rtrim
+        start_mongo_timing()
+        try:
+            mongo_results["$rtrim"] = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "right_trimmed": {"$rtrim": {"input": "$name"}}
+                            }
+                        }
+                    ]
+                )
+            )
+        except Exception as e:
+            mongo_results["$rtrim"] = f"Error: {e}"
+        finally:
+            end_mongo_timing()
+
+        # $strLenCP
+        start_mongo_timing()
+        try:
+            mongo_results["$strLenCP"] = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"name_len": {"$strLenCP": "$name"}}}]
+                )
+            )
+        except Exception as e:
+            mongo_results["$strLenCP"] = f"Error: {e}"
+        finally:
+            end_mongo_timing()
+
+        # $regexFind
+        start_mongo_timing()
+        try:
+            mongo_results["$regexFind"] = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "match": {
+                                    "$regexFind": {
+                                        "input": "$name",
+                                        "regex": "alice",
+                                        "options": "i",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+        except Exception as e:
+            mongo_results["$regexFind"] = f"Error: {e}"
+        finally:
+            end_mongo_timing()
+
+        # $regexMatch
+        start_mongo_timing()
+        try:
+            mongo_results["$regexMatch"] = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "match_i": {
+                                    "$regexMatch": {
+                                        "input": "$name",
+                                        "regex": "ALICE",
+                                        "options": "i",
+                                    }
+                                },
+                                "match_m": {
+                                    "$regexMatch": {
+                                        "input": "$text",
+                                        "regex": "^Line 2",
+                                        "options": "m",
+                                    }
+                                },
+                                "match_s": {
+                                    "$regexMatch": {
+                                        "input": "$text",
+                                        "regex": "Line 1.Line 2",
+                                        "options": "s",
+                                    }
+                                },
+                            }
+                        }
+                    ]
+                )
+            )
+        except Exception as e:
+            mongo_results["$regexMatch"] = f"Error: {e}"
+        finally:
+            end_mongo_timing()
+
+        # $replaceOne
+        start_mongo_timing()
+        try:
+            mongo_results["$replaceOne"] = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "replaced": {
+                                    "$replaceOne": {
+                                        "input": "$city",
+                                        "find": " ",
+                                        "replacement": "-",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+        except Exception as e:
+            mongo_results["$replaceOne"] = f"Error: {e}"
+        finally:
+            end_mongo_timing()
+
+        # $indexOfCP
+        start_mongo_timing()
+        try:
+            mongo_results["$indexOfCP"] = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"index": {"$indexOfCP": ["$name", "ice"]}}}]
+                )
+            )
+        except Exception as e:
+            mongo_results["$indexOfCP"] = f"Error: {e}"
+        finally:
+            end_mongo_timing()
+
+        # $regexFindAll
+        start_mongo_timing()
+        try:
+            mongo_results["$regexFindAll"] = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "matches": {
+                                    "$regexFindAll": {
+                                        "input": "$name",
+                                        "regex": "O",
+                                        "options": "i",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+        except Exception as e:
+            mongo_results["$regexFindAll"] = f"Error: {e}"
+        finally:
+            end_mongo_timing()
 
     # Record comparisons
     for op in operators:

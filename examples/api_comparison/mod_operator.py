@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -50,38 +50,35 @@ def compare_mod_operator():
         finally:
             end_neo_timing()
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     mongo_mod_result = None
 
     if client:
-        try:
-            mongo_db = client.test_database
-            mongo_collection = mongo_db.test_collection
-            mongo_collection.delete_many({})
-            mongo_collection.insert_many(
-                [
-                    {"name": "Alice", "age": 30},
-                    {"name": "Bob", "age": 25},
-                    {"name": "Charlie", "age": 35},
-                    {"name": "David", "age": 28},
-                    {"name": "Eve", "age": 32},
-                ]
-            )
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_collection
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many(
+            [
+                {"name": "Alice", "age": 30},
+                {"name": "Bob", "age": 25},
+                {"name": "Charlie", "age": 35},
+                {"name": "David", "age": 28},
+                {"name": "Eve", "age": 32},
+            ]
+        )
 
-            set_accumulation_mode(True)
-            start_mongo_timing()
-            try:
-                mongo_mod_result = list(
-                    mongo_collection.find({"age": {"$mod": [5, 0]}})
-                )
-                print(f"Mongo $mod (age % 5 == 0): {len(mongo_mod_result)}")
-            except Exception as e:
-                mongo_mod_result = f"Error: {e}"
-                print(f"Mongo $mod: Error - {e}")
-            finally:
-                end_mongo_timing()
+        set_accumulation_mode(True)
+        start_mongo_timing()
+        try:
+            mongo_mod_result = list(
+                mongo_collection.find({"age": {"$mod": [5, 0]}})
+            )
+            print(f"Mongo $mod (age % 5 == 0): {len(mongo_mod_result)}")
+        except Exception as e:
+            mongo_mod_result = f"Error: {e}"
+            print(f"Mongo $mod: Error - {e}")
         finally:
-            client.close()
+            end_mongo_timing()
 
     reporter.record_comparison(
         "$mod Operator",

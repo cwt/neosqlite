@@ -13,7 +13,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -119,7 +119,7 @@ def compare_session_methods():
                 print(f"Neo session context: Error - {e}")
 
     # MongoDB part
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     mongo_session = None
     mongo_tx_commit = None
     mongo_tx_abort = None
@@ -226,7 +226,6 @@ def compare_session_methods():
                         "Session & Transactions",
                         "MongoDB requires replica set for transactions (only start_session() ran)",
                     )
-            client.close()
     else:
         # MongoDB not available at all
         if benchmark_reporter:

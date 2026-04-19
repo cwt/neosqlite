@@ -13,7 +13,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import sanitize_for_mongodb, test_pymongo_connection
+from .utils import get_mongo_client, sanitize_for_mongodb
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -180,31 +180,28 @@ def compare_aggregation_stages():
         finally:
             end_neo_timing()
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     mongo_results = {}
 
     if client:
-        try:
-            mongo_db = client.test_database
-            mongo_collection = mongo_db.test_collection
-            mongo_collection.delete_many({})
-            mongo_collection.insert_many(sanitize_for_mongodb(data))
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_collection
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many(sanitize_for_mongodb(data))
 
-            set_accumulation_mode(True)
-            start_mongo_timing()
-            try:
-                for pipeline, op_name in pipelines:
-                    try:
-                        result = list(mongo_collection.aggregate(pipeline))
-                        mongo_results[op_name] = result
-                        print(f"Mongo {op_name}: {len(result)}")
-                    except Exception as e:
-                        mongo_results[op_name] = f"Error: {e}"
-                        print(f"Mongo {op_name}: Error - {e}")
-            finally:
-                end_mongo_timing()
+        set_accumulation_mode(True)
+        start_mongo_timing()
+        try:
+            for pipeline, op_name in pipelines:
+                try:
+                    result = list(mongo_collection.aggregate(pipeline))
+                    mongo_results[op_name] = result
+                    print(f"Mongo {op_name}: {len(result)}")
+                except Exception as e:
+                    mongo_results[op_name] = f"Error: {e}"
+                    print(f"Mongo {op_name}: Error - {e}")
         finally:
-            client.close()
+            end_mongo_timing()
 
     # Record comparisons
     for pipeline, op_name in pipelines:

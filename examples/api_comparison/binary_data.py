@@ -14,7 +14,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -98,7 +98,7 @@ def compare_binary_support():
         print(f"Neo Binary subtypes: {'OK' if neo_subtypes else 'FAIL'}")
 
     # MongoDB tests
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     if client:
         try:
             from bson import Binary as BsonBinary
@@ -180,8 +180,6 @@ def compare_binary_support():
             )
         except ImportError:
             print("PyMongo or bson not installed correctly for binary tests")
-        finally:
-            client.close()
 
     reporter.record_comparison(
         "Binary Data",

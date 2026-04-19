@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -338,7 +338,7 @@ def compare_expr_type_conversion():
         finally:
             end_neo_timing()
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     if client:
         mongo_db = client.test_database
         mongo_collection = mongo_db.test_collection
@@ -629,8 +629,6 @@ def compare_expr_type_conversion():
             print(f"Mongo $expr $radiansToDegrees: Error - {e}")
         finally:
             end_mongo_timing()
-
-        client.close()
 
     reporter.record_comparison(
         "$expr (Type & Conversion Operators)",

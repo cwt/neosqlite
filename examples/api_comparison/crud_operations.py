@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -141,7 +141,7 @@ def compare_crud_operations():
             "NeoSQLite CRUD: insert_one, insert_many, find, find_one, update_one, update_many, replace_one, delete_one, delete_many, count_documents, estimated_document_count"
         )
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     # Initialize MongoDB result variables
 
     mongo_collection = None
@@ -248,7 +248,6 @@ def compare_crud_operations():
             end_mongo_timing()
 
         print("PyMongo CRUD: All operations completed")
-        client.close()
 
     reporter.record_comparison("CRUD Operations", "insert_one", "OK", "OK")
     reporter.record_comparison("CRUD Operations", "insert_many", "OK", "OK")

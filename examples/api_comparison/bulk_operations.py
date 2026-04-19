@@ -11,7 +11,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -42,7 +42,7 @@ def compare_bulk_operations():
 
             end_neo_timing()
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     # Initialize MongoDB result variables
 
     mongo_collection = None
@@ -70,6 +70,5 @@ def compare_bulk_operations():
         finally:
 
             end_mongo_timing()
-        client.close()
 
     reporter.record_comparison("Bulk Operations", "bulk_write", "OK", "OK")

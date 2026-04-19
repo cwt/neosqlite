@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -43,7 +43,7 @@ def compare_nested_field_queries():
             end_neo_timing()
         print(f"Neo nested query (profile.city): {len(neo_result)}")
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     # Initialize MongoDB result variables
 
     mongo_collection = None
@@ -70,7 +70,6 @@ def compare_nested_field_queries():
 
             end_mongo_timing()
         print(f"Mongo nested query (profile.city): {len(mongo_result)}")
-        client.close()
 
     reporter.record_comparison(
         "Nested Queries",

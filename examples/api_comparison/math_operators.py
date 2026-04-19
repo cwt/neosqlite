@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -65,7 +65,7 @@ def compare_math_operators():
         neo_log2 = neo_project({"$log2": "$value"})
         neo_sigmoid = neo_project({"$sigmoid": "$value"})
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     # Initialize MongoDB result variables
     mongo_pow = mongo_sqrt = mongo_asin = mongo_acos = mongo_atan = None
     mongo_exp = mongo_asinh = mongo_acosh = mongo_atanh = None
@@ -73,52 +73,47 @@ def compare_math_operators():
     mongo_sigmoid = None
 
     if client:
-        try:
-            mongo_db = client.test_database
-            mongo_collection = mongo_db.test_collection
-            mongo_collection.delete_many({})
-            mongo_collection.insert_many(
-                [
-                    {"name": "A", "value": 16, "angle": 1.5708},
-                    {"name": "B", "value": 25, "angle": 0},
-                ]
-            )
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_collection
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many(
+            [
+                {"name": "A", "value": 16, "angle": 1.5708},
+                {"name": "B", "value": 25, "angle": 0},
+            ]
+        )
 
-            set_accumulation_mode(True)
+        set_accumulation_mode(True)
 
-            def mongo_project(expr):
-                start_mongo_timing()
-                try:
-                    res = list(
-                        mongo_collection.aggregate(
-                            [{"$project": {"val": expr}}]
-                        )
-                    )
-                    return res
-                except Exception as e:
-                    print(f"Mongo Error: {e}")
-                    return None
-                finally:
-                    end_mongo_timing()
+        def mongo_project(expr):
+            start_mongo_timing()
+            try:
+                res = list(
+                    mongo_collection.aggregate([{"$project": {"val": expr}}])
+                )
+                return res
+            except Exception as e:
+                print(f"Mongo Error: {e}")
+                return None
+            finally:
+                end_mongo_timing()
 
-            # Run MongoDB tests
-            mongo_pow = mongo_project({"$pow": ["$value", 2]})
-            mongo_sqrt = mongo_project({"$sqrt": "$value"})
-            mongo_asin = mongo_project({"$asin": 0.5})
-            mongo_acos = mongo_project({"$acos": 0.5})
-            mongo_atan = mongo_project({"$atan": 1})
-            mongo_exp = mongo_project({"$exp": 1})
-            mongo_asinh = mongo_project({"$asinh": 0.5})
-            mongo_acosh = mongo_project({"$acosh": 1.5})
-            mongo_atanh = mongo_project({"$atanh": 0.5})
-            mongo_degstorad = mongo_project({"$degreesToRadians": 180})
-            mongo_radtodeg = mongo_project({"$radiansToDegrees": 3.14159})
-            mongo_ln = mongo_project({"$ln": 10})
-            mongo_log = mongo_project({"$log": ["$value", 10]})
-            mongo_log10 = mongo_project({"$log10": "$value"})
-            mongo_sigmoid = mongo_project({"$sigmoid": "$value"})
-        finally:
-            client.close()
+        # Run MongoDB tests
+        mongo_pow = mongo_project({"$pow": ["$value", 2]})
+        mongo_sqrt = mongo_project({"$sqrt": "$value"})
+        mongo_asin = mongo_project({"$asin": 0.5})
+        mongo_acos = mongo_project({"$acos": 0.5})
+        mongo_atan = mongo_project({"$atan": 1})
+        mongo_exp = mongo_project({"$exp": 1})
+        mongo_asinh = mongo_project({"$asinh": 0.5})
+        mongo_acosh = mongo_project({"$acosh": 1.5})
+        mongo_atanh = mongo_project({"$atanh": 0.5})
+        mongo_degstorad = mongo_project({"$degreesToRadians": 180})
+        mongo_radtodeg = mongo_project({"$radiansToDegrees": 3.14159})
+        mongo_ln = mongo_project({"$ln": 10})
+        mongo_log = mongo_project({"$log": ["$value", 10]})
+        mongo_log10 = mongo_project({"$log10": "$value"})
+        mongo_sigmoid = mongo_project({"$sigmoid": "$value"})
 
     # Record comparisons
     ops = [

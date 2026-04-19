@@ -14,7 +14,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import sanitize_for_mongodb, test_pymongo_connection
+from .utils import get_mongo_client, sanitize_for_mongodb
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -359,184 +359,178 @@ def compare_additional_aggregation_stages():
         finally:
             cleanup_merge_db()
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     if client:
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_collection
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many(sanitize_for_mongodb(data))
+        set_accumulation_mode(True)
+
+        # $sample
+        start_mongo_timing()
         try:
-            mongo_db = client.test_database
-            mongo_collection = mongo_db.test_collection
-            mongo_collection.delete_many({})
-            mongo_collection.insert_many(sanitize_for_mongodb(data))
-            set_accumulation_mode(True)
-
-            # $sample
-            start_mongo_timing()
-            try:
-                result = list(
-                    mongo_collection.aggregate([{"$sample": {"size": 2}}])
-                )
-                mongo_results["sample"] = result
-                print("Mongo sample: OK")
-            except Exception as e:
-                mongo_results["sample"] = f"Error: {e}"
-                print(f"Mongo sample: Error - {e}")
-            finally:
-                end_mongo_timing()
-            if isinstance(mongo_results["sample"], list):
-                mongo_results["sample"] = len(mongo_results["sample"])
-
-            # $facet
-            start_mongo_timing()
-            try:
-                result = list(mongo_collection.aggregate(facet_pipeline))
-                mongo_results["facet"] = result
-                print("Mongo facet: OK")
-            except Exception as e:
-                mongo_results["facet"] = f"Error: {e}"
-                print(f"Mongo facet: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # $lookup
-            mongo_db.orders.delete_many({})
-            mongo_db.orders.insert_many(
-                [
-                    {"order_id": 1, "item": "A", "qty": 2},
-                    {"order_id": 2, "item": "B", "qty": 1},
-                    {"order_id": 3, "item": "C", "qty": 3},
-                ]
+            result = list(
+                mongo_collection.aggregate([{"$sample": {"size": 2}}])
             )
-            start_mongo_timing()
-            try:
-                result = list(mongo_collection.aggregate(lookup_pipeline))
-                mongo_results["lookup"] = result
-                print("Mongo lookup: OK")
-            except Exception as e:
-                mongo_results["lookup"] = f"Error: {e}"
-                print(f"Mongo lookup: Error - {e}")
-            finally:
-                end_mongo_timing()
-            if isinstance(mongo_results["lookup"], list):
-                mongo_results["lookup"] = clean_docs(
-                    mongo_results["lookup"], ["orders"]
-                )
-
-            # $lookup with pipeline
-            start_mongo_timing()
-            try:
-                result = list(mongo_collection.aggregate(lookup_p_pipeline))
-                mongo_results["lookup_pipeline"] = result
-                print("Mongo lookup_pipeline: OK")
-            except Exception as e:
-                mongo_results["lookup_pipeline"] = f"Error: {e}"
-                print(f"Mongo lookup_pipeline: Error - {e}")
-            finally:
-                end_mongo_timing()
-            if isinstance(mongo_results["lookup_pipeline"], list):
-                mongo_results["lookup_pipeline"] = clean_docs(
-                    mongo_results["lookup_pipeline"], ["matched_orders"]
-                )
-
-            # $bucket
-            start_mongo_timing()
-            try:
-                result = list(mongo_collection.aggregate(bucket_pipeline))
-                mongo_results["bucket"] = result
-                print("Mongo bucket: OK")
-            except Exception as e:
-                mongo_results["bucket"] = f"Error: {e}"
-                print(f"Mongo bucket: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # $bucketAuto
-            start_mongo_timing()
-            try:
-                result = list(mongo_collection.aggregate(bucket_auto_pipeline))
-                mongo_results["bucketauto"] = result
-                print("Mongo bucketauto: OK")
-            except Exception as e:
-                mongo_results["bucketauto"] = f"Error: {e}"
-                print(f"Mongo bucketauto: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # $unionWith
-            mongo_db.other_coll.delete_many({})
-            mongo_db.other_coll.insert_one({"item": "Other", "price": 50})
-            start_mongo_timing()
-            try:
-                result = list(mongo_collection.aggregate(union_pipeline))
-                mongo_results["unionwith"] = result
-                print("Mongo unionwith: OK")
-            except Exception as e:
-                mongo_results["unionwith"] = f"Error: {e}"
-                print(f"Mongo unionwith: Error - {e}")
-            finally:
-                end_mongo_timing()
-            if isinstance(mongo_results["unionwith"], list):
-                mongo_results["unionwith"] = clean_docs(
-                    mongo_results["unionwith"]
-                )
-
-            # $redact
-            start_mongo_timing()
-            try:
-                result = list(mongo_collection.aggregate(redact_pipeline))
-                mongo_results["redact"] = result
-                print("Mongo redact: OK")
-            except Exception as e:
-                mongo_results["redact"] = f"Error: {e}"
-                print(f"Mongo redact: Error - {e}")
-            finally:
-                end_mongo_timing()
-            if isinstance(mongo_results["redact"], list):
-                mongo_results["redact"] = clean_docs(mongo_results["redact"])
-
-            # $densify
-            mongo_db.densify_coll.delete_many({})
-            mongo_db.densify_coll.insert_many([{"t": 1}, {"t": 3}])
-            start_mongo_timing()
-            try:
-                result = list(mongo_db.densify_coll.aggregate(densify_pipeline))
-                mongo_results["densify"] = result
-                print("Mongo densify: OK")
-            except Exception as e:
-                mongo_results["densify"] = f"Error: {e}"
-                print(f"Mongo densify: Error - {e}")
-            finally:
-                end_mongo_timing()
-            if isinstance(mongo_results["densify"], list):
-                mongo_results["densify"] = clean_docs(mongo_results["densify"])
-
-            # $merge
-            target_name = "merged_results"
-            mongo_db[target_name].delete_many({})
-            start_mongo_timing()
-            try:
-                result = list(
-                    mongo_collection.aggregate(
-                        [
-                            {"$match": {"category": "books"}},
-                            {"$merge": {"into": target_name}},
-                        ]
-                    )
-                )
-                mongo_results["merge"] = result
-                print("Mongo merge: OK")
-            except Exception as e:
-                mongo_results["merge"] = f"Error: {e}"
-                print(f"Mongo merge: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            if not isinstance(mongo_results["merge"], str):
-                mongo_merge_raw = list(mongo_db[target_name].find({}))
-                mongo_results["merge"] = sorted(
-                    clean_docs(mongo_merge_raw), key=operator.itemgetter("item")
-                )
-
+            mongo_results["sample"] = result
+            print("Mongo sample: OK")
+        except Exception as e:
+            mongo_results["sample"] = f"Error: {e}"
+            print(f"Mongo sample: Error - {e}")
         finally:
-            client.close()
+            end_mongo_timing()
+        if isinstance(mongo_results["sample"], list):
+            mongo_results["sample"] = len(mongo_results["sample"])
+
+        # $facet
+        start_mongo_timing()
+        try:
+            result = list(mongo_collection.aggregate(facet_pipeline))
+            mongo_results["facet"] = result
+            print("Mongo facet: OK")
+        except Exception as e:
+            mongo_results["facet"] = f"Error: {e}"
+            print(f"Mongo facet: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # $lookup
+        mongo_db.orders.delete_many({})
+        mongo_db.orders.insert_many(
+            [
+                {"order_id": 1, "item": "A", "qty": 2},
+                {"order_id": 2, "item": "B", "qty": 1},
+                {"order_id": 3, "item": "C", "qty": 3},
+            ]
+        )
+        start_mongo_timing()
+        try:
+            result = list(mongo_collection.aggregate(lookup_pipeline))
+            mongo_results["lookup"] = result
+            print("Mongo lookup: OK")
+        except Exception as e:
+            mongo_results["lookup"] = f"Error: {e}"
+            print(f"Mongo lookup: Error - {e}")
+        finally:
+            end_mongo_timing()
+        if isinstance(mongo_results["lookup"], list):
+            mongo_results["lookup"] = clean_docs(
+                mongo_results["lookup"], ["orders"]
+            )
+
+        # $lookup with pipeline
+        start_mongo_timing()
+        try:
+            result = list(mongo_collection.aggregate(lookup_p_pipeline))
+            mongo_results["lookup_pipeline"] = result
+            print("Mongo lookup_pipeline: OK")
+        except Exception as e:
+            mongo_results["lookup_pipeline"] = f"Error: {e}"
+            print(f"Mongo lookup_pipeline: Error - {e}")
+        finally:
+            end_mongo_timing()
+        if isinstance(mongo_results["lookup_pipeline"], list):
+            mongo_results["lookup_pipeline"] = clean_docs(
+                mongo_results["lookup_pipeline"], ["matched_orders"]
+            )
+
+        # $bucket
+        start_mongo_timing()
+        try:
+            result = list(mongo_collection.aggregate(bucket_pipeline))
+            mongo_results["bucket"] = result
+            print("Mongo bucket: OK")
+        except Exception as e:
+            mongo_results["bucket"] = f"Error: {e}"
+            print(f"Mongo bucket: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # $bucketAuto
+        start_mongo_timing()
+        try:
+            result = list(mongo_collection.aggregate(bucket_auto_pipeline))
+            mongo_results["bucketauto"] = result
+            print("Mongo bucketauto: OK")
+        except Exception as e:
+            mongo_results["bucketauto"] = f"Error: {e}"
+            print(f"Mongo bucketauto: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # $unionWith
+        mongo_db.other_coll.delete_many({})
+        mongo_db.other_coll.insert_one({"item": "Other", "price": 50})
+        start_mongo_timing()
+        try:
+            result = list(mongo_collection.aggregate(union_pipeline))
+            mongo_results["unionwith"] = result
+            print("Mongo unionwith: OK")
+        except Exception as e:
+            mongo_results["unionwith"] = f"Error: {e}"
+            print(f"Mongo unionwith: Error - {e}")
+        finally:
+            end_mongo_timing()
+        if isinstance(mongo_results["unionwith"], list):
+            mongo_results["unionwith"] = clean_docs(mongo_results["unionwith"])
+
+        # $redact
+        start_mongo_timing()
+        try:
+            result = list(mongo_collection.aggregate(redact_pipeline))
+            mongo_results["redact"] = result
+            print("Mongo redact: OK")
+        except Exception as e:
+            mongo_results["redact"] = f"Error: {e}"
+            print(f"Mongo redact: Error - {e}")
+        finally:
+            end_mongo_timing()
+        if isinstance(mongo_results["redact"], list):
+            mongo_results["redact"] = clean_docs(mongo_results["redact"])
+
+        # $densify
+        mongo_db.densify_coll.delete_many({})
+        mongo_db.densify_coll.insert_many([{"t": 1}, {"t": 3}])
+        start_mongo_timing()
+        try:
+            result = list(mongo_db.densify_coll.aggregate(densify_pipeline))
+            mongo_results["densify"] = result
+            print("Mongo densify: OK")
+        except Exception as e:
+            mongo_results["densify"] = f"Error: {e}"
+            print(f"Mongo densify: Error - {e}")
+        finally:
+            end_mongo_timing()
+        if isinstance(mongo_results["densify"], list):
+            mongo_results["densify"] = clean_docs(mongo_results["densify"])
+
+        # $merge
+        target_name = "merged_results"
+        mongo_db[target_name].delete_many({})
+        start_mongo_timing()
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [
+                        {"$match": {"category": "books"}},
+                        {"$merge": {"into": target_name}},
+                    ]
+                )
+            )
+            mongo_results["merge"] = result
+            print("Mongo merge: OK")
+        except Exception as e:
+            mongo_results["merge"] = f"Error: {e}"
+            print(f"Mongo merge: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        if not isinstance(mongo_results["merge"], str):
+            mongo_merge_raw = list(mongo_db[target_name].find({}))
+            mongo_results["merge"] = sorted(
+                clean_docs(mongo_merge_raw), key=operator.itemgetter("item")
+            )
 
     # Final reporting
     stages = [

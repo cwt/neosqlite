@@ -6,7 +6,7 @@ import neosqlite
 from neosqlite import CodecOptions, ReadConcern, ReadPreference, WriteConcern
 
 from .reporter import reporter
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -41,18 +41,15 @@ def compare_options_classes():
         # 4. CodecOptions
         neo_co = CodecOptions(tz_aware=True)
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     mongo_wc_repr = None
 
     if client:
-        try:
-            from pymongo import WriteConcern as MongoWriteConcern
+        from pymongo import WriteConcern as MongoWriteConcern
 
-            # 1. WriteConcern
-            mongo_wc = MongoWriteConcern(w=1, j=True)
-            mongo_wc_repr = repr(mongo_wc)
-        finally:
-            client.close()
+        # 1. WriteConcern
+        mongo_wc = MongoWriteConcern(w=1, j=True)
+        mongo_wc_repr = repr(mongo_wc)
 
     # Record results (compatibility-only, no timing)
     reporter.record_result(

@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -244,7 +244,7 @@ def compare_project_unwind_fts():
             end_neo_timing()
 
     # ---- MongoDB comparison ----
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     mongo_collection = None
 
     mongo_project_simple = None
@@ -370,8 +370,6 @@ def compare_project_unwind_fts():
         # We'll skip the FTS comparison as the semantics differ
         mongo_project_unwind_fts = None
         mongo_project_unwind_fts_result = None
-
-        client.close()
 
     # Record comparisons
     reporter.record_comparison(

@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -68,7 +68,7 @@ def compare_objectid_operations():
             f"Neo ObjectId: create={oid is not None}, find={neo_found}, unique={neo_unique}, hex={neo_hex}"
         )
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     # Initialize MongoDB result variables
 
     mongo_collection = None
@@ -120,7 +120,6 @@ def compare_objectid_operations():
         print(
             f"Mongo ObjectId: create={oid is not None}, find={mongo_found}, unique={mongo_unique}, hex={mongo_hex}"
         )
-        client.close()
 
     reporter.record_comparison("ObjectId", "create", "OK", "OK")
     reporter.record_comparison(

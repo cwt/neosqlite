@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -344,280 +344,271 @@ def compare_cursor_methods():
         finally:
             end_neo_timing()
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     if client:
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_cursor
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many(
+            [{"name": f"Doc{i}", "value": i} for i in range(20)]
+        )
+        mongo_collection.create_index("value")
+
+        set_accumulation_mode(True)
+
+        # 1. chained_methods
+        from pymongo import DESCENDING as MONGO_DESCENDING
+
+        start_mongo_timing()
         try:
-            mongo_db = client.test_database
-            mongo_collection = mongo_db.test_cursor
-            mongo_collection.delete_many({})
-            mongo_collection.insert_many(
-                [{"name": f"Doc{i}", "value": i} for i in range(20)]
+            cursor = (
+                mongo_collection.find({"value": {"$gte": 3}})
+                .limit(5)
+                .skip(1)
+                .sort("value", MONGO_DESCENDING)
             )
-            mongo_collection.create_index("value")
-
-            set_accumulation_mode(True)
-
-            # 1. chained_methods
-            from pymongo import DESCENDING as MONGO_DESCENDING
-
-            start_mongo_timing()
-            try:
-                cursor = (
-                    mongo_collection.find({"value": {"$gte": 3}})
-                    .limit(5)
-                    .skip(1)
-                    .sort("value", MONGO_DESCENDING)
-                )
-                results = list(cursor)
-                mongo_cursor_methods = len(results) <= 5
-            except Exception as e:
-                print(f"Mongo cursor chained methods: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # 2. batch_size
-            start_mongo_timing()
-            try:
-                cursor = mongo_collection.find({}).batch_size(3)
-                mongo_batch_size = cursor is not None
-            except Exception as e:
-                print(f"Mongo batch_size: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # 3. hint
-            start_mongo_timing()
-            try:
-                cursor = mongo_collection.find({"value": 5}).hint("value_1")
-                results = list(cursor)
-                mongo_hint = len(results) >= 0
-            except Exception as e:
-                print(f"Mongo hint: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # 4. to_list
-            start_mongo_timing()
-            try:
-                cursor = mongo_collection.find({"value": {"$gte": 5}})
-                results = cursor.to_list()
-                mongo_to_list = len(results) >= 0
-            except Exception as e:
-                print(f"Mongo to_list(): Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # 5. to_list_length
-            start_mongo_timing()
-            try:
-                cursor = mongo_collection.find({})
-                results = cursor.to_list(3)
-                mongo_to_list_length = len(results) == 3
-            except Exception as e:
-                print(f"Mongo to_list(3): Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # 6. clone
-            start_mongo_timing()
-            try:
-                cursor = mongo_collection.find({"value": {"$gte": 5}}).limit(3)
-                cloned = cursor.clone()
-                results_original = list(cursor)
-                results_clone = list(cloned)
-                mongo_clone = len(results_original) == len(results_clone)
-            except Exception as e:
-                print(f"Mongo clone(): Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # 7. explain
-            start_mongo_timing()
-            try:
-                cursor = mongo_collection.find({"value": {"$gte": 5}})
-                plan = cursor.explain()
-                mongo_explain = "queryPlanner" in plan
-            except Exception as e:
-                print(f"Mongo explain(): Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # 8. comment
-            start_mongo_timing()
-            try:
-                cursor = mongo_collection.find({"value": {"$gte": 5}}).comment(
-                    "test comment"
-                )
-                results = list(cursor)
-                mongo_comment = len(results) >= 0
-            except Exception as e:
-                print(f"Mongo comment(): Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # 9. retrieved
-            start_mongo_timing()
-            try:
-                cursor = mongo_collection.find({"value": {"$gte": 5}})
-                results = list(cursor)
-                mongo_retrieved = cursor.retrieved == len(results)
-            except Exception as e:
-                print(f"Mongo retrieved: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # 10. alive
-            start_mongo_timing()
-            try:
-                cursor = mongo_collection.find({"value": {"$gte": 5}})
-                alive_initial = cursor.alive is True
-                list(cursor)
-                alive_after = isinstance(cursor.alive, bool)
-                mongo_alive = alive_initial and alive_after
-            except Exception as e:
-                print(f"Mongo alive: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # 11. collection
-            start_mongo_timing()
-            try:
-                cursor = mongo_collection.find({})
-                mongo_collection_prop = cursor.collection is mongo_collection
-            except Exception as e:
-                print(f"Mongo collection: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # 12. address
-            start_mongo_timing()
-            try:
-                cursor = mongo_collection.find({})
-                address_before = cursor.address is None
-                list(cursor)
-                address_after = (
-                    isinstance(cursor.address, tuple)
-                    and len(cursor.address) == 2
-                )
-                mongo_address = address_before and address_after
-            except Exception as e:
-                print(f"Mongo address: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # 13. min
-            start_mongo_timing()
-            try:
-                cursor = (
-                    mongo_collection.find({})
-                    .hint("value_1")
-                    .min([("value", 10)])
-                )
-                results = list(cursor)
-                mongo_min = len(results) == 10 and all(
-                    doc["value"] >= 10 for doc in results
-                )
-            except Exception as e:
-                print(f"Mongo min(): Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # 14. max
-            start_mongo_timing()
-            try:
-                cursor = (
-                    mongo_collection.find({})
-                    .hint("value_1")
-                    .max([("value", 10)])
-                )
-                results = list(cursor)
-                mongo_max = len(results) == 10 and all(
-                    doc["value"] < 10 for doc in results
-                )
-            except Exception as e:
-                print(f"Mongo max(): Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # 15. add_option
-            start_mongo_timing()
-            try:
-                cursor = mongo_collection.find({})
-                cursor.add_option(2)
-                mongo_add_option = True
-            except Exception as e:
-                print(f"Mongo add_option: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # 16. remove_option
-            start_mongo_timing()
-            try:
-                cursor = mongo_collection.find({})
-                cursor.add_option(2)
-                cursor.remove_option(2)
-                mongo_remove_option = True
-            except Exception as e:
-                print(f"Mongo remove_option: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # 17. max_await_time_ms
-            start_mongo_timing()
-            try:
-                cursor = mongo_collection.find({}).max_await_time_ms(100)
-                mongo_max_await = True
-            except Exception as e:
-                print(f"Mongo max_await_time_ms: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # 18. session
-            start_mongo_timing()
-            try:
-                cursor = mongo_collection.find({})
-                mongo_session_prop = cursor.session is None
-            except Exception as e:
-                print(f"Mongo session: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # 19. cursor_id
-            start_mongo_timing()
-            try:
-                cursor = mongo_collection.find({})
-                mongo_cursor_id_prop = isinstance(
-                    cursor.cursor_id, (int, type(None))
-                )
-            except Exception as e:
-                print(f"Mongo cursor_id: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # 20. collation
-            from pymongo.collation import Collation
-
-            start_mongo_timing()
-            try:
-                cursor = mongo_collection.find({}).collation(
-                    Collation(locale="en_US", strength=2)
-                )
-                mongo_collation = cursor is not None
-            except Exception as e:
-                print(f"Mongo collation(): Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # 21. where
-            start_mongo_timing()
-            try:
-                # Not supported as a method in PyMongo
-                mongo_where = None
-            finally:
-                end_mongo_timing()
-
+            results = list(cursor)
+            mongo_cursor_methods = len(results) <= 5
+        except Exception as e:
+            print(f"Mongo cursor chained methods: Error - {e}")
         finally:
-            client.close()
+            end_mongo_timing()
+
+        # 2. batch_size
+        start_mongo_timing()
+        try:
+            cursor = mongo_collection.find({}).batch_size(3)
+            mongo_batch_size = cursor is not None
+        except Exception as e:
+            print(f"Mongo batch_size: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # 3. hint
+        start_mongo_timing()
+        try:
+            cursor = mongo_collection.find({"value": 5}).hint("value_1")
+            results = list(cursor)
+            mongo_hint = len(results) >= 0
+        except Exception as e:
+            print(f"Mongo hint: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # 4. to_list
+        start_mongo_timing()
+        try:
+            cursor = mongo_collection.find({"value": {"$gte": 5}})
+            results = cursor.to_list()
+            mongo_to_list = len(results) >= 0
+        except Exception as e:
+            print(f"Mongo to_list(): Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # 5. to_list_length
+        start_mongo_timing()
+        try:
+            cursor = mongo_collection.find({})
+            results = cursor.to_list(3)
+            mongo_to_list_length = len(results) == 3
+        except Exception as e:
+            print(f"Mongo to_list(3): Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # 6. clone
+        start_mongo_timing()
+        try:
+            cursor = mongo_collection.find({"value": {"$gte": 5}}).limit(3)
+            cloned = cursor.clone()
+            results_original = list(cursor)
+            results_clone = list(cloned)
+            mongo_clone = len(results_original) == len(results_clone)
+        except Exception as e:
+            print(f"Mongo clone(): Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # 7. explain
+        start_mongo_timing()
+        try:
+            cursor = mongo_collection.find({"value": {"$gte": 5}})
+            plan = cursor.explain()
+            mongo_explain = "queryPlanner" in plan
+        except Exception as e:
+            print(f"Mongo explain(): Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # 8. comment
+        start_mongo_timing()
+        try:
+            cursor = mongo_collection.find({"value": {"$gte": 5}}).comment(
+                "test comment"
+            )
+            results = list(cursor)
+            mongo_comment = len(results) >= 0
+        except Exception as e:
+            print(f"Mongo comment(): Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # 9. retrieved
+        start_mongo_timing()
+        try:
+            cursor = mongo_collection.find({"value": {"$gte": 5}})
+            results = list(cursor)
+            mongo_retrieved = cursor.retrieved == len(results)
+        except Exception as e:
+            print(f"Mongo retrieved: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # 10. alive
+        start_mongo_timing()
+        try:
+            cursor = mongo_collection.find({"value": {"$gte": 5}})
+            alive_initial = cursor.alive is True
+            list(cursor)
+            alive_after = isinstance(cursor.alive, bool)
+            mongo_alive = alive_initial and alive_after
+        except Exception as e:
+            print(f"Mongo alive: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # 11. collection
+        start_mongo_timing()
+        try:
+            cursor = mongo_collection.find({})
+            mongo_collection_prop = cursor.collection is mongo_collection
+        except Exception as e:
+            print(f"Mongo collection: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # 12. address
+        start_mongo_timing()
+        try:
+            cursor = mongo_collection.find({})
+            address_before = cursor.address is None
+            list(cursor)
+            address_after = (
+                isinstance(cursor.address, tuple) and len(cursor.address) == 2
+            )
+            mongo_address = address_before and address_after
+        except Exception as e:
+            print(f"Mongo address: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # 13. min
+        start_mongo_timing()
+        try:
+            cursor = (
+                mongo_collection.find({}).hint("value_1").min([("value", 10)])
+            )
+            results = list(cursor)
+            mongo_min = len(results) == 10 and all(
+                doc["value"] >= 10 for doc in results
+            )
+        except Exception as e:
+            print(f"Mongo min(): Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # 14. max
+        start_mongo_timing()
+        try:
+            cursor = (
+                mongo_collection.find({}).hint("value_1").max([("value", 10)])
+            )
+            results = list(cursor)
+            mongo_max = len(results) == 10 and all(
+                doc["value"] < 10 for doc in results
+            )
+        except Exception as e:
+            print(f"Mongo max(): Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # 15. add_option
+        start_mongo_timing()
+        try:
+            cursor = mongo_collection.find({})
+            cursor.add_option(2)
+            mongo_add_option = True
+        except Exception as e:
+            print(f"Mongo add_option: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # 16. remove_option
+        start_mongo_timing()
+        try:
+            cursor = mongo_collection.find({})
+            cursor.add_option(2)
+            cursor.remove_option(2)
+            mongo_remove_option = True
+        except Exception as e:
+            print(f"Mongo remove_option: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # 17. max_await_time_ms
+        start_mongo_timing()
+        try:
+            cursor = mongo_collection.find({}).max_await_time_ms(100)
+            mongo_max_await = True
+        except Exception as e:
+            print(f"Mongo max_await_time_ms: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # 18. session
+        start_mongo_timing()
+        try:
+            cursor = mongo_collection.find({})
+            mongo_session_prop = cursor.session is None
+        except Exception as e:
+            print(f"Mongo session: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # 19. cursor_id
+        start_mongo_timing()
+        try:
+            cursor = mongo_collection.find({})
+            mongo_cursor_id_prop = isinstance(
+                cursor.cursor_id, (int, type(None))
+            )
+        except Exception as e:
+            print(f"Mongo cursor_id: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # 20. collation
+        from pymongo.collation import Collation
+
+        start_mongo_timing()
+        try:
+            cursor = mongo_collection.find({}).collation(
+                Collation(locale="en_US", strength=2)
+            )
+            mongo_collation = cursor is not None
+        except Exception as e:
+            print(f"Mongo collation(): Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # 21. where
+        start_mongo_timing()
+        try:
+            # Not supported as a method in PyMongo
+            mongo_where = None
+        finally:
+            end_mongo_timing()
 
     # Final reporting
     reporter.record_comparison(

@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -123,117 +123,112 @@ def compare_pullall_operator():
         finally:
             end_neo_timing()
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     mongo_results = {}
 
     if client:
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_collection
+        mongo_collection.delete_many({})
+
+        set_accumulation_mode(True)
+        # Test 1: Basic pullAll
+        mongo_collection.insert_one(
+            {"_id": 1, "name": "test1", "scores": [80, 90, 80, 100, 90, 80]}
+        )
+        start_mongo_timing()
         try:
-            mongo_db = client.test_database
-            mongo_collection = mongo_db.test_collection
-            mongo_collection.delete_many({})
-
-            set_accumulation_mode(True)
-            # Test 1: Basic pullAll
-            mongo_collection.insert_one(
-                {"_id": 1, "name": "test1", "scores": [80, 90, 80, 100, 90, 80]}
+            result = mongo_collection.update_one(
+                {"_id": 1}, {"$pullAll": {"scores": [80, 90]}}
             )
-            start_mongo_timing()
-            try:
-                result = mongo_collection.update_one(
-                    {"_id": 1}, {"$pullAll": {"scores": [80, 90]}}
-                )
-                doc = mongo_collection.find_one({"_id": 1})
-                mongo_results["basic"] = {
-                    "modified": result.modified_count,
-                    "result": sorted(doc["scores"]),
-                }
-                print(
-                    f"Mongo basic: modified={result.modified_count}, result={sorted(doc['scores'])}"
-                )
-            except Exception as e:
-                mongo_results["basic"] = f"Error: {e}"
-                print(f"Mongo basic: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # Test 2: PullAll with strings
-            mongo_collection.insert_one(
-                {
-                    "_id": 2,
-                    "name": "test2",
-                    "tags": ["a", "b", "c", "a", "b", "a"],
-                }
+            doc = mongo_collection.find_one({"_id": 1})
+            mongo_results["basic"] = {
+                "modified": result.modified_count,
+                "result": sorted(doc["scores"]),
+            }
+            print(
+                f"Mongo basic: modified={result.modified_count}, result={sorted(doc['scores'])}"
             )
-            start_mongo_timing()
-            try:
-                result = mongo_collection.update_one(
-                    {"_id": 2}, {"$pullAll": {"tags": ["a", "b"]}}
-                )
-                doc = mongo_collection.find_one({"_id": 2})
-                mongo_results["strings"] = {
-                    "modified": result.modified_count,
-                    "result": sorted(doc["tags"]),
-                }
-                print(
-                    f"Mongo strings: modified={result.modified_count}, result={sorted(doc['tags'])}"
-                )
-            except Exception as e:
-                mongo_results["strings"] = f"Error: {e}"
-                print(f"Mongo strings: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # Test 3: PullAll with no matches
-            mongo_collection.insert_one(
-                {"_id": 3, "name": "test3", "numbers": [1, 2, 3, 4, 5]}
-            )
-            start_mongo_timing()
-            try:
-                result = mongo_collection.update_one(
-                    {"_id": 3}, {"$pullAll": {"numbers": [10, 20]}}
-                )
-                doc = mongo_collection.find_one({"_id": 3})
-                mongo_results["no_matches"] = {
-                    "modified": result.modified_count,
-                    "result": sorted(doc["numbers"]),
-                }
-                print(
-                    f"Mongo no_matches: modified={result.modified_count}, result={sorted(doc['numbers'])}"
-                )
-            except Exception as e:
-                mongo_results["no_matches"] = f"Error: {e}"
-                print(f"Mongo no_matches: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # Test 4: PullAll with nested arrays
-            mongo_collection.insert_one(
-                {"_id": 4, "name": "test4", "nested": [[1, 2], [3, 4], [1, 2]]}
-            )
-            start_mongo_timing()
-            try:
-                result = mongo_collection.update_one(
-                    {"_id": 4}, {"$pullAll": {"nested": [[1, 2]]}}
-                )
-                doc = mongo_collection.find_one({"_id": 4})
-                mongo_results["nested"] = {
-                    "modified": result.modified_count,
-                    "result": [
-                        list(x) if isinstance(x, list) else x
-                        for x in doc["nested"]
-                    ],
-                }
-                print(
-                    f"Mongo nested: modified={result.modified_count}, result={doc['nested']}"
-                )
-            except Exception as e:
-                mongo_results["nested"] = f"Error: {e}"
-                print(f"Mongo nested: Error - {e}")
-            finally:
-                end_mongo_timing()
-
+        except Exception as e:
+            mongo_results["basic"] = f"Error: {e}"
+            print(f"Mongo basic: Error - {e}")
         finally:
-            client.close()
+            end_mongo_timing()
+
+        # Test 2: PullAll with strings
+        mongo_collection.insert_one(
+            {
+                "_id": 2,
+                "name": "test2",
+                "tags": ["a", "b", "c", "a", "b", "a"],
+            }
+        )
+        start_mongo_timing()
+        try:
+            result = mongo_collection.update_one(
+                {"_id": 2}, {"$pullAll": {"tags": ["a", "b"]}}
+            )
+            doc = mongo_collection.find_one({"_id": 2})
+            mongo_results["strings"] = {
+                "modified": result.modified_count,
+                "result": sorted(doc["tags"]),
+            }
+            print(
+                f"Mongo strings: modified={result.modified_count}, result={sorted(doc['tags'])}"
+            )
+        except Exception as e:
+            mongo_results["strings"] = f"Error: {e}"
+            print(f"Mongo strings: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # Test 3: PullAll with no matches
+        mongo_collection.insert_one(
+            {"_id": 3, "name": "test3", "numbers": [1, 2, 3, 4, 5]}
+        )
+        start_mongo_timing()
+        try:
+            result = mongo_collection.update_one(
+                {"_id": 3}, {"$pullAll": {"numbers": [10, 20]}}
+            )
+            doc = mongo_collection.find_one({"_id": 3})
+            mongo_results["no_matches"] = {
+                "modified": result.modified_count,
+                "result": sorted(doc["numbers"]),
+            }
+            print(
+                f"Mongo no_matches: modified={result.modified_count}, result={sorted(doc['numbers'])}"
+            )
+        except Exception as e:
+            mongo_results["no_matches"] = f"Error: {e}"
+            print(f"Mongo no_matches: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # Test 4: PullAll with nested arrays
+        mongo_collection.insert_one(
+            {"_id": 4, "name": "test4", "nested": [[1, 2], [3, 4], [1, 2]]}
+        )
+        start_mongo_timing()
+        try:
+            result = mongo_collection.update_one(
+                {"_id": 4}, {"$pullAll": {"nested": [[1, 2]]}}
+            )
+            doc = mongo_collection.find_one({"_id": 4})
+            mongo_results["nested"] = {
+                "modified": result.modified_count,
+                "result": [
+                    list(x) if isinstance(x, list) else x for x in doc["nested"]
+                ],
+            }
+            print(
+                f"Mongo nested: modified={result.modified_count}, result={doc['nested']}"
+            )
+        except Exception as e:
+            mongo_results["nested"] = f"Error: {e}"
+            print(f"Mongo nested: Error - {e}")
+        finally:
+            end_mongo_timing()
 
     # Compare results
     for test_name in neo_results:

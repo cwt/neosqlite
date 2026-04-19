@@ -22,7 +22,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -99,7 +99,7 @@ def compare_index_operations():
             print(f"NeoSQLite (direct): Error - {e}")
 
     # Test MongoDB via PyMongo (works with both real MongoDB and NX-27017)
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     if client:
         set_accumulation_mode(True)
         try:
@@ -169,8 +169,6 @@ def compare_index_operations():
         except Exception as e:
             backend_name = "NX-27017" if IS_NX27017_BACKEND else "MongoDB"
             print(f"{backend_name} (PyMongo): Error - {e}")
-        finally:
-            client.close()
     else:
         print("MongoDB: Failed to connect")
 

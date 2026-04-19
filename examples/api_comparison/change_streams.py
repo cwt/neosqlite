@@ -9,7 +9,7 @@ from .reporter import reporter
 from .timing import (
     set_accumulation_mode,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -41,7 +41,7 @@ def compare_change_streams():
         except Exception as e:
             print(f"Neo watch: Error - {e}")
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
 
     if client:
         mongo_db = client.test_database
@@ -56,8 +56,6 @@ def compare_change_streams():
             print("Mongo watch: Supported")
         except Exception as e:
             print(f"Mongo watch: Error - {e} (requires replica set)")
-
-        client.close()
 
     # Mark MongoDB as skipped in benchmark mode when not on replica set
     # NX-27017 backend: Both NeoSQLite and NX-27017 support change streams

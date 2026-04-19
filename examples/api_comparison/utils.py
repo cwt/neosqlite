@@ -7,26 +7,51 @@ from typing import Any, Callable
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
 
-
-def _sort_key(value: Any) -> str:
-    """Sort key for comparing documents regardless of field order."""
-    if isinstance(value, dict):
-        return str(sorted(value.items()))
-    return str(value)
+# Shared MongoClient instance for connection reuse across tests
+_shared_mongo_client: MongoClient | None = None
 
 
-def test_pymongo_connection() -> MongoClient | None:
-    """Test connection to MongoDB"""
+def get_mongo_client() -> MongoClient | None:
+    """Get the shared MongoClient instance.
+
+    Returns a cached connection if one exists, otherwise creates a new one.
+    This avoids the overhead of connecting/disconnecting for each test case.
+    """
+    global _shared_mongo_client
+    if _shared_mongo_client is not None:
+        return _shared_mongo_client
+
     try:
-        client: MongoClient = MongoClient(
+        _shared_mongo_client = MongoClient(
             "mongodb://localhost:27017/", serverSelectionTimeoutMS=5000
         )
-        client.admin.command("ping")
+        _shared_mongo_client.admin.command("ping")
         print("MongoDB connection successful")
-        return client
+        return _shared_mongo_client
     except ConnectionFailure:
         print("Failed to connect to MongoDB")
         return None
+
+
+def close_mongo_client():
+    """Close the shared MongoClient instance."""
+    global _shared_mongo_client
+    if _shared_mongo_client is not None:
+        _shared_mongo_client.close()
+        _shared_mongo_client = None
+
+
+def reset_mongo_client():
+    """Reset the shared MongoClient (for testing purposes)."""
+    global _shared_mongo_client
+    if _shared_mongo_client is not None:
+        _shared_mongo_client.close()
+        _shared_mongo_client = None
+
+
+def test_pymongo_connection() -> MongoClient | None:
+    """Test connection to MongoDB (legacy, use get_mongo_client instead)."""
+    return get_mongo_client()
 
 
 def _normalize_id(value: Any) -> Any:
@@ -145,6 +170,13 @@ def sanitize_for_mongodb(data: Any) -> Any:
 
     # Handle other types
     return data
+
+
+def _sort_key(value: Any) -> str:
+    """Sort key for comparing documents regardless of field order."""
+    if isinstance(value, dict):
+        return str(sorted(value.items()))
+    return str(value)
 
 
 def compare_results(

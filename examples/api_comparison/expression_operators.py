@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -88,73 +88,70 @@ def compare_expression_operators():
             neo_results["$let"] = f"Error: {e}"
             print(f"Neo $let: Error - {e}")
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     if client:
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_expr_ops
+        mongo_collection.delete_many({})
+        mongo_collection.insert_one({"_id": 1, "value": 5})
+
+        set_accumulation_mode(True)
+
+        # Test $rand
         try:
-            mongo_db = client.test_database
-            mongo_collection = mongo_db.test_expr_ops
-            mongo_collection.delete_many({})
-            mongo_collection.insert_one({"_id": 1, "value": 5})
-
-            set_accumulation_mode(True)
-
-            # Test $rand
+            start_mongo_timing()
             try:
-                start_mongo_timing()
-                try:
-                    result = list(
-                        mongo_collection.aggregate(
-                            [
-                                {"$match": {"_id": 1}},
-                                {"$project": {"random": {"$rand": {}}}},
-                            ]
-                        )
+                result = list(
+                    mongo_collection.aggregate(
+                        [
+                            {"$match": {"_id": 1}},
+                            {"$project": {"random": {"$rand": {}}}},
+                        ]
                     )
-                    val = result[0].get("random") if result else None
-                    mongo_results["$rand"] = (
-                        "generated"
-                        if val is not None and 0 <= val <= 1
-                        else "invalid"
-                    )
-                    print(f"Mongo $rand: {mongo_results['$rand']}")
-                finally:
-                    end_mongo_timing()
-            except Exception as e:
-                mongo_results["$rand"] = f"Error: {e}"
-                print(f"Mongo $rand: Error - {e}")
+                )
+                val = result[0].get("random") if result else None
+                mongo_results["$rand"] = (
+                    "generated"
+                    if val is not None and 0 <= val <= 1
+                    else "invalid"
+                )
+                print(f"Mongo $rand: {mongo_results['$rand']}")
+            finally:
+                end_mongo_timing()
+        except Exception as e:
+            mongo_results["$rand"] = f"Error: {e}"
+            print(f"Mongo $rand: Error - {e}")
 
-            # Test $let
+        # Test $let
+        try:
+            start_mongo_timing()
             try:
-                start_mongo_timing()
-                try:
-                    result = list(
-                        mongo_collection.aggregate(
-                            [
-                                {"$match": {"_id": 1}},
-                                {
-                                    "$project": {
-                                        "let_val": {
-                                            "$let": {
-                                                "vars": {"x": 5},
-                                                "in": {"$add": ["$$x", 10]},
-                                            }
+                result = list(
+                    mongo_collection.aggregate(
+                        [
+                            {"$match": {"_id": 1}},
+                            {
+                                "$project": {
+                                    "let_val": {
+                                        "$let": {
+                                            "vars": {"x": 5},
+                                            "in": {"$add": ["$$x", 10]},
                                         }
                                     }
-                                },
-                            ]
-                        )
+                                }
+                            },
+                        ]
                     )
-                    mongo_results["$let"] = (
-                        result[0].get("let_val") if result else None
-                    )
-                    print(f"Mongo $let: {mongo_results['$let']}")
-                finally:
-                    end_mongo_timing()
-            except Exception as e:
-                mongo_results["$let"] = f"Error: {e}"
-                print(f"Mongo $let: Error - {e}")
-        finally:
-            client.close()
+                )
+                mongo_results["$let"] = (
+                    result[0].get("let_val") if result else None
+                )
+                print(f"Mongo $let: {mongo_results['$let']}")
+            finally:
+                end_mongo_timing()
+        except Exception as e:
+            mongo_results["$let"] = f"Error: {e}"
+            print(f"Mongo $let: Error - {e}")
 
     for op_name in neo_results:
         reporter.record_comparison(

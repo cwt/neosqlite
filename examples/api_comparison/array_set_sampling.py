@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -106,94 +106,91 @@ def compare_array_operators_extended():
         except Exception:
             pass
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
 
     if client:
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_array_ops
+        mongo_collection.delete_many({})
+        mongo_collection.insert_one(
+            {
+                "_id": 1,
+                "arr": [1, 2, 3, 4, 5],
+                "set1": [1, 2, 3],
+                "set2": [3, 4, 5],
+            }
+        )
+
+        # Test $firstN
         try:
-            mongo_db = client.test_database
-            mongo_collection = mongo_db.test_array_ops
-            mongo_collection.delete_many({})
-            mongo_collection.insert_one(
-                {
-                    "_id": 1,
-                    "arr": [1, 2, 3, 4, 5],
-                    "set1": [1, 2, 3],
-                    "set2": [3, 4, 5],
-                }
-            )
-
-            # Test $firstN
+            start_mongo_timing()
             try:
-                start_mongo_timing()
-                try:
-                    result = list(
-                        mongo_collection.aggregate(
-                            [
-                                {"$match": {"_id": 1}},
-                                {
-                                    "$project": {
-                                        "first2": {
-                                            "$firstN": {"input": "$arr", "n": 2}
-                                        }
+                result = list(
+                    mongo_collection.aggregate(
+                        [
+                            {"$match": {"_id": 1}},
+                            {
+                                "$project": {
+                                    "first2": {
+                                        "$firstN": {"input": "$arr", "n": 2}
                                     }
-                                },
-                            ]
-                        )
+                                }
+                            },
+                        ]
                     )
-                except Exception as e:
-                    result = []
-                    mongo_results["$firstN"] = f"Error: {e}"
-                    print(f"Mongo $firstN: Error - {e}")
-                finally:
-                    end_mongo_timing()
-
-                if "$firstN" not in mongo_results:
-                    mongo_results["$firstN"] = (
-                        result[0].get("first2") if result else None
-                    )
-                print(f"Mongo $firstN: {mongo_results['$firstN']}")
-            except Exception:
-                pass
-
-            # Test $setIntersection
-            try:
-                start_mongo_timing()
-                try:
-                    result = list(
-                        mongo_collection.aggregate(
-                            [
-                                {"$match": {"_id": 1}},
-                                {
-                                    "$project": {
-                                        "intersection": {
-                                            "$setIntersection": [
-                                                "$set1",
-                                                "$set2",
-                                            ]
-                                        }
-                                    }
-                                },
-                            ]
-                        )
-                    )
-                except Exception as e:
-                    result = []
-                    mongo_results["$setIntersection"] = f"Error: {e}"
-                    print(f"Mongo $setIntersection: Error - {e}")
-                finally:
-                    end_mongo_timing()
-
-                if "$setIntersection" not in mongo_results:
-                    mongo_results["$setIntersection"] = (
-                        result[0].get("intersection") if result else None
-                    )
-                print(
-                    f"Mongo $setIntersection: {mongo_results['$setIntersection']}"
                 )
-            except Exception:
-                pass
-        finally:
-            client.close()
+            except Exception as e:
+                result = []
+                mongo_results["$firstN"] = f"Error: {e}"
+                print(f"Mongo $firstN: Error - {e}")
+            finally:
+                end_mongo_timing()
+
+            if "$firstN" not in mongo_results:
+                mongo_results["$firstN"] = (
+                    result[0].get("first2") if result else None
+                )
+            print(f"Mongo $firstN: {mongo_results['$firstN']}")
+        except Exception:
+            pass
+
+        # Test $setIntersection
+        try:
+            start_mongo_timing()
+            try:
+                result = list(
+                    mongo_collection.aggregate(
+                        [
+                            {"$match": {"_id": 1}},
+                            {
+                                "$project": {
+                                    "intersection": {
+                                        "$setIntersection": [
+                                            "$set1",
+                                            "$set2",
+                                        ]
+                                    }
+                                }
+                            },
+                        ]
+                    )
+                )
+            except Exception as e:
+                result = []
+                mongo_results["$setIntersection"] = f"Error: {e}"
+                print(f"Mongo $setIntersection: Error - {e}")
+            finally:
+                end_mongo_timing()
+
+            if "$setIntersection" not in mongo_results:
+                mongo_results["$setIntersection"] = (
+                    result[0].get("intersection") if result else None
+                )
+            print(
+                f"Mongo $setIntersection: {mongo_results['$setIntersection']}"
+            )
+        except Exception:
+            pass
 
     for op_name in ["$firstN", "$setIntersection"]:
         if op_name in neo_results:

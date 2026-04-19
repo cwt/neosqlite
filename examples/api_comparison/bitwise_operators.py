@@ -13,7 +13,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -83,44 +83,41 @@ def compare_bitwise_operators():
             except Exception as e:
                 neo_results[op_name] = f"Error: {e}"
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     mongo_results = {}
 
     if client:
-        try:
-            mongo_db = client.test_database
-            mongo_collection = mongo_db.test_collection
-            mongo_collection.delete_many({})
-            mongo_collection.insert_many(
-                [
-                    {"value": 0, "name": "zero"},
-                    {"value": 1, "name": "one"},
-                    {"value": 5, "name": "five"},
-                    {"value": 7, "name": "seven"},
-                    {"value": 8, "name": "eight"},
-                    {"value": 10, "name": "ten"},
-                    {"value": 15, "name": "fifteen"},
-                ]
-            )
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_collection
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many(
+            [
+                {"value": 0, "name": "zero"},
+                {"value": 1, "name": "one"},
+                {"value": 5, "name": "five"},
+                {"value": 7, "name": "seven"},
+                {"value": 8, "name": "eight"},
+                {"value": 10, "name": "ten"},
+                {"value": 15, "name": "fifteen"},
+            ]
+        )
 
-            set_accumulation_mode(True)
-            for query, op_name in operators:
+        set_accumulation_mode(True)
+        for query, op_name in operators:
+            try:
+                mongo_query = copy.deepcopy(query)
+                start_mongo_timing()
                 try:
-                    mongo_query = copy.deepcopy(query)
-                    start_mongo_timing()
-                    try:
-                        result = list(mongo_collection.find(mongo_query))
-                        mongo_results[op_name] = result
-                        print(f"Mongo {op_name}: {len(result)} documents")
-                    except Exception as e:
-                        mongo_results[op_name] = f"Error: {e}"
-                        print(f"Mongo {op_name}: Error - {e}")
-                    finally:
-                        end_mongo_timing()
+                    result = list(mongo_collection.find(mongo_query))
+                    mongo_results[op_name] = result
+                    print(f"Mongo {op_name}: {len(result)} documents")
                 except Exception as e:
                     mongo_results[op_name] = f"Error: {e}"
-        finally:
-            client.close()
+                    print(f"Mongo {op_name}: Error - {e}")
+                finally:
+                    end_mongo_timing()
+            except Exception as e:
+                mongo_results[op_name] = f"Error: {e}"
 
     # Record results
     for _, op_name in operators:

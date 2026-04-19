@@ -13,7 +13,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -48,7 +48,7 @@ def compare_raw_batch_operations():
         finally:
             end_neo_timing()
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     mongo_raw_batches = None
 
     if client:
@@ -73,8 +73,6 @@ def compare_raw_batch_operations():
             print(f"Mongo find_raw_batches: Error - {e}")
         finally:
             end_mongo_timing()
-
-        client.close()
 
     if IS_NX27017_BACKEND:
         skip_reason = (

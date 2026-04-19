@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -42,7 +42,7 @@ def compare_distinct():
             end_neo_timing()
         print(f"Neo distinct: {sorted(neo_distinct)}")
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     # Initialize MongoDB result variables
 
     mongo_collection = None
@@ -69,7 +69,6 @@ def compare_distinct():
 
             end_mongo_timing()
         print(f"Mongo distinct: {sorted(mongo_distinct)}")
-        client.close()
 
     reporter.record_comparison(
         "Distinct",

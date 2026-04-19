@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -155,7 +155,7 @@ def compare_expr_operator():
             finally:
                 end_neo_timing()
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     mongo_results = {}
 
     if client:
@@ -211,7 +211,6 @@ def compare_expr_operator():
                 print(f"Mongo {op_name}: Error - {e}")
             finally:
                 end_mongo_timing()
-        client.close()
 
     # Record comparisons
     for query, op_name in expr_queries:

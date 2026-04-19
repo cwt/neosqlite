@@ -13,7 +13,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -25,10 +25,8 @@ def compare_additional_update_operators():
     print("\n=== Additional Update Operators Comparison ===")
 
     # Check MongoDB availability FIRST to determine if we should time operations
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     mongo_available = client is not None
-    if client:
-        client.close()
 
     # Initialize result variables
     neo_push = False
@@ -156,118 +154,113 @@ def compare_additional_update_operators():
         )
 
     if mongo_available:
-        client = test_pymongo_connection()
+        client = get_mongo_client()
         if client:
+            mongo_db = client.test_database
+            mongo_collection = mongo_db.test_collection
+            mongo_collection.delete_many({})
+            mongo_collection.insert_one(
+                {"name": "Alice", "tags": ["python"], "score": 100}
+            )
+
+            set_accumulation_mode(True)
+
+            # Test $push
+            start_mongo_timing()
             try:
-                mongo_db = client.test_database
-                mongo_collection = mongo_db.test_collection
-                mongo_collection.delete_many({})
-                mongo_collection.insert_one(
-                    {"name": "Alice", "tags": ["python"], "score": 100}
-                )
-
-                set_accumulation_mode(True)
-
-                # Test $push
-                start_mongo_timing()
-                try:
-                    mongo_collection.update_one(
-                        {"name": "Alice"}, {"$push": {"tags": "sql"}}
-                    )
-                finally:
-                    end_mongo_timing()
-
-                doc = mongo_collection.find_one({"name": "Alice"})
-                mongo_push = "sql" in doc.get("tags", [])
-                print(f"Mongo $push: {'OK' if mongo_push else 'FAIL'}")
-
-                # Reset for $addToSet
                 mongo_collection.update_one(
-                    {"name": "Alice"}, {"$set": {"tags": ["python", "sql"]}}
-                )
-
-                # Test $addToSet
-                start_mongo_timing()
-                try:
-                    mongo_collection.update_one(
-                        {"name": "Alice"}, {"$addToSet": {"tags": "sql"}}
-                    )
-                    mongo_collection.update_one(
-                        {"name": "Alice"}, {"$addToSet": {"tags": "mongodb"}}
-                    )
-                finally:
-                    end_mongo_timing()
-
-                doc = mongo_collection.find_one({"name": "Alice"})
-                tags = doc.get("tags", [])
-                mongo_addtoset = (
-                    "sql" in tags
-                    and "mongodb" in tags
-                    and tags.count("sql") == 1
-                )
-                print(f"Mongo $addToSet: {'OK' if mongo_addtoset else 'FAIL'}")
-
-                # Reset for $pull
-                mongo_collection.update_one(
-                    {"name": "Alice"},
-                    {"$set": {"tags": ["python", "sql", "mongodb"]}},
-                )
-
-                # Test $pull
-                start_mongo_timing()
-                try:
-                    mongo_collection.update_one(
-                        {"name": "Alice"}, {"$pull": {"tags": "sql"}}
-                    )
-                finally:
-                    end_mongo_timing()
-
-                doc = mongo_collection.find_one({"name": "Alice"})
-                mongo_pull = "sql" not in doc.get("tags", [])
-                print(f"Mongo $pull: {'OK' if mongo_pull else 'FAIL'}")
-
-                # Reset for $pop
-                mongo_collection.update_one(
-                    {"name": "Alice"},
-                    {"$set": {"tags": ["first", "middle", "last"]}},
-                )
-
-                # Test $pop (remove last)
-                start_mongo_timing()
-                try:
-                    mongo_collection.update_one(
-                        {"name": "Alice"}, {"$pop": {"tags": 1}}
-                    )
-                finally:
-                    end_mongo_timing()
-
-                doc = mongo_collection.find_one({"name": "Alice"})
-                mongo_pop = doc.get("tags", []) == ["first", "middle"]
-                print(f"Mongo $pop (last): {'OK' if mongo_pop else 'FAIL'}")
-
-                # Reset for $currentDate
-                mongo_collection.update_one(
-                    {"name": "Alice"}, {"$set": {"updated_at": None}}
-                )
-
-                # Test $currentDate
-                start_mongo_timing()
-                try:
-                    mongo_collection.update_one(
-                        {"name": "Alice"},
-                        {"$currentDate": {"updated_at": True}},
-                    )
-                finally:
-                    end_mongo_timing()
-
-                doc = mongo_collection.find_one({"name": "Alice"})
-                updated_at = doc.get("updated_at")
-                mongo_currentdate = updated_at is not None
-                print(
-                    f"Mongo $currentDate: {'OK' if mongo_currentdate else 'FAIL'} (returns datetime)"
+                    {"name": "Alice"}, {"$push": {"tags": "sql"}}
                 )
             finally:
-                client.close()
+                end_mongo_timing()
+
+            doc = mongo_collection.find_one({"name": "Alice"})
+            mongo_push = "sql" in doc.get("tags", [])
+            print(f"Mongo $push: {'OK' if mongo_push else 'FAIL'}")
+
+            # Reset for $addToSet
+            mongo_collection.update_one(
+                {"name": "Alice"}, {"$set": {"tags": ["python", "sql"]}}
+            )
+
+            # Test $addToSet
+            start_mongo_timing()
+            try:
+                mongo_collection.update_one(
+                    {"name": "Alice"}, {"$addToSet": {"tags": "sql"}}
+                )
+                mongo_collection.update_one(
+                    {"name": "Alice"}, {"$addToSet": {"tags": "mongodb"}}
+                )
+            finally:
+                end_mongo_timing()
+
+            doc = mongo_collection.find_one({"name": "Alice"})
+            tags = doc.get("tags", [])
+            mongo_addtoset = (
+                "sql" in tags and "mongodb" in tags and tags.count("sql") == 1
+            )
+            print(f"Mongo $addToSet: {'OK' if mongo_addtoset else 'FAIL'}")
+
+            # Reset for $pull
+            mongo_collection.update_one(
+                {"name": "Alice"},
+                {"$set": {"tags": ["python", "sql", "mongodb"]}},
+            )
+
+            # Test $pull
+            start_mongo_timing()
+            try:
+                mongo_collection.update_one(
+                    {"name": "Alice"}, {"$pull": {"tags": "sql"}}
+                )
+            finally:
+                end_mongo_timing()
+
+            doc = mongo_collection.find_one({"name": "Alice"})
+            mongo_pull = "sql" not in doc.get("tags", [])
+            print(f"Mongo $pull: {'OK' if mongo_pull else 'FAIL'}")
+
+            # Reset for $pop
+            mongo_collection.update_one(
+                {"name": "Alice"},
+                {"$set": {"tags": ["first", "middle", "last"]}},
+            )
+
+            # Test $pop (remove last)
+            start_mongo_timing()
+            try:
+                mongo_collection.update_one(
+                    {"name": "Alice"}, {"$pop": {"tags": 1}}
+                )
+            finally:
+                end_mongo_timing()
+
+            doc = mongo_collection.find_one({"name": "Alice"})
+            mongo_pop = doc.get("tags", []) == ["first", "middle"]
+            print(f"Mongo $pop (last): {'OK' if mongo_pop else 'FAIL'}")
+
+            # Reset for $currentDate
+            mongo_collection.update_one(
+                {"name": "Alice"}, {"$set": {"updated_at": None}}
+            )
+
+            # Test $currentDate
+            start_mongo_timing()
+            try:
+                mongo_collection.update_one(
+                    {"name": "Alice"},
+                    {"$currentDate": {"updated_at": True}},
+                )
+            finally:
+                end_mongo_timing()
+
+            doc = mongo_collection.find_one({"name": "Alice"})
+            updated_at = doc.get("updated_at")
+            mongo_currentdate = updated_at is not None
+            print(
+                f"Mongo $currentDate: {'OK' if mongo_currentdate else 'FAIL'} (returns datetime)"
+            )
 
     # Record comparisons
     ops = [

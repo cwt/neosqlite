@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -87,53 +87,50 @@ def compare_elemmatch_operator():
                 end_neo_timing()
 
     # 2. MongoDB Comparison
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     if client:
-        try:
-            mongo_db = client.test_database
-            mongo_collection = mongo_db.test_elemmatch
-            mongo_collection.delete_many({})
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_elemmatch
+        mongo_collection.delete_many({})
 
-            # Seed data
-            mongo_collection.insert_many(
-                [
-                    {"name": "A", "scores": [80, 90, 100]},
-                    {"name": "B", "scores": [70, 75, 80]},
-                    {"name": "C", "scores": [85, 95]},
-                    {"name": "D", "scores": [60, 70]},
-                    {
-                        "name": "E",
-                        "results": [
-                            {"product": "abc", "score": 10},
-                            {"product": "xyz", "score": 5},
-                        ],
-                    },
-                    {
-                        "name": "F",
-                        "results": [
-                            {"product": "abc", "score": 8},
-                            {"product": "xyz", "score": 7},
-                        ],
-                    },
-                ]
-            )
+        # Seed data
+        mongo_collection.insert_many(
+            [
+                {"name": "A", "scores": [80, 90, 100]},
+                {"name": "B", "scores": [70, 75, 80]},
+                {"name": "C", "scores": [85, 95]},
+                {"name": "D", "scores": [60, 70]},
+                {
+                    "name": "E",
+                    "results": [
+                        {"product": "abc", "score": 10},
+                        {"product": "xyz", "score": 5},
+                    ],
+                },
+                {
+                    "name": "F",
+                    "results": [
+                        {"product": "abc", "score": 8},
+                        {"product": "xyz", "score": 7},
+                    ],
+                },
+            ]
+        )
 
-            set_accumulation_mode(True)
+        set_accumulation_mode(True)
 
-            for label, query in test_cases:
-                start_mongo_timing()
+        for label, query in test_cases:
+            start_mongo_timing()
+            try:
                 try:
-                    try:
-                        res = list(mongo_collection.find(query))
-                        mongo_results[label] = res
-                        print(f"Mongo $elemMatch ({label}): {len(res)} matches")
-                    except Exception as e:
-                        mongo_results[label] = f"Error: {e}"
-                        print(f"Mongo $elemMatch ({label}): Error - {e}")
-                finally:
-                    end_mongo_timing()
-        finally:
-            client.close()
+                    res = list(mongo_collection.find(query))
+                    mongo_results[label] = res
+                    print(f"Mongo $elemMatch ({label}): {len(res)} matches")
+                except Exception as e:
+                    mongo_results[label] = f"Error: {e}"
+                    print(f"Mongo $elemMatch ({label}): Error - {e}")
+            finally:
+                end_mongo_timing()
     else:
         print("MongoDB not available, skipping MongoDB $elemMatch comparison")
 

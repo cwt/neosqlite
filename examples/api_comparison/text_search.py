@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -66,7 +66,7 @@ def compare_text_search():
             neo_text_search = f"Error: {e}"
             print(f"Neo text search: Error - {e}")
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     mongo_text_search = None
 
     if client:
@@ -117,8 +117,6 @@ def compare_text_search():
         except Exception as e:
             mongo_text_search = f"Error: {e}"
             print(f"Mongo text search: Error - {e}")
-        finally:
-            client.close()
 
     reporter.record_comparison(
         "Text Search",

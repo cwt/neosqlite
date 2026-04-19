@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -158,152 +158,143 @@ def compare_expr_array_object():
         finally:
             end_neo_timing()
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     if client:
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_collection
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many(
+            [
+                {
+                    "name": "Alice",
+                    "scores": [80, 90, 100],
+                    "meta": {"city": "NYC", "zip": 10001},
+                },
+                {
+                    "name": "Bob",
+                    "scores": [70, 80],
+                    "meta": {"city": "LA", "zip": 90001},
+                },
+            ]
+        )
+
+        set_accumulation_mode(True)
+
+        # Test $arrayElemAt
+        start_mongo_timing()
         try:
-            mongo_db = client.test_database
-            mongo_collection = mongo_db.test_collection
-            mongo_collection.delete_many({})
-            mongo_collection.insert_many(
-                [
-                    {
-                        "name": "Alice",
-                        "scores": [80, 90, 100],
-                        "meta": {"city": "NYC", "zip": 10001},
-                    },
-                    {
-                        "name": "Bob",
-                        "scores": [70, 80],
-                        "meta": {"city": "LA", "zip": 90001},
-                    },
-                ]
+            res = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"val": {"$arrayElemAt": ["$scores", 0]}}}]
+                )
             )
-
-            set_accumulation_mode(True)
-
-            # Test $arrayElemAt
-            start_mongo_timing()
-            try:
-                res = list(
-                    mongo_collection.aggregate(
-                        [
-                            {
-                                "$project": {
-                                    "val": {"$arrayElemAt": ["$scores", 0]}
-                                }
-                            }
-                        ]
-                    )
-                )
-                mongo_results["$arrayElemAt"] = res
-                print("Mongo $arrayElemAt: OK")
-            except Exception as e:
-                mongo_results["$arrayElemAt"] = f"Error: {e}"
-                print(f"Mongo $arrayElemAt: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # Test $concat
-            start_mongo_timing()
-            try:
-                res = list(
-                    mongo_collection.aggregate(
-                        [
-                            {
-                                "$project": {
-                                    "val": {
-                                        "$concat": [
-                                            "$name",
-                                            " - ",
-                                            "$meta.city",
-                                        ]
-                                    }
-                                }
-                            }
-                        ]
-                    )
-                )
-                mongo_results["$concat"] = res
-                print("Mongo $concat: OK")
-            except Exception as e:
-                mongo_results["$concat"] = f"Error: {e}"
-                print(f"Mongo $concat: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # Test $objectToArray
-            start_mongo_timing()
-            try:
-                res = list(
-                    mongo_collection.aggregate(
-                        [{"$project": {"val": {"$objectToArray": "$meta"}}}]
-                    )
-                )
-                mongo_results["$objectToArray"] = res
-                print("Mongo $objectToArray: OK")
-            except Exception as e:
-                mongo_results["$objectToArray"] = f"Error: {e}"
-                print(f"Mongo $objectToArray: Error - {e}")
-            finally:
-                end_mongo_timing()
-
-            # Test $switch
-            start_mongo_timing()
-            try:
-                res = list(
-                    mongo_collection.aggregate(
-                        [
-                            {
-                                "$project": {
-                                    "val": {
-                                        "$switch": {
-                                            "branches": [
-                                                {
-                                                    "case": {
-                                                        "$gte": [
-                                                            {
-                                                                "$arrayElemAt": [
-                                                                    "$scores",
-                                                                    0,
-                                                                ]
-                                                            },
-                                                            90,
-                                                        ]
-                                                    },
-                                                    "then": "A",
-                                                },
-                                                {
-                                                    "case": {
-                                                        "$gte": [
-                                                            {
-                                                                "$arrayElemAt": [
-                                                                    "$scores",
-                                                                    0,
-                                                                ]
-                                                            },
-                                                            80,
-                                                        ]
-                                                    },
-                                                    "then": "B",
-                                                },
-                                            ],
-                                            "default": "C",
-                                        }
-                                    }
-                                }
-                            }
-                        ]
-                    )
-                )
-                mongo_results["$switch"] = res
-                print("Mongo $switch: OK")
-            except Exception as e:
-                mongo_results["$switch"] = f"Error: {e}"
-                print(f"Mongo $switch: Error - {e}")
-            finally:
-                end_mongo_timing()
+            mongo_results["$arrayElemAt"] = res
+            print("Mongo $arrayElemAt: OK")
+        except Exception as e:
+            mongo_results["$arrayElemAt"] = f"Error: {e}"
+            print(f"Mongo $arrayElemAt: Error - {e}")
         finally:
-            client.close()
+            end_mongo_timing()
+
+        # Test $concat
+        start_mongo_timing()
+        try:
+            res = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "val": {
+                                    "$concat": [
+                                        "$name",
+                                        " - ",
+                                        "$meta.city",
+                                    ]
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_results["$concat"] = res
+            print("Mongo $concat: OK")
+        except Exception as e:
+            mongo_results["$concat"] = f"Error: {e}"
+            print(f"Mongo $concat: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # Test $objectToArray
+        start_mongo_timing()
+        try:
+            res = list(
+                mongo_collection.aggregate(
+                    [{"$project": {"val": {"$objectToArray": "$meta"}}}]
+                )
+            )
+            mongo_results["$objectToArray"] = res
+            print("Mongo $objectToArray: OK")
+        except Exception as e:
+            mongo_results["$objectToArray"] = f"Error: {e}"
+            print(f"Mongo $objectToArray: Error - {e}")
+        finally:
+            end_mongo_timing()
+
+        # Test $switch
+        start_mongo_timing()
+        try:
+            res = list(
+                mongo_collection.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "val": {
+                                    "$switch": {
+                                        "branches": [
+                                            {
+                                                "case": {
+                                                    "$gte": [
+                                                        {
+                                                            "$arrayElemAt": [
+                                                                "$scores",
+                                                                0,
+                                                            ]
+                                                        },
+                                                        90,
+                                                    ]
+                                                },
+                                                "then": "A",
+                                            },
+                                            {
+                                                "case": {
+                                                    "$gte": [
+                                                        {
+                                                            "$arrayElemAt": [
+                                                                "$scores",
+                                                                0,
+                                                            ]
+                                                        },
+                                                        80,
+                                                    ]
+                                                },
+                                                "then": "B",
+                                            },
+                                        ],
+                                        "default": "C",
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+            mongo_results["$switch"] = res
+            print("Mongo $switch: OK")
+        except Exception as e:
+            mongo_results["$switch"] = f"Error: {e}"
+            print(f"Mongo $switch: Error - {e}")
+        finally:
+            end_mongo_timing()
 
     for op in ["$arrayElemAt", "$concat", "$objectToArray", "$switch"]:
         reporter.record_comparison(

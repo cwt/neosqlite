@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -75,7 +75,7 @@ def compare_gridfs_operations():
             end_neo_timing()
 
     # 2. MongoDB Comparison
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     mongo_db = None
     mongo_file_data = None
     mongo_gridfs_ok = None
@@ -120,8 +120,6 @@ def compare_gridfs_operations():
         except Exception as e:
             print(f"Mongo GridFS: Setup Error - {e}")
             mongo_gridfs_ok = False
-        finally:
-            client.close()
     else:
         skip_reason = "MongoDB/NX-27017 not available"
 

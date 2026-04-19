@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -78,32 +78,29 @@ def compare_fill_stage():
         finally:
             end_neo_timing()
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     mongo_results = {}
 
     if client:
-        try:
-            mongo_db = client.test_database
-            mongo_collection = mongo_db.test_fill
-            mongo_collection.delete_many({})
-            mongo_collection.insert_many(test_data)
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_fill
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many(test_data)
 
-            set_accumulation_mode(True)
-            start_mongo_timing()
-            try:
-                for name, pipeline in pipelines.items():
-                    try:
-                        # MongoDB 5.3+ supports $fill
-                        result = list(mongo_collection.aggregate(pipeline))
-                        mongo_results[name] = result
-                        print(f"Mongo $fill ({name}): OK")
-                    except Exception as e:
-                        mongo_results[name] = f"Error: {e}"
-                        print(f"Mongo $fill ({name}): Error - {e}")
-            finally:
-                end_mongo_timing()
+        set_accumulation_mode(True)
+        start_mongo_timing()
+        try:
+            for name, pipeline in pipelines.items():
+                try:
+                    # MongoDB 5.3+ supports $fill
+                    result = list(mongo_collection.aggregate(pipeline))
+                    mongo_results[name] = result
+                    print(f"Mongo $fill ({name}): OK")
+                except Exception as e:
+                    mongo_results[name] = f"Error: {e}"
+                    print(f"Mongo $fill ({name}): Error - {e}")
         finally:
-            client.close()
+            end_mongo_timing()
 
     # Record comparisons
     for name in pipelines:

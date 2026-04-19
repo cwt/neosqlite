@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -137,7 +137,7 @@ def compare_query_operators():
         if isinstance(neo_results["$text"], list):
             print(f"Neo $text: {len(neo_results['$text'])} documents")
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     mongo_results = {}
 
     if client:
@@ -226,7 +226,6 @@ def compare_query_operators():
                 mongo_results.get(op_name),
                 skip_reason=skip_reason,
             )
-        client.close()
     else:
         # MongoDB not available, record NeoSQLite results as skipped
         for op_name in neo_results:

@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -100,7 +100,7 @@ def compare_aggregation_cursor_methods():
         finally:
             end_neo_timing()
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     # Initialize MongoDB result variables
 
     mongo_agg_batch_size = None
@@ -174,8 +174,6 @@ def compare_aggregation_cursor_methods():
             print(f"Mongo AggregationCursor properties: Error - {e}")
         finally:
             end_mongo_timing()
-
-        client.close()
 
     reporter.record_comparison(
         "Aggregation (Cursor Properties)",

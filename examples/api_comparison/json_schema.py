@@ -14,7 +14,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -130,7 +130,7 @@ def compare_json_schema():
         except Exception as e:
             print(f"Neo write validation setup error: {e}")
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     mongo_results = {}
     mongo_write_validation = False
 
@@ -197,8 +197,6 @@ def compare_json_schema():
                 end_mongo_timing()
         except Exception as e:
             print(f"Mongo write validation setup error: {e}")
-
-        client.close()
 
     # Record comparisons
     for name in queries:

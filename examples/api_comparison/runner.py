@@ -67,10 +67,11 @@ from .update_array_operators import compare_additional_update_operators
 from .update_field_operators import compare_update_operators
 from .utils import (
     clear_tier_changes,
+    close_mongo_client,
     disable_tier_tracking,
     enable_tier_tracking,
+    get_mongo_client,
     get_tier_changes,
-    test_pymongo_connection,
 )
 from .window_functions import compare_window_functions
 from .window_math import compare_window_math
@@ -245,6 +246,9 @@ def run_benchmark(iterations: int = 10, silent: bool = False):
         bench_reporter.iterations = iterations
 
     try:
+        # Ensure shared MongoDB client is connected before benchmarking
+        mongo_client = get_mongo_client()
+
         for category, func in COMPARISON_FUNCTIONS:
             # Skip categories that are compatibility-only (no timing)
             if category == "Options Classes":
@@ -258,7 +262,7 @@ def run_benchmark(iterations: int = 10, silent: bool = False):
 
             for i in range(iterations):
                 cleanup_db_files()
-                cleanup_test_collections()
+                cleanup_test_collections(mongo_client)
 
                 from .timing import reset_timings
 
@@ -279,26 +283,6 @@ def run_benchmark(iterations: int = 10, silent: bool = False):
                     bench_reporter.record_neo_timing(category, neo_timing)
                 if mongo_timing > 0:
                     bench_reporter.record_mongo_timing(category, mongo_timing)
-
-            result = bench_reporter.results[category]
-            neo_stats = result.get_neo_stats()
-            mongo_stats = result.get_mongo_stats()
-
-            # Display status with skip information
-            if result.is_fully_skipped():
-                if not silent:
-                    print(f"  {category}: ⚠️ SKIPPED - {result.skip_reason}")
-            elif result.is_partial():
-                skip_side = "MongoDB" if result.mongo_skipped else "NeoSQLite"
-                if not silent:
-                    print(f"  {category}: ⚠️ PARTIAL ({skip_side} skipped)")
-                    if result.skip_reason:
-                        print(f"    Reason: {result.skip_reason}")
-            else:
-                if not silent:
-                    print(
-                        f"  {category}: NeoSQLite avg={neo_stats['avg']:.2f}ms, MongoDB avg={mongo_stats['avg']:.2f}ms"
-                    )
     finally:
         # Restore original Connection.__init__
         neosqlite.Connection.__init__ = original_init  # type: ignore[method-assign]
@@ -352,7 +336,7 @@ def run_benchmark(iterations: int = 10, silent: bool = False):
     return bench_reporter
 
 
-def cleanup_test_collections():
+def cleanup_test_collections(mongo_client=None):
     """Clean up test collections from previous runs"""
     print("Cleaning up test collections...")
 
@@ -412,7 +396,12 @@ def cleanup_test_collections():
         print(f"NeoSQLite: Cleanup skipped - {e}")
 
     # Clean up MongoDB
-    client = test_pymongo_connection()
+    client = mongo_client
+    if client is None:
+        from .utils import get_mongo_client
+
+        client = get_mongo_client()
+
     if client:
         try:
             db = client.test_database
@@ -425,7 +414,6 @@ def cleanup_test_collections():
         except Exception as e:
             print(f"MongoDB [test_database]: Cleanup skipped - {e}")
 
-        client.close()
         print("Cleanup completed\n")
 
 
@@ -491,6 +479,9 @@ def run_all_comparisons():
     enable_tier_tracking()
 
     try:
+        # Ensure shared MongoDB client is connected before running comparisons
+        mongo_client = get_mongo_client()
+
         # Run all comparison functions
         for category, func in COMPARISON_FUNCTIONS:
             print(f"\n{'=' * 80}")
@@ -501,7 +492,7 @@ def run_all_comparisons():
             clear_tier_changes()
 
             # Cleanup test collections between categories to avoid data pollution
-            cleanup_test_collections()
+            cleanup_test_collections(mongo_client)
 
             try:
                 func()
@@ -540,3 +531,4 @@ def run_all_comparisons():
         # Restore original init and cleanup
         neosqlite.Connection.__init__ = original_init
         disable_tier_tracking()
+        close_mongo_client()

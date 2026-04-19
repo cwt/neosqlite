@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -117,112 +117,102 @@ def compare_additional_aggregation_stages_extended():
             end_neo_timing()
         print(f"Neo $count: {'OK' if neo_count else 'FAIL'}")
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     mongo_replaceroot = None
     mongo_replacewith = None
     mongo_unset = None
     mongo_count = None
 
     if client:
-        try:
-            mongo_db = client.test_database
-            mongo_collection = mongo_db.test_agg_stages
-            mongo_collection.delete_many({})
-            mongo_collection.insert_many(
-                [
-                    {
-                        "name": {"first": "John", "last": "Doe"},
-                        "age": 30,
-                        "extra": "remove_me",
-                    },
-                    {
-                        "name": {"first": "Jane", "last": "Smith"},
-                        "age": 25,
-                        "extra": "remove_me",
-                    },
-                ]
-            )
-
-            set_accumulation_mode(True)
-
-            # Test $replaceRoot
-            start_mongo_timing()
-            try:
-                result = list(
-                    mongo_collection.aggregate(
-                        [{"$replaceRoot": {"newRoot": "$name"}}]
-                    )
-                )
-                mongo_replaceroot = len(result) == 2 and "first" in result[0]
-            except Exception as e:
-                print(f"Mongo $replaceRoot: Error - {e}")
-            finally:
-                end_mongo_timing()
-            print(
-                f"Mongo $replaceRoot: {'OK' if mongo_replaceroot else 'FAIL'}"
-            )
-
-            # Test $replaceWith (MongoDB 5.0+)
-            mongo_collection.insert_one(
+        mongo_db = client.test_database
+        mongo_collection = mongo_db.test_agg_stages
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many(
+            [
                 {
-                    "name": {"first": "Bob", "last": "Jones"},
-                    "age": 35,
+                    "name": {"first": "John", "last": "Doe"},
+                    "age": 30,
                     "extra": "remove_me",
-                }
-            )
+                },
+                {
+                    "name": {"first": "Jane", "last": "Smith"},
+                    "age": 25,
+                    "extra": "remove_me",
+                },
+            ]
+        )
 
-            start_mongo_timing()
-            try:
-                result = list(
-                    mongo_collection.aggregate(
-                        [
-                            {"$match": {"name.last": "Jones"}},
-                            {"$replaceWith": "$name"},
-                        ]
-                    )
+        set_accumulation_mode(True)
+
+        # Test $replaceRoot
+        start_mongo_timing()
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [{"$replaceRoot": {"newRoot": "$name"}}]
                 )
-                mongo_replacewith = len(result) == 1 and "first" in result[0]
-            except Exception as e:
-                print(f"Mongo $replaceWith: Error - {e}")
-            finally:
-                end_mongo_timing()
-            print(
-                f"Mongo $replaceWith: {'OK' if mongo_replacewith else 'FAIL'}"
             )
-
-            # Test $unset (aggregation stage)
-            mongo_collection.delete_many({})
-            mongo_collection.insert_many(
-                [
-                    {"name": "John", "age": 30, "secret": "hidden1"},
-                    {"name": "Jane", "age": 25, "secret": "hidden2"},
-                ]
-            )
-            start_mongo_timing()
-            try:
-                result = list(
-                    mongo_collection.aggregate([{"$unset": ["secret"]}])
-                )
-                mongo_unset = len(result) == 2 and "secret" not in result[0]
-            except Exception as e:
-                print(f"Mongo $unset: Error - {e}")
-            finally:
-                end_mongo_timing()
-            print(f"Mongo $unset: {'OK' if mongo_unset else 'FAIL'}")
-
-            # Test $count
-            start_mongo_timing()
-            try:
-                result = list(mongo_collection.aggregate([{"$count": "total"}]))
-                mongo_count = len(result) == 1 and result[0].get("total") == 2
-            except Exception as e:
-                print(f"Mongo $count: Error - {e}")
-            finally:
-                end_mongo_timing()
-            print(f"Mongo $count: {'OK' if mongo_count else 'FAIL'}")
-
+            mongo_replaceroot = len(result) == 2 and "first" in result[0]
+        except Exception as e:
+            print(f"Mongo $replaceRoot: Error - {e}")
         finally:
-            client.close()
+            end_mongo_timing()
+        print(f"Mongo $replaceRoot: {'OK' if mongo_replaceroot else 'FAIL'}")
+
+        # Test $replaceWith (MongoDB 5.0+)
+        mongo_collection.insert_one(
+            {
+                "name": {"first": "Bob", "last": "Jones"},
+                "age": 35,
+                "extra": "remove_me",
+            }
+        )
+
+        start_mongo_timing()
+        try:
+            result = list(
+                mongo_collection.aggregate(
+                    [
+                        {"$match": {"name.last": "Jones"}},
+                        {"$replaceWith": "$name"},
+                    ]
+                )
+            )
+            mongo_replacewith = len(result) == 1 and "first" in result[0]
+        except Exception as e:
+            print(f"Mongo $replaceWith: Error - {e}")
+        finally:
+            end_mongo_timing()
+        print(f"Mongo $replaceWith: {'OK' if mongo_replacewith else 'FAIL'}")
+
+        # Test $unset (aggregation stage)
+        mongo_collection.delete_many({})
+        mongo_collection.insert_many(
+            [
+                {"name": "John", "age": 30, "secret": "hidden1"},
+                {"name": "Jane", "age": 25, "secret": "hidden2"},
+            ]
+        )
+        start_mongo_timing()
+        try:
+            result = list(mongo_collection.aggregate([{"$unset": ["secret"]}]))
+            mongo_unset = len(result) == 2 and "secret" not in result[0]
+        except Exception as e:
+            print(f"Mongo $unset: Error - {e}")
+        finally:
+            end_mongo_timing()
+        print(f"Mongo $unset: {'OK' if mongo_unset else 'FAIL'}")
+
+        # Test $count
+        start_mongo_timing()
+        try:
+            result = list(mongo_collection.aggregate([{"$count": "total"}]))
+            mongo_count = len(result) == 1 and result[0].get("total") == 2
+        except Exception as e:
+            print(f"Mongo $count: Error - {e}")
+        finally:
+            end_mongo_timing()
+        print(f"Mongo $count: {'OK' if mongo_count else 'FAIL'}")
 
     reporter.record_comparison(
         "Aggregation (Root & Count Stages)",

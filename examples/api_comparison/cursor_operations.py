@@ -12,7 +12,7 @@ from .timing import (
     start_mongo_timing,
     start_neo_timing,
 )
-from .utils import test_pymongo_connection
+from .utils import get_mongo_client
 
 warnings.filterwarnings(
     "ignore", category=UserWarning, message=".*NeoSQLite extension.*"
@@ -69,7 +69,7 @@ def compare_cursor_operations():
             f"Neo cursor: count={neo_count}, limit={neo_limit}, skip={neo_skip}, sort={neo_sort_ok}"
         )
 
-    client = test_pymongo_connection()
+    client = get_mongo_client()
     # Initialize MongoDB result variables
 
     mongo_collection = None
@@ -126,7 +126,6 @@ def compare_cursor_operations():
         print(
             f"Mongo cursor: count={mongo_count}, limit={mongo_limit}, skip={mongo_skip}, sort={mongo_sort_ok}"
         )
-        client.close()
 
     reporter.record_comparison(
         "Cursor Operations",
