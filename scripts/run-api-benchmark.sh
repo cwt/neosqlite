@@ -4,11 +4,12 @@
 #
 # This script:
 # 1. Checks for podman or docker availability (podman preferred)
-# 2. Pulls the latest MongoDB image
-# 3. Runs MongoDB container with exposed port (single node, NOT replica set)
-# 4. Executes the API benchmark Python script with specified iterations
-# 5. Generates benchmark reports (markdown and CSV)
-# 6. Cleans up the container
+# 2. On macOS ARM: prefers native mongodb-community via Homebrew if available
+# 3. Pulls the latest MongoDB image (if using containers)
+# 4. Runs MongoDB container with exposed port (single node, NOT replica set)
+# 5. Executes the API benchmark Python script with specified iterations
+# 6. Generates benchmark reports (markdown and CSV)
+# 7. Cleans up the container or native MongoDB data
 #
 # Usage:
 #   ./run-api-benchmark.sh              # Run with default 10 iterations
@@ -40,8 +41,20 @@ BENCHMARK_SILENT=false
 # Container runtime (podman preferred over docker)
 CONTAINER_RUNTIME=""
 
+# Track how MongoDB is being run
+MONGODB_MODE="" # "container" or "native"
+
 # Track if we started the container (for cleanup)
 CONTAINER_STARTED=false
+
+# Track if we started native MongoDB (for cleanup)
+NATIVE_MONGODB_STARTED=false
+
+# Temp directory for native MongoDB data
+NATIVE_MONGODB_TMPDIR=""
+
+# PID of the native MongoDB process
+NATIVE_MONGODB_PID=""
 
 #######################################
 # Print colored message
@@ -99,13 +112,13 @@ benchmark_info() {
 }
 
 #######################################
-# Cleanup function to stop and remove container
+# Cleanup function to stop and remove container or native MongoDB
 #######################################
 cleanup() {
     local exit_code=$?
 
     if [ "$CONTAINER_STARTED" = true ]; then
-        info "Cleaning up..."
+        info "Cleaning up container..."
 
         # Stop the container
         info "Stopping container '$CONTAINER_NAME'..."
@@ -121,6 +134,40 @@ cleanup() {
             success "Container removed"
         else
             warn "Failed to remove container (may already be removed)"
+        fi
+    fi
+
+    if [ "$NATIVE_MONGODB_STARTED" = true ]; then
+        info "Cleaning up native MongoDB..."
+
+        # Stop native MongoDB process
+        if [ -n "$NATIVE_MONGODB_PID" ]; then
+            info "Stopping native MongoDB (PID: $NATIVE_MONGODB_PID)..."
+            if kill "$NATIVE_MONGODB_PID" 2>/dev/null; then
+                # Wait for process to exit
+                local wait_count=0
+                while kill -0 "$NATIVE_MONGODB_PID" 2>/dev/null && [ $wait_count -lt 10 ]; do
+                    sleep 1
+                    wait_count=$((wait_count + 1))
+                done
+                # Force kill if still running
+                if kill -0 "$NATIVE_MONGODB_PID" 2>/dev/null; then
+                    kill -9 "$NATIVE_MONGODB_PID" 2>/dev/null || true
+                fi
+                success "Native MongoDB stopped"
+            else
+                warn "Failed to stop native MongoDB (may already be stopped)"
+            fi
+        fi
+
+        # Clean up temp data directory
+        if [ -n "$NATIVE_MONGODB_TMPDIR" ] && [ -d "$NATIVE_MONGODB_TMPDIR" ]; then
+            info "Removing temp data directory: $NATIVE_MONGODB_TMPDIR"
+            if rm -rf "$NATIVE_MONGODB_TMPDIR"; then
+                success "Temp data directory removed"
+            else
+                warn "Failed to remove temp data directory"
+            fi
         fi
     fi
 
@@ -178,15 +225,28 @@ parse_args() {
 }
 
 #######################################
-# Check for available container runtime
-# Sets CONTAINER_RUNTIME to 'podman' or 'docker'
+# Check for available container runtime or native MongoDB
+# Sets CONTAINER_RUNTIME and MONGODB_MODE
+# Priority on macOS ARM: native MongoDB > podman > docker
 #######################################
-check_container_runtime() {
-    info "Checking for container runtime..."
+check_mongodb_availability() {
+    info "Checking for MongoDB availability..."
+
+    # On macOS: prefer native mongodb-community via Homebrew
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        if command -v brew &> /dev/null; then
+            if brew list mongodb/brew/mongodb-community &> /dev/null; then
+                MONGODB_MODE="native"
+                success "Found native mongodb-community via Homebrew"
+                return 0
+            fi
+        fi
+    fi
 
     # Check for podman first (higher priority)
     if command -v podman &> /dev/null; then
         CONTAINER_RUNTIME="podman"
+        MONGODB_MODE="container"
         success "Found podman"
         return 0
     fi
@@ -194,16 +254,27 @@ check_container_runtime() {
     # Check for docker
     if command -v docker &> /dev/null; then
         CONTAINER_RUNTIME="docker"
+        MONGODB_MODE="container"
         success "Found docker"
         return 0
     fi
 
-    error "Neither podman nor docker found. Please install one of them."
+    # No MongoDB option found
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        error "No MongoDB found. On macOS, you can install it via Homebrew:"
+        echo ""
+        echo "  brew tap mongodb/brew"
+        echo "  brew install mongodb-community"
+        echo ""
+        error "Alternatively, install podman or docker for container-based testing."
+    else
+        error "Neither podman nor docker found. Please install one of them."
+    fi
     return 1
 }
 
 #######################################
-# Pull MongoDB image
+# Pull MongoDB image (only for container mode)
 #######################################
 pull_mongodb_image() {
     info "Pulling MongoDB image: $MONGODB_IMAGE..."
@@ -310,6 +381,87 @@ run_mongodb_container() {
 }
 
 #######################################
+# Start native MongoDB with temp data directory
+# This avoids interfering with any existing user data
+#######################################
+start_native_mongodb() {
+    info "Starting native MongoDB with temp data directory..."
+
+    # Find mongod binary from Homebrew installation
+    local mongod_path=""
+    if uname -m | grep -q "arm64"; then
+        mongod_path="/opt/homebrew/bin/mongod"
+    else
+        mongod_path="/usr/local/bin/mongod"
+    fi
+
+    if [ ! -x "$mongod_path" ]; then
+        error "mongod binary not found at $mongod_path"
+        return 1
+    fi
+
+    # Create temp directory for MongoDB data
+    NATIVE_MONGODB_TMPDIR=$(mktemp -d "/tmp/neosqlite_mongodb_XXXXXX")
+    info "Using temp data directory: $NATIVE_MONGODB_TMPDIR"
+
+    # Start mongod with temp data directory in background
+    # Note: --fork is not supported on macOS, so we use & instead
+    "$mongod_path" \
+        --dbpath "$NATIVE_MONGODB_TMPDIR" \
+        --port "$MONGODB_PORT" \
+        --bind_ip_all \
+        --logpath "$NATIVE_MONGODB_TMPDIR/mongod.log" \
+        &
+    NATIVE_MONGODB_PID=$!
+
+    # Give it a moment to start
+    sleep 1
+
+    # Verify the process is still running
+    if ! kill -0 "$NATIVE_MONGODB_PID" 2>/dev/null; then
+        error "Failed to start mongod"
+        if [ -f "$NATIVE_MONGODB_TMPDIR/mongod.log" ]; then
+            error "Log: $(tail -20 "$NATIVE_MONGODB_TMPDIR/mongod.log")"
+        fi
+        return 1
+    fi
+
+    NATIVE_MONGODB_STARTED=true
+    success "Native MongoDB started (PID: $NATIVE_MONGODB_PID)"
+
+    # Wait for MongoDB to be ready
+    info "Waiting for MongoDB to be ready..."
+    local max_attempts=30
+    local attempt=0
+
+    while [ $attempt -lt $max_attempts ]; do
+        # Check if MongoDB is accepting connections
+        if command -v mongosh &> /dev/null; then
+            if mongosh --host localhost --port "$MONGODB_PORT" --eval "db.adminCommand('ping')" --quiet >/dev/null 2>&1; then
+                success "MongoDB is ready"
+                return 0
+            fi
+        elif command -v mongo &> /dev/null; then
+            if mongo --host localhost --port "$MONGODB_PORT" --eval "db.adminCommand('ping')" --quiet >/dev/null 2>&1; then
+                success "MongoDB is ready"
+                return 0
+            fi
+        else
+            # No mongo client available, just wait a bit
+            sleep 2
+            success "Assuming MongoDB is ready (no client available to verify)"
+            return 0
+        fi
+
+        attempt=$((attempt + 1))
+        sleep 1
+    done
+
+    error "MongoDB failed to become ready within ${max_attempts} seconds"
+    return 1
+}
+
+#######################################
 # Run the API benchmark script
 #######################################
 run_benchmark() {
@@ -330,7 +482,7 @@ run_benchmark() {
     # Build the command
     SCRIPT_DIR="$(dirname "$COMPARISON_SCRIPT")"
     CMD="python3 api_comparison_main.py --benchmark $BENCHMARK_ITERATIONS"
-    
+
     if [ "$BENCHMARK_SILENT" = true ]; then
         CMD="$CMD --silent"
     fi
@@ -338,7 +490,7 @@ run_benchmark() {
     # Run the benchmark script from the examples directory
     SCRIPT_DIR="$(dirname "$COMPARISON_SCRIPT")"
     PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-    
+
     if (cd "$SCRIPT_DIR" && PYTHONPATH="$PROJECT_ROOT" $CMD >/dev/null 2>&1); then
         if [ "$BENCHMARK_SILENT" = true ]; then
             echo "Benchmark complete. Reports generated in documents/benchmarks/"
@@ -365,22 +517,31 @@ main() {
     benchmark_info "Iterations: $BENCHMARK_ITERATIONS"
     echo ""
 
-    # Step 1: Check container runtime
-    if ! check_container_runtime; then
+    # Step 1: Check MongoDB availability (native or container)
+    if ! check_mongodb_availability; then
         exit 1
     fi
 
-    # Step 2: Pull MongoDB image
-    if ! pull_mongodb_image; then
-        exit 1
-    fi
+    if [ "$MONGODB_MODE" = "native" ]; then
+        # Native MongoDB path
+        # Step 2: Start native MongoDB
+        if ! start_native_mongodb; then
+            exit 1
+        fi
+    else
+        # Container-based path
+        # Step 2: Pull MongoDB image
+        if ! pull_mongodb_image; then
+            exit 1
+        fi
 
-    # Step 3: Cleanup existing container
-    cleanup_existing_container
+        # Step 3: Cleanup existing container
+        cleanup_existing_container
 
-    # Step 4: Run MongoDB container
-    if ! run_mongodb_container; then
-        exit 1
+        # Step 4: Run MongoDB container
+        if ! run_mongodb_container; then
+            exit 1
+        fi
     fi
 
     # Step 5: Run benchmark script
