@@ -1430,7 +1430,7 @@ class TestCursorAddress:
         import tempfile
 
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-            db_path = f.name
+            db_path = os.path.realpath(f.name)
 
         try:
             conn = neosqlite.Connection(db_path)
