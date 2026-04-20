@@ -25,7 +25,7 @@ NC='\033[0m' # No Color
 # Configuration
 NX27017_PORT=27017
 NX27017_HOST="127.0.0.1"
-NX27017_CMD="/home/cwt/Env/neosqlite/bin/nx-27017"
+NX27017_CMD="$(which nx-27017)"
 NX27017_DB_DIR=$(mktemp -d)
 NX27017_DB="$NX27017_DB_DIR/neosqlite"  # Use file-based database for persistence
 COMPARISON_SCRIPT="$(dirname "$0")/../examples/api_comparison_main.py"
