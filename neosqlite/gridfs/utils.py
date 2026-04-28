@@ -143,7 +143,7 @@ def force_sync_if_needed(
     """
     j = write_concern.get("j")
     w = write_concern.get("w")
-    if j is True or w == "majority":
+    if j or w == "majority":
         db_connection.execute("PRAGMA wal_checkpoint(PASSIVE)")
 
 

@@ -407,9 +407,9 @@ def test_custom_tokenizer_parameter():
         # Verify that enable_load_extension was called
         mock_db.enable_load_extension.assert_called_once_with(True)
 
-        # Verify that execute was called to load the extension
+        # Verify that execute was called to load the extension with parameters
         mock_db.execute.assert_called_with(
-            "SELECT load_extension('/path/to/libfts5_icu.so')"
+            "SELECT load_extension(?)", ("/path/to/libfts5_icu.so",)
         )
 
 

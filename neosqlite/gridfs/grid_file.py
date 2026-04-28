@@ -10,6 +10,7 @@ from ..collection.schema_utils import column_exists
 
 # Import ObjectId for GridIn and GridOut
 from ..objectid import ObjectId
+from ..sql_utils import quote_table_name
 from .errors import NoFile
 from .utils import (
     deserialize_aliases,
@@ -63,8 +64,8 @@ class GridIn:
         self._filename = filename
         self._metadata = metadata
         self._file_id = file_id
-        self._files_collection = f"{bucket_name}_files"
-        self._chunks_collection = f"{bucket_name}_chunks"
+        self._files_collection = quote_table_name(f"{bucket_name}_files")
+        self._chunks_collection = quote_table_name(f"{bucket_name}_chunks")
         self._disable_md5 = disable_md5
         self._write_concern = write_concern or {}
         self._content_type = content_type
@@ -396,8 +397,9 @@ class GridOut:
         # Convert file_id to integer for internal use
         if isinstance(file_id, ObjectId):
             # Look up the integer ID for this ObjectId
+            # Use quote_table_name to prevent SQL injection in bucket_name
             cursor = self._db.execute(
-                f"SELECT id FROM {bucket_name}_files WHERE _id = ?",
+                f"SELECT id FROM {quote_table_name(f'{bucket_name}_files')} WHERE _id = ?",
                 (str(file_id),),
             )
             if (row := cursor.fetchone()) is None:
@@ -407,8 +409,8 @@ class GridOut:
             self._int_file_id = row[0]  # Store the integer ID internally
         else:
             self._int_file_id = file_id  # Store the integer ID internally
-        self._files_collection = f"{bucket_name}_files"
-        self._chunks_collection = f"{bucket_name}_chunks"
+        self._files_collection = quote_table_name(f"{bucket_name}_files")
+        self._chunks_collection = quote_table_name(f"{bucket_name}_chunks")
 
         # Get file metadata using the integer ID
         # Check if new columns exist to maintain backward compatibility
@@ -720,7 +722,7 @@ class GridOutCursor:
         self._db = db
         self._bucket_name = bucket_name
         self._filter = filter
-        self._files_collection = f"{bucket_name}_files"
+        self._files_collection = quote_table_name(f"{bucket_name}_files")
 
         # Build query based on filter
         where_clause = ""

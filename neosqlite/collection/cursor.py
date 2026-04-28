@@ -1064,14 +1064,13 @@ class Cursor:
         if not self._collation:
             return ""
 
-        self._collation.get("locale", "")
         strength = self._collation.get("strength", 3)
         case_level = self._collation.get("caseLevel", False)
 
         # Determine collation based on settings
         # Strength 1-2: Ignore case/diacritics → NOCASE
         # Strength 3+: Respect case → BINARY (default)
-        if strength <= 2 or case_level is False:
+        if strength <= 2 or not case_level:
             # Case-insensitive comparison
             return " COLLATE NOCASE"
         else:
@@ -1206,7 +1205,7 @@ class Cursor:
             strength = self._collation.get("strength", 3)
             case_level = self._collation.get("caseLevel", False)
             # Strength 1-2 means case-insensitive
-            if strength <= 2 or case_level is False:
+            if strength <= 2 or not case_level:
                 case_insensitive = True
 
         for key in sort_keys:

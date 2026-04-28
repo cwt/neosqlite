@@ -427,12 +427,16 @@ class SQLOperatorTranslator:
                             return None, []
                 case "$exists":
                     # Handle boolean value for $exists
-                    if value is True:
-                        sql = f"{field_access} IS NOT NULL"
-                        params = []
-                    elif value is False:
-                        sql = f"{field_access} IS NULL"
-                        params = []
+                    if isinstance(value, bool):
+                        if value:
+                            sql = f"{field_access} IS NOT NULL"
+                            params = []
+                        else:
+                            sql = f"{field_access} IS NULL"
+                            params = []
+                    else:
+                        # Invalid value for $exists, fallback to Python
+                        return None, []
                 case "$mod":
                     # Handle [divisor, remainder] array
                     if isinstance(value, (list, tuple)) and len(value) == 2:

@@ -639,10 +639,11 @@ class UpdateOperationsMixin:
                     for field, type_spec in value.items():
                         json_path = f"'{parse_json_path(field)}'"
                         # Determine type: true defaults to date, { $type: "timestamp" } or { $type: "date" }
-                        if isinstance(type_spec, dict) and "$type" in type_spec:
-                            type_value = type_spec["$type"]
-                        elif type_spec is True:
-                            type_value = "date"
+                        if (
+                            isinstance(type_spec, dict)
+                            and type_spec.get("$type") == "timestamp"
+                        ):
+                            type_value = "timestamp"
                         else:
                             type_value = "date"
                         # Set to current datetime ISO string
@@ -866,10 +867,11 @@ class UpdateOperationsMixin:
                     for field, type_spec in value.items():
                         json_path = f"'{parse_json_path(field)}'"
                         # Determine type: true defaults to date, { $type: "timestamp" } or { $type: "date" }
-                        if isinstance(type_spec, dict) and "$type" in type_spec:
-                            type_value = type_spec["$type"]
-                        elif type_spec is True:
-                            type_value = "date"
+                        if (
+                            isinstance(type_spec, dict)
+                            and type_spec.get("$type") == "timestamp"
+                        ):
+                            type_value = "timestamp"
                         else:
                             type_value = "date"
                         # Set to current datetime ISO string to match Python implementation
@@ -1393,10 +1395,11 @@ class UpdateOperationsMixin:
                 for field, type_spec in value.items():
                     json_path = f"'{parse_json_path(field)}'"
                     # Determine type: true defaults to date, { $type: "timestamp" } or { $type: "date" }
-                    if isinstance(type_spec, dict) and "$type" in type_spec:
-                        type_value = type_spec["$type"]
-                    elif type_spec is True:
-                        type_value = "date"
+                    if (
+                        isinstance(type_spec, dict)
+                        and type_spec.get("$type") == "timestamp"
+                    ):
+                        type_value = "timestamp"
                     else:
                         type_value = "date"
                     # Set to current datetime ISO string to match Python implementation

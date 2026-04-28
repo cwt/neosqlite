@@ -3492,8 +3492,10 @@ class TemporaryTableAggregationProcessor:
             for table_name in result_tables:
                 try:
                     self.db.execute(f"DROP TABLE IF EXISTS {table_name}")
-                except Exception:
-                    pass
+                except Exception as cleanup_error:
+                    logger.debug(
+                        f"Failed to cleanup result table {table_name}: {cleanup_error}"
+                    )
             raise e
 
     def _process_union_with_stage(self, create_temp, current_table, union_spec):

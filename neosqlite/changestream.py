@@ -408,19 +408,21 @@ class ChangeStream:
                             pass
 
                     if skip_change:
-                        # Rollback the delete so the bad row stays for next poll,
+                        # Update _last_id before commit
+                        self._last_id = change_id
                         # but also delete it to avoid infinite loop on unparseable data
                         self._collection.db.commit()
-                        self._last_id = change_id
                         continue
+
+                    # Update the last processed ID BEFORE successful commit
+                    # This ensures that both the deletion and the cursor movement are atomic
+                    # with respect to other threads/processes sharing the same ChangeStream.
+                    self._last_id = change_id
 
                     # Commit the transaction AFTER all processing is complete
                     # This ensures that if processing fails, the rollback will
                     # restore the changestream row (preventing data loss)
                     self._collection.db.commit()
-
-                    # Update the last processed ID after successful commit
-                    self._last_id = change_id
 
                     return change_doc
                 else:

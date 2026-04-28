@@ -102,23 +102,30 @@ class Connection:
             **kwargs: Keyword arguments passed to sqlite3.connect().
         """
         self.db = sqlite3.connect(*args, **kwargs)
-        self.db.execute(f"PRAGMA auto_vacuum={self.auto_vacuum}")
+
+        # Safely access attributes to allow calling connect() on partially initialized objects
+        auto_vacuum = getattr(self, "auto_vacuum", AutoVacuumMode.INCREMENTAL)
+        journal_mode = getattr(self, "journal_mode", JournalMode.WAL)
+
+        self.db.execute(f"PRAGMA auto_vacuum={auto_vacuum}")
         self.db.isolation_level = None
-        self.db.execute(f"PRAGMA journal_mode={self.journal_mode}")
+        self.db.execute(f"PRAGMA journal_mode={journal_mode}")
         self._register_custom_functions()
 
         # Set synchronous mode to NORMAL for WAL mode by default if not specified by write concern
         # This provides a good balance of performance and safety in WAL mode
-        if self.journal_mode == "WAL":
+        if journal_mode == "WAL":
             self.db.execute("PRAGMA synchronous = NORMAL")
 
-        if hasattr(self, "_write_concern") and self._write_concern:
-            self._apply_write_concern(self._write_concern)
+        write_concern = getattr(self, "_write_concern", None)
+        if write_concern:
+            self._apply_write_concern(write_concern)
 
         if self._tokenizers:
             self.db.enable_load_extension(True)
             for name, path in self._tokenizers:
-                self.db.execute(f"SELECT load_extension('{path}')")
+                # Use parameterized query to prevent SQL injection in path
+                self.db.execute("SELECT load_extension(?)", (path,))
 
         self._check_and_migrate_autovacuum(*args, **kwargs)
 
@@ -230,23 +237,30 @@ class Connection:
         )
 
         self.db = sqlite3.connect(*args, **kwargs)
-        self.db.execute(f"PRAGMA auto_vacuum={self.auto_vacuum}")
+
+        # Safely access attributes to allow calling connect() on partially initialized objects
+        auto_vacuum = getattr(self, "auto_vacuum", AutoVacuumMode.INCREMENTAL)
+        journal_mode = getattr(self, "journal_mode", JournalMode.WAL)
+
+        self.db.execute(f"PRAGMA auto_vacuum={auto_vacuum}")
         self.db.isolation_level = None
-        self.db.execute(f"PRAGMA journal_mode={self.journal_mode}")
+        self.db.execute(f"PRAGMA journal_mode={journal_mode}")
         self._register_custom_functions()
 
         # Set synchronous mode to NORMAL for WAL mode by default if not specified by write concern
         # This provides a good balance of performance and safety in WAL mode
-        if self.journal_mode == "WAL":
+        if journal_mode == "WAL":
             self.db.execute("PRAGMA synchronous = NORMAL")
 
-        if hasattr(self, "_write_concern") and self._write_concern:
-            self._apply_write_concern(self._write_concern)
+        write_concern = getattr(self, "_write_concern", None)
+        if write_concern:
+            self._apply_write_concern(write_concern)
 
         if self._tokenizers:
             self.db.enable_load_extension(True)
             for name, path in self._tokenizers:
-                self.db.execute(f"SELECT load_extension('{path}')")
+                # Use parameterized query to prevent SQL injection in path
+                self.db.execute("SELECT load_extension(?)", (path,))
 
     def cleanup(self) -> None:
         """Clean up all collection resources associated with this connection."""
@@ -791,7 +805,12 @@ class Connection:
                     return {"bytesFreed": bytes_freed, "ok": 1}
 
                 case "wal_checkpoint":
-                    mode = kwargs.get("mode", "PASSIVE")
+                    mode = str(kwargs.get("mode", "PASSIVE")).upper()
+                    if mode not in ("PASSIVE", "FULL", "RESTART", "TRUNCATE"):
+                        return {
+                            "ok": 0,
+                            "errmsg": f"Invalid wal_checkpoint mode: {mode}",
+                        }
                     result = self.db.execute(
                         f"PRAGMA wal_checkpoint({mode})"
                     ).fetchone()
@@ -1075,6 +1094,12 @@ class Connection:
 
                 case _:
                     try:
+                        # Validate cmd_name to prevent SQL injection
+                        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", cmd_name):
+                            return {
+                                "ok": 0,
+                                "errmsg": f"Invalid command name: {cmd_name}",
+                            }
                         cursor = self.db.execute(f"PRAGMA {cmd_name}")
                         result = cursor.fetchall()
                         return {
@@ -1262,7 +1287,7 @@ class Connection:
             elif w == 1:
                 self.db.execute("PRAGMA synchronous = NORMAL")
 
-            if j is True:
+            if j:
                 self.db.execute("PRAGMA synchronous = FULL")
         except Exception as e:
             logger.warning(f"Error applying write concern: {e}")

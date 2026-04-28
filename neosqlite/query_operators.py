@@ -415,7 +415,8 @@ def _exists(field: str, value: bool, document: dict[str, Any]) -> bool:
                 # We've reached the final field
                 return value
             doc_value = doc_value.get(path, None)
-        # Unreachable: loop always returns via lines 333 or 336
+        # Should be unreachable as the loop returns for the last element,
+        # but required for static type checking.
         return not value
     else:
         return (field in document) if value else (field not in document)

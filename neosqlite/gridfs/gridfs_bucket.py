@@ -144,7 +144,7 @@ class GridFSBucket:
     def _apply_write_concern(self):
         """Apply write concern settings to SQLite connection."""
         # Handle journal concern (j=True)
-        if self._write_concern.get("j") is True:
+        if self._write_concern.get("j"):
             # Set synchronous to FULL for maximum durability
             self._db.execute("PRAGMA synchronous = FULL")
         else:

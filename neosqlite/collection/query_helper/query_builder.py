@@ -585,7 +585,7 @@ class QueryBuilderMixin:
         if collation:
             strength = collation.get("strength", 3)
             case_level = collation.get("caseLevel", False)
-            if strength <= 2 or case_level is False:
+            if strength <= 2 or not case_level:
                 collate_clause = " COLLATE NOCASE"
 
         for field, direction in sort.items():
@@ -799,14 +799,15 @@ class QueryBuilderMixin:
                         return None, []
                 case "$exists":
                     # Handle boolean value for $exists
-                    if op_val is True:
-                        clauses.append(
-                            f"{self._json_function_prefix}_extract(data, {json_path}) IS NOT NULL"
-                        )
-                    elif op_val is False:
-                        clauses.append(
-                            f"{self._json_function_prefix}_extract(data, {json_path}) IS NULL"
-                        )
+                    if isinstance(op_val, bool):
+                        if op_val:
+                            clauses.append(
+                                f"{self._json_function_prefix}_extract(data, {json_path}) IS NOT NULL"
+                            )
+                        else:
+                            clauses.append(
+                                f"{self._json_function_prefix}_extract(data, {json_path}) IS NULL"
+                            )
                     else:
                         # Invalid value for $exists, fallback to Python
                         return None, []
