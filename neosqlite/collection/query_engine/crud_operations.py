@@ -570,21 +570,14 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             return DeleteResult(deleted_count=cursor.rowcount)
 
         # Fallback for complex queries
-        # Reuse the already-translated where_clause from line 563
-        if where_clause is not None:
-            # Use direct SQL if possible
-            cmd = f"SELECT id FROM {quote_table_name(self.collection.name)} {where_clause}"
-            cursor = self.collection.db.execute(cmd, params)
-            ids = [row[0] for row in cursor.fetchall()]
-        else:
-            # Fallback to finding documents and getting their integer IDs
-            docs = list(self.find(filter))
-            if not docs:
-                return DeleteResult(deleted_count=0)
-            ids = []
-            for d in docs:
-                int_doc_id = self._get_integer_id_for_oid(d["_id"])
-                ids.append(int_doc_id)
+        # Fallback to finding documents and getting their integer IDs
+        docs = list(self.find(filter))
+        if not docs:
+            return DeleteResult(deleted_count=0)
+        ids = []
+        for d in docs:
+            int_doc_id = self._get_integer_id_for_oid(d["_id"])
+            ids.append(int_doc_id)
 
         if not ids:
             return DeleteResult(deleted_count=0)

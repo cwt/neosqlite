@@ -16,21 +16,21 @@ from .results import BulkWriteResult
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(slots=True)
 class BulkOperation(ABC):
     """Base class for bulk operations."""
 
     pass
 
 
-@dataclass
+@dataclass(slots=True)
 class InsertOperation(BulkOperation):
     """Represents an insert operation in a bulk operation."""
 
     document: dict[str, Any]
 
 
-@dataclass
+@dataclass(slots=True)
 class UpdateOperation(BulkOperation):
     """Represents an update operation in a bulk operation."""
 
@@ -40,7 +40,7 @@ class UpdateOperation(BulkOperation):
     multi: bool = False
 
 
-@dataclass
+@dataclass(slots=True)
 class DeleteOperation(BulkOperation):
     """Represents a delete operation in a bulk operation."""
 

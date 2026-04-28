@@ -389,8 +389,7 @@ class GridFSBucket:
             destination: A file-like object to which the file contents will be written
         """
         # Convert file_id to appropriate format for lookup
-        file_int_id = self._get_integer_id_for_file(file_id)
-        if file_int_id is None:
+        if (file_int_id := self._get_integer_id_for_file(file_id)) is None:
             raise NoFile(f"File with id {file_id} not found")
 
         # Get file metadata using integer ID
@@ -532,8 +531,7 @@ class GridFSBucket:
             A GridOut instance to read the file contents
         """
         # Convert to integer ID for internal use
-        file_int_id = self._get_integer_id_for_file(file_id)
-        if file_int_id is None:
+        if (file_int_id := self._get_integer_id_for_file(file_id)) is None:
             raise NoFile(f"File with id {file_id} not found")
         return GridOut(self._db, self._bucket_name, file_int_id)
 
@@ -562,8 +560,7 @@ class GridFSBucket:
             file_id: The _id of the file document (ObjectId, hex string, or integer ID)
         """
         # Convert to integer ID for internal use
-        file_int_id = self._get_integer_id_for_file(file_id)
-        if file_int_id is None:
+        if (file_int_id := self._get_integer_id_for_file(file_id)) is None:
             raise NoFile(f"File with id {file_id} not found")
 
         # Delete chunks first
@@ -858,8 +855,7 @@ class GridFSBucket:
             file_id: The _id of the file to rename (ObjectId, hex string, or integer ID)
             new_filename: The new name for the file
         """
-        file_int_id = self._get_integer_id_for_file(file_id)
-        if file_int_id is None:
+        if (file_int_id := self._get_integer_id_for_file(file_id)) is None:
             raise NoFile(f"File with id {file_id} not found")
 
         cursor = self._db.execute(

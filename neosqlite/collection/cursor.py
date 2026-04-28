@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable, Iterable, Iterator
 from copy import deepcopy
 from functools import partial
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator
+from typing import TYPE_CHECKING, Any
 
 from .json_path_utils import parse_json_path
 from .jsonb_support import _get_json_function_prefix, json_data_column

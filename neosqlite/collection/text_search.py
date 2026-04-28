@@ -5,7 +5,7 @@ Enhanced text search functionality for NeoSQLite with international character su
 import logging
 import re
 import unicodedata
-from functools import lru_cache
+from functools import cache
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -23,7 +23,7 @@ class TextSearchOptimizer:
     """
 
     @staticmethod
-    @lru_cache(maxsize=1000)
+    @cache
     def compile_pattern(search_term: str):
         """
         Compile and cache regex patterns for better performance.
@@ -59,7 +59,7 @@ class TextSearchOptimizer:
         return "".join(c for c in normalized if unicodedata.category(c) != "Mn")
 
     @staticmethod
-    @lru_cache(maxsize=1000)
+    @cache
     def get_normalized_pattern(search_term: str):
         """
         Get normalized pattern for diacritic-insensitive matching.
