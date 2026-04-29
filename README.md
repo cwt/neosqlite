@@ -33,15 +33,17 @@
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
-## Latest Release: v1.14.13
+## Latest Release: v1.14.14
 
-NeoSQLite v1.14.13 is a **bug fix and maintenance release** that ensures compatibility with newer SQLite versions (3.45.0+) and restores the full index comparison suite in the API benchmarks.
+NeoSQLite v1.14.14 is a **security hardening, code quality, and modernization release** that patches SQL injection vectors, improves transaction atomicity, and modernizes the codebase for Python 3.8+.
 
 **Key Fixes:**
-- **SQLite 3.45.0+ Compatibility** — Fixed a `no such column: json_each.value` error on systems where `jsonb_each()` is dynamically selected.
-- **Restored Index Benchmarks** — Re-added the index and compound index operations comparison in the API comparison suite.
+- **SQL Injection Hardening** — Parameterized `load_extension()`, PRAGMA whitelist validation, and GridFS identifier quoting.
+- **Atomicity Fix** — Change Stream `_last_id` now updated inside `BEGIN IMMEDIATE` to prevent race conditions.
+- **Code Quality** — Removed dead code, replaced bare `except: pass` with logging, fixed `$currentDate` validation.
+- **Python 3.8+ Modernization** — `@cache`, walrus operator, `slots=True`, `collections.abc` imports.
 
-For full details, see [documents/releases/v1.14.13.md](documents/releases/v1.14.13.md).
+For full details, see [documents/releases/v1.14.14.md](documents/releases/v1.14.14.md).
 
 ## Installation
 

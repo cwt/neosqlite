@@ -1,5 +1,58 @@
 # CHANGELOG
 
+## 1.14.14
+
+### Security Hardening & Modernization Release
+
+**Security and Code Quality Update** — fully backward compatible with v1.14.13.
+
+#### High Severity Fixes
+
+- **SQL Injection — `load_extension()`**: Extension path now passed as a bound parameter (`?`) instead of raw string literal in SQL, preventing injection via malicious path strings.
+
+- **PRAGMA Hardening**: Added whitelist validation for `wal_checkpoint` mode (`PASSIVE`/`FULL`/`RESTART`/`TRUNCATE`) and regex validation for PRAGMA command names in the fallback path.
+
+- **GridFS Identifier Quoting**: Applied `quote_table_name()` to all dynamic table name constructions in `grid_file.py`, `gridfs_bucket.py`, and `utils.py` to prevent identifier injection.
+
+#### Medium Severity Fixes
+
+- **Change Stream Atomicity**: Moved `_last_id` update inside `BEGIN IMMEDIATE` transaction block. Previously performed outside the transaction, which could cause the resume token to advance before the change was committed.
+
+- **`$currentDate` Type Spec Fix**: Fixed `type_spec` handling to explicitly check the `"$type"` field instead of relying on ambiguous truthiness.
+
+#### Code Quality Cleanup
+
+- Replaced bare `except Exception: pass` with logged debug output in temporary table cleanup.
+- Replaced `is True`/`is False` identity checks with `isinstance()` or truthiness throughout query builders.
+- Replaced `hasattr` guards with `getattr(..., default)` in `Connection.connect()`.
+- Removed unreachable dead code in `cursor.py`, `query_operators.py`, and `delete_many` fallback logic.
+
+#### Python 3.8+ Modernization
+
+- Replaced `@lru_cache(maxsize=1000)` with `@cache` in `text_search.py` (Py 3.9+).
+- Moved `Callable`, `Iterable`, `Iterator` imports from `typing` to `collections.abc` (Py 3.9+).
+- Added `slots=True` to `BulkOperation` dataclasses for memory efficiency (Py 3.10+).
+- Utilized walrus operator (`:=`) in `GridFSBucket` for cleaner ID lookups (Py 3.8+).
+
+#### Maintenance
+
+- **Shared PyMongo Connection**: Refactored all 61 API comparison tests to use a single shared `MongoClient` managed by `runner.py`, eliminating unfair benchmark overhead from repeated connection setup/teardown.
+- **macOS ARM Native MongoDB**: Benchmark scripts now prefer native Homebrew `mongodb-community` on macOS before falling back to podman/docker.
+- **macOS Symlink Fix**: Fixed test failure on macOS caused by symlinked temp directories.
+- **Code Formatter**: Updated for macOS compatibility.
+- **Dependencies**: Updated `poetry.lock` and `packages/nx_27017/poetry.lock`.
+
+#### Test Results
+- **Unit Tests**: 2,891 total (2,891 passed, 0 xfailed, 0 failed)
+- **API Comparison (NeoSQLite vs MongoDB)**: 379 tests (361 passed, 18 skipped, 0 failed) — 100.0%
+- **Code Coverage**: 81.1%
+
+#### Compatibility
+- **Backward Compatible**: Zero breaking changes.
+- **PyMongo API Parity**: 100% for comparable features.
+
+---
+
 ## 1.14.13
 
 ### Bug Fix & Maintenance: Modern SQLite Compatibility & Benchmark Restoration

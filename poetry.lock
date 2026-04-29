@@ -1501,4 +1501,4 @@ nx27017-speed = ["nx-27017", "pymongo", "uvloop"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.10, <3.15"
-content-hash = "be8fb3ab479e2708d4ce12e8e70663eb0b34e182d548128a4541277ad28a08ab"
+content-hash = "77f1553bc9cb883936ead24c691e46790c1140cdcc1611b3c884bb9a7320a5fd"
