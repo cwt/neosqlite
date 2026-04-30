@@ -575,6 +575,7 @@ class Connection:
             - "wal_checkpoint" - WAL checkpoint control (NeoSQLite extension)
             - "cache_size" - Get/set cache size (NeoSQLite extension)
             - "busy_timeout" - Get/set busy timeout (NeoSQLite extension)
+            - "query_only" - Get/set read-only mode (NeoSQLite extension)
             - "analyze" - Runs ANALYZE command
 
         compact Command:
@@ -1091,6 +1092,39 @@ class Connection:
                         collection = self[collection_name]
                         cursor_result = collection.aggregate(pipeline)
                         return {"ok": 1, "result": list(cursor_result)}
+
+                case "query_only":
+                    pragma_value = (
+                        command.get("query_only")
+                        if isinstance(command, dict)
+                        else None
+                    )
+
+                    if pragma_value is not None:
+                        if isinstance(pragma_value, bool):
+                            val = 1 if pragma_value else 0
+                        elif isinstance(pragma_value, str):
+                            val = (
+                                1
+                                if pragma_value.upper() in ("ON", "TRUE", "1")
+                                else 0
+                            )
+                        elif isinstance(pragma_value, (int, float)):
+                            val = 1 if pragma_value else 0
+                        else:
+                            return {
+                                "ok": 0,
+                                "errmsg": f"Invalid query_only value: {pragma_value!r}",
+                            }
+
+                        self.db.execute(f"PRAGMA query_only = {val}")
+                        return {"ok": 1, "query_only": bool(val)}
+                    else:
+                        cursor = self.db.execute("PRAGMA query_only")
+                        return {
+                            "ok": 1,
+                            "query_only": bool(cursor.fetchone()[0]),
+                        }
 
                 case _:
                     try:

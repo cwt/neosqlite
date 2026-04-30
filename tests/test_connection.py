@@ -865,3 +865,96 @@ def test_cursor_command_pragma():
     assert conn.dereference({"$ref": "nonexistent", "$id": 123}) is None
     assert conn.dereference(None) is None
     conn.close()
+
+
+# ── command("query_only") tests ──────────────────────────────────────────────
+
+
+def test_command_query_only_read():
+    """command('query_only') returns current read-only state."""
+    conn = neosqlite.Connection(":memory:")
+    result = conn.command("query_only")
+    assert result["ok"] == 1
+    assert "query_only" in result
+    assert isinstance(result["query_only"], bool)
+    assert result["query_only"] is False
+    conn.close()
+
+
+def test_command_query_only_set_int():
+    """command('query_only', 1) enables read-only mode."""
+    conn = neosqlite.Connection(":memory:")
+    result = conn.command("query_only", 1)
+    assert result["ok"] == 1
+    assert result["query_only"] is True
+    # Verify it actually took effect
+    read = conn.command("query_only")
+    assert read["query_only"] is True
+    conn.close()
+
+
+def test_command_query_only_set_bool():
+    """command('query_only', True/False) sets read-only mode."""
+    conn = neosqlite.Connection(":memory:")
+    conn.command("query_only", True)
+    assert conn.command("query_only")["query_only"] is True
+    conn.command("query_only", False)
+    assert conn.command("query_only")["query_only"] is False
+    conn.close()
+
+
+def test_command_query_only_set_str_on():
+    """command('query_only', 'ON') enables read-only mode."""
+    conn = neosqlite.Connection(":memory:")
+    result = conn.command("query_only", "ON")
+    assert result["ok"] == 1
+    assert result["query_only"] is True
+    conn.close()
+
+
+def test_command_query_only_set_str_off():
+    """command('query_only', 'OFF') disables read-only mode."""
+    conn = neosqlite.Connection(":memory:")
+    conn.command("query_only", "ON")
+    result = conn.command("query_only", "OFF")
+    assert result["ok"] == 1
+    assert result["query_only"] is False
+    conn.close()
+
+
+def test_command_query_only_set_dict():
+    """command({'query_only': 1}) enables read-only mode."""
+    conn = neosqlite.Connection(":memory:")
+    result = conn.command({"query_only": 1})
+    assert result["ok"] == 1
+    assert result["query_only"] is True
+    conn.close()
+
+
+def test_command_query_only_invalid_value():
+    """command('query_only', invalid_value) returns error."""
+    conn = neosqlite.Connection(":memory:")
+    result = conn.command("query_only", {"nested": "bad"})
+    assert result["ok"] == 0
+    assert "Invalid query_only value" in result["errmsg"]
+    conn.close()
+
+
+def test_command_query_only_effect():
+    """query_only PRAGMA actually prevents writes."""
+    conn = neosqlite.Connection(":memory:")
+    conn["test"].insert_one({"x": 1})
+    # Enable read-only
+    conn.command("query_only", 1)
+    # Existing cached collection reads still work
+    doc = conn["test"].find_one({"x": 1})
+    assert doc is not None
+    # New collection (requires CREATE TABLE) fails
+    try:
+        conn["new_collection"]
+        # If it didn't fail, try a write
+        conn["new_collection"].insert_one({"y": 1})
+        assert False, "Should have raised OperationalError"
+    except Exception as e:
+        assert "readonly" in str(e).lower()
+    conn.close()
