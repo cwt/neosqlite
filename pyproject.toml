@@ -43,7 +43,7 @@ nx27017_speed = ["pymongo", "nx-27017", "uvloop"]
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0"
 pytest-cov = "^7.1"
-mypy = "^1.20"
+mypy = "^2.1"
 pytest-xdist = "^3.8.0"
 
 [tool.pyright]

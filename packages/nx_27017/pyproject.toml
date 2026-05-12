@@ -28,7 +28,7 @@ speed = ["uvloop"]
 pytest = "^9.0"
 pytest-asyncio = "^1.0.0"
 pytest-cov = "^7.1"
-mypy = "^1.17"
+mypy = "^2.1"
 
 [tool.poetry.scripts]
 nx-27017 = "nx_27017.nx_27017:main"
