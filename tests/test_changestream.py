@@ -506,3 +506,39 @@ def test_close_idempotent(collection):
     # Should not raise any error
     stream.close()
     assert stream._closed is True
+
+
+def test_changestream_ensures_id_column_exists():
+    """Test that ChangeStream ensures _id column exists before creating triggers.
+
+    If a collection was created without an _id column (e.g., legacy schema),
+    ChangeStream should add it before setting up triggers that reference
+    NEW._id / OLD._id, preventing trigger runtime failures.
+    """
+    import neosqlite
+
+    db = neosqlite.Connection(":memory:")
+    # Create a table without _id column (simulate legacy schema)
+    db.db.execute(
+        "CREATE TABLE legacy_coll (id INTEGER PRIMARY KEY, data TEXT)"
+    )
+    # Manually register the collection (bypassing Collection.create())
+    coll = neosqlite.Collection(db.db, "legacy_coll", create=False, database=db)
+    # Verify _id column doesn't exist yet
+    cursor = db.db.execute(
+        "SELECT name FROM pragma_table_info('legacy_coll') WHERE name='_id'"
+    )
+    assert cursor.fetchone() is None
+    # Creating a ChangeStream should add the _id column
+    stream = coll.watch()
+    # Now the _id column should exist
+    cursor = db.db.execute(
+        "SELECT name FROM pragma_table_info('legacy_coll') WHERE name='_id'"
+    )
+    assert cursor.fetchone() is not None
+    # Insert should work (trigger references NEW._id which now exists)
+    coll.insert_one({"foo": "bar"})
+    change = next(stream)
+    assert change["operationType"] == "insert"
+    stream.close()
+    db.close()

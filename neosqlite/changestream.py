@@ -66,6 +66,9 @@ class ChangeStream:
 
         self._sanitized_name = self._sanitize_collection_name(collection.name)
 
+        # Ensure _id column exists before creating triggers that reference it
+        self._collection._ensure_id_column_exists()
+
         # Set up triggers to capture changes
         self._setup_triggers()
 
