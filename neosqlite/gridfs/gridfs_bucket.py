@@ -105,8 +105,8 @@ class GridFSBucket:
         """Migrate legacy GridFS tables from dot-based names to underscore-based names."""
         old_files = f"{self._bucket_name}.files"
         old_chunks = f"{self._bucket_name}.chunks"
-        new_files = f"{self._files_collection}"
-        new_chunks = f"{self._chunks_collection}"
+        new_files = quote_table_name(self._files_collection)
+        new_chunks = quote_table_name(self._chunks_collection)
 
         cursor = self._db.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name=?",

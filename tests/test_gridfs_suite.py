@@ -2558,3 +2558,48 @@ def test_gridfs_list_edge_cases(bucket):
     filenames = bucket.list()
     assert "same.txt" in filenames
     assert len([f for f in filenames if f == "same.txt"]) == 1  # Only once
+
+
+def test_gridfs_legacy_migration_with_safe_table_names():
+    """Test that legacy table migration uses properly quoted table names.
+
+    This verifies that _migrate_legacy_tables_if_needed quotes new table
+    names via quote_table_name, preventing SQL injection from bucket names
+    containing SQL keyword substrings.
+    """
+    import neosqlite
+
+    db = neosqlite.Connection(":memory:")
+    # Create legacy-style tables (dot notation) with full GridFS schema
+    # so that _create_collections can add indexes after migration
+    bucket_name = "test_from"  # contains SQL keyword substring
+    db.db.execute(
+        f'CREATE TABLE "{bucket_name}.files" (id INTEGER PRIMARY KEY, '
+        f"_id TEXT, filename TEXT, length INTEGER, chunkSize INTEGER, "
+        f"uploadDate TEXT, md5 TEXT, metadata TEXT, content_type TEXT, "
+        f"aliases TEXT)"
+    )
+    db.db.execute(
+        f'CREATE TABLE "{bucket_name}.chunks" '
+        f"(_id INTEGER PRIMARY KEY, files_id INTEGER, n INTEGER, data BLOB)"
+    )
+    # Creating GridFSBucket triggers _migrate_legacy_tables_if_needed
+    _bucket = GridFSBucket(db.db, bucket_name=bucket_name)
+    # Verify tables were migrated to underscore names
+    cursor = db.db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        (f"{bucket_name}_files",),
+    )
+    assert cursor.fetchone() is not None
+    cursor = db.db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        (f"{bucket_name}_chunks",),
+    )
+    assert cursor.fetchone() is not None
+    # Verify old dot tables are gone (renamed)
+    cursor = db.db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        (f"{bucket_name}.files",),
+    )
+    assert cursor.fetchone() is None
+    db.close()
