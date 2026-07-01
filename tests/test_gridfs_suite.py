@@ -2603,3 +2603,43 @@ def test_gridfs_legacy_migration_with_safe_table_names():
     )
     assert cursor.fetchone() is None
     db.close()
+
+
+def test_gridin_md5_for_empty_file(connection):
+    """Test that GridIn stores correct MD5 for an empty file."""
+    import hashlib
+
+    expected_md5 = hashlib.md5(b"").hexdigest()
+    bucket = GridFSBucket(connection.db)
+    file_id = bucket.upload_from_stream("empty.txt", b"")
+    grid_out = bucket.open_download_stream(file_id)
+    assert grid_out.md5 == expected_md5
+    assert grid_out.length == 0
+
+
+def test_gridin_md5_for_exact_chunk_size(connection):
+    """Test that GridIn stores correct MD5 when data fills chunk exactly."""
+    import hashlib
+
+    chunk_size = 1024
+    bucket = GridFSBucket(connection.db, chunk_size_bytes=chunk_size)
+    data = b"x" * chunk_size
+    expected_md5 = hashlib.md5(data).hexdigest()
+    file_id = bucket.upload_from_stream("exact.txt", data)
+    grid_out = bucket.open_download_stream(file_id)
+    assert grid_out.md5 == expected_md5
+    assert grid_out.length == chunk_size
+
+
+def test_gridin_md5_for_partial_chunk(connection):
+    """Test that GridIn stores correct MD5 for a file with partial last chunk."""
+    import hashlib
+
+    chunk_size = 1024
+    bucket = GridFSBucket(connection.db, chunk_size_bytes=chunk_size)
+    data = b"y" * (chunk_size + 512)
+    expected_md5 = hashlib.md5(data).hexdigest()
+    file_id = bucket.upload_from_stream("partial.txt", data)
+    grid_out = bucket.open_download_stream(file_id)
+    assert grid_out.md5 == expected_md5
+    assert grid_out.length == chunk_size + 512

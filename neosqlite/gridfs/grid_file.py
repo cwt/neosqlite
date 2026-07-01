@@ -344,7 +344,12 @@ class GridIn:
                 )
                 self._chunk_number += 1
 
-            # Update the file document with final metadata
+        # Update the file document with final metadata.
+        # This must happen even when the last chunk filled the buffer exactly
+        # (i.e., buffer is empty but chunks were written), otherwise the md5
+        # and length remain NULL from the initial INSERT.
+        if self._chunk_number > 0 or self._file_id is not None:
+            file_int_id = self._get_file_id()
             md5_hash = None
             if self._md5_hasher:
                 md5_hash = self._md5_hasher.hexdigest()
