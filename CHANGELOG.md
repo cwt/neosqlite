@@ -1,5 +1,42 @@
 # CHANGELOG
 
+## 1.14.15
+
+### Security & Data Integrity Patch Release
+
+**Bug-Fix Release** — fully backward compatible with v1.14.14.
+
+#### High Severity Fixes
+
+- **SQL Injection via Collection Names**: Applied `quote_table_name()` to 8 SQL f-strings in `cursor.py` and `raw_batch_cursor.py` that used `self._collection.name` directly. Also fixed GridFS legacy migration table names.
+
+- **ChangeStream `_last_id` Ordering**: Moved `_last_id = change_id` to **after** `commit()` in both normal and `skip_change` paths. Previously, if commit failed, the resume token advanced past uncommitted data, causing permanent event loss on recovery.
+
+#### Medium Severity Fixes
+
+- **`__del__` Accidental Commit**: Replaced `close()` with `_close_rollback()` in `__del__` to roll back (not commit) pending transactions during garbage collection, preventing accidental persistence of partial work.
+
+- **GridIn Empty/Exact-Chunk MD5**: Restructured `GridIn.close()` to always update file metadata when a file document exists. Empty-file MD5 now correctly computed as `hashlib.md5(b"").hexdigest()`.
+
+- **ChangeStream Missing `_id` Column**: `ChangeStream.__init__()` now calls `_ensure_id_column_exists()` before creating triggers that reference `NEW._id` / `OLD._id`.
+
+- **`with_options()` Shared Dict**: Clone's `_collections` uses `.copy()` so mutations to one Connection's cache don't affect the other.
+
+#### New Feature
+
+- **`command("query_only")`**: Get/set SQLite read-only mode via `conn.command("query_only")` or `conn.command("query_only", True)`. Supports int, bool, str (`"ON"`/`"OFF"`), and dict-style values.
+
+#### Test Results
+- **Unit Tests**: 2,924 total (2,924 passed, 0 xfailed, 0 failed)
+- **API Comparison (NeoSQLite vs MongoDB)**: 379 tests (361 passed, 18 skipped, 0 failed) — 100.0%
+- **Code Coverage**: ~81%
+
+#### Compatibility
+- **Backward Compatible**: Zero breaking changes.
+- **PyMongo API Parity**: 100% for comparable features.
+
+---
+
 ## 1.14.14
 
 ### Security Hardening & Modernization Release

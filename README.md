@@ -33,17 +33,17 @@
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
-## Latest Release: v1.14.14
+## Latest Release: v1.14.15
 
-NeoSQLite v1.14.14 is a **security hardening, code quality, and modernization release** that patches SQL injection vectors, improves transaction atomicity, and modernizes the codebase for Python 3.8+.
+NeoSQLite v1.14.15 is a **security and data integrity patch release** addressing SQL injection vectors via unquoted collection names and fixing several data-loss edge cases.
 
 **Key Fixes:**
-- **SQL Injection Hardening** — Parameterized `load_extension()`, PRAGMA whitelist validation, and GridFS identifier quoting.
-- **Atomicity Fix** — Change Stream `_last_id` now updated inside `BEGIN IMMEDIATE` to prevent race conditions.
-- **Code Quality** — Removed dead code, replaced bare `except: pass` with logging, fixed `$currentDate` validation.
-- **Python 3.8+ Modernization** — `@cache`, walrus operator, `slots=True`, `collections.abc` imports.
+- **SQL Injection Hardening** — Applied `quote_table_name()` to cursor SQL f-strings and GridFS legacy migration.
+- **Data Integrity** — Fixed ChangeStream `_last_id` ordering (moved after commit), `__del__` accidental commit (now rolls back), and GridIn empty/exact-chunk MD5.
+- **Correctness** — ChangeStream ensures `_id` column exists before triggers; `with_options()` clones get independent `_collections` dicts.
+- **New: `query_only` Command** — Get/set SQLite read-only mode via `conn.command("query_only")`.
 
-For full details, see [documents/releases/v1.14.14.md](documents/releases/v1.14.14.md).
+For full details, see [documents/releases/v1.14.15.md](documents/releases/v1.14.15.md).
 
 ## Installation
 
@@ -123,8 +123,8 @@ collection.insert_one({"name": "test"})  # Works!
 
 | Metric | Result |
 |--------|--------|
-| **Total Tests** | 386 |
-| **Passed** | 368 |
+| **Total Tests** | 379 |
+| **Passed** | 361 |
 | **Skipped** | 18 (architectural differences) |
 | **Failed** | 0 |
 | **Compatibility** | **100%** |
