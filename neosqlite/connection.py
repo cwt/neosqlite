@@ -301,6 +301,36 @@ class Connection:
 
         self._closed = True
 
+    def _close_rollback(self) -> None:
+        """
+        Close the database connection, rolling back any pending transaction.
+
+        This method is called from __del__ to prevent accidentally committing
+        partial work during garbage collection.
+        """
+        if getattr(self, "_is_clone", False) or getattr(self, "_closed", False):
+            return
+
+        if self.db is not None:
+            try:
+                if self.db.in_transaction:
+                    try:
+                        self.db.rollback()
+                    except Exception as e:
+                        if logger is not None:
+                            logger.debug(f"Rollback failed during GC: {e}")
+                        pass
+            except Exception:
+                # in_transaction check itself may fail during shutdown
+                pass
+
+            try:
+                self.db.close()
+            except Exception:
+                pass
+
+        self._closed = True
+
     @property
     def client(self) -> Connection:
         """
@@ -1353,11 +1383,13 @@ class Connection:
     def __del__(self):
         """
         Ensure the database connection is closed when the object is garbage collected.
+        Uses _close_rollback to rollback (not commit) any pending transaction,
+        since GC-triggered cleanup should not persist partial work.
         Wrapped in try/except to avoid crashes during interpreter shutdown when
         module-level imports (like sqlite3) may already be None.
         """
         try:
-            self.close()
+            self._close_rollback()
         except Exception as e:
             if logger is not None:
                 logger.debug(f"{e=}")

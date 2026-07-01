@@ -982,3 +982,40 @@ def test_with_options_collections_independent():
     assert "clone_only" in clone._collections
     assert "clone_only" not in conn._collections
     conn.close()
+
+
+def test_del_rolls_back_pending_transaction():
+    """Test that __del__ rolls back rather than commits pending transactions.
+
+    When a Connection is garbage collected while a transaction is in progress,
+    the pending work should be rolled back, not accidentally committed.
+    """
+    import os
+    import tempfile
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    db_path = tmp.name
+    tmp.close()
+
+    try:
+        conn = neosqlite.Connection(db_path)
+        conn["test"].insert_one({"x": 1})
+        # Begin a transaction and insert more data
+        conn.db.execute("BEGIN")
+        conn.db.execute(
+            "INSERT INTO test (id, _id, data) VALUES (NULL, 'temp', '{\"x\": 2}')"
+        )
+        assert conn.db.in_transaction is True
+        # Simulate GC (should rollback, not commit)
+        conn.__del__()
+
+        # Open a new connection and verify the uncommitted data is NOT there
+        conn2 = neosqlite.Connection(db_path)
+        count = conn2["test"].count_documents({})
+        assert count == 1  # Only the first insert (committed) should exist
+        conn2.close()
+    finally:
+        try:
+            os.unlink(db_path)
+        except OSError:
+            pass
