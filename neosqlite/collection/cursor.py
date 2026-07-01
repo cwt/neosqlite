@@ -7,6 +7,7 @@ from copy import deepcopy
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
+from ..sql_utils import quote_table_name
 from .json_path_utils import parse_json_path
 from .jsonb_support import _get_json_function_prefix, json_data_column
 from .type_utils import validate_session
@@ -575,14 +576,14 @@ class Cursor:
             jsonb = self._collection.query_engine._jsonb_supported
             sql = (
                 f"SELECT id, _id, {json_data_column(jsonb)} as data "
-                f"FROM {self._collection.name} {where_clause}{sort_clause}{pagination_clause}"
+                f"FROM {quote_table_name(self._collection.name)} {where_clause}{sort_clause}{pagination_clause}"
             )
         else:
             # No filter - simple select
             jsonb = self._collection.query_engine._jsonb_supported
             sql = (
                 f"SELECT id, _id, {json_data_column(jsonb)} as data "
-                f"FROM {self._collection.name}{sort_clause}{pagination_clause}"
+                f"FROM {quote_table_name(self._collection.name)}{sort_clause}{pagination_clause}"
             )
             params = ()
 
@@ -744,7 +745,7 @@ class Cursor:
             jsonb = self._collection.query_engine._jsonb_supported
             cmd = (
                 f"SELECT id, _id, {json_data_column(jsonb)} as data "
-                f"FROM {self._collection.name} {where_clause}{sort_clause}{pagination_clause}"
+                f"FROM {quote_table_name(self._collection.name)} {where_clause}{sort_clause}{pagination_clause}"
             )
 
             # Track which parts were handled by SQL
@@ -806,7 +807,7 @@ class Cursor:
         jsonb = self._collection.query_engine._jsonb_supported
         cmd = (
             f"SELECT id, _id, {json_data_column(jsonb)} as data "
-            f"FROM {self._collection.name}"
+            f"FROM {quote_table_name(self._collection.name)}"
         )
 
         # Add min/max bounds if specified (no filter case)
@@ -901,7 +902,7 @@ class Cursor:
                 jsonb = self._collection.query_engine._jsonb_supported
                 cmd = (
                     f"SELECT id, _id, {json_data_column(jsonb)} as data "
-                    f"FROM {self._collection.name} {where_clause}{sort_clause}{pagination_clause}"
+                    f"FROM {quote_table_name(self._collection.name)} {where_clause}{sort_clause}{pagination_clause}"
                 )
 
                 # Track which parts were handled by SQL
@@ -944,7 +945,7 @@ class Cursor:
             jsonb = self._collection.query_engine._jsonb_supported
             cmd = (
                 f"SELECT id, _id, {json_data_column(jsonb)} as data "
-                f"FROM {self._collection.name}{sort_clause}{pagination_clause}"
+                f"FROM {quote_table_name(self._collection.name)}{sort_clause}{pagination_clause}"
             )
 
             # Track which parts were handled by SQL

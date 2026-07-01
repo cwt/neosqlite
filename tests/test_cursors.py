@@ -1854,3 +1854,39 @@ def test_aggregation_cursor_new_properties():
         assert cursor.retrieved == 1
         assert cursor.alive is False
         assert cursor.address is not None
+
+
+def test_collection_name_with_sql_keyword_substring():
+    """Test that collection names containing SQL keyword substrings
+    (like 'from', 'select', 'where') are safely quoted via quote_table_name
+    and don't cause SQL injection or syntax errors."""
+    db = neosqlite.Connection(":memory:")
+    # Collection names with SQL keyword substrings must still be valid
+    # identifiers (alphanumeric + underscores only, per quote_table_name)
+    safe_names = [
+        "from_parts",
+        "select_data",
+        "where_clause",
+        "insert_log",
+        "update_records",
+        "delete_archive",
+    ]
+    for name in safe_names:
+        coll = db[name]
+        coll.insert_one({"x": 1, "name": name})
+        coll.insert_one({"x": 2, "name": name})
+        # Test find with filter
+        result = list(coll.find({"x": 1}))
+        assert len(result) == 1
+        assert result[0]["name"] == name
+        # Test find_one
+        doc = coll.find_one({"x": 2})
+        assert doc is not None
+        assert doc["name"] == name
+        # Test count
+        assert coll.count_documents({}) == 2
+        # Test raw batch cursor
+        cursor = coll.find_raw_batches()
+        batches = list(cursor)
+        assert len(batches) > 0
+    db.close()

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Iterator
 
 logger = logging.getLogger(__name__)
 
+from ..sql_utils import quote_table_name
 from .json_helpers import neosqlite_json_dumps
 from .json_path_utils import parse_json_path
 from .jsonb_support import _get_json_function_prefix, json_data_column
@@ -119,12 +120,12 @@ class RawBatchCursor:
             if where_clause and where_clause.strip():
                 cmd = (
                     f"SELECT id, {json_data_column(jsonb)} as data "
-                    f"FROM {self._collection.name} {where_clause} {order_by}"
+                    f"FROM {quote_table_name(self._collection.name)} {where_clause} {order_by}"
                 )
             else:
                 cmd = (
                     f"SELECT id, {json_data_column(jsonb)} as data "
-                    f"FROM {self._collection.name} {order_by}"
+                    f"FROM {quote_table_name(self._collection.name)} {order_by}"
                 )
 
             # Execute and process in batches
