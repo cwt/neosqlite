@@ -958,3 +958,27 @@ def test_command_query_only_effect():
     except Exception as e:
         assert "readonly" in str(e).lower()
     conn.close()
+
+
+def test_with_options_collections_independent():
+    """Test that with_options() clones have independent _collections dicts.
+
+    Mutations to one dict (adding/removing entries) should not affect
+    the other, preventing stale state in cached collection lookups.
+    """
+    conn = neosqlite.Connection(":memory:")
+    conn["shared"].insert_one({"x": 1})
+    # Create a clone with different options
+    clone = conn.with_options(write_concern={"w": "majority"})
+    # Both should have access to the same collection initially
+    assert "shared" in clone._collections
+    assert "shared" in conn._collections
+    # Removing from clone dict should not affect original
+    del clone._collections["shared"]
+    assert "shared" not in clone._collections
+    assert "shared" in conn._collections
+    # Adding to clone dict should not appear on original
+    clone._collections["clone_only"] = clone["shared"]
+    assert "clone_only" in clone._collections
+    assert "clone_only" not in conn._collections
+    conn.close()

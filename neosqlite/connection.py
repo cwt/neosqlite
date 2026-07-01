@@ -1267,14 +1267,16 @@ class Connection:
         """
         # Return a new Connection instance that shares the same database connection.
         # This is by design: SQLite uses a single writable connection per database file,
-        # so clones naturally share the same sqlite3.Connection and _collections dict.
+        # so clones naturally share the same sqlite3.Connection.
         # The clone only differs in its stored PyMongo-compatible options
         # (codec_options, read_preference, write_concern, read_concern).
+        # We use a shallow copy of _collections so that mutations to one Connection's
+        # _collections dict do not affect the other.
         clone = Connection(name=self.name, _is_clone=True)
         clone.db = self.db
         clone._tokenizers = self._tokenizers
         clone.debug = self.debug
-        clone._collections = self._collections
+        clone._collections = self._collections.copy()
         clone.journal_mode = self.journal_mode
 
         # Store the new options
