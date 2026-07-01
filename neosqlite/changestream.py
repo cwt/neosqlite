@@ -411,21 +411,24 @@ class ChangeStream:
                             pass
 
                     if skip_change:
-                        # Update _last_id before commit
-                        self._last_id = change_id
-                        # but also delete it to avoid infinite loop on unparseable data
+                        # Commit the transaction (DELETE was already executed)
                         self._collection.db.commit()
+                        # Update _last_id only after successful commit so that
+                        # a crash mid-commit does not leave _last_id ahead of
+                        # the actually-committed data.
+                        self._last_id = change_id
                         continue
 
-                    # Update the last processed ID BEFORE successful commit
-                    # This ensures that both the deletion and the cursor movement are atomic
-                    # with respect to other threads/processes sharing the same ChangeStream.
-                    self._last_id = change_id
-
-                    # Commit the transaction AFTER all processing is complete
+                    # Commit the transaction AFTER all processing is complete.
                     # This ensures that if processing fails, the rollback will
-                    # restore the changestream row (preventing data loss)
+                    # restore the changestream row (preventing data loss).
                     self._collection.db.commit()
+
+                    # Update _last_id only after successful commit.
+                    # This guards against crashes between the DELETE and COMMIT:
+                    # if the commit fails, _last_id is not advanced and the row
+                    # will be retried on the next iteration.
+                    self._last_id = change_id
 
                     return change_doc
                 else:

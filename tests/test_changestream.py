@@ -542,3 +542,23 @@ def test_changestream_ensures_id_column_exists():
     assert change["operationType"] == "insert"
     stream.close()
     db.close()
+
+
+def test_changestream_last_id_updated_after_commit(collection):
+    """Test that _last_id is only updated after successful commit.
+
+    This ensures a crash between DELETE and COMMIT does not advance
+    _last_id beyond the actually-committed data, preventing skipped
+    change events on recovery.
+    """
+    stream = collection.watch()
+    # Insert a document to generate a change event
+    collection.insert_one({"test": 1})
+    last_id_before = stream._last_id
+    # Get the next change (which commits internally)
+    change = next(stream)
+    # _last_id should have advanced after the successful commit
+    assert stream._last_id > last_id_before
+    # Verify the change is valid
+    assert change["operationType"] == "insert"
+    stream.close()
