@@ -262,8 +262,8 @@ def test_normalize_id_query_for_db__id_with_integer_string():
     """Test normalize_id_query_for_db with '_id' field containing integer string."""
     query = {"_id": "456"}
     result = normalize_id_query_for_db(query)
-    # Should convert string to integer
-    assert result == {"_id": 456}
+    # Strict MongoDB-like: keep the string _id verbatim (no int conversion).
+    assert result == {"_id": "456"}
 
 
 def test_normalize_id_query_for_db__id_with_valid_hex_string():

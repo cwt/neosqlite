@@ -41,12 +41,20 @@ Collections use a three-column schema: `(id INTEGER PRIMARY KEY AUTOINCREMENT, _
 #### Retrieval
 - Loads both integer `id` and ObjectId `_id` columns
 - Automatic ObjectId reconstruction via `_load_with_stored_id()`
-- Fallback to integer ID for legacy documents
+- Legacy documents (before `_id` column existed) use the deprecated `id` column as the logical `_id`
+
+#### Query Behavior (Strict MongoDB-like)
+- All `_id` queries target the **dedicated `_id` column** — never the auto-increment `id` column
+- Integer `_id` values in queries match the `_id` column directly (not redirected to `id`)
+- String `_id` values are kept verbatim — no implicit conversion to integers
+- Operators `$eq`, `$in`, `$nin`, `$ne` use fast SQL lookups against the `_id` column
+- Range operators (`$gt`, `$gte`, `$lt`, `$lte`) fall back to Python evaluation to preserve correct cross-type comparison semantics (MongoDB BSON ordering)
+- Legacy collections without a dedicated `_id` column fall back to the deprecated `id` column via a dynamic `_id_column_ref()` resolver
 
 #### Updates/Deletions
-- Support both integer and ObjectId queries
-- `_get_integer_id_for_oid()` maps ObjectIds to internal integer IDs
-- SQL translation handles `_id` queries efficiently
+- Support both ObjectId and user-assigned `_id` values
+- `_get_integer_id_for_oid()` maps ObjectIds to internal integer IDs for SQL operations
+- `_id` queries in update/delete filters use the same column resolver as reads
 
 ## Comparison with MongoDB ObjectId
 

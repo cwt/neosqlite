@@ -626,7 +626,7 @@ class TestBuildFieldClause:
     def test_id_field_with_int(self, query_helper):
         """Test _id field with integer value."""
         clause, params = query_helper._build_field_clause("_id", 123)
-        assert ".id = ?" in clause
+        assert "._id = ?" in clause
         assert params == [123]
 
     def test_id_field_with_24char_string(self, query_helper):
@@ -678,7 +678,9 @@ class TestBuildIdOperatorClause:
             {"$in": [123, oid]}
         )
         assert clause is not None
-        assert "id IN" in clause or "_id IN" in clause
+        assert "IN" in clause
+        assert 123 in params
+        assert str(oid) in params
 
     def test_id_nin_with_ints(self, query_helper):
         """Test _id $nin with integers."""
@@ -693,11 +695,8 @@ class TestBuildIdOperatorClause:
         """Test _id $ne with integer."""
         clause, params = query_helper._build_id_operator_clause({"$ne": 123})
         assert clause is not None
-        assert "id != ?" in clause
         assert "_id != ?" in clause
-        # Should exclude both int and string representation
-        assert 123 in params
-        assert "123" in params
+        assert params == [123]
 
     def test_id_ne_with_objectid(self, query_helper):
         """Test _id $ne with ObjectId."""
@@ -707,30 +706,28 @@ class TestBuildIdOperatorClause:
         assert "_id != ?" in clause
         assert str(oid) in params
 
-    def test_id_gt_with_int(self, query_helper):
-        """Test _id $gt with integer."""
-        clause, params = query_helper._build_id_operator_clause({"$gt": 100})
-        assert clause is not None
-        assert "id > ?" in clause
-        assert params == [100]
+    def test_id_gt_with_int_falls_back(self, query_helper):
+        """Test _id $gt with integer falls back to Python (mixed-type safety)."""
+        result = query_helper._build_id_operator_clause({"$gt": 100})
+        assert result is None
 
-    def test_id_lt_with_objectid(self, query_helper):
-        """Test _id $lt with ObjectId."""
+    def test_id_lt_with_objectid_falls_back(self, query_helper):
+        """Test _id $lt with ObjectId falls back to Python (mixed-type safety)."""
         oid = ObjectId()
-        clause, params = query_helper._build_id_operator_clause({"$lt": oid})
-        assert clause is not None
-        assert "_id < ?" in clause
-        assert params == [str(oid)]
+        result = query_helper._build_id_operator_clause({"$lt": oid})
+        assert result is None
 
     def test_id_in_empty_list_fallback(self, query_helper):
         """Test _id $in with empty list falls back."""
         result = query_helper._build_id_operator_clause({"$in": []})
         assert result is None
 
-    def test_id_in_with_unsupported_type(self, query_helper):
-        """Test _id $in with unsupported type falls back."""
-        result = query_helper._build_id_operator_clause({"$in": [1.5]})
-        assert result is None
+    def test_id_in_with_float(self, query_helper):
+        """Test _id $in with float values."""
+        clause, params = query_helper._build_id_operator_clause({"$in": [1.5]})
+        assert clause is not None
+        assert "IN" in clause
+        assert params == [1.5]
 
     def test_id_unsupported_operator(self, query_helper):
         """Test unsupported operator on _id falls back."""
@@ -738,47 +735,20 @@ class TestBuildIdOperatorClause:
         assert result is None
 
 
-class TestCategorizeIds:
-    """Tests for _categorize_ids method."""
+class TestIdColumnRef:
+    """Tests for _id_column_ref method."""
 
-    def test_categorize_ints(self, query_helper):
-        """Test categorizing integer IDs."""
-        result = query_helper._categorize_ids([1, 2, 3])
-        assert result is not None
-        int_ids, string_ids = result
-        assert int_ids == [1, 2, 3]
-        assert string_ids == []
-
-    def test_categorize_objectids(self, query_helper):
-        """Test categorizing ObjectId IDs."""
-        oids = [ObjectId(), ObjectId()]
-        result = query_helper._categorize_ids(oids)
-        assert result is not None
-        int_ids, string_ids = result
-        assert int_ids == []
-        assert len(string_ids) == 2
-
-    def test_categorize_mixed_types(self, query_helper):
-        """Test categorizing mixed int and ObjectId."""
-        oid = ObjectId()
-        result = query_helper._categorize_ids([123, oid, "test"])
-        assert result is not None
-        int_ids, string_ids = result
-        assert 123 in int_ids
-        assert str(oid) in string_ids
-        assert "test" in string_ids
-
-    def test_categorize_string_as_int(self, query_helper):
-        """Test categorizing string that can be parsed as int."""
-        result = query_helper._categorize_ids(["456"])
-        assert result is not None
-        int_ids, string_ids = result
-        assert 456 in int_ids
-
-    def test_categorize_unsupported_type(self, query_helper):
-        """Test categorizing unsupported type returns None."""
-        result = query_helper._categorize_ids([1.5])
-        assert result is None
+    def test_id_column_ref_returns_table_column(self, query_helper):
+        """Test that _id_column_ref returns a table-qualified column reference."""
+        ref = query_helper._id_column_ref()
+        # Should reference the collection name and the _id column
+        assert "_id" in ref
+        # Should be a dot-separated pair
+        parts = ref.split(".")
+        assert len(parts) == 2
+        # First part should be the collection/table name
+        assert parts[0] == query_helper.collection.name
+        assert parts[1] == "_id"
 
 
 class TestSearchInValue:
@@ -925,43 +895,5 @@ class TestBuildTextSearchQuery:
         assert result is None
 
 
-class TestCategorizeIdValue:
-    """Tests for _categorize_id_value method."""
-
-    def test_categorize_int(self, query_helper):
-        """Test categorizing an integer."""
-        int_val, str_val = query_helper._categorize_id_value(123)
-        assert int_val == 123
-        assert str_val is None
-
-    def test_categorize_objectid(self, query_helper):
-        """Test categorizing an ObjectId."""
-        oid = ObjectId()
-        int_val, str_val = query_helper._categorize_id_value(oid)
-        assert int_val is None
-        assert str_val == str(oid)
-
-    def test_categorize_objectid_string(self, query_helper):
-        """Test categorizing an ObjectId string."""
-        oid = ObjectId()
-        int_val, str_val = query_helper._categorize_id_value(str(oid))
-        assert int_val is None
-        assert str_val == str(oid)
-
-    def test_categorize_numeric_string(self, query_helper):
-        """Test categorizing a numeric string."""
-        int_val, str_val = query_helper._categorize_id_value("456")
-        assert int_val == 456
-        assert str_val is None
-
-    def test_categorize_plain_string(self, query_helper):
-        """Test categorizing a plain string (not ObjectId or int)."""
-        int_val, str_val = query_helper._categorize_id_value("test_id")
-        assert int_val is None
-        assert str_val == "test_id"
-
-    def test_categorize_unsupported_type(self, query_helper):
-        """Test categorizing unsupported type."""
-        int_val, str_val = query_helper._categorize_id_value(1.5)
-        assert int_val is None
-        assert str_val is None
+# TestCategorizeIdValue removed: the _categorize_id_value method was replaced
+# by the inline _normalize_id_value helper inside _build_id_operator_clause.

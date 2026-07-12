@@ -133,6 +133,16 @@ Skipped tests are due to MongoDB requiring a replica set (change streams, transa
 
 Run the comparison yourself: `./scripts/run-api-comparison.sh`
 
+### `_id` Field Behavior
+
+NeoSQLite uses a **strict MongoDB-compatible `_id` column**:
+
+- **Integer `_id` values** are stored and queried in the dedicated `_id` column — not redirected to the auto-increment `id` rowid.
+- **String `_id` values** are kept verbatim (e.g., `"5"` is a string, not converted to integer `5`).
+- **Auto-generated `_id`** produces MongoDB-compatible 12-byte ObjectIds stored in the `_id` column.
+- **Legacy collections** (created before the `_id` column existed) fall back to the `id` column via an automatic resolver.
+- **Range queries** (`$gt`, `$lt`, etc.) on `_id` use Python evaluation to preserve correct cross-type comparison semantics (MongoDB BSON ordering).
+
 ## Key APIs
 
 ### Indexes

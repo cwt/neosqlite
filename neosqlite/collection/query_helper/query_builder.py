@@ -148,44 +148,19 @@ class QueryBuilderMixin:
             return " AND ".join(clauses), params
         return "", params
 
-    def _categorize_ids(
-        self, ids: list[Any]
-    ) -> tuple[list[int], list[str]] | None:
+    def _id_column_ref(self) -> str:
+        """Return the quoted SQL column reference that stores the logical _id.
+
+        Modern collections keep the logical _id in a dedicated ``_id`` column.
+        Legacy collections that predate that column store it in the autoincrement
+        ``id`` surrogate, which is retained only as a deprecated fallback. All
+        _id queries must target this column so MongoDB-compatible _id semantics
+        are preserved (integer _id values are NOT redirected to ``id``).
         """
-        Categorize a list of ID values into integer IDs and string IDs.
-
-        Args:
-            ids: List of ID values (ints, ObjectIds, or strings)
-
-        Returns:
-            Tuple of (int_ids, string_ids) or None if unsupported types found
-        """
-        from ...objectid import ObjectId
-
-        int_ids: list[int] = []
-        string_ids: list[str] = []
-
-        for item in ids:
-            if isinstance(item, int):
-                int_ids.append(item)
-            elif isinstance(item, ObjectId):
-                string_ids.append(str(item))
-            elif isinstance(item, str):
-                # Check if it's a valid ObjectId string
-                try:
-                    obj_id = ObjectId(item)
-                    string_ids.append(str(obj_id))
-                except ValueError:
-                    # Try as integer
-                    try:
-                        int_id = int(item)
-                        int_ids.append(int_id)
-                    except ValueError:
-                        string_ids.append(item)
-            else:
-                return None  # Unsupported type
-
-        return int_ids, string_ids
+        return (
+            f"{quote_table_name(self.collection.name)}."
+            f"{self.collection._id_column}"
+        )
 
     def _build_id_operator_clause(
         self, value: dict
@@ -199,106 +174,49 @@ class QueryBuilderMixin:
         Returns:
             Tuple of (SQL clause, parameters) or None for Python fallback
         """
-        table = quote_table_name(self.collection.name)
+        id_col = self._id_column_ref()
+
+        from ...objectid import ObjectId
+
+        def _normalize_id_value(v: Any) -> Any:
+            if isinstance(v, ObjectId):
+                return str(v)
+            if isinstance(v, str):
+                try:
+                    return str(ObjectId(v))
+                except ValueError:
+                    return v
+            return v
+
         clauses: list[str] = []
         params: list[Any] = []
 
         for op, op_val in value.items():
-            if op == "$in":
+            if op == "$in" or op == "$nin":
                 if not isinstance(op_val, list) or len(op_val) == 0:
                     return None
-
-                result = self._categorize_ids(op_val)
-                if result is None:
-                    return None
-                int_ids, string_ids = result
-
-                # Build IN clauses for both id and _id columns
-                if int_ids and string_ids:
-                    int_ph = ", ".join("?" for _ in int_ids)
-                    str_ph = ", ".join("?" for _ in string_ids)
-                    clauses.append(
-                        f"({table}.id IN ({int_ph}) OR {table}._id IN ({str_ph}))"
-                    )
-                    params.extend(int_ids)
-                    params.extend(string_ids)
-                elif int_ids:
-                    ph = ", ".join("?" for _ in int_ids)
-                    clauses.append(f"{table}.id IN ({ph})")
-                    params.extend(int_ids)
-                elif string_ids:
-                    ph = ", ".join("?" for _ in string_ids)
-                    clauses.append(f"{table}._id IN ({ph})")
-                    params.extend(string_ids)
-
-            elif op == "$nin":
-                if not isinstance(op_val, list) or len(op_val) == 0:
-                    return None
-
-                result = self._categorize_ids(op_val)
-                if result is None:
-                    return None
-                int_ids, string_ids = result
-
-                # Build NOT IN clauses - must exclude from BOTH columns
-                if int_ids and string_ids:
-                    int_ph = ", ".join("?" for _ in int_ids)
-                    str_ph = ", ".join("?" for _ in string_ids)
-                    clauses.append(
-                        f"({table}.id NOT IN ({int_ph}) AND {table}._id NOT IN ({str_ph}))"
-                    )
-                    params.extend(int_ids)
-                    params.extend(string_ids)
-                elif int_ids:
-                    ph = ", ".join("?" for _ in int_ids)
-                    clauses.append(f"{table}.id NOT IN ({ph})")
-                    params.extend(int_ids)
-                elif string_ids:
-                    ph = ", ".join("?" for _ in string_ids)
-                    clauses.append(f"{table}._id NOT IN ({ph})")
-                    params.extend(string_ids)
+                ph = ", ".join("?" for _ in op_val)
+                if op == "$in":
+                    clauses.append(f"{id_col} IN ({ph})")
+                else:
+                    clauses.append(f"{id_col} NOT IN ({ph})")
+                params.extend(_normalize_id_value(v) for v in op_val)
 
             elif op == "$ne":
-                # For $ne, we must exclude the value from BOTH columns
-                # to be strictly correct with the dual-column approach.
-                # An int value could match id (as int) or _id (as string).
-                int_id, str_id = self._categorize_id_value(op_val)
-                if int_id is not None:
-                    clauses.append(f"{table}.id != ?")
-                    params.append(int_id)
-                    # Also exclude the string representation in _id column
-                    clauses.append(f"{table}._id != ?")
-                    params.append(str(int_id))
-                if str_id is not None:
-                    clauses.append(f"{table}._id != ?")
-                    params.append(str_id)
-                    # Try to also exclude as int in id column
-                    try:
-                        int_val = int(str_id)
-                        clauses.append(f"{table}.id != ?")
-                        params.append(int_val)
-                    except ValueError:
-                        pass  # Not convertible to int, skip
-                if int_id is None and str_id is None:
-                    return None  # Unsupported type
-
+                if isinstance(op_val, list):
+                    return None
+                clauses.append(f"{id_col} != ?")
+                params.append(_normalize_id_value(op_val))
             elif op in ("$gt", "$gte", "$lt", "$lte"):
-                # Support range queries on _id
-                # - int values target the id column
-                # - ObjectId/string values target the _id column (lexicographic comparison)
-
-                int_id, str_id = self._categorize_id_value(op_val)
-                op_map = {"$gt": ">", "$gte": ">=", "$lt": "<", "$lte": "<="}
-                sql_op = op_map[op]
-
-                if int_id is not None:
-                    clauses.append(f"{table}.id {sql_op} ?")
-                    params.append(int_id)
-                elif str_id is not None:
-                    clauses.append(f"{table}._id {sql_op} ?")
-                    params.append(str_id)
-                else:
-                    return None  # Unsupported type for range queries
+                # Fall back to Python for range comparisons on _id.
+                # The _id column may contain mixed types (int, str, ObjectId).
+                # SQLite JSONB ordering (numbers < strings) differs from MongoDB
+                # BSON ordering, which only compares within the same type.
+                # Python evaluation handles these correctly.
+                return None
+            elif op == "$eq":
+                clauses.append(f"{id_col} = ?")
+                params.append(_normalize_id_value(op_val))
             else:
                 return None  # Fall back to Python for unsupported operators
 
@@ -306,34 +224,8 @@ class QueryBuilderMixin:
             return " AND ".join(clauses), params
         return None  # Fall back to Python if no clauses generated
 
-    def _categorize_id_value(self, value: Any) -> tuple[int | None, str | None]:
-        """
-        Categorize a single ID value into either an int ID or a string ID.
-
-        Returns:
-            Tuple of (int_value, string_value) where only one is non-None.
-        """
-        from ...objectid import ObjectId
-
-        if isinstance(value, int):
-            return value, None
-        elif isinstance(value, ObjectId):
-            return None, str(value)
-        elif isinstance(value, str):
-            # Try as ObjectId first
-            try:
-                obj_id = ObjectId(value)
-                return None, str(obj_id)
-            except ValueError:
-                # Try as integer
-                try:
-                    int_id = int(value)
-                    return int_id, None
-                except ValueError:
-                    # Treat as plain string _id
-                    return None, value
-        return None, None
-
+    # _categorize_id_value removed: _id queries now use _id_column_ref() for
+    # strict MongoDB-like semantics (integer _id targets the _id column).
     def _build_field_clause(
         self, field: str, value: Any
     ) -> tuple[str, list[Any]] | None:
@@ -353,41 +245,25 @@ class QueryBuilderMixin:
             return None
 
         if field == "_id":
-            # Handle _id field specially
+            # Strict MongoDB-like _id handling: the logical _id lives in the
+            # dedicated `_id` column (or the deprecated `id` surrogate for legacy
+            # collections). Integer _id values are NOT redirected to `id`.
+            id_col = self._id_column_ref()
             if isinstance(value, dict):
-                # Handle operator-based queries on _id
                 return self._build_id_operator_clause(value)
             elif isinstance(value, ObjectId):
-                return f"{quote_table_name(self.collection.name)}._id = ?", [
-                    str(value)
-                ]
+                return f"{id_col} = ?", [str(value)]
             elif isinstance(value, str) and len(value) == 24:
                 try:
                     obj_id = ObjectId(value)
-                    return (
-                        f"{quote_table_name(self.collection.name)}._id = ?",
-                        [str(obj_id)],
-                    )
+                    return f"{id_col} = ?", [str(obj_id)]
                 except ValueError:
-                    try:
-                        int_id = int(value)
-                        return (
-                            f"{quote_table_name(self.collection.name)}.id = ?",
-                            [int_id],
-                        )
-                    except ValueError:
-                        return (
-                            f"{quote_table_name(self.collection.name)}._id = ?",
-                            [value],
-                        )
+                    # Not a valid ObjectId hex string: treat as a plain string _id.
+                    return f"{id_col} = ?", [value]
             elif isinstance(value, int):
-                return f"{quote_table_name(self.collection.name)}.id = ?", [
-                    value
-                ]
+                return f"{id_col} = ?", [value]
             else:
-                return f"{quote_table_name(self.collection.name)}._id = ?", [
-                    value
-                ]
+                return f"{id_col} = ?", [value]
         else:
             # Handle regular fields with json_extract/jsonb_extract
             # Use the correct function based on JSONB support
@@ -488,9 +364,12 @@ class QueryBuilderMixin:
                 )
 
             elif field == "_id":
-                # Handle _id field specially since it's now stored in the dedicated _id column for new records
-                # For backward compatibility, we need to check both the _id column and the auto-increment id column
+                # Strict MongoDB-like _id handling: the logical _id lives in the
+                # dedicated `_id` column (or the deprecated `id` surrogate for
+                # legacy collections). Integer _id values are NOT redirected to `id`.
                 from ...objectid import ObjectId
+
+                id_col = self._id_column_ref()
 
                 # Handle operator-based queries on _id using the dedicated method
                 if isinstance(value, dict):
@@ -500,51 +379,25 @@ class QueryBuilderMixin:
                     clause, field_params = result
                     clauses.append(clause)
                     params.extend(field_params)
-                # Convert the value to the appropriate format for storage
                 elif isinstance(value, ObjectId):
                     param_value = str(value)
-                    # Query the _id column
-                    clauses.append(
-                        f"{quote_table_name(self.collection.name)}._id = ?"
-                    )
+                    clauses.append(f"{id_col} = ?")
                     params.append(param_value)
                 elif isinstance(value, str) and len(value) == 24:
                     try:
-                        # Validate if it's a valid ObjectId string
                         obj_id = ObjectId(value)
                         param_value = str(obj_id)
-                        # Query the _id column
-                        clauses.append(
-                            f"{quote_table_name(self.collection.name)}._id = ?"
-                        )
+                        clauses.append(f"{id_col} = ?")
                         params.append(param_value)
                     except ValueError:
-                        # If not a valid ObjectId string, it might be an integer id
-                        try:
-                            int_id = int(
-                                value
-                            )  # Try to parse as integer for backward compatibility
-                            clauses.append(
-                                f"{quote_table_name(self.collection.name)}.id = ?"
-                            )
-                            params.append(int_id)
-                        except ValueError:
-                            # If not a valid integer, treat as a string _id
-                            clauses.append(
-                                f"{quote_table_name(self.collection.name)}._id = ?"
-                            )
-                            params.append(value)
+                        # Not a valid ObjectId hex string: treat as a plain string _id.
+                        clauses.append(f"{id_col} = ?")
+                        params.append(value)
                 elif isinstance(value, int):
-                    # Query the auto-increment id column
-                    clauses.append(
-                        f"{quote_table_name(self.collection.name)}.id = ?"
-                    )
+                    clauses.append(f"{id_col} = ?")
                     params.append(value)
                 else:
-                    # For other types, query the _id column
-                    clauses.append(
-                        f"{quote_table_name(self.collection.name)}._id = ?"
-                    )
+                    clauses.append(f"{id_col} = ?")
                     params.append(value)
             else:
                 # Handle regular fields with json_extract

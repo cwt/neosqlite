@@ -242,6 +242,23 @@ class Collection:
             )
             return None
 
+    @property
+    def _id_column(self) -> str:
+        """Return the name of the column that stores the logical _id.
+
+        Modern collections keep _id in a dedicated ``_id`` column. Legacy
+        collections (before _id column was introduced) store it in the
+        autoincrement ``id`` column, which is retained only as a deprecated
+        fallback.
+        """
+        cursor = self.db.execute(
+            "SELECT name FROM pragma_table_info(?) WHERE name = '_id'",
+            (self.name,),
+        )
+        if cursor.fetchone() is not None:
+            return "_id"
+        return "id"
+
     def _get_val(self, item: dict[str, Any], key: Any) -> Any:
         """
         Retrieves a value from a dictionary using a key, handling nested keys and

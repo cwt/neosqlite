@@ -2508,7 +2508,7 @@ def test_json_validation_with_special_values():
 
     assert isinstance(result.inserted_id, ObjectId)
 
-    found = collection.find_one({"_id": 1})
+    found = collection.find_one({"_id": result.inserted_id})
     assert found["middle_name"] is None
 
     # Test with boolean values
@@ -2624,7 +2624,7 @@ def test_json_validation_performance_benchmark():
     assert isinstance(result.inserted_id, ObjectId)
 
     # Verify document was inserted correctly
-    found = collection.find_one({"_id": 1})
+    found = collection.find_one({"_id": result.inserted_id})
     assert found is not None
     assert len(found["data"]) == 1000
     assert len(found["array_of_objects"]) == 100

@@ -120,7 +120,7 @@ def test_replace_one(collection):
 
 def test_update_one(collection):
     """Test updating a single document."""
-    collection.insert_one({"foo": "bar", "count": 1})
+    collection.insert_one({"_id": 1, "foo": "bar", "count": 1})
     result = collection.update_one(
         {"foo": "bar"}, {"$set": {"foo": "baz"}, "$inc": {"count": 1}}
     )

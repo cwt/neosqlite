@@ -128,15 +128,11 @@ def normalize_id_query_for_db(query: dict[str, Any]) -> dict[str, Any]:
                 corrected_query["_id"] = str(value)
 
             # Case: '_id' field with string
+            # Strict MongoDB-like: keep the string _id verbatim. A 24-char hex
+            # string is the ObjectId representation and is matched as-is against
+            # the _id column (which stores ObjectIds as their hex string).
             case ("_id", str() as s):
-                # First try to convert to int, otherwise check if valid ObjectId hex
-                match _try_convert_to_int(s):
-                    case int() as int_val:
-                        corrected_query["_id"] = int_val
-                    case str() as str_val if _is_valid_objectid_hex(str_val):
-                        corrected_query["_id"] = str_val
-                    case _ as other:
-                        corrected_query["_id"] = other
+                corrected_query["_id"] = s
 
             # Case: '_id' field with any other type -> keep as-is
             case ("_id", _):

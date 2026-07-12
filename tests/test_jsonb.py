@@ -104,7 +104,7 @@ def test_jsonb_operations():
             {"name": "Test User"}, {"$set": {"profile.settings.theme": "light"}}
         )
 
-        updated_doc = collection.find_one({"_id": 1})
+        updated_doc = collection.find_one({"_id": result.inserted_id})
         assert updated_doc["profile"]["settings"]["theme"] == "light"
 
 
