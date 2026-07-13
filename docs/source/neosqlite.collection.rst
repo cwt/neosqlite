@@ -10,6 +10,7 @@ Subpackages
    neosqlite.collection.expr_evaluator
    neosqlite.collection.query_engine
    neosqlite.collection.query_helper
+   neosqlite.collection.temporary_table_aggregation
 
 Submodules
 ----------
