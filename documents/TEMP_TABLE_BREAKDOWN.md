@@ -4,10 +4,16 @@
 **package** of the same name so that `from neosqlite.collection.temporary_table_aggregation import X`
 works unchanged. **Zero behavior changes. Zero test edits.**
 
+> ## Status
+> - **Phase 1 — package split: ✅ COMPLETE & verified** (old `.py` deleted, `ruff` + `mypy` clean,
+>   300 tests pass). See "Corrections applied during execution" below.
+> - **Phase 2 — split `operators.py`: 📋 PLANNED NEXT** (see Section 10). Behavior-preserving
+>   mixin composition; no method bodies changed.
+
 > **Source-of-truth rule:** The symbol inventory in Section 3 below was generated directly from the
 > current source file (every `def` / `class` line). The original plan's table was stale and listed
 > methods that do not exist. If the source changes again, **regenerate Section 3 from the file**
-> (`grep -nE '^(def |class |    def |HASH_JOIN_MEMORY_THRESHOLD)' neosqlite/collection/temporary_table_aggregation.py`)
+> (`grep -rnE '^(def |class |    def |HASH_JOIN_MEMORY_THRESHOLD)' neosqlite/collection/temporary_table_aggregation/`)
 > before executing — do not trust a hand-count.
 
 ---
@@ -30,15 +36,21 @@ neosqlite/collection/temporary_table_aggregation/
 ## 2. External Dependencies (MUST EXIST OUTSIDE THIS PACKAGE)
 
 These modules are imported by the source file and **must stay as sibling modules** in
-`neosqlite/collection/`. In the current single-file layout they are reached with a single dot
-(`from .expr_evaluator import ...`); once moved into the sub-package they become **parent-package**
-imports, so rewrite every `from .X import ...` as `from ..X import ...`.
+`neosqlite/collection/`. The source used **mixed** relative levels, so inside the new package the
+rules differ by depth:
+- **Collection-level siblings** (`expr_evaluator`, `json_path_utils`, `jsonb_support`,
+  `sql_translator_unified`, `json_helpers`, `query_helper`): were `from .X` in source → `from ..X`.
+- **Top-level `neosqlite` modules** (`_sqlite`, `objectid`, `sql_utils`): were `from ..X` in source
+  → **`from ...X`** (triple-dot). Getting this wrong is a silent `ImportError` at runtime.
+
+(The first mechanical cut wrote `_sqlite`/`objectid`/`sql_utils` as `..` and failed at import. The
+table below shows the **correct** final form.)
 
 | Module | Symbols actually imported by the source |
 |--------|------------------------------------------|
-| `.._sqlite` | `sqlite3` |
-| `..objectid` | `ObjectId` |
-| `..sql_utils` | `quote_table_name` |
+| `..._sqlite` (triple-dot — top-level `neosqlite` module) | `sqlite3` |
+| `...objectid` (triple-dot — top-level `neosqlite` module) | `ObjectId` |
+| `...sql_utils` (triple-dot — top-level `neosqlite` module) | `quote_table_name` |
 | `..expr_evaluator` | `AggregationContext`, `ExprEvaluator`, `_is_expression` |
 | `..json_path_utils` | `parse_json_path` |
 | `..jsonb_support` | `_contains_text_operator`, `_get_json_each_function`, `_get_json_function_prefix`, `_get_json_group_array_function`, `_get_json_tree_function`, `json_data_column`, `supports_jsonb`, `supports_jsonb_each` |
@@ -51,7 +63,23 @@ imports, so rewrite every `from .X import ...` as `from ..X import ...`.
 > the source (delegates to `_contains_text_operator`) — it is NOT imported from `jsonb_support`, so it is
 > moved, not re-imported.
 
-**Do not move these into the new package.** Import them from `..` (parent package).
+**Do not move these into the new package.** Import collection-level ones from `..` and top-level
+`neosqlite` ones (`_sqlite`, `objectid`, `sql_utils`) from `...` (see table).
+
+### 2.2 Corrections applied during Phase 1 execution
+The first mechanical split failed at import time; three fixes were required before tests passed:
+1. **Triple-dot imports for top-level modules.** `_sqlite`, `objectid`, `sql_utils` live at the
+   `neosqlite` top level, so inside the package they need `from ...X` (not `..X`). The plan table in
+   Section 2 was initially wrong here — the correct form is shown above.
+2. **Preserve `@contextmanager` on `aggregation_pipeline_context`.** A naive slice dropped the
+   decorator, turning the generator into a plain generator-returning function and breaking every
+   call site. It must stay a `@contextmanager`.
+3. **`OperatorsMixin` needs class-level attribute annotations** for mypy strict — declare
+   `collection`, `db`, `query_engine`, `expr_evaluator`, `sql_translator`, `_jsonb_supported`,
+   `_jsonb_each_supported`, `_json_each_function`, `_json_function_prefix`, `json_group_array_function`,
+   `_has_sort_stage`, `_text_on_temp_table_warned`, `_has_unwind_in_pipeline`. This mirrors the existing
+   `SqlConvertersMixin` pattern in `expr_evaluator/sql_converters.py`. Without them mypy errors on every
+   `self.X` use.
 
 ---
 
@@ -148,7 +176,7 @@ _process_fill_stage
 ```python
 from __future__ import annotations
 from typing import Any
-from ..objectid import ObjectId
+from ...objectid import ObjectId
 from ..jsonb_support import _contains_text_operator
 
 logger = logging.getLogger(__name__)
@@ -186,7 +214,7 @@ logger = logging.getLogger(__name__)
 from __future__ import annotations
 import logging
 from typing import Any
-from .._sqlite import sqlite3
+from ..._sqlite import sqlite3
 
 logger = logging.getLogger(__name__)
 
@@ -213,8 +241,8 @@ import hashlib
 import uuid
 import warnings
 from typing import Any, Callable, List, Dict, Optional, Tuple, Union, Set, Iterator
-from .._sqlite import sqlite3
-from ..sql_utils import quote_table_name
+from ..._sqlite import sqlite3
+from ...sql_utils import quote_table_name
 from ..expr_evaluator import (
     AggregationContext,
     ExprEvaluator,
@@ -274,9 +302,9 @@ which themselves reference imports. Give it its own import block:
 from __future__ import annotations
 import logging
 from typing import Any
-from .._sqlite import sqlite3
-from ..objectid import ObjectId
-from ..sql_utils import quote_table_name
+from ..._sqlite import sqlite3
+from ...objectid import ObjectId
+from ...sql_utils import quote_table_name
 from ..expr_evaluator import AggregationContext, ExprEvaluator
 from ..json_path_utils import parse_json_path
 from ..jsonb_support import (
@@ -377,7 +405,8 @@ that coexistence is fine as long as you **do not import the package** until step
    - Module-level import: `from ..expr_evaluator import _is_expression as _is_expression_module`
    - Instance method: `def _is_expression(self, ...): ...` in `OperatorsMixin`
    - Keep both. Do not merge.
-5. **External deps stay external** and use the `..` prefix (see Section 2 table). Do not move them in.
+5. **External deps stay external.** Collection-level ones use the `..` prefix; top-level `neosqlite`
+   ones (`_sqlite`, `objectid`, `sql_utils`) use `...` (triple-dot). Do not move them in.
 6. **`get_force_fallback` stays lazy** (function-local) wherever the source had it — never a top-level
    import in `operators.py` or `core.py`. This avoids a circular import through `query_helper`.
 7. **Delete the old `.py` file** after verification. A leftover file alongside the package directory
@@ -490,6 +519,7 @@ print('Smoke test passed')
 - [ ] Merged the two `_is_expression` (module + instance) into one
 - [ ] Moved `jsonb_support`, `expr_evaluator`, `sql_translator_unified`, etc. into the package (don't)
 - [ ] Used `from .X` instead of `from ..X` for sibling `neosqlite/collection/` modules
+- [ ] Used `..X` instead of `...X` for top-level `neosqlite` modules (`_sqlite`, `objectid`, `sql_utils`)
 - [ ] **Missed any of the 40 instance methods** in `OperatorsMixin` (see checklist step 2)
 - [ ] Created phantom methods (`_process_count_stage`, `_process_sort_stage`, …) that don't exist
 - [ ] Forgot the import block for `__init__.py` / `process_pipeline` (NameError at runtime)
@@ -512,4 +542,35 @@ the source has since changed).
 
 ---
 
-**End of Plan.** Execute steps 1–8 in order. No deviations.
+## 10. Phase 2 — Split `operators.py` (PLANNED NEXT)
+
+`operators.py` is ~148 KB / ~3,500 lines holding all 40 `OperatorsMixin` methods. Phase 2 splits it
+into **multiple mixin classes** composed into `OperatorsMixin` — purely structural, zero behavior
+change. MRO resolves every `self._process_x` regardless of which mixin defines it.
+
+### 10.1 Proposed mixin split (by stage family)
+
+| Mixin file | Methods |
+|------------|---------|
+| `operators_match.py` | `_process_match_stage`, `_process_unwind_stages` |
+| `operators_lookup.py` | `_create_lookup_hash_table`, `_create_lookup_hash_table_fallback`, `_estimate_collection_size`, `_get_available_memory`, `_should_use_hash_join`, `_extract_field_value`, `_process_lookup_stage`, `_process_lookup_correlated_subquery`, `_process_lookup_hash_join` |
+| `operators_sort_proj.py` | `_process_sort_skip_limit_stage`, `_process_add_fields_stage`, `_process_add_fields_stage_python_hybrid`, `_is_expression`, `_process_project_stage`, `_process_project_exclusion`, `_process_project_inclusion`, `_generate_text_score_sql`, `_process_replace_root_stage` |
+| `operators_group.py` | `_process_group_stage`, `_id_to_json_object_args`, `_get_results_from_table`, `_build_group_by_expr`, `_process_bucket_stage`, `_process_bucket_auto_stage` |
+| `operators_text.py` | `_matches_text_search`, `_batch_insert_documents`, `_process_text_search_stage`, `_detect_fts_tokenizer` |
+| `operators_advanced.py` | `_process_densify_stage`, `_process_facet_stage`, `_process_union_with_stage`, `_process_merge_stage`, `_process_redact_stage`, `_process_set_window_fields_stage`, `_map_window_operator_to_sql`, `_build_window_frame_sql`, `_process_graph_lookup_stage`, `_process_fill_stage` |
+| `operators.py` | `OperatorsMixin(AllMixins...)` + `HASH_JOIN_MEMORY_THRESHOLD` + the lazy `from . import TemporaryTableAggregationProcessor` |
+
+### 10.2 Constraints (same as Phase 1)
+
+- Keep `from __future__ import annotations`; keep top-level `..._sqlite` / `...objectid` / `...sql_utils`
+  and `..` collection siblings; keep `_is_expression` (module import as `_is_expression_module` + instance
+  method); keep `get_force_fallback` and `TemporaryTableAggregationProcessor` lazy.
+- Add class-level attribute annotations to `OperatorsMixin` (or to each mixin) — see 2.2 fix #3.
+- `__init__.py` import line stays `from .operators import OperatorsMixin, HASH_JOIN_MEMORY_THRESHOLD`.
+- **Verification = same as Phase 1 checklist (Section 7):** ruff clean, mypy clean, 300 tests pass,
+  smoke test passes. No test edits.
+
+---
+
+**End of Plan.** Phase 1 (package split) is complete & verified. Next: execute Phase 2 (Section 10),
+then commit.
