@@ -2,17 +2,33 @@
 
 ## NEXT
 
+#### Strict `_id` Field Parity (High Parity Improvements)
+
+- **Strict `_id` Semantics**: Dropped integer `_id` -> `id` column relaxation. String `_id` values (e.g., `"123"`) are no longer implicitly converted to integers. Range queries (`$gt`, `$lt`) on `_id` now fall back to Python-based evaluation for correct cross-type BSON ordering.
+- **Auto-Increment Fallback**: Updated core query builders to use `_id_column` resolving, targeting the logical `_id` column if present or falling back to the legacy `id` column.
+
 #### Bug Fixes & Parity Improvements
 
 - **ISO-8601 Datetime Deserialization inside lists/arrays**: Added support to recursively parse ISO date strings inside JSON arrays.
 - **Cache Key Generation Safety**: Prevented `TypeError` crash in cache key generation on unsortable items inside `TranslationCache.make_key`.
 - **SQL LIKE Wildcard Escape & Tokenizer Leak Fixes**: Filtered collections properly on `tbl_name` in index listings, escaped wildcard characters like underscore (`_`), and fixed collection boundary matching in FTS5 tokenizer detection to prevent cross-collection text index leakage.
-- **Removed Duplicate SQL SELECT compilation**: Consolidated `build_select_expression` in `ExprEvaluator` to delegate to `evaluate_for_aggregation`.
-- **Removed Dead/Duplicate Module files**: Deleted the redundant `neosqlite/collection/temporary_table_aggregation.py` file.
 - **Specialized UTC Datetime Index & Query Parameter Serialization**: Supported python timezone-aware `datetime` query parameter values and normalized direct datetime comparison values to match UTC-indexed formatting in SQL translation.
 - **MongoDB protocol server (`nx_27017`) Cursor `getMore` and Change Streams implementation**: Implemented the `"getMore"` command handler, added event hooks in write operations (`insert`, `update`, `delete`, `findAndModify`) to notify change streams, and resolved memory leak/accumulation in change stream events.
-- **Removed Dead/Unused Methods in `nx_27017`**: Deleted `_handle_update`, `_handle_find`, and `_handle_rename_collection` in the handler.
 - **Consolidated ObjectId utility logic in `nx_27017`**: Centralized all different conversion directions into a single `nx_27017.utils` module.
+
+#### Refactoring & Maintenance
+
+- **Subpackage Split for Aggregation Pipeline**: Split the ~4,285-line single module `temporary_table_aggregation.py` into a package structure (`neosqlite/collection/temporary_table_aggregation/`), solving scaling and readability issues.
+- **Composing Operators Split**: Sliced the large composing module `operators.py` (~3,500 lines) into composed mixin files (`operators_match.py`, `operators_lookup.py`, `operators_sort_proj.py`, `operators_group.py`, `operators_text.py`, `operators_advanced.py`).
+- **Removed Duplicate SQL SELECT compilation**: Consolidated `build_select_expression` in `ExprEvaluator` to delegate to `evaluate_for_aggregation`.
+- **Removed Dead/Duplicate Module files**: Deleted the redundant `neosqlite/collection/temporary_table_aggregation.py` file.
+- **Removed Dead/Unused Methods in `nx_27017`**: Deleted `_handle_update`, `_handle_find`, and `_handle_rename_collection` in the handler.
+
+#### Documentation
+
+- **Parity Guide**: Updated `README.md` and `ObjectId_IMPLEMENTATION.md` to describe the strict `_id` behavior.
+- **Sphinx Documentation**: Updated Sphinx build scripts and documentation configuration.
+- **Design Logs**: Updated `TEMP_TABLE_BREAKDOWN.md` to track refactoring progress.
 
 #### Test Results
 - **Unit Tests**: 2,834 passed in core NeoSQLite; 86 passed in `nx_27017`
