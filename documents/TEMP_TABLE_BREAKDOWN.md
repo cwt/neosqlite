@@ -7,8 +7,8 @@ works unchanged. **Zero behavior changes. Zero test edits.**
 > ## Status
 > - **Phase 1 — package split: ✅ COMPLETE & verified** (old `.py` deleted, `ruff` + `mypy` clean,
 >   300 tests pass). See "Corrections applied during execution" below.
-> - **Phase 2 — split `operators.py`: 📋 PLANNED NEXT** (see Section 10). Behavior-preserving
->   mixin composition; no method bodies changed.
+> - **Phase 2 — split `operators.py`: ✅ COMPLETE & verified** (7 mixin modules + `operators_base.py`,
+>   `ruff` + `mypy` clean, 300 tests pass). See Section 10.
 
 > **Source-of-truth rule:** The symbol inventory in Section 3 below was generated directly from the
 > current source file (every `def` / `class` line). The original plan's table was stale and listed
@@ -542,13 +542,25 @@ the source has since changed).
 
 ---
 
-## 10. Phase 2 — Split `operators.py` (PLANNED NEXT)
+## 10. Phase 2 — Split `operators.py` (COMPLETE)
 
-`operators.py` is ~148 KB / ~3,500 lines holding all 40 `OperatorsMixin` methods. Phase 2 splits it
-into **multiple mixin classes** composed into `OperatorsMixin` — purely structural, zero behavior
+`operators.py` was ~148 KB / ~3,500 lines holding all 40 `OperatorsMixin` methods. Split into
+**multiple mixin classes** composed into `OperatorsMixin` — purely structural, zero behavior
 change. MRO resolves every `self._process_x` regardless of which mixin defines it.
 
-### 10.1 Proposed mixin split (by stage family)
+### Resulting files (in `neosqlite/collection/temporary_table_aggregation/`)
+| File | Contents |
+|------|----------|
+| `operators_base.py` | `OperatorsBaseMixin`: class-level attribute annotations + a single stub `_process_text_search_stage` (see 10.3). All mixins inherit it. |
+| `operators_match.py` | `OperatorsMatchMixin` (`_process_match_stage`, `_process_unwind_stages`) |
+| `operators_lookup.py` | `OperatorsLookupMixin` (9 lookup/hash-join methods) + `HASH_JOIN_MEMORY_THRESHOLD` (defined here, re-exported from `operators.py`) |
+| `operators_sort_proj.py` | `OperatorsSortProjMixin` (9 sort/project/addFields/replaceRoot methods) |
+| `operators_group.py` | `OperatorsGroupMixin` (6 group/bucket methods) |
+| `operators_text.py` | `OperatorsTextMixin` (4 text-search methods; defines the real `_process_text_search_stage`) |
+| `operators_advanced.py` | `OperatorsAdvancedMixin` (10 densify/facet/union/merge/redact/window/graphLookup/fill methods) |
+| `operators.py` | `OperatorsMixin(OperatorsMatchMixin, OperatorsLookupMixin, OperatorsSortProjMixin, OperatorsGroupMixin, OperatorsTextMixin, OperatorsAdvancedMixin)` — no method bodies; re-exports `HASH_JOIN_MEMORY_THRESHOLD` via `__all__`. |
+
+### 10.1 Mixin split (by stage family)
 
 | Mixin file | Methods |
 |------------|---------|
@@ -570,7 +582,18 @@ change. MRO resolves every `self._process_x` regardless of which mixin defines i
 - **Verification = same as Phase 1 checklist (Section 7):** ruff clean, mypy clean, 300 tests pass,
   smoke test passes. No test edits.
 
+### 10.3 Notes from execution
+- **Single cross-mixin call.** Only one `self.<method>` call crosses a mixin boundary:
+  `_process_match_stage` (match) → `_process_text_search_stage` (text). Resolved by declaring a
+  permissive stub `def _process_text_search_stage(self, *args, **kwargs) -> Any: ...` on
+  `OperatorsBaseMixin`; the real implementation lives in `OperatorsTextMixin`. MRO satisfies mypy.
+- **`HASH_JOIN_MEMORY_THRESHOLD`** is defined in `operators_lookup.py` (the only file that uses it)
+  and re-exported from `operators.py`. Without an `__all__` listing it, ruff strips the re-export
+  import as F401 — so `operators.py` declares `__all__ = ["OperatorsMixin", "HASH_JOIN_MEMORY_THRESHOLD"]`.
+- Methods were sliced verbatim by AST `lineno`/`end_lineno`; each mixin carries the full original
+  import header and ruff trimmed unused imports per file.
+
 ---
 
-**End of Plan.** Phase 1 (package split) is complete & verified. Next: execute Phase 2 (Section 10),
-then commit.
+**End of Plan.** Both Phase 1 (package split) and Phase 2 (operators split) are complete & verified.
+No further phases planned.
