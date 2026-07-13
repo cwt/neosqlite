@@ -31,7 +31,6 @@ Submodules
    neosqlite.collection.schema_utils
    neosqlite.collection.sql_tier_aggregator
    neosqlite.collection.sql_translator_unified
-   neosqlite.collection.temporary_table_aggregation
    neosqlite.collection.text_search
    neosqlite.collection.type_correction
    neosqlite.collection.type_utils
