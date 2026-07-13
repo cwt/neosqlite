@@ -8,6 +8,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
 class DeterministicTempTableManager:
     """
     Manager for deterministic temporary table names.
@@ -219,4 +220,3 @@ def aggregation_pipeline_context(db_connection, pipeline_id: str | None = None):
                     f"Failed to drop temp table '{table_name}': {drop_error}"
                 )
                 pass
-

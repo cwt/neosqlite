@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 HASH_JOIN_MEMORY_THRESHOLD = 100 * 1024 * 1024  # 100 MB default threshold
 
 
-
 class OperatorsLookupMixin(OperatorsBaseMixin):
     def _create_lookup_hash_table(
         self,
@@ -52,6 +51,7 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
                     from_collection
                 )
                 from . import TemporaryTableAggregationProcessor
+
                 processor = TemporaryTableAggregationProcessor(
                     target_coll, None
                 )
@@ -619,4 +619,3 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
                     f"Failed to drop hash table '{hash_table_name}': {e}"
                 )
                 pass
-

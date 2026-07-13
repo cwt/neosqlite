@@ -13,7 +13,6 @@ from .operators_base import OperatorsBaseMixin
 logger = logging.getLogger(__name__)
 
 
-
 class OperatorsGroupMixin(OperatorsBaseMixin):
     def _process_group_stage(
         self,
@@ -792,4 +791,3 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         )
 
         return new_table
-

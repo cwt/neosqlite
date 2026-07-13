@@ -10,6 +10,7 @@ from ..jsonb_support import (
 
 logger = logging.getLogger(__name__)
 
+
 def _sanitize_params(params: list[Any] | None) -> list[Any] | None:
     """
     Sanitize SQL parameters by converting ObjectId instances to strings.
@@ -32,6 +33,7 @@ def _sanitize_params(params: list[Any] | None) -> list[Any] | None:
         else:
             sanitized.append(param)
     return sanitized
+
 
 def _json_extract_field_with_objectid_support(
     json_function_prefix: str,
@@ -68,6 +70,8 @@ def _json_extract_field_with_objectid_support(
         f"ELSE CAST({base_extract} AS TEXT) "
         f"END"
     )
+
+
 def _contains_text_search(match_spec: dict[str, Any]) -> bool:
     """
     Check if a match specification contains text search operations.
@@ -82,4 +86,3 @@ def _contains_text_search(match_spec: dict[str, Any]) -> bool:
         bool: True if the match specification contains text search operations, False otherwise
     """
     return _contains_text_operator(match_spec)
-

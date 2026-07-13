@@ -15,7 +15,6 @@ from .operators_base import OperatorsBaseMixin
 logger = logging.getLogger(__name__)
 
 
-
 class OperatorsAdvancedMixin(OperatorsBaseMixin):
     def _process_densify_stage(self, create_temp, current_table, densify_spec):
         """
@@ -918,4 +917,3 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             ) {subquery_alias}
         """
         return create_temp({"$fill": spec}, stage_sql, all_params)
-

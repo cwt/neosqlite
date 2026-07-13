@@ -20,7 +20,6 @@ from .operators_base import OperatorsBaseMixin
 logger = logging.getLogger(__name__)
 
 
-
 class OperatorsSortProjMixin(OperatorsBaseMixin):
     def _process_sort_skip_limit_stage(
         self,
@@ -708,4 +707,3 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
             raise NotImplementedError(
                 f"$replaceRoot with expression {new_root_expr} not supported in SQL tier"
             )
-

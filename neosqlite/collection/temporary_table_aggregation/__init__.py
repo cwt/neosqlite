@@ -15,7 +15,10 @@ from ..jsonb_support import (
     supports_jsonb_each,
 )
 from ..sql_translator_unified import SQLTranslator
-from .core import can_process_with_temporary_tables, execute_2nd_tier_aggregation
+from .core import (
+    can_process_with_temporary_tables,
+    execute_2nd_tier_aggregation,
+)
 from .manager import DeterministicTempTableManager, aggregation_pipeline_context
 from .operators import HASH_JOIN_MEMORY_THRESHOLD, OperatorsMixin
 from .utils import (
@@ -37,6 +40,7 @@ __all__ = [
     "_contains_text_search",
     "HASH_JOIN_MEMORY_THRESHOLD",
 ]
+
 
 class TemporaryTableAggregationProcessor(OperatorsMixin):
     def __init__(self, collection, query_engine=None):

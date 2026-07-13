@@ -14,7 +14,6 @@ from .operators_base import OperatorsBaseMixin
 logger = logging.getLogger(__name__)
 
 
-
 class OperatorsTextMixin(OperatorsBaseMixin):
     def _matches_text_search(
         self, document: dict[str, Any], search_term: str
@@ -198,4 +197,3 @@ class OperatorsTextMixin(OperatorsBaseMixin):
 
         # Default: no tokenizer specified
         return ""
-

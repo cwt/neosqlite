@@ -7,6 +7,7 @@ from ..._sqlite import sqlite3
 
 logger = logging.getLogger(__name__)
 
+
 def can_process_with_temporary_tables(pipeline: list[dict[str, Any]]) -> bool:
     """
     Determine if a pipeline can be processed with temporary tables.
@@ -87,6 +88,8 @@ def can_process_with_temporary_tables(pipeline: list[dict[str, Any]]) -> bool:
         return False
 
     return True
+
+
 def execute_2nd_tier_aggregation(
     query_engine,
     pipeline: list[dict[str, Any]],

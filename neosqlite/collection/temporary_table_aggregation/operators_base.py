@@ -24,5 +24,4 @@ class OperatorsBaseMixin:
     # Stub for the single method called across mixin boundaries
     # (_process_match_stage -> _process_text_search_stage). The real implementation lives
     # in OperatorsTextMixin; declaring it here lets static analysis resolve the call via MRO.
-    def _process_text_search_stage(self, *args: Any, **kwargs: Any) -> Any:
-        ...
+    def _process_text_search_stage(self, *args: Any, **kwargs: Any) -> Any: ...

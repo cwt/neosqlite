@@ -14,7 +14,6 @@ from .utils import (
 logger = logging.getLogger(__name__)
 
 
-
 class OperatorsMatchMixin(OperatorsBaseMixin):
     def _process_match_stage(
         self,
@@ -341,4 +340,3 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
             current_temp_table = create_temp(unwind_stage, unwind_query)
 
         return current_temp_table
-
