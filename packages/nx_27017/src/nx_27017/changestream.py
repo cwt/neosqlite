@@ -9,8 +9,6 @@ from datetime import datetime, timezone
 from itertools import count
 from typing import Any, Callable
 
-from bson import ObjectId as BsonObjectId
-
 logger = logging.getLogger("nx_27017")
 
 # Counter for generating unique cursor IDs
@@ -67,7 +65,9 @@ class ChangeStreamCursor:
 
     def get_resume_token(self) -> dict:
         """Get the resume token for this change stream."""
-        return {"_id": BsonObjectId()}
+        if self._changes:
+            return self._changes[-1]["_id"]
+        return {"_data": f"{self._stream_id}"}
 
     def _on_change(
         self,

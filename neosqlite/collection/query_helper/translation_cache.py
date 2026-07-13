@@ -98,7 +98,19 @@ class TranslationCache:
                 case str() as s:
                     key_parts.append(f"{stage_name}:{s}")
                 case list() as lst:
-                    key_parts.append(f"{stage_name}:{tuple(sorted(lst))}")
+                    # Convert dicts/lists to safe structures and sort using str representation
+                    # as key to avoid TypeError with mixed or unorderable types.
+                    safe_lst = [
+                        (
+                            self._extract_structure(x)
+                            if isinstance(x, (dict, list))
+                            else x
+                        )
+                        for x in lst
+                    ]
+                    key_parts.append(
+                        f"{stage_name}:{tuple(sorted(safe_lst, key=str))}"
+                    )
                 case dict() as d:
                     nested_struct = self._extract_structure(d)
                     key_parts.append(f"{stage_name}:{nested_struct}")

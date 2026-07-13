@@ -478,23 +478,9 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
             >>> evaluator.build_select_expression(42)
             ("?", [42])
         """
-        if context is None:
-            context = AggregationContext()
-
-        # Set temporary context for SQL conversion
-        old_context = self._current_context
-        self._current_context = context
-
-        try:
-            sql, params = self._convert_operand_to_sql_agg(expr, context)
-
-            if alias:
-                sql = f"{sql} AS {alias}"
-
-            return sql, params
-        finally:
-            # Restore previous context
-            self._current_context = old_context
+        return self.evaluate_for_aggregation(
+            expr, context=context, as_alias=alias
+        )
 
     def build_group_by_expression(
         self,

@@ -121,10 +121,7 @@ async def handle_client(
                             f"OP_MSG handled: request_id={request_id}, response_doc={response_doc.get('ok') if isinstance(response_doc, dict) else 'N/A'}"
                         )
                     except Exception as e:
-                        logger.error(f"Error handling OP_MSG: {e}")
-                        import traceback
-
-                        traceback.print_exc()
+                        logger.exception("Error handling OP_MSG")
                         response_doc = {"ok": 0, "errmsg": str(e)}
                         request_id = msg.get("request_id", 0)
 
@@ -247,11 +244,7 @@ def handle_client_threaded(
                     if is_insert or any(
                         s[0] == "payload_docs" for s in msg["sections"]
                     ):
-                        _, response_doc = (
-                            handler.handle_insert(msg)
-                            if is_insert
-                            else (request_id, {"ok": 0})
-                        )
+                        _, response_doc = handler.handle_insert(msg)
                     else:
                         _, response_doc = handler.handle_command(msg)
 

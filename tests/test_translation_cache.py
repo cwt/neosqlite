@@ -2322,6 +2322,25 @@ class TestComparisonOperatorsInMatch:
         assert result[0]["name"] == "Charlie"
 
 
+class TestMakeKeySafety:
+    """Test that make_key operates safely with mixed/unorderable types in list specs."""
+
+    def test_make_key_unorderable_types(self):
+        from neosqlite.collection.query_helper.translation_cache import (
+            TranslationCache,
+        )
+
+        tc = TranslationCache()
+
+        # Test mixed types
+        key1 = tc.make_key([{"$stage": [1, "a"]}])
+        # Test dicts in list
+        key2 = tc.make_key([{"$stage": [{"a": 1}, {"b": 2}]}])
+
+        assert key1 is not None
+        assert key2 is not None
+
+
 @pytest.fixture
 def connection():
     """Fixture to provide a clean connection for each test."""

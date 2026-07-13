@@ -425,15 +425,16 @@ class IndexManager:
             list[str] or list[list[str]]: List of index names or keys, depending on the as_keys parameter.
                 If as_keys is True, each entry is a list containing a single string (the key name).
         """
-        # Get indexes that match our naming convention
-        cmd = (
-            "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE ?"
+        # Get indexes that match our naming convention and belong to this table
+        cmd = "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name = ? AND name LIKE ? ESCAPE '\\'"
+        escaped_name = quote_table_name(self.collection.name).replace(
+            "_", "\\_"
         )
-        like_pattern = f"idx_{quote_table_name(self.collection.name)}_%"
+        like_pattern = f"idx_{escaped_name}\\_%"
         if as_keys:
             # Extract key names from index names
             indexes = self.collection.db.execute(
-                cmd, (like_pattern,)
+                cmd, (self.collection.name, like_pattern)
             ).fetchall()
             result = []
             for idx in indexes:
@@ -453,7 +454,7 @@ class IndexManager:
         all_indexes = [
             idx[0]
             for idx in self.collection.db.execute(
-                cmd, (like_pattern,)
+                cmd, (self.collection.name, like_pattern)
             ).fetchall()
         ]
         # Filter out the automatically created _id index since it should be hidden
@@ -636,10 +637,19 @@ class IndexManager:
         """
         # Get all FTS tables from sqlite_master
         # FTS tables have a specific naming pattern: {collection}_{field}_fts
+        escaped_name = quote_table_name(self.collection.name).replace(
+            "_", "\\_"
+        )
         fts_tables = self.collection.db.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE ?",
-            (f"{quote_table_name(self.collection.name)}_%_fts",),
+            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE ? ESCAPE '\\'",
+            (f"{escaped_name}\\_%\\_fts",),
         ).fetchall()
+
+        # Get all table names to check for longer collection name prefixes
+        all_tables_cursor = self.collection.db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+        all_tables = {row[0] for row in all_tables_cursor.fetchall()}
 
         # Extract the field names from the FTS table names
         search_indexes = []
@@ -647,6 +657,18 @@ class IndexManager:
         suffix_len = len("_fts")
 
         for (table_name,) in fts_tables:
+            base_name = table_name[:-suffix_len]
+            is_longer_match = False
+            for tbl in all_tables:
+                if tbl != self.collection.name and tbl.startswith(
+                    self.collection.name + "_"
+                ):
+                    if base_name.startswith(tbl + "_"):
+                        is_longer_match = True
+                        break
+            if is_longer_match:
+                continue
+
             # Extract field name from FTS table name
             # Format: {collection}_{field}_fts
             field_name = table_name[prefix_len:-suffix_len]
@@ -715,9 +737,12 @@ class IndexManager:
         # This is just for naming consistency
         column_name = f"{key.replace('.', '_')}_utc"
 
+        # Determine which function to use based on JSONB support
+        func_prefix = _get_json_function_prefix(self._jsonb_supported)
+
         index_sql = f"""
         CREATE {"UNIQUE " if unique else ""}INDEX IF NOT EXISTS
         idx_{quote_table_name(self.collection.name)}_{column_name}
-        ON {quote_table_name(self.collection.name)}(datetime(json_extract(data, '{parse_json_path(key)}')))
+        ON {quote_table_name(self.collection.name)}(datetime({func_prefix}_extract(data, '{parse_json_path(key)}')))
         """
         self.collection.db.execute(index_sql)

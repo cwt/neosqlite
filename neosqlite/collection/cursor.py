@@ -1133,6 +1133,9 @@ class Cursor:
                         # Check if it's a datetime regex pattern
                         if self._is_datetime_regex(op_value):
                             return True
+            else:
+                if self._is_datetime_value(value):
+                    return True
         return False
 
     def _is_datetime_value(self, value: Any) -> bool:

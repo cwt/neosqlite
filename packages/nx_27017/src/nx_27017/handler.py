@@ -11,7 +11,6 @@ from typing import Any
 from bson import ObjectId as BsonObjectId
 
 from neosqlite import Connection
-from neosqlite.objectid import ObjectId as NeoObjectId
 from nx_27017.changestream import (
     ChangeStreamManager,
     extract_change_stream_options,
@@ -113,23 +112,9 @@ class NeoSQLiteHandler:
 
     def _convert_objectids(self, doc: dict) -> dict:
         """Convert PyMongo ObjectIds to NeoSQLite ObjectIds recursively."""
+        from nx_27017.utils import convert_bson_to_neo_objectids
 
-        def convert_value(value):
-            if isinstance(value, dict):
-                return self._convert_objectids(value)
-            elif isinstance(value, list):
-                return [convert_value(item) for item in value]
-            elif isinstance(value, BsonObjectId):
-                return NeoObjectId(value.binary)
-            return value
-
-        if not isinstance(doc, dict):
-            return doc
-
-        result = {}
-        for key, value in doc.items():
-            result[key] = convert_value(value)
-        return result
+        return convert_bson_to_neo_objectids(doc)
 
     def increment_connections(self) -> None:
         """Increment the active connections counter."""
@@ -385,6 +370,14 @@ class NeoSQLiteHandler:
 
         if docs_to_insert:
             result = coll.insert_many(docs_to_insert, session=session_to_use)
+            for doc in docs_to_insert:
+                doc_key = {"_id": doc.get("_id")}
+                self._change_stream_manager.notify_change(
+                    collection_name=coll_name,
+                    operation_type="insert",
+                    document=doc,
+                    document_key=doc_key,
+                )
             return request_id, {
                 "ok": 1,
                 "n": len(result.inserted_ids),
@@ -680,17 +673,43 @@ class NeoSQLiteHandler:
             coll = db[coll_name]
 
             if remove:
-                doc = coll.find_one_and_delete(query)
+                try:
+                    doc = coll.find_one_and_delete(query)
+                except Exception:
+                    doc = None
+                if doc:
+                    self._change_stream_manager.notify_change(
+                        collection_name=coll_name,
+                        operation_type="delete",
+                        document=doc,
+                        document_key={"_id": doc.get("_id")},
+                    )
                 return request_id, {"ok": 1, "value": doc}
             elif update_doc:
                 update_doc = self._convert_objectids(update_doc)
-                if upsert:
-                    doc = coll.find_one_and_replace(
-                        query, update_doc, upsert=True, return_document=new_doc
+                try:
+                    if upsert:
+                        doc = coll.find_one_and_replace(
+                            query,
+                            update_doc,
+                            upsert=True,
+                            return_document=new_doc,
+                        )
+                    else:
+                        doc = coll.find_one_and_replace(
+                            query, update_doc, return_document=new_doc
+                        )
+                except Exception:
+                    doc = None
+                if doc:
+                    is_replace = not any(
+                        k.startswith("$") for k in update_doc.keys()
                     )
-                else:
-                    doc = coll.find_one_and_replace(
-                        query, update_doc, return_document=new_doc
+                    self._change_stream_manager.notify_change(
+                        collection_name=coll_name,
+                        operation_type="replace" if is_replace else "update",
+                        document=doc,
+                        document_key={"_id": doc.get("_id")},
                     )
                 return request_id, {"ok": 1, "value": doc}
             else:
@@ -711,16 +730,58 @@ class NeoSQLiteHandler:
                 u = self._convert_objectids(u)
                 multi = update.get("multi", False)
                 upsert = update.get("upsert", False)
+
+                # Fetch matching documents to get their _id and state before update
+                try:
+                    matched_docs = list(coll.find(q))
+                except Exception:
+                    matched_docs = []
+
                 is_replace = not any(k.startswith("$") for k in u.keys())
                 if is_replace:
                     upd_result = coll.replace_one(q, u, upsert=upsert)
                     modified += upd_result.modified_count
+
+                    for doc in matched_docs:
+                        doc_id = doc.get("_id")
+                        self._change_stream_manager.notify_change(
+                            collection_name=coll_name,
+                            operation_type="replace",
+                            document=u,
+                            document_key={"_id": doc_id},
+                        )
                 elif multi:
                     upd_result = coll.update_many(q, u, upsert=upsert)
                     modified += upd_result.modified_count
+
+                    for doc in matched_docs:
+                        doc_id = doc.get("_id")
+                        new_doc = coll.find_one({"_id": doc_id})
+                        self._change_stream_manager.notify_change(
+                            collection_name=coll_name,
+                            operation_type="update",
+                            document=new_doc or {},
+                            document_key={"_id": doc_id},
+                            update_description={
+                                "updatedFields": u.get("$set", {})
+                            },
+                        )
                 else:
                     upd_result = coll.update_one(q, u, upsert=upsert)
                     modified += upd_result.modified_count
+
+                    if matched_docs:
+                        doc_id = matched_docs[0].get("_id")
+                        new_doc = coll.find_one({"_id": doc_id})
+                        self._change_stream_manager.notify_change(
+                            collection_name=coll_name,
+                            operation_type="update",
+                            document=new_doc or {},
+                            document_key={"_id": doc_id},
+                            update_description={
+                                "updatedFields": u.get("$set", {})
+                            },
+                        )
             return request_id, {"ok": 1, "n": modified, "nModified": modified}
 
         if "find" in cmd_copy:
@@ -954,63 +1015,40 @@ class NeoSQLiteHandler:
                     },
                 }
 
+        if "getMore" in cmd_copy:
+            raw_id = cmd_copy.get("getMore")
+            cursor_id = int(raw_id) if raw_id is not None else 0
+            coll_name = cmd_copy.get("collection")
+            stream = self._change_stream_manager.get_stream(cursor_id)
+            if stream:
+                next_batch = list(stream._changes)
+                stream._changes.clear()
+                stream._position = 0
+                return request_id, {
+                    "ok": 1,
+                    "cursor": {
+                        "id": stream._id,
+                        "ns": f"{db.name}.{coll_name}",
+                        "nextBatch": next_batch,
+                        "postBatchResumeToken": stream.get_resume_token(),
+                    },
+                }
+            else:
+                return request_id, {
+                    "ok": 1,
+                    "cursor": {
+                        "id": 0,
+                        "ns": f"{db.name}.{coll_name}",
+                        "nextBatch": [],
+                    },
+                }
+
         logger.info(f"Calling db.command with: {cmd_copy}")
         cmd_result = db.command(cmd_copy)
         logger.info(
             f"NeoSQLite returned: {list(cmd_result.keys()) if isinstance(cmd_result, dict) else type(cmd_result)}"
         )
         return request_id, cmd_result
-
-    def _handle_find(
-        self, request_id: int, command_doc: dict, db: Connection
-    ) -> tuple[int, dict[str, Any]]:
-        coll_name = command_doc.get("find")
-        if not coll_name:
-            for key in command_doc:
-                if key not in (
-                    "$db",
-                    "filter",
-                    "projection",
-                    "sort",
-                    "limit",
-                    "skip",
-                    "lsid",
-                ) and not key.startswith("$"):
-                    coll_name = key
-                    break
-
-        if not coll_name:
-            return request_id, {"ok": 0, "errmsg": "No collection specified"}
-
-        if self._is_gridfs_collection(coll_name):
-            return self._handle_gridfs_find(
-                request_id, command_doc, db, coll_name
-            )
-
-        coll = db[coll_name]
-        filter_query = command_doc.get("filter", {})
-        filter_query = self._convert_objectids(filter_query)
-
-        cursor = coll.find(filter_query)
-
-        if "sort" in command_doc:
-            cursor = cursor.sort(list(command_doc["sort"].items()))
-        if "limit" in command_doc:
-            limit = command_doc["limit"]
-            if limit > 0:
-                cursor = cursor.limit(limit)
-        if "skip" in command_doc:
-            cursor = cursor.skip(command_doc["skip"])
-
-        docs = list(cursor)
-        return request_id, {
-            "ok": 1,
-            "cursor": {
-                "id": 0,
-                "ns": f"{db.name}.{coll_name}",
-                "firstBatch": docs,
-            },
-        }
 
     def _handle_gridfs_find(
         self,
@@ -1211,48 +1249,6 @@ class NeoSQLiteHandler:
             logger.error(f"GridFS download error: {e}")
             return request_id, {"ok": 0, "errmsg": str(e)}
 
-    def _handle_update(
-        self, request_id: int, command_doc: dict, db: Connection
-    ) -> tuple[int, dict[str, Any]]:
-        coll_name = command_doc.get("update")
-        if not coll_name:
-            for key in command_doc:
-                if key not in (
-                    "$db",
-                    "updates",
-                    "ordered",
-                    "writeConcern",
-                    "lsid",
-                ) and not key.startswith("$"):
-                    coll_name = key
-                    break
-
-        if not coll_name:
-            return request_id, {"ok": 0, "errmsg": "No collection specified"}
-
-        coll = db[coll_name]
-        updates = command_doc.get("updates", [])
-
-        modified = 0
-        upserted = 0
-        for update in updates:
-            q = update.get("q", {})
-            u = update.get("u", {})
-            q = self._convert_objectids(q)
-            u = self._convert_objectids(u)
-            upsert = update.get("upsert", False)
-            multi = update.get("multi", False)
-
-            if multi:
-                result = coll.update_many(q, u, upsert=upsert)
-            else:
-                result = coll.update_one(q, u, upsert=upsert)
-            modified += result.modified_count
-            if upsert:
-                upserted += 1
-
-        return request_id, {"ok": 1, "n": modified, "nModified": modified}
-
     def _handle_delete(
         self, request_id: int, command_doc: dict, db: Connection
     ) -> tuple[int, dict[str, Any]]:
@@ -1281,8 +1277,23 @@ class NeoSQLiteHandler:
             q = self._convert_objectids(q)
             limit = delete.get("limit", 0)
 
+            # Fetch matching documents to get their _id before deletion
+            try:
+                matched_docs = list(coll.find(q))
+            except Exception:
+                matched_docs = []
+
             result = coll.delete_many(q) if limit == 0 else coll.delete_one(q)
             removed += result.deleted_count
+
+            for doc in (matched_docs[:1] if limit != 0 else matched_docs):
+                doc_id = doc.get("_id")
+                self._change_stream_manager.notify_change(
+                    collection_name=coll_name,
+                    operation_type="delete",
+                    document=doc,
+                    document_key={"_id": doc_id},
+                )
 
         return request_id, {"ok": 1, "n": removed}
 
@@ -1554,31 +1565,6 @@ class NeoSQLiteHandler:
                 "firstBatch": collections,
             },
         }
-
-    def _handle_rename_collection(
-        self, request_id: int, command_doc: dict, db: Connection
-    ) -> tuple[int, dict[str, Any]]:
-        """Handle renameCollection command."""
-        rename = command_doc.get("renameCollection")
-        if not rename:
-            return request_id, {"ok": 0, "errmsg": "No collection to rename"}
-
-        to = command_doc.get("to", "")
-        if not to:
-            return request_id, {"ok": 0, "errmsg": "No target name specified"}
-
-        old_coll = rename.split(".")[-1] if "." in rename else rename
-        new_coll = to.split(".")[-1] if "." in to else to
-
-        try:
-            old_coll_obj = db[old_coll]
-            docs = list(old_coll_obj.find({}))
-            if docs:
-                db[new_coll].insert_many(docs)
-            db.drop_collection(old_coll)
-            return request_id, {"ok": 1}
-        except Exception as e:
-            return request_id, {"ok": 0, "errmsg": str(e)}
 
     def handle_query(
         self, msg: dict[str, Any]

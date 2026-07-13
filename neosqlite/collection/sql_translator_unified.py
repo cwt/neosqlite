@@ -267,17 +267,26 @@ class SQLOperatorTranslator:
             value = neosqlite_json_dumps_for_sql(value)
 
         # Check if this is a datetime comparison that should be wrapped with datetime() function
+        from datetime import datetime
+
+        def to_iso(v: Any) -> str:
+            if isinstance(v, datetime):
+                return v.isoformat()
+            return v
+
+        # Check if this is a datetime comparison that should be wrapped with datetime() function
         # This is needed when datetime fields are indexed using datetime(json_extract(...)) for timezone normalization
         is_datetime_comparison = (
             operator in ("$eq", "$gt", "$lt", "$gte", "$lte", "$ne")
-            and isinstance(value, str)
+            and isinstance(value, (str, datetime))
             and self._is_datetime_value(value)
         ) or (
             operator in ("$in", "$nin")
             and isinstance(value, (list, tuple))
             and len(value) > 0  # Only if there are elements to check
             and all(
-                isinstance(v, str) and self._is_datetime_value(v) for v in value
+                isinstance(v, (str, datetime)) and self._is_datetime_value(v)
+                for v in value
             )
         )
 
@@ -288,22 +297,22 @@ class SQLOperatorTranslator:
             match operator:
                 case "$eq":
                     sql = f"{datetime_field_access} = datetime(?)"
-                    params = [value]
+                    params = [to_iso(value)]
                 case "$gt":
                     sql = f"{datetime_field_access} > datetime(?)"
-                    params = [value]
+                    params = [to_iso(value)]
                 case "$lt":
                     sql = f"{datetime_field_access} < datetime(?)"
-                    params = [value]
+                    params = [to_iso(value)]
                 case "$gte":
                     sql = f"{datetime_field_access} >= datetime(?)"
-                    params = [value]
+                    params = [to_iso(value)]
                 case "$lte":
                     sql = f"{datetime_field_access} <= datetime(?)"
-                    params = [value]
+                    params = [to_iso(value)]
                 case "$ne":
                     sql = f"{datetime_field_access} != datetime(?)"
-                    params = [value]
+                    params = [to_iso(value)]
                 case "$in":
                     if isinstance(value, (list, tuple)):
                         if field_access == "_id":
@@ -311,14 +320,14 @@ class SQLOperatorTranslator:
                                 "datetime(?)" for _ in value
                             )
                             sql = f"{datetime_field_access} IN ({placeholders})"
-                            params = list(value)
+                            params = [to_iso(v) for v in value]
                         else:
                             # For array fields with datetime values, use json_each
                             placeholders = ", ".join(
                                 "datetime(?)" for _ in value
                             )
                             sql = f"EXISTS (SELECT 1 FROM {self._json_each_function}({datetime_field_access}) WHERE json_each.value IN ({placeholders}))"
-                            params = list(value)
+                            params = [to_iso(v) for v in value]
                 case "$nin":
                     if isinstance(value, (list, tuple)):
                         if field_access == "_id":
@@ -326,14 +335,14 @@ class SQLOperatorTranslator:
                                 "datetime(?)" for _ in value
                             )
                             sql = f"{datetime_field_access} NOT IN ({placeholders})"
-                            params = list(value)
+                            params = [to_iso(v) for v in value]
                         else:
                             # For array fields with datetime values, use json_each
                             placeholders = ", ".join(
                                 "datetime(?)" for _ in value
                             )
                             sql = f"NOT EXISTS (SELECT 1 FROM {self._json_each_function}({datetime_field_access}) WHERE json_each.value IN ({placeholders}))"
-                            params = list(value)
+                            params = [to_iso(v) for v in value]
                 case _:
                     # For unsupported operators with datetime values, fall back to regular processing
                     is_datetime_comparison = False
@@ -384,7 +393,7 @@ class SQLOperatorTranslator:
                         if field_access == "_id":
                             # For _id field, SQL IN works correctly (scalar comparison)
                             if len(value) > 0 and all(
-                                isinstance(v, str)
+                                isinstance(v, (str, datetime))
                                 and self._is_datetime_value(v)
                                 for v in value
                             ):
@@ -392,10 +401,11 @@ class SQLOperatorTranslator:
                                     "datetime(?)" for _ in value
                                 )
                                 sql = f"datetime({field_access}) IN ({placeholders})"
+                                params = [to_iso(v) for v in value]
                             else:
                                 placeholders = ", ".join("?" for _ in value)
                                 sql = f"{field_access} IN ({placeholders})"
-                            params = list(value)
+                                params = list(value)
                         else:
                             return None, []
                 case "$nin":
@@ -405,7 +415,7 @@ class SQLOperatorTranslator:
                         if field_access == "_id":
                             # For _id field, SQL NOT IN works correctly (scalar comparison)
                             if len(value) > 0 and all(
-                                isinstance(v, str)
+                                isinstance(v, (str, datetime))
                                 and self._is_datetime_value(v)
                                 for v in value
                             ):
@@ -413,10 +423,11 @@ class SQLOperatorTranslator:
                                     "datetime(?)" for _ in value
                                 )
                                 sql = f"datetime({field_access}) NOT IN ({placeholders})"
+                                params = [to_iso(v) for v in value]
                             else:
                                 placeholders = ", ".join("?" for _ in value)
                                 sql = f"{field_access} NOT IN ({placeholders})"
-                            params = list(value)
+                                params = list(value)
                         else:
                             return None, []
                 case "$all":
@@ -707,6 +718,17 @@ class SQLClauseBuilder:
                             return None, []
                         clauses.append(sql)
                         params.extend(clause_params)
+                elif self.operator_translator._is_datetime_value(value):
+                    # For simple datetime equality, translate it as an $eq operator
+                    sql, clause_params = (
+                        self.operator_translator.translate_operator(
+                            field_access, "$eq", value
+                        )
+                    )
+                    if sql is None:
+                        return None, []
+                    clauses.append(sql)
+                    params.extend(clause_params)
                 else:
                     # Simple equality check
                     clauses.append(f"{field_access} = ?")

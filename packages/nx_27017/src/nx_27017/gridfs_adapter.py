@@ -734,32 +734,9 @@ class GridFSAdapter:
 
 def _convert_objectids_in_dict(doc: dict) -> dict | None:
     """Recursively convert ObjectIds in a document."""
-    if doc is None:
-        return None
+    from nx_27017.utils import convert_json_to_neo_objectids
 
-    result: dict = {}
-    for key, value in doc.items():
-        if isinstance(value, dict):
-            if "$oid" in value:
-                result[key] = ObjectId(value["$oid"])
-            elif key == "$oid":
-                result[key] = (
-                    ObjectId(value) if isinstance(value, str) else value
-                )
-            else:
-                result[key] = _convert_objectids_in_dict(value)
-        elif isinstance(value, list):
-            result[key] = [
-                (
-                    ObjectId(v["$oid"])
-                    if isinstance(v, dict) and "$oid" in v
-                    else v
-                )
-                for v in value
-            ]
-        else:
-            result[key] = value
-    return result
+    return convert_json_to_neo_objectids(doc)
 
 
 def create_gridfs_adapter(

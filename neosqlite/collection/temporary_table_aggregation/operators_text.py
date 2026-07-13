@@ -177,14 +177,34 @@ class OperatorsTextMixin(OperatorsBaseMixin):
         Returns:
             str: The tokenizer clause for FTS5 (e.g., ", tokenize=porter" or "")
         """
-        # Query sqlite_master to find FTS tables for this collection
-        fts_table_pattern = f"{quote_table_name(self.collection.name)}_%_fts"
+        escaped_name = quote_table_name(self.collection.name).replace(
+            "_", "\\_"
+        )
+        fts_table_pattern = f"{escaped_name}\\_%\\_fts"
         cursor = self.db.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name LIKE ?",
+            "SELECT name, sql FROM sqlite_master WHERE type='table' AND name LIKE ? ESCAPE '\\'",
             (fts_table_pattern,),
         )
 
-        for (sql,) in cursor.fetchall():
+        all_tables_cursor = self.db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+        all_tables = {row[0] for row in all_tables_cursor.fetchall()}
+
+        suffix_len = len("_fts")
+        for name, sql in cursor.fetchall():
+            base_name = name[:-suffix_len]
+            is_longer_match = False
+            for tbl in all_tables:
+                if tbl != self.collection.name and tbl.startswith(
+                    self.collection.name + "_"
+                ):
+                    if base_name.startswith(tbl + "_"):
+                        is_longer_match = True
+                        break
+            if is_longer_match:
+                continue
+
             if sql:
                 # Parse tokenizer from CREATE VIRTUAL TABLE ... USING FTS5(..., tokenize=xxx)
                 # Example: "CREATE VIRTUAL TABLE test USING FTS5(content, tokenize=porter)"

@@ -7,10 +7,7 @@ import struct
 from itertools import count
 from typing import Any
 
-from bson import BSON, Int64, encode
-from bson import ObjectId as BsonObjectId
-
-from neosqlite.objectid import ObjectId as NeoObjectId
+from bson import BSON, encode
 
 logger = logging.getLogger("nx_27017")
 
@@ -58,36 +55,7 @@ def _extract_session_id(lsid: dict) -> str | None:
     return str(session_id_obj)
 
 
-def _convert_objectids(doc: dict) -> dict:
-    """Convert NeoSQLite ObjectIds to BSON ObjectIds, and Decimal to float."""
-    from decimal import Decimal as PyDecimal
-
-    def _convert_value(value: Any) -> Any:
-        if isinstance(value, NeoObjectId):
-            return BsonObjectId(value.binary)
-        elif isinstance(value, PyDecimal):
-            return float(value)
-        elif isinstance(value, list):
-            return [_convert_value(item) for item in value]
-        elif isinstance(value, dict):
-            return _convert_objectids(value)
-        return value
-
-    if isinstance(doc, dict):
-        result = {}
-        for key, value in doc.items():
-            if key == "id" and value == 0:
-                result[key] = Int64(0)
-            else:
-                result[key] = _convert_value(value)
-        return result
-    elif isinstance(doc, list):
-        return [_convert_value(item) for item in doc]
-    elif isinstance(doc, PyDecimal):
-        return float(doc)
-    elif isinstance(doc, NeoObjectId):
-        return BsonObjectId(doc.binary)
-    return doc
+from nx_27017.utils import convert_neo_to_bson_objectids as _convert_objectids
 
 
 class WireProtocol:

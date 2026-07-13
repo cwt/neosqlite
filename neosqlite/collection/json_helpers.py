@@ -95,6 +95,22 @@ def neosqlite_json_loads(s: str, **kwargs) -> Any:
         Deserialized object
     """
 
+    def walk_list(lst: list) -> list[Any]:
+        res: list[Any] = []
+        for item in lst:
+            if isinstance(item, list):
+                res.append(walk_list(item))
+            elif isinstance(item, str) and ISO_DATE_PATTERN.match(item):
+                try:
+                    res.append(
+                        datetime.fromisoformat(item.replace("Z", "+00:00"))
+                    )
+                except ValueError:
+                    res.append(item)
+            else:
+                res.append(item)
+        return res
+
     def object_hook(dct: dict[str, Any]) -> Any:
         """
         Decodes Binary objects, ObjectId objects, and ISO date strings from JSON deserialization.
@@ -129,7 +145,12 @@ def neosqlite_json_loads(s: str, **kwargs) -> Any:
                         f"Failed to parse ISO date string '{value}': {e}"
                     )
                     pass  # Not a valid date string, keep as string
+            elif isinstance(value, list):
+                dct[key] = walk_list(value)
         return dct
 
     kwargs["object_hook"] = object_hook
-    return json.loads(s, **kwargs)
+    res = json.loads(s, **kwargs)
+    if isinstance(res, list):
+        res = walk_list(res)
+    return res
