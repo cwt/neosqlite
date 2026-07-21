@@ -20,6 +20,7 @@
 
 - **Subpackage Split for Aggregation Pipeline**: Split the ~4,285-line single module `temporary_table_aggregation.py` into a package structure (`neosqlite/collection/temporary_table_aggregation/`), solving scaling and readability issues.
 - **Composing Operators Split**: Sliced the large composing module `operators.py` (~3,500 lines) into composed mixin files (`operators_match.py`, `operators_lookup.py`, `operators_sort_proj.py`, `operators_group.py`, `operators_text.py`, `operators_advanced.py`).
+- **Python Evaluators Split**: Split the ~2,500-line `python_evaluators.py` into package `neosqlite/collection/expr_evaluator/python_evaluators/` with domain mixins (`core`, `math_ops`, `array_ops`, `string_ops`, `date_ops`, `object_ops`, `type_ops`) composed by `PythonEvaluatorsMixin`; shared `BasePythonMixin` stubs keep mypy happy across mixin boundaries.
 - **Removed Duplicate SQL SELECT compilation**: Consolidated `build_select_expression` in `ExprEvaluator` to delegate to `evaluate_for_aggregation`.
 - **Removed Dead/Duplicate Module files**: Deleted the redundant `neosqlite/collection/temporary_table_aggregation.py` file.
 - **Removed Dead/Unused Methods in `nx_27017`**: Deleted `_handle_update`, `_handle_find`, and `_handle_rename_collection` in the handler.
