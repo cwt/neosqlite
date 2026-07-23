@@ -261,11 +261,25 @@ class CorePythonMixin(BasePythonMixin):
         left = self._evaluate_operand_python(operands[0], document)
         right = self._evaluate_operand_python(operands[1], document)
 
+        # For $eq/$ne, handle missing-field-vs-null distinction.
+        # MongoDB: missing field == null literal -> False
+        #          missing field == missing field -> True
+        #          null field == null literal -> True
+        if operator in ("$eq", "$ne"):
+            left_missing = self._is_field_missing(operands[0], document)
+            right_missing = self._is_field_missing(operands[1], document)
+            # Literal null on one side, missing field on the other -> not equal
+            if (operands[1] is None and left_missing) or (
+                operands[0] is None and right_missing
+            ):
+                return False if operator == "$eq" else True
+            if left_missing and right_missing:
+                return True if operator == "$eq" else False
+            if left_missing or right_missing:
+                return False if operator == "$eq" else True
+            return (left == right) if operator == "$eq" else (left != right)
+
         match operator:
-            case "$eq":
-                return left == right
-            case "$ne":
-                return left != right
             case "$gt" | "$gte" | "$lt" | "$lte":
                 # For ordering comparisons, if any operand is None, return False
                 # (MongoDB behavior - null values don't participate in ordering)
@@ -360,6 +374,29 @@ class CorePythonMixin(BasePythonMixin):
         if default is not None:
             return self._evaluate_operand_python(default, document)
         return None
+
+    def _is_field_missing(self, operand: Any, document: dict[str, Any]) -> bool:
+        """Check whether a $field reference points to a missing field.
+
+        Returns True if operand is a field reference ($field) and the
+        referenced field does not exist in the document.  Returns False
+        for non-field operands (literals, expressions) and for fields
+        that exist (even if their value is None).
+        """
+        if not isinstance(operand, str) or not operand.startswith("$"):
+            return False
+        if operand.startswith("$$"):
+            # Aggregation variable; check if it exists in document
+            return operand not in document
+        field_path = operand[1:]
+        keys = field_path.split(".")
+        current: Any = document
+        for key in keys:
+            if isinstance(current, dict) and key in current:
+                current = current[key]
+            else:
+                return True
+        return False
 
     def _evaluate_literal_python(
         self, operands: Any, document: dict[str, Any]

@@ -24,6 +24,43 @@ class ComparisonMixin(BaseSqlMixin):
         left_sql, left_params = self._convert_operand_to_sql(operands[0])
         right_sql, right_params = self._convert_operand_to_sql(operands[1])
 
+        # $eq/$ne with a None literal: use IS / IS NOT.
+        # Also handle missing-field-vs-null distinction via json_type:
+        # a missing JSON key (json_type IS NULL) is NOT equal to null.
+        if operator in ("$eq", "$ne") and (
+            operands[0] is None or operands[1] is None
+        ):
+            field_op = operands[1] if operands[0] is None else operands[0]
+            field_sql = right_sql if operands[0] is None else left_sql
+            field_params = right_params if operands[0] is None else left_params
+            # Use json_type to distinguish missing key (returns SQL NULL)
+            # from present null value (returns 'null').
+            # Only do this for simple $field references where the SQL
+            # is just json_extract(data, '$.field').
+            if (
+                isinstance(field_op, str)
+                and field_op.startswith("$")
+                and "json_extract" in field_sql
+            ):
+                # $eq: missing->0, null->1, else->0
+                # $ne: missing->1, null->0, else->1
+                m_val = "0" if operator == "$eq" else "1"
+                n_val = "1" if operator == "$eq" else "0"
+                e_val = "0" if operator == "$eq" else "1"
+                sql = (
+                    f"(CASE WHEN json_type({self.data_column},"
+                    f"'$." + field_op[1:] + f"') IS NULL THEN {m_val}"
+                    f" WHEN {field_sql} IS NULL THEN {n_val}"
+                    f" ELSE {e_val} END)"
+                )
+                return sql, field_params
+            # Fallback: simple IS / IS NOT (can't distinguish missing from null)
+            sql_operator = "IS" if operator == "$eq" else "IS NOT"
+            return (
+                f"{left_sql} {sql_operator} {right_sql}",
+                left_params + right_params,
+            )
+
         sql_operator = self._map_comparison_operator(operator)
 
         return (

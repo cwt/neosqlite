@@ -48,7 +48,10 @@ class StringPythonMixin(BasePythonMixin):
                     self._evaluate_operand_python(op, document)
                     for op in operands
                 ]
-                return "".join(str(v) if v is not None else "" for v in values)
+                # MongoDB: if any argument resolves to null, return null.
+                if any(v is None for v in values):
+                    return None
+                return "".join(str(v) for v in values)
             case "$toLower":
                 if len(operands) != 1:
                     raise ValueError("$toLower requires exactly 1 operand")
