@@ -21,7 +21,7 @@ from typing import Any
 from ..sql_utils import quote_table_name
 
 logger = logging.getLogger(__name__)
-from .jsonb_support import supports_jsonb
+from .jsonb_support import JSONBContext
 from .query_helper import QueryHelper
 from .sql_translator_unified import SQLFieldAccessor, SQLTranslator
 from .temporary_table_aggregation import (
@@ -60,8 +60,8 @@ class DateTimeQueryProcessor:
             query_engine.helpers if query_engine else QueryHelper(collection)
         )
         self.sql_translator = SQLTranslator(collection.name, "data", "id")
-        # Check if JSONB is supported for this connection
-        self._jsonb_supported = supports_jsonb(self.db)
+        # Initialize JSONB capabilities
+        self.jsonb = JSONBContext.from_db(self.db)
         # Configuration for kill switch behavior - DEFAULT TO LOCAL for better isolation
         self._use_global_kill_switch = use_global_kill_switch
         # Local kill switch state (isolated to this instance)

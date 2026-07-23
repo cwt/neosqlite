@@ -30,6 +30,7 @@ from .utils import (
 
 if TYPE_CHECKING:
     from .. import Collection
+    from ..jsonb_support import JSONBContext
 
 
 class AggregationMixin:
@@ -45,9 +46,9 @@ class AggregationMixin:
             - _load: Method to load documents
             - _get_val: Method to get values from documents
             - _set_val: Method to set values in documents
-        self._jsonb_supported: Whether JSONB is supported
-        self._json_function_prefix: "json" or "jsonb"
-        self._json_each_function: "json_each" or "jsonb_each"
+        self.jsonb.jsonb_supported: Whether JSONB is supported
+        self.jsonb.json_function_prefix: "json" or "jsonb"
+        self.jsonb.json_each_function: "json_each" or "jsonb_each"
         self._build_simple_where_clause: Method to build WHERE clauses
         self._reorder_pipeline_for_indexes: Method to reorder pipelines
         self._estimate_pipeline_cost: Method to estimate costs
@@ -58,9 +59,7 @@ class AggregationMixin:
     """
 
     collection: "Collection"
-    _jsonb_supported: bool
-    _json_function_prefix: str
-    _json_each_function: str
+    jsonb: "JSONBContext"
     _build_simple_where_clause: Any
     _reorder_pipeline_for_indexes: Any
     _estimate_pipeline_cost: Any
@@ -140,7 +139,7 @@ class AggregationMixin:
                             )
                         else:
                             sort_clauses.append(
-                                f"{self._json_function_prefix}_extract(data, '{parse_json_path(key)}') "
+                                f"{self.jsonb.json_function_prefix}_extract(data, '{parse_json_path(key)}') "
                                 f"{'DESC' if direction == DESCENDING else 'ASC'}"
                             )
                     order_by = "ORDER BY " + ", ".join(sort_clauses)
@@ -223,9 +222,9 @@ class AggregationMixin:
                             else:
                                 # Grouping by another field
                                 select_expressions.append(
-                                    f"{self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(group_id_field)}') AS _id"
+                                    f"{self.jsonb.json_function_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(group_id_field)}') AS _id"
                                 )
-                                group_by_clause = f"GROUP BY {self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(group_id_field)}')"
+                                group_by_clause = f"GROUP BY {self.jsonb.json_function_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(group_id_field)}')"
 
                             # Try to build the group query using the general method
                             # This supports all accumulator operations including $avg, $min, $max
@@ -250,7 +249,7 @@ class AggregationMixin:
                                 if group_id_field == unwind_field_name:
                                     # Replace the _id extraction with je.value
                                     modified_select = select_clause.replace(
-                                        f"{self._json_function_prefix}_extract(data, '{parse_json_path(unwind_field_name)}') AS _id",
+                                        f"{self.jsonb.json_function_prefix}_extract(data, '{parse_json_path(unwind_field_name)}') AS _id",
                                         "je.value AS _id",
                                     )
                                     # For GROUP BY clause, use je.value when grouping by the unwind field
@@ -259,26 +258,26 @@ class AggregationMixin:
                                     modified_select = select_clause
                                     # Keep the original GROUP BY but ensure it references the correct table
                                     group_by_clause = group_by_clause.replace(
-                                        f"{self._json_function_prefix}_extract(data,",
-                                        f"{self._json_function_prefix}_extract({table_name}.data,",
+                                        f"{self.jsonb.json_function_prefix}_extract(data,",
+                                        f"{self.jsonb.json_function_prefix}_extract({table_name}.data,",
                                     )
 
                                 # Replace all other json_extract(data, ...) with json_extract(table.data, ...)
                                 # to properly reference the table column in the JOIN context
                                 modified_select = modified_select.replace(
-                                    f"{self._json_function_prefix}_extract(data,",
-                                    f"{self._json_function_prefix}_extract({table_name}.data,",
+                                    f"{self.jsonb.json_function_prefix}_extract(data,",
+                                    f"{self.jsonb.json_function_prefix}_extract({table_name}.data,",
                                 )
 
                                 # For fields that reference the unwind field (e.g., $push: "$tags" when unwinding "$tags"),
                                 # replace with je.value to get the unwound value instead of the full array
                                 modified_select = modified_select.replace(
-                                    f"{self._json_function_prefix}_extract({table_name}.data, '{parse_json_path(unwind_field_name)}')",
+                                    f"{self.jsonb.json_function_prefix}_extract({table_name}.data, '{parse_json_path(unwind_field_name)}')",
                                     "je.value",
                                 )
 
                                 # Build the FROM clause with json_each for unwinding
-                                from_clause = f"FROM {table_name}, {self._json_each_function}({self._json_function_prefix}_extract({table_name}.data, '{parse_json_path(unwind_field_name)}')) as je"
+                                from_clause = f"FROM {table_name}, {self.jsonb.json_each_function}({self.jsonb.json_function_prefix}_extract({table_name}.data, '{parse_json_path(unwind_field_name)}')) as je"
 
                                 # Add ordering by _id for consistent results
                                 order_by_clause = "ORDER BY _id"
@@ -342,12 +341,12 @@ class AggregationMixin:
                     if group_id_field == unwind_field:
                         # Replace the _id extraction with je.value
                         modified_select = select_clause.replace(
-                            f"{self._json_function_prefix}_extract(data, '{parse_json_path(unwind_field)}') AS _id",
+                            f"{self.jsonb.json_function_prefix}_extract(data, '{parse_json_path(unwind_field)}') AS _id",
                             "je.value AS _id",
                         )
                         # Also replace any other references to the unwind field in the SELECT clause
                         modified_select = modified_select.replace(
-                            f"{self._json_function_prefix}_extract(data, '{parse_json_path(unwind_field)}')",
+                            f"{self.jsonb.json_function_prefix}_extract(data, '{parse_json_path(unwind_field)}')",
                             "je.value",
                         )
                         # For GROUP BY clause, use je.value when grouping by the unwind field
@@ -356,20 +355,20 @@ class AggregationMixin:
                         modified_select = select_clause
                         # Keep the original GROUP BY but ensure it references the correct table
                         modified_group_by = group_by_clause.replace(
-                            f"{self._json_function_prefix}_extract(data,",
-                            f"{self._json_function_prefix}_extract({table_name}.data,",
+                            f"{self.jsonb.json_function_prefix}_extract(data,",
+                            f"{self.jsonb.json_function_prefix}_extract({table_name}.data,",
                         )
 
                     # Replace all other json_extract(data, ...) with json_extract(table.data, ...)
                     # to properly reference the table column in the JOIN context
                     # This is needed for fields that aren't the unwind field (e.g., $push: $name)
                     modified_select = modified_select.replace(
-                        f"{self._json_function_prefix}_extract(data,",
-                        f"{self._json_function_prefix}_extract({table_name}.data,",
+                        f"{self.jsonb.json_function_prefix}_extract(data,",
+                        f"{self.jsonb.json_function_prefix}_extract({table_name}.data,",
                     )
 
                     # Build the FROM clause with json_each for unwinding
-                    from_clause = f"FROM {table_name}, {self._json_each_function}({self._json_function_prefix}_extract({table_name}.data, '{parse_json_path(unwind_field)}')) as je"
+                    from_clause = f"FROM {table_name}, {self.jsonb.json_each_function}({self.jsonb.json_function_prefix}_extract({table_name}.data, '{parse_json_path(unwind_field)}')) as je"
 
                     # Add ordering by _id for consistent results
                     order_by_clause = "ORDER BY _id"
@@ -456,11 +455,11 @@ class AggregationMixin:
             if parent_field and parent_alias:
                 nested_path = field_name[len(parent_field) + 1 :]
                 all_where_clauses.append(
-                    f"json_type({self._json_function_prefix}_extract({parent_alias}.value, '{parse_json_path(nested_path)}')) = 'array'"
+                    f"json_type({self.jsonb.json_function_prefix}_extract({parent_alias}.value, '{parse_json_path(nested_path)}')) = 'array'"
                 )
             else:
                 all_where_clauses.append(
-                    f"json_type({self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}')) = 'array'"
+                    f"json_type({self.jsonb.json_function_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}')) = 'array'"
                 )
 
         where_clause = ""
@@ -529,11 +528,11 @@ class AggregationMixin:
             if parent_field and parent_alias:
                 nested_path = field_name[len(parent_field) + 1 :]
                 from_parts.append(
-                    f", {self._json_each_function}({self._json_function_prefix}_extract({parent_alias}.value, '{parse_json_path(nested_path)}')) as {je_alias}"
+                    f", {self.jsonb.json_each_function}({self.jsonb.json_function_prefix}_extract({parent_alias}.value, '{parse_json_path(nested_path)}')) as {je_alias}"
                 )
             else:
                 from_parts.append(
-                    f", {self._json_each_function}({self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}')) as {je_alias}"
+                    f", {self.jsonb.json_each_function}({self.jsonb.json_function_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}')) as {je_alias}"
                 )
             unwound_fields[field_name] = je_alias
 
@@ -627,7 +626,7 @@ class AggregationMixin:
                     if parent_field and parent_alias:
                         nested_path = key[len(parent_field) + 1 :]
                         sort_clauses.append(
-                            f"{self._json_function_prefix}_extract({parent_alias}.value, '{parse_json_path(nested_path)}') "
+                            f"{self.jsonb.json_function_prefix}_extract({parent_alias}.value, '{parse_json_path(nested_path)}') "
                             f"{'DESC' if direction == DESCENDING else 'ASC'}"
                         )
                     elif key in unwound_fields:
@@ -637,7 +636,7 @@ class AggregationMixin:
                         )
                     else:
                         sort_clauses.append(
-                            f"{self._json_function_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(key)}') "
+                            f"{self.jsonb.json_function_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(key)}') "
                             f"{'DESC' if direction == DESCENDING else 'ASC'}"
                         )
             if sort_clauses:
@@ -686,9 +685,9 @@ class AggregationMixin:
             output_fields = ["_id"]
         elif isinstance(group_id_expr, str) and group_id_expr.startswith("$"):
             group_by_field = group_id_expr[1:]
-            group_by_clause = f"GROUP BY {self._json_function_prefix}_extract(data, '{parse_json_path(group_by_field)}')"
+            group_by_clause = f"GROUP BY {self.jsonb.json_function_prefix}_extract(data, '{parse_json_path(group_by_field)}')"
             select_expressions = [
-                f"{self._json_function_prefix}_extract(data, '{parse_json_path(group_by_field)}') AS _id"
+                f"{self.jsonb.json_function_prefix}_extract(data, '{parse_json_path(group_by_field)}') AS _id"
             ]
             output_fields = ["_id"]
         else:
@@ -714,7 +713,7 @@ class AggregationMixin:
                     return None  # Fallback for complex accumulator expressions
                 field_name = expr[1:]
                 select_expressions.append(
-                    f"json_group_array({self._json_function_prefix}_extract(data, '{parse_json_path(field_name)}')) AS \"{field}\""
+                    f"json_group_array({self.jsonb.json_function_prefix}_extract(data, '{parse_json_path(field_name)}')) AS \"{field}\""
                 )
                 output_fields.append(field)
                 continue
@@ -725,7 +724,7 @@ class AggregationMixin:
                     return None  # Fallback for complex accumulator expressions
                 field_name = expr[1:]
                 select_expressions.append(
-                    f"json_group_array(DISTINCT {self._json_function_prefix}_extract(data, '{parse_json_path(field_name)}')) AS \"{field}\""
+                    f"json_group_array(DISTINCT {self.jsonb.json_function_prefix}_extract(data, '{parse_json_path(field_name)}')) AS \"{field}\""
                 )
                 output_fields.append(field)
                 continue
@@ -752,7 +751,7 @@ class AggregationMixin:
                 return None  # Unsupported accumulator
 
             select_expressions.append(
-                f"{sql_func}({self._json_function_prefix}_extract(data, '{parse_json_path(field_name)}')) AS {field}"
+                f"{sql_func}({self.jsonb.json_function_prefix}_extract(data, '{parse_json_path(field_name)}')) AS {field}"
             )
             output_fields.append(field)
 

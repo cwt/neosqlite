@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..sql_utils import quote_table_name
 from .json_path_utils import parse_json_path
-from .jsonb_support import _get_json_function_prefix, json_data_column
+from .jsonb_support import json_data_column
 from .type_utils import validate_session
 
 if TYPE_CHECKING:
@@ -573,14 +573,14 @@ class Cursor:
 
         if where_result is not None:
             where_clause, params, tables = where_result
-            jsonb = self._collection.query_engine._jsonb_supported
+            jsonb = self._collection.query_engine.jsonb.jsonb_supported
             sql = (
                 f"SELECT id, _id, {json_data_column(jsonb)} as data "
                 f"FROM {quote_table_name(self._collection.name)} {where_clause}{sort_clause}{pagination_clause}"
             )
         else:
             # No filter - simple select
-            jsonb = self._collection.query_engine._jsonb_supported
+            jsonb = self._collection.query_engine.jsonb.jsonb_supported
             sql = (
                 f"SELECT id, _id, {json_data_column(jsonb)} as data "
                 f"FROM {quote_table_name(self._collection.name)}{sort_clause}{pagination_clause}"
@@ -742,7 +742,7 @@ class Cursor:
                 )
 
             # Use the collection's JSONB support flag to determine how to select data
-            jsonb = self._collection.query_engine._jsonb_supported
+            jsonb = self._collection.query_engine.jsonb.jsonb_supported
             cmd = (
                 f"SELECT id, _id, {json_data_column(jsonb)} as data "
                 f"FROM {quote_table_name(self._collection.name)} {where_clause}{sort_clause}{pagination_clause}"
@@ -804,7 +804,7 @@ class Cursor:
         pagination_clause = ""
 
         # Use the collection's JSONB support flag to determine how to select data
-        jsonb = self._collection.query_engine._jsonb_supported
+        jsonb = self._collection.query_engine.jsonb.jsonb_supported
         cmd = (
             f"SELECT id, _id, {json_data_column(jsonb)} as data "
             f"FROM {quote_table_name(self._collection.name)}"
@@ -899,7 +899,7 @@ class Cursor:
                         )
                     )
 
-                jsonb = self._collection.query_engine._jsonb_supported
+                jsonb = self._collection.query_engine.jsonb.jsonb_supported
                 cmd = (
                     f"SELECT id, _id, {json_data_column(jsonb)} as data "
                     f"FROM {quote_table_name(self._collection.name)} {where_clause}{sort_clause}{pagination_clause}"
@@ -942,7 +942,7 @@ class Cursor:
             pagination_clause = ""
 
             # Get all documents
-            jsonb = self._collection.query_engine._jsonb_supported
+            jsonb = self._collection.query_engine.jsonb.jsonb_supported
             cmd = (
                 f"SELECT id, _id, {json_data_column(jsonb)} as data "
                 f"FROM {quote_table_name(self._collection.name)}{sort_clause}{pagination_clause}"
@@ -1013,8 +1013,8 @@ class Cursor:
         additional_conditions = []
         additional_params = list(params)
 
-        jsonb = self._collection.query_engine._jsonb_supported
-        json_func = _get_json_function_prefix(jsonb)
+        jsonb = self._collection.query_engine.jsonb.jsonb_supported
+        json_func = "jsonb" if jsonb else "json"
 
         # Add minimum bounds
         if min_spec:

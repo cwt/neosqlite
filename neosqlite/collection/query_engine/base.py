@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 if TYPE_CHECKING:
     from ..client_session import ClientSession
     from ..cursor import Cursor
+    from ..jsonb_support import JSONBContext
     from ..query_helper import QueryHelper
     from ..sql_translator_unified import SQLTranslator
 
@@ -17,7 +18,7 @@ class QueryEngineProtocol(Protocol):
     collection: Any
     helpers: "QueryHelper"
     sql_translator: "SQLTranslator"
-    _jsonb_supported: bool
+    jsonb: "JSONBContext"
 
     def _get_integer_id_for_oid(self, oid: Any) -> int:
         """Get integer ID for an ObjectId."""

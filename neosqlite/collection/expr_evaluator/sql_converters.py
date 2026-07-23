@@ -16,6 +16,7 @@ from ..json_path_utils import build_json_extract_expression, parse_json_path
 
 if TYPE_CHECKING:
     # Avoid circular import by using TYPE_CHECKING
+    from ..jsonb_support import JSONBContext
     from .context import AggregationContext
 
 
@@ -38,7 +39,7 @@ class SqlConvertersMixin:
     # Type annotations for simple attributes expected from parent class
     # (Properties like json_function_prefix are handled separately)
     data_column: str
-    _jsonb_supported: bool
+    jsonb: "JSONBContext"
     _log2_warned: bool
     _current_context: AggregationContext | None
 
@@ -406,12 +407,12 @@ class SqlConvertersMixin:
                 count = operands[1]
                 skip = operands[2] if len(operands) > 2 else 0
                 if skip != 0:
-                    if self._jsonb_supported:
+                    if self.jsonb.jsonb_supported:
                         sql = f"(SELECT json({json_group_array}(value)) FROM (SELECT value FROM {json_each}({array_sql}) LIMIT {count} OFFSET {skip}))"
                     else:
                         sql = f"(SELECT {json_group_array}(value) FROM (SELECT value FROM {json_each}({array_sql}) LIMIT {count} OFFSET {skip}))"
                 else:
-                    if self._jsonb_supported:
+                    if self.jsonb.jsonb_supported:
                         sql = f"(SELECT json({json_group_array}(value)) FROM (SELECT value FROM {json_each}({array_sql}) LIMIT {count}))"
                     else:
                         sql = f"(SELECT {json_group_array}(value) FROM (SELECT value FROM {json_each}({array_sql}) LIMIT {count}))"
@@ -1941,7 +1942,7 @@ class SqlConvertersMixin:
                     self.data_column, field_path
                 )
                 # Replace hardcoded "json_extract" with dynamic prefix
-                if self._jsonb_supported:
+                if self.jsonb.jsonb_supported:
                     json_path_expr = json_path_expr.replace(
                         "json_extract", "jsonb_extract"
                     )

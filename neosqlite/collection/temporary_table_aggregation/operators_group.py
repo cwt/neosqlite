@@ -86,7 +86,7 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                 group_by_parts.append("_id")
             else:
                 # Group by extracted field
-                json_extract = f"{self._json_function_prefix}_extract"
+                json_extract = f"{self.jsonb.json_function_prefix}_extract"
                 select_parts.append(
                     f"{json_extract}(data, '{parse_json_path(field_name)}') AS _id"
                 )
@@ -158,8 +158,8 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                 )
 
             # Map accumulator to SQL
-            json_extract = f"{self._json_function_prefix}_extract"
-            json_group_array = self.json_group_array_function
+            json_extract = f"{self.jsonb.json_function_prefix}_extract"
+            json_group_array = self.jsonb.json_group_array_function
 
             match op:
                 case "$sum":
@@ -284,7 +284,7 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                     if isinstance(expr, dict):
                         # Build json_object for the expression (same as $push)
                         json_object_func = (
-                            f"{self._json_function_prefix}_object"
+                            f"{self.jsonb.json_function_prefix}_object"
                         )
                         obj_args = []
                         for key, val in expr.items():
@@ -332,7 +332,7 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                     if isinstance(expr, dict):
                         # Build json_object for the expression
                         json_object_func = (
-                            f"{self._json_function_prefix}_object"
+                            f"{self.jsonb.json_function_prefix}_object"
                         )
                         obj_args = []
                         for key, val in expr.items():
@@ -392,7 +392,7 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         # The _id field should be the group key, and other fields are accumulators
         # We'll create a JSON object with all the fields
         json_args = self._id_to_json_object_args(select_parts)
-        json_object_func = f"{self._json_function_prefix}_object"
+        json_object_func = f"{self.jsonb.json_function_prefix}_object"
         # Wrap with json() to ensure text output for Python consumption
         # (jsonb_object returns binary JSONB which Python can't read directly)
         json_output_func = f"json({json_object_func}"
@@ -481,7 +481,7 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         # When data is stored as JSONB (binary), we need to convert it to text JSON for Python
         # Since temp tables created with CREATE TABLE ... AS SELECT don't preserve column types,
         # we check if the source collection has JSONB support instead
-        use_json_wrapper = self._jsonb_supported
+        use_json_wrapper = self.jsonb.jsonb_supported
 
         # Check if the table has id and _id columns
         columns = self.db.execute(
@@ -685,7 +685,7 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                 case {"$push": push_expr}:
                     # Use json_group_array for push
                     json_group_func = _get_json_group_array_function(
-                        self._jsonb_supported
+                        self.jsonb.jsonb_supported
                     )
                     output_fields.append(
                         f"{json_group_func}({push_expr}) AS {field_name}"
@@ -710,7 +710,7 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         if isinstance(group_by, str) and group_by.startswith("$"):
             field = group_by[1:]
             json_path = parse_json_path(field)
-            json_extract = f"{self._json_function_prefix}_extract"
+            json_extract = f"{self.jsonb.json_function_prefix}_extract"
             return f"CAST({json_extract}(data, '{json_path}') AS REAL)"
         return "1"
 
@@ -739,7 +739,7 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
 
         # For bucketAuto, we need to calculate min/max and divide into buckets
         # This is a simplified implementation using NTILE window function
-        json_extract = f"{self._json_function_prefix}_extract"
+        json_extract = f"{self.jsonb.json_function_prefix}_extract"
         field = (
             group_by[1:]
             if isinstance(group_by, str) and group_by.startswith("$")
@@ -779,7 +779,7 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         # Group by bucket and create the _id object with min/max using json_object
         # Wrap with json() to ensure text output (not JSONB binary)
         json_set_func = (
-            "jsonb_object" if self._jsonb_supported else "json_object"
+            "jsonb_object" if self.jsonb.jsonb_supported else "json_object"
         )
         select_clause = f"json({json_set_func}('min', MIN(s.val), 'max', MAX(s.val))) AS _id"
         if agg_fields:

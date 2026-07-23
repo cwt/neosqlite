@@ -42,21 +42,7 @@ from ..json_path_utils import (
 from ..json_path_utils import (
     parse_json_path as parse_json_path,
 )
-from ..jsonb_support import (
-    _get_json_each_function as _get_json_each_function,
-)
-from ..jsonb_support import (
-    _get_json_function_prefix as _get_json_function_prefix,
-)
-from ..jsonb_support import (
-    _get_json_group_array_function as _get_json_group_array_function,
-)
-from ..jsonb_support import (
-    supports_jsonb as supports_jsonb,
-)
-from ..jsonb_support import (
-    supports_jsonb_each as supports_jsonb_each,
-)
+from ..jsonb_support import JSONBContext
 
 # Import from submodules
 from .constants import (
@@ -199,30 +185,33 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
                           If None, json_* functions will be used (safe fallback).
         """
         self.data_column = data_column
-        self._jsonb_supported = False
-        self._jsonb_each_supported = False
         self._log2_warned = False  # Track if we've warned about $log2
         self._current_context = None  # Temporary context for SQL conversion
         if db_connection is not None:
-            self._jsonb_supported = supports_jsonb(db_connection)
-            self._jsonb_each_supported = supports_jsonb_each(db_connection)
+            self.jsonb = JSONBContext.from_db(db_connection)
+        else:
+            self.jsonb = JSONBContext(
+                jsonb_supported=False,
+                jsonb_each_supported=False,
+                json_function_prefix="json",
+                json_each_function="json_each",
+                json_group_array_function="json_group_array",
+            )
 
     @property
     def json_function_prefix(self) -> str:
         """Get the appropriate JSON function prefix (json or jsonb)."""
-        return _get_json_function_prefix(self._jsonb_supported)
+        return self.jsonb.json_function_prefix
 
     @property
     def json_each_function(self) -> str:
         """Get the appropriate json_each function name (json_each or jsonb_each)."""
-        return _get_json_each_function(
-            self._jsonb_supported, self._jsonb_each_supported
-        )
+        return self.jsonb.json_each_function
 
     @property
     def json_group_array_function(self) -> str:
         """Get the appropriate json_group_array function name."""
-        return _get_json_group_array_function(self._jsonb_supported)
+        return self.jsonb.json_group_array_function
 
     def evaluate(
         self, expr: dict[str, Any], tier: int = 1, force_python: bool = False

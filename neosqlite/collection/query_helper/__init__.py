@@ -2,11 +2,7 @@ from typing import Any
 
 # Import sqlite3 for type hints and potential direct usage
 from ..._sqlite import sqlite3 as sqlite3  # noqa: F401
-from ..jsonb_support import (
-    _get_json_each_function,
-    supports_jsonb,
-    supports_jsonb_each,
-)
+from ..jsonb_support import JSONBContext
 
 # Import the centralized ID normalization function
 from ..type_correction import normalize_id_query_for_db
@@ -32,9 +28,6 @@ from .utils import (
 )
 from .utils import (
     _get_json_function as _get_json_function,
-)
-from .utils import (
-    _get_json_function_prefix,
 )
 from .utils import (
     _is_numeric_value as _is_numeric_value,
@@ -91,18 +84,8 @@ class QueryHelper(
             if hasattr(collection, "database")
             else False
         )
-        # Check if JSONB is supported for this connection
-        self._jsonb_supported = supports_jsonb(collection.db)
-        # Check if jsonb_each is supported (requires SQLite 3.51.0+)
-        self._jsonb_each_supported = supports_jsonb_each(collection.db)
-        # Cache the function prefix for performance
-        self._json_function_prefix = _get_json_function_prefix(
-            self._jsonb_supported
-        )
-        # Cache the correct json_each function name
-        self._json_each_function = _get_json_each_function(
-            self._jsonb_supported, self._jsonb_each_supported
-        )
+        # Initialize JSONB capabilities
+        self.jsonb = JSONBContext.from_db(collection.db)
         # Initialize Tier-2 evaluator for complex $expr queries
         # Import here to avoid circular imports
         from ..expr_temp_table import TempTableExprEvaluator

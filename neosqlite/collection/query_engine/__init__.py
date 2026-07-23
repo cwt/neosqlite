@@ -8,11 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 logger = logging.getLogger(__name__)
 
-from neosqlite.collection.jsonb_support import (
-    _get_json_each_function,
-    supports_jsonb,
-    supports_jsonb_each,
-)
+from neosqlite.collection.jsonb_support import JSONBContext
 
 from ...bulk_operations import BulkOperationExecutor
 from ...exceptions import MalformedQueryException
@@ -59,17 +55,13 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         self.collection = collection
         self.helpers = QueryHelper(collection)
         # Check if JSONB is supported for this connection
-        self._jsonb_supported = supports_jsonb(collection.db)
-        self._jsonb_each_supported = supports_jsonb_each(collection.db)
-        json_each_function = _get_json_each_function(
-            self._jsonb_supported, self._jsonb_each_supported
-        )
+        self.jsonb = JSONBContext.from_db(collection.db)
         self.sql_translator = SQLTranslator(
             collection.name,
             "data",
             "id",
-            self._jsonb_supported,
-            json_each_function,
+            self.jsonb.jsonb_supported,
+            self.jsonb.json_each_function,
         )
         # Get translation cache size from connection (default: 100, 0 to disable)
         # collection._database is the NeoSQLite Connection, collection.db is sqlite3

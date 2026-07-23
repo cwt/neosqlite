@@ -83,7 +83,9 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
 
         # Create filtered temporary table for regular match operations
         match_stage = {"$match": match_spec}
-        json_set_func = "jsonb_set" if self._jsonb_supported else "json_set"
+        json_set_func = (
+            "jsonb_set" if self.jsonb.jsonb_supported else "json_set"
+        )
 
         # Check what columns the current table has (similar to _process_add_fields_stage)
         columns = self.db.execute(
@@ -98,7 +100,7 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
         # rewrite WHERE clause to extract _id from JSON
         if not has_underscore_id and has_data:
             # Replace references to _id with json_extract(data, '$._id')
-            json_extract = f"{self._json_function_prefix}_extract"
+            json_extract = f"{self.jsonb.json_function_prefix}_extract"
             import re
 
             # Replace _id when it's used as a column reference (not inside a string)
@@ -121,7 +123,7 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
         elif has_id and has_data:
             # Table without _id column (e.g., after $group)
             # Extract _id from JSON data for consistency
-            json_extract = f"{self._json_function_prefix}_extract"
+            json_extract = f"{self.jsonb.json_function_prefix}_extract"
             sql = (
                 f"SELECT id, "
                 f"json({json_set_func}(data, '$._id', {json_extract}(data, '$._id'))) AS data "
@@ -206,7 +208,7 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
 
             # Build SQL based on options
             # Use appropriate JSON functions based on support
-            json_extract_func = f"{self._json_function_prefix}_extract"
+            json_extract_func = f"{self.jsonb.json_function_prefix}_extract"
 
             # Build the SELECT clause
             select_parts = [
@@ -220,8 +222,8 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
                 index_field = parse_json_path(include_index.lstrip("$"))
                 # Use CAST to ensure key is treated as integer for proper indexing
                 select_parts.append(
-                    f"{self._json_function_prefix}_set("
-                    f"  {self._json_function_prefix}_set("
+                    f"{self.jsonb.json_function_prefix}_set("
+                    f"  {self.jsonb.json_function_prefix}_set("
                     f"    {quote_table_name(self.collection.name)}.data,"
                     f"    '{parse_json_path(field_name)}',"
                     f"    je.value"
@@ -233,7 +235,7 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
             else:
                 # Standard unwind - just set the unwound value
                 select_parts.append(
-                    f"{self._json_function_prefix}_set("
+                    f"{self.jsonb.json_function_prefix}_set("
                     f"  {quote_table_name(self.collection.name)}.data,"
                     f"  '{parse_json_path(field_name)}',"
                     f"  je.value"
@@ -245,7 +247,7 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
             # Build FROM clause with json_each
             from_clause = (
                 f"FROM {current_table} as {quote_table_name(self.collection.name)}, "
-                f"{self._json_each_function}({json_extract_func}("
+                f"{self.jsonb.json_each_function}({json_extract_func}("
                 f"  {quote_table_name(self.collection.name)}.data,"
                 f"  '{parse_json_path(field_name)}'"
                 f")) as je"
@@ -262,8 +264,8 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
                 # 2. Documents without arrays (preserved as-is)
 
                 # For JSONB, we need to use json() to convert binary JSON to text for comparisons
-                json_wrapper = "json(" if self._jsonb_supported else ""
-                json_wrapper_close = ")" if self._jsonb_supported else ""
+                json_wrapper = "json(" if self.jsonb.jsonb_supported else ""
+                json_wrapper_close = ")" if self.jsonb.jsonb_supported else ""
 
                 # For preserved documents, MongoDB sets the unwound field to null (not empty array)
                 # We need to handle three cases:
@@ -280,12 +282,12 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
                         CASE
                             WHEN json_type({json_extract_func}({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}')) = 'array'
                                  AND {json_wrapper}{json_extract_func}({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}'){json_wrapper_close} = '[]'
-                            THEN {self._json_function_prefix}_set(
-                                    {self._json_function_prefix}_remove({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}'),
+                            THEN {self.jsonb.json_function_prefix}_set(
+                                    {self.jsonb.json_function_prefix}_remove({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}'),
                                     '{index_field}',
                                     NULL
                                   )
-                            ELSE {self._json_function_prefix}_set(
+                            ELSE {self.jsonb.json_function_prefix}_set(
                                     {quote_table_name(self.collection.name)}.data,
                                     '{index_field}',
                                     NULL
@@ -298,7 +300,7 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
                         CASE
                             WHEN json_type({json_extract_func}({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}')) = 'array'
                                  AND {json_wrapper}{json_extract_func}({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}'){json_wrapper_close} = '[]'
-                            THEN {self._json_function_prefix}_remove({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}')
+                            THEN {self.jsonb.json_function_prefix}_remove({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}')
                             ELSE {quote_table_name(self.collection.name)}.data
                         END
                     """

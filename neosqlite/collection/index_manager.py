@@ -5,9 +5,8 @@ from .._sqlite import sqlite3
 from ..sql_utils import quote_identifier, quote_table_name
 from .json_path_utils import parse_json_path
 from .jsonb_support import (
-    _get_json_function_prefix,
+    JSONBContext,
     _get_json_tree_function,
-    supports_jsonb,
     supports_jsonb_each,
 )
 
@@ -35,8 +34,8 @@ class IndexManager:
             collection: The NeoSQLite collection instance to manage indexes for
         """
         self.collection = collection
-        # Check if JSONB is supported for this connection
-        self._jsonb_supported = supports_jsonb(collection.db)
+        # Initialize JSONB capabilities
+        self.jsonb = JSONBContext.from_db(collection.db)
 
     def create_index(
         self,
@@ -84,7 +83,7 @@ class IndexManager:
                 index_name = field.replace(".", "_")
 
                 # Determine which function to use based on JSONB support
-                func_prefix = _get_json_function_prefix(self._jsonb_supported)
+                func_prefix = self.jsonb.json_function_prefix
 
                 # Create the index using appropriate JSON/JSONB function
                 self.collection.db.execute(
@@ -103,7 +102,7 @@ class IndexManager:
                 index_name = key.replace(".", "_")
 
                 # Determine which function to use based on JSONB support
-                func_prefix = _get_json_function_prefix(self._jsonb_supported)
+                func_prefix = self.jsonb.json_function_prefix
 
                 # Create the index using appropriate JSON/JSONB function
                 self.collection.db.execute(
@@ -139,7 +138,7 @@ class IndexManager:
             index_name = "_".join(fields).replace(".", "_")
 
             # Determine which function to use based on JSONB support
-            func_prefix = _get_json_function_prefix(self._jsonb_supported)
+            func_prefix = self.jsonb.json_function_prefix
 
             # Create the compound index using multiple JSON/JSONB extract calls
             index_columns = ", ".join(
@@ -200,7 +199,7 @@ class IndexManager:
             # Concatenate all text values with spaces for FTS indexing
             jsonb_each_supported = supports_jsonb_each(self.collection.db)
             json_tree_func = _get_json_tree_function(
-                self._jsonb_supported, jsonb_each_supported
+                self.jsonb.jsonb_supported, jsonb_each_supported
             )
             last_key = field_parts[-1]
             self.collection.db.execute(
@@ -238,7 +237,7 @@ class IndexManager:
             # Nested field - use json_tree/jsonb_tree with GROUP BY
             jsonb_each_supported = supports_jsonb_each(self.collection.db)
             json_tree_func = _get_json_tree_function(
-                self._jsonb_supported, jsonb_each_supported
+                self.jsonb.jsonb_supported, jsonb_each_supported
             )
             self.collection.db.execute(f"""
                 CREATE TRIGGER IF NOT EXISTS {quote_table_name(self.collection.name)}_{index_name}_fts_insert
@@ -272,7 +271,7 @@ class IndexManager:
             # Nested field - use json_tree/jsonb_tree with GROUP BY
             jsonb_each_supported = supports_jsonb_each(self.collection.db)
             json_tree_func = _get_json_tree_function(
-                self._jsonb_supported, jsonb_each_supported
+                self.jsonb.jsonb_supported, jsonb_each_supported
             )
             self.collection.db.execute(f"""
                 CREATE TRIGGER IF NOT EXISTS {quote_table_name(self.collection.name)}_{index_name}_fts_update
@@ -738,7 +737,7 @@ class IndexManager:
         column_name = f"{key.replace('.', '_')}_utc"
 
         # Determine which function to use based on JSONB support
-        func_prefix = _get_json_function_prefix(self._jsonb_supported)
+        func_prefix = self.jsonb.json_function_prefix
 
         index_sql = f"""
         CREATE {"UNIQUE " if unique else ""}INDEX IF NOT EXISTS

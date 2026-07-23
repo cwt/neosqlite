@@ -2854,10 +2854,10 @@ def test_jsonb_support_detection_integration():
     helper = collection.query_engine.helpers
 
     # The helper should have the correct JSONB support flag
-    assert isinstance(helper._jsonb_supported, bool)
+    assert isinstance(helper.jsonb.jsonb_supported, bool)
 
     # And it should match what we detected
-    assert helper._jsonb_supported == jsonb_supported
+    assert helper.jsonb.jsonb_supported == jsonb_supported
 
 
 def test_complete_document_insertion_workflow():

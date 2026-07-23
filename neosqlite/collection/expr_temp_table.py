@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 from .._sqlite import sqlite3
 from .json_path_utils import parse_json_path
-from .jsonb_support import supports_jsonb
+from .jsonb_support import JSONBContext
 from .query_helper.translation_cache import TranslationCache
 
 
@@ -52,7 +52,7 @@ class TempTableExprEvaluator:
         """
         self.db = db_connection
         self.data_column = data_column
-        self._jsonb_supported = supports_jsonb(db_connection)
+        self.jsonb = JSONBContext.from_db(db_connection)
         self._temp_tables: list[str] = []
         if translation_cache_size is None:
             translation_cache_size = 100
@@ -63,7 +63,7 @@ class TempTableExprEvaluator:
     @property
     def json_function_prefix(self) -> str:
         """Get the appropriate JSON function prefix (json or jsonb)."""
-        return "jsonb" if self._jsonb_supported else "json"
+        return self.jsonb.json_function_prefix
 
     def is_cache_enabled(self) -> bool:
         """Check if translation cache is enabled."""
@@ -258,7 +258,7 @@ class TempTableExprEvaluator:
         params = self._extract_param_values_from_expr(expr)
 
         # Build SELECT with json() conversion for Python-space data
-        if self._jsonb_supported:
+        if self.jsonb.jsonb_supported:
             select_data = f"json({collection_name}.{self.data_column}) as data"
         else:
             select_data = f"{collection_name}.data as data"
@@ -407,7 +407,7 @@ class TempTableExprEvaluator:
             col_name = self._sanitize_field_name(field)
 
             # Build JSON extract expression
-            if self._jsonb_supported:
+            if self.jsonb.jsonb_supported:
                 extract_expr = f"jsonb_extract({self.data_column}, '{parse_json_path(field)}') as {col_name}"
             else:
                 extract_expr = f"json_extract({self.data_column}, '{parse_json_path(field)}') as {col_name}"
@@ -452,7 +452,7 @@ class TempTableExprEvaluator:
         )
 
         # Build SELECT with json() conversion for Python-space data
-        if self._jsonb_supported:
+        if self.jsonb.jsonb_supported:
             # Use json() to convert jsonb to regular JSON for Python space
             select_data = f"json({collection_name}.{self.data_column}) as data"
         else:

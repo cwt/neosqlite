@@ -100,7 +100,7 @@ def test_get_results_from_table_with_jsonb():
         processor = TemporaryTableAggregationProcessor(collection)
 
         # Verify that JSONB is supported for this processor as well
-        if not processor._jsonb_supported:
+        if not processor.jsonb.jsonb_supported:
             pytest.skip("JSONB not supported for temporary table processor")
 
         # Create a temporary table with JSONB data

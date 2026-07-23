@@ -18,6 +18,9 @@ from ..json_path_utils import parse_json_path
 from ..text_search import unified_text_search
 from ..type_correction import normalize_id_query_for_db
 
+if TYPE_CHECKING:
+    from .. import Collection
+    from ..jsonb_support import JSONBContext
 logger = logging.getLogger(__name__)
 
 
@@ -31,14 +34,13 @@ class QueryBuilderMixin:
 
     This mixin assumes it will be used with a class that has:
     - self.collection (with db and name attributes)
-    - self._jsonb_supported
-    - self._json_function_prefix
+    - self.jsonb.jsonb_supported
+    - self.jsonb.json_function_prefix
     - self._build_expr_where_clause method (for handling $expr queries)
     """
 
     collection: "Collection"
-    _jsonb_supported: bool
-    _json_function_prefix: str
+    jsonb: "JSONBContext"
     _build_expr_where_clause: Any
 
     def _is_text_search_query(self, query: dict[str, Any]) -> bool:
@@ -284,9 +286,7 @@ class QueryBuilderMixin:
                 if isinstance(value, re.Pattern):
                     return None  # Fall back to Python for regex objects
 
-                extract_expr = (
-                    f"{self._json_function_prefix}_extract(data, {json_path})"
-                )
+                extract_expr = f"{self.jsonb.json_function_prefix}_extract(data, {json_path})"
                 return f"{extract_expr} = ?", [value]
 
     def _build_simple_where_clause(
@@ -446,9 +446,7 @@ class QueryBuilderMixin:
                 order_field = f"{quote_table_name(self.collection.name)}._id"
             else:
                 json_path = f"'{parse_json_path(field)}'"
-                order_field = (
-                    f"{self._json_function_prefix}_extract(data, {json_path})"
-                )
+                order_field = f"{self.jsonb.json_function_prefix}_extract(data, {json_path})"
 
             order_dir = "ASC" if direction == 1 else "DESC"
             clauses.append(f"{order_field}{collate_clause} {order_dir}")
@@ -530,12 +528,12 @@ class QueryBuilderMixin:
                         return None, []
                     if is_datetime_indexed:
                         clauses.append(
-                            f"{self._json_function_prefix}_extract(data, {json_path}) = datetime(?)"
+                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) = datetime(?)"
                         )
                         params.append(op_val)
                     else:
                         clauses.append(
-                            f"{self._json_function_prefix}_extract(data, {json_path}) = ?"
+                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) = ?"
                         )
                         params.append(op_val)
                 case "$gt":
@@ -544,12 +542,12 @@ class QueryBuilderMixin:
                         return None, []
                     if is_datetime_indexed:
                         clauses.append(
-                            f"{self._json_function_prefix}_extract(data, {json_path}) > datetime(?)"
+                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) > datetime(?)"
                         )
                         params.append(op_val)
                     else:
                         clauses.append(
-                            f"{self._json_function_prefix}_extract(data, {json_path}) > ?"
+                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) > ?"
                         )
                         params.append(op_val)
                 case "$lt":
@@ -558,12 +556,12 @@ class QueryBuilderMixin:
                         return None, []
                     if is_datetime_indexed:
                         clauses.append(
-                            f"{self._json_function_prefix}_extract(data, {json_path}) < datetime(?)"
+                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) < datetime(?)"
                         )
                         params.append(op_val)
                     else:
                         clauses.append(
-                            f"{self._json_function_prefix}_extract(data, {json_path}) < ?"
+                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) < ?"
                         )
                         params.append(op_val)
                 case "$gte":
@@ -571,12 +569,12 @@ class QueryBuilderMixin:
                         return None, []
                     if is_datetime_indexed:
                         clauses.append(
-                            f"{self._json_function_prefix}_extract(data, {json_path}) >= datetime(?)"
+                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) >= datetime(?)"
                         )
                         params.append(op_val)
                     else:
                         clauses.append(
-                            f"{self._json_function_prefix}_extract(data, {json_path}) >= ?"
+                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) >= ?"
                         )
                         params.append(op_val)
                 case "$lte":
@@ -584,12 +582,12 @@ class QueryBuilderMixin:
                         return None, []
                     if is_datetime_indexed:
                         clauses.append(
-                            f"{self._json_function_prefix}_extract(data, {json_path}) <= datetime(?)"
+                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) <= datetime(?)"
                         )
                         params.append(op_val)
                     else:
                         clauses.append(
-                            f"{self._json_function_prefix}_extract(data, {json_path}) <= ?"
+                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) <= ?"
                         )
                         params.append(op_val)
                 case "$ne":
@@ -598,18 +596,16 @@ class QueryBuilderMixin:
                         return None, []
                     if is_datetime_indexed:
                         clauses.append(
-                            f"{self._json_function_prefix}_extract(data, {json_path}) != datetime(?)"
+                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) != datetime(?)"
                         )
                         params.append(op_val)
                     else:
                         clauses.append(
-                            f"{self._json_function_prefix}_extract(data, {json_path}) != ?"
+                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) != ?"
                         )
                         params.append(op_val)
                 case "$in":
-                    json_each_func = getattr(
-                        self, "_json_each_function", "json_each"
-                    )
+                    json_each_func = self.jsonb.json_each_function
                     if isinstance(op_val, (list, tuple)):
                         placeholders = ", ".join("?" for _ in op_val)
                         if json_path == "value":
@@ -622,9 +618,7 @@ class QueryBuilderMixin:
                     else:
                         return None, []
                 case "$nin":
-                    json_each_func = getattr(
-                        self, "_json_each_function", "json_each"
-                    )
+                    json_each_func = self.jsonb.json_each_function
                     if isinstance(op_val, (list, tuple)):
                         placeholders = ", ".join("?" for _ in op_val)
                         if json_path == "value":
@@ -655,11 +649,11 @@ class QueryBuilderMixin:
                     if isinstance(op_val, bool):
                         if op_val:
                             clauses.append(
-                                f"{self._json_function_prefix}_extract(data, {json_path}) IS NOT NULL"
+                                f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) IS NOT NULL"
                             )
                         else:
                             clauses.append(
-                                f"{self._json_function_prefix}_extract(data, {json_path}) IS NULL"
+                                f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) IS NULL"
                             )
                     else:
                         # Invalid value for $exists, fallback to Python
@@ -670,7 +664,7 @@ class QueryBuilderMixin:
                         divisor, remainder = op_val
                         clauses.append(
                             f"json_type(data, {json_path}) IN ('integer', 'real') AND "
-                            f"{self._json_function_prefix}_extract(data, {json_path}) % ? = ?"
+                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) % ? = ?"
                         )
                         params.extend([divisor, remainder])
                     else:
@@ -680,7 +674,7 @@ class QueryBuilderMixin:
                     # Handle array size comparison
                     if isinstance(op_val, int):
                         clauses.append(
-                            f"json_array_length({self._json_function_prefix}_extract(data, {json_path})) = ?"
+                            f"json_array_length({self.jsonb.json_function_prefix}_extract(data, {json_path})) = ?"
                         )
                         params.append(op_val)
                     else:
@@ -690,7 +684,7 @@ class QueryBuilderMixin:
                     # Handle case-insensitive substring search
                     if isinstance(op_val, str):
                         clauses.append(
-                            f"lower({self._json_function_prefix}_extract(data, {json_path})) LIKE ?"
+                            f"lower({self.jsonb.json_function_prefix}_extract(data, {json_path})) LIKE ?"
                         )
                         params.append(f"%{op_val.lower()}%")
                     else:
@@ -717,9 +711,9 @@ class QueryBuilderMixin:
                             if c is None:
                                 return None, []
                             # Retarget: replace json_extract(data, value) with value
-                            # The _build_operator_clause uses f"{self._json_function_prefix}_extract(data, value)"
+                            # The _build_operator_clause uses f"{self.jsonb.json_function_prefix}_extract(data, value)"
                             c = c.replace(
-                                f"{self._json_function_prefix}_extract(data, value)",
+                                f"{self.jsonb.json_function_prefix}_extract(data, value)",
                                 "value",
                             )
                             # Also fix json_each(data, value) -> json_each(data, "value")
@@ -742,7 +736,7 @@ class QueryBuilderMixin:
                                 else:
                                     # Equality on subfield
                                     c = (
-                                        f"{self._json_function_prefix}_extract(data, "
+                                        f"{self.jsonb.json_function_prefix}_extract(data, "
                                         f"'{parse_json_path(sub_field)}') = ?"
                                     )
                                     p = [sub_val]
@@ -751,8 +745,8 @@ class QueryBuilderMixin:
                                     return None, []
                                 # Retarget from 'data' to 'value' (the row from json_each)
                                 c = c.replace(
-                                    f"{self._json_function_prefix}_extract(data,",
-                                    f"{self._json_function_prefix}_extract(value,",
+                                    f"{self.jsonb.json_function_prefix}_extract(data,",
+                                    f"{self.jsonb.json_function_prefix}_extract(value,",
                                 )
                                 inner_clauses.append(c)
                                 inner_params.extend(p)
@@ -795,7 +789,7 @@ class QueryBuilderMixin:
                         pattern = op_val
 
                     clauses.append(
-                        f"{self._json_function_prefix}_extract(data, {json_path}) REGEXP ?"
+                        f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) REGEXP ?"
                     )
                     params.append(pattern)
                 case _:

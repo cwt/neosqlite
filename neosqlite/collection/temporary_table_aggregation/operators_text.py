@@ -135,7 +135,7 @@ class OperatorsTextMixin(OperatorsBaseMixin):
         # the JSON object at any depth, then concatenate them for FTS indexing.
         # This handles any unwound object/array structure without hardcoded paths.
         json_tree_func = _get_json_tree_function(
-            self._jsonb_supported, self._jsonb_each_supported
+            self.jsonb.jsonb_supported, self.jsonb.jsonb_each_supported
         )
 
         self.db.execute(f"""
@@ -151,7 +151,7 @@ class OperatorsTextMixin(OperatorsBaseMixin):
         # Join on source rowid to get exact matching rows
         # Also preserve _id column for proper sorting support
         # Store bm25 score in JSON data for $meta: textScore support
-        json_set_func = f"{self._json_function_prefix}_set"
+        json_set_func = f"{self.jsonb.json_function_prefix}_set"
         self.db.execute(f"DROP TABLE IF EXISTS {result_table_name}")
         self.db.execute(
             f"""

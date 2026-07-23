@@ -93,7 +93,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                 "$densify with non-numeric bounds not supported - use force_fallback"
             )
 
-        json_extract = f"{self._json_function_prefix}_extract"
+        json_extract = f"{self.jsonb.json_function_prefix}_extract"
 
         densify_key = f"{field}:{step}:{lower_bound}:{upper_bound}"
         densify_hash = hashlib.sha256(densify_key.encode()).hexdigest()[:8]
@@ -121,7 +121,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                 + ")"
             )
 
-            json_set_func = f"{self._json_function_prefix}_set"
+            json_set_func = f"{self.jsonb.json_function_prefix}_set"
 
             select_clause = f"""
                 SELECT id, _id,
@@ -176,7 +176,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
         # Extract input documents from current temp table
         # IMPORTANT: _id is stored as a separate column, not in the data JSON
         # When JSONB is supported, data column stores JSONB BLOB — convert to text
-        if self._jsonb_supported:
+        if self.jsonb.jsonb_supported:
             cursor = self.db.execute(
                 f"SELECT _id, json(data) FROM {current_table}"
             )
@@ -523,7 +523,9 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             json_set_args.append(window_sql)
 
         # 4. Create the temporary table
-        json_set_func = "jsonb_set" if self._jsonb_supported else "json_set"
+        json_set_func = (
+            "jsonb_set" if self.jsonb.jsonb_supported else "json_set"
+        )
 
         # Build SELECT clause based on available columns
         if has_id and has_underscore_id and has_data:
@@ -769,8 +771,12 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
         if depth_field:
             depth_json_sql = f", '{parse_json_path(str(depth_field))}', depth"
 
-        json_group_func = _get_json_group_array_function(self._jsonb_supported)
-        json_set_func = "jsonb_set" if self._jsonb_supported else "json_set"
+        json_group_func = _get_json_group_array_function(
+            self.jsonb.jsonb_supported
+        )
+        json_set_func = (
+            "jsonb_set" if self.jsonb.jsonb_supported else "json_set"
+        )
 
         as_field_str = str(as_field)
         stage_sql = f"""
@@ -846,7 +852,9 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
 
         # 2. Process output fields
         has_locf = any(fs.get("method") == "locf" for fs in output.values())
-        json_set_func = "jsonb_set" if self._jsonb_supported else "json_set"
+        json_set_func = (
+            "jsonb_set" if self.jsonb.jsonb_supported else "json_set"
+        )
 
         if not has_locf:
             # Simple constant value fill

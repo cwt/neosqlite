@@ -21,11 +21,7 @@ from .expr_evaluator import (
     _is_expression,
 )
 from .json_path_utils import parse_json_path
-from .jsonb_support import (
-    _get_json_each_function,
-    supports_jsonb,
-    supports_jsonb_each,
-)
+from .jsonb_support import JSONBContext
 from .query_helper.translation_cache import TranslationCache
 from .query_helper.utils import _get_json_function
 
@@ -142,18 +138,7 @@ class SQLTierAggregator:
         self.evaluator = expr_evaluator or ExprEvaluator(
             data_column="data", db_connection=collection.db
         )
-        self._jsonb_supported = supports_jsonb(collection.db)
-        self._jsonb_each_supported = supports_jsonb_each(collection.db)
-        self._json_function_prefix = (
-            "jsonb" if self._jsonb_supported else "json"
-        )
-        self._json_each_function = _get_json_each_function(
-            self._jsonb_supported, self._jsonb_each_supported
-        )
-        self._jsonb_supported = supports_jsonb(collection.db)
-        self._json_function_prefix = (
-            "jsonb" if self._jsonb_supported else "json"
-        )
+        self.jsonb = JSONBContext.from_db(collection.db)
         # translation_cache_size: None = use default, 0 = disable, positive = custom size
         if translation_cache_size is None:
             translation_cache_size = 100
@@ -164,12 +149,12 @@ class SQLTierAggregator:
     def _get_json_extract(self, path: str | None = None) -> str:
         """Get JSON extract function with correct prefix."""
         if path:
-            return f"{self._json_function_prefix}_extract(data, '${path}')"
-        return f"{self._json_function_prefix}_extract"
+            return f"{self.jsonb.json_function_prefix}_extract(data, '${path}')"
+        return f"{self.jsonb.json_function_prefix}_extract"
 
     def _get_json_set(self) -> str:
         """Get JSON set function with correct prefix."""
-        return f"{self._json_function_prefix}_set"
+        return f"{self.jsonb.json_function_prefix}_set"
 
     def can_optimize_pipeline(self, pipeline: list[dict[str, Any]]) -> bool:
         """Check if pipeline can be optimized in SQL tier."""
@@ -983,8 +968,8 @@ class SQLTierAggregator:
         else:
             include_id = spec.get("_id", 1) == 1
 
-        json_extract_func = f"{self._json_function_prefix}_extract"
-        json_obj_func = f"{self._json_function_prefix}_object"
+        json_extract_func = f"{self.jsonb.json_function_prefix}_extract"
+        json_obj_func = f"{self.jsonb.json_function_prefix}_object"
 
         json_parts = []
 
@@ -1031,7 +1016,9 @@ class SQLTierAggregator:
 
     def _build_unset_sql(self, spec, prev_stage, context, preserve_root):
         fields = [spec] if isinstance(spec, str) else spec
-        json_remove_func = _get_json_function("remove", self._jsonb_supported)
+        json_remove_func = _get_json_function(
+            "remove", self.jsonb.jsonb_supported
+        )
         json_set_func = self._get_json_set()
         json_paths = [f"'{parse_json_path(f)}'" for f in fields]
         data_expr = f"json({json_set_func}({json_remove_func}(data, {', '.join(json_paths)}), '$._id', _id))"
@@ -1052,7 +1039,7 @@ class SQLTierAggregator:
             and not new_root.startswith("$$")
         ):
             field = new_root[1:]
-            json_extract_func = f"{self._json_function_prefix}_extract"
+            json_extract_func = f"{self.jsonb.json_function_prefix}_extract"
             expr_sql = f"{json_extract_func}(data, '{parse_json_path(field)}')"
         elif new_root == "$$ROOT":
             if context.has_root:
@@ -1278,7 +1265,7 @@ class SQLTierAggregator:
         if not from_coll or not as_field:
             return None, []
 
-        json_extract_func = f"{self._json_function_prefix}_extract"
+        json_extract_func = f"{self.jsonb.json_function_prefix}_extract"
         json_set_func = self._get_json_set()
 
         if pipeline:
@@ -1532,7 +1519,9 @@ class SQLTierAggregator:
                 if field == "_id":
                     field_sql = "_id"
                 else:
-                    json_extract_func = f"{self._json_function_prefix}_extract"
+                    json_extract_func = (
+                        f"{self.jsonb.json_function_prefix}_extract"
+                    )
                     field_sql = (
                         f"{json_extract_func}(data, '{parse_json_path(field)}')"
                     )
@@ -1563,7 +1552,7 @@ class SQLTierAggregator:
                                     json_path = parse_json_path(field)
                                     placeholders = ", ".join("?" for _ in arg)
                                     where_clauses.append(
-                                        f"EXISTS (SELECT 1 FROM {self._json_each_function}(data, '{json_path}') WHERE json_each.value IN ({placeholders}))"
+                                        f"EXISTS (SELECT 1 FROM {self.jsonb.json_each_function}(data, '{json_path}') WHERE json_each.value IN ({placeholders}))"
                                     )
                                     all_params.extend(arg)
                                 else:
@@ -1573,7 +1562,7 @@ class SQLTierAggregator:
                                     json_path = parse_json_path(field)
                                     placeholders = ", ".join("?" for _ in arg)
                                     where_clauses.append(
-                                        f"NOT EXISTS (SELECT 1 FROM {self._json_each_function}(data, '{json_path}') WHERE json_each.value IN ({placeholders}))"
+                                        f"NOT EXISTS (SELECT 1 FROM {self.jsonb.json_each_function}(data, '{json_path}') WHERE json_each.value IN ({placeholders}))"
                                     )
                                     all_params.extend(arg)
                                 else:
@@ -1585,7 +1574,7 @@ class SQLTierAggregator:
                                     json_path = parse_json_path(field)
                                     for v in arg:
                                         where_clauses.append(
-                                            f"EXISTS (SELECT 1 FROM {self._json_each_function}(data, '{json_path}') WHERE json_each.value = ?)"
+                                            f"EXISTS (SELECT 1 FROM {self.jsonb.json_each_function}(data, '{json_path}') WHERE json_each.value = ?)"
                                         )
                                         all_params.append(v)
                                 else:
@@ -1614,7 +1603,7 @@ class SQLTierAggregator:
             if field == "_id":
                 field_sql = "_id"
             else:
-                json_extract_func = f"{self._json_function_prefix}_extract"
+                json_extract_func = f"{self.jsonb.json_function_prefix}_extract"
                 field_sql = (
                     f"{json_extract_func}(data, '{parse_json_path(field)}')"
                 )
@@ -1675,7 +1664,7 @@ class SQLTierAggregator:
                 if field == "_id":
                     field_sql = "_id"
                 else:
-                    field_sql = f"{self._json_function_prefix}_extract(data, '{parse_json_path(field)}')"
+                    field_sql = f"{self.jsonb.json_function_prefix}_extract(data, '{parse_json_path(field)}')"
                 sort_parts.append(f"{field_sql} {order}")
             sort_clause = f"ORDER BY {', '.join(sort_parts)}"
 

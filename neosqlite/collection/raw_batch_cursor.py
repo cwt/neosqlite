@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 from ..sql_utils import quote_table_name
 from .json_helpers import neosqlite_json_dumps
 from .json_path_utils import parse_json_path
-from .jsonb_support import _get_json_function_prefix, json_data_column
+from .jsonb_support import json_data_column
 
 if TYPE_CHECKING:
     from ..client_session import ClientSession
@@ -102,8 +102,8 @@ class RawBatchCursor:
                 self._tables_to_cleanup.extend(tables)
 
             # Use the collection's JSONB support flag to determine how to select data
-            jsonb = self._collection.query_engine._jsonb_supported
-            json_func = _get_json_function_prefix(jsonb)
+            jsonb = self._collection.query_engine.jsonb.jsonb_supported
+            json_func = "jsonb" if jsonb else "json"
 
             # Build ORDER BY clause if sorting is specified
             order_by = ""

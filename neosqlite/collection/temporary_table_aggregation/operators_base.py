@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ..jsonb_support import JSONBContext
 
 
 class OperatorsBaseMixin:
@@ -12,11 +15,7 @@ class OperatorsBaseMixin:
     query_engine: Any
     expr_evaluator: Any
     sql_translator: Any
-    _jsonb_supported: bool
-    _jsonb_each_supported: bool
-    _json_each_function: str
-    _json_function_prefix: str
-    json_group_array_function: str
+    jsonb: "JSONBContext"
     _has_sort_stage: bool
     _text_on_temp_table_warned: bool
     _has_unwind_in_pipeline: bool

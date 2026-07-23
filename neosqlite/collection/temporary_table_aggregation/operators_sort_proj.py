@@ -78,7 +78,7 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
                 else:
                     # Neither id nor _id column exists - extract _id from JSON
                     # Replace references to _id with json_extract(data, '$._id')
-                    json_func = self._json_function_prefix
+                    json_func = self.jsonb.json_function_prefix
                     order_clause = order_clause.replace(
                         "_id ASC", f"{json_func}_extract(data, '$._id') ASC"
                     )
@@ -173,8 +173,8 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
                     replacement_str_escaped = replacement_str.replace("'", "''")
 
                     # Build SQL for $replaceOne using instr() and substr()
-                    json_extract = f"{self._json_function_prefix}_extract"
-                    json_set_func = f"{self._json_function_prefix}_set"
+                    json_extract = f"{self.jsonb.json_function_prefix}_extract"
+                    json_set_func = f"{self.jsonb.json_function_prefix}_set"
                     if isinstance(input_expr, str) and input_expr.startswith(
                         "$"
                     ):
@@ -199,19 +199,19 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
             # Handle simple field copying (e.g., {"newField": "$existingField"})
             elif isinstance(source_field, str) and source_field.startswith("$"):
                 source_field_name = source_field[1:]  # Remove leading $
-                json_set_func = f"{self._json_function_prefix}_set"
+                json_set_func = f"{self.jsonb.json_function_prefix}_set"
                 if source_field_name == "_id":
                     # Special handling for _id field
                     data_expr = f"{json_set_func}({data_expr}, '{parse_json_path(new_field)}', id)"
                 else:
                     # Use json_extract/jsonb_extract to get the source field value
-                    json_extract = f"{self._json_function_prefix}_extract"
+                    json_extract = f"{self.jsonb.json_function_prefix}_extract"
                     data_expr = f"{json_set_func}({data_expr}, '{parse_json_path(new_field)}', {json_extract}(data, '{parse_json_path(source_field_name)}'))"
 
             # Handle literal values
             elif not isinstance(source_field, dict):
                 # For literal values, use json_set with parameterized value
-                json_set_func = f"{self._json_function_prefix}_set"
+                json_set_func = f"{self.jsonb.json_function_prefix}_set"
                 data_expr = f"{json_set_func}({data_expr}, '{parse_json_path(new_field)}', json(?))"
                 params.append(source_field)
 
@@ -264,7 +264,7 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
             select_cols = ""
 
         # When using JSONB, we need to convert final output to text JSON for Python
-        jsonb = self._jsonb_supported
+        jsonb = self.jsonb.jsonb_supported
 
         # If we have parameters, use a subquery to avoid duplicating
         # placeholder expressions in json_data_column()'s CASE statement.
@@ -494,7 +494,7 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
             select_cols.append("_id")
 
         if fields_to_remove:
-            json_remove = f"{self._json_function_prefix}_remove"
+            json_remove = f"{self.jsonb.json_function_prefix}_remove"
             # SQLite's json_remove supports multiple paths in a single call:
             #   json_remove(data, p1, p2, ...)  -- more efficient than nesting
             path_args = ", ".join(
@@ -505,7 +505,7 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
             data_expr = "data"
 
         select_cols.append(
-            f"{json_data_column(self._jsonb_supported, data_expr)} AS data"
+            f"{json_data_column(self.jsonb.jsonb_supported, data_expr)} AS data"
         )
 
         sql = f"SELECT {', '.join(select_cols)} FROM {current_table}"
@@ -526,9 +526,9 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
         - Field references: ``{"alias": "$some.path"}``
         - Expression projections: ``{"alias": {$concat: [...]}}``
         """
-        jsonb = self._jsonb_supported
+        jsonb = self.jsonb.jsonb_supported
         json_obj_func = "jsonb_object" if jsonb else "json_object"
-        json_extract_func = f"{self._json_function_prefix}_extract"
+        json_extract_func = f"{self.jsonb.json_function_prefix}_extract"
 
         # Determine if projection uses expressions or field references.
         # When it does, _id is only included if explicitly specified
@@ -654,7 +654,7 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
         Returns:
             SQL expression that returns the BM25 relevance score (positive value)
         """
-        json_extract = f"{self._json_function_prefix}_extract"
+        json_extract = f"{self.jsonb.json_function_prefix}_extract"
         return f"COALESCE({json_extract}(data, '$._textScore'), 0.0)"
 
     def _process_replace_root_stage(
@@ -693,7 +693,7 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
 
             # Create replaceRoot temporary table
             replace_stage = {"$replaceRoot": {"newRoot": new_root_expr}}
-            json_extract = f"{self._json_function_prefix}_extract"
+            json_extract = f"{self.jsonb.json_function_prefix}_extract"
 
             # Extract the field and use it as the new root document
             new_table = create_temp(

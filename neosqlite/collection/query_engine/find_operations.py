@@ -178,7 +178,7 @@ class FindOperationsMixin(QueryEngineProtocol):
             # Tier-1: Use RETURNING clause for atomic find-and-delete
             # Note: SQLite doesn't support LIMIT with DELETE RETURNING directly
             # We need to use a subquery approach
-            jsonb = self._jsonb_supported
+            jsonb = self.jsonb.jsonb_supported
             data_col = json_data_column(jsonb)
             cmd = (
                 f"DELETE FROM {quote_table_name(self.collection.name)} "
@@ -196,7 +196,7 @@ class FindOperationsMixin(QueryEngineProtocol):
         else:
             # Tier-1 (Fallback): Two-step process (SELECT then DELETE)
             # Used when RETURNING clause is not supported (SQLite < 3.35.0)
-            jsonb = self._jsonb_supported
+            jsonb = self.jsonb.jsonb_supported
             cmd = (
                 f"SELECT id, _id, {json_data_column(jsonb)} as data "
                 f"FROM {quote_table_name(self.collection.name)} "
@@ -285,7 +285,7 @@ class FindOperationsMixin(QueryEngineProtocol):
 
         if use_returning:
             # Tier-1: Use RETURNING clause for atomic find-and-replace
-            jsonb = self._jsonb_supported
+            jsonb = self.jsonb.jsonb_supported
             cmd = (
                 f"SELECT id, _id, {json_data_column(jsonb)} as data "
                 f"FROM {quote_table_name(self.collection.name)} "
@@ -301,7 +301,7 @@ class FindOperationsMixin(QueryEngineProtocol):
                 self.helpers._internal_replace(int_id, replacement)
                 if return_document:
                     # Use RETURNING to get the updated document
-                    jsonb = self._jsonb_supported
+                    jsonb = self.jsonb.jsonb_supported
                     data_col = json_data_column(jsonb)
                     update_cmd = (
                         f"UPDATE {quote_table_name(self.collection.name)} "
@@ -331,7 +331,7 @@ class FindOperationsMixin(QueryEngineProtocol):
         else:
             # Tier-1 (Fallback): Two-step process
             # Used when RETURNING clause is not supported (SQLite < 3.35.0)
-            jsonb = self._jsonb_supported
+            jsonb = self.jsonb.jsonb_supported
             cmd = (
                 f"SELECT id, _id, {json_data_column(jsonb)} as data "
                 f"FROM {quote_table_name(self.collection.name)} "
@@ -456,7 +456,7 @@ class FindOperationsMixin(QueryEngineProtocol):
 
         if use_returning:
             # Tier-1: Use RETURNING clause for atomic find-and-update
-            jsonb = self._jsonb_supported
+            jsonb = self.jsonb.jsonb_supported
             cmd = (
                 f"SELECT id, _id, {json_data_column(jsonb)} as data "
                 f"FROM {quote_table_name(self.collection.name)} "
@@ -499,7 +499,7 @@ class FindOperationsMixin(QueryEngineProtocol):
         else:
             # Tier-1 (Fallback): Two-step process
             # Used when RETURNING clause is not supported (SQLite < 3.35.0)
-            jsonb = self._jsonb_supported
+            jsonb = self.jsonb.jsonb_supported
             cmd = (
                 f"SELECT id, _id, {json_data_column(jsonb)} as data "
                 f"FROM {quote_table_name(self.collection.name)} "

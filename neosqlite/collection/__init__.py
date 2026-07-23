@@ -328,13 +328,13 @@ class Collection:
 
             schema_sql = compile_schema_to_sql(
                 validator["$jsonSchema"],
-                jsonb=self.query_engine._jsonb_supported,
+                jsonb=self.query_engine.jsonb.jsonb_supported,
             )
             if schema_sql and schema_sql != "1":
                 check_clause = f", CHECK ({schema_sql})"
 
         # Use the QueryEngine's cached JSONB support flag
-        if self.query_engine._jsonb_supported:
+        if self.query_engine.jsonb.jsonb_supported:
             self.db.execute(f"""
                 CREATE TABLE IF NOT EXISTS {quote_table_name(self.name)} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -372,7 +372,7 @@ class Collection:
 
             if not column_exists:
                 # Add the _id column using the same type as the data column
-                if self.query_engine._jsonb_supported:
+                if self.query_engine.jsonb.jsonb_supported:
                     self.db.execute(
                         f"ALTER TABLE {quote_table_name(self.name)} ADD COLUMN _id JSONB"
                     )

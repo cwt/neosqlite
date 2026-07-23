@@ -5,11 +5,44 @@ Provides efficient detection of JSONB capabilities with automatic caching
 to avoid redundant database queries.
 """
 
+from __future__ import annotations
+
 import logging
+from dataclasses import dataclass
 
 from .._sqlite import sqlite3
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class JSONBContext:
+    """Immutable snapshot of JSONB capabilities for a database connection.
+
+    Replaces the scattered ``_jsonb_supported`` / ``_jsonb_each_supported`` /
+    ``_json_function_prefix`` / ``_json_each_function`` attributes that were
+    previously duplicated across 9 constructors.
+    """
+
+    jsonb_supported: bool
+    jsonb_each_supported: bool
+    json_function_prefix: str
+    json_each_function: str
+    json_group_array_function: str
+
+    @classmethod
+    def from_db(cls, db_connection) -> JSONBContext:
+        """Build a context by probing *db_connection* once."""
+        b = supports_jsonb(db_connection)
+        be = supports_jsonb_each(db_connection)
+        return cls(
+            jsonb_supported=b,
+            jsonb_each_supported=be,
+            json_function_prefix=_get_json_function_prefix(b),
+            json_each_function=_get_json_each_function(b, be),
+            json_group_array_function=_get_json_group_array_function(b),
+        )
+
 
 # Module-level cache for JSONB support detection results
 # Key: connection id (int), Value: dict with support flags

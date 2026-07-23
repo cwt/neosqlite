@@ -19,8 +19,8 @@ class QueryOptimizerMixin:
 
     This mixin assumes it will be used with a class that has:
     - self.collection (with db and name attributes)
-    - self._jsonb_supported
-    - self._json_function_prefix
+    - self.jsonb.jsonb_supported
+    - self.jsonb.json_function_prefix
     """
 
     collection: "Collection"

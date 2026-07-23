@@ -120,7 +120,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         if where_clause:
             # Get the integer id as well for internal operations
             # Use the same approach as the original code considering JSONB support
-            jsonb = self._jsonb_supported
+            jsonb = self.jsonb.jsonb_supported
             cmd = (
                 f"SELECT id, _id, {json_data_column(jsonb)} as data "
                 f"FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
@@ -207,11 +207,13 @@ class CRUDOperationsMixin(QueryEngineProtocol):
                 if key == "metadata":
                     # Update entire metadata column directly
                     # Use jsonb_set for consistency and gradual migration to JSONB storage
-                    func_name = _get_json_function("set", self._jsonb_supported)
+                    func_name = _get_json_function(
+                        "set", self.jsonb.jsonb_supported
+                    )
 
                     # Need to serialize dict/list to JSON for SQLite storage
                     if isinstance(value, (dict, list)):
-                        if self._jsonb_supported:
+                        if self.jsonb.jsonb_supported:
                             # Use jsonb_set to store as JSONB for better performance
                             set_clauses.append(
                                 f"metadata = {func_name}(metadata, '$', json(?))"
@@ -239,7 +241,9 @@ class CRUDOperationsMixin(QueryEngineProtocol):
                     converted_val = _convert_bytes_to_binary(value)
 
                     # Determine if we should use jsonb_* or json_* functions
-                    func_name = _get_json_function("set", self._jsonb_supported)
+                    func_name = _get_json_function(
+                        "set", self.jsonb.jsonb_supported
+                    )
 
                     if isinstance(converted_val, (dict, list)):
                         # For complex objects, serialize to JSON
@@ -378,7 +382,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
                 where_clause,
                 where_params,
                 update,
-                self._jsonb_supported,
+                self.jsonb.jsonb_supported,
             ):
                 return None
 
@@ -471,7 +475,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         modified_count = 0
         for int_doc_id in ids:
             # Get the document using the integer ID for the update
-            jsonb = self._jsonb_supported
+            jsonb = self.jsonb.jsonb_supported
             cmd = (
                 f"SELECT id, _id, {json_data_column(jsonb)} as data "
                 f"FROM {quote_table_name(self.collection.name)} WHERE id = ?"
@@ -617,7 +621,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         # Find the document using the filter, but get the integer ID for internal operations
         where_clause, params = self.sql_translator.translate_match(filter)
         if where_clause:
-            if self._jsonb_supported:
+            if self.jsonb.jsonb_supported:
                 cmd = f"SELECT id, _id, json(data) as data FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
             else:
                 cmd = f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"

@@ -44,6 +44,7 @@ from .utils import (
 
 if TYPE_CHECKING:
     from .. import Collection
+    from ..jsonb_support import JSONBContext
 
 
 class UpdateOperationsMixin:
@@ -52,14 +53,13 @@ class UpdateOperationsMixin:
 
     This mixin assumes it will be used with a class that has:
     - self.collection (with db and name attributes)
-    - self._jsonb_supported
-    - self._json_function_prefix
+    - self.jsonb.jsonb_supported
+    - self.jsonb.json_function_prefix
     - self._build_simple_where_clause method
     """
 
     collection: "Collection"
-    _jsonb_supported: bool
-    _json_function_prefix: str
+    jsonb: "JSONBContext"
     _get_integer_id_for_oid: Any
 
     def _internal_update(
@@ -299,7 +299,7 @@ class UpdateOperationsMixin:
 
         if unset_clauses:
             # Handle $unset operations with json_remove
-            func_name = _get_json_function("remove", self._jsonb_supported)
+            func_name = _get_json_function("remove", self.jsonb.jsonb_supported)
             current_data = (
                 f"{func_name}({current_data}, {', '.join(unset_clauses)})"
             )
@@ -307,7 +307,7 @@ class UpdateOperationsMixin:
 
         if set_clauses:
             # Handle other operations with json_set
-            func_name = _get_json_function("set", self._jsonb_supported)
+            func_name = _get_json_function("set", self.jsonb.jsonb_supported)
             current_data = (
                 f"{func_name}({current_data}, {', '.join(set_clauses)})"
             )
@@ -330,7 +330,7 @@ class UpdateOperationsMixin:
 
         # Fetch and return the updated document
         # Use the instance's JSONB support flag to determine how to select data
-        jsonb = self._jsonb_supported
+        jsonb = self.jsonb.jsonb_supported
         cmd = (
             f"SELECT id, {json_data_column(jsonb)} as data "
             f"FROM {quote_table_name(self.collection.name)} WHERE id = ?"
@@ -560,7 +560,7 @@ class UpdateOperationsMixin:
                 case "$addToSet":
                     # Tier 2: $addToSet (with or without $each) can use conditional SQL
                     insert_func = _get_json_function(
-                        "insert", self._jsonb_supported
+                        "insert", self.jsonb.jsonb_supported
                     )
                     for field, val in value.items():
                         json_path = f"'{parse_json_path(field)}'"
@@ -620,7 +620,7 @@ class UpdateOperationsMixin:
                     for field, bit_spec in value.items():
                         json_path = f"'{parse_json_path(field)}'"
                         extract_func = _get_json_function(
-                            "extract", self._jsonb_supported
+                            "extract", self.jsonb.jsonb_supported
                         )
                         current_expr = (
                             f"COALESCE({extract_func}(data, {json_path}), 0)"
@@ -663,7 +663,7 @@ class UpdateOperationsMixin:
                         old_json_path = f"'{parse_json_path(old_field)}'"
                         new_json_path = f"'{parse_json_path(new_field)}'"
                         extract_func = _get_json_function(
-                            "extract", self._jsonb_supported
+                            "extract", self.jsonb.jsonb_supported
                         )
                         # First set the new field, then remove the old field
                         # We need to nest the operations: json_remove(json_set(data, new_path, value), old_path)
@@ -690,8 +690,10 @@ class UpdateOperationsMixin:
         # Special handling for $rename: combine json_set and json_remove logic
         has_rename = any(op == "$rename" for op in update_spec.keys())
         if has_rename and set_clauses and unset_clauses:
-            set_func = _get_json_function("set", self._jsonb_supported)
-            remove_func = _get_json_function("remove", self._jsonb_supported)
+            set_func = _get_json_function("set", self.jsonb.jsonb_supported)
+            remove_func = _get_json_function(
+                "remove", self.jsonb.jsonb_supported
+            )
             current_data = f"{remove_func}({set_func}({current_data}, {', '.join(set_clauses)}), {', '.join(unset_clauses)})"
             all_params.extend(set_params)
             # Clear them so we don't process them again below
@@ -700,28 +702,30 @@ class UpdateOperationsMixin:
 
         # Process remaining clauses in order to build a single nested expression
         if unset_clauses:
-            func_name = _get_json_function("remove", self._jsonb_supported)
+            func_name = _get_json_function("remove", self.jsonb.jsonb_supported)
             current_data = (
                 f"{func_name}({current_data}, {', '.join(unset_clauses)})"
             )
             all_params.extend(unset_params)
 
         if insert_clauses:
-            func_name = _get_json_function("insert", self._jsonb_supported)
+            func_name = _get_json_function("insert", self.jsonb.jsonb_supported)
             current_data = (
                 f"{func_name}({current_data}, {', '.join(insert_clauses)})"
             )
             all_params.extend(insert_params)
 
         if replace_clauses:
-            func_name = _get_json_function("replace", self._jsonb_supported)
+            func_name = _get_json_function(
+                "replace", self.jsonb.jsonb_supported
+            )
             current_data = (
                 f"{func_name}({current_data}, {', '.join(replace_clauses)})"
             )
             all_params.extend(replace_params)
 
         if set_clauses:
-            func_name = _get_json_function("set", self._jsonb_supported)
+            func_name = _get_json_function("set", self.jsonb.jsonb_supported)
             current_data = (
                 f"{func_name}({current_data}, {', '.join(set_clauses)})"
             )
@@ -739,7 +743,7 @@ class UpdateOperationsMixin:
             pass
 
         # Fetch updated document
-        jsonb = self._jsonb_supported
+        jsonb = self.jsonb.jsonb_supported
         cmd = (
             f"SELECT id, {json_data_column(jsonb)} as data "
             f"FROM {quote_table_name(self.collection.name)} WHERE id = ?"
@@ -767,7 +771,7 @@ class UpdateOperationsMixin:
         int_doc_id = self._get_integer_id_for_oid(doc_id)
 
         # Fetch the document data
-        jsonb = self._jsonb_supported
+        jsonb = self.jsonb.jsonb_supported
         cmd = (
             f"SELECT {json_data_column(jsonb)} as data "
             f"FROM {quote_table_name(self.collection.name)} WHERE id = ?"
@@ -780,7 +784,7 @@ class UpdateOperationsMixin:
         # Parse the JSON to get field names
         try:
             doc_data = neosqlite_json_loads(
-                row[0] if self._jsonb_supported else row[0]
+                row[0] if self.jsonb.jsonb_supported else row[0]
             )
             if isinstance(doc_data, dict):
                 return set(doc_data.keys())
@@ -822,28 +826,28 @@ class UpdateOperationsMixin:
                     for field, field_val in value.items():
                         json_path = f"'{parse_json_path(field)}'"
                         set_clauses.append(
-                            f"{json_path}, COALESCE({self._json_function_prefix}_extract(data, {json_path}), 0) + ?"
+                            f"{json_path}, COALESCE({self.jsonb.json_function_prefix}_extract(data, {json_path}), 0) + ?"
                         )
                         params.append(field_val)
                 case "$mul":
                     for field, field_val in value.items():
                         json_path = f"'{parse_json_path(field)}'"
                         set_clauses.append(
-                            f"{json_path}, COALESCE({self._json_function_prefix}_extract(data, {json_path}), 0) * ?"
+                            f"{json_path}, COALESCE({self.jsonb.json_function_prefix}_extract(data, {json_path}), 0) * ?"
                         )
                         params.append(field_val)
                 case "$min":
                     for field, field_val in value.items():
                         json_path = f"'{parse_json_path(field)}'"
                         set_clauses.append(
-                            f"{json_path}, min({self._json_function_prefix}_extract(data, {json_path}), ?)"
+                            f"{json_path}, min({self.jsonb.json_function_prefix}_extract(data, {json_path}), ?)"
                         )
                         params.append(field_val)
                 case "$max":
                     for field, field_val in value.items():
                         json_path = f"'{parse_json_path(field)}'"
                         set_clauses.append(
-                            f"{json_path}, max({self._json_function_prefix}_extract(data, {json_path}), ?)"
+                            f"{json_path}, max({self.jsonb.json_function_prefix}_extract(data, {json_path}), ?)"
                         )
                         params.append(field_val)
                 case "$unset":
@@ -854,7 +858,7 @@ class UpdateOperationsMixin:
                     # json_remove has a different syntax
                     if set_clauses:
                         func_name = _get_json_function(
-                            "remove", self._jsonb_supported
+                            "remove", self.jsonb.jsonb_supported
                         )
                         return (
                             f"data = {func_name}(data, {', '.join(set_clauses)})",
@@ -899,7 +903,7 @@ class UpdateOperationsMixin:
                     # json_remove has a different syntax
                     if set_clauses:
                         func_name = _get_json_function(
-                            "remove", self._jsonb_supported
+                            "remove", self.jsonb.jsonb_supported
                         )
                         return (
                             f"data = {func_name}(data, {', '.join(set_clauses)})",
@@ -1088,7 +1092,7 @@ class UpdateOperationsMixin:
 
         # For $unset, we already returned above
         if "$unset" not in update:
-            func_name = _get_json_function("set", self._jsonb_supported)
+            func_name = _get_json_function("set", self.jsonb.jsonb_supported)
             return f"data = {func_name}(data, {', '.join(set_clauses)})", params
         else:
             # This case should have been handled above
@@ -1134,12 +1138,12 @@ class UpdateOperationsMixin:
                     # If it's a Binary object, serialize it to JSON and use json() function
                     if isinstance(converted_val, Binary):
                         clauses.append(
-                            f"{json_path}, COALESCE({self._json_function_prefix}_extract(data, {json_path}), 0) + json(?)"
+                            f"{json_path}, COALESCE({self.jsonb.json_function_prefix}_extract(data, {json_path}), 0) + json(?)"
                         )
                         params.append(neosqlite_json_dumps(converted_val))
                     else:
                         clauses.append(
-                            f"{json_path}, COALESCE({self._json_function_prefix}_extract(data, {json_path}), 0) + ?"
+                            f"{json_path}, COALESCE({self.jsonb.json_function_prefix}_extract(data, {json_path}), 0) + ?"
                         )
                         params.append(converted_val)
             case "$mul":
@@ -1150,26 +1154,26 @@ class UpdateOperationsMixin:
                     # If it's a Binary object, serialize it to JSON and use json() function
                     if isinstance(converted_val, Binary):
                         clauses.append(
-                            f"{json_path}, COALESCE({self._json_function_prefix}_extract(data, {json_path}), 0) * json(?)"
+                            f"{json_path}, COALESCE({self.jsonb.json_function_prefix}_extract(data, {json_path}), 0) * json(?)"
                         )
                         params.append(neosqlite_json_dumps(converted_val))
                     else:
                         clauses.append(
-                            f"{json_path}, COALESCE({self._json_function_prefix}_extract(data, {json_path}), 0) * ?"
+                            f"{json_path}, COALESCE({self.jsonb.json_function_prefix}_extract(data, {json_path}), 0) * ?"
                         )
                         params.append(converted_val)
             case "$min":
                 for field, field_val in value.items():
                     json_path = f"'{parse_json_path(field)}'"
                     clauses.append(
-                        f"{json_path}, min({self._json_function_prefix}_extract(data, {json_path}), ?)"
+                        f"{json_path}, min({self.jsonb.json_function_prefix}_extract(data, {json_path}), ?)"
                     )
                     # Convert bytes to Binary for proper JSON serialization
                     converted_val = _convert_bytes_to_binary(field_val)
                     # If it's a Binary object, serialize it to JSON and use json() function
                     if isinstance(converted_val, Binary):
                         clauses[-1] = (
-                            f"{json_path}, min({self._json_function_prefix}_extract(data, {json_path}), json(?))"
+                            f"{json_path}, min({self.jsonb.json_function_prefix}_extract(data, {json_path}), json(?))"
                         )
                         params.append(neosqlite_json_dumps(converted_val))
                     else:
@@ -1178,14 +1182,14 @@ class UpdateOperationsMixin:
                 for field, field_val in value.items():
                     json_path = f"'{parse_json_path(field)}'"
                     clauses.append(
-                        f"{json_path}, max({self._json_function_prefix}_extract(data, {json_path}), ?)"
+                        f"{json_path}, max({self.jsonb.json_function_prefix}_extract(data, {json_path}), ?)"
                     )
                     # Convert bytes to Binary for proper JSON serialization
                     converted_val = _convert_bytes_to_binary(field_val)
                     # If it's a Binary object, serialize it to JSON and use json() function
                     if isinstance(converted_val, Binary):
                         clauses[-1] = (
-                            f"{json_path}, max({self._json_function_prefix}_extract(data, {json_path}), json(?))"
+                            f"{json_path}, max({self.jsonb.json_function_prefix}_extract(data, {json_path}), json(?))"
                         )
                         params.append(neosqlite_json_dumps(converted_val))
                     else:
@@ -1316,7 +1320,7 @@ class UpdateOperationsMixin:
                     if not use_json:
                         # Build SQL that only inserts if value not in array
                         insert_func = _get_json_function(
-                            "insert", self._jsonb_supported
+                            "insert", self.jsonb.jsonb_supported
                         )
                         array_path = json_path
                         append_path = f"'{parse_json_path(field)}[#]'"

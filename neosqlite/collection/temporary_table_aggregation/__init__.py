@@ -7,13 +7,7 @@ from typing import Any
 from ...sql_utils import quote_table_name
 from ..expr_evaluator import ExprEvaluator
 from ..json_path_utils import parse_json_path
-from ..jsonb_support import (
-    _get_json_each_function,
-    _get_json_function_prefix,
-    _get_json_group_array_function,
-    supports_jsonb,
-    supports_jsonb_each,
-)
+from ..jsonb_support import JSONBContext
 from ..sql_translator_unified import SQLTranslator
 from .core import (
     can_process_with_temporary_tables,
@@ -62,28 +56,14 @@ class TemporaryTableAggregationProcessor(OperatorsMixin):
         self.expr_evaluator = ExprEvaluator(
             data_column="data", db_connection=collection.db
         )
-        # Check if JSONB is supported for this connection
-        self._jsonb_supported = supports_jsonb(self.db)
-        self._jsonb_each_supported = supports_jsonb_each(self.db)
-        self._json_each_function = _get_json_each_function(
-            self._jsonb_supported, self._jsonb_each_supported
-        )
+        # Initialize JSONB capabilities
+        self.jsonb = JSONBContext.from_db(self.db)
         self.sql_translator = SQLTranslator(
             collection.name,
             "data",
             "id",
-            self._jsonb_supported,
-            self._json_each_function,
-        )
-        # Set appropriate JSON function prefixes and names based on support
-        self._json_function_prefix = _get_json_function_prefix(
-            self._jsonb_supported
-        )
-        self._json_each_function = _get_json_each_function(
-            self._jsonb_supported, self._jsonb_each_supported
-        )
-        self.json_group_array_function = _get_json_group_array_function(
-            self._jsonb_supported
+            self.jsonb.jsonb_supported,
+            self.jsonb.json_each_function,
         )
         # Track if pipeline has $sort stage (for $first/$last limitation)
         self._has_sort_stage = False
@@ -300,7 +280,7 @@ class TemporaryTableAggregationProcessor(OperatorsMixin):
                         data_expr = "data"
                         for field in unset_fields:
                             json_path = parse_json_path(field)
-                            if self._jsonb_supported:
+                            if self.jsonb.jsonb_supported:
                                 data_expr = (
                                     f"jsonb_remove({data_expr}, '{json_path}')"
                                 )

@@ -308,7 +308,7 @@ class TestEvaluateForAggregation:
         """Test that JSONB support is properly detected."""
         # Without DB connection, should default to json_extract
         evaluator = ExprEvaluator()
-        assert evaluator._jsonb_supported is False
+        assert evaluator.jsonb.jsonb_supported is False
 
         sql, params = evaluator.evaluate_for_aggregation("$field")
         assert "json_extract" in sql
