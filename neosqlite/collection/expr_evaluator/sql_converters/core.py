@@ -156,6 +156,12 @@ class CoreMixin(BaseSqlMixin):
                 return self._convert_date_to_string_operator(operands)
             case "$dateTrunc":
                 return self._convert_date_trunc_operator(operands)
+            case "$dateFromParts":
+                return self._convert_date_from_parts_operator(operands)
+            case "$dateToParts":
+                return self._convert_date_to_parts_operator(operands)
+            case "$dateFromString":
+                return self._convert_date_from_string_operator(operands)
             case (
                 "$mergeObjects"
                 | "$getField"

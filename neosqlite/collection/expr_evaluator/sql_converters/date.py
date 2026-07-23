@@ -304,3 +304,134 @@ class DateMixin(BaseSqlMixin):
         fmt = unit_formats[unit]
         sql = f"strftime('{fmt}', {date_sql})"
         return sql, date_params
+
+    def _convert_date_from_parts_operator(
+        self, operands: Any
+    ) -> tuple[str, list[Any]]:
+        """Convert $dateFromParts to SQLite date construction.
+
+        MongoDB: { $dateFromParts: { year: <expr>, month: <expr>, ... } }
+        """
+        if not isinstance(operands, dict):
+            raise ValueError("$dateFromParts requires a dictionary")
+
+        # Timezone not supported in SQL tier
+        if operands.get("timezone") is not None:
+            raise NotImplementedError(
+                "$dateFromParts with timezone not supported in SQL tier"
+            )
+
+        year_sql, params = self._convert_operand_to_sql(operands.get("year"))
+
+        def _field_or_default(key: str, default: int) -> tuple[str, list[Any]]:
+            val = operands.get(key)
+            if val is None:
+                return str(default), []
+            s, p = self._convert_operand_to_sql(val)
+            return f"COALESCE(CAST({s} AS INTEGER), {default})", p
+
+        month_sql, mp = _field_or_default("month", 1)
+        day_sql, dp = _field_or_default("day", 1)
+        hour_sql, hp = _field_or_default("hour", 0)
+        minute_sql, mip = _field_or_default("minute", 0)
+        second_sql, sp = _field_or_default("second", 0)
+        ms_sql, msp = _field_or_default("millisecond", 0)
+
+        all_params = params + mp + dp + hp + mip + sp + msp
+
+        # Build ISO 8601 string via printf + strftime.
+        # The 'T' separator and 'Z' suffix ensure neosqlite_json_loads
+        # recognises the result as a UTC datetime.
+        sql = (
+            f"strftime('%Y-%m-%dT%H:%M:%fZ',"
+            f" printf('%04d', CAST({year_sql} AS INTEGER)) || '-' ||"
+            f" printf('%02d', {month_sql}) || '-' ||"
+            f" printf('%02d', {day_sql}) || 'T' ||"
+            f" printf('%02d', {hour_sql}) || ':' ||"
+            f" printf('%02d', {minute_sql}) || ':' ||"
+            f" printf('%02d', {second_sql}) || '.' ||"
+            f" printf('%03d', {ms_sql}))"
+        )
+        return sql, all_params
+
+    def _convert_date_to_parts_operator(
+        self, operands: Any
+    ) -> tuple[str, list[Any]]:
+        """Convert $dateToParts to SQLite strftime + json_object.
+
+        MongoDB: { $dateToParts: { date: <expr> } }
+        """
+        if isinstance(operands, dict):
+            date_operand = operands.get("date")
+        elif isinstance(operands, list) and len(operands) >= 1:
+            date_operand = operands[0]
+        else:
+            raise ValueError("$dateToParts requires date")
+
+        # Timezone / iso8601 / unit not supported in SQL tier
+        if isinstance(operands, dict) and (
+            operands.get("timezone") is not None
+            or operands.get("iso8601") is not None
+            or operands.get("unit") is not None
+        ):
+            raise NotImplementedError(
+                "$dateToParts with timezone/iso8601/unit not supported in SQL tier"
+            )
+
+        date_sql, date_params = self._convert_operand_to_sql(date_operand)
+
+        sql = (
+            f"json_object("
+            f"'year', CAST(strftime('%Y', {date_sql}) AS INTEGER),"
+            f" 'month', CAST(strftime('%m', {date_sql}) AS INTEGER),"
+            f" 'day', CAST(strftime('%d', {date_sql}) AS INTEGER),"
+            f" 'hour', CAST(strftime('%H', {date_sql}) AS INTEGER),"
+            f" 'minute', CAST(strftime('%M', {date_sql}) AS INTEGER),"
+            f" 'second', CAST(strftime('%S', {date_sql}) AS INTEGER),"
+            f" 'millisecond',"
+            f" CAST(CAST(strftime('%f', {date_sql}) * 1000 AS INTEGER) % 1000"
+            f" AS INTEGER)"
+            f")"
+        )
+        return sql, date_params
+
+    def _convert_date_from_string_operator(
+        self, operands: Any
+    ) -> tuple[str, list[Any]]:
+        """Convert $dateFromString to SQLite strftime parsing.
+
+        MongoDB: { $dateFromString: { dateString: <expr> } }
+
+        SQLite strftime can parse ISO 8601 strings; non-ISO formats
+        and timezone/onError/onNull options fall back to Python.
+        """
+        if isinstance(operands, dict):
+            date_string_operand = operands.get("dateString")
+            timezone = operands.get("timezone")
+            on_error = operands.get("onError")
+            on_null = operands.get("onNull")
+        elif isinstance(operands, list) and len(operands) >= 1:
+            date_string_operand = operands[0]
+            timezone = operands[1] if len(operands) > 1 else None
+            on_error = operands[2] if len(operands) > 2 else None
+            on_null = operands[3] if len(operands) > 3 else None
+        else:
+            raise ValueError("$dateFromString requires dateString")
+
+        if timezone is not None or on_error is not None or on_null is not None:
+            raise NotImplementedError(
+                "$dateFromString with timezone/onError/onNull not supported in SQL tier"
+            )
+
+        string_sql, string_params = self._convert_operand_to_sql(
+            date_string_operand
+        )
+
+        # Use strftime to convert ISO string back to a standardised format.
+        # The 'T' separator and 'Z' suffix make neosqlite_json_loads produce UTC.
+        # COALESCE handles on_null: returns NULL if input is NULL.
+        sql = (
+            f"CASE WHEN {string_sql} IS NULL THEN NULL"
+            f" ELSE strftime('%Y-%m-%dT%H:%M:%SZ', {string_sql}) END"
+        )
+        return sql, string_params

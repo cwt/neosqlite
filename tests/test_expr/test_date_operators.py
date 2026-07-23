@@ -5,8 +5,10 @@ Covers: $year, $month, $dayOfMonth, $hour, $minute, $second,
         $dayOfWeek, $dayOfYear, $week, $isoDayOfWeek, $isoWeek, $millisecond
 """
 
+import json
 from datetime import datetime, timezone
 
+import neosqlite
 from neosqlite.collection.expr_evaluator import ExprEvaluator
 
 
@@ -356,3 +358,258 @@ class TestDateOperatorsPython:
         # For MongoDB compatibility, string dates raise ValueError
         with pytest.raises(ValueError):
             evaluator._evaluate_expr_python(expr, {"date": "not-a-date"})
+
+
+class TestDateFromPartsSQL:
+    """Test $dateFromParts SQL conversion."""
+
+    def test_basic_sql(self):
+        e = ExprEvaluator()
+        expr = {"$dateFromParts": {"year": 2024, "month": 6, "day": 15}}
+        sql, params = e._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "strftime" in sql
+        assert "printf" in sql
+
+    def test_kill_switch(self):
+        e = ExprEvaluator()
+        expr = {"$dateFromParts": {"year": 2024, "month": 6}}
+        assert e.evaluate(expr, force_python=True) == (None, [])
+
+    def test_python_sql_consistency(self):
+        e = ExprEvaluator()
+        doc = {}
+        for expr in [
+            {"$dateFromParts": {"year": 2024, "month": 6, "day": 15}},
+            {"$dateFromParts": {"year": 2024}},
+            {
+                "$dateFromParts": {
+                    "year": 2024,
+                    "month": 12,
+                    "day": 31,
+                    "hour": 23,
+                    "minute": 59,
+                    "second": 45,
+                }
+            },
+        ]:
+            py = e._evaluate_expr_python(expr, doc)
+            sql, params = e._evaluate_sql_tier1(expr)
+            assert sql is not None
+            with neosqlite.Connection(":memory:") as conn:
+                conn.db.execute("CREATE TEMP TABLE t(data TEXT)")
+                conn.db.execute("INSERT INTO t VALUES (?)", [json.dumps(doc)])
+                row = conn.db.execute(f"SELECT {sql} FROM t", params).fetchone()
+                sq = row[0] if row else None
+                if sq:
+                    sq_dt = datetime.fromisoformat(sq.replace("Z", "+00:00"))
+                    assert sq_dt.year == py.year
+                    assert sq_dt.month == py.month
+                    assert sq_dt.day == py.day
+                    assert sq_dt.hour == py.hour
+                    assert sq_dt.minute == py.minute
+                    assert sq_dt.second == py.second
+
+    def test_integration(self):
+        with neosqlite.Connection(":memory:") as conn:
+            c = conn["test"]
+            c.insert_one({"y": 2024, "m": 6, "d": 15})
+            pipeline = [
+                {
+                    "$project": {
+                        "dt": {
+                            "$dateFromParts": {
+                                "year": "$y",
+                                "month": "$m",
+                                "day": "$d",
+                            }
+                        }
+                    }
+                }
+            ]
+            results = list(c.aggregate(pipeline))
+            assert len(results) == 1
+            dt = results[0]["dt"]
+            assert dt.year == 2024 and dt.month == 6 and dt.day == 15
+
+    def test_kill_switch_integration(self):
+        with neosqlite.Connection(":memory:") as conn:
+            c = conn["test"]
+            c.insert_one({"y": 2024, "m": 6, "d": 15})
+            results = list(
+                c.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "dt": {
+                                    "$dateFromParts": {
+                                        "year": "$y",
+                                        "month": "$m",
+                                        "day": "$d",
+                                    }
+                                }
+                            }
+                        }
+                    ],
+                    force_python=True,
+                )
+            )
+            assert len(results) == 1
+            dt = results[0]["dt"]
+            assert dt.year == 2024 and dt.month == 6 and dt.day == 15
+
+
+class TestDateToPartsSQL:
+    """Test $dateToParts SQL conversion."""
+
+    def test_basic_sql(self):
+        e = ExprEvaluator()
+        expr = {"$dateToParts": {"date": "$dt"}}
+        sql, params = e._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "strftime" in sql
+        assert "json_object" in sql
+
+    def test_kill_switch(self):
+        e = ExprEvaluator()
+        expr = {"$dateToParts": {"date": "$dt"}}
+        assert e.evaluate(expr, force_python=True) == (None, [])
+
+    def test_python_sql_consistency(self):
+        e = ExprEvaluator()
+        doc = {"dt": datetime(2024, 6, 15, 9, 30, 45, tzinfo=timezone.utc)}
+        expr = {"$dateToParts": {"date": "$dt"}}
+        py = e._evaluate_expr_python(expr, doc)
+        sql, params = e._evaluate_sql_tier1(expr)
+        assert sql is not None
+        with neosqlite.Connection(":memory:") as conn:
+            conn.db.execute("CREATE TEMP TABLE t(data TEXT)")
+            conn.db.execute(
+                "INSERT INTO t VALUES (?)",
+                [json.dumps(doc, default=str)],
+            )
+            row = conn.db.execute(f"SELECT {sql} FROM t", params).fetchone()
+            sq = json.loads(row[0]) if row[0] else None
+        assert sq["year"] == py["year"]
+        assert sq["month"] == py["month"]
+        assert sq["day"] == py["day"]
+        assert sq["hour"] == py["hour"]
+        assert sq["minute"] == py["minute"]
+        assert sq["second"] == py["second"]
+
+    def test_integration(self):
+        with neosqlite.Connection(":memory:") as conn:
+            c = conn["test"]
+            c.insert_one(
+                {"dt": datetime(2024, 6, 15, 9, 30, 45, tzinfo=timezone.utc)}
+            )
+            pipeline = [
+                {"$project": {"parts": {"$dateToParts": {"date": "$dt"}}}}
+            ]
+            results = list(c.aggregate(pipeline))
+            assert len(results) == 1
+            parts = results[0]["parts"]
+            assert parts["year"] == 2024
+            assert parts["month"] == 6
+            assert parts["day"] == 15
+
+    def test_kill_switch_integration(self):
+        with neosqlite.Connection(":memory:") as conn:
+            c = conn["test"]
+            c.insert_one(
+                {"dt": datetime(2024, 6, 15, 9, 30, 45, tzinfo=timezone.utc)}
+            )
+            results = list(
+                c.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "parts": {"$dateToParts": {"date": "$dt"}}
+                            }
+                        }
+                    ],
+                    force_python=True,
+                )
+            )
+            assert len(results) == 1
+            assert results[0]["parts"]["year"] == 2024
+
+
+class TestDateFromStringSQL:
+    """Test $dateFromString SQL conversion."""
+
+    def test_basic_sql(self):
+        e = ExprEvaluator()
+        expr = {"$dateFromString": {"dateString": "$s"}}
+        sql, params = e._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "strftime" in sql
+
+    def test_kill_switch(self):
+        e = ExprEvaluator()
+        expr = {"$dateFromString": {"dateString": "$s"}}
+        assert e.evaluate(expr, force_python=True) == (None, [])
+
+    def test_python_sql_consistency(self):
+        e = ExprEvaluator()
+        doc = {"s": "2024-06-15T09:30:45Z"}
+        expr = {"$dateFromString": {"dateString": "$s"}}
+        py = e._evaluate_expr_python(expr, doc)
+        sql, params = e._evaluate_sql_tier1(expr)
+        assert sql is not None
+        with neosqlite.Connection(":memory:") as conn:
+            conn.db.execute("CREATE TEMP TABLE t(data TEXT)")
+            conn.db.execute("INSERT INTO t VALUES (?)", [json.dumps(doc)])
+            row = conn.db.execute(f"SELECT {sql} FROM t", params).fetchone()
+            sq = row[0] if row else None
+        if sq:
+            sq_dt = datetime.fromisoformat(sq.replace("Z", "+00:00"))
+            assert sq_dt.year == py.year
+            assert sq_dt.month == py.month
+            assert sq_dt.day == py.day
+
+    def test_null_handling(self):
+        e = ExprEvaluator()
+        doc = {}
+        expr = {"$dateFromString": {"dateString": "$s"}}
+        py = e._evaluate_expr_python(expr, doc)
+        sql, params = e._evaluate_sql_tier1(expr)
+        assert sql is not None
+        with neosqlite.Connection(":memory:") as conn:
+            conn.db.execute("CREATE TEMP TABLE t(data TEXT)")
+            conn.db.execute("INSERT INTO t VALUES (?)", [json.dumps(doc)])
+            row = conn.db.execute(f"SELECT {sql} FROM t", params).fetchone()
+            sq = row[0] if row else None
+        assert py is None
+        assert sq is None
+
+    def test_integration(self):
+        with neosqlite.Connection(":memory:") as conn:
+            c = conn["test"]
+            c.insert_one({"d": "2024-06-15T09:30:45Z"})
+            pipeline = [
+                {"$project": {"dt": {"$dateFromString": {"dateString": "$d"}}}}
+            ]
+            results = list(c.aggregate(pipeline))
+            assert len(results) == 1
+            dt = results[0]["dt"]
+            assert dt.year == 2024 and dt.month == 6 and dt.day == 15
+
+    def test_kill_switch_integration(self):
+        with neosqlite.Connection(":memory:") as conn:
+            c = conn["test"]
+            c.insert_one({"d": "2024-06-15"})
+            results = list(
+                c.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "dt": {"$dateFromString": {"dateString": "$d"}}
+                            }
+                        }
+                    ],
+                    force_python=True,
+                )
+            )
+            assert len(results) == 1
+            assert results[0]["dt"].year == 2024
