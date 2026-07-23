@@ -570,6 +570,10 @@ class Connection:
             {"name": row[0], "options": row[1]} for row in cursor.fetchall()
         ]
 
+    # ------------------------------------------------------------------
+    # Command dispatch table (module-level functions for clarity)
+    # ------------------------------------------------------------------
+
     def command(
         self, command: str | dict[str, Any], value: Any = None, **kwargs: Any
     ) -> dict[str, Any]:
@@ -590,24 +594,6 @@ class Connection:
         Returns:
             dict[str, Any]: Command response
 
-        Supported Commands:
-            - "ping" or {"ping": 1} - Returns {"ok": 1}
-            - "serverStatus" - Returns SQLite version info
-            - "listCollections" - Returns collection list
-            - "table_info" - Returns table schema (PRAGMA table_info)
-            - "integrity_check" - Returns integrity check results
-            - "validate" - Returns integrity check for a collection
-            - "reIndex" - Rebuilds indexes for a collection
-            - "foreign_key_check" - Returns foreign key check results
-            - "index_list" - Returns index list for a table
-            - "vacuum" - Runs full VACUUM command
-            - "compact" - MongoDB-compatible compact (see below)
-            - "wal_checkpoint" - WAL checkpoint control (NeoSQLite extension)
-            - "cache_size" - Get/set cache size (NeoSQLite extension)
-            - "busy_timeout" - Get/set busy timeout (NeoSQLite extension)
-            - "query_only" - Get/set read-only mode (NeoSQLite extension)
-            - "analyze" - Runs ANALYZE command
-
         compact Command:
             MongoDB-compatible compact implementation with NeoSQLite extensions.
 
@@ -622,12 +608,6 @@ class Connection:
             Returns:
                 dryRun: {"estimatedBytesFreed": <bytes>, "ok": 1}
                 compact: {"bytesFreed": <bytes>, "ok": 1}
-
-            Examples:
-                >>> db.command("compact", "collection")  # 20MB threshold + incremental
-                >>> db.command("compact", "collection", dryRun=True)  # Estimate only
-                >>> db.command("compact", "collection", freeSpaceTargetMB=10)  # 10MB threshold + incremental
-                >>> db.command("compact", "collection", freeSpaceTargetMB=0)  # Full vacuum
 
         Example:
             >>> db = Connection("test.db")
@@ -649,540 +629,11 @@ class Connection:
             raise TypeError("command must be a string or dict")
 
         try:
-            match cmd_name:
-                case "ping":
-                    return {"ok": 1}
-
-                case "serverstatus":
-                    import sqlite3
-
-                    return {
-                        "ok": 1,
-                        "version": sqlite3.sqlite_version,
-                        "python_sqlite_version": getattr(
-                            sqlite3, "version", "unknown"
-                        ),
-                        "process": "neosqlite",
-                        "pid": 1,
-                    }
-
-                case "listcollections":
-                    collections = self.list_collection_names()
-                    return {
-                        "ok": 1,
-                        "collections": [{"name": name} for name in collections],
-                    }
-
-                case "table_info":
-                    table_name = kwargs.get("table")
-                    if not table_name and isinstance(command, dict):
-                        table_name = command.get("table_info")
-                    if not table_name:
-                        raise ValueError(
-                            "table_info requires 'table' parameter"
-                        )
-                    cursor = self.db.execute(
-                        f"PRAGMA table_info({quote_table_name(table_name)})"
-                    )
-                    columns = [
-                        {
-                            "cid": row[0],
-                            "name": row[1],
-                            "type": row[2],
-                            "notnull": bool(row[3]),
-                            "default": row[4],
-                            "pk": bool(row[5]),
-                        }
-                        for row in cursor.fetchall()
-                    ]
-                    return {"ok": 1, "columns": columns}
-
-                case "integrity_check":
-                    cursor = self.db.execute("PRAGMA integrity_check")
-                    result = cursor.fetchall()
-                    return {"ok": 1, "result": [row[0] for row in result]}
-
-                case "validate":
-                    collection_name = kwargs.get("validate")
-                    if not collection_name and isinstance(command, dict):
-                        collection_name = command.get("validate")
-
-                    if collection_name:
-                        cursor = self.db.execute(
-                            f"PRAGMA integrity_check({quote_table_name(collection_name)})"
-                        )
-                    else:
-                        cursor = self.db.execute("PRAGMA integrity_check")
-
-                    result = cursor.fetchall()
-                    errors = [row[0] for row in result if row[0] != "ok"]
-
-                    return {
-                        "ok": 1 if not errors else 0,
-                        "result": [row[0] for row in result],
-                        "errors": errors,
-                        "valid": len(errors) == 0,
-                    }
-
-                case "foreign_key_check":
-                    table_name = kwargs.get("table")
-                    if table_name:
-                        cursor = self.db.execute(
-                            f"PRAGMA foreign_key_check({quote_table_name(table_name)})"
-                        )
-                    else:
-                        cursor = self.db.execute("PRAGMA foreign_key_check")
-                    result = cursor.fetchall()
-                    return {
-                        "ok": 1,
-                        "violations": [
-                            {
-                                "table": row[0],
-                                "rowid": row[1],
-                                "parent": row[2],
-                                "fkid": row[3],
-                            }
-                            for row in result
-                        ],
-                    }
-
-                case "index_list":
-                    table_name = kwargs.get("table")
-                    if not table_name and isinstance(command, dict):
-                        table_name = command.get("index_list")
-                    if not table_name:
-                        raise ValueError(
-                            "index_list requires 'table' parameter"
-                        )
-                    cursor = self.db.execute(
-                        f"PRAGMA index_list({quote_table_name(table_name)})"
-                    )
-                    indexes = [
-                        {
-                            "seq": row[0],
-                            "name": row[1],
-                            "unique": bool(row[2]),
-                            "origin": row[3] if len(row) > 3 else "c",
-                            "partial": bool(row[4]) if len(row) > 4 else False,
-                        }
-                        for row in cursor.fetchall()
-                    ]
-                    return {"ok": 1, "indexes": indexes}
-
-                case "vacuum":
-                    self.db.execute("VACUUM")
-                    return {"ok": 1, "message": "VACUUM completed"}
-
-                case "compact":
-                    _ = kwargs.get("compact")
-                    _ = kwargs.get("comment")
-                    dry_run = kwargs.get("dryRun", False)
-                    free_space_target_mb = kwargs.get("freeSpaceTargetMB")
-
-                    free_pages = self.db.execute(
-                        "PRAGMA freelist_count"
-                    ).fetchone()[0]
-                    page_size = self.db.execute("PRAGMA page_size").fetchone()[
-                        0
-                    ]
-                    free_bytes = free_pages * page_size
-
-                    if dry_run:
-                        return {
-                            "estimatedBytesFreed": free_bytes,
-                            "ok": 1,
-                        }
-
-                    if free_space_target_mb == 0:
-                        page_count_before = self.db.execute(
-                            "PRAGMA page_count"
-                        ).fetchone()[0]
-                        self.db.execute("VACUUM")
-                        page_count_after = self.db.execute(
-                            "PRAGMA page_count"
-                        ).fetchone()[0]
-                        bytes_freed = (
-                            page_count_before - page_count_after
-                        ) * page_size
-                        return {"bytesFreed": bytes_freed, "ok": 1}
-
-                    if free_space_target_mb is None:
-                        free_space_target_mb = 20
-
-                    target_bytes = free_space_target_mb * 1024 * 1024
-                    if free_bytes < target_bytes:
-                        return {"bytesFreed": 0, "ok": 1}
-
-                    page_count_before = self.db.execute(
-                        "PRAGMA page_count"
-                    ).fetchone()[0]
-
-                    target_pages = max(1, target_bytes // page_size)
-
-                    while free_pages > 0:
-                        reclaim = min(target_pages, free_pages)
-                        self.db.execute(f"PRAGMA incremental_vacuum({reclaim})")
-                        free_pages = self.db.execute(
-                            "PRAGMA freelist_count"
-                        ).fetchone()[0]
-
-                    page_count_after = self.db.execute(
-                        "PRAGMA page_count"
-                    ).fetchone()[0]
-
-                    bytes_freed = (
-                        page_count_before - page_count_after
-                    ) * page_size
-                    return {"bytesFreed": bytes_freed, "ok": 1}
-
-                case "wal_checkpoint":
-                    mode = str(kwargs.get("mode", "PASSIVE")).upper()
-                    if mode not in ("PASSIVE", "FULL", "RESTART", "TRUNCATE"):
-                        return {
-                            "ok": 0,
-                            "errmsg": f"Invalid wal_checkpoint mode: {mode}",
-                        }
-                    result = self.db.execute(
-                        f"PRAGMA wal_checkpoint({mode})"
-                    ).fetchone()
-                    return {
-                        "ok": 1,
-                        "mode": mode,
-                        "busy": result[0],
-                        "log": result[1],
-                        "checkpointed": result[2],
-                    }
-
-                case "cache_size":
-                    pages = kwargs.get("pages")
-                    if pages is not None:
-                        self.db.execute(f"PRAGMA cache_size = {pages}")
-                        return {
-                            "ok": 1,
-                            "message": f"cache_size set to {pages}",
-                        }
-                    else:
-                        current = self.db.execute(
-                            "PRAGMA cache_size"
-                        ).fetchone()[0]
-                        return {"ok": 1, "cache_size": current}
-
-                case "busy_timeout":
-                    ms = kwargs.get("milliseconds")
-                    if ms is not None:
-                        self.db.execute(f"PRAGMA busy_timeout = {ms}")
-                        return {
-                            "ok": 1,
-                            "message": f"busy_timeout set to {ms}ms",
-                        }
-                    else:
-                        current = self.db.execute(
-                            "PRAGMA busy_timeout"
-                        ).fetchone()[0]
-                        return {"ok": 1, "busy_timeout": current}
-
-                case "analyze":
-                    self.db.execute("ANALYZE")
-                    return {"ok": 1, "message": "ANALYZE completed"}
-
-                case "reindex":
-                    collection_name = kwargs.get("reIndex")
-                    if not collection_name and isinstance(command, dict):
-                        collection_name = command.get("reindex")
-
-                    if collection_name:
-                        self.db.execute(
-                            f"REINDEX {quote_table_name(collection_name)}"
-                        )
-                    else:
-                        self.db.execute("REINDEX")
-
-                    return {"ok": 1, "message": "REINDEX completed"}
-
-                case "collstats":
-                    collection_name = kwargs.get("collection")
-                    if not collection_name and isinstance(command, dict):
-                        collection_name = command.get("collstats")
-                    if not collection_name:
-                        raise ValueError(
-                            "collstats requires 'collection' parameter"
-                        )
-                    quoted_table = quote_table_name(collection_name)
-
-                    cursor = self.db.execute(
-                        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
-                        (collection_name,),
-                    )
-                    if not cursor.fetchone():
-                        return {
-                            "ok": 1,
-                            "ns": collection_name,
-                            "count": 0,
-                            "size": 0,
-                            "avgObjSize": 0,
-                            "storageSize": 0,
-                            "totalIndexSize": 0,
-                            "indexSizes": {},
-                        }
-
-                    cursor = self.db.execute(
-                        f"SELECT COUNT(*) FROM {quoted_table}"
-                    )
-                    count = cursor.fetchone()[0] or 0
-
-                    size = 0
-                    try:
-                        size_cursor = self.db.execute(
-                            f"SELECT SUM(LENGTH(data)) FROM {quoted_table}"
-                        )
-                        size = size_cursor.fetchone()[0] or 0
-                    except Exception as e:
-                        logger.debug(
-                            f"Failed to calculate collection size: {e}"
-                        )
-                        pass
-
-                    avg_obj_size = size / count if count > 0 else 0
-
-                    storage_size = 0
-                    total_index_size = 0
-                    index_sizes: dict = {}
-
-                    try:
-                        self.db.execute(
-                            "CREATE VIRTUAL TABLE IF NOT EXISTS temp.dbstat USING dbstat(main)"
-                        )
-
-                        storage_cursor = self.db.execute(
-                            "SELECT SUM(pgsize) FROM dbstat WHERE name = ?",
-                            (collection_name,),
-                        )
-                        storage_size = storage_cursor.fetchone()[0] or 0
-
-                        index_cursor = self.db.execute(
-                            "SELECT name, SUM(pgsize) as size FROM dbstat "
-                            "WHERE tbl_name = ? AND type = 'index' GROUP BY name",
-                            (collection_name,),
-                        )
-                        for row in index_cursor.fetchall():
-                            idx_name, idx_size = row
-                            if idx_name and idx_size:
-                                index_sizes[idx_name] = idx_size
-                                total_index_size += idx_size
-                    except Exception as e:
-                        logger.debug(f"{e=}")
-                        pass
-
-                    return {
-                        "ok": 1,
-                        "ns": collection_name,
-                        "count": count,
-                        "size": size,
-                        "avgObjSize": avg_obj_size,
-                        "storageSize": storage_size,
-                        "totalIndexSize": total_index_size,
-                        "indexSizes": index_sizes,
-                    }
-
-                case "dbstats":
-                    page_count = self.db.execute(
-                        "PRAGMA page_count"
-                    ).fetchone()[0]
-                    page_size = self.db.execute("PRAGMA page_size").fetchone()[
-                        0
-                    ]
-
-                    collections = self.list_collection_names()
-                    total_objects = 0
-                    total_indexes = 0
-
-                    for coll_name in collections:
-                        cursor = self.db.execute(
-                            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
-                            (coll_name,),
-                        )
-                        if not (row := cursor.fetchone()):
-                            continue
-                        sql = row[0] or ""
-
-                        if (
-                            "VIRTUAL TABLE" in sql.upper()
-                            and "fts" in sql.lower()
-                        ):
-                            continue
-
-                        try:
-                            count = self.db.execute(
-                                f"SELECT COUNT(*) FROM {quote_table_name(coll_name)}"
-                            ).fetchone()[0]
-                            total_objects += count
-                        except Exception as e:
-                            logger.debug(
-                                f"Failed to count documents in '{coll_name}': {e}"
-                            )
-                            pass
-
-                        try:
-                            indexes = self.db.execute(
-                                f"PRAGMA index_list({quote_table_name(coll_name)})"
-                            ).fetchall()
-                            total_indexes += len(indexes)
-                        except Exception as e:
-                            logger.debug(
-                                f"Failed to get indexes for '{coll_name}': {e}"
-                            )
-                            pass
-
-                    storage_size = page_count * page_size
-
-                    try:
-                        self.db.execute(
-                            "CREATE VIRTUAL TABLE IF NOT EXISTS temp.dbstat USING dbstat(main)"
-                        )
-                        cursor = self.db.execute(
-                            "SELECT SUM(pgsize) FROM dbstat WHERE name LIKE 'idx_%' OR name LIKE 'sqlite_autoindex%'"
-                        )
-                        index_size = cursor.fetchone()[0] or 0
-                    except Exception as e:
-                        logger.debug(
-                            f"Failed to calculate index size, using estimate: {e}"
-                        )
-                        index_size = int(storage_size * 0.2)
-
-                    data_size = storage_size - index_size
-
-                    views_count = self.db.execute(
-                        "SELECT COUNT(*) FROM sqlite_master WHERE type='view'"
-                    ).fetchone()[0]
-
-                    import os
-                    import shutil
-
-                    fs_total = 0
-                    fs_used = 0
-                    db_file_size = 0
-
-                    if self._db_path and self._db_path != ":memory:":
-                        try:
-                            db_dir = os.path.dirname(self._db_path) or "."
-                            fs_usage = shutil.disk_usage(db_dir)
-                            fs_total = fs_usage.total
-                            fs_used = fs_usage.used
-                            db_file_size = os.path.getsize(self._db_path)
-                            wal_path = self._db_path + "-wal"
-                            if os.path.exists(wal_path):
-                                db_file_size += os.path.getsize(wal_path)
-                            shm_path = self._db_path + "-shm"
-                            if os.path.exists(shm_path):
-                                db_file_size += os.path.getsize(shm_path)
-                        except OSError as e:
-                            logger.debug(f"{e=}")
-                            pass
-
-                    return {
-                        "ok": 1,
-                        "db": self.name,
-                        "collections": len(collections),
-                        "views": views_count,
-                        "objects": total_objects,
-                        "avgObjSize": (
-                            int(data_size / total_objects)
-                            if total_objects
-                            else 0
-                        ),
-                        "dataSize": data_size,
-                        "storageSize": storage_size,
-                        "indexes": total_indexes,
-                        "indexSize": index_size,
-                        "totalSize": data_size + index_size,
-                        "fsTotalSize": fs_total,
-                        "fsUsedSize": fs_used,
-                        "scaleFactor": 1,
-                    }
-
-                case "aggregate":
-                    collection_name = kwargs.get("aggregate")
-                    if not collection_name and isinstance(command, dict):
-                        collection_name = command.get("aggregate")
-                    if not collection_name:
-                        raise ValueError(
-                            "aggregate requires 'aggregate' parameter"
-                        )
-
-                    pipeline = kwargs.get("pipeline", [])
-                    explain = kwargs.get("explain", False)
-                    kwargs.get("allowDiskUse", False)
-
-                    if explain:
-                        collection = self[collection_name]
-                        return collection.query_engine.explain_aggregation(
-                            pipeline, session=None
-                        )
-                    else:
-                        collection = self[collection_name]
-                        cursor_result = collection.aggregate(pipeline)
-                        return {"ok": 1, "result": list(cursor_result)}
-
-                case "query_only":
-                    pragma_value = (
-                        command.get("query_only")
-                        if isinstance(command, dict)
-                        else None
-                    )
-
-                    if pragma_value is not None:
-                        if isinstance(pragma_value, bool):
-                            val = 1 if pragma_value else 0
-                        elif isinstance(pragma_value, str):
-                            val = (
-                                1
-                                if pragma_value.upper() in ("ON", "TRUE", "1")
-                                else 0
-                            )
-                        elif isinstance(pragma_value, (int, float)):
-                            val = 1 if pragma_value else 0
-                        else:
-                            return {
-                                "ok": 0,
-                                "errmsg": f"Invalid query_only value: {pragma_value!r}",
-                            }
-
-                        self.db.execute(f"PRAGMA query_only = {val}")
-                        return {"ok": 1, "query_only": bool(val)}
-                    else:
-                        cursor = self.db.execute("PRAGMA query_only")
-                        return {
-                            "ok": 1,
-                            "query_only": bool(cursor.fetchone()[0]),
-                        }
-
-                case _:
-                    try:
-                        # Validate cmd_name to prevent SQL injection
-                        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", cmd_name):
-                            return {
-                                "ok": 0,
-                                "errmsg": f"Invalid command name: {cmd_name}",
-                            }
-                        cursor = self.db.execute(f"PRAGMA {cmd_name}")
-                        result = cursor.fetchall()
-                        return {
-                            "ok": 1,
-                            "result": [
-                                dict(
-                                    zip([d[0] for d in cursor.description], row)
-                                )
-                                for row in result
-                            ],
-                        }
-                    except Exception as e:
-                        logger.debug(f"{e=}")
-                        return {
-                            "ok": 0,
-                            "errmsg": f"Unknown command: {cmd_name}",
-                            "error": str(e),
-                        }
-
+            handler = _COMMAND_DISPATCH.get(cmd_name)
+            if handler is not None:
+                return handler(self, command, **kwargs)
+            # Fallback: validate and try as PRAGMA
+            return _command_default(self, cmd_name)
         except Exception as e:
             logger.debug(f"{e=}")
             return {"ok": 0, "errmsg": str(e), "code": 1}
@@ -1394,3 +845,519 @@ class Connection:
             if logger is not None:
                 logger.debug(f"{e=}")
             pass
+
+
+# ------------------------------------------------------------------
+# Command dispatch table & handlers
+# Each handler receives (connection, command_dict, **kwargs) and
+# returns {"ok": 1, ...} or {"ok": 0, ...}
+# ------------------------------------------------------------------
+
+
+def _command_ping(
+    self: Connection, _command: dict, **__: Any
+) -> dict[str, Any]:
+    return {"ok": 1}
+
+
+def _command_serverstatus(
+    self: Connection, _command: dict, **__: Any
+) -> dict[str, Any]:
+    import sqlite3
+
+    return {
+        "ok": 1,
+        "version": sqlite3.sqlite_version,
+        "python_sqlite_version": getattr(sqlite3, "version", "unknown"),
+        "process": "neosqlite",
+        "pid": 1,
+    }
+
+
+def _command_listcollections(
+    self: Connection, _command: dict, **__: Any
+) -> dict[str, Any]:
+    collections = self.list_collection_names()
+    return {
+        "ok": 1,
+        "collections": [{"name": name} for name in collections],
+    }
+
+
+def _command_table_info(
+    self: Connection, command: dict, **kwargs: Any
+) -> dict[str, Any]:
+    table_name = kwargs.get("table")
+    if not table_name and isinstance(command, dict):
+        table_name = command.get("table_info")
+    if not table_name:
+        raise ValueError("table_info requires 'table' parameter")
+    cursor = self.db.execute(
+        f"PRAGMA table_info({quote_table_name(table_name)})"
+    )
+    columns = [
+        {
+            "cid": row[0],
+            "name": row[1],
+            "type": row[2],
+            "notnull": bool(row[3]),
+            "default": row[4],
+            "pk": bool(row[5]),
+        }
+        for row in cursor.fetchall()
+    ]
+    return {"ok": 1, "columns": columns}
+
+
+def _command_integrity_check(
+    self: Connection, _command: dict, **__: Any
+) -> dict[str, Any]:
+    cursor = self.db.execute("PRAGMA integrity_check")
+    result = cursor.fetchall()
+    return {"ok": 1, "result": [row[0] for row in result]}
+
+
+def _command_validate(
+    self: Connection, command: dict, **kwargs: Any
+) -> dict[str, Any]:
+    collection_name = kwargs.get("validate")
+    if not collection_name and isinstance(command, dict):
+        collection_name = command.get("validate")
+    if collection_name:
+        cursor = self.db.execute(
+            f"PRAGMA integrity_check({quote_table_name(collection_name)})"
+        )
+    else:
+        cursor = self.db.execute("PRAGMA integrity_check")
+    result = cursor.fetchall()
+    errors = [row[0] for row in result if row[0] != "ok"]
+    return {
+        "ok": 1 if not errors else 0,
+        "result": [row[0] for row in result],
+        "errors": errors,
+        "valid": len(errors) == 0,
+    }
+
+
+def _command_foreign_key_check(
+    self: Connection, command: dict, **kwargs: Any
+) -> dict[str, Any]:
+    table_name = kwargs.get("table")
+    if table_name:
+        cursor = self.db.execute(
+            f"PRAGMA foreign_key_check({quote_table_name(table_name)})"
+        )
+    else:
+        cursor = self.db.execute("PRAGMA foreign_key_check")
+    result = cursor.fetchall()
+    return {
+        "ok": 1,
+        "violations": [
+            {"table": row[0], "rowid": row[1], "parent": row[2], "fkid": row[3]}
+            for row in result
+        ],
+    }
+
+
+def _command_index_list(
+    self: Connection, command: dict, **kwargs: Any
+) -> dict[str, Any]:
+    table_name = kwargs.get("table")
+    if not table_name and isinstance(command, dict):
+        table_name = command.get("index_list")
+    if not table_name:
+        raise ValueError("index_list requires 'table' parameter")
+    cursor = self.db.execute(
+        f"PRAGMA index_list({quote_table_name(table_name)})"
+    )
+    indexes = [
+        {
+            "seq": row[0],
+            "name": row[1],
+            "unique": bool(row[2]),
+            "origin": row[3] if len(row) > 3 else "c",
+            "partial": bool(row[4]) if len(row) > 4 else False,
+        }
+        for row in cursor.fetchall()
+    ]
+    return {"ok": 1, "indexes": indexes}
+
+
+def _command_vacuum(
+    self: Connection, _command: dict, **__: Any
+) -> dict[str, Any]:
+    self.db.execute("VACUUM")
+    return {"ok": 1, "message": "VACUUM completed"}
+
+
+def _command_compact(
+    self: Connection, _command: dict, **kwargs: Any
+) -> dict[str, Any]:
+    dry_run = kwargs.get("dryRun", False)
+    free_space_target_mb = kwargs.get("freeSpaceTargetMB")
+
+    free_pages = self.db.execute("PRAGMA freelist_count").fetchone()[0]
+    page_size = self.db.execute("PRAGMA page_size").fetchone()[0]
+    free_bytes = free_pages * page_size
+
+    if dry_run:
+        return {"estimatedBytesFreed": free_bytes, "ok": 1}
+
+    if free_space_target_mb == 0:
+        page_count_before = self.db.execute("PRAGMA page_count").fetchone()[0]
+        self.db.execute("VACUUM")
+        page_count_after = self.db.execute("PRAGMA page_count").fetchone()[0]
+        return {
+            "bytesFreed": (page_count_before - page_count_after) * page_size,
+            "ok": 1,
+        }
+
+    if free_space_target_mb is None:
+        free_space_target_mb = 20
+
+    target_bytes = free_space_target_mb * 1024 * 1024
+    if free_bytes < target_bytes:
+        return {"bytesFreed": 0, "ok": 1}
+
+    page_count_before = self.db.execute("PRAGMA page_count").fetchone()[0]
+    target_pages = max(1, target_bytes // page_size)
+
+    while free_pages > 0:
+        reclaim = min(target_pages, free_pages)
+        self.db.execute(f"PRAGMA incremental_vacuum({reclaim})")
+        free_pages = self.db.execute("PRAGMA freelist_count").fetchone()[0]
+
+    page_count_after = self.db.execute("PRAGMA page_count").fetchone()[0]
+    return {
+        "bytesFreed": (page_count_before - page_count_after) * page_size,
+        "ok": 1,
+    }
+
+
+def _command_wal_checkpoint(
+    self: Connection, _command: dict, **kwargs: Any
+) -> dict[str, Any]:
+    mode = str(kwargs.get("mode", "PASSIVE")).upper()
+    if mode not in ("PASSIVE", "FULL", "RESTART", "TRUNCATE"):
+        return {"ok": 0, "errmsg": f"Invalid wal_checkpoint mode: {mode}"}
+    result = self.db.execute(f"PRAGMA wal_checkpoint({mode})").fetchone()
+    return {
+        "ok": 1,
+        "mode": mode,
+        "busy": result[0],
+        "log": result[1],
+        "checkpointed": result[2],
+    }
+
+
+def _command_cache_size(
+    self: Connection, _command: dict, **kwargs: Any
+) -> dict[str, Any]:
+    pages = kwargs.get("pages")
+    if pages is not None:
+        self.db.execute(f"PRAGMA cache_size = {pages}")
+        return {"ok": 1, "message": f"cache_size set to {pages}"}
+    current = self.db.execute("PRAGMA cache_size").fetchone()[0]
+    return {"ok": 1, "cache_size": current}
+
+
+def _command_busy_timeout(
+    self: Connection, _command: dict, **kwargs: Any
+) -> dict[str, Any]:
+    ms = kwargs.get("milliseconds")
+    if ms is not None:
+        self.db.execute(f"PRAGMA busy_timeout = {ms}")
+        return {"ok": 1, "message": f"busy_timeout set to {ms}ms"}
+    current = self.db.execute("PRAGMA busy_timeout").fetchone()[0]
+    return {"ok": 1, "busy_timeout": current}
+
+
+def _command_analyze(
+    self: Connection, _command: dict, **__: Any
+) -> dict[str, Any]:
+    self.db.execute("ANALYZE")
+    return {"ok": 1, "message": "ANALYZE completed"}
+
+
+def _command_reindex(
+    self: Connection, command: dict, **kwargs: Any
+) -> dict[str, Any]:
+    collection_name = kwargs.get("reIndex")
+    if not collection_name and isinstance(command, dict):
+        collection_name = command.get("reindex")
+    if collection_name:
+        self.db.execute(f"REINDEX {quote_table_name(collection_name)}")
+    else:
+        self.db.execute("REINDEX")
+    return {"ok": 1, "message": "REINDEX completed"}
+
+
+def _command_collstats(
+    self: Connection, command: dict, **kwargs: Any
+) -> dict[str, Any]:
+    collection_name = kwargs.get("collection")
+    if not collection_name and isinstance(command, dict):
+        collection_name = command.get("collstats")
+    if not collection_name:
+        raise ValueError("collstats requires 'collection' parameter")
+    quoted_table = quote_table_name(collection_name)
+
+    cursor = self.db.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
+        (collection_name,),
+    )
+    if not cursor.fetchone():
+        return {
+            "ok": 1,
+            "ns": collection_name,
+            "count": 0,
+            "size": 0,
+            "avgObjSize": 0,
+            "storageSize": 0,
+            "totalIndexSize": 0,
+            "indexSizes": {},
+        }
+
+    cursor = self.db.execute(f"SELECT COUNT(*) FROM {quoted_table}")
+    count = cursor.fetchone()[0] or 0
+
+    size = 0
+    try:
+        size_cursor = self.db.execute(
+            f"SELECT SUM(LENGTH(data)) FROM {quoted_table}"
+        )
+        size = size_cursor.fetchone()[0] or 0
+    except Exception as e:
+        logger.debug(f"Failed to calculate collection size: {e}")
+
+    avg_obj_size = size / count if count > 0 else 0
+
+    storage_size = 0
+    total_index_size = 0
+    index_sizes: dict[str, int] = {}
+
+    try:
+        self.db.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS temp.dbstat USING dbstat(main)"
+        )
+        storage_cursor = self.db.execute(
+            "SELECT SUM(pgsize) FROM dbstat WHERE name = ?",
+            (collection_name,),
+        )
+        storage_size = storage_cursor.fetchone()[0] or 0
+
+        index_cursor = self.db.execute(
+            "SELECT name, SUM(pgsize) as size FROM dbstat "
+            "WHERE tbl_name = ? AND type = 'index' GROUP BY name",
+            (collection_name,),
+        )
+        for row in index_cursor.fetchall():
+            idx_name, idx_size = row
+            if idx_name and idx_size:
+                index_sizes[idx_name] = idx_size
+                total_index_size += idx_size
+    except Exception as e:
+        logger.debug(f"{e=}")
+
+    return {
+        "ok": 1,
+        "ns": collection_name,
+        "count": count,
+        "size": size,
+        "avgObjSize": avg_obj_size,
+        "storageSize": storage_size,
+        "totalIndexSize": total_index_size,
+        "indexSizes": index_sizes,
+    }
+
+
+def _command_dbstats(
+    self: Connection, _command: dict, **__: Any
+) -> dict[str, Any]:
+    page_count = self.db.execute("PRAGMA page_count").fetchone()[0]
+    page_size = self.db.execute("PRAGMA page_size").fetchone()[0]
+
+    collections = self.list_collection_names()
+    total_objects = 0
+    total_indexes = 0
+
+    for coll_name in collections:
+        cursor = self.db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
+            (coll_name,),
+        )
+        if not (row := cursor.fetchone()):
+            continue
+        sql = row[0] or ""
+
+        if "VIRTUAL TABLE" in sql.upper() and "fts" in sql.lower():
+            continue
+
+        try:
+            count = self.db.execute(
+                f"SELECT COUNT(*) FROM {quote_table_name(coll_name)}"
+            ).fetchone()[0]
+            total_objects += count
+        except Exception as e:
+            logger.debug(f"Failed to count documents in '{coll_name}': {e}")
+
+        try:
+            indexes = self.db.execute(
+                f"PRAGMA index_list({quote_table_name(coll_name)})"
+            ).fetchall()
+            total_indexes += len(indexes)
+        except Exception as e:
+            logger.debug(f"Failed to get indexes for '{coll_name}': {e}")
+
+    storage_size = page_count * page_size
+
+    try:
+        self.db.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS temp.dbstat USING dbstat(main)"
+        )
+        cursor = self.db.execute(
+            "SELECT SUM(pgsize) FROM dbstat WHERE name LIKE 'idx_%' "
+            "OR name LIKE 'sqlite_autoindex%'"
+        )
+        index_size = cursor.fetchone()[0] or 0
+    except Exception as e:
+        logger.debug(f"Failed to calculate index size, using estimate: {e}")
+        index_size = int(storage_size * 0.2)
+
+    data_size = storage_size - index_size
+
+    views_count = self.db.execute(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='view'"
+    ).fetchone()[0]
+
+    import os
+    import shutil
+
+    fs_total = 0
+    fs_used = 0
+    db_file_size = 0
+
+    if self._db_path and self._db_path != ":memory:":
+        try:
+            db_dir = os.path.dirname(self._db_path) or "."
+            fs_usage = shutil.disk_usage(db_dir)
+            fs_total = fs_usage.total
+            fs_used = fs_usage.used
+            db_file_size = os.path.getsize(self._db_path)
+            wal_path = self._db_path + "-wal"
+            if os.path.exists(wal_path):
+                db_file_size += os.path.getsize(wal_path)
+            shm_path = self._db_path + "-shm"
+            if os.path.exists(shm_path):
+                db_file_size += os.path.getsize(shm_path)
+        except OSError as e:
+            logger.debug(f"{e=}")
+
+    return {
+        "ok": 1,
+        "db": self.name,
+        "collections": len(collections),
+        "views": views_count,
+        "objects": total_objects,
+        "avgObjSize": int(data_size / total_objects) if total_objects else 0,
+        "dataSize": data_size,
+        "storageSize": storage_size,
+        "indexes": total_indexes,
+        "indexSize": index_size,
+        "totalSize": data_size + index_size,
+        "fsTotalSize": fs_total,
+        "fsUsedSize": fs_used,
+        "scaleFactor": 1,
+    }
+
+
+def _command_aggregate(
+    self: Connection, command: dict, **kwargs: Any
+) -> dict[str, Any]:
+    collection_name = kwargs.get("aggregate")
+    if not collection_name and isinstance(command, dict):
+        collection_name = command.get("aggregate")
+    if not collection_name:
+        raise ValueError("aggregate requires 'aggregate' parameter")
+
+    pipeline = kwargs.get("pipeline", [])
+    explain = kwargs.get("explain", False)
+
+    if explain:
+        collection = self[collection_name]
+        return collection.query_engine.explain_aggregation(
+            pipeline, session=None
+        )
+    collection = self[collection_name]
+    cursor_result = collection.aggregate(pipeline)
+    return {"ok": 1, "result": list(cursor_result)}
+
+
+def _command_query_only(
+    self: Connection, command: dict, **__: Any
+) -> dict[str, Any]:
+    pragma_value = (
+        command.get("query_only") if isinstance(command, dict) else None
+    )
+    if pragma_value is not None:
+        if isinstance(pragma_value, bool):
+            val = 1 if pragma_value else 0
+        elif isinstance(pragma_value, str):
+            val = 1 if pragma_value.upper() in ("ON", "TRUE", "1") else 0
+        elif isinstance(pragma_value, (int, float)):
+            val = 1 if pragma_value else 0
+        else:
+            return {
+                "ok": 0,
+                "errmsg": f"Invalid query_only value: {pragma_value!r}",
+            }
+        self.db.execute(f"PRAGMA query_only = {val}")
+        return {"ok": 1, "query_only": bool(val)}
+    cursor = self.db.execute("PRAGMA query_only")
+    return {"ok": 1, "query_only": bool(cursor.fetchone()[0])}
+
+
+def _command_default(self: Connection, cmd_name: str) -> dict[str, Any]:
+    """Fallback handler: validate and run as a PRAGMA."""
+    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", cmd_name):
+        return {"ok": 0, "errmsg": f"Invalid command name: {cmd_name}"}
+    try:
+        cursor = self.db.execute(f"PRAGMA {cmd_name}")
+        result = cursor.fetchall()
+        return {
+            "ok": 1,
+            "result": [
+                dict(zip([d[0] for d in cursor.description], row))
+                for row in result
+            ],
+        }
+    except Exception as e:
+        logger.debug(f"{e=}")
+        return {
+            "ok": 0,
+            "errmsg": f"Unknown command: {cmd_name}",
+            "error": str(e),
+        }
+
+
+_COMMAND_DISPATCH: dict[str, Any] = {
+    "ping": _command_ping,
+    "serverstatus": _command_serverstatus,
+    "listcollections": _command_listcollections,
+    "table_info": _command_table_info,
+    "integrity_check": _command_integrity_check,
+    "validate": _command_validate,
+    "foreign_key_check": _command_foreign_key_check,
+    "index_list": _command_index_list,
+    "vacuum": _command_vacuum,
+    "compact": _command_compact,
+    "wal_checkpoint": _command_wal_checkpoint,
+    "cache_size": _command_cache_size,
+    "busy_timeout": _command_busy_timeout,
+    "analyze": _command_analyze,
+    "reindex": _command_reindex,
+    "collstats": _command_collstats,
+    "dbstats": _command_dbstats,
+    "aggregate": _command_aggregate,
+    "query_only": _command_query_only,
+}
