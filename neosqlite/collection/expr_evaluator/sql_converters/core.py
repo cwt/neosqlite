@@ -74,6 +74,8 @@ class CoreMixin(BaseSqlMixin):
                 | "$firstN"
                 | "$lastN"
                 | "$sortArray"
+                | "$maxN"
+                | "$minN"
                 | "$slice"
                 | "$indexOfArray"
                 | "$sum"

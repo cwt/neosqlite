@@ -264,6 +264,12 @@ class ArrayMixin(BaseSqlMixin):
                         f" {json_each}({array_sql}))"
                     )
                 return sql, array_params
+            case "$maxN":
+                # MongoDB: { $maxN: { input: <array>, n: <number> } }
+                return self._convert_extreme_n(operands, "DESC")
+            case "$minN":
+                # MongoDB: { $minN: { input: <array>, n: <number> } }
+                return self._convert_extreme_n(operands, "ASC")
             case (
                 "$setEquals"
                 | "$setIntersection"
@@ -278,3 +284,37 @@ class ArrayMixin(BaseSqlMixin):
                 raise NotImplementedError(
                     f"Array operator {operator} not supported in SQL tier"
                 )
+
+    def _convert_extreme_n(
+        self, operands: Any, direction: str
+    ) -> tuple[str, list[Any]]:
+        """Convert $maxN / $minN to SQL (shared implementation)."""
+        if isinstance(operands, dict):
+            array_operand = operands.get("input")
+            n_operand = operands.get("n")
+        elif isinstance(operands, list) and len(operands) == 2:
+            array_operand = operands[0]
+            n_operand = operands[1]
+        else:
+            raise ValueError("$maxN/$minN requires input array and n count")
+        array_sql, array_params = self._convert_operand_to_sql(array_operand)
+        if isinstance(n_operand, int):
+            n_clause = str(n_operand)
+            n_params: list[Any] = []
+        else:
+            n_sql, n_params = self._convert_operand_to_sql(n_operand)
+            n_clause = n_sql
+        json_ga = self.json_group_array_function
+        if self.jsonb.jsonb_supported:
+            sql = (
+                f"(SELECT json({json_ga}(value ORDER BY value {direction}))"
+                f" FROM (SELECT value FROM {self.json_each_function}({array_sql})"
+                f" ORDER BY value {direction} LIMIT {n_clause}))"
+            )
+        else:
+            sql = (
+                f"(SELECT {json_ga}(value ORDER BY value {direction})"
+                f" FROM (SELECT value FROM {self.json_each_function}({array_sql})"
+                f" ORDER BY value {direction} LIMIT {n_clause}))"
+            )
+        return sql, array_params + n_params
