@@ -153,6 +153,8 @@ class CoreMixin(BaseSqlMixin):
                 | "$setField"
                 | "$unsetField"
                 | "$objectToArray"
+                | "$literal"
+                | "$rand"
             ):
                 return self._convert_object_operator(operator, operands)
             case "$let":

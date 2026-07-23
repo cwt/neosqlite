@@ -100,6 +100,25 @@ class ObjectMixin(BaseSqlMixin):
                 # Use a subquery with json_each to build the array
                 sql = f"(SELECT json({json_group_array}(json_object('k', key, 'v', value))) FROM {json_each}({sql_input}))"
                 return sql, params
+            case "$literal":
+                # Return operand as-is without interpretation.
+                # Handles $ prefix strings and expression-looking dicts correctly.
+                if isinstance(operands, str) and operands.startswith("$"):
+                    return "?", [operands]
+                if isinstance(operands, (dict, list)):
+                    from neosqlite.collection.json_helpers import (
+                        neosqlite_json_dumps,
+                    )
+
+                    return "json(?)", [neosqlite_json_dumps(operands)]
+                return "?", [operands]
+            case "$rand":
+                # SQLite random() returns integer -64..64 bits.
+                # Divide to get float in [0, 1) matching Python's random.random().
+                return (
+                    "(ABS(RANDOM() % 1000000000)) / 1000000000.0",
+                    [],
+                )
             case _:
                 raise NotImplementedError(
                     f"Object operator {operator} not supported in SQL tier"

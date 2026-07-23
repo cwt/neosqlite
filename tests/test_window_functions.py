@@ -241,21 +241,19 @@ def test_window_tier2_fallback(collection):
 def test_window_unsupported_operator_fallback(collection):
     """Test fallback when an operator is not supported by SQL but is by Python."""
     collection, conn = collection
-    # We don't have many of these yet since we implemented most in SQL,
-    # but we can check if it raises NotImplementedError in SQL builder and falls back.
-
-    # Forcing a complex expression in $shift that might fail SQL translation
+    # Use $sortArray which has a Python evaluator but no SQL converter yet.
     pipeline = [
         {
             "$setWindowFields": {
+                "sortBy": {"_id": 1},
                 "output": {
-                    "complex": {
+                    "sorted": {
                         "$shift": {
-                            "output": {"$literal": {"a": 1}},  # Complex literal
+                            "output": {"$sortArray": {"input": [3, 1, 2]}},
                             "by": 1,
                         }
                     }
-                }
+                },
             }
         }
     ]
@@ -263,7 +261,12 @@ def test_window_unsupported_operator_fallback(collection):
     # This should still work via Tier 3
     results = list(collection.aggregate(pipeline))
     assert len(results) == 6
-    assert results[0]["complex"] == {"a": 1}
+    # $sortArray falls back to Python because it has no SQL converter
+    assert results[1]["sorted"] == [
+        1,
+        2,
+        3,
+    ]  # doc index 1 gets shifted result from doc 0
 
 
 def test_window_first_last(collection):
