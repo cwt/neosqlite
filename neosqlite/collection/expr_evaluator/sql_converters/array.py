@@ -32,6 +32,8 @@ class ArrayMixin(BaseSqlMixin):
             "$avg",
             "$min",
             "$max",
+            "$first",
+            "$last",
         ) and not isinstance(operands, list):
             operands = [operands]
 
@@ -114,6 +116,46 @@ class ArrayMixin(BaseSqlMixin):
                 )
                 sql = f"(SELECT COALESCE((SELECT key FROM {json_each}({array_sql}) WHERE value = {value_sql} LIMIT 1), -1))"
                 return sql, array_params + value_params
+            case "$arrayElemAt":
+                if not isinstance(operands, list) or len(operands) != 2:
+                    raise ValueError("$arrayElemAt requires exactly 2 operands")
+                array_sql, array_params = self._convert_operand_to_sql(
+                    operands[0]
+                )
+                # Literal index: use SQLite JSON path $[N] / $[#-N] directly
+                if isinstance(operands[1], int):
+                    idx = operands[1]
+                    if idx >= 0:
+                        sql = f"json_extract({array_sql}, '$[{idx}]')"
+                    else:
+                        sql = f"json_extract({array_sql}, '$[#-{abs(idx)}]')"
+                    return sql, array_params
+                # Dynamic index: use json_each to avoid parameter duplication
+                idx_sql, idx_params = self._convert_operand_to_sql(operands[1])
+                json_each = self.json_each_function
+                sql = (
+                    f"(SELECT value FROM {json_each}({array_sql})"
+                    f" WHERE CAST(key AS INTEGER) = CAST({idx_sql} AS INTEGER)"
+                    f" LIMIT 1)"
+                )
+                return sql, array_params + idx_params
+            case "$first":
+                if len(operands) != 1:
+                    raise ValueError("$first requires exactly 1 operand")
+                array_sql, array_params = self._convert_operand_to_sql(
+                    operands[0]
+                )
+                sql = f"json_extract({array_sql}, '$[0]')"
+                return sql, array_params
+            case "$last":
+                if len(operands) != 1:
+                    raise ValueError("$last requires exactly 1 operand")
+                array_sql, array_params = self._convert_operand_to_sql(
+                    operands[0]
+                )
+                # Negative index -1 for last element (SQLite JSON path supports #-1)
+                sql = f"json_extract({array_sql}, '$[#-1]')"
+                return sql, array_params
             case (
                 "$setEquals"
                 | "$setIntersection"
