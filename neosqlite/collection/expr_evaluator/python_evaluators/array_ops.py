@@ -437,7 +437,7 @@ class ArrayPythonMixin(BasePythonMixin):
                 if not isinstance(input_array, list):
                     return []
 
-                as_var = operands.get("as", "item")
+                as_var = operands.get("as", "this")  # MongoDB default
                 cond = operands.get("cond")
 
                 if cond is None:
@@ -466,7 +466,7 @@ class ArrayPythonMixin(BasePythonMixin):
                 if not isinstance(input_array, list):
                     return []
 
-                as_var = operands.get("as", "item")
+                as_var = operands.get("as", "this")  # MongoDB default
                 in_expr = operands.get("in")
 
                 if in_expr is None:

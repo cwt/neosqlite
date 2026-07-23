@@ -174,6 +174,10 @@ class CoreMixin(BaseSqlMixin):
                 return self._convert_object_operator(operator, operands)
             case "$let":
                 return self._convert_let_operator(operands)
+            case "$filter" | "$map" | "$reduce":
+                return self._convert_array_transform_operator(
+                    operator, operands
+                )
             case (
                 "$type"
                 | "$toString"

@@ -290,6 +290,95 @@ class ArrayMixin(BaseSqlMixin):
                     f"Array operator {operator} not supported in SQL tier"
                 )
 
+    def _convert_array_transform_operator(
+        self, operator: str, operands: Any
+    ) -> tuple[str, list[Any]]:
+        """Convert $filter / $map / $reduce to SQL.
+
+        Uses json_each to iterate array elements and the AggregationContext
+        variable mechanism to substitute $$var references with the current
+        element column (\"value\") in the SQL expression.
+        """
+        if not isinstance(operands, dict):
+            raise ValueError(f"{operator} requires a dictionary")
+
+        input_operand = operands.get("input")
+        as_var = operands.get("as", "this")
+
+        if input_operand is None:
+            raise ValueError(f"{operator} requires 'input' field")
+
+        input_sql, input_params = self._convert_operand_to_sql(input_operand)
+
+        json_ga = self.json_group_array_function
+
+        # Build a temporary context where $$var -> value (json_each column)
+        # and document fields still reference the outer data column.
+        from ..context import AggregationContext
+
+        ctx = AggregationContext()
+        ctx.set_variable(f"$${as_var}", ("value", []))
+        old_ctx = self._current_context
+        self._current_context = ctx
+
+        try:
+            if operator == "$filter":
+                cond = operands.get("cond")
+                if cond is None:
+                    raise ValueError("$filter requires 'cond' expression")
+                cond_sql, cond_params = self._convert_expr_to_sql(cond)
+
+                if self.jsonb.jsonb_supported:
+                    sql = (
+                        f"(SELECT json({json_ga}(value ORDER BY"
+                        f" CAST(key AS INTEGER))) FROM"
+                        f" {self.json_each_function}({input_sql})"
+                        f" WHERE {cond_sql})"
+                    )
+                else:
+                    sql = (
+                        f"(SELECT {json_ga}(value ORDER BY"
+                        f" CAST(key AS INTEGER)) FROM"
+                        f" {self.json_each_function}({input_sql})"
+                        f" WHERE {cond_sql})"
+                    )
+                return sql, input_params + cond_params
+
+            elif operator == "$map":
+                in_expr = operands.get("in")
+                if in_expr is None:
+                    raise ValueError("$map requires 'in' expression")
+                in_sql, in_params = self._convert_operand_to_sql(in_expr)
+
+                if self.jsonb.jsonb_supported:
+                    sql = (
+                        f"(SELECT json({json_ga}({in_sql} ORDER BY"
+                        f" CAST(key AS INTEGER))) FROM"
+                        f" {self.json_each_function}({input_sql}))"
+                    )
+                else:
+                    sql = (
+                        f"(SELECT {json_ga}({in_sql} ORDER BY"
+                        f" CAST(key AS INTEGER)) FROM"
+                        f" {self.json_each_function}({input_sql}))"
+                    )
+                return sql, input_params + in_params
+
+            elif operator == "$reduce":
+                # $reduce requires state accumulation across iterations
+                # (recursive CTE / window function), not yet implemented.
+                raise NotImplementedError(
+                    "$reduce not supported in SQL tier (use force_python)"
+                )
+
+            else:
+                raise NotImplementedError(
+                    f"Array transform operator {operator}"
+                    f" not supported in SQL tier"
+                )
+        finally:
+            self._current_context = old_ctx
+
     def _convert_extreme_n(
         self, operands: Any, direction: str
     ) -> tuple[str, list[Any]]:
