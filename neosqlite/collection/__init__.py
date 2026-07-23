@@ -581,23 +581,19 @@ class Collection:
 
         return self.query_engine.delete_one(filter, session=session)
 
-    def _delete_one_as_gridfs(self, filter: dict[str, Any]):
-        """
-        Delete a single document from a GridFS system collection using GridFSBucket API.
+    def _get_gridfs_bucket(self):
+        """Return a GridFSBucket for this collection's bucket.
 
-        This properly handles GridFS deletion by removing both the file document
-        and associated chunks.
+        Extracts the bucket name by stripping the ``_files`` or ``_chunks``
+        suffix from the collection name.  Raises :exc:`RuntimeError` when the
+        collection name does not follow the GridFS naming convention.
 
-        Args:
-            filter: Query filter to match document to delete
-
-        Returns:
-            DeleteResult: Result of the delete operation
+        This helper eliminates the duplicate bucket-name extraction logic that
+        was previously copy-pasted in ``_delete_one_as_gridfs``,
+        ``_delete_many_as_gridfs`` and ``_find_as_gridfs``.
         """
         from ..gridfs import GridFSBucket
-        from ..results import DeleteResult
 
-        # Extract bucket name from collection name
         if self.name.endswith("_files"):
             bucket_name = self.name.removesuffix("_files")
         elif self.name.endswith("_chunks"):
@@ -606,9 +602,13 @@ class Collection:
             raise RuntimeError(
                 f"Invalid GridFS collection name: {quote_table_name(self.name)}"
             )
+        return GridFSBucket(self.db, bucket_name=bucket_name)
 
-        # Find the file(s) to delete
-        bucket = GridFSBucket(self.db, bucket_name=bucket_name)
+    def _delete_one_as_gridfs(self, filter: dict[str, Any]):
+        """Delete a single document from a GridFS system collection."""
+        from ..results import DeleteResult
+
+        bucket = self._get_gridfs_bucket()
         cursor = bucket.find(filter)
         files = list(cursor)
 
@@ -647,33 +647,10 @@ class Collection:
         return self.query_engine.delete_many(filter, session=session)
 
     def _delete_many_as_gridfs(self, filter: dict[str, Any]):
-        """
-        Delete multiple documents from a GridFS system collection using GridFSBucket API.
-
-        This properly handles GridFS deletion by removing both file documents
-        and associated chunks.
-
-        Args:
-            filter: Query filter to match documents to delete
-
-        Returns:
-            DeleteResult: Result of the delete operation
-        """
-        from ..gridfs import GridFSBucket
+        """Delete multiple documents from a GridFS system collection."""
         from ..results import DeleteResult
 
-        # Extract bucket name from collection name
-        if self.name.endswith("_files"):
-            bucket_name = self.name.removesuffix("_files")
-        elif self.name.endswith("_chunks"):
-            bucket_name = self.name.removesuffix("_chunks")
-        else:
-            raise RuntimeError(
-                f"Invalid GridFS collection name: {quote_table_name(self.name)}"
-            )
-
-        # Find the files to delete
-        bucket = GridFSBucket(self.db, bucket_name=bucket_name)
+        bucket = self._get_gridfs_bucket()
         cursor = bucket.find(filter)
         files = list(cursor)
 
@@ -772,35 +749,8 @@ class Collection:
         filter: dict[str, Any] | None = None,
         session: ClientSession | None = None,
     ):
-        """
-        Execute find on a GridFS system collection using GridFSBucket API.
-
-        This allows PyMongo-style access like db.fs.files.find({...}) to work
-        by delegating to the GridFSBucket.find() method which understands the
-        GridFS schema.
-
-        Args:
-            filter: Query filter
-            session: A ClientSession for transactions.
-
-        Returns:
-            GridOutCursor: Cursor over GridOut objects
-        """
-        from ..gridfs import GridFSBucket
-
-        # Extract bucket name from collection name (e.g., "fs_files" -> "fs")
-        if self.name.endswith("_files"):
-            bucket_name = self.name.removesuffix("_files")
-        elif self.name.endswith("_chunks"):
-            bucket_name = self.name.removesuffix("_chunks")
-        else:
-            # Should not happen if _is_gridfs_collection() is correct
-            raise RuntimeError(
-                f"Invalid GridFS collection name: {quote_table_name(self.name)}"
-            )
-
-        # Create GridFSBucket and delegate find operation
-        bucket = GridFSBucket(self.db, bucket_name=bucket_name)
+        """Execute find on a GridFS system collection via GridFSBucket."""
+        bucket = self._get_gridfs_bucket()
         return bucket.find(filter, session=session)
 
     def find_raw_batches(
