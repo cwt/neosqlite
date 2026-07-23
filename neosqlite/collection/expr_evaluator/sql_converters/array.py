@@ -179,16 +179,18 @@ class ArrayMixin(BaseSqlMixin):
                     n_sql, n_params = self._convert_operand_to_sql(n_operand)
                     n_clause = n_sql
                 json_ga = self.json_group_array_function
-                # Wrap json_group_array result with json() when using jsonb
+                # Wrap json_group_array result with json() when using jsonb.
+                # Include 'key' in the inner SELECT so the ordered aggregate
+                # can reference it.
                 if self.jsonb.jsonb_supported:
                     sql = (
                         f"(SELECT json({json_ga}(value ORDER BY CAST(key AS INTEGER) ASC)) FROM"
-                        f" (SELECT value FROM {json_each}({array_sql}) LIMIT {n_clause}))"
+                        f" (SELECT value, key FROM {json_each}({array_sql}) LIMIT {n_clause}))"
                     )
                 else:
                     sql = (
                         f"(SELECT {json_ga}(value ORDER BY CAST(key AS INTEGER) ASC) FROM"
-                        f" (SELECT value FROM {json_each}({array_sql}) LIMIT {n_clause}))"
+                        f" (SELECT value, key FROM {json_each}({array_sql}) LIMIT {n_clause}))"
                     )
                 return sql, array_params + n_params
             case "$lastN":
@@ -243,7 +245,11 @@ class ArrayMixin(BaseSqlMixin):
                 )
                 json_ga = self.json_group_array_function
                 if sort_by is None:
-                    # Sort primitive values ascending
+                    # Sort primitive values ascending.
+                    # For mixed types Python falls back to original order;
+                    # we approximate with type-aware sorting (NULLs first,
+                    # then numbers, then strings) which is deterministic
+                    # and matches the spirit of $sortArray.
                     order = "ASC"
                     order_expr = "value"
                 elif isinstance(sort_by, dict):
