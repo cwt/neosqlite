@@ -11,7 +11,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+from ..query_operators import _convert_to_bitmask
 from .cursor import DESCENDING
+from .json_path_utils import parse_json_path
 from .jsonb_support import (
     should_use_json_functions,
 )
@@ -35,47 +37,6 @@ def _text_search_fallback() -> tuple[None, list[Any]]:
         tuple[None, list[Any]]: A tuple containing None and an empty list.
     """
     return None, []
-
-
-def _convert_to_bitmask(value: Any) -> int | None:
-    """
-    Convert a value to a bitmask for bitwise operators.
-
-    Args:
-        value: The value to convert (int, list of bit positions, or iterable)
-
-    Returns:
-        Integer bitmask or None if conversion fails
-    """
-    if isinstance(value, int):
-        return value
-    match value:
-        case list() | tuple():
-            bitmask = 0
-            for bit_pos in value:
-                try:
-                    bitmask |= 1 << int(bit_pos)
-                except (TypeError, ValueError) as e:
-                    logger.debug(f"{e=}")
-                    return None
-            return bitmask
-        case _ if hasattr(value, "__iter__") and not isinstance(
-            value, (str, bytes)
-        ):
-            bitmask = 0
-            try:
-                for bit_pos in value:
-                    bitmask |= 1 << int(bit_pos)
-            except (TypeError, ValueError) as e:
-                logger.debug(f"{e=}")
-                return None
-            return bitmask
-        case _:
-            try:
-                return int(value)
-            except (TypeError, ValueError) as e:
-                logger.debug(f"{e=}")
-            return None
 
 
 class SQLFieldAccessor:
@@ -105,74 +66,6 @@ class SQLFieldAccessor:
         self.id_column = id_column
         self.jsonb_supported = jsonb_supported
 
-    def _parse_json_path(self, field: str) -> str:
-        """
-        Convert dot notation with array indexing to JSON path syntax.
-
-        Supports:
-        - Simple fields: "name" -> "$.name"
-        - Nested fields: "address.street" -> "$.address.street"
-        - Array indexing: "tags[0]" -> "$.tags[0]"
-        - Nested array access: "orders.items[2].name" -> "$.orders.items[2].name"
-        - Complex paths: "a.b[0].c[1].d" -> "$.a.b[0].c[1].d"
-
-        Args:
-            field (str): The field path in dot notation with optional array indices
-
-        Returns:
-            str: Properly formatted JSON path
-        """
-
-        # Handle special case for _id
-        if field == "_id":
-            return field
-
-        # Pattern to match field names with optional array indices
-        # This pattern matches sequences like "field", "field[0]", "field[0][1]", etc.
-
-        # Split the field path by dots while preserving array indices
-        parts = []
-        current_part = ""
-
-        i = 0
-        while i < len(field):
-            if field[i] == ".":
-                if current_part:
-                    parts.append(current_part)
-                    current_part = ""
-            elif field[i] == "[":
-                # Find the closing bracket
-                bracket_end = field.find("]", i)
-                if bracket_end != -1:
-                    # Add the array index to current part
-                    current_part += field[i : bracket_end + 1]
-                    i = bracket_end
-                else:
-                    # Malformed array index, treat as regular character
-                    current_part += field[i]
-            else:
-                current_part += field[i]
-            i += 1
-
-        # Add the last part
-        if current_part:
-            parts.append(current_part)
-
-        # Convert each part to JSON path format
-        json_parts = []
-        for part in parts:
-            # Check if part contains array indices
-            if "[" in part:
-                # Split field name from array indices
-                field_name_end = part.find("[")
-                field_name = part[:field_name_end]
-                array_indices = part[field_name_end:]
-                json_parts.append(f"{field_name}{array_indices}")
-            else:
-                json_parts.append(part)
-
-        return f"$.{'.'.join(json_parts)}"
-
     def get_field_access(
         self, field: str, context: str = "direct", query: dict | None = None
     ) -> str:
@@ -198,7 +91,7 @@ class SQLFieldAccessor:
             return "_id"
         else:
             # Use enhanced JSON path parsing
-            json_path = self._parse_json_path(field)
+            json_path = parse_json_path(field)
 
             # Determine whether to use json_* or jsonb_* functions
             use_json = should_use_json_functions(query, self.jsonb_supported)

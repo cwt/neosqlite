@@ -3,6 +3,7 @@ Tests for the SQL translator unified module.
 """
 
 from neosqlite.collection import sqlite3
+from neosqlite.collection.json_path_utils import parse_json_path
 from neosqlite.collection.jsonb_support import supports_jsonb
 from neosqlite.collection.sql_translator_unified import (
     SQLClauseBuilder,
@@ -118,38 +119,32 @@ class TestSQLFieldAccessor:
 
     def test_parse_json_path_simple_field(self):
         """Test parsing simple field path."""
-        accessor = SQLFieldAccessor()
-        result = accessor._parse_json_path("name")
+        result = parse_json_path("name")
         assert result == "$.name"
 
     def test_parse_json_path_nested_field(self):
         """Test parsing nested field path."""
-        accessor = SQLFieldAccessor()
-        result = accessor._parse_json_path("address.street")
+        result = parse_json_path("address.street")
         assert result == "$.address.street"
 
     def test_parse_json_path_array_indexing(self):
         """Test parsing field with array indexing."""
-        accessor = SQLFieldAccessor()
-        result = accessor._parse_json_path("tags[0]")
+        result = parse_json_path("tags[0]")
         assert result == "$.tags[0]"
 
     def test_parse_json_path_nested_array_access(self):
         """Test parsing nested array access."""
-        accessor = SQLFieldAccessor()
-        result = accessor._parse_json_path("orders.items[2].name")
+        result = parse_json_path("orders.items[2].name")
         assert result == "$.orders.items[2].name"
 
     def test_parse_json_path_complex_path(self):
         """Test parsing complex path with multiple array indices."""
-        accessor = SQLFieldAccessor()
-        result = accessor._parse_json_path("a.b[0].c[1].d")
+        result = parse_json_path("a.b[0].c[1].d")
         assert result == "$.a.b[0].c[1].d"
 
     def test_parse_json_path_id_field(self):
         """Test parsing _id field (special case)."""
-        accessor = SQLFieldAccessor()
-        result = accessor._parse_json_path("_id")
+        result = parse_json_path("_id")
         assert result == "_id"
 
     def test_parse_json_path_array_index(self):
