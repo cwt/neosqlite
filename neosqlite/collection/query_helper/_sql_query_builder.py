@@ -149,7 +149,7 @@ class SqlQueryBuilderMixin:
 
         for op, op_val in value.items():
             if op == "$in" or op == "$nin":
-                if not isinstance(op_val, list) or len(op_val) == 0:
+                if not isinstance(op_val, list) or not op_val:
                     return None
                 ph = ", ".join("?" for _ in op_val)
                 if op == "$in":
@@ -589,7 +589,7 @@ class SqlQueryBuilderMixin:
                         self, "_json_each_function", "json_each"
                     )
                     if isinstance(op_val, (list, tuple)):
-                        if len(op_val) == 0:
+                        if not op_val:
                             return None, []
                         for v in op_val:
                             clauses.append(

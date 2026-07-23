@@ -176,7 +176,7 @@ class SQLOperatorTranslator:
         ) or (
             operator in ("$in", "$nin")
             and isinstance(value, (list, tuple))
-            and len(value) > 0  # Only if there are elements to check
+            and value  # Only if there are elements to check
             and all(
                 isinstance(v, (str, datetime)) and self._is_datetime_value(v)
                 for v in value
@@ -281,11 +281,11 @@ class SQLOperatorTranslator:
                     params = [value]
                 case "$in":
                     if isinstance(value, (list, tuple)):
-                        if len(value) == 0:
+                        if not value:
                             return None, []
                         if field_access == "_id":
                             # For _id field, SQL IN works correctly (scalar comparison)
-                            if len(value) > 0 and all(
+                            if value and all(
                                 isinstance(v, (str, datetime))
                                 and self._is_datetime_value(v)
                                 for v in value
@@ -303,11 +303,11 @@ class SQLOperatorTranslator:
                             return None, []
                 case "$nin":
                     if isinstance(value, (list, tuple)):
-                        if len(value) == 0:
+                        if not value:
                             return None, []
                         if field_access == "_id":
                             # For _id field, SQL NOT IN works correctly (scalar comparison)
-                            if len(value) > 0 and all(
+                            if value and all(
                                 isinstance(v, (str, datetime))
                                 and self._is_datetime_value(v)
                                 for v in value
@@ -325,7 +325,7 @@ class SQLOperatorTranslator:
                             return None, []
                 case "$all":
                     if isinstance(value, (list, tuple)):
-                        if len(value) == 0:
+                        if not value:
                             return None, []
                         if field_access != "_id":
                             return None, []

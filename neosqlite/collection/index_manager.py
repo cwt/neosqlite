@@ -116,11 +116,7 @@ class IndexManager:
             # Compound indexes: must use PyMongo tuple format
             # [("field1", 1), ("field2", -1)]
             fields: list[str]
-            if (
-                isinstance(key, list)
-                and len(key) > 0
-                and isinstance(key[0], tuple)
-            ):
+            if isinstance(key, list) and key and isinstance(key[0], tuple):
                 fields = [k[0] for k in key]
             elif (
                 isinstance(key, list)

@@ -913,7 +913,7 @@ def _command_validate(
         "ok": 1 if not errors else 0,
         "result": [row[0] for row in result],
         "errors": errors,
-        "valid": len(errors) == 0,
+        "valid": not errors,
     }
 
 

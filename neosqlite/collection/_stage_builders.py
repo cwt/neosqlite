@@ -781,7 +781,7 @@ class StageBuildersMixin:
                                     return None, []
                             case "$all":
                                 if isinstance(arg, (list, tuple)):
-                                    if len(arg) == 0:
+                                    if not arg:
                                         return None, []
                                     json_path = parse_json_path(field)
                                     for v in arg:

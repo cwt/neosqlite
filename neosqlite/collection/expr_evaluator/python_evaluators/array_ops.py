@@ -102,7 +102,7 @@ class ArrayPythonMixin(BasePythonMixin):
                 if len(ops) != 1:
                     raise ValueError("$first requires exactly 1 operand")
                 array = self._evaluate_operand_python(ops[0], document)
-                if isinstance(array, list) and len(array) > 0:
+                if isinstance(array, list) and array:
                     return array[0]
                 return None
             case "$last":
@@ -114,7 +114,7 @@ class ArrayPythonMixin(BasePythonMixin):
                 if len(ops) != 1:
                     raise ValueError("$last requires exactly 1 operand")
                 array = self._evaluate_operand_python(ops[0], document)
-                if isinstance(array, list) and len(array) > 0:
+                if isinstance(array, list) and array:
                     return array[-1]
                 return None
             case "$firstN":

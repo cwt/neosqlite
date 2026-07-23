@@ -205,7 +205,7 @@ class TempTableExprEvaluator:
                             if isinstance(op, dict):
                                 score += self._analyze_complexity(op)
                 case "$not":
-                    if isinstance(operands, list) and len(operands) > 0:
+                    if isinstance(operands, list) and operands:
                         if isinstance(operands[0], dict):
                             score += self._analyze_complexity(operands[0])
                 case "$size" | "$in" | "$arrayElemAt":
@@ -301,7 +301,7 @@ class TempTableExprEvaluator:
                         for op in operands:
                             extract_from_expr(op)
                 case "$not":
-                    if isinstance(operands, list) and len(operands) > 0:
+                    if isinstance(operands, list) and operands:
                         extract_from_expr(operands[0])
                 case "$gt" | "$gte" | "$lt" | "$lte" | "$eq" | "$ne" | "$cmp":
                     if isinstance(operands, list):
@@ -320,7 +320,7 @@ class TempTableExprEvaluator:
                         if "else" in operands:
                             extract_from_operand(operands["else"])
                 case "$abs" | "$ceil" | "$floor" | "$round":
-                    if isinstance(operands, list) and len(operands) > 0:
+                    if isinstance(operands, list) and operands:
                         extract_from_operand(operands[0])
 
         def extract_from_operand(op: Any) -> None:

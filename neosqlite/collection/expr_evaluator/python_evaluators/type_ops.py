@@ -76,7 +76,7 @@ class TypePythonMixin(BasePythonMixin):
                 if isinstance(value, (int, float)):
                     return value != 0
                 if isinstance(value, str):
-                    return len(value) > 0
+                    return bool(value)
                 return bool(value)
             case "$toLong":
                 if len(operands) != 1:
