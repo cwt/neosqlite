@@ -241,15 +241,21 @@ def test_window_tier2_fallback(collection):
 def test_window_unsupported_operator_fallback(collection):
     """Test fallback when an operator is not supported by SQL but is by Python."""
     collection, conn = collection
-    # Use $sortArray which has a Python evaluator but no SQL converter yet.
+    # Use $filter which has a Python evaluator but no SQL converter yet.
     pipeline = [
         {
             "$setWindowFields": {
                 "sortBy": {"_id": 1},
                 "output": {
-                    "sorted": {
+                    "filtered": {
                         "$shift": {
-                            "output": {"$sortArray": {"input": [3, 1, 2]}},
+                            "output": {
+                                "$filter": {
+                                    "input": [1, 2, 3, 4, 5],
+                                    "as": "n",
+                                    "cond": {"$gt": ["$$n", 3]},
+                                }
+                            },
                             "by": 1,
                         }
                     }
@@ -261,12 +267,7 @@ def test_window_unsupported_operator_fallback(collection):
     # This should still work via Tier 3
     results = list(collection.aggregate(pipeline))
     assert len(results) == 6
-    # $sortArray falls back to Python because it has no SQL converter
-    assert results[1]["sorted"] == [
-        1,
-        2,
-        3,
-    ]  # doc index 1 gets shifted result from doc 0
+    assert results[1]["filtered"] == [4, 5]  # doc 1 gets shifted from doc 0
 
 
 def test_window_first_last(collection):

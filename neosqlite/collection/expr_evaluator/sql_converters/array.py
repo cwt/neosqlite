@@ -156,6 +156,114 @@ class ArrayMixin(BaseSqlMixin):
                 # Negative index -1 for last element (SQLite JSON path supports #-1)
                 sql = f"json_extract({array_sql}, '$[#-1]')"
                 return sql, array_params
+            case "$firstN":
+                # MongoDB: { $firstN: { input: <array>, n: <number> } }
+                # Also accepts positional: [<array>, <number>]
+                if isinstance(operands, dict):
+                    array_operand = operands.get("input")
+                    n_operand = operands.get("n")
+                elif isinstance(operands, list) and len(operands) == 2:
+                    array_operand = operands[0]
+                    n_operand = operands[1]
+                else:
+                    raise ValueError("$firstN requires input array and n count")
+                array_sql, array_params = self._convert_operand_to_sql(
+                    array_operand
+                )
+                # Use literal n if available, otherwise parameterize
+                if isinstance(n_operand, int):
+                    n_value: int = n_operand
+                    n_clause = str(n_value)
+                    n_params: list[Any] = []
+                else:
+                    n_sql, n_params = self._convert_operand_to_sql(n_operand)
+                    n_clause = n_sql
+                json_ga = self.json_group_array_function
+                # Wrap json_group_array result with json() when using jsonb
+                if self.jsonb.jsonb_supported:
+                    sql = (
+                        f"(SELECT json({json_ga}(value ORDER BY CAST(key AS INTEGER) ASC)) FROM"
+                        f" (SELECT value FROM {json_each}({array_sql}) LIMIT {n_clause}))"
+                    )
+                else:
+                    sql = (
+                        f"(SELECT {json_ga}(value ORDER BY CAST(key AS INTEGER) ASC) FROM"
+                        f" (SELECT value FROM {json_each}({array_sql}) LIMIT {n_clause}))"
+                    )
+                return sql, array_params + n_params
+            case "$lastN":
+                # MongoDB: { $lastN: { input: <array>, n: <number> } }
+                if isinstance(operands, dict):
+                    array_operand = operands.get("input")
+                    n_operand = operands.get("n")
+                elif isinstance(operands, list) and len(operands) == 2:
+                    array_operand = operands[0]
+                    n_operand = operands[1]
+                else:
+                    raise ValueError("$lastN requires input array and n count")
+                array_sql, array_params = self._convert_operand_to_sql(
+                    array_operand
+                )
+                if isinstance(n_operand, int):
+                    n_value = n_operand
+                    n_clause = str(n_value)
+                    n_params = []
+                else:
+                    n_sql, n_params = self._convert_operand_to_sql(n_operand)
+                    n_clause = n_sql
+                json_ga = self.json_group_array_function
+                # Get last N in original order.
+                # Inner: select last N elements (DESC by key).
+                # Outer: use ordered aggregate to re-sort by original key ASC.
+                if self.jsonb.jsonb_supported:
+                    sql = (
+                        f"(SELECT json({json_ga}(value ORDER BY CAST(key AS INTEGER) ASC))"
+                        f" FROM (SELECT value, key"
+                        f" FROM {json_each}({array_sql})"
+                        f" ORDER BY CAST(key AS INTEGER) DESC LIMIT {n_clause}))"
+                    )
+                else:
+                    sql = (
+                        f"(SELECT {json_ga}(value ORDER BY CAST(key AS INTEGER) ASC)"
+                        f" FROM (SELECT value, key"
+                        f" FROM {json_each}({array_sql})"
+                        f" ORDER BY CAST(key AS INTEGER) DESC LIMIT {n_clause}))"
+                    )
+                return sql, array_params + n_params
+            case "$sortArray":
+                # MongoDB: { $sortArray: { input: <array>, sortBy: {<f>: <dir>} } }
+                if not isinstance(operands, dict):
+                    raise ValueError("$sortArray requires a dictionary")
+                array_operand = operands.get("input")
+                sort_by = operands.get("sortBy")
+                if array_operand is None:
+                    raise ValueError("$sortArray requires 'input' field")
+                array_sql, array_params = self._convert_operand_to_sql(
+                    array_operand
+                )
+                json_ga = self.json_group_array_function
+                if sort_by is None:
+                    # Sort primitive values ascending
+                    order = "ASC"
+                    order_expr = "value"
+                elif isinstance(sort_by, dict):
+                    field = next(iter(sort_by.keys()))
+                    direction = sort_by[field]
+                    order = "DESC" if direction == -1 else "ASC"
+                    order_expr = f"{self.json_function_prefix}_extract(value, '$.{field}')"
+                else:
+                    raise ValueError("$sortArray sortBy must be a dict or null")
+                if self.jsonb.jsonb_supported:
+                    sql = (
+                        f"(SELECT json({json_ga}(value ORDER BY {order_expr} {order})) FROM"
+                        f" {json_each}({array_sql}))"
+                    )
+                else:
+                    sql = (
+                        f"(SELECT {json_ga}(value ORDER BY {order_expr} {order}) FROM"
+                        f" {json_each}({array_sql}))"
+                    )
+                return sql, array_params
             case (
                 "$setEquals"
                 | "$setIntersection"
