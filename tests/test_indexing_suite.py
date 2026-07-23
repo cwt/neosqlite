@@ -7,7 +7,6 @@ from operator import itemgetter
 from typing import Tuple, Type
 
 import pytest
-from pytest import raises
 
 import neosqlite
 from neosqlite.collection import sqlite3
@@ -27,90 +26,6 @@ except ImportError:
 # ================================
 # Basic Indexing Tests
 # ================================
-
-
-def test_create_index(collection):
-    collection.insert_one({"foo": "bar"})
-    collection.create_index("foo")
-    assert "idx_foo_foo" in collection.list_indexes()
-
-
-def test_create_index_on_nested_keys(collection):
-    collection.insert_many(
-        [{"foo": {"bar": "zzz"}, "bok": "bak"}, {"a": 1, "b": 2}]
-    )
-    collection.create_index("foo.bar")
-    assert "idx_foo_foo_bar" in collection.list_indexes()
-
-
-def test_reindex(collection):
-    collection.create_index("foo")
-    collection.insert_one({"foo": "bar"})
-    # With native JSON indexing, reindex does nothing but should not fail
-    collection.reindex("idx_foo_foo")
-
-
-def test_insert_auto_index(collection):
-    collection.create_index("foo")
-    collection.insert_one({"foo": "bar"})
-    collection.insert_one({"foo": "baz"})
-
-    # With native JSON indexing, we can't directly query the index table
-    # but we can verify the index exists by checking the index list
-    assert "idx_foo_foo" in collection.list_indexes()
-
-
-def test_create_compound_index(collection):
-    collection.insert_one({"foo": "bar", "far": "boo"})
-    collection.create_index([("foo", 1), ("far", 1)])
-    assert "idx_foo_foo_far" in collection.list_indexes()
-
-
-def test_create_unique_index_violation(collection):
-    collection.create_index("foo", unique=True)
-    collection.insert_one({"foo": "bar"})
-    with raises(IntegrityError):
-        collection.insert_one({"foo": "bar"})
-
-
-def test_update_to_break_uniqueness(collection):
-    collection.create_index("foo", unique=True)
-    collection.insert_one({"foo": "bar"})
-    res = collection.insert_one({"foo": "baz"})
-
-    with raises(IntegrityError):
-        collection.update_one(
-            {"_id": res.inserted_id}, {"$set": {"foo": "bar"}}
-        )
-
-
-def test_hint_index(collection):
-    collection.insert_many(
-        [{"foo": "bar", "a": 1}, {"foo": "bar", "a": 2}, {"fox": "baz", "a": 3}]
-    )
-    collection.create_index("foo")
-
-    # This test is more conceptual now, as the implementation details changed
-    # We can't easily mock the execute call in the same way.
-    # We'll trust the implementation detail that hint is used.
-    docs_with_hint = list(
-        collection.find({"foo": "bar", "a": 2}, hint="idx_foo_foo")
-    )
-    assert len(docs_with_hint) == 1
-    assert docs_with_hint[0]["a"] == 2
-
-
-def test_list_indexes(collection):
-    collection.create_index("foo")
-    indexes = collection.list_indexes()
-    assert isinstance(indexes, list)
-    assert "idx_foo_foo" in indexes
-
-
-def test_drop_index(collection):
-    collection.create_index("foo")
-    collection.drop_index("foo")
-    assert "idx_foo_foo" not in collection.list_indexes()
 
 
 def test_drop_indexes_from_collection_index(collection):

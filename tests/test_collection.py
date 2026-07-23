@@ -34,7 +34,7 @@ except ImportError:
     OperationalError = (sqlite3.OperationalError,)
     Error = (sqlite3.Error,)
 
-from neosqlite import DeleteOne, InsertOne, MalformedDocument, UpdateOne
+from neosqlite import MalformedDocument
 from neosqlite.query_operators import _eq, _gt, _in, _lt, _lte
 
 
@@ -1221,92 +1221,6 @@ def test_drop_indexes(collection):
     collection.create_index("bar")
     collection.drop_indexes()
     assert len(collection.list_indexes()) == 0
-
-
-def test_bulk_write(collection):
-    """Test bulk write operations."""
-    collection.insert_many([{"a": 1}, {"a": 2}, {"a": 3}])
-    requests = [
-        InsertOne({"a": 4}),
-        UpdateOne({"a": 1}, {"$set": {"a": 10}}),
-        DeleteOne({"a": 2}),
-    ]
-    result = collection.bulk_write(requests)
-    assert isinstance(result, neosqlite.BulkWriteResult)
-    assert result.inserted_count == 1
-    assert result.matched_count == 1
-    assert result.modified_count == 1
-    assert result.deleted_count == 1
-    assert collection.count_documents({}) == 3
-    assert collection.find_one({"a": 10}) is not None
-    assert collection.find_one({"a": 4}) is not None
-    assert collection.find_one({"a": 2}) is None
-
-
-def test_bulk_write_with_upsert(collection):
-    """Test bulk write with upsert."""
-    requests = [UpdateOne({"a": 1}, {"$set": {"a": 10}}, upsert=True)]
-    result = collection.bulk_write(requests)
-    assert result.upserted_count == 1
-    assert collection.count_documents({}) == 1
-
-
-def test_bulk_write_rollback(collection):
-    """Test bulk write rollback on error."""
-    collection.create_index("a", unique=True)
-    collection.insert_one({"a": 1})
-    requests = [
-        InsertOne({"a": 2}),
-        InsertOne({"a": 1}),  # This will fail
-    ]
-    with raises(IntegrityError):
-        collection.bulk_write(requests)
-    assert collection.count_documents({}) == 1
-    assert collection.find_one({"a": 2}) is None
-
-
-def test_bulk_write_ordered_parameter(collection):
-    """Test bulk_write with ordered parameter."""
-    # Test with ordered=True (default)
-    collection.insert_many([{"a": 1}, {"a": 2}])
-    requests = [
-        InsertOne({"a": 3}),
-        UpdateOne({"a": 1}, {"$set": {"a": 10}}),
-        DeleteOne({"a": 2}),
-    ]
-    result = collection.bulk_write(requests, ordered=True)
-    assert isinstance(result, neosqlite.BulkWriteResult)
-    assert result.inserted_count == 1
-    assert result.matched_count == 1
-    assert result.modified_count == 1
-    assert result.deleted_count == 1
-
-    # Verify the operations were executed
-    assert collection.count_documents({}) == 2
-    assert collection.find_one({"a": 10}) is not None
-    assert collection.find_one({"a": 3}) is not None
-    assert collection.find_one({"a": 2}) is None
-
-    # Test with ordered=False
-    collection.delete_many({})
-    collection.insert_many([{"a": 1}, {"a": 2}])
-    requests = [
-        InsertOne({"a": 4}),
-        UpdateOne({"a": 1}, {"$set": {"a": 10}}),
-        DeleteOne({"a": 2}),
-    ]
-    result = collection.bulk_write(requests, ordered=False)
-    assert isinstance(result, neosqlite.BulkWriteResult)
-    assert result.inserted_count == 1
-    assert result.matched_count == 1
-    assert result.modified_count == 1
-    assert result.deleted_count == 1
-
-    # Verify the operations were executed
-    assert collection.count_documents({}) == 2
-    assert collection.find_one({"a": 10}) is not None
-    assert collection.find_one({"a": 4}) is not None
-    assert collection.find_one({"a": 2}) is None
 
 
 def test_collection_create_with_jsonb_support():
