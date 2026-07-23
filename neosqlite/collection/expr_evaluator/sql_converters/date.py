@@ -218,3 +218,45 @@ class DateMixin(BaseSqlMixin):
 
         # Params must match placeholder order: date2 first, then date1
         return sql, date2_params + date1_params
+
+    def _convert_date_to_string_operator(
+        self, operands: Any
+    ) -> tuple[str, list[Any]]:
+        """Convert $dateToString to SQLite strftime().
+
+        MongoDB: { $dateToString: { format: "%Y-%m-%d", date: <expr> } }
+                 or positional: [<format>, <date>]
+        """
+        if isinstance(operands, dict):
+            fmt = operands.get("format", "%Y-%m-%d")
+            date_operand = operands.get("date")
+            timezone = operands.get("timezone")
+        elif isinstance(operands, list) and len(operands) >= 2:
+            fmt = operands[0]
+            date_operand = operands[1]
+            timezone = operands[2] if len(operands) > 2 else None
+        else:
+            raise ValueError("$dateToString requires format and date")
+
+        # Only support literal format strings (not field references)
+        if not isinstance(fmt, str):
+            raise NotImplementedError(
+                "$dateToString with dynamic format not supported in SQL tier"
+            )
+
+        # Only support UTC / no timezone in SQL tier
+        if timezone is not None:
+            tz_str = str(timezone).upper().replace(" ", "")
+            if tz_str not in ("UTC", "+00:00", "Z"):
+                raise NotImplementedError(
+                    "$dateToString with non-UTC timezone not supported in SQL tier"
+                )
+
+        date_sql, date_params = self._convert_operand_to_sql(date_operand)
+
+        # Convert MongoDB format to SQLite strftime format.
+        # %L (milliseconds) -> %f (fractional seconds) in SQLite.
+        sqlite_fmt = fmt.replace("%L", "%f")
+
+        sql = f"strftime('{sqlite_fmt}', {date_sql})"
+        return sql, date_params

@@ -152,6 +152,8 @@ class CoreMixin(BaseSqlMixin):
                 )
             case "$dateDiff":
                 return self._convert_date_diff_operator(operands)
+            case "$dateToString":
+                return self._convert_date_to_string_operator(operands)
             case (
                 "$mergeObjects"
                 | "$getField"
