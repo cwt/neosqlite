@@ -2,6 +2,82 @@
 
 ## NEXT
 
+#### Expression Operators: Massive SQL Tier Expansion (16 new SQL converters)
+
+Converted 16 expression operators from Python-only to SQL tier, verified against real
+MongoDB 8.0 for correctness:
+
+| Category | Operators | SQL Mapping |
+|---|---|---|
+| Conditional | `$switch` | `CASE WHEN ... THEN ... ELSE ... END` |
+| Array access | `$arrayElemAt`, `$first`, `$last` | `json_extract($[N]` / `$[#-1]` / `json_each` |
+| Array slicing | `$firstN`, `$lastN` | `json_each` + ordered `json_group_array` |
+| Array extremes | `$maxN`, `$minN` | `json_each` + `ORDER BY value` + `LIMIT n` |
+| Array sort | `$sortArray` | `json_each` + `json_group_array(ORDER BY ...)` |
+| Array transform | `$filter`, `$map` | `json_each` subquery with variable binding via `AggregationContext` |
+| Set | `$setEquals` | Bidirectional `NOT EXISTS` subset check |
+| String | `$split` | `replace()` → `json()` array parse |
+| Date format | `$dateToString` | `strftime()` with `%L`→`%f` conversion |
+| Date truncate | `$dateTrunc` | `strftime()` per-unit format strings |
+| Date assemble | `$dateFromParts` | `printf` + `strftime` with `COALESCE` defaults |
+| Date decompose | `$dateToParts` | `strftime` + `json_object` |
+| Date parse | `$dateFromString` | `strftime` (ISO 8601) |
+| Literal | `$literal` | Parameter passthrough |
+| Random | `$rand` | `(ABS(RANDOM() % 1000000000)) / 1000000000.0` |
+
+All operators respect the existing kill switch (`force_python=True` / `tier=3`) —
+Python fallback code is untouched and always available.
+
+#### Correctness Fixes (verified against MongoDB 8.0)
+
+- **`$concat` null propagation (Python)**: Previously treated null/missing operands as
+  empty strings (returning partial concatenation). MongoDB spec: "if any argument
+  resolves to null, returns null." Fixed to return `None` when any operand is null.
+
+- **`$eq`/`$ne` null comparison (Python)**: Missing fields were indistinguishable from
+  null-valued fields (`None == None` → `True`). MongoDB: missing ≠ null literal.
+  Added `_is_field_missing()` helper to distinguish "field absent" from
+  "field present with value None".
+
+- **`$eq`/`$ne` null comparison (SQL)**: `NULL = NULL` → `NULL` in SQL, not `True`.
+  Fixed by detecting `None` literals and emitting a `CASE` with `json_type()` to
+  distinguish missing keys (SQL NULL) from present null values (`'null'`).
+
+- **`$sortArray` BSON comparison order (Python)**: Sorted mixed-type arrays with
+  Python's `sorted()` which raises `TypeError` on mixed types, silently returning
+  the original unsorted array. Fixed with `_bson_sort()` using proper BSON comparison
+  order: Null < Numbers < Strings < Objects < Arrays < Boolean < Date.
+
+- **`$filter`/`$map` default `as` variable (Python)**: Defaulted to `"item"` instead
+  of MongoDB's `"this"`. Fixed to match MongoDB spec.
+
+#### JSONB Compatibility Hardening
+
+- `$first`, `$last`, `$arrayElemAt`: replaced hardcoded `json_extract` with dynamic
+  `json_function_prefix + "_extract"` so JSONB-capable databases auto-select `jsonb_extract`.
+- `$eq` null check: field-SQL detection now matches both `json_extract` and `jsonb_extract`.
+
+#### API Comparison Coverage
+
+- Added `$dateFromParts` and `$dateToParts` to the API comparison script against MongoDB.
+  All 381 comparison tests pass (363 passed, 18 skipped, 0 failed — 100%).
+
+#### Test Results
+- **Unit Tests**: 2,825 passed (was 2,791; +34 new tests covering SQL conversion,
+  Python-SQL consistency, kill-switch verification, and integration)
+- **Code Coverage**: ~81.7%
+
+#### Deep Dive: `$filter` / `$map` Variable Binding
+
+The key technique that made `$filter` and `$map` possible in SQL:
+`json_each()` iterates array elements as `(key, value)` rows. By injecting the `as`
+variable binding (`$$item` → `("value", [])`) into the `AggregationContext`, document
+field references in the `cond`/`in` expression continue to resolve against outer
+columns while `$$var` references resolve to the current element. The result is a
+`json_group_array` over the filtered/mapped subquery.
+
+---
+
 #### Strict `_id` Field Parity (High Parity Improvements)
 
 - **Strict `_id` Semantics**: Dropped integer `_id` -> `id` column relaxation. String `_id` values (e.g., `"123"`) are no longer implicitly converted to integers. Range queries (`$gt`, `$lt`) on `_id` now fall back to Python-based evaluation for correct cross-type BSON ordering.
