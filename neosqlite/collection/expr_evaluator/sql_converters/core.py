@@ -109,6 +109,7 @@ class CoreMixin(BaseSqlMixin):
                 | "$replaceOne"
                 | "$strLenCP"
                 | "$indexOfCP"
+                | "$strcasecmp"
             ):
                 return self._convert_string_operator(operator, operands)
             case "$abs" | "$ceil" | "$floor" | "$round" | "$trunc":
