@@ -10,6 +10,7 @@ Submodules
    neosqlite.collection.query_engine.base
    neosqlite.collection.query_engine.crud_operations
    neosqlite.collection.query_engine.find_operations
+   neosqlite.collection.query_engine.python_aggregation_engine
    neosqlite.collection.query_engine.query_methods
 
 Module contents
