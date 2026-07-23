@@ -14,6 +14,7 @@ from .base import BaseSqlMixin
 
 
 class CoreMixin(BaseSqlMixin):
+    """$expr dispatch, operand-to-SQL conversion, operator mapping."""
 
     def _convert_expr_to_sql(
         self, expr: dict[str, Any]

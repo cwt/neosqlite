@@ -12,6 +12,7 @@ from .base import BaseSqlMixin
 
 
 class SetMixin(BaseSqlMixin):
+    """$setUnion / $setIntersection / $setDifference / $setIsSubset / $anyElementTrue / $allElementsTrue → SQL."""
 
     def _convert_set_operator(
         self, operator: str, operands: Any

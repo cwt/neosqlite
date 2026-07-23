@@ -12,6 +12,7 @@ from .base import BaseSqlMixin
 
 
 class DateMixin(BaseSqlMixin):
+    """$year / $month / $dayOfMonth / $dateAdd / $dateSubtract / $dateDiff → SQL."""
 
     def _convert_date_operator(
         self, operator: str, operands: Any

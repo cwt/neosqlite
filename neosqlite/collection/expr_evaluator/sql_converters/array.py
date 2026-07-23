@@ -14,6 +14,7 @@ from .base import BaseSqlMixin
 
 
 class ArrayMixin(BaseSqlMixin):
+    """$size / $in / $isArray / $slice / $indexOfArray / $sum / $avg → SQL."""
 
     def _convert_array_operator(
         self, operator: str, operands: Any

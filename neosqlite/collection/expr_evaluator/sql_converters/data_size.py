@@ -12,6 +12,7 @@ from .base import BaseSqlMixin
 
 
 class DataSizeMixin(BaseSqlMixin):
+    """$binarySize / $bsonSize → SQL."""
 
     def _convert_data_size_operator(
         self, operator: str, operands: Any

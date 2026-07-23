@@ -12,6 +12,7 @@ from .base import BaseSqlMixin
 
 
 class LogicalMixin(BaseSqlMixin):
+    """$and / $or / $not / $nor → SQL."""
 
     def _convert_logical_operator(
         self, operator: str, operands: Any

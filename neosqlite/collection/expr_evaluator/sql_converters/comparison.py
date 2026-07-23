@@ -12,6 +12,7 @@ from .base import BaseSqlMixin
 
 
 class ComparisonMixin(BaseSqlMixin):
+    """$eq / $gt / $lt / $gte / $lte / $ne / $cmp → SQL."""
 
     def _convert_comparison_operator(
         self, operator: str, operands: list[Any]

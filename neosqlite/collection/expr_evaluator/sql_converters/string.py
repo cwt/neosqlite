@@ -12,6 +12,7 @@ from .base import BaseSqlMixin
 
 
 class StringMixin(BaseSqlMixin):
+    """$concat / $toLower / $toUpper / $substr / $trim / $regexMatch / $replaceAll → SQL."""
 
     def _build_pattern_with_options(self, regex: str, options: str) -> str:
         """Build regex pattern with inline flags."""

@@ -14,6 +14,7 @@ from .base import BaseSqlMixin
 
 
 class ObjectMixin(BaseSqlMixin):
+    """$mergeObjects / $getField / $setField / $unsetField / $objectToArray / $let → SQL."""
 
     def _convert_object_operator(
         self, operator: str, operands: Any

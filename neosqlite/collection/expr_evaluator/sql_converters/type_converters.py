@@ -12,6 +12,7 @@ from .base import BaseSqlMixin
 
 
 class TypeConvertersMixin(BaseSqlMixin):
+    """$toString / $toInt / $toBool / $type / $isNumber / $convert → SQL."""
 
     def _get_operator_return_type(self, operator: str) -> str | None:
         """

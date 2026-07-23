@@ -7,6 +7,8 @@ if TYPE_CHECKING:
 
 
 class OperatorsBaseMixin:
+    """Shared base for temporary-table aggregation stage operators."""
+
     # Attribute annotations for state supplied by
     # TemporaryTableAggregationProcessor.__init__. Declared on the shared base so every
     # mixin sees them via MRO. Values are assigned by the concrete processor subclass.

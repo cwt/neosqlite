@@ -12,6 +12,7 @@ from .base import BaseSqlMixin
 
 
 class ArithmeticMixin(BaseSqlMixin):
+    """SQL converter for  operators in the ArithmeticMixin category."""
 
     def _convert_arithmetic_operator(
         self, operator: str, operands: list[Any]

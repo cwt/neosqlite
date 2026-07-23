@@ -13,6 +13,8 @@ from .base import BaseSqlMixin
 
 
 class MathTrigMixin(BaseSqlMixin):
+    """$abs / $ceil / $floor / $sqrt / $pow / $sin / $cos / $atan2 → SQL."""
+
     _log2_warned: bool
 
     def _convert_math_operator(

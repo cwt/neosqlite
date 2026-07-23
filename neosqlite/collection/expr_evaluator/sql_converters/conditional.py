@@ -12,6 +12,7 @@ from .base import BaseSqlMixin
 
 
 class ConditionalMixin(BaseSqlMixin):
+    """$cond / $ifNull → SQL CASE / COALESCE."""
 
     def _convert_cond_operator(
         self, operands: dict[str, Any]
