@@ -130,6 +130,14 @@ class TestStringOperatorsPython:
             "c",
         ]
 
+    def test_split_sql(self):
+        """Test $split SQL conversion."""
+        evaluator = ExprEvaluator()
+        expr = {"$split": ["$text", ","]}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "replace" in sql.lower()
+
     def test_replaceAll_operator(self):
         """Test $replaceAll operator."""
         evaluator = ExprEvaluator()

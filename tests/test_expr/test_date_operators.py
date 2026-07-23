@@ -94,6 +94,15 @@ class TestDateOperatorsSQL:
         assert sql is not None
         assert "%f" in sql
 
+    def test_dateToString_sql(self):
+        """Test $dateToString SQL conversion."""
+        evaluator = ExprEvaluator()
+        expr = {"$dateToString": {"format": "%Y-%m-%d", "date": "$dt"}}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "strftime" in sql
+        assert "%Y-%m-%d" in sql
+
 
 class TestDateOperatorsSingleValueFormat:
     """Test date operators with single-value operand format (bug fix verification).

@@ -162,6 +162,90 @@ class TestArrayOperatorsSQL:
         assert sql is not None
         assert "json_each" in sql
 
+    def test_arrayElemAt_sql(self):
+        """Test $arrayElemAt SQL conversion."""
+        evaluator = ExprEvaluator()
+        expr = {"$arrayElemAt": ["$items", 1]}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "json_extract" in sql
+
+    def test_arrayElemAt_negative_sql(self):
+        """Test $arrayElemAt with negative index SQL conversion."""
+        evaluator = ExprEvaluator()
+        expr = {"$arrayElemAt": ["$items", -1]}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "#-1" in sql
+
+    def test_first_sql(self):
+        """Test $first SQL conversion."""
+        evaluator = ExprEvaluator()
+        expr = {"$first": "$items"}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "$[0]" in sql
+
+    def test_last_sql(self):
+        """Test $last SQL conversion."""
+        evaluator = ExprEvaluator()
+        expr = {"$last": "$items"}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "#-1" in sql
+
+    def test_firstN_sql(self):
+        """Test $firstN SQL conversion."""
+        evaluator = ExprEvaluator()
+        expr = {"$firstN": {"input": "$items", "n": 3}}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "json_each" in sql
+        assert "LIMIT 3" in sql
+
+    def test_lastN_sql(self):
+        """Test $lastN SQL conversion."""
+        evaluator = ExprEvaluator()
+        expr = {"$lastN": {"input": "$items", "n": 2}}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "json_each" in sql
+        assert "DESC" in sql
+
+    def test_sortArray_sql(self):
+        """Test $sortArray SQL conversion."""
+        evaluator = ExprEvaluator()
+        expr = {"$sortArray": {"input": "$items"}}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "json_group_array" in sql
+        assert "ORDER BY value ASC" in sql
+
+    def test_sortArray_with_sortby_sql(self):
+        """Test $sortArray with sortBy SQL conversion."""
+        evaluator = ExprEvaluator()
+        expr = {"$sortArray": {"input": "$objs", "sortBy": {"score": -1}}}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "json_extract" in sql
+        assert "DESC" in sql
+
+    def test_maxN_sql(self):
+        """Test $maxN SQL conversion."""
+        evaluator = ExprEvaluator()
+        expr = {"$maxN": {"input": "$scores", "n": 3}}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "ORDER BY value DESC" in sql
+
+    def test_minN_sql(self):
+        """Test $minN SQL conversion."""
+        evaluator = ExprEvaluator()
+        expr = {"$minN": {"input": "$scores", "n": 2}}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "ORDER BY value ASC" in sql
+
 
 class TestArrayIntegration:
     """Integration tests for array operators."""

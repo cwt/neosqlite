@@ -175,6 +175,31 @@ class TestObjectOperatorsSQL:
         assert sql is not None
         assert "json_set" in sql
 
+    def test_literal_sql(self):
+        """Test $literal SQL conversion."""
+        evaluator = ExprEvaluator()
+        expr = {"$literal": "hello"}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert params == ["hello"]
+
+    def test_literal_dollar_string_sql(self):
+        """Test $literal with $prefixed string (not a field ref)."""
+        evaluator = ExprEvaluator()
+        expr = {"$literal": "$not_a_field"}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert params == ["$not_a_field"]
+        assert "json_extract" not in sql  # Not interpreted as field ref
+
+    def test_rand_sql(self):
+        """Test $rand SQL conversion."""
+        evaluator = ExprEvaluator()
+        expr = {"$rand": {}}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "RANDOM" in sql
+
 
 class TestObjectIntegration:
     """Integration tests for object operators."""

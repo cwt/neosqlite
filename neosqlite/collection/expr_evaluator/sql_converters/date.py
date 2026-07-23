@@ -260,3 +260,47 @@ class DateMixin(BaseSqlMixin):
 
         sql = f"strftime('{sqlite_fmt}', {date_sql})"
         return sql, date_params
+
+    def _convert_date_trunc_operator(
+        self, operands: Any
+    ) -> tuple[str, list[Any]]:
+        """Convert $dateTrunc to SQLite strftime().
+
+        MongoDB: { $dateTrunc: { date: <expr>, unit: "hour" } }
+        """
+        if isinstance(operands, dict):
+            date_operand = operands.get("date")
+            unit = operands.get("unit", "day")
+        elif isinstance(operands, list) and len(operands) >= 2:
+            date_operand = operands[0]
+            unit = operands[1]
+        else:
+            raise ValueError("$dateTrunc requires date and unit")
+
+        if not isinstance(unit, str):
+            raise NotImplementedError(
+                "$dateTrunc with dynamic unit not supported in SQL tier"
+            )
+
+        date_sql, date_params = self._convert_operand_to_sql(date_operand)
+
+        # Map MongoDB truncation units to strftime format strings.
+        # The output includes 'T' separator and 'Z' suffix so
+        # neosqlite_json_loads recognizes it as a UTC ISO date.
+        unit_formats: dict[str, str] = {
+            "year": "%Y-01-01T00:00:00Z",
+            "month": "%Y-%m-01T00:00:00Z",
+            "day": "%Y-%m-%dT00:00:00Z",
+            "hour": "%Y-%m-%dT%H:00:00Z",
+            "minute": "%Y-%m-%dT%H:%M:00Z",
+            "second": "%Y-%m-%dT%H:%M:%SZ",
+        }
+
+        if unit not in unit_formats:
+            raise NotImplementedError(
+                f"$dateTrunc unit '{unit}' not supported in SQL tier"
+            )
+
+        fmt = unit_formats[unit]
+        sql = f"strftime('{fmt}', {date_sql})"
+        return sql, date_params

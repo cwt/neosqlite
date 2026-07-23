@@ -98,6 +98,42 @@ class TestConditionalOperatorsSQL:
         assert "COALESCE" in sql
         assert params == ["default"]
 
+    def test_switch_sql(self):
+        """Test $switch SQL conversion."""
+        evaluator = ExprEvaluator()
+        expr = {
+            "$switch": {
+                "branches": [
+                    {"case": {"$eq": ["$a", 1]}, "then": "one"},
+                    {"case": {"$eq": ["$a", 2]}, "then": "two"},
+                ],
+                "default": "other",
+            }
+        }
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "CASE" in sql
+        assert "WHEN" in sql
+        assert "THEN" in sql
+        assert "ELSE" in sql
+        assert "END" in sql
+        assert params == [1, "one", 2, "two", "other"]
+
+    def test_switch_without_default_sql(self):
+        """Test $switch without default SQL conversion."""
+        evaluator = ExprEvaluator()
+        expr = {
+            "$switch": {
+                "branches": [
+                    {"case": {"$gte": ["$score", 90]}, "then": "A"},
+                ],
+            }
+        }
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "ELSE NULL" in sql
+        assert params == [90, "A"]
+
 
 class TestConditionalIntegration:
     """Integration tests for conditional operators."""
@@ -147,3 +183,35 @@ class TestConditionalIntegration:
             results = list(collection.find(expr))
             assert len(results) == 1
             assert results[0]["a"] == 5
+
+    def test_switch_integration(self):
+        """Test $switch with database."""
+        with neosqlite.Connection(":memory:") as conn:
+            collection = conn["test"]
+            collection.insert_many(
+                [
+                    {"a": 1, "name": "alice"},
+                    {"a": 2, "name": "bob"},
+                    {"a": 3, "name": "carol"},
+                ]
+            )
+
+            expr = {
+                "$expr": {
+                    "$eq": [
+                        {
+                            "$switch": {
+                                "branches": [
+                                    {"case": {"$eq": ["$a", 1]}, "then": "one"},
+                                    {"case": {"$eq": ["$a", 2]}, "then": "two"},
+                                ],
+                                "default": "other",
+                            }
+                        },
+                        "two",
+                    ]
+                }
+            }
+            results = list(collection.find(expr))
+            assert len(results) == 1
+            assert results[0]["name"] == "bob"

@@ -51,6 +51,7 @@ class BaseSqlMixin:
     def _convert_date_arithmetic_operator(self, op: str, operands: Any) -> tuple[str, list[Any]]: ...  # type: ignore[empty-body]
     def _convert_date_diff_operator(self, operands: Any) -> tuple[str, list[Any]]: ...  # type: ignore[empty-body]
     def _convert_date_to_string_operator(self, operands: Any) -> tuple[str, list[Any]]: ...  # type: ignore[empty-body]
+    def _convert_date_trunc_operator(self, operands: Any) -> tuple[str, list[Any]]: ...  # type: ignore[empty-body]
     def _convert_object_operator(self, op: str, operands: Any) -> tuple[str, list[Any]]: ...  # type: ignore[empty-body]
     def _convert_let_operator(self, operands: Any) -> tuple[str, list[Any]]: ...  # type: ignore[empty-body]
     def _convert_data_size_operator(self, op: str, operands: Any) -> tuple[str, list[Any]]: ...  # type: ignore[empty-body]
