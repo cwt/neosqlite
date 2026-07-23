@@ -55,6 +55,20 @@ def compare_date_expr_operators():
             "$dateFromString",
             {"$dateFromString": {"dateString": "2024-06-15"}},
         ),
+        (
+            "$dateFromParts",
+            {
+                "$dateFromParts": {
+                    "year": 2024,
+                    "month": 6,
+                    "day": 15,
+                }
+            },
+        ),
+        (
+            "$dateToParts",
+            {"$dateToParts": {"date": "$date"}},
+        ),
     ]
 
     neo_dateadd = None
