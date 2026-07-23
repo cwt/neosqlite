@@ -123,12 +123,13 @@ class ArrayMixin(BaseSqlMixin):
                     operands[0]
                 )
                 # Literal index: use SQLite JSON path $[N] / $[#-N] directly
+                jfx = self.json_function_prefix + "_extract"
                 if isinstance(operands[1], int):
                     idx = operands[1]
                     if idx >= 0:
-                        sql = f"json_extract({array_sql}, '$[{idx}]')"
+                        sql = f"{jfx}({array_sql}, '$[{idx}]')"
                     else:
-                        sql = f"json_extract({array_sql}, '$[#-{abs(idx)}]')"
+                        sql = f"{jfx}({array_sql}, '$[#-{abs(idx)}]')"
                     return sql, array_params
                 # Dynamic index: use json_each to avoid parameter duplication
                 idx_sql, idx_params = self._convert_operand_to_sql(operands[1])
@@ -145,7 +146,8 @@ class ArrayMixin(BaseSqlMixin):
                 array_sql, array_params = self._convert_operand_to_sql(
                     operands[0]
                 )
-                sql = f"json_extract({array_sql}, '$[0]')"
+                jfx = self.json_function_prefix + "_extract"
+                sql = f"{jfx}({array_sql}, '$[0]')"
                 return sql, array_params
             case "$last":
                 if len(operands) != 1:
@@ -153,8 +155,9 @@ class ArrayMixin(BaseSqlMixin):
                 array_sql, array_params = self._convert_operand_to_sql(
                     operands[0]
                 )
+                jfx = self.json_function_prefix + "_extract"
                 # Negative index -1 for last element (SQLite JSON path supports #-1)
-                sql = f"json_extract({array_sql}, '$[#-1]')"
+                sql = f"{jfx}({array_sql}, '$[#-1]')"
                 return sql, array_params
             case "$firstN":
                 # MongoDB: { $firstN: { input: <array>, n: <number> } }

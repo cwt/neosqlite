@@ -36,11 +36,13 @@ class ComparisonMixin(BaseSqlMixin):
             # Use json_type to distinguish missing key (returns SQL NULL)
             # from present null value (returns 'null').
             # Only do this for simple $field references where the SQL
-            # is just json_extract(data, '$.field').
+            # is a json/jsonb_extract call.
             if (
                 isinstance(field_op, str)
                 and field_op.startswith("$")
-                and "json_extract" in field_sql
+                and (
+                    "json_extract" in field_sql or "jsonb_extract" in field_sql
+                )
             ):
                 # $eq: missing->0, null->1, else->0
                 # $ne: missing->1, null->0, else->1
