@@ -251,28 +251,6 @@ class QueryHelper(
                 sql_expr, params, query, expr
             )
 
-    def _build_other_fields_clause(
-        self, query: dict[str, Any], expr: dict[str, Any]
-    ) -> tuple[str, list[Any]] | None:
-        """Helper to build WHERE clause for non-$expr fields."""
-        where_parts = []
-        all_params = []
-        for field, value in query.items():
-            if field == "$expr":
-                continue
-            if field in ("$and", "$or", "$nor", "$not"):
-                return None
-            field_result = self._build_field_clause(field, value)
-            if field_result is None:
-                return None
-            field_clause, field_params = field_result
-            where_parts.append(field_clause)
-            all_params.extend(field_params)
-
-        if not where_parts:
-            return "", []
-        return " AND ".join(where_parts), all_params
-
     def _analyze_expr_complexity(self, expr: dict[str, Any]) -> int:
         """
         Analyze expression complexity to determine appropriate tier.

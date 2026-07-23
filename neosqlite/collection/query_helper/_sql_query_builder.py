@@ -104,41 +104,6 @@ class SqlQueryBuilderMixin:
         """
         return where_clause, params, []
 
-    def _build_other_fields_clause(
-        self, query: dict[str, Any], expr: dict[str, Any]
-    ) -> tuple[str, list[Any]] | None:
-        """
-        Build WHERE clause for non-$expr fields.
-
-        Args:
-            query: Full query dictionary
-            expr: The $expr expression
-
-        Returns:
-            Tuple of (WHERE clause, parameters) or None for Python fallback
-        """
-        clauses: list[str] = []
-        params: list[Any] = []
-
-        for field, value in query.items():
-            if field == "$expr":
-                continue
-
-            if field in ("$and", "$or", "$nor", "$not"):
-                return None
-
-            field_result = self._build_field_clause(field, value)
-            if field_result is None:
-                return None
-            field_clause, field_params = field_result
-
-            clauses.append(field_clause)
-            params.extend(field_params)
-
-        if clauses:
-            return " AND ".join(clauses), params
-        return "", params
-
     def _id_column_ref(self) -> str:
         """Return the quoted SQL column reference that stores the logical _id.
 
