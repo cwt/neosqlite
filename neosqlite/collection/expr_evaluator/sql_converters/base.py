@@ -40,6 +40,7 @@ class BaseSqlMixin:
     def _convert_arithmetic_operator(self, op: str, operands: Any) -> tuple[str, list[Any]]: ...  # type: ignore[empty-body]
     def _convert_cond_operator(self, operands: Any) -> tuple[str, list[Any]]: ...  # type: ignore[empty-body]
     def _convert_ifNull_operator(self, operands: Any) -> tuple[str, list[Any]]: ...  # type: ignore[empty-body]
+    def _convert_switch_operator(self, operands: Any) -> tuple[str, list[Any]]: ...  # type: ignore[empty-body]
     def _convert_array_operator(self, op: str, operands: Any) -> tuple[str, list[Any]]: ...  # type: ignore[empty-body]
     def _convert_set_operator(self, op: str, operands: Any) -> tuple[str, list[Any]]: ...  # type: ignore[empty-body]
     def _convert_string_operator(self, op: str, operands: Any) -> tuple[str, list[Any]]: ...  # type: ignore[empty-body]

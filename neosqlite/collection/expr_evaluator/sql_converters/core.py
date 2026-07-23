@@ -62,6 +62,8 @@ class CoreMixin(BaseSqlMixin):
                 return self._convert_cond_operator(operands)
             case "$ifNull":
                 return self._convert_ifNull_operator(operands)
+            case "$switch":
+                return self._convert_switch_operator(operands)
             case (
                 "$size"
                 | "$in"
