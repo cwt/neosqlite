@@ -31,10 +31,37 @@ class SetMixin(BaseSqlMixin):
 
         match operator:
             case "$setEquals":
-                # NOT EXISTS clauses duplicate ? placeholders causing param mismatch.
-                raise NotImplementedError(
-                    "Operator $setEquals not supported in SQL tier"
+                if len(operands) != 2:
+                    raise ValueError("$setEquals requires exactly 2 operands")
+                array1_sql, array1_params = self._convert_operand_to_sql(
+                    operands[0]
                 )
+                array2_sql, array2_params = self._convert_operand_to_sql(
+                    operands[1]
+                )
+                # Bidirectional subset check: A ⊆ B AND B ⊆ A.
+                # Each array reference appears twice; for field references
+                # (the common case) this adds no extra parameters.
+                sql = f"""
+                (
+                  NOT EXISTS (
+                    SELECT 1 FROM {json_each}({array1_sql}) AS a1
+                    WHERE NOT EXISTS (
+                      SELECT 1 FROM {json_each}({array2_sql}) AS a2
+                      WHERE a2.value = a1.value
+                    )
+                  )
+                  AND
+                  NOT EXISTS (
+                    SELECT 1 FROM {json_each}({array2_sql}) AS a2
+                    WHERE NOT EXISTS (
+                      SELECT 1 FROM {json_each}({array1_sql}) AS a1
+                      WHERE a1.value = a2.value
+                    )
+                  )
+                )
+                """
+                return sql, array1_params + array2_params
 
             case "$setIntersection":
                 if len(operands) != 2:

@@ -212,9 +212,29 @@ class StringMixin(BaseSqlMixin):
                 sql = f"json(REGEXP_FIND_ALL(?, {input_sql}))"
                 return sql, input_params + [pattern]
             case "$split":
-                # Recursive CTE duplicates ? placeholders causing param mismatch.
+                if not isinstance(operands, list) or len(operands) != 2:
+                    raise ValueError("$split requires [string, delimiter]")
+                string_sql, string_params = self._convert_operand_to_sql(
+                    operands[0]
+                )
+                # Literal delimiter: use replace() to convert to JSON array.
+                if isinstance(operands[1], str):
+                    delim = operands[1]
+                    # Escape delimiter for safe embedding in SQL string literal.
+                    delim_sql = delim.replace("'", "''")
+                    # Split by replacing delimiter with '","' and wrapping in '["']...'"']'.
+                    # This handles simple strings; for strings with embedded
+                    # JSON-special characters the caller should use
+                    # force_python fallback.
+                    sql = (
+                        f"json('[\"' ||"
+                        f" replace({string_sql}, '{delim_sql}', '\",\"') ||"
+                        f" '\"]')"
+                    )
+                    return sql, string_params
+                # Dynamic delimiter: fall back to Python.
                 raise NotImplementedError(
-                    "Operator $split not supported in SQL tier"
+                    "$split with dynamic delimiter not supported in SQL tier"
                 )
             case "$replaceAll":
                 # Handle MongoDB dict format: {input, find, replacement}
