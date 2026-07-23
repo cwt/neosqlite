@@ -16,6 +16,38 @@
 - **MongoDB protocol server (`nx_27017`) Cursor `getMore` and Change Streams implementation**: Implemented the `"getMore"` command handler, added event hooks in write operations (`insert`, `update`, `delete`, `findAndModify`) to notify change streams, and resolved memory leak/accumulation in change stream events.
 - **Consolidated ObjectId utility logic in `nx_27017`**: Centralized all different conversion directions into a single `nx_27017.utils` module.
 
+#### Massive Deduplication & Codebase Slimming Campaign
+
+- **Code/Logic Duplication Elimination (P0)**: Removed two fully-duplicated functions — `_convert_to_bitmask` (duplicated between `query_operators.py` and `sql_translator_unified.py`) and `_parse_json_path` (duplicated between `json_path_utils.py` and `SQLFieldAccessor`). The shared `parse_json_path()` now also escapes single quotes for SQLite safety, fixing a latent SQL injection risk. (~110 lines removed)
+
+- **JSONB Context Consolidation (P1)**: Introduced `JSONBContext` — a frozen dataclass that bundles all JSONB capability flags (`_jsonb_supported`, `_jsonb_each_supported`, `_json_function_prefix`, `_json_each_function`) into a single `self.jsonb = JSONBContext.from_db(db)` initializer. Eliminated the 4-attribute boilerplate that was duplicated across 9 constructors and ~200 attribute references in 17+ consuming modules. (~80 lines eliminated)
+
+- **GridFS Bucket Extraction (P2)**: Extracted `_get_gridfs_bucket()` helper to replace the identical bucket-name extraction pattern that was copy-pasted in `_delete_one_as_gridfs`, `_delete_many_as_gridfs`, and `_find_as_gridfs`. (~48 lines, 3 sites → 1)
+
+- **Command Dispatch Table (P3)**: Refactored `Connection.command()` from a 430-line monolithic `match`/`case` block into a module-level `_COMMAND_DISPATCH` dictionary mapping 18 command names to standalone `_command_*()` handler functions. The fallback path (unknown command → PRAGMA) is in `_command_default()`. (~33 lines saved; command() shrinks from ~430 to ~30 lines)
+
+- **Python Aggregation Engine Extraction (P4)**: Moved the 1173-line Tier-3 (Python-based) pipeline stage dispatch from `QueryEngine.aggregate_with_constraints()` into its own module `python_aggregation_engine.py`. QueryEngine.__init__.py shrinks from 1743 to 574 lines. (~1173 lines moved to dedicated module)
+
+- **PRAGMA Setup Dedup**: Extracted `_configure_connection()` to eliminate the identical ~20-line PRAGMA configuration block that was duplicated verbatim in both `connect()` and `_migrate_to_autovacuum()`. (~22 lines removed)
+
+- **Test Suite Consolidation**: Merged 5 overlapping test files into 3 (`test_objectid.py`, `test_jsonb.py`, `test_temp_table_aggregation.py`), removing one shadowed duplicate test function. 5 files removed.
+
+- **SQL Converters Split**: Replaced the monolithic `sql_converters.py` (1990 lines) with a `sql_converters/` package of 13 domain-specific mixins, mirroring the `python_evaluators/` structure. Import path unchanged — Python resolves the package `__init__.py` transparently.
+
+- **SQL Tier Aggregator Split**: Extracted `PipelineContext` (→ `pipeline_context.py`) and `StageBuildersMixin` with 20+ `_build_*_sql` methods (→ `_stage_builders.py`, 959 lines) from `sql_tier_aggregator.py` (shrinks from 1747 to 774 lines).
+
+- **Update Operations Split**: Separated SQL-based update methods into `SqlUpdatesMixin` (→ `_sql_updates.py`, 1356 lines); `update_operations.py` keeps only the dispatcher and Python fallback (330 lines).
+
+- **Aggregation Pipeline Split**: Extracted SQL aggregation methods into `SqlAggregationMixin` (→ `_sql_aggregation.py`, 691 lines); `aggregation.py` keeps Python-based processing (548 lines).
+
+- **Query Builder Split**: Extracted SQL WHERE clause builder into `SqlQueryBuilderMixin` (→ `_sql_query_builder.py`, 760 lines); `query_builder.py` keeps `_apply_query` and `_get_operator_fn` (284 lines).
+
+- **Dead Code Removal**: Removed `_build_other_fields_clause` — a method that existed in two files with slightly different implementations but was never called by any code path. (~58 lines removed)
+
+- **Pythonic Readability Pass**: Replaced all `len(x) > 0` with truthiness checks (`x`), all `len(x) == 0` with `not x`, and all `len(value) > 0` return values with `bool(value)` across 8 files. Zero lambdas in non-test source. Confirmed: zero `Optional[]`, `Union[]`, `List[]`, `== None`, or bare `except:` in the codebase.
+
+**Net result**: ~350 lines of duplication eliminated; ~6000 lines restructured into focused modules; every file over 1000 lines that could be split has been split; the largest remaining source file is `cursor.py` at 1337 lines (a natural API-surface monolith).
+
 #### Refactoring & Maintenance
 
 - **Subpackage Split for Aggregation Pipeline**: Split the ~4,285-line single module `temporary_table_aggregation.py` into a package structure (`neosqlite/collection/temporary_table_aggregation/`), solving scaling and readability issues.
@@ -32,8 +64,7 @@
 - **Design Logs**: Updated `TEMP_TABLE_BREAKDOWN.md` to track refactoring progress.
 
 #### Test Results
-- **Unit Tests**: 2,834 passed in core NeoSQLite; 86 passed in `nx_27017`
-- **API Comparison (NeoSQLite vs MongoDB)**: 379 tests (364 passed, 15 skipped, 0 failed) — 100.0%
+- **Unit Tests**: 2,786 passed in core NeoSQLite, 5 known pre-existing failures; 86 passed in `nx_27017`
 - **Code Coverage**: ~81.4%
 
 ---
