@@ -116,7 +116,7 @@ from .type_utils import (
 
 # Forward reference for PipelineContext to avoid circular import
 if TYPE_CHECKING:
-    from ..sql_tier_aggregator import PipelineContext
+    from ..pipeline_context import PipelineContext
 
 # Public API exports
 __all__ = [
