@@ -245,11 +245,10 @@ class ArrayMixin(BaseSqlMixin):
                 )
                 json_ga = self.json_group_array_function
                 if sort_by is None:
-                    # Sort primitive values ascending.
-                    # For mixed types Python falls back to original order;
-                    # we approximate with type-aware sorting (NULLs first,
-                    # then numbers, then strings) which is deterministic
-                    # and matches the spirit of $sortArray.
+                    # Sort by value.  SQLite json_each converts JSON
+                    # true/false to integers, so boolean vs number
+                    # distinction is not preserved (same as the
+                    # json_group_array approach used by $firstN etc.).
                     order = "ASC"
                     order_expr = "value"
                 elif isinstance(sort_by, dict):

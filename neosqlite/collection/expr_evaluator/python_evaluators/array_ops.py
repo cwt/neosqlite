@@ -2,9 +2,69 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from .base import BasePythonMixin
+
+# BSON comparison order groups (lower = earlier in sort).
+# Order: Null < Numbers < Strings < Objects < Arrays <
+#        BinData < ObjectId < Boolean < Date < Timestamp < Regex
+_BSON_TYPE_ORDER: dict[type | str, int] = {
+    type(None): 0,
+    int: 1,
+    float: 1,
+    str: 2,
+    dict: 3,
+    list: 4,
+    bytes: 5,
+    bytearray: 5,
+    bool: 6,
+    datetime: 7,
+}
+
+
+def _bson_sort_key(value: Any) -> tuple[int, Any]:
+    """Return a sort key tuple that encodes BSON comparison order.
+
+    The first element is the BSON type group (0..9), the second is the
+    value itself for same-type comparison.  Unknown types fall at the end.
+    """
+    if value is None:
+        return (0, None)
+    # bool is a subclass of int; check it first.
+    if isinstance(value, bool):
+        return (6, value)
+    if isinstance(value, (int, float)):
+        return (1, value)
+    if isinstance(value, str):
+        return (2, value)
+    if isinstance(value, dict):
+        return (3, str(value))
+    if isinstance(value, list):
+        return (4, str(value))
+    if isinstance(value, (bytes, bytearray)):
+        return (5, value)
+    if isinstance(value, datetime):
+        return (7, value)
+    # From neosqlite.objectid / neosqlite.binary if available
+    type_name = type(value).__name__
+    if type_name == "ObjectId":
+        return (5, str(value))
+    if type_name == "Binary":
+        return (5, bytes(value) if hasattr(value, "__bytes__") else str(value))
+    # Fallback: unknown types sort last
+    return (99, str(value))
+
+
+def _bson_sort(array: list[Any]) -> list[Any]:
+    """Sort a list using MongoDB BSON comparison order."""
+    try:
+        return sorted(array, key=_bson_sort_key)
+    except TypeError:
+        # Fallback: if two values of the same type still can't be compared,
+        # return original order.
+        return array
 
 
 class ArrayPythonMixin(BasePythonMixin):
@@ -223,12 +283,11 @@ class ArrayPythonMixin(BasePythonMixin):
                 if not isinstance(array, list):
                     return []
 
-                # If no sortBy specified, sort primitive values
+                # If no sortBy specified, sort by value using BSON comparison order.
+                # BSON order: Null < Numbers < Strings < Objects < Arrays <
+                #             BinData < ObjectId < Boolean < Date < Timestamp < Regex
                 if sort_by is None:
-                    try:
-                        return sorted(array)
-                    except TypeError:
-                        return array
+                    return _bson_sort(array)
 
                 # Sort by field (for array of objects)
                 if isinstance(sort_by, dict):
