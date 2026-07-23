@@ -102,8 +102,11 @@ class Connection:
             **kwargs: Keyword arguments passed to sqlite3.connect().
         """
         self.db = sqlite3.connect(*args, **kwargs)
+        self._configure_connection()
+        self._check_and_migrate_autovacuum(*args, **kwargs)
 
-        # Safely access attributes to allow calling connect() on partially initialized objects
+    def _configure_connection(self) -> None:
+        """Apply PRAGMA settings and register custom functions on ``self.db``."""
         auto_vacuum = getattr(self, "auto_vacuum", AutoVacuumMode.INCREMENTAL)
         journal_mode = getattr(self, "journal_mode", JournalMode.WAL)
 
@@ -112,8 +115,8 @@ class Connection:
         self.db.execute(f"PRAGMA journal_mode={journal_mode}")
         self._register_custom_functions()
 
-        # Set synchronous mode to NORMAL for WAL mode by default if not specified by write concern
-        # This provides a good balance of performance and safety in WAL mode
+        # Set synchronous mode to NORMAL for WAL mode by default
+        # unless overridden by write concern.
         if journal_mode == "WAL":
             self.db.execute("PRAGMA synchronous = NORMAL")
 
@@ -126,8 +129,6 @@ class Connection:
             for name, path in self._tokenizers:
                 # Use parameterized query to prevent SQL injection in path
                 self.db.execute("SELECT load_extension(?)", (path,))
-
-        self._check_and_migrate_autovacuum(*args, **kwargs)
 
     def _register_custom_functions(self) -> None:
         """Register custom SQLite functions, including regex operators."""
@@ -237,30 +238,7 @@ class Connection:
         )
 
         self.db = sqlite3.connect(*args, **kwargs)
-
-        # Safely access attributes to allow calling connect() on partially initialized objects
-        auto_vacuum = getattr(self, "auto_vacuum", AutoVacuumMode.INCREMENTAL)
-        journal_mode = getattr(self, "journal_mode", JournalMode.WAL)
-
-        self.db.execute(f"PRAGMA auto_vacuum={auto_vacuum}")
-        self.db.isolation_level = None
-        self.db.execute(f"PRAGMA journal_mode={journal_mode}")
-        self._register_custom_functions()
-
-        # Set synchronous mode to NORMAL for WAL mode by default if not specified by write concern
-        # This provides a good balance of performance and safety in WAL mode
-        if journal_mode == "WAL":
-            self.db.execute("PRAGMA synchronous = NORMAL")
-
-        write_concern = getattr(self, "_write_concern", None)
-        if write_concern:
-            self._apply_write_concern(write_concern)
-
-        if self._tokenizers:
-            self.db.enable_load_extension(True)
-            for name, path in self._tokenizers:
-                # Use parameterized query to prevent SQL injection in path
-                self.db.execute("SELECT load_extension(?)", (path,))
+        self._configure_connection()
 
     def cleanup(self) -> None:
         """Clean up all collection resources associated with this connection."""
