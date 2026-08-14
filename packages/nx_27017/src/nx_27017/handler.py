@@ -178,6 +178,7 @@ class NeoSQLiteHandler:
 
     def _handle_gridfs_insert(
         self,
+        request_id: int,
         coll_name: str,
         docs: list[dict],
         db: Connection,
@@ -189,7 +190,7 @@ class NeoSQLiteHandler:
 
         if not docs:
             logger.debug("_handle_gridfs_insert: no docs, returning success")
-            return 0, {"ok": 1, "n": 0}
+            return request_id, {"ok": 1, "n": 0}
 
         is_files = coll_name.endswith(".files")
         is_chunks = coll_name.endswith(".chunks")
@@ -207,7 +208,7 @@ class NeoSQLiteHandler:
             logger.error(
                 f"create_gridfs_adapter returned None for coll_name={coll_name}"
             )
-            return 0, {"ok": 0, "errmsg": "Invalid GridFS collection"}
+            return request_id, {"ok": 0, "errmsg": "Invalid GridFS collection"}
 
         if is_chunks and docs:
             logger.debug(
@@ -221,7 +222,7 @@ class NeoSQLiteHandler:
         logger.debug(f"Calling adapter.handle_insert: is_files={is_files}")
         result = adapter.handle_insert(docs, is_files=is_files)
         logger.debug(f"adapter.handle_insert result: {result}")
-        return 0, result
+        return request_id, result
 
     def _gridfs_insert_file(self, bucket, doc: dict) -> BsonObjectId:
         """Insert a file document into GridFS files collection."""
@@ -352,7 +353,9 @@ class NeoSQLiteHandler:
                     and isinstance(value, dict)
                 ):
                     docs_to_insert.append(value)
-            return self._handle_gridfs_insert(coll_name, docs_to_insert, db)
+            return self._handle_gridfs_insert(
+                request_id, coll_name, docs_to_insert, db
+            )
 
         if coll_name not in db._collections:
             coll = db.create_collection(coll_name)

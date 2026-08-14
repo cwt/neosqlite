@@ -107,7 +107,11 @@ async def handle_client(
                     except Exception as e:
                         logger.exception("Error handling OP_MSG")
                         response_doc = {"ok": 0, "errmsg": str(e)}
-                        request_id = 0
+                        request_id = (
+                            msg.get("request_id", 0)
+                            if "msg" in locals() and isinstance(msg, dict)
+                            else 0
+                        )
 
                     try:
                         reply = ResponseBuilder.build_op_msg_reply(
