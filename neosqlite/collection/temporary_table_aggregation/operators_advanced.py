@@ -48,23 +48,6 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                 "$densify with partitionBy not supported - use force_fallback"
             )
 
-        print(
-            f"DEBUG DENSIFY: field={field}, range_spec={range_spec}, partition_by={partition_by}"
-        )
-
-        if not field or not range_spec:
-            raise NotImplementedError(
-                "$densify requires field and range - use force_fallback or simplify pipeline"
-            )
-
-        if partition_by:
-            print(
-                "DEBUG DENSIFY: partition_by is truthy, raising NotImplementedError"
-            )
-            raise NotImplementedError(
-                "$densify with partitionBy not supported - use force_fallback"
-            )
-
         step = range_spec.get("step")
         bounds = range_spec.get("bounds")
 
