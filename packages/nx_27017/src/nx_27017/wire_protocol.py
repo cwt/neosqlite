@@ -157,22 +157,37 @@ class OP_MSG:
                 sections.append(("body", doc))
                 offset += doc_len
             elif section_type == 1:
+                section_start = offset
+                if offset + 4 > effective_length:
+                    raise ValueError("Section header extends beyond message")
                 size = struct.unpack("<I", message_bytes[offset : offset + 4])[
                     0
                 ]
                 offset += 4
 
-                cstring_end = message_bytes.index(b"\x00", offset)
+                if size < 4 or section_start + size > effective_length:
+                    raise ValueError("Invalid section size in OP_MSG section 1")
+
+                try:
+                    cstring_end = message_bytes.index(b"\x00", offset)
+                except ValueError as err:
+                    raise ValueError(
+                        "Null terminator missing in section 1 identifier"
+                    ) from err
                 field_name = message_bytes[offset:cstring_end].decode("utf-8")
                 offset = cstring_end + 1
 
                 docs_start = offset
-                docs_end = offset - 4 + size
+                docs_end = section_start + size
+                if docs_start > docs_end:
+                    raise ValueError("Malformed section 1 sequence")
                 doc_data = message_bytes[docs_start:docs_end]
 
                 docs = []
                 doc_offset = 0
                 while doc_offset < len(doc_data):
+                    if doc_offset + 4 > len(doc_data):
+                        break
                     doc_len = struct.unpack(
                         "<i", doc_data[doc_offset : doc_offset + 4]
                     )[0]
@@ -187,15 +202,25 @@ class OP_MSG:
                 sections.append(("payload", {field_name: docs}))
                 offset = docs_end
             elif section_type == 2:
+                if offset + 4 > effective_length:
+                    raise ValueError("Section 2 header extends beyond message")
                 count = struct.unpack("<I", message_bytes[offset : offset + 4])[
                     0
                 ]
                 offset += 4
                 docs = []
                 for _ in range(count):
+                    if offset + 4 > effective_length:
+                        raise ValueError(
+                            "Section 2 doc header extends beyond message"
+                        )
                     doc_len = struct.unpack(
                         "<i", message_bytes[offset : offset + 4]
                     )[0]
+                    if doc_len <= 0 or offset + doc_len > effective_length:
+                        raise ValueError(
+                            f"Invalid BSON document length in section 2: {doc_len}"
+                        )
                     doc_data = message_bytes[offset : offset + doc_len]
                     docs.append(BSON(doc_data).decode())
                     offset += doc_len
@@ -218,25 +243,42 @@ class OP_QUERY:
 
     @staticmethod
     def parse(data: bytes) -> dict[str, Any]:
+        if len(data) < 16:
+            raise ValueError("OP_QUERY message too short")
         struct.unpack("<i", data[0:4])[0]
         request_id = struct.unpack("<i", data[4:8])[0]
         response_to = struct.unpack("<i", data[8:12])[0]
         struct.unpack("<i", data[12:16])[0]
         offset = 16
 
+        if len(data) < offset + 4:
+            raise ValueError("OP_QUERY message too short for flags")
         flags = struct.unpack("<I", data[offset : offset + 4])[0]
         offset += 4
 
-        null_pos = data.index(b"\x00", offset)
+        try:
+            null_pos = data.index(b"\x00", offset)
+        except ValueError as err:
+            raise ValueError(
+                "Missing null terminator in full_collection_name"
+            ) from err
         full_collection_name = data[offset:null_pos].decode("utf-8")
         offset = null_pos + 1
 
+        if len(data) < offset + 8:
+            raise ValueError(
+                "OP_QUERY message too short for skip/return counts"
+            )
         number_to_skip = struct.unpack("<i", data[offset : offset + 4])[0]
         offset += 4
         number_to_return = struct.unpack("<i", data[offset : offset + 4])[0]
         offset += 4
 
+        if len(data) < offset + 4:
+            raise ValueError("OP_QUERY message too short for document length")
         doc_len = struct.unpack("<i", data[offset : offset + 4])[0]
+        if doc_len <= 0 or offset + doc_len > len(data):
+            raise ValueError("Invalid document length in OP_QUERY")
         doc_data = data[offset : offset + doc_len]
         query = BSON(doc_data).decode()
 
