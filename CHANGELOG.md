@@ -2,7 +2,7 @@
 
 ## NEXT
 
-#### Expression Operators: Massive SQL Tier Expansion (16 new SQL converters)
+### Expression Operators: Massive SQL Tier Expansion (16 new SQL converters)
 
 Converted 16 expression operators from Python-only to SQL tier, verified against real
 MongoDB 8.0 for correctness:
@@ -28,7 +28,7 @@ MongoDB 8.0 for correctness:
 All operators respect the existing kill switch (`force_python=True` / `tier=3`) —
 Python fallback code is untouched and always available.
 
-#### Correctness Fixes (verified against MongoDB 8.0)
+### Correctness Fixes (verified against MongoDB 8.0)
 
 - **`$concat` null propagation (Python)**: Previously treated null/missing operands as
   empty strings (returning partial concatenation). MongoDB spec: "if any argument
@@ -51,23 +51,23 @@ Python fallback code is untouched and always available.
 - **`$filter`/`$map` default `as` variable (Python)**: Defaulted to `"item"` instead
   of MongoDB's `"this"`. Fixed to match MongoDB spec.
 
-#### JSONB Compatibility Hardening
+### JSONB Compatibility Hardening
 
 - `$first`, `$last`, `$arrayElemAt`: replaced hardcoded `json_extract` with dynamic
   `json_function_prefix + "_extract"` so JSONB-capable databases auto-select `jsonb_extract`.
 - `$eq` null check: field-SQL detection now matches both `json_extract` and `jsonb_extract`.
 
-#### API Comparison Coverage
+### API Comparison Coverage
 
 - Added `$dateFromParts` and `$dateToParts` to the API comparison script against MongoDB.
   All 381 comparison tests pass (363 passed, 18 skipped, 0 failed — 100%).
 
-#### Test Results
+### Test Results
 - **Unit Tests**: 2,825 passed (was 2,791; +34 new tests covering SQL conversion,
   Python-SQL consistency, kill-switch verification, and integration)
 - **Code Coverage**: ~81.7%
 
-#### Deep Dive: `$filter` / `$map` Variable Binding
+### Deep Dive: `$filter` / `$map` Variable Binding
 
 The key technique that made `$filter` and `$map` possible in SQL:
 `json_each()` iterates array elements as `(key, value)` rows. By injecting the `as`
@@ -78,12 +78,12 @@ columns while `$$var` references resolve to the current element. The result is a
 
 ---
 
-#### Strict `_id` Field Parity (High Parity Improvements)
+### Strict `_id` Field Parity (High Parity Improvements)
 
 - **Strict `_id` Semantics**: Dropped integer `_id` -> `id` column relaxation. String `_id` values (e.g., `"123"`) are no longer implicitly converted to integers. Range queries (`$gt`, `$lt`) on `_id` now fall back to Python-based evaluation for correct cross-type BSON ordering.
 - **Auto-Increment Fallback**: Updated core query builders to use `_id_column` resolving, targeting the logical `_id` column if present or falling back to the legacy `id` column.
 
-#### Bug Fixes & Parity Improvements
+### Bug Fixes & Parity Improvements
 
 - **ISO-8601 Datetime Deserialization inside lists/arrays**: Added support to recursively parse ISO date strings inside JSON arrays.
 - **Cache Key Generation Safety**: Prevented `TypeError` crash in cache key generation on unsortable items inside `TranslationCache.make_key`.
@@ -91,8 +91,12 @@ columns while `$$var` references resolve to the current element. The result is a
 - **Specialized UTC Datetime Index & Query Parameter Serialization**: Supported python timezone-aware `datetime` query parameter values and normalized direct datetime comparison values to match UTC-indexed formatting in SQL translation.
 - **MongoDB protocol server (`nx_27017`) Cursor `getMore` and Change Streams implementation**: Implemented the `"getMore"` command handler, added event hooks in write operations (`insert`, `update`, `delete`, `findAndModify`) to notify change streams, and resolved memory leak/accumulation in change stream events.
 - **Consolidated ObjectId utility logic in `nx_27017`**: Centralized all different conversion directions into a single `nx_27017.utils` module.
+- **`serverStatus` Process ID Parity**: Fixed `serverStatus` command to return the actual process ID (`os.getpid()`) rather than a hardcoded value (`1`).
+- **Cursor Pagination Memory Efficiency**: Used `itertools.islice` for memory-efficient `skip` and `limit` paging over generator streams in cursor iteration.
+- **Change Stream Identifier Quoting**: Applied `quote_table_name()` to changestream trigger creation queries for consistent table identifier safety.
+- **`$densify` Stage Debug Cleanup & Validation**: Removed leftover debug `print()` statements and eliminated duplicate field/range/partition validation blocks in advanced aggregation.
 
-#### Massive Deduplication & Codebase Slimming Campaign
+### Massive Deduplication & Codebase Slimming Campaign
 
 - **Code/Logic Duplication Elimination (P0)**: Removed two fully-duplicated functions — `_convert_to_bitmask` (duplicated between `query_operators.py` and `sql_translator_unified.py`) and `_parse_json_path` (duplicated between `json_path_utils.py` and `SQLFieldAccessor`). The shared `parse_json_path()` now also escapes single quotes for SQLite safety, fixing a latent SQL injection risk. (~110 lines removed)
 
@@ -102,7 +106,7 @@ columns while `$$var` references resolve to the current element. The result is a
 
 - **Command Dispatch Table (P3)**: Refactored `Connection.command()` from a 430-line monolithic `match`/`case` block into a module-level `_COMMAND_DISPATCH` dictionary mapping 18 command names to standalone `_command_*()` handler functions. The fallback path (unknown command → PRAGMA) is in `_command_default()`. (~33 lines saved; command() shrinks from ~430 to ~30 lines)
 
-- **Python Aggregation Engine Extraction (P4)**: Moved the 1173-line Tier-3 (Python-based) pipeline stage dispatch from `QueryEngine.aggregate_with_constraints()` into its own module `python_aggregation_engine.py`. QueryEngine.__init__.py shrinks from 1743 to 574 lines. (~1173 lines moved to dedicated module)
+- **Python Aggregation Engine Extraction (P4)**: Moved the 1173-line Tier-3 (Python-based) pipeline stage dispatch from `QueryEngine.aggregate_with_constraints()` into its own module `python_aggregation_engine.py`. QueryEngine initializer shrinks from 1743 to 574 lines. (~1173 lines moved to dedicated module)
 
 - **PRAGMA Setup Dedup**: Extracted `_configure_connection()` to eliminate the identical ~20-line PRAGMA configuration block that was duplicated verbatim in both `connect()` and `_migrate_to_autovacuum()`. (~22 lines removed)
 
@@ -124,24 +128,22 @@ columns while `$$var` references resolve to the current element. The result is a
 
 **Net result**: ~350 lines of duplication eliminated; ~6000 lines restructured into focused modules; every file over 1000 lines that could be split has been split; the largest remaining source file is `cursor.py` at 1337 lines (a natural API-surface monolith).
 
-#### Refactoring & Maintenance
+### Refactoring & Maintenance
 
 - **Subpackage Split for Aggregation Pipeline**: Split the ~4,285-line single module `temporary_table_aggregation.py` into a package structure (`neosqlite/collection/temporary_table_aggregation/`), solving scaling and readability issues.
 - **Composing Operators Split**: Sliced the large composing module `operators.py` (~3,500 lines) into composed mixin files (`operators_match.py`, `operators_lookup.py`, `operators_sort_proj.py`, `operators_group.py`, `operators_text.py`, `operators_advanced.py`).
 - **Python Evaluators Split**: Split the ~2,500-line `python_evaluators.py` into package `neosqlite/collection/expr_evaluator/python_evaluators/` with domain mixins (`core`, `math_ops`, `array_ops`, `string_ops`, `date_ops`, `object_ops`, `type_ops`) composed by `PythonEvaluatorsMixin`; shared `BasePythonMixin` stubs keep mypy happy across mixin boundaries.
+- **Query Builder Function Hoisting**: Extracted `_normalize_id_value` from `_build_id_operator_clause` to module level in `_sql_query_builder.py` to avoid per-invocation function recreation overhead.
 - **Removed Duplicate SQL SELECT compilation**: Consolidated `build_select_expression` in `ExprEvaluator` to delegate to `evaluate_for_aggregation`.
 - **Removed Dead/Duplicate Module files**: Deleted the redundant `neosqlite/collection/temporary_table_aggregation.py` file.
 - **Removed Dead/Unused Methods in `nx_27017`**: Deleted `_handle_update`, `_handle_find`, and `_handle_rename_collection` in the handler.
+- **Dead Code Cleanup (`normalize_id_query`)**: Removed obsolete `normalize_id_query` stub function and updated corresponding tests to use `normalize_id_query_for_db`.
 
-#### Documentation
+### Documentation
 
 - **Parity Guide**: Updated `README.md` and `ObjectId_IMPLEMENTATION.md` to describe the strict `_id` behavior.
 - **Sphinx Documentation**: Updated Sphinx build scripts and documentation configuration.
 - **Design Logs**: Updated `TEMP_TABLE_BREAKDOWN.md` to track refactoring progress.
-
-#### Test Results
-- **Unit Tests**: 2,786 passed in core NeoSQLite, 5 known pre-existing failures; 86 passed in `nx_27017`
-- **Code Coverage**: ~81.4%
 
 ---
 
@@ -741,11 +743,6 @@ Seven modules refactored to use `match/case` pattern matching:
 - **test_temp_table_aggregation_fixes.py**: 31 new tests for aggregation pipeline fixes
 - **Total new tests**: 91 tests added
 
-### Test Results
-- **Unit Tests**: 2,502 total (2,502 passed, 5 xfailed, 0 failed)
-- **API Comparison (NeoSQLite vs MongoDB)**: 377 tests (360 passed, 17 skipped, 0 failed) — 100%
-- **Code Coverage**: 81%
-
 ### Compatibility
 - **Backward Compatible**: Zero breaking changes
 - **PyMongo API Parity**: 100% for comparable features
@@ -804,11 +801,6 @@ Three modules refactored to use `match/case` pattern matching:
 #### Test Infrastructure
 
 - **conftest.py**: Suppress neosqlite logger warnings during test runs to keep output clean (warnings still active in production)
-
-### Test Results
-- **Unit Tests**: 2,415 total (2,410 passed, 5 xfailed, 0 failed)
-- **API Comparison (NeoSQLite vs MongoDB)**: 377 tests (360 passed, 17 skipped, 0 failed) — 100%
-- **Code Coverage**: 81%
 
 ### Compatibility
 - **Backward Compatible**: Zero breaking changes
@@ -876,11 +868,6 @@ class ChangeStreamManager:
         self._streams: dict[int, ChangeStreamCursor] = {}
         self._listeners: dict[str, list[Callable]] = {}
 ```
-
-### Test Results
-- **Unit Tests**: 2,415 total (2,410 passed, 5 xfailed, 0 failed)
-- **API Comparison (NeoSQLite vs MongoDB)**: 377 tests (360 passed, 17 skipped, 0 failed) — 100%
-- **API Comparison (NX-27017 vs MongoDB)**: 372 tests (358 passed, 14 skipped, 0 failed) — 100%
 
 ### Compatibility
 - **Backward Compatible**: Zero breaking changes
@@ -973,12 +960,6 @@ COMMIT;  # Only update _last_id after successful commit
 - **fix: update lint script** - Fixed all linting errors across codebase
 - **fix(cursor): escape SQL comment markers** - Insert spaces to unweaponize markers while preserving text
 
-### Test Results
-- All security fixes tested with SQL injection attempts
-- Context manager protocol tested for cleanup guarantees
-- Savepoint release tested for edge cases
-- Changestream atomicity tested for exactly-once semantics
-
 ### Compatibility
 - **Backward Compatible**: Zero breaking changes — all existing code continues to work
 - **PyMongo API Parity**: Full compatibility maintained across all operations
@@ -1027,11 +1008,6 @@ collection.aggregate([{" $collStats": {}}])  # Works!
 **Documentation**:
 - Updated README to reflect `$collStats` support
 - Corrected test statistics
-
-### Test Results
-- **Unit Tests**: 2,415 total (2,410 passed, 5 xfailed, 0 failed)
-- **API Comparison**: 377 tests (360 passed, 17 skipped, 0 failed)
-- **Code Coverage**: 81%
 
 ---
 
@@ -1224,11 +1200,6 @@ Update all calls to `cursor.min()` and `cursor.max()`:
 | `cursor.min({"field": 10})` | `cursor.hint([("field", 1)]).min([("field", 10)])` |
 | `cursor.max({"field": 10})` | `cursor.hint([("field", 1)]).max([("field", 10)])` |
 
-### Test Results
-- **Unit Tests**: 2,404 total (2,409 passed, 5 xfailed, 0 failed)
-- **API Comparison**: 376 tests (361 passed, 15 skipped, 0 failed)
-- **Code Coverage**: 82%
-
 ### Compatibility
 - **Breaking Change**: Code using dict format for min/max requires migration
 - **PyMongo API Parity**: 100% compatibility with PyMongo 4.16+ maintained
@@ -1272,12 +1243,6 @@ Update all calls to `cursor.min()` and `cursor.max()`:
 ### Bug Fixes
 - **ok Return Values**: Changed from `1.0` (float) to `1` (int) for MongoDB compatibility
 - **Index Size Accuracy**: dbStats now uses dbstat virtual table for actual index sizes
-
-### Test Results
-- **Unit Tests**: 2,409 total (2,404 passed, 5 xfailed, 0 failed)
-- **API Comparison**: 376 tests (361 passed, 15 skipped, 0 failed)
-- **Code Coverage**: 82%
-- **New Tests**: 60+ tests for compact, dbStats, wal_checkpoint, cache_size, busy_timeout
 
 ### Compatibility
 - **Backward Compatible**: Zero breaking changes — all existing code continues to work
@@ -1328,12 +1293,6 @@ Update all calls to `cursor.min()` and `cursor.max()`:
 - **$count Parameter Extraction**: Fixed previously ignored count stage parameters.
 - **$facet Handling**: Fixed type error when processing `$facet` stage.
 
-### Test Results
-- **Unit Tests**: 2,323 total (2,318 passed, 5 xfailed, 0 failed)
-- **API Comparison**: 375 tests (360 passed, 15 skipped, 0 failed)
-- **Code Coverage**: 82%
-- **New Tests**: 232 tests for translation caching, tier callbacks, and bug fixes.
-
 ### Compatibility
 - **Backward Compatible**: Zero breaking changes — all existing code continues to work
 - **PyMongo API Parity**: 100% compatibility maintained
@@ -1377,11 +1336,6 @@ Update all calls to `cursor.min()` and `cursor.max()`:
 - `$inc` / `$mul` - Type-safe SQL validation before update
 - `$setOnInsert` - Fast path implementation
 - `$pop` / `$push` - SQL-tier optimization (5-20x speedup)
-
-### Test Results
-- **Unit Tests**: 2,200 total (2,195 passed, 0 failed)
-- **API Comparison**: 375 tests (360 passed, 15 skipped, 0 failed)
-- **Code Coverage**: 82%
 
 ### Compatibility
 - **Backward Compatible**: Zero breaking changes — all existing code continues to work
