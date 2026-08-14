@@ -40,50 +40,22 @@ def convert_neo_to_bson_objectids(doc: Any) -> Any:
 
 def convert_bson_to_neo_objectids(doc: Any) -> Any:
     """Convert PyMongo/BSON ObjectIds to NeoSQLite ObjectIds recursively."""
-
-    def _convert_value(value: Any) -> Any:
-        if isinstance(value, dict):
-            return convert_bson_to_neo_objectids(value)
-        elif isinstance(value, list):
-            return [_convert_value(item) for item in value]
-        elif isinstance(value, BsonObjectId):
-            return NeoObjectId(value.binary)
-        return value
-
-    if not isinstance(doc, dict):
-        return doc
-
-    result = {}
-    for key, value in doc.items():
-        result[key] = _convert_value(value)
-    return result
+    if isinstance(doc, BsonObjectId):
+        return NeoObjectId(doc.binary)
+    elif isinstance(doc, list):
+        return [convert_bson_to_neo_objectids(item) for item in doc]
+    elif isinstance(doc, dict):
+        return {k: convert_bson_to_neo_objectids(v) for k, v in doc.items()}
+    return doc
 
 
 def convert_json_to_neo_objectids(doc: Any) -> Any:
     """Recursively convert JSON-like $oid dicts to NeoSQLite ObjectIds."""
-    if doc is None:
-        return None
-
-    result: dict[Any, Any] = {}
-    for key, value in doc.items():
-        if isinstance(value, dict):
-            if "$oid" in value:
-                result[key] = NeoObjectId(value["$oid"])
-            elif key == "$oid":
-                result[key] = (
-                    NeoObjectId(value) if isinstance(value, str) else value
-                )
-            else:
-                result[key] = convert_json_to_neo_objectids(value)
-        elif isinstance(value, list):
-            result[key] = [
-                (
-                    NeoObjectId(v["$oid"])
-                    if isinstance(v, dict) and "$oid" in v
-                    else v
-                )
-                for v in value
-            ]
-        else:
-            result[key] = value
-    return result
+    if isinstance(doc, dict):
+        if len(doc) == 1 and "$oid" in doc:
+            val = doc["$oid"]
+            return NeoObjectId(val) if isinstance(val, (str, bytes)) else val
+        return {k: convert_json_to_neo_objectids(v) for k, v in doc.items()}
+    elif isinstance(doc, list):
+        return [convert_json_to_neo_objectids(item) for item in doc]
+    return doc
