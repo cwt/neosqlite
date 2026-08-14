@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from contextlib import contextmanager
 from typing import Any, Iterator, Literal
@@ -848,7 +849,7 @@ def _command_serverstatus(
         "version": sqlite3.sqlite_version,
         "python_sqlite_version": getattr(sqlite3, "version", "unknown"),
         "process": "neosqlite",
-        "pid": 1,
+        "pid": os.getpid(),
     }
 
 
