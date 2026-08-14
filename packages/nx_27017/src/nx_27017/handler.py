@@ -116,6 +116,27 @@ class NeoSQLiteHandler:
 
         return convert_bson_to_neo_objectids(doc)
 
+    def _get_or_create_session(self, command_doc: dict[str, Any]) -> Any | None:
+        """Extract session from command document if lsid is provided."""
+        lsid = command_doc.get("lsid")
+        if not lsid:
+            return None
+        session_id = _extract_session_id(lsid)
+        if not session_id:
+            return None
+        with self._sessions_lock:
+            if session_id not in self._sessions:
+                session = self.conn.start_session()
+                session._in_transaction = False
+                self._sessions[session_id] = session
+            session_to_use = self._sessions[session_id]
+            if (
+                command_doc.get("startTransaction")
+                and not session_to_use.in_transaction
+            ):
+                session_to_use.start_transaction()
+            return session_to_use
+
     def increment_connections(self) -> None:
         """Increment the active connections counter."""
         with self._connections_lock:
@@ -354,19 +375,7 @@ class NeoSQLiteHandler:
             self._convert_objectids(doc) for doc in docs_to_insert
         ]
 
-        session_to_use = None
-        if command_doc.get("startTransaction") and "lsid" in command_doc:
-            lsid = command_doc.get("lsid")
-            session_id = _extract_session_id(lsid) if lsid else None
-            if session_id:
-                with self._sessions_lock:
-                    if session_id not in self._sessions:
-                        session = self.conn.start_session()
-                        session._in_transaction = False
-                        self._sessions[session_id] = session
-                    session_to_use = self._sessions[session_id]
-                    if not session_to_use._in_transaction:
-                        session_to_use.start_transaction()
+        session_to_use = self._get_or_create_session(command_doc)
 
         if docs_to_insert:
             result = coll.insert_many(docs_to_insert, session=session_to_use)
@@ -679,11 +688,15 @@ class NeoSQLiteHandler:
                 sort_tuples = sort_val
 
             coll = db[coll_name]
+            session_to_use = self._get_or_create_session(command_doc)
 
             if remove:
                 try:
                     doc = coll.find_one_and_delete(
-                        query, projection=fields, sort=sort_tuples
+                        query,
+                        projection=fields,
+                        sort=sort_tuples,
+                        session=session_to_use,
                     )
                 except Exception:
                     doc = None
@@ -709,6 +722,7 @@ class NeoSQLiteHandler:
                             sort=sort_tuples,
                             upsert=upsert,
                             return_document=new_doc,
+                            session=session_to_use,
                         )
                     else:
                         doc = coll.find_one_and_update(
@@ -719,6 +733,7 @@ class NeoSQLiteHandler:
                             upsert=upsert,
                             return_document=new_doc,
                             array_filters=array_filters,
+                            session=session_to_use,
                         )
                 except Exception:
                     doc = None
@@ -764,6 +779,7 @@ class NeoSQLiteHandler:
                 }
 
             coll = db[coll_name]
+            session_to_use = self._get_or_create_session(command_doc)
             modified = 0
             has_listeners = bool(
                 self._change_stream_manager._listeners.get(coll_name)
@@ -781,7 +797,9 @@ class NeoSQLiteHandler:
                 if has_listeners:
                     try:
                         cursor = (
-                            coll.find(q) if multi else coll.find(q).limit(1)
+                            coll.find(q, session=session_to_use)
+                            if multi
+                            else coll.find(q, session=session_to_use).limit(1)
                         )
                         matched_docs = list(cursor)
                     except Exception:
@@ -789,7 +807,9 @@ class NeoSQLiteHandler:
 
                 is_replace = not any(k.startswith("$") for k in u.keys())
                 if is_replace:
-                    upd_result = coll.replace_one(q, u, upsert=upsert)
+                    upd_result = coll.replace_one(
+                        q, u, upsert=upsert, session=session_to_use
+                    )
                     modified += upd_result.modified_count
 
                     for doc in matched_docs:
@@ -801,12 +821,16 @@ class NeoSQLiteHandler:
                             document_key={"_id": doc_id},
                         )
                 elif multi:
-                    upd_result = coll.update_many(q, u, upsert=upsert)
+                    upd_result = coll.update_many(
+                        q, u, upsert=upsert, session=session_to_use
+                    )
                     modified += upd_result.modified_count
 
                     for doc in matched_docs:
                         doc_id = doc.get("_id")
-                        new_doc = coll.find_one({"_id": doc_id})
+                        new_doc = coll.find_one(
+                            {"_id": doc_id}, session=session_to_use
+                        )
                         self._change_stream_manager.notify_change(
                             collection_name=coll_name,
                             operation_type="update",
@@ -817,12 +841,16 @@ class NeoSQLiteHandler:
                             },
                         )
                 else:
-                    upd_result = coll.update_one(q, u, upsert=upsert)
+                    upd_result = coll.update_one(
+                        q, u, upsert=upsert, session=session_to_use
+                    )
                     modified += upd_result.modified_count
 
                     if matched_docs:
                         doc_id = matched_docs[0].get("_id")
-                        new_doc = coll.find_one({"_id": doc_id})
+                        new_doc = coll.find_one(
+                            {"_id": doc_id}, session=session_to_use
+                        )
                         self._change_stream_manager.notify_change(
                             collection_name=coll_name,
                             operation_type="update",
@@ -847,10 +875,11 @@ class NeoSQLiteHandler:
                 )
 
             coll = db[coll_name]
+            session_to_use = self._get_or_create_session(command_doc)
             cursor = (
-                coll.find(filter_query, projection)
+                coll.find(filter_query, projection, session=session_to_use)
                 if projection
-                else coll.find(filter_query)
+                else coll.find(filter_query, session=session_to_use)
             )
             if "sort" in cmd_copy:
                 cursor = cursor.sort(list(cmd_copy["sort"].items()))
@@ -1320,7 +1349,11 @@ class NeoSQLiteHandler:
             return request_id, {"ok": 0, "errmsg": "No collection specified"}
 
         coll = db[coll_name]
+        session_to_use = self._get_or_create_session(command_doc)
         deletes = command_doc.get("deletes", [])
+        has_listeners = bool(
+            self._change_stream_manager._listeners.get(coll_name)
+        )
 
         removed = 0
         for delete in deletes:
@@ -1328,13 +1361,23 @@ class NeoSQLiteHandler:
             q = self._convert_objectids(q)
             limit = delete.get("limit", 0)
 
-            # Fetch matching documents to get their _id before deletion
-            try:
-                matched_docs = list(coll.find(q))
-            except Exception:
-                matched_docs = []
+            matched_docs = []
+            if has_listeners:
+                try:
+                    cursor = (
+                        coll.find(q, session=session_to_use)
+                        if limit == 0
+                        else coll.find(q, session=session_to_use).limit(1)
+                    )
+                    matched_docs = list(cursor)
+                except Exception:
+                    matched_docs = []
 
-            result = coll.delete_many(q) if limit == 0 else coll.delete_one(q)
+            result = (
+                coll.delete_many(q, session=session_to_use)
+                if limit == 0
+                else coll.delete_one(q, session=session_to_use)
+            )
             removed += result.deleted_count
 
             for doc in (matched_docs[:1] if limit != 0 else matched_docs):

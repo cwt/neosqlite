@@ -251,6 +251,78 @@ class TestSessions:
         _, abort_response = handler.handle_command(abort_msg)
         assert abort_response["ok"] == 1
 
+    def test_transaction_insert_update_abort_rollback(self, handler):
+        # 1. Start session
+        start_msg = {
+            "request_id": 21,
+            "sections": [("body", {"startSession": 1, "$db": "admin"})],
+        }
+        _, start_response = handler.handle_command(start_msg)
+        session_id = start_response["session"]["id"]["$oid"]
+        lsid = {"id": {"$oid": session_id}}
+
+        # 2. Insert with startTransaction
+        insert_msg = {
+            "request_id": 22,
+            "sections": [
+                (
+                    "body",
+                    {
+                        "insert": "tx_test",
+                        "$db": "test",
+                        "lsid": lsid,
+                        "startTransaction": True,
+                    },
+                ),
+                ("payload_docs", [{"_id": 100, "val": 10}]),
+            ],
+        }
+        _, insert_res = handler.handle_insert(insert_msg)
+        assert insert_res["ok"] == 1
+
+        # 3. Update inside the same transaction
+        update_msg = {
+            "request_id": 23,
+            "sections": [
+                (
+                    "body",
+                    {
+                        "update": "tx_test",
+                        "updates": [
+                            {"q": {"_id": 100}, "u": {"$set": {"val": 20}}}
+                        ],
+                        "$db": "test",
+                        "lsid": lsid,
+                    },
+                )
+            ],
+        }
+        _, update_res = handler.handle_command(update_msg)
+        assert update_res["ok"] == 1
+
+        # 4. Abort transaction
+        abort_msg = {
+            "request_id": 24,
+            "sections": [
+                ("body", {"abortTransaction": 1, "$db": "admin", "lsid": lsid})
+            ],
+        }
+        _, abort_res = handler.handle_command(abort_msg)
+        assert abort_res["ok"] == 1
+
+        # 5. Verify doc was rolled back
+        find_msg = {
+            "request_id": 25,
+            "sections": [
+                (
+                    "body",
+                    {"find": "tx_test", "filter": {"_id": 100}, "$db": "test"},
+                )
+            ],
+        }
+        _, find_res = handler.handle_command(find_msg)
+        assert len(find_res["cursor"]["firstBatch"]) == 0
+
     def test_end_sessions_with_session(self, handler):
         start_msg = {
             "request_id": 21,
