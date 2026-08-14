@@ -1040,6 +1040,7 @@ class NeoSQLiteHandler:
             stream = self._change_stream_manager.get_stream(cursor_id)
             if stream:
                 next_batch = list(stream._changes)
+                token = stream.get_resume_token()
                 stream._changes.clear()
                 stream._position = 0
                 return request_id, {
@@ -1048,7 +1049,7 @@ class NeoSQLiteHandler:
                         "id": stream._id,
                         "ns": f"{db.name}.{coll_name}",
                         "nextBatch": next_batch,
-                        "postBatchResumeToken": stream.get_resume_token(),
+                        "postBatchResumeToken": token,
                     },
                 }
             else:
@@ -1367,6 +1368,7 @@ class NeoSQLiteHandler:
                 resume_after=options.get("resume_after"),
                 start_at_operation_time=options.get("start_at_operation_time"),
                 full_document=options.get("full_document"),
+                db_name=db.name,
             )
 
             # Return empty batch initially - change streams start empty

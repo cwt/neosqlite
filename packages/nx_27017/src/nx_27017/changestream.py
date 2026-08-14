@@ -25,12 +25,14 @@ class ChangeStreamCursor:
         resume_after: dict | None = None,
         start_at_operation_time: datetime | None = None,
         full_document: str | None = None,
+        db_name: str = "test",
     ):
         self.collection_name = collection_name
         self.pipeline = pipeline
         self.resume_after = resume_after
         self.start_at_operation_time = start_at_operation_time
         self.full_document = full_document or "default"
+        self.db_name = db_name
         self._id = next(_cursor_id_counter)  # Integer cursor ID
         self._stream_id = str(
             uuid.uuid4()
@@ -101,7 +103,7 @@ class ChangeStreamCursor:
             "clusterTime": now,
             "wallTime": now,
             "fullDocument": full_doc,
-            "ns": {"db": "test", "coll": self.collection_name},
+            "ns": {"db": self.db_name, "coll": self.collection_name},
             "documentKey": document_key,
             "updateDescription": update_description,
         }
@@ -121,6 +123,7 @@ class ChangeStreamManager:
         resume_after: dict | None = None,
         start_at_operation_time: datetime | None = None,
         full_document: str | None = None,
+        db_name: str = "test",
     ) -> ChangeStreamCursor:
         """Create a new change stream."""
         stream = ChangeStreamCursor(
@@ -129,6 +132,7 @@ class ChangeStreamManager:
             resume_after=resume_after,
             start_at_operation_time=start_at_operation_time,
             full_document=full_document,
+            db_name=db_name,
         )
         self._streams[stream._id] = stream
 
@@ -143,11 +147,19 @@ class ChangeStreamManager:
         return stream
 
     def close_stream(self, stream_id: int) -> None:
-        """Close a change stream."""
+        """Close a change stream and unregister its listener."""
         if stream_id in self._streams:
-            stream = self._streams[stream_id]
+            stream = self._streams.pop(stream_id)
             stream.close()
-            del self._streams[stream_id]
+            if stream.collection_name in self._listeners:
+                try:
+                    self._listeners[stream.collection_name].remove(
+                        stream._on_change
+                    )
+                except ValueError:
+                    pass
+                if not self._listeners[stream.collection_name]:
+                    del self._listeners[stream.collection_name]
             logger.debug(f"Closed change stream {stream_id}")
 
     def get_stream(self, stream_id: int) -> ChangeStreamCursor | None:
@@ -166,32 +178,13 @@ class ChangeStreamManager:
         if collection_name not in self._listeners:
             return
 
-        for listener in self._listeners[collection_name]:
+        for listener in list(self._listeners[collection_name]):
             try:
                 listener(
                     operation_type, document, document_key, update_description
                 )
             except Exception as e:
                 logger.error(f"Error notifying change stream listener: {e}")
-
-    def _on_change(
-        self,
-        stream_id: int,
-        operation_type: str,
-        document: dict,
-        document_key: dict,
-        update_description: dict | None = None,
-    ) -> None:
-        """Handle a change for a specific stream."""
-        stream = self._streams.get(stream_id)
-        if stream and not stream.is_closed():
-            change_doc = stream._create_change_document(
-                operation_type=operation_type,
-                document_key=document_key,
-                full_doc=document if stream.full_document != "off" else None,
-                update_description=update_description,
-            )
-            stream._changes.append(change_doc)
 
 
 def is_change_stream_pipeline(pipeline: list[dict]) -> bool:

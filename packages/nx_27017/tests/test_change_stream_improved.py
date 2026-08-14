@@ -119,3 +119,25 @@ def test_change_stream_lifecycle_and_getmore(handler):
     events3 = getmore_res3["cursor"]["nextBatch"]
     assert len(events3) == 1
     assert events3[0]["operationType"] == "delete"
+    assert getmore_res3["cursor"]["postBatchResumeToken"] == events3[0]["_id"]
+
+
+def test_change_stream_manager_listener_cleanup():
+    from nx_27017.changestream import ChangeStreamManager
+
+    manager = ChangeStreamManager()
+    stream = manager.create_stream(
+        "test_coll", [{"$changeStream": {}}], db_name="mydb"
+    )
+    assert "test_coll" in manager._listeners
+    assert len(manager._listeners["test_coll"]) == 1
+
+    manager.notify_change(
+        "test_coll", "insert", {"_id": 1, "val": "abc"}, {"_id": 1}
+    )
+    assert len(stream._changes) == 1
+    assert stream._changes[0]["ns"]["db"] == "mydb"
+
+    manager.close_stream(stream._id)
+    assert "test_coll" not in manager._listeners
+    assert manager.get_stream(stream._id) is None
