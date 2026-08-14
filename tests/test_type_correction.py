@@ -5,8 +5,6 @@ This module contains tests for the functions in the type_correction module,
 which handles automatic conversion between integer IDs and ObjectIds in queries.
 """
 
-import pytest
-
 from neosqlite.collection.type_correction import (
     normalize_id_query_for_db,
     normalize_objectid_for_db_query,

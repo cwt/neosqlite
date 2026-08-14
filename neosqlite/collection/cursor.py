@@ -1253,12 +1253,15 @@ class Cursor:
             list[dict[str, Any]]: A list of dictionaries representing the documents
                                   after applying skip and limit.
         """
-        doc_list = list(docs)
-        skipped_docs = doc_list[self._skip :]
+        from itertools import islice
 
+        # Use islice for memory-efficient skip without loading all docs first
+        skipped = islice(docs, self._skip, None)
+
+        # Apply limit if specified
         if self._limit is not None:
-            return skipped_docs[: self._limit]
-        return skipped_docs
+            return list(islice(skipped, self._limit))
+        return list(skipped)
 
     def _apply_projection(
         self, docs: Iterable[dict[str, Any]]

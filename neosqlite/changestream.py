@@ -5,6 +5,8 @@ import re
 import time
 from typing import TYPE_CHECKING, Any
 
+from .sql_utils import quote_table_name
+
 if TYPE_CHECKING:
     from .client_session import ClientSession
     from .collection import Collection
@@ -127,7 +129,7 @@ class ChangeStream:
         # Insert trigger
         self._collection.db.execute(f"""
             CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._sanitized_name}_insert_trigger
-            AFTER INSERT ON {self._sanitized_name}
+            AFTER INSERT ON {quote_table_name(self._sanitized_name)}
             BEGIN
                 INSERT INTO _neosqlite_changestream
                 (collection_name, operation, document_id, document_data, document_id_value)
@@ -138,7 +140,7 @@ class ChangeStream:
         # Update trigger
         self._collection.db.execute(f"""
             CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._sanitized_name}_update_trigger
-            AFTER UPDATE ON {self._sanitized_name}
+            AFTER UPDATE ON {quote_table_name(self._sanitized_name)}
             BEGIN
                 INSERT INTO _neosqlite_changestream
                 (collection_name, operation, document_id, document_data, document_id_value)
@@ -149,7 +151,7 @@ class ChangeStream:
         # Delete trigger
         self._collection.db.execute(f"""
             CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._sanitized_name}_delete_trigger
-            AFTER DELETE ON {self._sanitized_name}
+            AFTER DELETE ON {quote_table_name(self._sanitized_name)}
             BEGIN
                 INSERT INTO _neosqlite_changestream
                 (collection_name, operation, document_id, document_data, document_id_value)
