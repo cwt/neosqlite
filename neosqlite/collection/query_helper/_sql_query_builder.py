@@ -22,6 +22,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _normalize_id_value(v: Any) -> Any:
+    """Normalize an ID value for database queries."""
+    from ...objectid import ObjectId
+
+    if isinstance(v, ObjectId):
+        return str(v)
+    if isinstance(v, str):
+        try:
+            return str(ObjectId(v))
+        except ValueError:
+            return v
+    return v
+
+
 class SqlQueryBuilderMixin:
     """Mixin providing SQL WHERE clause building methods.
 
@@ -131,18 +145,6 @@ class SqlQueryBuilderMixin:
             Tuple of (SQL clause, parameters) or None for Python fallback
         """
         id_col = self._id_column_ref()
-
-        from ...objectid import ObjectId
-
-        def _normalize_id_value(v: Any) -> Any:
-            if isinstance(v, ObjectId):
-                return str(v)
-            if isinstance(v, str):
-                try:
-                    return str(ObjectId(v))
-                except ValueError:
-                    return v
-            return v
 
         clauses: list[str] = []
         params: list[Any] = []
