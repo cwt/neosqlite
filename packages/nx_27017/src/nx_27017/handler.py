@@ -533,6 +533,7 @@ class NeoSQLiteHandler:
                 return request_id, result
 
             coll = db[coll_name]
+            num_before = len(coll.list_indexes())
             created_names = []
             for index_spec in indexes_spec:
                 key = index_spec.get("key", {})
@@ -563,7 +564,7 @@ class NeoSQLiteHandler:
             return request_id, {
                 "ok": 1,
                 "createdCollectionAutomatically": False,
-                "numIndexesBefore": len(coll.list_indexes()),
+                "numIndexesBefore": num_before,
                 "numIndexesAfter": len(coll.list_indexes()),
                 "indexesCreated": [{"name": n} for n in created_names],
             }
@@ -572,18 +573,15 @@ class NeoSQLiteHandler:
             coll_name = cmd_copy.pop("dropIndexes")
             index = cmd_copy.pop("index", "*")
             coll = db[coll_name]
+            num_before = len(coll.list_indexes())
             if index == "*":
                 coll.drop_indexes()
-                return request_id, {
-                    "ok": 1,
-                    "nIndexesWas": len(coll.list_indexes()) + 1,
-                }
             else:
                 coll.drop_index(index)
-                return request_id, {
-                    "ok": 1,
-                    "nIndexesWas": len(coll.list_indexes()) + 1,
-                }
+            return request_id, {
+                "ok": 1,
+                "nIndexesWas": num_before,
+            }
 
         if "createIndex" in cmd_copy:
             coll_name = cmd_copy.pop("createIndex")
@@ -607,6 +605,7 @@ class NeoSQLiteHandler:
                 }
 
             coll = db[coll_name]
+            num_before = len(coll.list_indexes())
 
             if isinstance(key, dict):
                 # Convert {"field": 1, "field2": -1} to [("field", 1), ("field2", -1)]
@@ -620,7 +619,7 @@ class NeoSQLiteHandler:
             return request_id, {
                 "ok": 1,
                 "createdCollectionAutomatically": False,
-                "numIndexesBefore": len(coll.list_indexes()),
+                "numIndexesBefore": num_before,
                 "numIndexesAfter": len(coll.list_indexes()),
                 "indexesCreated": [{"name": idx_name}],
             }
@@ -629,10 +628,11 @@ class NeoSQLiteHandler:
             coll_name = cmd_copy.pop("dropIndex")
             index = cmd_copy.pop("index")
             coll = db[coll_name]
+            num_before = len(coll.list_indexes())
             coll.drop_index(index)
             return request_id, {
                 "ok": 1,
-                "nIndexesWas": len(coll.list_indexes()) + 1,
+                "nIndexesWas": num_before,
             }
 
         if "delete" in cmd_copy:
@@ -1525,6 +1525,7 @@ class NeoSQLiteHandler:
 
         try:
             coll = db[coll_name]
+            index_names = coll.list_indexes()
         except Exception:
             return request_id, {
                 "ok": 1,
@@ -1535,15 +1536,16 @@ class NeoSQLiteHandler:
                 },
             }
 
-        index_names = coll.list_indexes()
         index_list = []
         prefix = f"idx_{coll.name}_"
         for idx_name in index_names:
-            if idx_name == f"{prefix}id":
+            if idx_name in (f"{prefix}id", "_id_"):
                 key = {"_id": 1}
-            else:
-                key_str = idx_name.removeprefix(prefix).replace("_", ".")
+            elif idx_name.startswith(prefix):
+                key_str = idx_name[len(prefix) :]
                 key = {key_str: 1}
+            else:
+                key = {idx_name: 1}
             index_list.append({"v": 2, "key": key, "name": idx_name})
 
         return request_id, {

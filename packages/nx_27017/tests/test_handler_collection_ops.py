@@ -113,6 +113,7 @@ class TestCollectionOperations:
         }
         _, response = handler.handle_command(drop_index_msg)
         assert response["ok"] == 1
+        assert response["nIndexesWas"] == 1
 
     def test_drop_all_indexes(self, handler):
         """Test dropIndexes with index='*' to drop all indexes."""
@@ -158,6 +159,7 @@ class TestCollectionOperations:
         }
         _, response = handler.handle_command(drop_all_msg)
         assert response["ok"] == 1
+        assert response["nIndexesWas"] == 2
 
     def test_list_indexes(self, handler):
         """Test listIndexes command."""
@@ -165,7 +167,7 @@ class TestCollectionOperations:
             "request_id": 1,
             "sections": [
                 ("body", {"insert": "users", "$db": "test"}),
-                ("payload_docs", [{"name": "Alice"}]),
+                ("payload_docs", [{"name": "Alice", "user_id": 100}]),
             ],
         }
         handler.handle_insert(insert_msg)
@@ -177,7 +179,9 @@ class TestCollectionOperations:
                     "body",
                     {
                         "createIndexes": "users",
-                        "indexes": [{"name": "name_1", "key": {"name": 1}}],
+                        "indexes": [
+                            {"name": "user_id_1", "key": {"user_id": 1}}
+                        ],
                         "$db": "test",
                     },
                 )
@@ -194,7 +198,10 @@ class TestCollectionOperations:
         _, response = handler.handle_command(list_msg)
         assert response["ok"] == 1
         assert "cursor" in response
-        assert len(response["cursor"]["firstBatch"]) >= 1
+        first_batch = response["cursor"]["firstBatch"]
+        assert len(first_batch) >= 1
+        keys = [idx["key"] for idx in first_batch]
+        assert {"user_id": 1} in keys
 
     def test_list_collections(self, handler):
         """Test listCollections command."""
