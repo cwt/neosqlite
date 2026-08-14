@@ -667,14 +667,24 @@ class NeoSQLiteHandler:
             update_doc = cmd_copy.pop("update", None)
             remove = cmd_copy.pop("remove", False)
             new_doc = cmd_copy.pop("new", False)
-            cmd_copy.pop("fields", None)
+            fields = cmd_copy.pop("fields", None)
+            sort_val = cmd_copy.pop("sort", None)
             upsert = cmd_copy.pop("upsert", False)
+            array_filters = cmd_copy.pop("arrayFilters", None)
+
+            sort_tuples = None
+            if isinstance(sort_val, dict):
+                sort_tuples = list(sort_val.items())
+            elif isinstance(sort_val, list):
+                sort_tuples = sort_val
 
             coll = db[coll_name]
 
             if remove:
                 try:
-                    doc = coll.find_one_and_delete(query)
+                    doc = coll.find_one_and_delete(
+                        query, projection=fields, sort=sort_tuples
+                    )
                 except Exception:
                     doc = None
                 if doc:
@@ -687,24 +697,32 @@ class NeoSQLiteHandler:
                 return request_id, {"ok": 1, "value": doc}
             elif update_doc:
                 update_doc = self._convert_objectids(update_doc)
+                is_replace = not any(
+                    k.startswith("$") for k in update_doc.keys()
+                )
                 try:
-                    if upsert:
+                    if is_replace:
                         doc = coll.find_one_and_replace(
                             query,
                             update_doc,
-                            upsert=True,
+                            projection=fields,
+                            sort=sort_tuples,
+                            upsert=upsert,
                             return_document=new_doc,
                         )
                     else:
-                        doc = coll.find_one_and_replace(
-                            query, update_doc, return_document=new_doc
+                        doc = coll.find_one_and_update(
+                            query,
+                            update_doc,
+                            projection=fields,
+                            sort=sort_tuples,
+                            upsert=upsert,
+                            return_document=new_doc,
+                            array_filters=array_filters,
                         )
                 except Exception:
                     doc = None
                 if doc:
-                    is_replace = not any(
-                        k.startswith("$") for k in update_doc.keys()
-                    )
                     self._change_stream_manager.notify_change(
                         collection_name=coll_name,
                         operation_type="replace" if is_replace else "update",

@@ -403,6 +403,37 @@ class TestFindAndModify:
         assert response["value"]["name"] == "Alice"
         assert response["value"]["age"] == 31
 
+    def test_find_and_modify_with_set_operator(self, handler):
+        insert_msg = {
+            "request_id": 1,
+            "sections": [
+                ("body", {"insert": "users", "$db": "test"}),
+                ("payload_docs", [{"name": "Bob", "age": 25, "city": "NYC"}]),
+            ],
+        }
+        handler.handle_insert(insert_msg)
+
+        find_modify_msg = {
+            "request_id": 2,
+            "sections": [
+                (
+                    "body",
+                    {
+                        "findAndModify": "users",
+                        "query": {"name": "Bob"},
+                        "update": {"$set": {"age": 26}},
+                        "fields": {"name": 1, "age": 1},
+                        "new": True,
+                    },
+                )
+            ],
+        }
+        _, response = handler.handle_command(find_modify_msg)
+        assert response["ok"] == 1
+        assert response["value"]["age"] == 26
+        assert response["value"]["name"] == "Bob"
+        assert "city" not in response["value"]
+
     def test_find_and_modify_with_remove(self, handler):
         insert_msg = {
             "request_id": 3,
