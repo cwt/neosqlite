@@ -185,3 +185,69 @@ class TestGridFSOperations:
         assert response2["ok"] == 1
         assert len(response2["cursor"]["firstBatch"]) == 1
         assert response2["cursor"]["firstBatch"][0]["_id"] == file_id
+
+    def test_gridfs_update_file_metadata(self, handler):
+        """Test GridFS update command on fs.files."""
+        find_all_msg = {
+            "request_id": 1,
+            "sections": [
+                (
+                    "body",
+                    {
+                        "find": "fs.files",
+                        "filter": {"filename": "test.txt"},
+                        "$db": "test",
+                    },
+                )
+            ],
+        }
+        _, response = handler.handle_command(find_all_msg)
+        assert response["ok"] == 1
+        file_id = response["cursor"]["firstBatch"][0]["_id"]
+
+        update_msg = {
+            "request_id": 2,
+            "sections": [
+                (
+                    "body",
+                    {
+                        "update": "fs.files",
+                        "updates": [
+                            {
+                                "q": {"_id": file_id},
+                                "u": {
+                                    "$set": {
+                                        "filename": "renamed_test.txt",
+                                        "metadata": {"author": "neo"},
+                                    }
+                                },
+                            }
+                        ],
+                        "$db": "test",
+                    },
+                )
+            ],
+        }
+        _, upd_res = handler.handle_command(update_msg)
+        assert upd_res["ok"] == 1
+        assert upd_res["n"] == 1
+
+        find_updated_msg = {
+            "request_id": 3,
+            "sections": [
+                (
+                    "body",
+                    {
+                        "find": "fs.files",
+                        "filter": {"_id": file_id},
+                        "$db": "test",
+                    },
+                )
+            ],
+        }
+        _, find_upd_res = handler.handle_command(find_updated_msg)
+        assert find_upd_res["ok"] == 1
+        assert (
+            find_upd_res["cursor"]["firstBatch"][0]["filename"]
+            == "renamed_test.txt"
+        )

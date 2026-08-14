@@ -739,8 +739,36 @@ class NeoSQLiteHandler:
         if "update" in cmd_copy:
             coll_name = cmd_copy.pop("update")
             updates = cmd_copy.pop("updates", []) or payload_updates
+
+            if self._is_gridfs_collection(coll_name):
+                adapter, bucket_name = create_gridfs_adapter(db.db, coll_name)
+                if adapter is None:
+                    return request_id, {
+                        "ok": 0,
+                        "errmsg": "Invalid GridFS collection",
+                    }
+                total_n = 0
+                total_n_modified = 0
+                for update in updates:
+                    q = update.get("q", {})
+                    u = update.get("u", {})
+                    file_id = q.get("_id")
+                    if file_id is not None:
+                        res = adapter.handle_update(file_id, u)
+                        total_n += res.get("n", 0)
+                        total_n_modified += res.get("nModified", 0)
+                return request_id, {
+                    "ok": 1,
+                    "n": total_n,
+                    "nModified": total_n_modified,
+                }
+
             coll = db[coll_name]
             modified = 0
+            has_listeners = bool(
+                self._change_stream_manager._listeners.get(coll_name)
+            )
+
             for update in updates:
                 q = update.get("q", {})
                 u = update.get("u", {})
@@ -749,11 +777,15 @@ class NeoSQLiteHandler:
                 multi = update.get("multi", False)
                 upsert = update.get("upsert", False)
 
-                # Fetch matching documents to get their _id and state before update
-                try:
-                    matched_docs = list(coll.find(q))
-                except Exception:
-                    matched_docs = []
+                matched_docs = []
+                if has_listeners:
+                    try:
+                        cursor = (
+                            coll.find(q) if multi else coll.find(q).limit(1)
+                        )
+                        matched_docs = list(cursor)
+                    except Exception:
+                        matched_docs = []
 
                 is_replace = not any(k.startswith("$") for k in u.keys())
                 if is_replace:
