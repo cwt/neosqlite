@@ -398,6 +398,9 @@ class TestDatabaseCommand:
         assert "version" in result
         assert "process" in result
         assert result["process"] == "neosqlite"
+        assert "pid" in result
+        assert isinstance(result["pid"], int)
+        assert result["pid"] > 0
 
     def test_command_db_stats(self, connection):
         """Test command('dbStats')."""

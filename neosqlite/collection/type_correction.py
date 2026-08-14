@@ -12,26 +12,6 @@ from ..sql_utils import quote_table_name
 logger = logging.getLogger(__name__)
 
 
-def normalize_id_query(query: dict[str, Any]) -> dict[str, Any]:
-    """
-    Public function to normalize ID types in a query.
-
-    This function is provided for backward compatibility. The actual
-    normalization logic is implemented in QueryHelper._normalize_id_query
-    method to avoid code duplication. This function is not actively used
-    but kept for API compatibility.
-
-    Args:
-        query: The query dictionary to normalize
-
-    Returns:
-        A normalized query dictionary with corrected ID types
-    """
-    # This function is kept for API compatibility but doesn't do anything
-    # since the normalization happens in the QueryHelper
-    return query
-
-
 def _try_convert_to_int(value: str) -> int | str:
     """Try to convert a string to int, return original if fails."""
     try:
