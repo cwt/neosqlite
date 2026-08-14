@@ -155,3 +155,33 @@ class TestGridFSOperations:
         coll_names = [c["name"] for c in response["cursor"]["firstBatch"]]
         assert "fs_files" in coll_names
         assert "fs_chunks" in coll_names
+
+    def test_gridfs_find_by_objectid_filter(self, handler):
+        """Test GridFS find by _id using dict with $oid."""
+        find_all_msg = {
+            "request_id": 1,
+            "sections": [
+                ("body", {"find": "fs.files", "filter": {}, "$db": "test"})
+            ],
+        }
+        _, response = handler.handle_command(find_all_msg)
+        assert response["ok"] == 1
+        file_id = response["cursor"]["firstBatch"][0]["_id"]
+
+        find_oid_msg = {
+            "request_id": 2,
+            "sections": [
+                (
+                    "body",
+                    {
+                        "find": "fs.files",
+                        "filter": {"_id": {"$oid": str(file_id)}},
+                        "$db": "test",
+                    },
+                )
+            ],
+        }
+        _, response2 = handler.handle_command(find_oid_msg)
+        assert response2["ok"] == 1
+        assert len(response2["cursor"]["firstBatch"]) == 1
+        assert response2["cursor"]["firstBatch"][0]["_id"] == file_id

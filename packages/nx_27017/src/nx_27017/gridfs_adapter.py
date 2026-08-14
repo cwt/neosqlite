@@ -105,7 +105,7 @@ class GridFSAdapter:
                     else:
                         col_type = (
                             "TEXT"
-                            if col in ("filename", "uploadDate", "md5")
+                            if col in ("_id", "filename", "uploadDate", "md5")
                             else "INTEGER"
                         )
                         self._db.execute(
@@ -519,7 +519,7 @@ class GridFSAdapter:
         if filter_query is None:
             filter_query = {}
 
-            filter_query = _convert_objectids_in_dict(filter_query)
+        filter_query = _convert_objectids_in_dict(filter_query) or {}
 
         try:
             cursor = self._get_bucket().find(filter_query)
