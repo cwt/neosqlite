@@ -1680,16 +1680,6 @@ class NeoSQLiteHandler:
             if "$query" in query:
                 query = query["$query"]
 
-            for key in query:
-                if not key.startswith("$"):
-                    result = self.handle_command(
-                        {
-                            "request_id": msg["request_id"],
-                            "sections": [("body", query)],
-                        }
-                    )
-                    return result[0], [result[1]]
-
             result = self.handle_command(
                 {
                     "request_id": msg["request_id"],
@@ -1698,9 +1688,16 @@ class NeoSQLiteHandler:
             )
             return result[0], [result[1]]
 
+        skip = msg.get("number_to_skip", 0)
+        limit = msg.get("number_to_return", 0)
+
         if self._is_gridfs_collection(collection):
             command_doc = dict(query)
             command_doc["find"] = collection
+            if skip > 0:
+                command_doc["skip"] = skip
+            if limit > 0:
+                command_doc["limit"] = limit
             _, response = self._handle_gridfs_find(
                 msg["request_id"], command_doc, db, collection
             )
@@ -1712,15 +1709,22 @@ class NeoSQLiteHandler:
         if "$query" in query:
             filter_query = query.get("$query", {})
             sort = query.get("$orderby", {})
-            limit = query.get("$limit", 0)
+            query_limit = query.get("$limit", limit)
 
             cursor = coll.find(filter_query)
             if sort:
                 cursor = cursor.sort(list(sort.items()))
+            if skip > 0:
+                cursor = cursor.skip(skip)
+            if query_limit > 0:
+                cursor = cursor.limit(query_limit)
             docs = list(cursor)
-            if limit > 0:
-                docs = docs[:limit]
         else:
-            docs = list(coll.find(query))
+            cursor = coll.find(query)
+            if skip > 0:
+                cursor = cursor.skip(skip)
+            if limit > 0:
+                cursor = cursor.limit(limit)
+            docs = list(cursor)
 
         return msg["request_id"], docs

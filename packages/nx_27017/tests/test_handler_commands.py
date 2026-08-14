@@ -896,3 +896,29 @@ class TestAggregate:
         assert "storageSize" in stats
         assert "totalIndexSize" in stats
         assert "indexSizes" in stats
+
+    def test_handle_query_skip_and_limit(self, handler):
+        insert_msg = {
+            "request_id": 1,
+            "sections": [
+                ("body", {"insert": "items", "$db": "test"}),
+                (
+                    "payload_docs",
+                    [{"idx": i} for i in range(10)],
+                ),
+            ],
+        }
+        handler.handle_insert(insert_msg)
+
+        query_msg = {
+            "request_id": 2,
+            "collection": "items",
+            "query": {},
+            "db": "test",
+            "number_to_skip": 3,
+            "number_to_return": 4,
+        }
+        _, docs = handler.handle_query(query_msg)
+        assert len(docs) == 4
+        assert docs[0]["idx"] == 3
+        assert docs[-1]["idx"] == 6

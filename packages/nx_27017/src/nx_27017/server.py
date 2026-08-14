@@ -79,36 +79,23 @@ async def handle_client(
 
             match opcode:
                 case WireProtocol.OP_MSG:
-                    msg = OP_MSG.parse(full_message)
-
-                    is_insert = False
-                    for section_type, section_data in msg["sections"]:
-                        if (
-                            section_type == "body"
-                            and isinstance(section_data, dict)
-                            and "insert" in section_data
-                        ):
-                            is_insert = True
-                            break
-
-                    has_payload_docs = any(
-                        s[0] == "payload_docs" for s in msg["sections"]
-                    )
-
                     try:
-                        logger.debug(
-                            f"OP_MSG about to handle: is_insert={is_insert}, has_payload={has_payload_docs}"
+                        msg = OP_MSG.parse(full_message)
+
+                        is_insert = False
+                        for section_type, section_data in msg["sections"]:
+                            if (
+                                section_type == "body"
+                                and isinstance(section_data, dict)
+                                and "insert" in section_data
+                            ):
+                                is_insert = True
+                                break
+
+                        has_payload_docs = any(
+                            s[0] == "payload_docs" for s in msg["sections"]
                         )
-                        logger.debug(
-                            f"OP_MSG msg['request_id']={msg.get('request_id')}, msg['response_to']={msg.get('response_to')}"
-                        )
-                        if not is_insert and not has_payload_docs:
-                            for section_type, section_data in msg["sections"]:
-                                if section_type == "body":
-                                    logger.debug(
-                                        f"Non-insert command body: {section_data}"
-                                    )
-                        msg.get("request_id", 0)
+
                         if is_insert or has_payload_docs:
                             request_id, response_doc = await asyncio.to_thread(
                                 handler.handle_insert, msg
@@ -117,18 +104,15 @@ async def handle_client(
                             request_id, response_doc = await asyncio.to_thread(
                                 handler.handle_command, msg
                             )
-                        logger.debug(
-                            f"OP_MSG handled: request_id={request_id}, response_doc={response_doc.get('ok') if isinstance(response_doc, dict) else 'N/A'}"
-                        )
                     except Exception as e:
                         logger.exception("Error handling OP_MSG")
                         response_doc = {"ok": 0, "errmsg": str(e)}
-                        request_id = msg.get("request_id", 0)
+                        request_id = 0
 
                     try:
                         reply = ResponseBuilder.build_op_msg_reply(
-                            request_id=0,
-                            response_to=msg.get("request_id", 0),
+                            request_id=_get_next_request_id(),
+                            response_to=request_id,
                             document=response_doc,
                         )
                         writer.write(reply)
@@ -229,24 +213,30 @@ def handle_client_threaded(
                 )
 
                 if opcode == WireProtocol.OP_MSG:
-                    msg = OP_MSG.parse(full_message)
+                    try:
+                        msg = OP_MSG.parse(full_message)
 
-                    is_insert = False
-                    for section_type, section_data in msg["sections"]:
-                        if (
-                            section_type == "body"
-                            and isinstance(section_data, dict)
-                            and "insert" in section_data
+                        is_insert = False
+                        for section_type, section_data in msg["sections"]:
+                            if (
+                                section_type == "body"
+                                and isinstance(section_data, dict)
+                                and "insert" in section_data
+                            ):
+                                is_insert = True
+                                break
+
+                        if is_insert or any(
+                            s[0] == "payload_docs" for s in msg["sections"]
                         ):
-                            is_insert = True
-                            break
-
-                    if is_insert or any(
-                        s[0] == "payload_docs" for s in msg["sections"]
-                    ):
-                        _, response_doc = handler.handle_insert(msg)
-                    else:
-                        _, response_doc = handler.handle_command(msg)
+                            _, response_doc = handler.handle_insert(msg)
+                        else:
+                            _, response_doc = handler.handle_command(msg)
+                    except Exception as e:
+                        logger.exception(
+                            f"Error handling OP_MSG in threaded client: {e}"
+                        )
+                        response_doc = {"ok": 0, "errmsg": str(e)}
 
                     logger.info(
                         f"Command response: response_keys={list(response_doc.keys()) if isinstance(response_doc, dict) else type(response_doc)}"
@@ -256,10 +246,6 @@ def handle_client_threaded(
                         request_id=response_request_id,
                         response_to=request_id,
                         document=response_doc,
-                    )
-                    logger.info(
-                        f"Sending reply: len={len(reply)}, "
-                        f"first_40_bytes={list(reply[:40])}"
                     )
                     client_socket.sendall(reply)
 

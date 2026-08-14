@@ -96,6 +96,7 @@ def stop_daemon(pid_file: str) -> int:
             time.sleep(SHUTDOWN_POLL_INTERVAL)
 
         os.kill(pid, signal.SIGKILL)
+        remove_pid_file(pid_file)
         print(f"Forcefully killed NX-27017 (PID: {pid})")
         return 0
     except ProcessLookupError:
