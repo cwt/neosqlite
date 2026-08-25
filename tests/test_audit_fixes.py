@@ -113,3 +113,52 @@ class TestAddToSetNoDocumentNesting:
         c.update_one({"_id": 1}, {"$addToSet": {"arr": 3}})
         c.update_one({"_id": 1}, {"$addToSet": {"arr": 3}})
         assert sorted(c.find_one({"_id": 1})["arr"]) == [1, 2, 3]
+
+
+class TestNullMatchSemantics:
+    """#90: {f: null} must match null-or-missing; $ne must not exclude
+    documents whose field is missing — in both SQL tiers."""
+
+    @pytest.fixture
+    def docs(self, connection):
+        c = connection.t
+        c.insert_many([{"a": 1, "b": None}, {"a": 2}, {"a": 3, "b": "x"}])
+        return c
+
+    def test_equality_null_matches_null_and_missing(self, docs):
+        found = sorted(d["a"] for d in docs.find({"b": None}))
+        assert found == [1, 2]
+
+    def test_eq_operator_null_matches_null_and_missing(self, docs):
+        found = sorted(d["a"] for d in docs.find({"b": {"$eq": None}}))
+        assert found == [1, 2]
+
+    def test_ne_excludes_only_matching_values_not_missing(self, docs):
+        found = sorted(d["a"] for d in docs.find({"b": {"$ne": "x"}}))
+        assert found == [1, 2]
+
+    def test_ne_still_excludes_the_value_itself(self, docs):
+        found = [d["a"] for d in docs.find({"b": {"$ne": None}})]
+        assert found == [3]
+
+    def test_tier1_group_pipeline_match_null(self, connection):
+        """Tier-1 CTE match builder honors the same semantics."""
+        c = connection.t1
+        c.insert_many([{"g": None}, {"g": "v"}, {}])
+        rows = list(
+            c.aggregate(
+                [
+                    {"$match": {"g": {"$ne": "v"}}},
+                    {"$group": {"_id": None, "n": {"$sum": 1}}},
+                ]
+            )
+        )
+        assert rows and rows[0]["n"] == 2
+
+    def test_tier1_match_equality_null(self, connection):
+        c = connection.t1
+        c.insert_many([{"g": None}, {"g": "v"}, {}])
+        found = list(c.aggregate([{"$match": {"g": None}}]))
+        # Both the explicit-null and the missing-field docs match
+        assert len(found) == 2
+        assert all(d.get("g") is None for d in found)

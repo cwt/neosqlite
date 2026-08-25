@@ -754,10 +754,18 @@ class StageBuildersMixin:
                                 where_clauses.append(f"{field_sql} <= ?")
                                 all_params.append(arg)
                             case "$eq":
-                                where_clauses.append(f"{field_sql} = ?")
-                                all_params.append(arg)
+                                if arg is None:
+                                    # MongoDB: null matches null-or-missing (#90)
+                                    where_clauses.append(
+                                        f"{field_sql} IS NULL"
+                                    )
+                                else:
+                                    where_clauses.append(f"{field_sql} = ?")
+                                    all_params.append(arg)
                             case "$ne":
-                                where_clauses.append(f"{field_sql} != ?")
+                                # IS NOT (unlike !=) matches rows where the
+                                # field is missing/NULL, as MongoDB does (#90)
+                                where_clauses.append(f"{field_sql} IS NOT ?")
                                 all_params.append(arg)
                             case "$in":
                                 if isinstance(arg, (list, tuple)):
@@ -794,8 +802,12 @@ class StageBuildersMixin:
                             case _:
                                 return None, []
                 else:
-                    where_clauses.append(f"{field_sql} = ?")
-                    all_params.append(value)
+                    if value is None:
+                        # MongoDB: null matches null-or-missing (#90)
+                        where_clauses.append(f"{field_sql} IS NULL")
+                    else:
+                        where_clauses.append(f"{field_sql} = ?")
+                        all_params.append(value)
 
         where_clause = (
             f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""

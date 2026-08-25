@@ -243,6 +243,10 @@ class SqlQueryBuilderMixin:
                     return None  # Fall back to Python for regex objects
 
                 extract_expr = f"{self.jsonb.json_function_prefix}_extract(data, {json_path})"
+                if value is None:
+                    # MongoDB: {f: null} matches docs where f is JSON null
+                    # *or absent*; json_extract yields SQL NULL for both (#90)
+                    return f"{extract_expr} IS NULL", []
                 return f"{extract_expr} = ?", [value]
 
     def _build_simple_where_clause(
@@ -482,7 +486,12 @@ class SqlQueryBuilderMixin:
                     # Array values need Python for correct semantics
                     if isinstance(op_val, (list, tuple)):
                         return None, []
-                    if is_datetime_indexed:
+                    if op_val is None:
+                        # MongoDB: {$eq: null} matches null-or-missing (#90)
+                        clauses.append(
+                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) IS NULL"
+                        )
+                    elif is_datetime_indexed:
                         clauses.append(
                             f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) = datetime(?)"
                         )
@@ -550,14 +559,22 @@ class SqlQueryBuilderMixin:
                     # Array values need Python for correct semantics
                     if isinstance(op_val, (list, tuple)):
                         return None, []
-                    if is_datetime_indexed:
+                    if op_val is None:
+                        # MongoDB: {$ne: null} excludes only JSON null,
+                        # not missing fields — IS NOT handles both (#90)
                         clauses.append(
-                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) != datetime(?)"
+                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) IS NOT NULL"
+                        )
+                    elif is_datetime_indexed:
+                        clauses.append(
+                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) IS NOT datetime(?)"
                         )
                         params.append(op_val)
                     else:
+                        # IS NOT (unlike !=) matches rows where the field is
+                        # missing/NULL, as MongoDB's $ne does (#90)
                         clauses.append(
-                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) != ?"
+                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) IS NOT ?"
                         )
                         params.append(op_val)
                 case "$in":

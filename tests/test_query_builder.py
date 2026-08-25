@@ -111,7 +111,7 @@ class TestBuildOperatorClause:
         clause, params = query_helper._build_operator_clause(
             "'$.name'", {"$ne": "Alice"}
         )
-        assert "extract(data, '$.name') != ?" in clause
+        assert "extract(data, '$.name') IS NOT ?" in clause
         assert params == ["Alice"]
 
     def test_in_operator(self, query_helper):
@@ -246,7 +246,7 @@ class TestBuildOperatorClause:
         )
         assert ">=" in clause
         assert "<=" in clause
-        assert "!=" in clause
+        assert "IS NOT" in clause
         assert clause.count("AND") == 2
         assert params == [25, 35, 30]
 

@@ -735,7 +735,7 @@ def test_query_helper_aggregation_and_query_building():
         # Check that all conditions are present
         assert ">" in clause
         assert "<" in clause
-        assert "!=" in clause
+        assert "IS NOT" in clause
         # Check that they're combined with AND
         assert clause.count("AND") == 2
         assert params == [5, 15, 10]
