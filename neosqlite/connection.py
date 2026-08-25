@@ -800,7 +800,19 @@ class Connection:
 
         Yields control to the block, and automatically commits or rolls back
         based on execution outcome.
+
+        Raises:
+            sqlite3.OperationalError: If a transaction is already active.
+                Nesting is refused *before* touching connection state — the
+                previous behavior issued BEGIN (which fails) and then rolled
+                back unconditionally, destroying the outer transaction's
+                pending work (#93).
         """
+        if self.db.in_transaction:
+            raise sqlite3.OperationalError(
+                "Cannot start a transaction within a transaction. "
+                "Use ClientSession transactions (savepoints) for nesting."
+            )
         try:
             self.db.execute("BEGIN")
             yield
