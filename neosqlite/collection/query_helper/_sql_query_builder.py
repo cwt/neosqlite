@@ -723,6 +723,10 @@ class SqlQueryBuilderMixin:
                     # Handle [divisor, remainder] array
                     if isinstance(op_val, (list, tuple)) and len(op_val) == 2:
                         divisor, remainder = op_val
+                        if divisor == 0:
+                            # Zero divisor: let the Python tier raise
+                            # MalformedQueryException (#160)
+                            return None, []
                         clauses.append(
                             f"json_type(data, {json_path}) IN ('integer', 'real') AND "
                             f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) % ? = ?"

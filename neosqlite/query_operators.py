@@ -371,6 +371,10 @@ def _mod(field: str, value: list[int], document: dict[str, Any]) -> bool:
         raise MalformedQueryException(
             "'$mod' must accept an iterable: [divisor, remainder]"
         )
+    if divisor == 0:
+        raise MalformedQueryException(
+            "'$mod' divisor must not be 0"
+        )
     try:
         doc_value = _get_nested_field(field, document)
         # $mod only works on scalar values, not arrays
@@ -451,7 +455,8 @@ def _regex(
     try:
         doc_val = _get_nested_field(field, document)
         if doc_val is None:
-            doc_val = ""
+            # MongoDB never matches a missing field with $regex (#161)
+            return False
 
         # If value is already a compiled pattern, flags are ignored in re.search
         if isinstance(value, re.Pattern):
@@ -477,7 +482,7 @@ def _elemMatch(field: str, value: Any, document: dict[str, Any]) -> bool:
     Returns:
         bool: True if the field value matches the criteria, False otherwise.
     """
-    field_val = document.get(field)
+    field_val = _get_nested_field(field, document)
     if not isinstance(field_val, list):
         return False
 
@@ -608,7 +613,7 @@ def _contains(field: str, value: str, document: dict[str, Any]) -> bool:
         bool: True if the field value contains the specified substring, False otherwise.
     """
     try:
-        field_val = document.get(field)
+        field_val = _get_nested_field(field, document)
         if field_val is None:
             return False
         # Convert both values to strings and do a case-insensitive comparison

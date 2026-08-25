@@ -895,12 +895,12 @@ def test_distinct_complex_types(collection):
             {"foo": {"a": 1}},
         ]
     )
+    # #165: arrays flatten to their elements; documents dedupe by JSON
     results = collection.distinct("foo")
-    assert len(results) == 3
-    results = collection.distinct("foo")
-    assert len(results) == 3
-    assert (1, 2) in results
-    assert (2, 3) in results
+    assert sorted(r for r in results if not isinstance(r, str)) == [1, 2, 3]
+    assert results.count('{"a": 1}') == 1
+    # no tuple composites in output
+    assert not any(isinstance(r, tuple) for r in results)
     assert '{"a": 1}' in results
 
 

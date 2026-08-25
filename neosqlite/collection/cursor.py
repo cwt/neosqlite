@@ -473,7 +473,9 @@ class Cursor:
             return self._retrieved < self._limit
         # Without limit, cursor is considered alive until iteration starts
         # After iteration, check if we got any results
-        return self._retrieved == 0 or not hasattr(self, "_exhausted")
+        if hasattr(self, "_exhausted"):
+            return False  # iteration completed (#157)
+        return self._retrieved == 0
 
     @property
     def collection(self):

@@ -137,7 +137,8 @@ def test_regex_operator():
     assert _regex("name", "^Al", doc) is True
     assert _regex("name", "ice$", doc) is True
     assert _regex("name", "bob", doc) is False
-    assert _regex("nonexistent", ".*", doc) is True
+    # #161: missing fields never match $regex, even with .*
+    assert _regex("nonexistent", ".*", doc) is False
     assert _regex("name", "[", doc) is False
     assert _regex("name", 123, doc) is False
 

@@ -350,6 +350,8 @@ class SQLOperatorTranslator:
                     # Handle [divisor, remainder] array
                     if isinstance(value, (list, tuple)) and len(value) == 2:
                         divisor, remainder = value
+                        if divisor == 0:
+                            return None, []  # Python tier raises (#160)
                         sql = f"{field_access} % ? = ?"
                         params = [divisor, remainder]
                 case "$size":

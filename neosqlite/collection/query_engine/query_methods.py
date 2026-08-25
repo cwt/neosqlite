@@ -114,7 +114,23 @@ class QueryMethodsMixin(QueryEngineProtocol):
                 val = neosqlite_json_loads(row[0])
                 match val:
                     case list():
-                        results.add(tuple(val))
+                        # MongoDB distinct flattens arrays and returns each
+                        # element (#165); documents canonicalize via JSON
+                        for item in val:
+                            if isinstance(item, dict):
+                                results.add(
+                                    neosqlite_json_dumps(
+                                        item, sort_keys=True
+                                    )
+                                )
+                            elif isinstance(item, list):
+                                results.add(
+                                    neosqlite_json_dumps(
+                                        item, sort_keys=True
+                                    )
+                                )
+                            else:
+                                results.add(item)
                     case dict():
                         results.add(neosqlite_json_dumps(val, sort_keys=True))
                     case _:
