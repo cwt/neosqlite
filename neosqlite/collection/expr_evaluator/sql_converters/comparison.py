@@ -120,7 +120,6 @@ class ComparisonMixin(BaseSqlMixin):
                 from ...json_path_utils import parse_json_path
 
                 safe_path = "'" + parse_json_path(field_op[1:]) + "'"
-                type_expr = f"json_type({self.data_column}, {safe_path})"
                 # $eq: missing->0, null->1, else->0
                 # $ne: missing->1, null->0, else->1
                 m_val = "0" if operator == "$eq" else "1"

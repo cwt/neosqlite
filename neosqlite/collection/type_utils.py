@@ -348,6 +348,7 @@ __all__ = [
     "validate_session",
 ]
 
+
 def _hashable_group_key(value: Any) -> tuple:
     """Type-tagged, hashable stand-in for a $group _id value (#103).
 

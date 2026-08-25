@@ -377,7 +377,11 @@ class GridFSBucket:
             data: The data to be chunked
         """
         rows = [
-            (file_id, i // self._chunk_size_bytes, data[i : i + self._chunk_size_bytes])
+            (
+                file_id,
+                i // self._chunk_size_bytes,
+                data[i : i + self._chunk_size_bytes],
+            )
             for i in range(0, len(data), self._chunk_size_bytes)
         ]
         if not rows:

@@ -5,8 +5,6 @@ Arithmetic: $add, $subtract, $multiply, $divide, $mod
 Math: $abs, $ceil, $floor, $round, $trunc, $pow, $sqrt
 """
 
-import pytest
-
 import neosqlite
 from neosqlite.collection.expr_evaluator import ExprEvaluator
 

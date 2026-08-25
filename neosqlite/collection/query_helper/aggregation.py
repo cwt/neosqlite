@@ -25,7 +25,6 @@ if TYPE_CHECKING:
     from ..jsonb_support import JSONBContext
 
 
-
 from ..type_utils import _hashable_group_key
 
 

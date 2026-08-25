@@ -372,9 +372,7 @@ def _mod(field: str, value: list[int], document: dict[str, Any]) -> bool:
             "'$mod' must accept an iterable: [divisor, remainder]"
         )
     if divisor == 0:
-        raise MalformedQueryException(
-            "'$mod' divisor must not be 0"
-        )
+        raise MalformedQueryException("'$mod' divisor must not be 0")
     try:
         doc_value = _get_nested_field(field, document)
         # $mod only works on scalar values, not arrays

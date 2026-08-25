@@ -120,7 +120,6 @@ class OperatorsTextMixin(OperatorsBaseMixin):
 
         # Generate deterministic table names
         fts_table_name = f"temp_text_fts_{hashlib.sha256(str(match_spec).encode()).hexdigest()[:8]}"
-        result_table_name = f"temp_text_filtered_{hashlib.sha256(str(match_spec).encode()).hexdigest()[:8]}"
 
         # Step 1: Create FTS5 virtual table with detected tokenizer
         # We need to extract text content from the JSON data for indexing

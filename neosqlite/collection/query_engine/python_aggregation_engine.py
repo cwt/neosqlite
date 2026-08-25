@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, Any
 from ...exceptions import MalformedQueryException
 from ..cursor import DESCENDING
 from ..expr_evaluator import (
-    AggregationContext,
     ExprEvaluator,
     _is_expression,
 )

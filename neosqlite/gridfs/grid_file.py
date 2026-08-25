@@ -175,7 +175,10 @@ class GridIn:
         and no file ID has been set, it creates the corresponding file document first.
         The chunk is inserted with its sequence number and associated with the file ID.
         """
-        if len(self._buffer) - getattr(self, "_buffer_start", 0) >= self._chunk_size_bytes:
+        if (
+            len(self._buffer) - getattr(self, "_buffer_start", 0)
+            >= self._chunk_size_bytes
+        ):
             start = getattr(self, "_buffer_start", 0)
             chunk_data = bytes(
                 self._buffer[start : start + self._chunk_size_bytes]
@@ -292,8 +295,9 @@ class GridIn:
             self._create_file_document()
 
         # Return the integer ID, which can be obtained by looking up the stored _id
-        if getattr(self, "_int_file_id", None) is not None:
-            return self._int_file_id
+        cached = getattr(self, "_int_file_id", None)
+        if cached is not None:
+            return int(cached)
         if isinstance(self._file_id, ObjectId):
             # Look up the integer ID for this ObjectId — cache it: chunked
             # uploads previously re-ran this SELECT per chunk (#152)

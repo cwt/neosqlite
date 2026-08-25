@@ -303,9 +303,7 @@ class DatePythonMixin(BasePythonMixin):
                                     # represents local time in that zone;
                                     # normalize to UTC (#120).
                                     dt = dt.replace(tzinfo=tz.utc) - (
-                                        datetime.timedelta(
-                                            seconds=offset_seconds
-                                        )
+                                        timedelta(seconds=offset_seconds)
                                     )
                             except (ValueError, TypeError, AttributeError) as e:
                                 logger.debug(

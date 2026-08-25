@@ -119,15 +119,11 @@ class QueryMethodsMixin(QueryEngineProtocol):
                         for item in val:
                             if isinstance(item, dict):
                                 results.add(
-                                    neosqlite_json_dumps(
-                                        item, sort_keys=True
-                                    )
+                                    neosqlite_json_dumps(item, sort_keys=True)
                                 )
                             elif isinstance(item, list):
                                 results.add(
-                                    neosqlite_json_dumps(
-                                        item, sort_keys=True
-                                    )
+                                    neosqlite_json_dumps(item, sort_keys=True)
                                 )
                             else:
                                 results.add(item)

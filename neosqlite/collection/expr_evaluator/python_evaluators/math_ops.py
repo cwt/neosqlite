@@ -53,7 +53,12 @@ class MathPythonMixin(BasePythonMixin):
                 # Python's % takes the sign of the divisor, producing -7 % 3
                 # == 2 instead of -1 (#116).
                 a, b = values[0], values[1]
-                return a - b * float(int(a / b)) if isinstance(a, (int, float)) and isinstance(b, (int, float)) else None
+                return (
+                    a - b * float(int(a / b))
+                    if isinstance(a, (int, float))
+                    and isinstance(b, (int, float))
+                    else None
+                )
             case _:
                 raise ValueError(f"Unknown arithmetic operator: {operator}")
 

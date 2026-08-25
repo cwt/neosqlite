@@ -97,7 +97,6 @@ def _dedupe(seq: list) -> list:
     return out
 
 
-
 def _bson_min_max(array: list, is_min: bool):
     """min/max under BSON type ordering; None if no non-null values."""
     from neosqlite.collection.type_utils import bson_sort_key
@@ -107,7 +106,6 @@ def _bson_min_max(array: list, is_min: bool):
         return None
     key = lambda v: bson_sort_key(v)  # noqa: E731
     return min(vals, key=key) if is_min else max(vals, key=key)
-
 
 
 class ArrayPythonMixin(BasePythonMixin):

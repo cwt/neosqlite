@@ -33,7 +33,6 @@ def _numeric_literal(value: Any, name: str) -> str:
     return repr(float(value))
 
 
-
 def _compile_node(
     schema: Any, data_column: str, json_func: str, path: str = "$"
 ) -> str:
@@ -78,17 +77,23 @@ def _compile_node(
             clauses.append(type_clause)
 
     # 4. Handle numeric constraints
-    val_expr = (
-        f"{json_func}({data_column}, '{_safe_json_path(path)}')"
-    )
+    val_expr = f"{json_func}({data_column}, '{_safe_json_path(path)}')"
     if "minimum" in schema:
-        clauses.append(f"{val_expr} >= {_numeric_literal(schema['minimum'], 'minimum')}")
+        clauses.append(
+            f"{val_expr} >= {_numeric_literal(schema['minimum'], 'minimum')}"
+        )
     if "maximum" in schema:
-        clauses.append(f"{val_expr} <= {_numeric_literal(schema['maximum'], 'maximum')}")
+        clauses.append(
+            f"{val_expr} <= {_numeric_literal(schema['maximum'], 'maximum')}"
+        )
     if "exclusiveMinimum" in schema:
-        clauses.append(f"{val_expr} > {_numeric_literal(schema['exclusiveMinimum'], 'exclusiveMinimum')}")
+        clauses.append(
+            f"{val_expr} > {_numeric_literal(schema['exclusiveMinimum'], 'exclusiveMinimum')}"
+        )
     if "exclusiveMaximum" in schema:
-        clauses.append(f"{val_expr} < {_numeric_literal(schema['exclusiveMaximum'], 'exclusiveMaximum')}")
+        clauses.append(
+            f"{val_expr} < {_numeric_literal(schema['exclusiveMaximum'], 'exclusiveMaximum')}"
+        )
 
     if not clauses:
         return "1"

@@ -184,10 +184,14 @@ class TemporaryTableAggregationProcessor(OperatorsMixin):
                         limit_value: int | None = None
                         j = i
 
-                        def _apply_skip(cur_skip: int, cur_lim: int | None, n: int) -> int:
+                        def _apply_skip(
+                            cur_skip: int, cur_lim: int | None, n: int
+                        ) -> int:
                             return cur_skip + n
 
-                        def _apply_limit(cur_lim: int | None, n: int) -> int | None:
+                        def _apply_limit(
+                            cur_lim: int | None, n: int
+                        ) -> int | None:
                             if cur_lim is None or n < cur_lim:
                                 return n
                             return cur_lim

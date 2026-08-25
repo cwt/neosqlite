@@ -33,9 +33,7 @@ def get_table_columns(db_connection: Any, table_name: str) -> set[str]:
 _table_columns_cache: dict[tuple[int, str], frozenset[str]] = {}
 
 
-def get_table_columns_cached(
-    db_connection: Any, table_name: str
-) -> set[str]:
+def get_table_columns_cached(db_connection: Any, table_name: str) -> set[str]:
     """get_table_columns with a small per-connection cache (#152).
 
     GridFS constructs many GridOut objects; PRAGMA table_info per object
