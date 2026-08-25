@@ -51,7 +51,8 @@ def test_drop_collection():
     with patch("neosqlite.connection.sqlite3"):
         conn = neosqlite.Connection()
         conn.drop_collection("foo")
-        conn.db.execute.assert_called_with("DROP TABLE IF EXISTS foo")
+        # #132 also lists FTS shadow objects; assert the DROP still happens
+        conn.db.execute.assert_any_call("DROP TABLE IF EXISTS foo")
 
 
 def test_getattr_returns_attribute():

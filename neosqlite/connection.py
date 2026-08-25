@@ -386,11 +386,18 @@ class Connection:
         attempts to retrieve it using the dictionary-style collection access (via
         `__getitem__`). This enables both attribute and dictionary access to collections.
 
-        Returns:
-            Any: The value retrieved from the collection, or the attribute if it exists.
+        Only valid collection identifiers are proxied; anything else raises
+        AttributeError so typos and internal lookups fail loudly instead of
+        silently creating and caching bogus Collection objects (#130).
         """
         if name in self.__dict__:
             return self.__dict__[name]
+        if name.startswith("_") or not re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_]*", name
+        ):
+            raise AttributeError(
+                f"{type(self).__name__!s} has no attribute {name!r}"
+            )
         return self[name]
 
     def start_session(
@@ -455,6 +462,36 @@ class Connection:
                         the use of `IF EXISTS` in the SQL command.
         """
         self.db.execute(f"DROP TABLE IF EXISTS {quote_table_name(name)}")
+        # Evict the cached Collection so later access doesn't resurrect a
+        # table-less object (#132)
+        self._collections.pop(name, None)
+        # Drop FTS5 virtual tables and their shadow tables, which are
+        # separate schema objects that would otherwise outlive the
+        # collection forever (#132)
+        try:
+            all_tables = {
+                r[0]
+                for r in self.db.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            prefix = name + "_"
+            fts_tables = [
+                t
+                for t in all_tables
+                if t.startswith(prefix) and t.endswith("_fts")
+            ]
+        except Exception:
+            fts_tables = []
+        for fts_table in fts_tables:
+            self.db.execute(
+                f"DROP TABLE IF EXISTS {quote_table_name(fts_table)}"
+            )
+            for suffix in ("_data", "_idx", "_content", "_docsize", "_config"):
+                self.db.execute(
+                    f"DROP TABLE IF EXISTS "
+                    f"{quote_table_name(fts_table + suffix)}"
+                )
 
     def create_collection(self, name: str, **kwargs) -> Collection:
         """
@@ -506,7 +543,11 @@ class Connection:
         Raises:
             CollectionInvalid: If the old collection doesn't exist or new name already exists.
         """
-        if old_name not in self._collections:
+        exists_row = self.db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (old_name,),
+        ).fetchone()
+        if not exists_row:
             raise CollectionInvalid(f"Collection {old_name} does not exist")
 
         # Check if new name already exists
@@ -517,9 +558,17 @@ class Connection:
         if cursor.fetchone():
             raise CollectionInvalid(f"Collection {new_name} already exists")
 
-        # Rename the collection
-        self._collections[old_name].rename(new_name)
-        self._collections[new_name] = self._collections.pop(old_name)
+        # Rename the collection (cache entry may not exist for tables that
+        # were never accessed through this Connection — #133)
+        cached = self._collections.pop(old_name, None)
+        if cached is not None:
+            cached.rename(new_name)
+            self._collections[new_name] = cached
+        else:
+            self.db.execute(
+                f"ALTER TABLE {quote_table_name(old_name)} "
+                f"RENAME TO {quote_table_name(new_name)}"
+            )
 
     def list_collection_names(self) -> list[str]:
         """

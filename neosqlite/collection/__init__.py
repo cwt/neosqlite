@@ -426,9 +426,33 @@ class Collection:
             raise sqlite3.Error(f"Collection '{new_name}' already exists")
 
         # Rename the table
+        old_name = self.name
         self.db.execute(
-            f"ALTER TABLE {quote_table_name(self.name)} RENAME TO {quote_table_name(new_name)}"
+            f"ALTER TABLE {quote_table_name(old_name)} RENAME TO {quote_table_name(new_name)}"
         )
+
+        # Carry FTS5 virtual tables along; otherwise text indexes are lost
+        # and stale shadow tables accumulate under the old name (#134)
+        all_tables = {
+            r[0]
+            for r in self.db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        prefix = old_name + "_"
+        fts_rows = [
+            (t,)
+            for t in all_tables
+            if t.startswith(prefix) and t.endswith("_fts")
+        ]
+        for (fts_name,) in fts_rows:
+            if not fts_name.startswith(f"{old_name}_"):
+                continue
+            new_fts = f"{new_name}_{fts_name[len(old_name) + 1:]}"
+            self.db.execute(
+                f"ALTER TABLE {quote_table_name(fts_name)} "
+                f"RENAME TO {quote_table_name(new_fts)}"
+            )
 
         # Update the collection name
         self.name = new_name

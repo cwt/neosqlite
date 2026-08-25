@@ -44,9 +44,14 @@ class JSONBContext:
         )
 
 
-# Module-level cache for JSONB support detection results
-# Key: connection id (int), Value: dict with support flags
-_jsonb_support_cache: dict[int, dict[str, bool]] = {}
+# Module-level cache for JSONB support detection results.
+# Stored ON the connection object (sqlite connections accept attribute
+# assignment is NOT possible, so we key by id but ALSO pin the connection
+# object in the value) — see #129: a bare id() key let a recycled address
+# inherit a dead connection's capability flags.
+_jsonb_support_cache: dict[int, tuple[Any, dict[str, bool]]] = {}
+
+_JSONB_CACHE_MAX = 64
 
 
 def clear_jsonb_cache(db_connection=None) -> None:
@@ -80,10 +85,16 @@ def supports_jsonb(db_connection) -> bool:
     """
     conn_id = id(db_connection)
 
-    if conn_id not in _jsonb_support_cache:
-        _jsonb_support_cache[conn_id] = {}
+    entry = _jsonb_support_cache.get(conn_id)
+    if entry is None or entry[0] is not db_connection:
+        # Pin the connection so its id cannot be recycled while cached,
+        # and bound growth (#129)
+        if len(_jsonb_support_cache) >= _JSONB_CACHE_MAX:
+            _jsonb_support_cache.clear()
+        entry = (db_connection, {})
+        _jsonb_support_cache[conn_id] = entry
 
-    cache = _jsonb_support_cache[conn_id]
+    cache = entry[1]
 
     if "jsonb_supported" not in cache:
         try:
@@ -112,10 +123,16 @@ def supports_jsonb_each(db_connection) -> bool:
     """
     conn_id = id(db_connection)
 
-    if conn_id not in _jsonb_support_cache:
-        _jsonb_support_cache[conn_id] = {}
+    entry = _jsonb_support_cache.get(conn_id)
+    if entry is None or entry[0] is not db_connection:
+        # Pin the connection so its id cannot be recycled while cached,
+        # and bound growth (#129)
+        if len(_jsonb_support_cache) >= _JSONB_CACHE_MAX:
+            _jsonb_support_cache.clear()
+        entry = (db_connection, {})
+        _jsonb_support_cache[conn_id] = entry
 
-    cache = _jsonb_support_cache[conn_id]
+    cache = entry[1]
 
     if "jsonb_each_supported" not in cache:
         try:
