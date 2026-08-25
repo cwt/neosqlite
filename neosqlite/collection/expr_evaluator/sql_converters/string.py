@@ -64,7 +64,9 @@ class StringMixin(BaseSqlMixin):
                 value_sql, value_params = self._convert_operand_to_sql(
                     operands[0]
                 )
-                sql = f"length({value_sql})"
+                # length() on TEXT counts characters; MongoDB wants bytes
+                # (#117). length() on BLOB counts bytes.
+                sql = f"length(CAST({value_sql} AS BLOB))"
                 return sql, value_params
             case "$substr":
                 if len(operands) != 3:
@@ -132,7 +134,11 @@ class StringMixin(BaseSqlMixin):
                 substr_sql, substr_params = self._convert_operand_to_sql(
                     operands[1]
                 )
-                sql = f"(instr({string_sql}, {substr_sql}) - 1)"
+                # NULL operands must yield -1 like MongoDB (#117)
+                sql = (
+                    f"(CASE WHEN {string_sql} IS NULL OR {substr_sql} IS NULL "
+                    f"THEN -1 ELSE instr({string_sql}, {substr_sql}) - 1 END)"
+                )
                 return sql, string_params + substr_params
             case "$strcasecmp":
                 # Case-insensitive string comparison using SQLite's COLLATE NOCASE
@@ -227,9 +233,10 @@ class StringMixin(BaseSqlMixin):
                     # JSON-special characters the caller should use
                     # force_python fallback.
                     sql = (
-                        f"json('[\"' ||"
+                        f"CASE WHEN {string_sql} IS NULL THEN json('[]') "
+                        f"ELSE json('[\"' ||"
                         f" replace({string_sql}, '{delim_sql}', '\",\"') ||"
-                        f" '\"]')"
+                        f" '\"]') END"
                     )
                     return sql, string_params
                 # Dynamic delimiter: fall back to Python.

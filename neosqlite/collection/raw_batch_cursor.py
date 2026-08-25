@@ -105,8 +105,15 @@ class RawBatchCursor:
             jsonb = self._collection.query_engine.jsonb.jsonb_supported
             json_func = "jsonb" if jsonb else "json"
 
-            # Build ORDER BY clause if sorting is specified
+            # Build ORDER BY clause. With no explicit sort we still order
+            # by the rowid so OFFSET pagination is deterministic across
+            # batches (#149); unordered LIMIT/OFFSET can skip or repeat
+            # documents when the plan changes between statements.
             order_by = ""
+            if not self._sort:
+                order_by = (
+                    f"ORDER BY {quote_table_name(self._collection.name)}.id ASC"
+                )
             if self._sort:
                 sort_clauses = []
                 table_ref = quote_table_name(self._collection.name)
