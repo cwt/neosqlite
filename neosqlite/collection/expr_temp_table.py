@@ -167,7 +167,7 @@ class TempTableExprEvaluator:
             # close (#126)
             self._drop_tracked_tables()
             return None, [], []
-        except Exception as e:
+        except Exception:
             self._drop_tracked_tables()
             raise
 

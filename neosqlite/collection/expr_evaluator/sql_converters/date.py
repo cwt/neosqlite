@@ -10,7 +10,6 @@ if TYPE_CHECKING:
 
 from .base import BaseSqlMixin
 
-
 _DATE_FMT_SPECIFIERS = frozenset(
     "%Y %m %d %H %M %S %L %j %w %u %U %V %G %g %z %%".split()
 )

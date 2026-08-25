@@ -249,8 +249,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             # one _facet_combined_* table per aggregation (#124).
             result_table = create_temp(
                 {"$facet": "_combined"},
-                "SELECT NULL AS id, NULL AS _id, "
-                "'{}' AS data WHERE 0",
+                "SELECT NULL AS id, NULL AS _id, " "'{}' AS data WHERE 0",
             )
             self.db.execute(
                 f"INSERT INTO {result_table} (_id, data) VALUES (?, ?)",

@@ -286,9 +286,7 @@ class DateTimeQueryProcessor:
         try:
             cursor = self.db.execute(cmd, params)
             results = [
-                self.collection._load_with_stored_id(
-                    row[0], row[2], row[1]
-                )
+                self.collection._load_with_stored_id(row[0], row[2], row[1])
                 for row in cursor.fetchall()
             ]
             return results
@@ -369,9 +367,7 @@ class DateTimeQueryProcessor:
                     f"SELECT id, _id, data FROM {result_table}"
                 )
                 results = [
-                    self.collection._load_with_stored_id(
-                        row[0], row[2], row[1]
-                    )
+                    self.collection._load_with_stored_id(row[0], row[2], row[1])
                     for row in cursor.fetchall()
                 ]
                 return results

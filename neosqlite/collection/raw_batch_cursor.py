@@ -165,7 +165,9 @@ class RawBatchCursor:
 
                 # Convert rows to documents
                 docs = [
-                    self._collection._load_with_stored_id(row[0], row[2], row[1])
+                    self._collection._load_with_stored_id(
+                        row[0], row[2], row[1]
+                    )
                     for row in rows
                 ]
 
