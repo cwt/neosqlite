@@ -49,3 +49,33 @@ class TestUpdateManyIncMulValidation:
         assert res.modified_count == 1
         docs = {d["kind"]: d["v"] for d in c.find({})}
         assert docs == {"num": 6, "str": "x"}
+
+
+class TestMinMaxMissingField:
+    """#88: SQL-tier $min/$max wrote JSON null when the field was missing."""
+
+    def test_min_sets_value_when_field_missing(self, connection):
+        c = connection.t
+        c.insert_one({"_id": 1})
+        c.update_one({"_id": 1}, {"$min": {"score": 5}})
+        assert c.find_one({"_id": 1})["score"] == 5
+
+    def test_max_sets_value_when_field_missing(self, connection):
+        c = connection.t
+        c.insert_one({"_id": 1})
+        c.update_one({"_id": 1}, {"$max": {"score": 5}})
+        assert c.find_one({"_id": 1})["score"] == 5
+
+    def test_min_keeps_smaller_existing_value(self, connection):
+        c = connection.t
+        c.insert_one({"_id": 1, "score": 3})
+        c.update_one({"_id": 1}, {"$min": {"score": 5}})
+        assert c.find_one({"_id": 1})["score"] == 3
+
+    def test_max_keeps_larger_existing_value(self, connection):
+        c = connection.t
+        c.insert_one({"_id": 1, "score": 9})
+        c.update_one({"_id": 1}, {"$max": {"score": 5}})
+        assert c.find_one({"_id": 1})["score"] == 9
+
+
