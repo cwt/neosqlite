@@ -108,17 +108,17 @@ def test_apply_positional_recursive_dollar_no_filter_doc():
 
 
 def test_apply_positional_recursive_dollar_no_field_in_filter_doc():
-    """Test $ operator when field is missing from filter_doc (updates first element)."""
+    """#99: a query that says nothing about the array must NOT write
+    element 0 — refuse instead (MongoDB errors in this situation)."""
     doc = {"scores": [80, 90, 100]}
     parts = ["scores", "$"]
-    # filter_doc doesn't contain "scores"
     assert (
         _apply_positional_recursive(
             doc, parts, 1, 95, filter_doc={"_id": 1}, parent_array=doc["scores"]
         )
-        is True
+        is False
     )
-    assert doc["scores"] == [95, 90, 100]
+    assert doc["scores"] == [80, 90, 100]
 
 
 def test_apply_positional_recursive_regular_field_non_dict():
@@ -288,16 +288,15 @@ def test_apply_positional_recursive_filtered_matching_filter():
 
 
 def test_apply_positional_recursive_dollar_no_index():
-    """Test $ operator with index=0 (no field name to look back to)."""
+    """#99: with no path prefix there is no array condition — refuse."""
     doc = [80, 90, 100]
-    # index is 0, so field_name cannot be looked up
     assert (
         _apply_positional_recursive(
             doc, ["$"], 0, 95, filter_doc={"scores": 90}
         )
-        is True
+        is False
     )
-    assert doc == [95, 90, 100]
+    assert doc == [80, 90, 100]
 
 
 def test_apply_positional_recursive_regular_field_nested_no_next_positional():
@@ -308,30 +307,28 @@ def test_apply_positional_recursive_regular_field_nested_no_next_positional():
 
 
 def test_apply_positional_recursive_dollar_no_field_in_filter_doc_nested():
-    """Test $ operator when field is missing from filter_doc and it's a nested update."""
+    """#99: refuse when the query constrains nothing on the array."""
     doc = {"scores": [{"val": 80}, {"val": 90}]}
     parts = ["scores", "$", "val"]
-    # filter_doc doesn't contain "scores"
     assert (
         _apply_positional_recursive(
             doc, parts, 1, 95, filter_doc={"_id": 1}, parent_array=doc["scores"]
         )
-        is True
+        is False
     )
-    assert doc["scores"][0]["val"] == 95
+    assert doc["scores"][0]["val"] == 80
 
 
 def test_apply_positional_recursive_dollar_no_index_nested():
-    """Test $ operator with index=0 and nested update."""
+    """#99: no prefix means no condition — refuse rather than write [0]."""
     doc = [{"val": 80}, {"val": 90}]
-    # index is 0, filter_doc present, nested update
     assert (
         _apply_positional_recursive(
             doc, ["$", "val"], 0, 95, filter_doc={"scores": 90}
         )
-        is True
+        is False
     )
-    assert doc[0]["val"] == 95
+    assert doc[0]["val"] == 80
 
 
 def test_matches_filter_scalar_with_dict_filter():

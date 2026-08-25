@@ -511,7 +511,8 @@ class TestBuildSimpleWhereClause:
         assert result is not None
         clause, params, tables = result
         assert "WHERE" in clause
-        assert params == ["test"]
+        # equality + array-containment binds (unindexed field) (#99)
+        assert params == ["test", "test"]
 
     def test_multiple_fields(self, query_helper):
         """Test multiple field equality."""
@@ -653,7 +654,7 @@ class TestBuildFieldClause:
         """Test regular field with equality."""
         clause, params = query_helper._build_field_clause("name", "Alice")
         assert "extract(data," in clause
-        assert params == ["Alice"]
+        assert params == ["Alice", "Alice"]
 
     def test_regular_field_with_operator(self, query_helper):
         """Test regular field with operator."""

@@ -33,7 +33,7 @@ def test_nested_field_queries_now_use_sql(collection):
         "json_extract(data, '$.profile.age') = ?" in where_clause
         or "jsonb_extract(data, '$.profile.age') = ?" in where_clause
     )
-    assert params == [25]
+    assert params == [25, 25]
 
 
 def test_nested_field_with_operators_now_use_sql(collection):
@@ -114,7 +114,7 @@ def test_nested_field_performance_improvement(collection):
         "json_extract(data, '$.profile.age') = ?" in where_clause
         or "jsonb_extract(data, '$.profile.age') = ?" in where_clause
     )
-    assert params == [25]
+    assert params == [25, 25]
 
 
 def test_nested_array_unwind_basic(collection):

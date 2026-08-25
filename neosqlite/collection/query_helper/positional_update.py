@@ -44,10 +44,122 @@ def _apply_positional_update(
         _set_nested_field(doc, field_path, value)
         return True
 
+    # Canonical "$" form: <path.to.array>.<optional leaf>.<tail...>
+    # Resolve the matched element from the query filter up-front (#99).
+    if "$" in parts:
+        di = parts.index("$")
+        if parts[di] == "$" and di >= 1:
+            applied = _apply_dollar_update(doc, parts, di, value, filter_doc)
+            if applied is not None:
+                return applied
+            # fall through to legacy recursion for exotic shapes
+
     # Find the array field and positional operator
     return _apply_positional_recursive(
         doc, parts, 0, value, array_filters, filter_doc
     )
+
+
+def _apply_dollar_update(
+    doc: dict[str, Any],
+    parts: list[str],
+    dollar_index: int,
+    value: Any,
+    filter_doc: dict[str, Any] | None,
+) -> bool | None:
+    """Filter-driven "$" update; returns None to defer to legacy path."""
+    arr_segs = parts[:dollar_index]
+    tail = parts[dollar_index + 1 :]
+
+    def _get_at(d: Any, segs: list[str]) -> Any:
+        cur = d
+        for sg in segs:
+            if not isinstance(cur, dict) or sg not in cur:
+                return None
+            cur = cur[sg]
+        return cur
+
+    # Locate the ARRAY within the prefix. The prefix may end with the
+    # array itself ("scores") or name a leaf inside its elements
+    # ("students.name") — try the deepest split that yields a list (#99).
+    arr: Any = None
+    structural_leaf: str | None = None
+    for split in range(len(arr_segs), 0, -1):
+        cand = _get_at(doc, arr_segs[:split])
+        if isinstance(cand, list):
+            arr = cand
+            rest = arr_segs[split:]
+            structural_leaf = ".".join(rest) if rest else None
+            break
+    if arr is None:
+        return None  # shape not understood by this fast path
+
+    # Resolve the query condition for this array: exact prefix key first,
+    # then any query key extending the prefix ("students.name": x).
+    base = ".".join(arr_segs)
+    field_filter: Any = None
+    leaf: str | None = structural_leaf
+    if filter_doc:
+        if leaf:
+            full_key = f"{base}.{leaf}"
+            if full_key in filter_doc:
+                field_filter = filter_doc[full_key]
+        if field_filter is None:
+            for k, v in filter_doc.items():
+                if k.startswith(base + "."):
+                    field_filter = v
+                    if leaf is None:
+                        leaf = k[len(base) + 1 :]
+                    break
+        if field_filter is None and not leaf and base in filter_doc:
+            # Whole-array condition: {"scores": 90} matches any element == 90
+            field_filter = filter_doc[base]
+
+    def _pred(elem: Any) -> bool:
+        if field_filter is None:
+            return False
+        target = elem
+        if leaf:
+            if not isinstance(elem, dict):
+                return False
+            target = elem
+            for lg in leaf.split("."):
+                if not isinstance(target, dict) or lg not in target:
+                    return False
+                target = target[lg]
+        if isinstance(field_filter, dict):
+            return (
+                _matches_query_operators(target, field_filter)
+                if not isinstance(target, dict)
+                else _matches_filter(target, field_filter)
+            )
+        return target == field_filter
+
+    if field_filter is None:
+        if filter_doc:
+            # Query exists but constrains nothing on this array (#99)
+            return False
+        # Legacy: no query at all — update the first element
+        if arr:
+            if tail:
+                if isinstance(arr[0], dict):
+                    _set_nested_field(arr[0], ".".join(tail), value)
+                    return True
+                return False
+            arr[0] = value
+            return True
+        return False
+
+    for i, elem in enumerate(arr):
+        if _pred(elem):
+            if tail:
+                if isinstance(elem, dict):
+                    _set_nested_field(elem, ".".join(tail), value)
+                    return True
+                return False
+            arr[i] = value
+            return True
+    return False
 
 
 def _apply_positional_recursive(
@@ -152,94 +264,44 @@ def _apply_positional_recursive(
         if not isinstance(arr, list):
             return False
 
-        # Find first matching element using filter_doc
+        # Resolve the filter that identified this array. The query may use
+        # a dotted path ("a.scores": 90) whose immediate parent segment has
+        # no top-level entry — search by the full prefix (#99).
+        field_filter = (
+            _resolve_filter_value(filter_doc, parts[:index])
+            if index > 0
+            else None
+        )
+
+        def _apply_to(i: int, elem: Any) -> bool:
+            if is_last:
+                arr[i] = value
+                return True
+            if isinstance(elem, dict):
+                return _apply_positional_recursive(
+                    elem, parts, index + 1, value,
+                    array_filters, filter_doc, None,
+                )
+            return False
+
+        if field_filter is None:
+            if filter_doc:
+                # A query exists but constrains nothing on this array:
+                # MongoDB errors here; silently writing element 0 corrupts
+                # unrelated documents.
+                return False
+            # No query at all — legacy behavior: update first element
+            return bool(arr) and _apply_to(0, arr[0])
+
         matched = False
         for i, elem in enumerate(arr):
-            if not matched:
-                # Check if this element matches the filter
-                # Extract the filter for this array field from filter_doc
-                # For "scores.$", filter_doc would be {"scores": 90} or {"_id": 1}
-                if filter_doc:
-                    # Try to get the filter value for the array field
-                    # Look back in parts to find the field name
-                    if index > 0:
-                        field_name = parts[index - 1]
-                        field_filter = filter_doc.get(field_name)
-                        if field_filter is not None:
-                            # There's a filter for this field, check if element matches
-                            if (
-                                _matches_filter(elem, field_filter)
-                                if isinstance(field_filter, dict)
-                                else elem == field_filter
-                            ):
-                                if is_last:
-                                    arr[i] = value
-                                    matched = True
-                                else:
-                                    if isinstance(elem, dict):
-                                        _apply_positional_recursive(
-                                            elem,
-                                            parts,
-                                            index + 1,
-                                            value,
-                                            array_filters,
-                                            filter_doc,
-                                            None,
-                                        )
-                                        matched = True
-                        else:
-                            # No filter for this array field, update first element (MongoDB behavior)
-                            if is_last:
-                                arr[i] = value
-                                matched = True
-                            else:
-                                if isinstance(elem, dict):
-                                    _apply_positional_recursive(
-                                        elem,
-                                        parts,
-                                        index + 1,
-                                        value,
-                                        array_filters,
-                                        filter_doc,
-                                        None,
-                                    )
-                                    matched = True
-                    else:
-                        # index <= 0, no field name to look back to, update first element
-                        if is_last:
-                            arr[i] = value
-                            matched = True
-                        else:
-                            if isinstance(elem, dict):
-                                _apply_positional_recursive(
-                                    elem,
-                                    parts,
-                                    index + 1,
-                                    value,
-                                    array_filters,
-                                    filter_doc,
-                                    None,
-                                )
-                                matched = True
-                else:
-                    # No filter, just update first element
-                    if is_last:
-                        arr[i] = value
-                        matched = True
-                    else:
-                        if isinstance(elem, dict):
-                            _apply_positional_recursive(
-                                elem,
-                                parts,
-                                index + 1,
-                                value,
-                                array_filters,
-                                filter_doc,
-                                None,
-                            )
-                            matched = True
-
-        return True
+            if not matched and (
+                _matches_filter(elem, field_filter)
+                if isinstance(field_filter, dict)
+                else elem == field_filter
+            ):
+                matched = _apply_to(i, elem)
+        return matched
 
     # Regular field access
     else:
@@ -282,6 +344,29 @@ def _apply_positional_recursive(
                     filter_doc,
                     None,
                 )
+
+
+
+def _resolve_filter_value(
+    filter_doc: dict[str, Any] | None, segments: list[str]
+) -> Any:
+    """Find the query filter that applies to the given path prefix (#99).
+
+    Looks for a flat dotted key first ("a.scores"), then walks nested
+    structures. Returns None when the filter says nothing about the path.
+    """
+    if not filter_doc:
+        return None
+    name = ".".join(segments)
+    if name in filter_doc:
+        return filter_doc[name]
+    current: Any = filter_doc
+    for seg in segments:
+        if isinstance(current, dict) and seg in current:
+            current = current[seg]
+        else:
+            return None
+    return current
 
 
 def _matches_filter(elem: Any, filter_spec: dict[str, Any]) -> bool:
@@ -355,7 +440,35 @@ def _matches_query_operators(value: Any, operators: dict[str, Any]) -> bool:
             case "$nin":
                 if value in expected:
                     return False
-            # Add more operators as needed
+            case "$exists":
+                # Elements always exist when extracted from an array
+                if not expected:
+                    return False
+            case "$size":
+                if not (isinstance(value, (list, tuple)) and len(value) == expected):
+                    return False
+            case "$type":
+                from ..type_utils import get_bson_type
+
+                names = (
+                    expected
+                    if isinstance(expected, list)
+                    else [expected]
+                )
+                aliases = {"long": "int", "double": "int"}
+                wanted = {aliases.get(n, n) for n in names}
+                if get_bson_type(value) not in wanted and not (
+                    "number" in names
+                    and isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                ):
+                    return False
+            case _ if op.startswith("$"):
+                # Unknown operators must fail loudly: silently matching
+                # everything caused arrayFilters to over-update (#100)
+                raise ValueError(
+                    f"Unsupported operator '{op}' in array filter"
+                )
     return True
 
 

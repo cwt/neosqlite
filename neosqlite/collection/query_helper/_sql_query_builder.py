@@ -184,6 +184,21 @@ class SqlQueryBuilderMixin:
 
     # _categorize_id_value removed: _id queries now use _id_column_ref() for
     # strict MongoDB-like semantics (integer _id targets the _id column).
+    def _field_has_index(self, field: str) -> bool:
+        """True when an index exists whose name encodes this field (#99).
+
+        Indexed scalar equalities keep a sargable predicate; adding the
+        array-containment OR would otherwise force a full scan.
+        """
+        try:
+            suffix = f"_{field.replace('.', '_')}"
+            for name in self.collection.list_indexes():
+                if isinstance(name, str) and name.endswith(suffix):
+                    return True
+        except Exception:
+            pass
+        return False
+
     def _build_field_clause(
         self, field: str, value: Any
     ) -> tuple[str, list[Any]] | None:
@@ -247,6 +262,39 @@ class SqlQueryBuilderMixin:
                     # MongoDB: {f: null} matches docs where f is JSON null
                     # *or absent*; json_extract yields SQL NULL for both (#90)
                     return f"{extract_expr} IS NULL", []
+                if isinstance(value, (dict, list)):
+                    return f"{extract_expr} = ?", [value]
+                # MongoDB: {arr: v} also matches when the array CONTAINS v
+                # (#99). Skipped for indexed fields so the OR-form cannot
+                # disable the expression index; those queries keep the
+                # plain sargable equality (array containment there is then
+                # handled by the Python tier when it evaluates the filter).
+                if not self._field_has_index(field):
+                    json_each_func = self.jsonb.json_each_function
+                    segs = field.split(".")
+                    if len(segs) > 1:
+                        # Dotted path: match the leaf inside each array
+                        # element ("students.name" -> elements of students)
+                        arr_path = "'$." + ".".join(segs[:-1]) + "'"
+                        leaf = segs[-1]
+                        arr_expr = f"json_extract(data, {arr_path})"
+                        elem_pred = (
+                            f"json_extract(value, '$.{leaf}') = ?"
+                        )
+                    else:
+                        arr_path = json_path
+                        arr_expr = f"json_extract(data, {json_path})"
+                        elem_pred = "value = ?"
+                    contains = (
+                        f"EXISTS (SELECT 1 FROM {json_each_func}("
+                        f"CASE WHEN json_type(data, {arr_path}) = 'array' "
+                        f"THEN {arr_expr} END"
+                        f") WHERE {elem_pred})"
+                    )
+                    return (
+                        f"({extract_expr} = ? OR {contains})",
+                        [value, value],
+                    )
                 return f"{extract_expr} = ?", [value]
 
     def _build_simple_where_clause(

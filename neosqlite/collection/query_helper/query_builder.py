@@ -23,6 +23,41 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+
+def _iter_leaf_values(document: dict[str, Any], parts: list[str]) -> Any | None:
+    """Resolve a dotted path, expanding arrays along the way (#99).
+
+    Returns the list of leaf values found (arrays flattened one level per
+    step), or None when the first segment is missing entirely.
+    """
+    current: list[Any] = [document]
+    for part in parts:
+        nxt: list[Any] = []
+        found = False
+        for node in current:
+            if isinstance(node, dict) and part in node:
+                found = True
+                v = node[part]
+                if isinstance(v, list):
+                    nxt.extend(v)
+                elif v is not None:
+                    nxt.append(v)
+            elif isinstance(node, list):
+                for el in node:
+                    if isinstance(el, dict) and part in el:
+                        found = True
+                        ev = el[part]
+                        if isinstance(ev, list):
+                            nxt.extend(ev)
+                        elif ev is not None:
+                            nxt.append(ev)
+        if not found:
+            return None
+        current = nxt
+    return current
+
+
+
 class QueryBuilderMixin(SqlQueryBuilderMixin):
     """
     A mixin class that provides query building capabilities.
@@ -248,8 +283,24 @@ class QueryBuilderMixin(SqlQueryBuilderMixin):
                                 str(doc_value)
                             ):
                                 matches.append(False)
-                        elif value != doc_value:
-                            matches.append(False)
+                        else:
+                            candidates = _iter_leaf_values(
+                                document, field.split(".")
+                            )
+                            if candidates is None:
+                                if value != doc_value:
+                                    matches.append(False)
+                            elif isinstance(value, (list, dict, re.Pattern)):
+                                if value != doc_value:
+                                    matches.append(False)
+                            elif not any(
+                                cv == value
+                                for cv in candidates
+                                for cv in (
+                                    cv if isinstance(cv, list) else [cv]
+                                )
+                            ):
+                                matches.append(False)
         return all(matches)
 
     def _get_operator_fn(self, op: str) -> Any:

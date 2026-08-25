@@ -688,7 +688,7 @@ def test_query_helper_aggregation_and_query_building():
         clause, params, _ = helper._build_simple_where_clause({"name": "test"})
         # Check for either json_extract or jsonb_extract depending on support
         assert "json_extract" in clause or "jsonb_extract" in clause
-        assert params == ["test"]
+        assert params == ["test", "test"]
 
         # Test _build_simple_where_clause with _id field
         clause, params, _ = helper._build_simple_where_clause({"_id": 1})

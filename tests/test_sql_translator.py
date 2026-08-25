@@ -368,34 +368,34 @@ class TestSQLClauseBuilder:
         builder = SQLClauseBuilder()
         conditions = [{"name": "Alice"}, {"age": {"$gte": 18}}]
         result = builder._build_logical_condition("$and", conditions)
-        expected_sql = "(json_extract(data, '$.name') = ?) AND (json_extract(data, '$.age') >= ?)"
+        expected_sql = "((json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?))) AND (json_extract(data, '$.age') >= ?)"
         assert result[0] == expected_sql
-        assert result[1] == ["Alice", 18]
+        assert result[1] == ["Alice", "Alice", 18]
 
     def test_build_logical_condition_or(self):
         """Test building $or logical condition."""
         builder = SQLClauseBuilder()
         conditions = [{"name": "Alice"}, {"age": {"$gte": 18}}]
         result = builder._build_logical_condition("$or", conditions)
-        expected_sql = "(json_extract(data, '$.name') = ?) OR (json_extract(data, '$.age') >= ?)"
+        expected_sql = "((json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?))) OR (json_extract(data, '$.age') >= ?)"
         assert result[0] == expected_sql
-        assert result[1] == ["Alice", 18]
+        assert result[1] == ["Alice", "Alice", 18]
 
     def test_build_logical_condition_nor(self):
         """Test building $nor logical condition."""
         builder = SQLClauseBuilder()
         conditions = [{"name": "Alice"}, {"age": {"$gte": 18}}]
         result = builder._build_logical_condition("$nor", conditions)
-        expected_sql = "NOT ((json_extract(data, '$.name') = ?) OR (json_extract(data, '$.age') >= ?))"
+        expected_sql = "NOT (((json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?))) OR (json_extract(data, '$.age') >= ?))"
         assert result[0] == expected_sql
-        assert result[1] == ["Alice", 18]
+        assert result[1] == ["Alice", "Alice", 18]
 
     def test_build_logical_condition_unsupported_operator(self):
         """Test building unsupported logical condition."""
         builder = SQLClauseBuilder()
         conditions = [{"name": "Alice"}]
         result = builder._build_logical_condition("$unsupported", conditions)
-        assert result == (None, ["Alice"])
+        assert result == (None, ["Alice", "Alice"])
 
     def test_build_logical_condition_non_list(self):
         """Test building logical condition with non-list conditions."""
@@ -422,8 +422,8 @@ class TestSQLClauseBuilder:
         builder = SQLClauseBuilder()
         query = {"name": "Alice"}
         result = builder.build_where_clause(query)
-        assert result[0] == "WHERE json_extract(data, '$.name') = ?"
-        assert result[1] == ["Alice"]
+        assert result[0] == "WHERE (json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?))"
+        assert result[1] == ["Alice", "Alice"]
 
     def test_build_where_clause_operator(self):
         """Test building WHERE clause with operator."""
@@ -438,35 +438,35 @@ class TestSQLClauseBuilder:
         builder = SQLClauseBuilder()
         query = {"$and": [{"name": "Alice"}, {"age": {"$gte": 18}}]}
         result = builder.build_where_clause(query)
-        expected_sql = "WHERE (json_extract(data, '$.name') = ?) AND (json_extract(data, '$.age') >= ?)"
+        expected_sql = "WHERE ((json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?))) AND (json_extract(data, '$.age') >= ?)"
         assert result[0] == expected_sql
-        assert result[1] == ["Alice", 18]
+        assert result[1] == ["Alice", "Alice", 18]
 
     def test_build_where_clause_or(self):
         """Test building WHERE clause with $or operator."""
         builder = SQLClauseBuilder()
         query = {"$or": [{"name": "Alice"}, {"age": {"$gte": 18}}]}
         result = builder.build_where_clause(query)
-        expected_sql = "WHERE (json_extract(data, '$.name') = ?) OR (json_extract(data, '$.age') >= ?)"
+        expected_sql = "WHERE ((json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?))) OR (json_extract(data, '$.age') >= ?)"
         assert result[0] == expected_sql
-        assert result[1] == ["Alice", 18]
+        assert result[1] == ["Alice", "Alice", 18]
 
     def test_build_where_clause_nor(self):
         """Test building WHERE clause with $nor operator."""
         builder = SQLClauseBuilder()
         query = {"$nor": [{"name": "Alice"}, {"age": {"$gte": 18}}]}
         result = builder.build_where_clause(query)
-        expected_sql = "WHERE NOT ((json_extract(data, '$.name') = ?) OR (json_extract(data, '$.age') >= ?))"
+        expected_sql = "WHERE NOT (((json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?))) OR (json_extract(data, '$.age') >= ?))"
         assert result[0] == expected_sql
-        assert result[1] == ["Alice", 18]
+        assert result[1] == ["Alice", "Alice", 18]
 
     def test_build_where_clause_not(self):
         """Test building WHERE clause with $not operator."""
         builder = SQLClauseBuilder()
         query = {"$not": {"name": "Alice"}}
         result = builder.build_where_clause(query)
-        assert result[0] == "WHERE NOT (json_extract(data, '$.name') = ?)"
-        assert result[1] == ["Alice"]
+        assert result[0] == "WHERE NOT ((json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?)))"
+        assert result[1] == ["Alice", "Alice"]
 
     def test_build_where_clause_not_invalid_format(self):
         """Test building WHERE clause with $not operator with invalid format."""
@@ -560,8 +560,8 @@ class TestSQLTranslator:
         translator = SQLTranslator()
         match_spec = {"name": "Alice"}
         result = translator.translate_match(match_spec)
-        assert result[0] == "WHERE json_extract(data, '$.name') = ?"
-        assert result[1] == ["Alice"]
+        assert result[0] == "WHERE (json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?))"
+        assert result[1] == ["Alice", "Alice"]
 
     def test_translate_match_with_operator(self):
         """Test translating $match stage with operator."""
@@ -774,8 +774,8 @@ class TestSQLTranslator:
         query = {"name": "Alice"}
         result = builder.build_where_clause(query, is_nested=True)
         # Should not have WHERE prefix when nested
-        assert result[0] == "json_extract(data, '$.name') = ?"
-        assert result[1] == ["Alice"]
+        assert result[0] == "(json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?))"
+        assert result[1] == ["Alice", "Alice"]
 
     def test_build_limit_offset_clause_zero_skip(self):
         """Test build_limit_offset_clause with zero skip value."""

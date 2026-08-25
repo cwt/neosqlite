@@ -247,8 +247,13 @@ class SQLOperatorTranslator:
                     # Array values need Python for correct semantics
                     if isinstance(value, (list, tuple)):
                         return None, []
-                    sql = f"{field_access} = ?"
-                    params = [value]
+                    if value is None:
+                        # MongoDB: null matches null-or-missing (#90)
+                        sql = f"{field_access} IS NULL"
+                        params = []
+                    else:
+                        sql = f"{field_access} = ?"
+                        params = [value]
                 case "$gt":
                     # Array values need Python for correct semantics
                     if isinstance(value, (list, tuple)):
@@ -436,6 +441,9 @@ class SQLClauseBuilder:
                                will be created with this function.
         """
         self.field_accessor = field_accessor or SQLFieldAccessor()
+        # Retained so clause builders can emit array-containment checks (#99)
+        self._json_each_function = json_each_function or "json_each"
+        self.data_column = self.field_accessor.data_column
         if operator_translator is not None:
             self.operator_translator = operator_translator
         elif json_each_function is not None:
@@ -622,10 +630,38 @@ class SQLClauseBuilder:
                         return None, []
                     clauses.append(sql)
                     params.extend(clause_params)
-                else:
-                    # Simple equality check
+                elif value is None:
+                    clauses.append(f"{field_access} IS NULL")
+                elif isinstance(value, (dict, list)) or field == "_id":
+                    # _id is a real column — no containment applies (#99)
                     clauses.append(f"{field_access} = ?")
                     params.append(value)
+                else:
+                    # Simple equality check with array containment (#99)
+                    segs = field.split(".")
+                    if len(segs) > 1:
+                        arr_path = "'$." + ".".join(segs[:-1]) + "'"
+                        elem_pred = (
+                            f"json_extract(value, '$.{segs[-1]}') = ?"
+                        )
+                        arr_expr = (
+                            f"json_extract({self.data_column}, {arr_path})"
+                        )
+                    else:
+                        path_lit = f"'{parse_json_path(field)}'"
+                        arr_path = path_lit
+                        arr_expr = (
+                            f"json_extract({self.data_column}, {path_lit})"
+                        )
+                        elem_pred = "value = ?"
+                    clauses.append(
+                        f"({field_access} = ? OR EXISTS (SELECT 1 FROM "
+                        f"{self._json_each_function}(CASE WHEN "
+                        f"json_type({self.data_column}, {arr_path}) = 'array' "
+                        f"THEN {arr_expr} END"
+                        f") WHERE {elem_pred}))"
+                    )
+                    params.extend([value, value])
 
         if not clauses:
             return _empty_result()

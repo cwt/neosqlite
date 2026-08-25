@@ -880,3 +880,75 @@ class TestTier2Densify:
         )
         pairs = sorted((d.get("t"), d.get("v")) for d in rows)
         assert pairs == [(0, None), (1, "a"), (2, None), (3, "b"), (4, None)]
+
+
+class TestPositionalDollarTargeting:
+    """#99: positional $ resolved its array condition from the immediate
+    path segment only, so dotted filters updated element 0 (or nothing).
+    It now resolves the full prefix and refuses when the query constrains
+    nothing on the array — matching MongoDB instead of corrupting data."""
+
+    def test_dotted_filter_targets_matching_element(self, connection):
+        c = connection.pd
+        c.insert_one({"a": {"scores": [70, 90, 80]}})
+        res = c.update_one({"a.scores": 90}, {"$set": {"a.scores.$": 100}})
+        assert res.modified_count == 1
+        assert c.find_one({})["a"]["scores"] == [70, 100, 80]
+
+    def test_top_level_array_containment_filter(self, connection):
+        c = connection.pd2
+        c.insert_one({"scores": [80, 90, 100]})
+        res = c.update_one({"scores": 90}, {"$set": {"scores.$": 95}})
+        assert res.modified_count == 1
+        assert c.find_one({})["scores"] == [80, 95, 100]
+
+    def test_nested_element_field_targeting(self, connection):
+        c = connection.pd3
+        c.insert_one(
+            {
+                "students": [
+                    {"name": "Alice", "grade": 85},
+                    {"name": "Bob", "grade": 90},
+                ]
+            }
+        )
+        res = c.update_one(
+            {"students.name": "Bob"}, {"$set": {"students.$.grade": 95}}
+        )
+        assert res.modified_count == 1
+        doc = c.find_one({})
+        assert doc["students"][1]["grade"] == 95
+
+    def test_unrelated_condition_refuses_instead_of_element_zero(
+        self, connection
+    ):
+        c = connection.pd4
+        c.insert_one({"items": [1, 2, 3], "tags": ["x"]})
+        res = c.update_one({"tags": "x"}, {"$set": {"items.$": 99}})
+        assert res.matched_count == 1
+        assert res.modified_count == 0, "must not write element 0"
+        assert c.find_one({})["items"] == [1, 2, 3]
+
+
+class TestArrayFilterOperatorValidation:
+    """#100: unknown operators in arrayFilters silently matched every
+    element; they now raise, and common operators ($size/$exists/$type)
+    are supported."""
+
+    def test_unknown_operator_raises(self):
+        from neosqlite.collection.query_helper.positional_update import (
+            _matches_query_operators,
+        )
+
+        with pytest.raises(ValueError):
+            _matches_query_operators([1, 2], {"$weird": 1})
+
+    def test_size_exists_type_supported(self):
+        from neosqlite.collection.query_helper.positional_update import (
+            _matches_query_operators,
+        )
+
+        assert _matches_query_operators([1, 2, 3], {"$size": 3})
+        assert _matches_query_operators(7, {"$exists": True})
+        assert not _matches_query_operators(7, {"$exists": False})
+        assert _matches_query_operators(3, {"$type": "int"})

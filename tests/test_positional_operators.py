@@ -22,13 +22,14 @@ class TestPositionalOperatorDollar:
                 {"_id": 1, "name": "test", "scores": [80, 90, 100, 90]}
             )
 
-            # Update first element that equals 90 (use _id filter since array containment not fully supported)
-            result = coll.update_one({"_id": 1}, {"$set": {"scores.$": 95}})
+            # Update the element equal to 90 (first match wins) (#99)
+            result = coll.update_one(
+                {"_id": 1, "scores": 90}, {"$set": {"scores.$": 95}}
+            )
 
             assert result.modified_count == 1
             doc = coll.find_one({"_id": 1})
-            # Without filter, $ updates first element
-            assert doc["scores"] == [95, 90, 100, 90]
+            assert doc["scores"] == [80, 95, 100, 90]
 
     def test_positional_dollar_with_nested_field(self):
         """Test $ operator with nested field in array element."""
@@ -46,15 +47,14 @@ class TestPositionalOperatorDollar:
                 }
             )
 
-            # Update first student's grade (using _id filter)
+            # Update Bob's grade via a filter that names the array (#99)
             result = coll.update_one(
-                {"_id": 1}, {"$set": {"students.$.grade": 95}}
+                {"students.name": "Bob"}, {"$set": {"students.$.grade": 95}}
             )
 
             assert result.modified_count == 1
             doc = coll.find_one({"_id": 1})
-            # First student (Alice) should be updated
-            assert doc["students"][0]["grade"] == 95
+            assert doc["students"][1]["grade"] == 95
 
     def test_positional_dollar_no_match(self):
         """Test $ operator when no element matches."""
@@ -62,14 +62,22 @@ class TestPositionalOperatorDollar:
             coll = conn.test_collection
             coll.insert_one({"_id": 1, "name": "test", "scores": [80, 90, 100]})
 
-            # Update with _id filter (document exists)
+            # MongoDB: $ without an array condition in the query is an error;
+            # NeoSQLite refuses instead of silently writing element 0 (#99).
             result = coll.update_one({"_id": 1}, {"$set": {"scores.$": 95}})
-
-            # Document matched, first element updated
             assert result.matched_count == 1
-            assert result.modified_count == 1
+            assert result.modified_count == 0
             doc = coll.find_one({"_id": 1})
-            assert doc["scores"][0] == 95
+            assert doc["scores"] == [80, 90, 100]
+
+    def test_positional_dollar_without_array_filter_is_refused(self):
+        """#99 regression: element-0 writes without an array condition."""
+        with neosqlite.Connection(":memory:") as conn:
+            coll = conn.test_collection
+            coll.insert_one({"_id": 1, "scores": [80, 90, 100]})
+            result = coll.update_one({"_id": 1}, {"$set": {"scores.$": 95}})
+            assert result.modified_count == 0
+            assert coll.find_one({"_id": 1})["scores"] == [80, 90, 100]
 
     def test_positional_dollar_multiple_matches(self):
         """Test $ operator only updates first match even with multiple matches."""
@@ -79,12 +87,13 @@ class TestPositionalOperatorDollar:
                 {"_id": 1, "name": "test", "scores": [90, 80, 90, 90]}
             )
 
-            # Update first element (using _id filter)
-            result = coll.update_one({"_id": 1}, {"$set": {"scores.$": 100}})
+            # Only the FIRST matching element is updated (#99)
+            result = coll.update_one(
+                {"_id": 1, "scores": 90}, {"$set": {"scores.$": 100}}
+            )
 
             assert result.modified_count == 1
             doc = coll.find_one({"_id": 1})
-            # Only first element should be updated
             assert doc["scores"] == [100, 80, 90, 90]
 
 
@@ -294,12 +303,14 @@ class TestPositionalKillSwitch:
             try:
                 set_force_fallback(True)
 
-                result = coll.update_one({"_id": 1}, {"$set": {"scores.$": 95}})
+                result = coll.update_one(
+                    {"_id": 1, "scores": 90}, {"$set": {"scores.$": 95}}
+                )
 
                 assert result.modified_count == 1
                 doc = coll.find_one({"_id": 1})
-                # First element updated
-                assert doc["scores"] == [95, 90, 100, 90]
+                # Matching element updated through the Python tier too
+                assert doc["scores"] == [80, 95, 100, 90]
             finally:
                 set_force_fallback(original_state)
 
