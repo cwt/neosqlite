@@ -575,11 +575,25 @@ class TestSQLTierCorrectness:
             # Sort keys for consistent comparison
             sql_sorted = dict(sorted(sql_doc.items()))
             python_sorted = dict(sorted(python_doc.items()))
-            assert sql_sorted == python_sorted, (
-                f"{test_name}: Result {i} differs\n"
+            # Float accumulation order differs between SQL SUM and Python
+            # sequential addition; compare floats approximately (#94).
+            assert set(sql_sorted) == set(python_sorted), (
+                f"{test_name}: Result {i} keys differ\n"
                 f"SQL:    {sql_sorted}\n"
                 f"Python: {python_sorted}"
             )
+            for key in sql_sorted:
+                sv, pv = sql_sorted[key], python_sorted[key]
+                if isinstance(sv, float) or isinstance(pv, float):
+                    assert sv == pytest.approx(pv), (
+                        f"{test_name}: Result {i} field {key} differs\n"
+                        f"SQL:    {sv}\nPython: {pv}"
+                    )
+                else:
+                    assert sv == pv, (
+                        f"{test_name}: Result {i} field {key} differs\n"
+                        f"SQL:    {sv}\nPython: {pv}"
+                    )
 
         return sql_results
 

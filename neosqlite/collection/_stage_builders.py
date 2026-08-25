@@ -303,8 +303,13 @@ class StageBuildersMixin:
 
         bucket_id_sql = f"CASE {' '.join(case_parts)} END"
 
-        # Build accumulators
-        acc_parts = [f"{bucket_id_sql} AS _id"]
+        # Build accumulators into an inner SELECT; the outer projection
+        # references those aliases to satisfy the (id, _id, data) invariant
+        # without self-referencing them at the same SELECT level (#94).
+        # The bucket key alias must not collide with the input's own _id
+        # column, so it is named __bucket_id and projected as _id outside.
+        sub_parts = [f"{bucket_id_sql} AS __bucket_id"]
+        output_fields: list[str] = []
         for field, acc_spec in output.items():
             op, expr = next(iter(acc_spec.items()))
             agg_result = self._map_accumulator_to_sql(op)
@@ -314,15 +319,25 @@ class StageBuildersMixin:
             expr_sql, expr_params = self.evaluator.build_select_expression(expr)
             all_params.extend(expr_params)
             distinct_str = "DISTINCT " if use_distinct else ""
-            acc_parts.append(f"{sql_agg}({distinct_str}{expr_sql}) AS {field}")
+            sub_parts.append(f"{sql_agg}({distinct_str}{expr_sql}) AS {field}")
+            output_fields.append(field)
 
-        # NeoSQLite stores result in data column
-        acc_fields = ", ".join(
-            [f"'{f}', {f}" for f in output.keys()] + ["'_id', _id"]
+        json_args = ", ".join(
+            ["'_id', __bucket_id"]
+            + [
+                f"'{f.replace(chr(39), chr(39) * 2)}', {f}"
+                for f in output_fields
+            ]
         )
-        data_expr = f"json_object({acc_fields})"
 
-        sql = f"SELECT NULL AS id, _id, {data_expr} AS data FROM {prev_stage} GROUP BY {bucket_id_sql}"
+        # GROUP BY __bucket_id (an unambiguous name), so the CASE expression
+        # — and its bound parameters — appear exactly once.
+        sql = (
+            f"SELECT NULL AS id, __bucket_id AS _id, "
+            f"json_object({json_args}) AS data "
+            f"FROM (SELECT {', '.join(sub_parts)} FROM {prev_stage} "
+            f"GROUP BY __bucket_id)"
+        )
         return sql, all_params
 
     def _build_bucket_auto_sql(self, spec, prev_stage, context):
@@ -354,12 +369,18 @@ class StageBuildersMixin:
                 max_val,
                 CASE
                     WHEN max_val = min_val THEN 0
-                    ELSE (max_val - min_val) / {buckets}
+                    ELSE (max_val - min_val) * 1.0 / {buckets}
                 END as bucket_width
             FROM ({min_max_sql})
         """
 
-        acc_parts = ["bucket_id as _id"]
+        grouped_parts: list[str] = [
+            # MongoDB's $bucketAuto reports each bucket's boundaries as an
+            # {_id: {min, max}} document computed over the bucketed values.
+            f"MIN(val) AS __bmin",
+            f"MAX(val) AS __bmax",
+        ]
+        output_fields: list[str] = []
         for field, acc_spec in output.items():
             op, expr = next(iter(acc_spec.items()))
             agg_result = self._map_accumulator_to_sql(op)
@@ -369,30 +390,57 @@ class StageBuildersMixin:
             expr_sql, expr_params = self.evaluator.build_select_expression(expr)
             all_params.extend(expr_params)
             distinct_str = "DISTINCT " if use_distinct else ""
-            acc_parts.append(f"{sql_agg}({distinct_str}{expr_sql}) AS {field}")
+            grouped_parts.append(
+                f"{sql_agg}({distinct_str}{expr_sql}) AS {field}"
+            )
+            output_fields.append(field)
 
-        acc_fields = ", ".join(
-            [f"'{f}', {f}" for f in output.keys()] + ["'_id', _id"]
+        # Wrap the grouped SELECT in an outer projection: json_object must
+        # reference the accumulator aliases from an enclosing level (#94).
+        # The bucket key is aliased __bucket_id to avoid colliding with the
+        # input's own _id column.
+        json_args = ", ".join(
+            ["'_id', json_object('min', __bmin, 'max', __bmax)"]
+            + [
+                f"'{f.replace(chr(39), chr(39) * 2)}', {f}"
+                for f in output_fields
+            ]
         )
-        data_expr = f"json_object({acc_fields})"
 
         sql = f"""
             SELECT
                 NULL AS id,
-                bucket_id AS _id,
-                {data_expr} AS data
+                json_object('min', __bmin, 'max', __bmax) AS _id,
+                json_object({json_args}) AS data
             FROM (
                 SELECT
-                    {key_sql} as val,
-                    CASE
-                        WHEN max_val = min_val THEN 0
-                        ELSE CAST(({key_sql} - min_val) / ((max_val - min_val) / {buckets}) AS INTEGER)
-                    END as bucket_id
-                FROM {prev_stage}, ({bucket_calc_sql})
-                WHERE min_val IS NOT NULL AND max_val IS NOT NULL
+                    i.bucket_id AS __bucket_id,
+                    MIN(i.val) AS __bmin,
+                    MAX(i.val) AS __bmax,
+                    {', '.join(grouped_parts)}
+                FROM (
+                    SELECT
+                        __src.id AS __rid,
+                        {key_sql} as val,
+                        CASE
+                            WHEN max_val = min_val THEN 0
+                            ELSE MIN(
+                                CAST(
+                                    ({key_sql} - min_val) * 1.0
+                                    / ((max_val - min_val) * 1.0 / {buckets})
+                                    AS INTEGER
+                                ),
+                                {buckets} - 1
+                            )
+                        END as bucket_id
+                    FROM {prev_stage} AS __src, ({bucket_calc_sql})
+                    WHERE min_val IS NOT NULL AND max_val IS NOT NULL
+                ) AS i
+                JOIN {prev_stage} AS __src2
+                    ON __src2.id = i.__rid
+                GROUP BY i.bucket_id
             )
-            GROUP BY bucket_id
-            ORDER BY bucket_id
+            ORDER BY _id
         """
         return sql, all_params
 
@@ -650,40 +698,100 @@ class StageBuildersMixin:
         return sql, all_params
 
     def _build_group_sql(self, spec, prev_stage, context):
+        """Build $group SQL preserving the (id, _id, data) CTE invariant (#94).
+
+        Downstream stages read fields via json_extract(data, ...) and the
+        final wrapper selects id/_id/data, so the aggregate SELECT is wrapped
+        in an outer projection that materializes those columns.
+        """
         all_params = []
-        select_parts = []
+        agg_select_parts = []
         group_by_parts = []
         group_id = spec.get("_id")
         if group_id is not None:
             key_sql, key_params = self.evaluator.build_select_expression(
                 group_id
             )
-            select_parts.append(f"{key_sql} AS _id")
+            agg_select_parts.append(f"{key_sql} AS _id")
             group_by_parts.append(key_sql)
             all_params.extend(key_params)
         else:
-            select_parts.append("NULL AS _id")
+            agg_select_parts.append("NULL AS _id")
 
+        output_fields: list[str] = []
+        array_fields: set[str] = set()
         for field, accumulator in spec.items():
             if field == "_id":
                 continue
             op, expr = next(iter(accumulator.items()))
+            # Object literals / array literals as accumulator input (e.g.
+            # $push of a sub-document) are not compiled by the SQL evaluator;
+            # bail out so the pipeline falls back to the Python tier rather
+            # than emitting unexpanded field references (#94).
+            if isinstance(expr, list):
+                return None, []
+            if isinstance(expr, dict) and not any(
+                k.startswith("$") for k in expr
+            ):
+                return None, []
             agg_result = self._map_accumulator_to_sql(op)
             if not agg_result:
                 return None, []
             sql_agg, use_distinct = agg_result
-            expr_sql, expr_params = self.evaluator.build_select_expression(expr)
+            expr_sql, expr_params = self.evaluator.build_select_expression(
+                expr
+            )
             all_params.extend(expr_params)
             distinct_str = "DISTINCT " if use_distinct else ""
-            select_parts.append(
+            agg_select_parts.append(
                 f"{sql_agg}({distinct_str}{expr_sql}) AS {field}"
             )
+            output_fields.append(field)
+            if sql_agg == "json_group_array":
+                # json_group_array yields a JSON *string*; re-parse it so
+                # data holds a real JSON array like MongoDB (#94).
+                array_fields.add(field)
 
         group_by_clause = (
             f"GROUP BY {', '.join(group_by_parts)}" if group_by_parts else ""
         )
+
+        # Reference the inner aliases from the wrapping SELECT level.
+        json_args = ", ".join(
+            ["'_id', _id"]
+            + [
+                (
+                    f"'{f.replace(chr(39), chr(39) * 2)}', json({f})"
+                    if f in array_fields
+                    else f"'{f.replace(chr(39), chr(39) * 2)}', {f}"
+                )
+                for f in output_fields
+            ]
+        )
+        select_parts = [
+            "ROW_NUMBER() OVER () AS id",
+            "_id AS _id",
+            f"json_object({json_args}) AS data",
+        ]
+        if context.has_root:
+            # $group cannot preserve $$ROOT, but keeping the column present
+            # keeps the final wrapper's SELECT executable.
+            select_parts.append("NULL AS root_data")
+
+        if not group_by_parts:
+            # A constant-key aggregate without GROUP BY always emits exactly
+            # one row in SQLite — even over zero input rows. Compute the row
+            # count alongside the aggregates and filter outside so empty
+            # input yields zero documents, as in MongoDB.
+            agg_select_parts.append("COUNT(*) AS __cnt")
+            having = "WHERE __cnt > 0"
+        else:
+            having = ""
+
         return (
-            f"SELECT {', '.join(select_parts)} FROM {prev_stage} {group_by_clause}",
+            f"SELECT {', '.join(select_parts)} FROM "
+            f"(SELECT {', '.join(agg_select_parts)} FROM {prev_stage} "
+            f"{group_by_clause}) {having}",
             all_params,
         )
 

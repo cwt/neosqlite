@@ -142,8 +142,13 @@ class AggregationMixin(SqlAggregationMixin):
                     else:
                         # Complex expression like {"$multiply": [...]}, not supported in Python fallback
                         continue
-                else:
+                elif isinstance(key, str) and key.startswith("$"):
                     value = self.collection._get_val(doc, key)
+                else:
+                    # Remaining scalar values are literals (#94 parity:
+                    # $push/$addToSet of a constant must push the constant,
+                    # not look it up as a field path)
+                    value = key
 
                 match op:
                     case "$sum":

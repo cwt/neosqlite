@@ -200,3 +200,168 @@ class TestTextSearchCombinedFilters:
             news.find({"category": "sports", "$text": {"$search": "war"}})
         )
         assert found == []
+
+
+class TestTier1GroupCteInvariant:
+    """#94: Tier-1 $group/$bucket SQL violated the (id,_id,data) CTE
+    invariant, so every such pipeline silently fell back to Python."""
+
+    @pytest.fixture
+    def sales(self, connection):
+        c = connection.sales
+        c.insert_many(
+            [
+                {"cat": "a", "amt": 10},
+                {"cat": "a", "amt": 20},
+                {"cat": "b", "amt": 5},
+            ]
+        )
+        return c
+
+    def test_group_executes_in_tier1_with_correct_results(self, sales):
+        rows = list(
+            sales.aggregate(
+                [
+                    {
+                        "$group": {
+                            "_id": "$cat",
+                            "total": {"$sum": "$amt"},
+                            "n": {"$sum": 1},
+                        }
+                    }
+                ]
+            )
+        )
+        assert {d["_id"]: d["total"] for d in rows} == {"a": 30, "b": 5}
+        assert {d["_id"]: d["n"] for d in rows} == {"a": 2, "b": 1}
+
+    def test_group_output_feeds_downstream_match(self, sales):
+        rows = list(
+            sales.aggregate(
+                [
+                    {"$group": {"_id": "$cat", "total": {"$sum": "$amt"}}},
+                    {"$match": {"total": {"$gt": 10}}},
+                ]
+            )
+        )
+        assert [d["_id"] for d in rows] == ["a"]
+
+    def test_group_push_returns_real_array(self, connection):
+        c = connection.t
+        c.insert_many([{"cat": "a", "tag": "x"}, {"cat": "a", "tag": None}])
+        rows = list(
+            c.aggregate(
+                [{"$group": {"_id": "$cat", "tags": {"$push": "$tag"}}}]
+            )
+        )
+        assert rows == [{"_id": "a", "tags": ["x", None]}]
+
+    def test_constant_key_group_on_empty_input_yields_no_rows(self, connection):
+        c = connection.empty
+        rows = list(c.aggregate([{"$group": {"_id": None, "n": {"$sum": 1}}}]))
+        assert rows == []
+
+    def test_bucket_boundaries_and_accumulators(self, sales):
+        rows = list(
+            sales.aggregate(
+                [
+                    {
+                        "$bucket": {
+                            "groupBy": "$amt",
+                            "boundaries": [0, 10, 100],
+                            "default": "other",
+                            "output": {"count": {"$sum": 1}},
+                        }
+                    }
+                ]
+            )
+        )
+        assert rows == [{"_id": 0, "count": 1}, {"_id": 10, "count": 2}]
+
+
+class TestBucketAutoAccumulatesSpecifiedField:
+    """#95: $bucketAuto output accumulators summed the groupBy field
+    instead of the accumulator's own field expression."""
+
+    def test_sum_uses_target_field(self, connection):
+        c = connection.b
+        c.insert_many(
+            [
+                {"g": 1, "qty": 10},
+                {"g": 1, "qty": 10},
+                {"g": 2, "qty": 10},
+                {"g": 2, "qty": 10},
+            ]
+        )
+        rows = list(
+            c.aggregate(
+                [
+                    {
+                        "$bucketAuto": {
+                            "groupBy": "$g",
+                            "buckets": 2,
+                            "output": {"totalQty": {"$sum": "$qty"}},
+                        }
+                    }
+                ]
+            )
+        )
+        assert sorted(d["totalQty"] for d in rows) == [20, 20]
+
+    def test_id_reports_min_max_boundaries(self, connection):
+        c = connection.b3
+        c.insert_many([{"qty": 1}, {"qty": 2}, {"qty": 9}, {"qty": 10}])
+        rows = list(
+            c.aggregate([{"$bucketAuto": {"groupBy": "$qty", "buckets": 2}}])
+        )
+        pairs = sorted((d["_id"]["min"], d["_id"]["max"]) for d in rows)
+        assert pairs == [(1, 2), (9, 10)]
+
+    def test_degenerate_single_value_single_bucket(self, connection):
+        c = connection.b2
+        c.insert_many([{"qty": 10}, {"qty": 10}, {"qty": 10}])
+        rows = list(
+            c.aggregate([{"$bucketAuto": {"groupBy": "$qty", "buckets": 2}}])
+        )
+        assert len(rows) == 1
+
+
+class TestGroupLiteralAccumulatorParity:
+    """#94 follow-up: tier-3 accumulators treated string literals as field
+    paths; constants must be pushed as-is to match the SQL tier."""
+
+    def test_addtoset_literal_matches_across_tiers(self, connection):
+        from neosqlite.collection.query_helper import set_force_fallback
+
+        c = connection.lit
+        c.insert_many([{"k": "A"}, {"k": "A"}])
+        pipeline = [
+            {"$group": {"_id": "$k", "vals": {"$addToSet": "constant"}}}
+        ]
+        set_force_fallback(False)
+        t1 = list(c.aggregate(pipeline))
+        set_force_fallback(True)
+        t3 = list(c.aggregate(pipeline))
+        set_force_fallback(False)
+        assert t1 == t3 == [{"_id": "A", "vals": ["constant"]}]
+
+    def test_object_literal_push_falls_back_instead_of_corrupting(
+        self, connection
+    ):
+        c = connection.lit2
+        c.insert_many([{"cat": "A", "name": "n1"}, {"cat": "A", "name": "n2"}])
+        pipeline = [
+            {
+                "$group": {
+                    "_id": "$cat",
+                    "items": {"$push": {"name": "$name", "kind": "x"}},
+                }
+            }
+        ]
+        rows = list(c.aggregate(pipeline))
+        assert len(rows) == 1
+        items = rows[0]["items"]
+        assert items == [
+            {"name": "n1", "kind": "x"},
+            {"name": "n2", "kind": "x"},
+        ]
