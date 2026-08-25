@@ -92,7 +92,16 @@ class ArrayMixin(BaseSqlMixin):
                 )
                 count = operands[1]
                 skip = operands[2] if len(operands) > 2 else 0
-                if skip != 0:
+                # LIMIT/OFFSET are interpolated, not bound: only literal
+                # integers may reach them (#119). Anything else falls back.
+                if isinstance(count, bool) or not isinstance(count, int):
+                    raise NotImplementedError(
+                        "$slice count must be an integer literal in SQL tier"
+                    )
+                if isinstance(skip, bool) or not isinstance(skip, int):
+                    raise NotImplementedError(
+                        "$slice skip must be an integer literal in SQL tier"
+                    )
                     if self.jsonb.jsonb_supported:
                         sql = f"(SELECT json({json_group_array}(value)) FROM (SELECT value FROM {json_each}({array_sql}) LIMIT {count} OFFSET {skip}))"
                     else:
@@ -258,7 +267,11 @@ class ArrayMixin(BaseSqlMixin):
                     field = next(iter(sort_by.keys()))
                     direction = sort_by[field]
                     order = "DESC" if direction == -1 else "ASC"
-                    order_expr = f"{self.json_function_prefix}_extract(value, '$.{field}')"
+                    # Escape the field path like every other emitter (#119)
+                    order_expr = (
+                        f"{self.json_function_prefix}_extract("
+                        f"value, '{parse_json_path(field)}')"
+                    )
                 else:
                     raise ValueError("$sortArray sortBy must be a dict or null")
                 if self.jsonb.jsonb_supported:

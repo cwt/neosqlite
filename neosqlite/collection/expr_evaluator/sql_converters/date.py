@@ -11,6 +11,35 @@ if TYPE_CHECKING:
 from .base import BaseSqlMixin
 
 
+_DATE_FMT_SPECIFIERS = frozenset(
+    "%Y %m %d %H %M %S %L %j %w %u %U %V %G %g %z %%".split()
+)
+
+
+def _validate_strftime_format(fmt: str) -> str:
+    """Validate a MongoDB date format before strftime interpolation (#119).
+
+    Only known % specifiers and non-% characters pass; a single quote or an
+    unknown specifier raises so the caller falls back to the Python tier
+    instead of interpolating attacker-controlled text into SQL.
+    """
+    if "'" in fmt:
+        raise NotImplementedError(
+            "$dateToString format not supported in SQL tier"
+        )
+    i = 0
+    while i < len(fmt):
+        if fmt[i] == "%":
+            if fmt[i : i + 2] not in _DATE_FMT_SPECIFIERS:
+                raise NotImplementedError(
+                    "$dateToString format not supported in SQL tier"
+                )
+            i += 2
+        else:
+            i += 1
+    return fmt.replace("%L", "%f")
+
+
 class DateMixin(BaseSqlMixin):
     """$year / $month / $dayOfMonth / $dateAdd / $dateSubtract / $dateDiff → SQL."""
 
@@ -43,6 +72,7 @@ class DateMixin(BaseSqlMixin):
                 fmt = "%S"
             case "$dayOfWeek":
                 fmt = "%w"
+                _validate_strftime_format(fmt)
                 sql = f"(CAST(strftime('{fmt}', {value_sql}) AS INTEGER) + 1)"
                 return sql, value_params
             case "$dayOfYear":
@@ -265,8 +295,9 @@ class DateMixin(BaseSqlMixin):
         date_sql, date_params = self._convert_operand_to_sql(date_operand)
 
         # Convert MongoDB format to SQLite strftime format.
-        # %L (milliseconds) -> %f (fractional seconds) in SQLite.
-        sqlite_fmt = fmt.replace("%L", "%f")
+        # %L (milliseconds) -> %f (fractional seconds). The format is
+        # validated against an allow-list first (#119).
+        sqlite_fmt = _validate_strftime_format(fmt)
 
         sql = f"strftime('{sqlite_fmt}', {date_sql})"
         return sql, date_params
