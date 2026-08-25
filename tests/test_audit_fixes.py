@@ -792,3 +792,42 @@ class TestTier2FirstLast:
             [{"$group": {"_id": "$cat", "l": {"$last": "$v"}}}]
         )
         assert any(d["_id"] is None and d["l"] == 99 for d in rows)
+
+
+class TestTier2LookupPipeline:
+    """#107: $lookup with a sub-pipeline inserted every row with id=0 into
+    an INTEGER PRIMARY KEY temp table, so any second matching row raised
+    UNIQUE violation and the whole tier always fell back."""
+
+    def test_multiple_matches_survive(self, connection):
+        from neosqlite.collection.temporary_table_aggregation import (
+            TemporaryTableAggregationProcessor,
+        )
+
+        users = connection.users
+        orders = connection.orders
+        users.insert_many([{"_id": 1, "name": "A"}, {"_id": 2, "name": "B"}])
+        orders.insert_many(
+            [
+                {"uid": 1, "amt": 10},
+                {"uid": 1, "amt": 20},
+                {"uid": 1, "amt": 30},
+                {"uid": 2, "amt": 5},   # filtered out by the pipeline
+            ]
+        )
+        proc = TemporaryTableAggregationProcessor(users)
+        rows = proc.process_pipeline(
+            [
+                {
+                    "$lookup": {
+                        "from": "orders",
+                        "localField": "_id",
+                        "foreignField": "uid",
+                        "pipeline": [{"$match": {"amt": {"$gte": 10}}}],
+                        "as": "ords",
+                    }
+                }
+            ]
+        )
+        counts = {d["_id"]: len(d["ords"]) for d in rows}
+        assert counts == {1: 3, 2: 0}

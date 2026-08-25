@@ -68,12 +68,13 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
                         f"CREATE TEMP TABLE {hash_table_name} (id INTEGER PRIMARY KEY, _id INTEGER, data TEXT, {join_key} TEXT)"
                     )
 
+                    row_number = 0
                     if foreign_field == "_id":
                         for doc in pipeline_result:
                             self.db.execute(
                                 f"INSERT INTO {hash_table_name} (id, _id, data, {join_key}) VALUES (?, ?, ?, ?)",
                                 (
-                                    doc.get("id", 0),
+                                    (row_number := row_number + 1),
                                     doc.get("_id"),
                                     neosqlite_json_dumps(doc),
                                     str(doc.get("_id")),
@@ -87,7 +88,7 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
                             self.db.execute(
                                 f"INSERT INTO {hash_table_name} (id, _id, data, {join_key}) VALUES (?, ?, ?, ?)",
                                 (
-                                    doc.get("id", 0),
+                                    (row_number := row_number + 1),
                                     doc.get("_id"),
                                     neosqlite_json_dumps(doc),
                                     (
@@ -432,11 +433,12 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
                     self.collection.db.execute(
                         f"CREATE TEMP TABLE {pipeline_result_table} (id INTEGER PRIMARY KEY, _id INTEGER, data TEXT)"
                     )
+                    row_number = 0
                     for doc in pipeline_result:
                         self.collection.db.execute(
                             f"INSERT INTO {pipeline_result_table} (id, _id, data) VALUES (?, ?, ?)",
                             (
-                                doc.get("id", 0),
+                                (row_number := row_number + 1),
                                 doc.get("_id"),
                                 neosqlite_json_dumps(doc),
                             ),
