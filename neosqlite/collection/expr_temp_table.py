@@ -155,14 +155,32 @@ class TempTableExprEvaluator:
                     where_clause_template,
                     (tuple(fields), tuple(params)),
                 )
+            self._temp_tables.clear()
             return result
 
         except (NotImplementedError, ValueError) as e:
             logger.debug(
                 f"Tier 2 evaluation failed, falling back to Python: {e}"
             )
-            # Fall back to Python evaluation
+            # Drop any temp table created before the failure — previously
+            # these accumulated in sqlite_temp_master until connection
+            # close (#126)
+            self._drop_tracked_tables()
             return None, [], []
+        except Exception as e:
+            self._drop_tracked_tables()
+            raise
+
+    def _drop_tracked_tables(self) -> None:
+        """Drop and forget every temp table this evaluator created."""
+        for table in self._temp_tables:
+            try:
+                self.db.execute(f"DROP TABLE IF EXISTS {table}")
+            except Exception as drop_error:  # pragma: no cover
+                logger.debug(
+                    f"Failed to drop temp table '{table}': {drop_error}"
+                )
+        self._temp_tables.clear()
         # Cleanup handled by Cursor
 
     def _analyze_complexity(self, expr: dict[str, Any]) -> int:
