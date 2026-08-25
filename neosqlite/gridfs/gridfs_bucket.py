@@ -492,28 +492,25 @@ class GridFSBucket:
         Returns:
             The integer _id of the file document
         """
-        if revision == -1:
-            # Get the latest revision
-            row = self._db.execute(
-                f"""
-                SELECT id FROM {self._files_collection}
-                WHERE filename = ?
-                ORDER BY uploadDate DESC
-                LIMIT 1
-            """,
-                (filename,),
-            ).fetchone()
+        if revision >= 0:
+            # Forward revisions: 0-indexed from the oldest upload
+            order = "ASC"
+            offset = revision
         else:
-            # Get specific revision (0-indexed)
-            row = self._db.execute(
-                f"""
-                SELECT id FROM {self._files_collection}
-                WHERE filename = ?
-                ORDER BY uploadDate ASC
-                LIMIT 1 OFFSET ?
-            """,
-                (filename, revision),
-            ).fetchone()
+            # Negative revisions count backwards from the newest:
+            # -1 = latest, -2 = second-to-last, ... (#109)
+            order = "DESC"
+            offset = -revision - 1
+
+        row = self._db.execute(
+            f"""
+            SELECT id FROM {self._files_collection}
+            WHERE filename = ?
+            ORDER BY uploadDate {order}, id {order}
+            LIMIT 1 OFFSET ?
+        """,
+            (filename, offset),
+        ).fetchone()
 
         if row is None:
             raise NoFile(f"File with name {filename} not found")
