@@ -89,7 +89,9 @@ class TestComparisonOperatorsSQL:
         expr = {"$ne": ["$a", 5]}
         sql, params = evaluator._evaluate_sql_tier1(expr)
         assert sql is not None
-        assert "!=" in sql
+        # #121: missing field matches $ne; explicit null does not
+        assert "IS NULL THEN 1" in sql
+        assert "IS NOT ?" in sql
         assert params == [5]
 
     def test_gt_sql(self):
