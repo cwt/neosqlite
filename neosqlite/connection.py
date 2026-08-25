@@ -102,6 +102,15 @@ class Connection:
             *args: Positional arguments passed to sqlite3.connect().
             **kwargs: Keyword arguments passed to sqlite3.connect().
         """
+        # Close any previous handle so reconnecting doesn't leak it (#131).
+        # Read self.__dict__ directly — getattr would route through
+        # __getattr__ and CREATE a bogus "db" Collection (#130's hazard).
+        old_db = self.__dict__.get("db")
+        if old_db is not None:
+            try:
+                old_db.close()
+            except sqlite3.Error as e:
+                logger.debug(f"Failed to close previous connection: {e}")
         self.db = sqlite3.connect(*args, **kwargs)
         self._configure_connection()
         self._check_and_migrate_autovacuum(*args, **kwargs)
@@ -386,18 +395,11 @@ class Connection:
         attempts to retrieve it using the dictionary-style collection access (via
         `__getitem__`). This enables both attribute and dictionary access to collections.
 
-        Only valid collection identifiers are proxied; anything else raises
-        AttributeError so typos and internal lookups fail loudly instead of
-        silently creating and caching bogus Collection objects (#130).
+        Returns:
+            Any: The value retrieved from the collection, or the attribute if it exists.
         """
         if name in self.__dict__:
             return self.__dict__[name]
-        if name.startswith("_") or not re.fullmatch(
-            r"[A-Za-z_][A-Za-z0-9_]*", name
-        ):
-            raise AttributeError(
-                f"{type(self).__name__!s} has no attribute {name!r}"
-            )
         return self[name]
 
     def start_session(

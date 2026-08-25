@@ -66,6 +66,8 @@ class Cursor:
         self._session = session
         self._tables_to_cleanup = tables_to_cleanup or []
         self._closed = False
+        self._active_generator: Any = None
+        self._generator_closed = False
 
         # Validate session
         validate_session(session, collection._database)
@@ -768,14 +770,20 @@ class Cursor:
             db_cursor = self._collection.db.execute(cmd, params)
 
             def doc_generator():
-                while True:
-                    rows = db_cursor.fetchmany(self._batch_size)
-                    if not rows:
-                        break
-                    for doc in self._load_documents(rows):
-                        yield doc
+                try:
+                    while True:
+                        rows = db_cursor.fetchmany(self._batch_size)
+                        if not rows:
+                            break
+                        for doc in self._load_documents(rows):
+                            yield doc
+                finally:
+                    # Release the sqlite statement even when iteration is
+                    # abandoned early (#135)
+                    db_cursor.close()
 
             docs = doc_generator()
+            self._active_generator = docs
         else:
             # Fall back to Python-based filtering
             docs = self._handle_python_fallback()
@@ -1299,6 +1307,16 @@ class Cursor:
         """
         if self._closed:
             return
+        # Signal any active generator to stop and release its sqlite
+        # statement (#135)
+        self._generator_closed = True
+        gen = getattr(self, "_active_generator", None)
+        if gen is not None:
+            try:
+                gen.close()
+            except Exception as e:
+                logger.debug(f"Failed to close generator: {e}")
+            self._active_generator = None
         self._cleanup_tables()
         self._closed = True
 
