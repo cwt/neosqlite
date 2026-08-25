@@ -507,3 +507,90 @@ class TestBsonOrderedSort:
         ordered = sorted(range(len(values)), key=lambda i: keys[i])
         ranks = [keys[i][0] for i in ordered]
         assert ranks == sorted(ranks)  # total order, no exceptions
+
+
+class TestUnwindScalars:
+    """#96: $unwind dropped documents whose field held a scalar (tier-3)
+    and crashed on them (tier-2). MongoDB unwinds non-null scalars as a
+    single element; null/missing/empty follow preserveNullAndEmptyArrays."""
+
+    @pytest.fixture
+    def docs(self, connection):
+        c = connection.u
+        c.insert_many(
+            [
+                {"_id": 1, "a": 5},
+                {"_id": 2, "a": [1, 2]},
+                {"_id": 3, "a": []},
+                {"_id": 4, "b": 9},
+                {"_id": 5, "a": None},
+                {"_id": 6, "a": {"n": 1}},
+            ]
+        )
+        return c
+
+    def test_tier3_scalar_unwinds_as_single_element(self, docs):
+        from neosqlite.collection.query_helper import set_force_fallback
+
+        set_force_fallback(True)
+        try:
+            rows = sorted(
+                d["_id"] for d in docs.aggregate([{"$unwind": "$a"}])
+            )
+        finally:
+            set_force_fallback(False)
+        assert rows == [1, 2, 2, 6]
+
+    def test_tier3_preserve_keeps_null_missing_empty(self, docs):
+        from neosqlite.collection.query_helper import set_force_fallback
+
+        set_force_fallback(True)
+        try:
+            rows = list(
+                docs.aggregate(
+                    [
+                        {
+                            "$unwind": {
+                                "path": "$a",
+                                "preserveNullAndEmptyArrays": True,
+                            }
+                        }
+                    ]
+                )
+            )
+        finally:
+            set_force_fallback(False)
+        ids = sorted(d["_id"] for d in rows)
+        assert ids == [1, 2, 2, 3, 4, 5, 6]
+        assert all("a" not in d for d in rows if d["_id"] in (3, 4))
+
+    def test_tier2_matches_tier3(self, docs):
+        from neosqlite.collection.query_helper import set_force_fallback
+        from neosqlite.collection.temporary_table_aggregation import (
+            TemporaryTableAggregationProcessor,
+        )
+
+        proc = TemporaryTableAggregationProcessor(docs)
+        for spec in (
+            {"$unwind": "$a"},
+            {
+                "$unwind": {
+                    "path": "$a",
+                    "preserveNullAndEmptyArrays": True,
+                }
+            },
+            {"$unwind": {"path": "$a", "includeArrayIndex": "idx"}},
+        ):
+            set_force_fallback(True)
+            try:
+                t3 = sorted(
+                    (d["_id"], str(d.get("a")), d.get("idx"))
+                    for d in docs.aggregate([spec])
+                )
+            finally:
+                set_force_fallback(False)
+            t2 = sorted(
+                (d["_id"], str(d.get("a")), d.get("idx"))
+                for d in proc.process_pipeline([spec])
+            )
+            assert t3 == t2, spec

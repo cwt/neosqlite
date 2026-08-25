@@ -244,13 +244,25 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
 
             select_clause = ", ".join(select_parts)
 
-            # Build FROM clause with json_each
+            # Build FROM clause with json_each. The extracted value is
+            # CASE-wrapped so that non-null scalars iterate as a single-
+            # element array (MongoDB semantics) instead of crashing
+            # json_each with malformed JSON; null/missing stays NULL and
+            # yields no rows (#96).
+            table_ref = quote_table_name(self.collection.name)
+            extracted = (
+                f"{json_extract_func}({table_ref}.data, "
+                f"'{parse_json_path(field_name)}')"
+            )
             from_clause = (
-                f"FROM {current_table} as {quote_table_name(self.collection.name)}, "
-                f"{self.jsonb.json_each_function}({json_extract_func}("
-                f"  {quote_table_name(self.collection.name)}.data,"
-                f"  '{parse_json_path(field_name)}'"
-                f")) as je"
+                f"FROM {current_table} as {table_ref}, "
+                f"{self.jsonb.json_each_function}("
+                f"CASE"
+                f" WHEN json_type({extracted}) = 'array' THEN {extracted}"
+                f" WHEN json_type({extracted}) IS NULL THEN NULL"
+                f" ELSE json_array({extracted})"
+                f"END"
+                f") as je"
             )
 
             # Build WHERE clause based on preserveNullAndEmptyArrays
@@ -308,29 +320,22 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
                 unwind_query = f"""
                     SELECT {select_clause}
                     {from_clause}
-                    WHERE json_type({json_extract_func}({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}')) = 'array'
 
                     UNION ALL
 
-                    SELECT {quote_table_name(self.collection.name)}.id,
-                           {quote_table_name(self.collection.name)}._id as _id,
+                    SELECT {table_ref}.id,
+                           {table_ref}._id as _id,
                            {preserved_data_expr} as data
-                    FROM {current_table} as {quote_table_name(self.collection.name)}
-                    WHERE json_type({json_extract_func}({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}')) IS NULL
-                       OR json_type({json_extract_func}({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}')) != 'array'
-                       OR {json_wrapper}{json_extract_func}({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}'){json_wrapper_close} = '[]'
+                    FROM {current_table} as {table_ref}
+                    WHERE json_type({extracted}) IS NULL
+                       OR {json_wrapper}{extracted}{json_wrapper_close} = '[]'
                 """
             else:
-                # Only include documents where the field is a non-empty array
-                where_clause = (
-                    f"WHERE json_type({json_extract_func}("
-                    f"  {quote_table_name(self.collection.name)}.data,"
-                    f"  '{parse_json_path(field_name)}'"
-                    f")) = 'array'"
-                )
-                unwind_query = (
-                    f"SELECT {select_clause} {from_clause} {where_clause}"
-                )
+                # The CASE-wrapped json_each already yields exactly the
+                # MongoDB row set for non-preserve unwinds: arrays fan out,
+                # scalars become one row, null/missing/empty produce none —
+                # so no additional filter is needed (#96).
+                unwind_query = f"SELECT {select_clause} {from_clause}"
 
             # Create the unwind stage spec for naming
             unwind_stage: dict[str, Any] = {"$unwind": field_path}

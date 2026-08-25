@@ -107,16 +107,16 @@ class TestUnwindTier2:
         set_force_fallback(True)
         tier3_result = list(collection.aggregate(pipeline))
 
-        # Tier-2 correctly includes Frank (matches MongoDB), Tier-3 doesn't (bug)
-        # For this test, we compare only the common documents
+        # Both tiers include Frank: MongoDB-correct 6 unwound + 3 preserved
         assert (
             len(tier2_result) == 9
-        )  # MongoDB-correct: 6 unwound + 3 preserved
-        assert len(tier3_result) == 8  # Bug: missing Frank
+        ), f"tier2={tier2_result}"
+        assert (
+            len(tier3_result) == 9
+        ), f"tier3={tier3_result}"  # fixed in #96
 
-        # Compare common documents (excluding Frank)
-        tier2_no_frank = [d for d in tier2_result if d.get("name") != "Frank"]
-        assert self._normalize_result(tier2_no_frank) == self._normalize_result(
+        # Tiers now agree fully — compare complete results
+        assert self._normalize_result(tier2_result) == self._normalize_result(
             tier3_result
         )
 
@@ -182,16 +182,16 @@ class TestUnwindTier2:
         set_force_fallback(True)
         tier3_result = list(collection.aggregate(pipeline))
 
-        # Tier-2 correctly includes Frank (matches MongoDB), Tier-3 doesn't (bug)
-        # For this test, we compare only the common documents
+        # Both tiers include Frank: MongoDB-correct 6 unwound + 3 preserved
         assert (
             len(tier2_result) == 9
-        )  # MongoDB-correct: 6 unwound + 3 preserved
-        assert len(tier3_result) == 8  # Bug: missing Frank
+        ), f"tier2={tier2_result}"
+        assert (
+            len(tier3_result) == 9
+        ), f"tier3={tier3_result}"  # fixed in #96
 
-        # Compare common documents (excluding Frank)
-        tier2_no_frank = [d for d in tier2_result if d.get("name") != "Frank"]
-        assert self._normalize_result(tier2_no_frank) == self._normalize_result(
+        # Tiers now agree fully — compare complete results
+        assert self._normalize_result(tier2_result) == self._normalize_result(
             tier3_result
         )
 

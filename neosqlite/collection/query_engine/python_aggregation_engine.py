@@ -278,22 +278,30 @@ def execute_python_aggregation(
                                 {"__doc__": new_doc, "__root__": root}
                             )
                         # If empty array and preserve is False, don't add any documents
-                    elif (
-                        not isinstance(array_to_unwind, list)
-                        and field_path in doc
-                        and preserve_null_and_empty
-                    ):
-                        # Non-array value (None, string, number, etc.) that exists in the document and preserve is requested
+                    elif array_to_unwind is None and preserve_null_and_empty:
+                        # Null/missing field with preserve requested: emit
+                        # the document without the field (MongoDB behavior)
                         new_doc = deepcopy(doc)
-                        # Keep the value as-is
-                        # Add array index if requested
                         if include_array_index:
                             new_doc[include_array_index] = None
                         unwound_docs_with_context.append(
                             {"__doc__": new_doc, "__root__": root}
                         )
-                    # Missing fields (field_path not in doc) are never preserved
-                    # Default case: non-array values are ignored unless they exist and preserveNullAndEmptyArrays is True
+                    elif array_to_unwind is not None and not isinstance(
+                        array_to_unwind, list
+                    ):
+                        # MongoDB: non-null scalar fields unwind as a single
+                        # element regardless of preserveNullAndEmptyArrays;
+                        # nested paths resolve via _get_val above (#96).
+                        new_doc = deepcopy(doc)
+                        # Keep the value as-is
+                        # Add array index if requested
+                        if include_array_index:
+                            new_doc[include_array_index] = 0
+                        unwound_docs_with_context.append(
+                            {"__doc__": new_doc, "__root__": root}
+                        )
+                    # Remaining case: missing/null without preserve — dropped.
                 docs_with_context = unwound_docs_with_context
             case "$lookup":
                 # Python fallback implementation for $lookup
