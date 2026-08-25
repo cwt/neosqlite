@@ -23,7 +23,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-
 def _iter_leaf_values(document: dict[str, Any], parts: list[str]) -> Any | None:
     """Resolve a dotted path, expanding arrays along the way (#99).
 
@@ -55,7 +54,6 @@ def _iter_leaf_values(document: dict[str, Any], parts: list[str]) -> Any | None:
             return None
         current = nxt
     return current
-
 
 
 class QueryBuilderMixin(SqlQueryBuilderMixin):
@@ -296,9 +294,7 @@ class QueryBuilderMixin(SqlQueryBuilderMixin):
                             elif not any(
                                 cv == value
                                 for cv in candidates
-                                for cv in (
-                                    cv if isinstance(cv, list) else [cv]
-                                )
+                                for cv in (cv if isinstance(cv, list) else [cv])
                             ):
                                 matches.append(False)
         return all(matches)

@@ -645,7 +645,10 @@ class SQLClauseBuilder:
                         arr_path = "'$." + ".".join(segs[:k]) + "'"
                         arr_expr = (
                             "json_extract("
-                            + self.data_column + ", " + arr_path + ")"
+                            + self.data_column
+                            + ", "
+                            + arr_path
+                            + ")"
                         )
                         rest = segs[k:]
                         if rest:
@@ -657,10 +660,17 @@ class SQLClauseBuilder:
                             elem_pred = "value = ?"
                         arms.append(
                             "EXISTS (SELECT 1 FROM "
-                            + self._json_each_function + "(CASE WHEN "
-                            + "json_type(" + self.data_column + ", "
-                            + arr_path + ") = 'array' THEN " + arr_expr
-                            + " END) WHERE " + elem_pred + ")"
+                            + self._json_each_function
+                            + "(CASE WHEN "
+                            + "json_type("
+                            + self.data_column
+                            + ", "
+                            + arr_path
+                            + ") = 'array' THEN "
+                            + arr_expr
+                            + " END) WHERE "
+                            + elem_pred
+                            + ")"
                         )
                         params_arm.append(value)
                     clauses.append("(" + " OR ".join(arms) + ")")

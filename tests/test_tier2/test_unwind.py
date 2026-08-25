@@ -108,12 +108,8 @@ class TestUnwindTier2:
         tier3_result = list(collection.aggregate(pipeline))
 
         # Both tiers include Frank: MongoDB-correct 6 unwound + 3 preserved
-        assert (
-            len(tier2_result) == 9
-        ), f"tier2={tier2_result}"
-        assert (
-            len(tier3_result) == 9
-        ), f"tier3={tier3_result}"  # fixed in #96
+        assert len(tier2_result) == 9, f"tier2={tier2_result}"
+        assert len(tier3_result) == 9, f"tier3={tier3_result}"  # fixed in #96
 
         # Tiers now agree fully — compare complete results
         assert self._normalize_result(tier2_result) == self._normalize_result(
@@ -183,12 +179,8 @@ class TestUnwindTier2:
         tier3_result = list(collection.aggregate(pipeline))
 
         # Both tiers include Frank: MongoDB-correct 6 unwound + 3 preserved
-        assert (
-            len(tier2_result) == 9
-        ), f"tier2={tier2_result}"
-        assert (
-            len(tier3_result) == 9
-        ), f"tier3={tier3_result}"  # fixed in #96
+        assert len(tier2_result) == 9, f"tier2={tier2_result}"
+        assert len(tier3_result) == 9, f"tier3={tier3_result}"  # fixed in #96
 
         # Tiers now agree fully — compare complete results
         assert self._normalize_result(tier2_result) == self._normalize_result(

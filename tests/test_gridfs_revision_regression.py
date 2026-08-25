@@ -20,8 +20,14 @@ def bucket(connection):
 
 @pytest.mark.parametrize(
     "revision,expected",
-    [(0, "data-v1"), (1, "data-v2"), (2, "data-v3"),
-     (-1, "data-v3"), (-2, "data-v2"), (-3, "data-v1")],
+    [
+        (0, "data-v1"),
+        (1, "data-v2"),
+        (2, "data-v3"),
+        (-1, "data-v3"),
+        (-2, "data-v2"),
+        (-3, "data-v1"),
+    ],
 )
 def test_revisions(bucket, revision, expected):
     out = bucket.open_download_stream_by_name("f.txt", revision=revision)

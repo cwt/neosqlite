@@ -347,7 +347,8 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         # The _id field should be the group key, and other fields are accumulators
         # We'll create a JSON object with all the fields
         json_args = ", ".join(
-            f"'{alias}', {alias}" for alias in self._select_aliases(select_parts)
+            f"'{alias}', {alias}"
+            for alias in self._select_aliases(select_parts)
         )
         json_object_func = f"{self.jsonb.json_function_prefix}_object"
         # Wrap with json() to ensure text output for Python consumption
@@ -381,8 +382,6 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                     current_table, select_parts, group_by_clause
                 )
             )
-            params = []
-
         new_table = create_temp(group_stage, query)
 
         # Store array fields metadata for efficient post-processing
@@ -446,7 +445,9 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
             if expr_field == "_id":
                 value_sql = "src_id"
             else:
-                value_sql = f"{json_extract}(data, '{parse_json_path(expr_field)}')"
+                value_sql = (
+                    f"{json_extract}(data, '{parse_json_path(expr_field)}')"
+                )
             flag = "rd" if is_last else "rn"
             agg_parts.append(
                 f"MAX(CASE WHEN {flag} = 1 THEN {value_sql} END) AS {field}"

@@ -286,9 +286,7 @@ class SqlUpdatesMixin:
         ]
         if values_json is not None:
             # Inserted values arrive as one bound JSON-array parameter
-            arms.append(
-                "SELECT value, 1 AS blk, key AS ord FROM json_each(?)"
-            )
+            arms.append("SELECT value, 1 AS blk, key AS ord FROM json_each(?)")
             extra_params.append(values_json)
         if boundary_sql:
             arms.append(
@@ -296,9 +294,7 @@ class SqlUpdatesMixin:
                 f"WHERE key >= {boundary_sql}"
             )
         union_sql = " UNION ALL ".join(arms)
-        base_ordered = (
-            f"SELECT value FROM ({union_sql}) ORDER BY blk, ord"
-        )
+        base_ordered = f"SELECT value FROM ({union_sql}) ORDER BY blk, ord"
 
         if slice_value is None:
             final_select = base_ordered
@@ -313,9 +309,7 @@ class SqlUpdatesMixin:
                 f"SELECT value FROM ({union_sql}) "
                 f"ORDER BY blk DESC, ord DESC LIMIT {-int(slice_value)}"
             )
-            final_select = (
-                f"SELECT value FROM ({reversed_scan}) ORDER BY rowid"
-            )
+            final_select = f"SELECT value FROM ({reversed_scan}) ORDER BY rowid"
 
         fragment = (
             f"{json_path}, (SELECT json_group_array(value) "
@@ -954,7 +948,9 @@ class SqlUpdatesMixin:
                             append_path = f"'{parse_json_path(field)}[#]'"
                             for val in values_to_push:
                                 converted_val = _convert_bytes_to_binary(val)
-                                if isinstance(converted_val, (dict, list, Binary)):
+                                if isinstance(
+                                    converted_val, (dict, list, Binary)
+                                ):
                                     set_clauses.append(
                                         f"{append_path}, json(?)"
                                     )

@@ -208,10 +208,18 @@ class SqlQueryBuilderMixin:
             else:
                 elem_pred = "value = ?"
             arms.append(
-                "EXISTS (SELECT 1 FROM " + json_each_func + "("
-                + "CASE WHEN json_type(data, " + arr_path + ") = 'array' "
-                + "THEN " + arr_expr + " END"
-                + ") WHERE " + elem_pred + ")"
+                "EXISTS (SELECT 1 FROM "
+                + json_each_func
+                + "("
+                + "CASE WHEN json_type(data, "
+                + arr_path
+                + ") = 'array' "
+                + "THEN "
+                + arr_expr
+                + " END"
+                + ") WHERE "
+                + elem_pred
+                + ")"
             )
             params.append(value)
         clause = " OR ".join([extract_expr + " = ?"] + arms)

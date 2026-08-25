@@ -279,8 +279,13 @@ def _apply_positional_recursive(
                 return True
             if isinstance(elem, dict):
                 return _apply_positional_recursive(
-                    elem, parts, index + 1, value,
-                    array_filters, filter_doc, None,
+                    elem,
+                    parts,
+                    index + 1,
+                    value,
+                    array_filters,
+                    filter_doc,
+                    None,
                 )
             return False
 
@@ -344,7 +349,6 @@ def _apply_positional_recursive(
                     filter_doc,
                     None,
                 )
-
 
 
 def _resolve_filter_value(
@@ -445,16 +449,14 @@ def _matches_query_operators(value: Any, operators: dict[str, Any]) -> bool:
                 if not expected:
                     return False
             case "$size":
-                if not (isinstance(value, (list, tuple)) and len(value) == expected):
+                if not (
+                    isinstance(value, (list, tuple)) and len(value) == expected
+                ):
                     return False
             case "$type":
                 from ..type_utils import get_bson_type
 
-                names = (
-                    expected
-                    if isinstance(expected, list)
-                    else [expected]
-                )
+                names = expected if isinstance(expected, list) else [expected]
                 aliases = {"long": "int", "double": "int"}
                 wanted = {aliases.get(n, n) for n in names}
                 if get_bson_type(value) not in wanted and not (
@@ -466,9 +468,7 @@ def _matches_query_operators(value: Any, operators: dict[str, Any]) -> bool:
             case _ if op.startswith("$"):
                 # Unknown operators must fail loudly: silently matching
                 # everything caused arrayFilters to over-update (#100)
-                raise ValueError(
-                    f"Unsupported operator '{op}' in array filter"
-                )
+                raise ValueError(f"Unsupported operator '{op}' in array filter")
     return True
 
 

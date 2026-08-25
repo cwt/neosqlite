@@ -422,7 +422,10 @@ class TestSQLClauseBuilder:
         builder = SQLClauseBuilder()
         query = {"name": "Alice"}
         result = builder.build_where_clause(query)
-        assert result[0] == "WHERE (json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?))"
+        assert (
+            result[0]
+            == "WHERE (json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?))"
+        )
         assert result[1] == ["Alice", "Alice"]
 
     def test_build_where_clause_operator(self):
@@ -465,7 +468,10 @@ class TestSQLClauseBuilder:
         builder = SQLClauseBuilder()
         query = {"$not": {"name": "Alice"}}
         result = builder.build_where_clause(query)
-        assert result[0] == "WHERE NOT ((json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?)))"
+        assert (
+            result[0]
+            == "WHERE NOT ((json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?)))"
+        )
         assert result[1] == ["Alice", "Alice"]
 
     def test_build_where_clause_not_invalid_format(self):
@@ -560,7 +566,10 @@ class TestSQLTranslator:
         translator = SQLTranslator()
         match_spec = {"name": "Alice"}
         result = translator.translate_match(match_spec)
-        assert result[0] == "WHERE (json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?))"
+        assert (
+            result[0]
+            == "WHERE (json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?))"
+        )
         assert result[1] == ["Alice", "Alice"]
 
     def test_translate_match_with_operator(self):
@@ -774,7 +783,10 @@ class TestSQLTranslator:
         query = {"name": "Alice"}
         result = builder.build_where_clause(query, is_nested=True)
         # Should not have WHERE prefix when nested
-        assert result[0] == "(json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?))"
+        assert (
+            result[0]
+            == "(json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?))"
+        )
         assert result[1] == ["Alice", "Alice"]
 
     def test_build_limit_offset_clause_zero_skip(self):

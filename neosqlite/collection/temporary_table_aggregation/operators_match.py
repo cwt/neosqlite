@@ -269,7 +269,6 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
             if preserve_null:
                 # Include documents where array is missing/null/empty
                 # Use LEFT JOIN approach with UNION for null/empty cases
-                where_clause = ""
 
                 # Create temp table with two parts:
                 # 1. Documents with arrays (unwound)

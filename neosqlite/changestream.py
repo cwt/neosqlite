@@ -342,7 +342,6 @@ class ChangeStream:
                         timestamp,
                     ) = row
 
-
                     # Get the actual _id of the document
                     # Try to get _id from the stored document_id_value first (this works even for deleted documents)
                     actual_id = document_id  # Default to integer ID if nothing else works

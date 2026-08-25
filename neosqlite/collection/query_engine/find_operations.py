@@ -13,10 +13,10 @@ from ..jsonb_support import json_data_column
 
 # Import feature detection
 from ..query_helper import _supports_returning_clause, get_force_fallback
+from ..query_helper.utils import build_upsert_base_document
 from ..raw_batch_cursor import RawBatchCursor
 from ..type_utils import validate_session
 from .base import QueryEngineProtocol
-from ..query_helper.utils import build_upsert_base_document
 
 
 class FindOperationsMixin(QueryEngineProtocol):

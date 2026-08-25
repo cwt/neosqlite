@@ -433,7 +433,7 @@ class TestBsonOrderedSort:
         c.insert_many(
             [
                 {"_id": 1, "a": 5},
-                {"_id": 2},                # missing
+                {"_id": 2},  # missing
                 {"_id": 3, "a": "txt"},
                 {"_id": 4, "a": None},
                 {"_id": 5, "a": 2.5},
@@ -443,9 +443,7 @@ class TestBsonOrderedSort:
 
     def test_cursor_fallback_sort_mixed_types(self, mixed):
         rows = list(
-            mixed.find({"$or": [{"a": {"$exists": True}}, {"x": 1}]}).sort(
-                "a"
-            )
+            mixed.find({"$or": [{"a": {"$exists": True}}, {"x": 1}]}).sort("a")
         )
         vals = [d.get("a") for d in rows]
         # None/missing first, numbers next, string last — never TypeError
@@ -499,8 +497,9 @@ class TestBsonOrderedSort:
         ]
 
     def test_bson_sort_key_total_order(self):
-        from neosqlite.collection.type_utils import bson_sort_key
         import datetime
+
+        from neosqlite.collection.type_utils import bson_sort_key
 
         values = [None, 3, "s", True, [1], {"k": 1}, datetime.datetime.now()]
         keys = [bson_sort_key(v) for v in values]
@@ -534,9 +533,7 @@ class TestUnwindScalars:
 
         set_force_fallback(True)
         try:
-            rows = sorted(
-                d["_id"] for d in docs.aggregate([{"$unwind": "$a"}])
-            )
+            rows = sorted(d["_id"] for d in docs.aggregate([{"$unwind": "$a"}]))
         finally:
             set_force_fallback(False)
         assert rows == [1, 2, 2, 6]
@@ -609,16 +606,22 @@ class TestPushPositionAndSlice:
         return c
 
     def test_position_inserts_at_index(self, doc):
-        doc.update_one({"_id": 1}, {"$push": {"arr": {"$each": [9], "$position": 1}}})
+        doc.update_one(
+            {"_id": 1}, {"$push": {"arr": {"$each": [9], "$position": 1}}}
+        )
         assert doc.find_one({"_id": 1})["arr"] == [1, 9, 2, 3]
 
     def test_negative_position_counts_from_end(self, doc):
         # MongoDB: insertion index = len(arr) + position
-        doc.update_one({"_id": 1}, {"$push": {"arr": {"$each": [7], "$position": -2}}})
+        doc.update_one(
+            {"_id": 1}, {"$push": {"arr": {"$each": [7], "$position": -2}}}
+        )
         assert doc.find_one({"_id": 1})["arr"] == [1, 7, 2, 3]
 
     def test_positive_slice_keeps_head(self, doc):
-        doc.update_one({"_id": 1}, {"$push": {"arr": {"$each": [4, 5], "$slice": 3}}})
+        doc.update_one(
+            {"_id": 1}, {"$push": {"arr": {"$each": [4, 5], "$slice": 3}}}
+        )
         assert doc.find_one({"_id": 1})["arr"] == [1, 2, 3]
 
     def test_negative_slice_keeps_tail(self, doc):
@@ -629,7 +632,9 @@ class TestPushPositionAndSlice:
         assert doc.find_one({"_id": 1})["arr"] == [3, 4, 5]
 
     def test_zero_slice_empties_array(self, doc):
-        doc.update_one({"_id": 1}, {"$push": {"arr": {"$each": [9], "$slice": 0}}})
+        doc.update_one(
+            {"_id": 1}, {"$push": {"arr": {"$each": [9], "$slice": 0}}}
+        )
         assert doc.find_one({"_id": 1})["arr"] == []
 
     def test_update_many_no_longer_crashes_on_position(self, doc):
@@ -693,12 +698,14 @@ class TestGroupByComplexKeys:
 
         pipeline = [{"$group": {"_id": "$tags", "total": {"$sum": "$n"}}}]
         proc = TemporaryTableAggregationProcessor(docs)
-        t2 = sorted((tuple(d["_id"]), d["total"]) for d in proc.process_pipeline(pipeline))
+        t2 = sorted(
+            (tuple(d["_id"]), d["total"])
+            for d in proc.process_pipeline(pipeline)
+        )
         set_force_fallback(True)
         try:
             t3 = sorted(
-                (tuple(d["_id"]), d["total"])
-                for d in docs.aggregate(pipeline)
+                (tuple(d["_id"]), d["total"]) for d in docs.aggregate(pipeline)
             )
         finally:
             set_force_fallback(False)
@@ -717,7 +724,10 @@ class TestTier2EmptyGroup:
         c = connection.g
         proc = TemporaryTableAggregationProcessor(c)
         rows = proc.process_pipeline(
-            [{"$match": {"g": "nope"}}, {"$group": {"_id": None, "n": {"$sum": 1}}}]
+            [
+                {"$match": {"g": "nope"}},
+                {"$group": {"_id": None, "n": {"$sum": 1}}},
+            ]
         )
         assert rows == []
 
@@ -778,7 +788,15 @@ class TestTier2FirstLast:
 
         proc = TemporaryTableAggregationProcessor(docs)
         assert proc.process_pipeline(
-            [{"$group": {"_id": None, "f": {"$first": "$v"}, "l": {"$last": "$v"}}}]
+            [
+                {
+                    "$group": {
+                        "_id": None,
+                        "f": {"$first": "$v"},
+                        "l": {"$last": "$v"},
+                    }
+                }
+            ]
         ) == [{"_id": None, "f": 10, "l": 5}]
 
     def test_null_group_keys_do_not_break(self, docs):
@@ -812,7 +830,7 @@ class TestTier2LookupPipeline:
                 {"uid": 1, "amt": 10},
                 {"uid": 1, "amt": 20},
                 {"uid": 1, "amt": 30},
-                {"uid": 2, "amt": 5},   # filtered out by the pipeline
+                {"uid": 2, "amt": 5},  # filtered out by the pipeline
             ]
         )
         proc = TemporaryTableAggregationProcessor(users)
