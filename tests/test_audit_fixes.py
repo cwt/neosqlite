@@ -831,3 +831,26 @@ class TestTier2LookupPipeline:
         )
         counts = {d["_id"]: len(d["ords"]) for d in rows}
         assert counts == {1: 3, 2: 0}
+
+
+class TestHybridAddFieldsPreservesGroupId:
+    """#108: after $group, the Python-hybrid $addFields wrote NULL into the
+    _id column; a following stage that rebuilt data from columns (like
+    $match) then nulled out every group key."""
+
+    def test_group_addfields_match_keeps_keys(self, connection):
+        from neosqlite.collection.temporary_table_aggregation import (
+            TemporaryTableAggregationProcessor,
+        )
+
+        c = connection.h
+        c.insert_many([{"cat": "a", "n": 3}, {"cat": "b", "n": 2}])
+        proc = TemporaryTableAggregationProcessor(c)
+        rows = proc.process_pipeline(
+            [
+                {"$group": {"_id": "$cat", "total": {"$sum": "$n"}}},
+                {"$addFields": {"dbl": {"$multiply": ["$total", 2]}}},
+                {"$match": {"total": {"$gt": 0}}},
+            ]
+        )
+        assert {d["_id"]: d["dbl"] for d in rows} == {"a": 6, "b": 4}

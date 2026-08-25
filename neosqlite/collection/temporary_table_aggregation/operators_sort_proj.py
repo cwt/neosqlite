@@ -345,11 +345,20 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
 
         for row in rows:
             doc_id = row[0]
-            doc_underscore_id = row[1] if has_underscore_id else None
             doc_data = row[-1]
 
             # Parse the document
             doc = neosqlite_json_loads(doc_data)
+
+            if has_underscore_id:
+                doc_underscore_id = row[1]
+            elif isinstance(doc, dict) and "_id" in doc:
+                # Source table has no _id column (e.g. post-$group): the
+                # logical _id lives only inside data — carry it forward so
+                # downstream stages don't overwrite it with NULL (#108)
+                doc_underscore_id = doc.get("_id")
+            else:
+                doc_underscore_id = None
 
             # Ensure _id is in the document
             if "_id" not in doc and doc_underscore_id is not None:
