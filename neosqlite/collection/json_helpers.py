@@ -1,7 +1,7 @@
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from neosqlite.binary import Binary
@@ -41,8 +41,9 @@ class NeoSQLiteJSONEncoder(json.JSONEncoder):
             logger.debug(f"ObjectId module not available for encoding: {e}")
             pass  # ObjectId module not available
 
-        # Handle datetime objects - convert to ISO format string
-        if isinstance(obj, datetime):
+        # Handle date/datetime objects - convert to ISO format string.
+        # datetime is a subclass of date, so this covers both (#112).
+        if isinstance(obj, (datetime, date)):
             return obj.isoformat()
 
         return super().default(obj)

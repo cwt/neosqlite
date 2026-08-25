@@ -400,3 +400,22 @@ class TestIdColumnReferences:
                 json.loads(line) for line in batch.decode().splitlines()
             )
         assert [d["v"] for d in docs] == [3, 2, 1]
+
+
+class TestDateSerialization:
+    """#112: NeoSQLiteJSONEncoder only special-cased datetime.datetime;
+    plain datetime.date raised TypeError on insert."""
+
+    def test_insert_date(self, connection):
+        import datetime
+
+        c = connection.t
+        c.insert_one({"d": datetime.date(2023, 1, 15)})
+        assert c.find_one({})["d"] == "2023-01-15"
+
+    def test_datetime_still_round_trips(self, connection):
+        import datetime
+
+        c = connection.t
+        c.insert_one({"ts": datetime.datetime(2024, 6, 1, 12, 30)})
+        assert isinstance(c.find_one({})["ts"], datetime.datetime)
