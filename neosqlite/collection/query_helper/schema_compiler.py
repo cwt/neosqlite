@@ -16,6 +16,24 @@ def compile_schema_to_sql(
     return _compile_node(schema, data_column, json_func)
 
 
+def _safe_json_path(path: str) -> str:
+    """Escape a dotted path for embedding in a SQL string literal (#123)."""
+    from ..json_path_utils import parse_json_path
+
+    rel = path[2:] if path.startswith("$.") else path
+    return parse_json_path(rel) if rel else "$"
+
+
+def _numeric_literal(value: Any, name: str) -> str:
+    """Validate and render a numeric schema bound (#123)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(
+            f"JSON schema '{name}' must be a number, got {value!r}"
+        )
+    return repr(float(value))
+
+
+
 def _compile_node(
     schema: Any, data_column: str, json_func: str, path: str = "$"
 ) -> str:
@@ -31,7 +49,8 @@ def _compile_node(
         for field in req_fields:
             field_path = f"{path}.{field}"
             clauses.append(
-                f"{json_func}({data_column}, '{field_path}') IS NOT NULL"
+                f"{json_func}({data_column}, "
+                f"'{_safe_json_path(field_path)}') IS NOT NULL"
             )
 
     # 2. Handle properties
@@ -44,7 +63,8 @@ def _compile_node(
             )
             if prop_sql != "1":
                 clauses.append(
-                    f"({json_func}({data_column}, '{field_path}') IS NULL OR ({prop_sql}))"
+                    f"({json_func}({data_column}, "
+                    f"'{_safe_json_path(field_path)}') IS NULL OR ({prop_sql}))"
                 )
 
     # 3. Handle type/bsonType
@@ -58,15 +78,17 @@ def _compile_node(
             clauses.append(type_clause)
 
     # 4. Handle numeric constraints
-    val_expr = f"{json_func}({data_column}, '{path}')"
+    val_expr = (
+        f"{json_func}({data_column}, '{_safe_json_path(path)}')"
+    )
     if "minimum" in schema:
-        clauses.append(f"{val_expr} >= {schema['minimum']}")
+        clauses.append(f"{val_expr} >= {_numeric_literal(schema['minimum'], 'minimum')}")
     if "maximum" in schema:
-        clauses.append(f"{val_expr} <= {schema['maximum']}")
+        clauses.append(f"{val_expr} <= {_numeric_literal(schema['maximum'], 'maximum')}")
     if "exclusiveMinimum" in schema:
-        clauses.append(f"{val_expr} > {schema['exclusiveMinimum']}")
+        clauses.append(f"{val_expr} > {_numeric_literal(schema['exclusiveMinimum'], 'exclusiveMinimum')}")
     if "exclusiveMaximum" in schema:
-        clauses.append(f"{val_expr} < {schema['exclusiveMaximum']}")
+        clauses.append(f"{val_expr} < {_numeric_literal(schema['exclusiveMaximum'], 'exclusiveMaximum')}")
 
     if not clauses:
         return "1"
@@ -79,7 +101,7 @@ def _compile_type_check(
 ) -> str | None:
     """Compile type checks into SQL using json_type."""
     # json_type(data, path)
-    type_expr = f"json_type({data_column}, '{path}')"
+    type_expr = f"json_type({data_column}, '{_safe_json_path(path)}')"
 
     types = target_type if isinstance(target_type, list) else [target_type]
     sql_types = []

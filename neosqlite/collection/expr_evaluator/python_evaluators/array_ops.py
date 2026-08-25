@@ -67,6 +67,49 @@ def _bson_sort(array: list[Any]) -> list[Any]:
         return array
 
 
+def _set_key(v: Any) -> Any:
+    """Hashable canonical form of an element for $set* operators (#122)."""
+    import json as _json
+
+    if isinstance(v, dict):
+        return ("d", _json.dumps(v, sort_keys=True, default=str))
+    if isinstance(v, list):
+        return ("l", tuple(_set_key(x) for x in v))
+    if isinstance(v, bool):
+        return ("b", v)
+    if isinstance(v, int):
+        return ("i", v)
+    if isinstance(v, float):
+        return ("f", repr(v))
+    if isinstance(v, str):
+        return ("s", v)
+    return ("o", str(v))
+
+
+def _dedupe(seq: list) -> list:
+    seen: set = set()
+    out: list = []
+    for x in seq:
+        k = _set_key(x)
+        if k not in seen:
+            seen.add(k)
+            out.append(x)
+    return out
+
+
+
+def _bson_min_max(array: list, is_min: bool):
+    """min/max under BSON type ordering; None if no non-null values."""
+    from neosqlite.collection.type_utils import bson_sort_key
+
+    vals = [v for v in array if v is not None]
+    if not vals:
+        return None
+    key = lambda v: bson_sort_key(v)  # noqa: E731
+    return min(vals, key=key) if is_min else max(vals, key=key)
+
+
+
 class ArrayPythonMixin(BasePythonMixin):
     """Array, set, and transform ($filter/$map/$reduce) operators."""
 
@@ -137,9 +180,11 @@ class ArrayPythonMixin(BasePythonMixin):
                     case "$avg":
                         return sum(nums) / len(nums)
                     case "$min":
-                        return min(array)  # min/max work on all types
+                        # BSON-ordered min: mixed-type arrays must not
+                        # raise TypeError (#122)
+                        return _bson_min_max(array, True)
                     case "$max":
-                        return max(array)
+                        return _bson_min_max(array, False)
                     case _:
                         return None
             case "$arrayElemAt":
@@ -359,7 +404,8 @@ class ArrayPythonMixin(BasePythonMixin):
                 set1 = self._evaluate_operand_python(operands[0], document)
                 set2 = self._evaluate_operand_python(operands[1], document)
                 if isinstance(set1, list) and isinstance(set2, list):
-                    return list(set(set1) & set(set2))
+                    b_keys = {_set_key(y) for y in set2}
+                    return _dedupe([x for x in set1 if _set_key(x) in b_keys])
                 return []
             case "$setUnion":
                 if len(operands) != 2:
@@ -367,7 +413,7 @@ class ArrayPythonMixin(BasePythonMixin):
                 set1 = self._evaluate_operand_python(operands[0], document)
                 set2 = self._evaluate_operand_python(operands[1], document)
                 if isinstance(set1, list) and isinstance(set2, list):
-                    return list(set(set1) | set(set2))
+                    return _dedupe(list(set1) + list(set2))
                 return []
             case "$setDifference":
                 if len(operands) != 2:
@@ -377,7 +423,8 @@ class ArrayPythonMixin(BasePythonMixin):
                 set1 = self._evaluate_operand_python(operands[0], document)
                 set2 = self._evaluate_operand_python(operands[1], document)
                 if isinstance(set1, list) and isinstance(set2, list):
-                    return list(set(set1) - set(set2))
+                    b_keys = {_set_key(y) for y in set2}
+                    return [x for x in set1 if _set_key(x) not in b_keys]
                 return []
             case "$setIsSubset":
                 if len(operands) != 2:

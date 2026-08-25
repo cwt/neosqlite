@@ -238,21 +238,32 @@ class CorePythonMixin(BasePythonMixin):
     ) -> bool:
         """Evaluate logical operators in Python."""
         if operator == "$not":
-            if len(operands) != 1:
+            # Accept both {"$not": [<expr>]} and the documented bare-dict
+            # form {"$not": {"$gt": [...]}} (#122)
+            if isinstance(operands, dict):
+                return not self._evaluate_expr_python(operands, document)
+            if not isinstance(operands, list) or len(operands) != 1:
                 raise ValueError("$not requires exactly one operand")
             return not self._evaluate_expr_python(operands[0], document)
 
-        results = [self._evaluate_expr_python(op, document) for op in operands]
+        # Short-circuit: evaluate lazily so later (possibly invalid) operands
+        # do not crash rows already decided (#122)
+        if operator == "$and":
+            for op in operands:
+                if not self._evaluate_operand_python(op, document):
+                    return False
+            return True
+        if operator == "$or":
+            for op in operands:
+                if self._evaluate_operand_python(op, document):
+                    return True
+            return False
+        if operator == "$nor":
+            return not any(
+                self._evaluate_operand_python(op, document) for op in operands
+            )
 
-        match operator:
-            case "$and":
-                return all(results)
-            case "$or":
-                return any(results)
-            case "$nor":
-                return not any(results)
-            case _:
-                raise ValueError(f"Unknown logical operator: {operator}")
+        raise ValueError(f"Unknown logical operator: {operator}")
 
     def _evaluate_comparison_python(
         self, operator: str, operands: list[Any], document: dict[str, Any]
