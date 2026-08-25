@@ -23,6 +23,7 @@ from ...sql_utils import quote_table_name
 from ..json_path_utils import parse_json_path
 from ..jsonb_support import json_data_column
 from ..query_helper import _convert_bytes_to_binary, _get_json_function
+from ..query_helper.utils import build_upsert_base_document
 from ..type_correction import get_integer_id_for_oid
 from ..type_utils import validate_session
 from .base import QueryEngineProtocol
@@ -159,7 +160,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             # For upsert, we need to create a document that includes:
             # 1. The filter fields (as base document)
             # 2. Apply the update operations to that document
-            new_doc: dict[str, Any] = dict(filter)  # Start with filter fields
+            new_doc = build_upsert_base_document(filter)
             updated_doc, _ = self.helpers._internal_update(
                 0, update, new_doc, array_filters, filter
             )  # Apply updates

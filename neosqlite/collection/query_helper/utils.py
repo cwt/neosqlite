@@ -1,6 +1,7 @@
 """Utility functions for query helper operations."""
 
 import logging
+import re
 from typing import Any
 
 from ..._sqlite import sqlite3
@@ -202,3 +203,45 @@ def _validate_inc_mul_field_value(
             f"Field '{field_name}' has non-numeric type {type(field_value).__name__} "
             f"with value {repr(field_value)}"
         )
+
+
+def build_upsert_base_document(filter_doc: dict[str, Any]) -> dict[str, Any]:
+    """Extract equality predicates from a query filter for upserts (#101).
+
+    MongoDB builds the inserted document from the query's EQUALITY
+    conditions only. Copying the filter verbatim stored operator dicts
+    ({"age": {"$gte": 18}}) as literal data. Supported forms:
+    - scalar / None equality ("name": "x")
+    - explicit $eq ("age": {"$eq": 25})
+    - dotted keys, nested into proper sub-documents ("a.b": 1)
+    - top-level $and lists of the above
+    Everything else ($gt, $in, regex, ...) is ignored, as in MongoDB's
+    lenient handling.
+    """
+    base: dict[str, Any] = {}
+
+    def set_path(path: str, val: Any) -> None:
+        cur = base
+        parts = path.split(".")
+        for part in parts[:-1]:
+            cur = cur.setdefault(part, {})
+        cur[parts[-1]] = val
+
+    def add(key: str, val: Any) -> None:
+        if key.startswith("$"):
+            return
+        if isinstance(val, dict) and len(val) == 1 and "$eq" in val:
+            val = val["$eq"]
+        if isinstance(val, dict) or isinstance(val, re.Pattern):
+            return
+        set_path(key, val)
+
+    for key, value in filter_doc.items():
+        if key == "$and" and isinstance(value, list):
+            for sub in value:
+                if isinstance(sub, dict):
+                    for k2, v2 in sub.items():
+                        add(k2, v2)
+        else:
+            add(key, value)
+    return base

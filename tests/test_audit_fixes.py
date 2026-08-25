@@ -952,3 +952,38 @@ class TestArrayFilterOperatorValidation:
         assert _matches_query_operators(7, {"$exists": True})
         assert not _matches_query_operators(7, {"$exists": False})
         assert _matches_query_operators(3, {"$type": "int"})
+
+
+class TestUpsertBaseDocument:
+    """#101: upsert copied the filter verbatim as the base document,
+    storing operator dicts ({"age": {"$gte": 18}}) as literal data and
+    keeping dotted keys flat. Equality-only extraction now matches
+    MongoDB."""
+
+    def test_operator_filters_not_stored(self, connection):
+        c = connection.u
+        c.update_one({"age": {"$gte": 18}}, {"$set": {"ok": 1}}, upsert=True)
+        doc = c.find_one({"ok": 1})
+        assert doc is not None
+        assert "age" not in doc, "non-equality filter keys must be dropped"
+
+    def test_dotted_equality_nests(self, connection):
+        c = connection.u2
+        c.update_one({"a.b": 1}, {"$set": {"c": 2}}, upsert=True)
+        assert c.find_one({})["a"] == {"b": 1}
+
+    def test_eq_operator_unwrapped(self, connection):
+        c = connection.u3
+        c.update_one(
+            {"k": {"$eq": "v"}, "n": 5}, {"$set": {"x": 1}}, upsert=True
+        )
+        doc = c.find_one({})
+        assert doc["k"] == "v" and doc["n"] == 5
+
+    def test_and_flattened(self, connection):
+        c = connection.u4
+        c.update_one(
+            {"$and": [{"p": 1}, {"q": 2}]}, {"$set": {"z": 9}}, upsert=True
+        )
+        doc = c.find_one({"z": 9})
+        assert doc["p"] == 1 and doc["q"] == 2

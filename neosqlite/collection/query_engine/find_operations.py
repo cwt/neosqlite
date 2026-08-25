@@ -16,6 +16,7 @@ from ..query_helper import _supports_returning_clause, get_force_fallback
 from ..raw_batch_cursor import RawBatchCursor
 from ..type_utils import validate_session
 from .base import QueryEngineProtocol
+from ..query_helper.utils import build_upsert_base_document
 
 
 class FindOperationsMixin(QueryEngineProtocol):
@@ -439,7 +440,7 @@ class FindOperationsMixin(QueryEngineProtocol):
 
             if upsert:
                 # Basic upsert logic
-                new_doc = dict(filter)
+                new_doc = build_upsert_base_document(filter)
                 res = self.insert_one(new_doc, session=session)
                 self.update_one(
                     {"_id": res.inserted_id},
@@ -482,7 +483,7 @@ class FindOperationsMixin(QueryEngineProtocol):
                 return original_doc
             # No document found, handle upsert
             if upsert:
-                new_doc = dict(filter)
+                new_doc = build_upsert_base_document(filter)
                 res = self.insert_one(new_doc, session=session)
                 self.update_one(
                     {"_id": res.inserted_id},
@@ -524,7 +525,7 @@ class FindOperationsMixin(QueryEngineProtocol):
 
             if upsert:
                 # Basic upsert logic
-                new_doc = dict(filter)
+                new_doc = build_upsert_base_document(filter)
                 res = self.insert_one(new_doc, session=session)
                 self.update_one(
                     {"_id": res.inserted_id},
