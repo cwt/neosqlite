@@ -59,21 +59,13 @@ class MathTrigMixin(BaseSqlMixin):
                 sql = f"log({base_sql}, {number_sql})"
                 return sql, number_params + base_params
             case "$round":
-                # $round can have 1 or 2 operands: [number] or [number, precision]
-                if len(operands) < 1 or len(operands) > 2:
-                    raise ValueError("$round requires 1 or 2 operands")
-                number_sql, number_params = self._convert_operand_to_sql(
-                    operands[0]
+                # MongoDB \$round uses ties-to-even; SQLite ROUND is
+                # half-away-from-zero. Python's round() matches MongoDB, so
+                # defer to the Python tier for exact semantics (#116).
+                raise NotImplementedError(
+                    "$round is evaluated in the Python tier to preserve "
+                    "MongoDB ties-to-even rounding"
                 )
-                if len(operands) == 2:
-                    precision_sql, precision_params = (
-                        self._convert_operand_to_sql(operands[1])
-                    )
-                    sql = f"round({number_sql}, {precision_sql})"
-                    return sql, number_params + precision_params
-                else:
-                    sql = f"round({number_sql})"
-                    return sql, number_params
             case "$sigmoid":
                 # Sigmoid function: 1 / (1 + e^(-x))
                 # Handle object format: { $sigmoid: { input: <expr>, onNull: <expr> } }

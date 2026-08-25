@@ -30,6 +30,13 @@ class ArithmeticMixin(BaseSqlMixin):
             all_params.extend(operand_params)
 
         sql_operator = self._map_arithmetic_operator(operator)
+        if operator == "$divide":
+            # SQLite '/' on two integers truncates; MongoDB always returns
+            # a double. Force REAL division (#116).
+            sql_parts = [
+                f"({part}) * 1.0" if idx == 0 else f"({part})"
+                for idx, part in enumerate(sql_parts)
+            ]
         sql = f"({f' {sql_operator} '.join(sql_parts)})"
 
         return sql, all_params

@@ -5,6 +5,8 @@ Arithmetic: $add, $subtract, $multiply, $divide, $mod
 Math: $abs, $ceil, $floor, $round, $trunc, $pow, $sqrt
 """
 
+import pytest
+
 import neosqlite
 from neosqlite.collection.expr_evaluator import ExprEvaluator
 
@@ -211,12 +213,11 @@ class TestMathOperatorsSQL:
         assert "floor(" in sql
 
     def test_round_sql(self):
-        """Test $round SQL conversion."""
+        """$round uses ties-to-even, so it evaluates in the Python tier (#116)."""
         evaluator = ExprEvaluator()
         expr = {"$round": ["$value"]}
-        sql, params = evaluator._evaluate_sql_tier1(expr)
-        assert sql is not None
-        assert "round(" in sql
+        # None = SQL tier declines; Python tier applies ties-to-even (#116)
+        assert evaluator._evaluate_sql_tier1(expr) == (None, [])
 
     def test_trunc_sql(self):
         """Test $trunc SQL conversion."""
@@ -406,11 +407,9 @@ class TestArithmeticIntegration:
         expr = {"$round": [3.14159, 0]}
         assert evaluator._evaluate_expr_python(expr, {}) == 3
 
-        # SQL conversion
+        # SQL conversion defers to Python for ties-to-even (#116)
         expr = {"$round": [3.14159, 2]}
-        sql, params = evaluator._evaluate_sql_tier1(expr)
-        assert sql is not None
-        assert "round(" in sql
+        assert evaluator._evaluate_sql_tier1(expr) == (None, [])
 
     def test_round_integration(self):
         """Test $round with database."""
