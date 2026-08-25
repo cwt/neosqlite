@@ -613,8 +613,9 @@ class TestPushPositionAndSlice:
         assert doc.find_one({"_id": 1})["arr"] == [1, 9, 2, 3]
 
     def test_negative_position_counts_from_end(self, doc):
+        # MongoDB: insertion index = len(arr) + position
         doc.update_one({"_id": 1}, {"$push": {"arr": {"$each": [7], "$position": -2}}})
-        assert doc.find_one({"_id": 1})["arr"] == [1, 2, 7, 3]
+        assert doc.find_one({"_id": 1})["arr"] == [1, 7, 2, 3]
 
     def test_positive_slice_keeps_head(self, doc):
         doc.update_one({"_id": 1}, {"$push": {"arr": {"$each": [4, 5], "$slice": 3}}})
