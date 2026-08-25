@@ -448,6 +448,27 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         # Get the update clause using existing helper
         update_result = self.helpers._build_update_clause(update)
 
+        # Guard $inc/$mul against non-numeric target fields: SQLite would
+        # silently coerce ('hello' + 1 == 1), corrupting string data.
+        # Validation failure falls through to the per-document Python tier,
+        # mirroring update_one's fast-path behavior (#87).
+        if (
+            where_clause is not None
+            and update_result is not None
+            and ("$inc" in update or "$mul" in update)
+        ):
+            from ..query_helper.update_operations import UpdateOperationsMixin
+
+            if not UpdateOperationsMixin._validate_inc_mul_types_sql(
+                self.collection.db,
+                self.collection.name,
+                where_clause,
+                where_params,
+                update,
+                self.jsonb.jsonb_supported,
+            ):
+                update_result = None
+
         if where_clause is not None and update_result is not None:
             set_clause, set_params = update_result
             cmd = f"UPDATE {quote_table_name(self.collection.name)} SET {set_clause} {where_clause}"

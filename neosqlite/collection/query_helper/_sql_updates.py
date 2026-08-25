@@ -732,16 +732,26 @@ class SqlUpdatesMixin:
                 case "$min":
                     for field, field_val in value.items():
                         json_path = f"'{parse_json_path(field)}'"
-                        set_clauses.append(
-                            f"{json_path}, min({self.jsonb.json_function_prefix}_extract(data, {json_path}), ?)"
+                        # Missing/NULL field must take the new value (scalar
+                        # min(NULL, x) is NULL), matching MongoDB (#88).
+                        extract_expr = (
+                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path})"
                         )
+                        set_clauses.append(
+                            f"{json_path}, CASE WHEN {extract_expr} IS NULL THEN ? ELSE min({extract_expr}, ?) END"
+                        )
+                        params.append(field_val)
                         params.append(field_val)
                 case "$max":
                     for field, field_val in value.items():
                         json_path = f"'{parse_json_path(field)}'"
-                        set_clauses.append(
-                            f"{json_path}, max({self.jsonb.json_function_prefix}_extract(data, {json_path}), ?)"
+                        extract_expr = (
+                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path})"
                         )
+                        set_clauses.append(
+                            f"{json_path}, CASE WHEN {extract_expr} IS NULL THEN ? ELSE max({extract_expr}, ?) END"
+                        )
+                        params.append(field_val)
                         params.append(field_val)
                 case "$unset":
                     # For $unset, we use json_remove
@@ -1058,34 +1068,46 @@ class SqlUpdatesMixin:
             case "$min":
                 for field, field_val in value.items():
                     json_path = f"'{parse_json_path(field)}'"
+                    # Missing/NULL field must take the new value (scalar
+                    # min(NULL, x) is NULL), matching MongoDB (#88).
+                    extract_expr = (
+                        f"{self.jsonb.json_function_prefix}_extract(data, {json_path})"
+                    )
                     clauses.append(
-                        f"{json_path}, min({self.jsonb.json_function_prefix}_extract(data, {json_path}), ?)"
+                        f"{json_path}, CASE WHEN {extract_expr} IS NULL THEN ? ELSE min({extract_expr}, ?) END"
                     )
                     # Convert bytes to Binary for proper JSON serialization
                     converted_val = _convert_bytes_to_binary(field_val)
                     # If it's a Binary object, serialize it to JSON and use json() function
                     if isinstance(converted_val, Binary):
                         clauses[-1] = (
-                            f"{json_path}, min({self.jsonb.json_function_prefix}_extract(data, {json_path}), json(?))"
+                            f"{json_path}, CASE WHEN {extract_expr} IS NULL THEN json(?) ELSE min({extract_expr}, json(?)) END"
                         )
                         params.append(neosqlite_json_dumps(converted_val))
+                        params.append(neosqlite_json_dumps(converted_val))
                     else:
+                        params.append(converted_val)
                         params.append(converted_val)
             case "$max":
                 for field, field_val in value.items():
                     json_path = f"'{parse_json_path(field)}'"
+                    extract_expr = (
+                        f"{self.jsonb.json_function_prefix}_extract(data, {json_path})"
+                    )
                     clauses.append(
-                        f"{json_path}, max({self.jsonb.json_function_prefix}_extract(data, {json_path}), ?)"
+                        f"{json_path}, CASE WHEN {extract_expr} IS NULL THEN ? ELSE max({extract_expr}, ?) END"
                     )
                     # Convert bytes to Binary for proper JSON serialization
                     converted_val = _convert_bytes_to_binary(field_val)
                     # If it's a Binary object, serialize it to JSON and use json() function
                     if isinstance(converted_val, Binary):
                         clauses[-1] = (
-                            f"{json_path}, max({self.jsonb.json_function_prefix}_extract(data, {json_path}), json(?))"
+                            f"{json_path}, CASE WHEN {extract_expr} IS NULL THEN json(?) ELSE max({extract_expr}, json(?)) END"
                         )
                         params.append(neosqlite_json_dumps(converted_val))
+                        params.append(neosqlite_json_dumps(converted_val))
                     else:
+                        params.append(converted_val)
                         params.append(converted_val)
             case "$push":
                 # Optimized $push (with $each, optionally with $position and/or $slice) using [#]
@@ -1216,13 +1238,19 @@ class SqlUpdatesMixin:
                             "insert", self.jsonb.jsonb_supported
                         )
                         array_path = json_path
-                        append_path = f"'{parse_json_path(field)}[#]'"
 
-                        # Use a CASE expression to conditionally call json_insert
+                        # Use a CASE expression returning the resulting array.
+                        # Both branches must yield the *array value* because
+                        # this clause is wrapped as json_set(data, ...):
+                        # - element exists -> keep current array unchanged
+                        # - missing        -> insert into a copy of the array (#89)
                         exists_subquery = f"EXISTS (SELECT 1 FROM json_each(data, {array_path}) WHERE value = ?)"
+                        current_array = (
+                            f"{self.jsonb.json_function_prefix}_extract(data, {array_path})"
+                        )
 
                         clauses.append(
-                            f"{array_path}, CASE WHEN {exists_subquery} THEN data ELSE {insert_func}(data, {append_path}, ?) END"
+                            f"{array_path}, CASE WHEN {exists_subquery} THEN {current_array} ELSE {insert_func}({current_array}, '$[#]', ?) END"
                         )
                         params.extend([param_value, param_value])
                     else:
