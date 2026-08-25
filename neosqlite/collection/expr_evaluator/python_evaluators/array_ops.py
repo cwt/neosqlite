@@ -237,7 +237,11 @@ class ArrayPythonMixin(BasePythonMixin):
 
                 if not isinstance(array, list) or n is None:
                     return []
-
+                if not isinstance(n, (int, float)) or isinstance(n, bool):
+                    raise ValueError("$firstN requires a numeric n")
+                if n <= 0:
+                    # MongoDB errors on non-positive n; $lastN already does
+                    raise ValueError("$firstN requires a positive n")
                 return array[: int(n)]
             case "$lastN":
                 # Get last N elements from array
@@ -495,8 +499,15 @@ class ArrayPythonMixin(BasePythonMixin):
                     ctx[f"$${as_var}"] = item
                     ctx[f"$${as_var}Index"] = i
 
-                    # Evaluate condition in context
-                    if self._evaluate_expr_python(cond, ctx):
+                    # Evaluate condition in context. A bare string like
+                    # "$$this" is an operand, not an expression dict —
+                    # route it through the operand evaluator so MongoDB's
+                    # cond: "$$this" works (#122).
+                    if isinstance(cond, str):
+                        outcome = self._evaluate_operand_python(cond, ctx)
+                    else:
+                        outcome = self._evaluate_expr_python(cond, ctx)
+                    if outcome:
                         result.append(item)
 
                 return result
