@@ -316,26 +316,57 @@ def execute_python_aggregation(
                     from_collection_name
                 ]
 
-                # Process each document
+                # Build an index over the foreign collection ONCE, then
+                # join in memory — previously this re-scanned the whole
+                # foreign collection per input document, O(N×M) (#150).
+                from ..type_utils import _hashable_group_key
+
+                foreign_index: dict[Any, list[dict[str, Any]]] = {}
+                for match_doc in from_collection.find(session=session):
+                    foreign_value = from_collection._get_val(
+                        match_doc, foreign_field
+                    )
+                    key = _hashable_group_key(foreign_value)
+                    stripped = {
+                        k: v for k, v in match_doc.items() if k != "_id"
+                    }
+                    foreign_index.setdefault(key, []).append(stripped)
+
+                # Element-wise local values (arrays expand like MongoDB)
+                def _local_candidates(doc: dict[str, Any]) -> list[Any]:
+                    parts = local_field.split(".")
+                    current: list[Any] = [doc]
+                    for part in parts:
+                        nxt: list[Any] = []
+                        found = False
+                        for node in current:
+                            if isinstance(node, dict) and part in node:
+                                found = True
+                                v = node[part]
+                                if isinstance(v, list):
+                                    nxt.extend(v)
+                                elif v is not None:
+                                    nxt.append(v)
+                            elif isinstance(node, list):
+                                for el in node:
+                                    if isinstance(el, dict) and part in el:
+                                        found = True
+                                        ev = el[part]
+                                        if isinstance(ev, list):
+                                            nxt.extend(ev)
+                                        elif ev is not None:
+                                            nxt.append(ev)
+                        if not found:
+                            return []
+                        current = nxt
+                    return current
+
                 for dc in docs_with_context:
                     doc = dc["__doc__"]
-                    # Get the local field value
-                    local_value = query_engine.collection._get_val(
-                        doc, local_field
-                    )
-
-                    # Find matching documents in the from collection
-                    matching_docs = []
-                    for match_doc in from_collection.find(session=session):
-                        foreign_value = from_collection._get_val(
-                            match_doc, foreign_field
-                        )
-                        if local_value == foreign_value:
-                            # Add the matching document (without _id)
-                            match_doc_copy = match_doc.copy()
-                            match_doc_copy.pop("_id", None)
-                            matching_docs.append(match_doc_copy)
-
+                    matching_docs: list[dict[str, Any]] = []
+                    for lv in _local_candidates(doc):
+                        key = _hashable_group_key(lv)
+                        matching_docs.extend(foreign_index.get(key, []))
                     # Add the matching documents as an array field
                     doc[as_field] = matching_docs
             case "$addFields":
@@ -348,11 +379,6 @@ def execute_python_aggregation(
                 for dc in docs_with_context:
                     doc = dc["__doc__"]
                     root = dc["__root__"]
-
-                    # Create context for this document
-                    ctx = AggregationContext()
-                    ctx.bind_document(root)  # Bind original document as $$ROOT
-                    ctx.update_current(doc)  # Set current document state
 
                     for new_field, expr in add_fields_spec.items():
                         if _is_expression(expr):
@@ -392,9 +418,6 @@ def execute_python_aggregation(
                             query_engine.collection._set_val(
                                 doc, new_field, expr
                             )
-
-                    # Update $$CURRENT after all fields are added
-                    ctx.update_current(doc)
             case "$setWindowFields":
                 from ..query_helper.window_operators import (
                     process_set_window_fields,
@@ -717,13 +740,14 @@ def execute_python_aggregation(
                 if not coll_name:
                     break
 
-                # Get documents from other collection
+                # Get documents from the other collection. When a pipeline
+                # is present it fully determines the unioned side — fetching
+                # the whole collection first was pure waste (#151).
                 other_coll = query_engine.collection._database[coll_name]
-                other_docs = list(other_coll.find())
-
-                # Apply pipeline if specified
                 if pipeline:
                     other_docs = list(other_coll.aggregate(pipeline))
+                else:
+                    other_docs = list(other_coll.find())
 
                 # Combine documents
                 current_docs = [dc["__doc__"] for dc in docs_with_context]

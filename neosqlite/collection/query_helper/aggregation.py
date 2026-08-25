@@ -25,39 +25,8 @@ if TYPE_CHECKING:
     from ..jsonb_support import JSONBContext
 
 
-def _hashable_group_key(value: Any) -> tuple:
-    """Type-tagged, hashable stand-in for a $group _id value (#103).
 
-    MongoDB groups by array/document values too; Python dicts require
-    hashable keys, so complex values are represented by their canonical
-    structure while the ORIGINAL value is kept as the returned _id.
-    """
-    match value:
-        case bool():
-            return ("b", value)
-        case int():
-            return ("i", value)
-        case float():
-            return ("f", repr(value))
-        case str():
-            return ("s", value)
-        case None:
-            return ("z",)
-        case dict():
-            return (
-                "d",
-                tuple(
-                    sorted(
-                        (k, _hashable_group_key(v)) for k, v in value.items()
-                    )
-                ),
-            )
-        case list() | tuple():
-            return ("l", tuple(_hashable_group_key(v) for v in value))
-        case bytes():
-            return ("y", value)
-        case _:
-            return ("o", type(value).__name__, str(value))
+from ..type_utils import _hashable_group_key
 
 
 class AggregationMixin(SqlAggregationMixin):
@@ -452,16 +421,15 @@ class AggregationMixin(SqlAggregationMixin):
                     )
                 )
 
-                # Insert results into result temp table
-                for doc in result:
-                    from neosqlite.collection.json_helpers import (
-                        neosqlite_json_dumps,
-                    )
+                # Insert results into result temp table (#154: executemany)
+                from neosqlite.collection.json_helpers import (
+                    neosqlite_json_dumps,
+                )
 
-                    self.collection.db.execute(
-                        f"INSERT INTO {result_table} (data) VALUES (?)",
-                        (neosqlite_json_dumps(doc),),
-                    )
+                self.collection.db.executemany(
+                    f"INSERT INTO {result_table} (data) VALUES (?)",
+                    [(neosqlite_json_dumps(doc),) for doc in result],
+                )
 
                 # Clear temp collection for next batch
                 temp_collection.delete_many({})

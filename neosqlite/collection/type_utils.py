@@ -339,6 +339,7 @@ __all__ = [
     "_convert_to_null",
     "get_bson_type",
     "bson_sort_key",
+    "_hashable_group_key",
     # Type checking helpers
     "_is_expression",
     "_is_field_reference",
@@ -346,3 +347,37 @@ __all__ = [
     "_is_numeric_value",
     "validate_session",
 ]
+
+def _hashable_group_key(value: Any) -> tuple:
+    """Type-tagged, hashable stand-in for a $group _id value (#103).
+
+    MongoDB groups by array/document values too; Python dicts require
+    hashable keys, so complex values are represented by their canonical
+    structure while the ORIGINAL value is kept as the returned _id.
+    """
+    match value:
+        case bool():
+            return ("b", value)
+        case int():
+            return ("i", value)
+        case float():
+            return ("f", repr(value))
+        case str():
+            return ("s", value)
+        case None:
+            return ("z",)
+        case dict():
+            return (
+                "d",
+                tuple(
+                    sorted(
+                        (k, _hashable_group_key(v)) for k, v in value.items()
+                    )
+                ),
+            )
+        case list() | tuple():
+            return ("l", tuple(_hashable_group_key(v) for v in value))
+        case bytes():
+            return ("y", value)
+        case _:
+            return ("o", type(value).__name__, str(value))
