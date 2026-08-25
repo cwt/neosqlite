@@ -25,6 +25,41 @@ if TYPE_CHECKING:
     from ..jsonb_support import JSONBContext
 
 
+def _hashable_group_key(value: Any) -> tuple:
+    """Type-tagged, hashable stand-in for a $group _id value (#103).
+
+    MongoDB groups by array/document values too; Python dicts require
+    hashable keys, so complex values are represented by their canonical
+    structure while the ORIGINAL value is kept as the returned _id.
+    """
+    match value:
+        case bool():
+            return ("b", value)
+        case int():
+            return ("i", value)
+        case float():
+            return ("f", repr(value))
+        case str():
+            return ("s", value)
+        case None:
+            return ("z",)
+        case dict():
+            return (
+                "d",
+                tuple(
+                    sorted(
+                        (k, _hashable_group_key(v)) for k, v in value.items()
+                    )
+                ),
+            )
+        case list() | tuple():
+            return ("l", tuple(_hashable_group_key(v) for v in value))
+        case bytes():
+            return ("y", value)
+        case _:
+            return ("o", type(value).__name__, str(value))
+
+
 class AggregationMixin(SqlAggregationMixin):
     """
     Mixin class providing aggregation pipeline methods.
@@ -100,7 +135,12 @@ class AggregationMixin(SqlAggregationMixin):
             else:
                 group_id = self.collection._get_val(doc, group_id_key)
 
-            group = grouped_docs.setdefault(group_id, {"_id": group_id})
+            key = _hashable_group_key(group_id)
+            group = grouped_docs.get(key)
+            if group is None:
+                # Keep the original (possibly list/dict) value as _id (#103)
+                group = {"_id": group_id}
+                grouped_docs[key] = group
 
             for field, accumulator in accumulators.items():
                 # Check if accumulator is a valid dictionary format

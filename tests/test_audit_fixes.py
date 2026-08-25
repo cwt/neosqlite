@@ -639,3 +639,67 @@ class TestPushPositionAndSlice:
     def test_plain_push_unaffected(self, doc):
         doc.update_one({"_id": 1}, {"$push": {"arr": 42}})
         assert doc.find_one({"_id": 1})["arr"] == [1, 2, 3, 42]
+
+
+class TestGroupByComplexKeys:
+    """#103: $group by array/document _id crashed (tier-3) or returned
+    corrupted binary keys. Complex values now group by canonical structure
+    while the original value round-trips as _id."""
+
+    @pytest.fixture
+    def docs(self, connection):
+        c = connection.g
+        c.insert_many(
+            [
+                {"tags": [1, 2], "n": 1},
+                {"tags": [1, 2], "n": 2},
+                {"tags": [3], "n": 5},
+            ]
+        )
+        return c
+
+    def test_tier3_array_keys(self, docs):
+        from neosqlite.collection.query_helper import set_force_fallback
+
+        set_force_fallback(True)
+        try:
+            rows = list(
+                docs.aggregate([{"$group": {"_id": "$tags", "n": {"$sum": 1}}}])
+            )
+        finally:
+            set_force_fallback(False)
+        by_key = {tuple(sorted(d["_id"])): d["n"] for d in rows}
+        assert by_key == {(1, 2): 2, (3,): 1}
+
+    def test_tier3_document_keys(self, connection):
+        from neosqlite.collection.query_helper import set_force_fallback
+
+        c = connection.g2
+        c.insert_many([{"m": {"k": 1}}, {"m": {"k": 1}}, {"m": {"k": 2}}])
+        set_force_fallback(True)
+        try:
+            rows = list(
+                c.aggregate([{"$group": {"_id": "$m", "n": {"$sum": 1}}}])
+            )
+        finally:
+            set_force_fallback(False)
+        assert len(rows) == 2
+
+    def test_tiers_agree_on_array_keys(self, docs):
+        from neosqlite.collection.query_helper import set_force_fallback
+        from neosqlite.collection.temporary_table_aggregation import (
+            TemporaryTableAggregationProcessor,
+        )
+
+        pipeline = [{"$group": {"_id": "$tags", "total": {"$sum": "$n"}}}]
+        proc = TemporaryTableAggregationProcessor(docs)
+        t2 = sorted((tuple(d["_id"]), d["total"]) for d in proc.process_pipeline(pipeline))
+        set_force_fallback(True)
+        try:
+            t3 = sorted(
+                (tuple(d["_id"]), d["total"])
+                for d in docs.aggregate(pipeline)
+            )
+        finally:
+            set_force_fallback(False)
+        assert t2 == t3 == [((1, 2), 3), ((3,), 5)]
