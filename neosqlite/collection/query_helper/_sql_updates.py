@@ -235,6 +235,94 @@ class SqlUpdatesMixin:
         # This shouldn't happen, but just in case
         raise RuntimeError("Failed to fetch updated document")
 
+    @staticmethod
+    def _build_push_position_slice_clause(
+        field: str,
+        values_json: str | None,
+        position_value: int | None,
+        slice_value: int | None,
+    ) -> tuple[str, list[Any]] | None:
+        """Build the SET-clause fragment for $push with $position/$slice.
+
+        Assembles the new array from explicit ordered blocks (front /
+        inserted values / tail) so no LIMIT appears before UNION ALL —
+        the previous template was rejected by SQLite (#97). $slice follows
+        MongoDB semantics including negative counts, which keep the LAST
+        n elements instead of everything (#98).
+
+        Args:
+            field: target field name
+            new_values_json: JSON text array of converted values to insert
+                (None when only slicing is requested)
+            position_value: $position value (negative counts from end)
+            slice_value: $slice value (negative keeps the tail)
+
+        Returns:
+            (fragment, extra_params): the "<json_path>, (<subquery>)"
+            fragment plus parameters to append to the statement's bind list
+            (the inserted-values JSON array), or None when the caller should
+            fall back to the Python tier.
+        """
+        json_path = f"'{parse_json_path(field)}'"
+        cur = f"json_extract(data, {json_path})"
+
+        extra_params: list[Any] = []
+
+        boundary_sql: str | None = None
+        if position_value is not None:
+            p = int(position_value)
+            if p >= 0:
+                boundary_sql = str(p)
+            else:
+                # Negative $position counts back from the array's end,
+                # clamped to 0; the length is resolved at run time.
+                boundary_sql = (
+                    f"MAX((SELECT COUNT(*) FROM json_each({cur})) + ({p}), 0)"
+                )
+
+        arms: list[str] = [
+            f"SELECT value, 0 AS blk, key AS ord FROM json_each({cur})"
+            + (f" WHERE key < {boundary_sql}" if boundary_sql else "")
+        ]
+        if values_json is not None:
+            # Inserted values arrive as one bound JSON-array parameter
+            arms.append(
+                "SELECT value, 1 AS blk, key AS ord FROM json_each(?)"
+            )
+            extra_params.append(values_json)
+        if boundary_sql:
+            arms.append(
+                f"SELECT value, 2 AS blk, key AS ord FROM json_each({cur}) "
+                f"WHERE key >= {boundary_sql}"
+            )
+        union_sql = " UNION ALL ".join(arms)
+        base_ordered = (
+            f"SELECT value FROM ({union_sql}) ORDER BY blk, ord"
+        )
+
+        if slice_value is None:
+            final_select = base_ordered
+        elif slice_value == 0:
+            return f"{json_path}, json('[]')", []
+        elif slice_value > 0:
+            final_select = f"{base_ordered} LIMIT {slice_value}"
+        else:
+            # Negative slice: keep the last n elements. Take them off a
+            # reversed scan, then restore original order via rowid.
+            reversed_scan = (
+                f"SELECT value FROM ({union_sql}) "
+                f"ORDER BY blk DESC, ord DESC LIMIT {-int(slice_value)}"
+            )
+            final_select = (
+                f"SELECT value FROM ({reversed_scan}) ORDER BY rowid"
+            )
+
+        fragment = (
+            f"{json_path}, (SELECT json_group_array(value) "
+            f"FROM ({final_select}))"
+        )
+        return fragment, extra_params
+
     def _perform_enhanced_sql_update(
         self,
         doc_id: Any,
@@ -388,42 +476,18 @@ class SqlUpdatesMixin:
                         # Build JSON array of new values
                         new_values_json = neosqlite_json_dumps(converted_values)
 
-                        # Handle $position: need to reconstruct array with insertion at position
-                        if position_value is not None:
-                            # Position 0 = insert at beginning
-                            # Position N = insert after N elements
-                            # Clamp position to valid range
-                            position = int(position_value)
-                            if position < 0:
-                                position = 0
-
-                            if slice_value is not None and slice_value == 0:
-                                # Slice 0 means empty array
-                                set_clauses.append(f"{json_path}, json('[]')")
-                            elif slice_value is not None:
-                                # Both $position and $slice - apply slice after insertion
-                                # Get elements before position, new values, then slice from position
-                                slice_limit = (
-                                    slice_value if slice_value > 0 else 1000000
-                                )
-                                set_clauses.append(
-                                    f"{json_path}, (SELECT json_group_array(value) FROM (SELECT value FROM json_each(json_extract(data, {json_path})) LIMIT {position} UNION ALL SELECT value FROM json_each({new_values_json}) UNION ALL SELECT value FROM json_each(json_extract(data, {json_path})) LIMIT {slice_limit} OFFSET {position}))"
-                                )
-                            else:
-                                # Only $position, no $slice - insert at position
-                                set_clauses.append(
-                                    f"{json_path}, (SELECT json_group_array(value) FROM (SELECT value FROM json_each(json_extract(data, {json_path})) LIMIT {position} UNION ALL SELECT value FROM json_each({new_values_json}) UNION ALL SELECT value FROM json_each(json_extract(data, {json_path})) LIMIT -1 OFFSET {position}))"
-                                )
-                        elif slice_value is not None:
-                            # Handle $slice only (existing logic)
-                            if slice_value == 0:
-                                # Slice 0 means empty array
-                                set_clauses.append(f"{json_path}, json('[]')")
-                            else:
-                                # Get existing array, concatenate with new values, then slice
-                                set_clauses.append(
-                                    f"{json_path}, (SELECT json_group_array(value) FROM (SELECT value FROM json_each(json_extract(data, {json_path})) UNION ALL SELECT value FROM json_each({new_values_json}) LIMIT {slice_value if slice_value > 0 else 1000000}))"
-                                )
+                        # Handle $position / $slice via the shared,
+                        # order-correct clause builder (#97, #98).
+                        built = self._build_push_position_slice_clause(
+                            field,
+                            new_values_json,
+                            position_value,
+                            slice_value,
+                        )
+                        if built is not None:
+                            clause, extra = built
+                            set_clauses.append(clause)
+                            set_params.extend(extra)
                         else:
                             # No $position or $slice - just append values using [#]
                             append_path = f"'{parse_json_path(field)}[#]'"
@@ -811,7 +875,6 @@ class SqlUpdatesMixin:
                     else:
                         return None
                 case "$push":
-                    # Optimized $push (with $each, optionally with $slice) using [#]
                     for field, push_value in value.items():
                         # Handle $each, $position, and $slice
                         values_to_push = []
@@ -872,51 +935,35 @@ class SqlUpdatesMixin:
                                 converted_values
                             )
 
-                            # Handle $position: insert at specific position
-                            if position_value is not None:
-                                position = int(position_value)
-                                if position < 0:
-                                    position = 0
-
-                                if slice_value is not None and slice_value == 0:
-                                    # Slice 0 means empty array
-                                    set_clauses.append(
-                                        f"{json_path}, json('[]')"
-                                    )
-                                elif slice_value is not None:
-                                    # Both $position and $slice
-                                    slice_limit = (
-                                        slice_value
-                                        if slice_value > 0
-                                        else 1000000
-                                    )
-                                    set_clauses.append(
-                                        f"{json_path}, (SELECT json_group_array(value) FROM (SELECT value FROM json_each(json_extract(data, {json_path})) LIMIT {position} UNION ALL SELECT value FROM json_each({new_values_json}) UNION ALL SELECT value FROM json_each(json_extract(data, {json_path})) LIMIT {slice_limit} OFFSET {position}))"
-                                    )
-                                else:
-                                    # Only $position, no $slice
-                                    set_clauses.append(
-                                        f"{json_path}, (SELECT json_group_array(value) FROM (SELECT value FROM json_each(json_extract(data, {json_path})) LIMIT {position} UNION ALL SELECT value FROM json_each({new_values_json}) UNION ALL SELECT value FROM json_each(json_extract(data, {json_path})) LIMIT -1 OFFSET {position}))"
-                                    )
-                            elif slice_value is not None:
-                                # Handle $slice only
-                                if slice_value == 0:
-                                    # Slice 0 means empty array
-                                    set_clauses.append(
-                                        f"{json_path}, json('[]')"
-                                    )
-                                else:
-                                    # Get existing array, concatenate with new values, then slice
-                                    set_clauses.append(
-                                        f"{json_path}, (SELECT json_group_array(value) FROM (SELECT value FROM json_each(json_extract(data, {json_path})) UNION ALL SELECT value FROM json_each({new_values_json}) LIMIT {slice_value if slice_value > 0 else 1000000}))"
-                                    )
+                            # Handle $position / $slice via the shared,
+                            # order-correct clause builder (#97, #98).
+                            built = self._build_push_position_slice_clause(
+                                field,
+                                new_values_json,
+                                position_value,
+                                slice_value,
+                            )
+                            if built is not None:
+                                clause, extra = built
+                                set_clauses.append(clause)
+                                params.extend(extra)
+                            else:
+                                return None  # builder declined: Python tier
                         else:
                             # No $position or $slice - just append values
                             append_path = f"'{parse_json_path(field)}[#]'"
                             for val in values_to_push:
                                 converted_val = _convert_bytes_to_binary(val)
-                                set_clauses.append(f"{append_path}, ?")
-                                params.append(converted_val)
+                                if isinstance(converted_val, (dict, list, Binary)):
+                                    set_clauses.append(
+                                        f"{append_path}, json(?)"
+                                    )
+                                    params.append(
+                                        neosqlite_json_dumps(converted_val)
+                                    )
+                                else:
+                                    set_clauses.append(f"{append_path}, ?")
+                                    params.append(converted_val)
                 case "$setOnInsert":
                     # $setOnInsert only applies on upsert (doc_id == 0)
                     # For existing documents (doc_id != 0), this is a no-op
@@ -1148,57 +1195,37 @@ class SqlUpdatesMixin:
                         # Build JSON array of new values
                         new_values_json = neosqlite_json_dumps(converted_values)
 
-                        # Handle $position: insert at specific position
-                        if position_value is not None:
-                            position = int(position_value)
-                            if position < 0:
-                                position = 0
-
-                            if slice_value is not None and slice_value == 0:
-                                # Slice 0 means empty array
-                                clauses.append(f"{json_path}, json('[]')")
-                            elif slice_value is not None:
-                                # Both $position and $slice
-                                slice_limit = (
-                                    slice_value if slice_value > 0 else 1000000
-                                )
-                                clauses.append(
-                                    f"{json_path}, (SELECT json_group_array(value) FROM (SELECT value FROM json_each(json_extract(data, {json_path})) LIMIT {position} UNION ALL SELECT value FROM json_each({new_values_json}) UNION ALL SELECT value FROM json_each(json_extract(data, {json_path})) LIMIT {slice_limit} OFFSET {position}))"
-                                )
-                            else:
-                                # Only $position, no $slice
-                                clauses.append(
-                                    f"{json_path}, (SELECT json_group_array(value) FROM (SELECT value FROM json_each(json_extract(data, {json_path})) LIMIT {position} UNION ALL SELECT value FROM json_each({new_values_json}) UNION ALL SELECT value FROM json_each(json_extract(data, {json_path})) LIMIT -1 OFFSET {position}))"
-                                )
-                        elif slice_value is not None:
-                            # Handle $slice only
-                            if slice_value == 0:
-                                # Slice 0 means empty array
-                                clauses.append(f"{json_path}, json('[]')")
-                            else:
-                                # Get existing array, concatenate with new values, then slice
-                                clauses.append(
-                                    f"{json_path}, (SELECT json_group_array(value) FROM (SELECT value FROM json_each(json_extract(data, {json_path})) UNION ALL SELECT value FROM json_each({new_values_json}) LIMIT {slice_value if slice_value > 0 else 1000000}))"
-                                )
-                    else:
-                        # No $position or $slice - just append values
-                        append_path = f"'{parse_json_path(field)}[#]'"
-                        for val in values_to_push:
-                            # Convert bytes to Binary for proper JSON serialization
-                            converted_val = _convert_bytes_to_binary(val)
-                            if isinstance(converted_val, Binary):
-                                clauses.append(f"{append_path}, json(?)")
-                                params.append(
-                                    neosqlite_json_dumps(converted_val)
-                                )
-                            elif isinstance(converted_val, (dict, list)):
-                                clauses.append(f"{append_path}, json(?)")
-                                params.append(
-                                    neosqlite_json_dumps(converted_val)
-                                )
-                            else:
-                                clauses.append(f"{append_path}, ?")
-                                params.append(converted_val)
+                        # Handle $position / $slice via the shared,
+                        # order-correct clause builder (#97, #98).
+                        built = self._build_push_position_slice_clause(
+                            field,
+                            new_values_json,
+                            position_value,
+                            slice_value,
+                        )
+                        if built is not None:
+                            clause, extra = built
+                            clauses.append(clause)
+                            params.extend(extra)
+                        else:
+                            # No $position or $slice - just append values
+                            append_path = f"'{parse_json_path(field)}[#]'"
+                            for val in values_to_push:
+                                # Convert bytes to Binary for proper JSON serialization
+                                converted_val = _convert_bytes_to_binary(val)
+                                if isinstance(converted_val, Binary):
+                                    clauses.append(f"{append_path}, json(?)")
+                                    params.append(
+                                        neosqlite_json_dumps(converted_val)
+                                    )
+                                elif isinstance(converted_val, (dict, list)):
+                                    clauses.append(f"{append_path}, json(?)")
+                                    params.append(
+                                        neosqlite_json_dumps(converted_val)
+                                    )
+                                else:
+                                    clauses.append(f"{append_path}, ?")
+                                    params.append(converted_val)
             case "$pop":
                 # Tier 2: $pop uses json_remove with [0] or [#-1]
                 if not _supports_relative_json_indexing():

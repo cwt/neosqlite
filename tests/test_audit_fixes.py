@@ -594,3 +594,47 @@ class TestUnwindScalars:
                 for d in proc.process_pipeline([spec])
             )
             assert t3 == t2, spec
+
+
+class TestPushPositionAndSlice:
+    """#97/#98: $push $position generated LIMIT-before-UNION-ALL (rejected
+    by SQLite, hard-crashing update_many) and negative $slice silently kept
+    everything. A shared clause builder now assembles ordered blocks and
+    implements MongoDB slice semantics in all three SQL builders."""
+
+    @pytest.fixture
+    def doc(self, connection):
+        c = connection.t
+        c.insert_one({"_id": 1, "arr": [1, 2, 3]})
+        return c
+
+    def test_position_inserts_at_index(self, doc):
+        doc.update_one({"_id": 1}, {"$push": {"arr": {"$each": [9], "$position": 1}}})
+        assert doc.find_one({"_id": 1})["arr"] == [1, 9, 2, 3]
+
+    def test_negative_position_counts_from_end(self, doc):
+        doc.update_one({"_id": 1}, {"$push": {"arr": {"$each": [7], "$position": -2}}})
+        assert doc.find_one({"_id": 1})["arr"] == [1, 2, 7, 3]
+
+    def test_positive_slice_keeps_head(self, doc):
+        doc.update_one({"_id": 1}, {"$push": {"arr": {"$each": [4, 5], "$slice": 3}}})
+        assert doc.find_one({"_id": 1})["arr"] == [1, 2, 3]
+
+    def test_negative_slice_keeps_tail(self, doc):
+        doc.update_one(
+            {"_id": 1},
+            {"$push": {"arr": {"$each": [4, 5], "$slice": -3}}},
+        )
+        assert doc.find_one({"_id": 1})["arr"] == [3, 4, 5]
+
+    def test_zero_slice_empties_array(self, doc):
+        doc.update_one({"_id": 1}, {"$push": {"arr": {"$each": [9], "$slice": 0}}})
+        assert doc.find_one({"_id": 1})["arr"] == []
+
+    def test_update_many_no_longer_crashes_on_position(self, doc):
+        doc.update_many({}, {"$push": {"arr": {"$each": [55], "$position": 1}}})
+        assert doc.find_one({"_id": 1})["arr"] == [1, 55, 2, 3]
+
+    def test_plain_push_unaffected(self, doc):
+        doc.update_one({"_id": 1}, {"$push": {"arr": 42}})
+        assert doc.find_one({"_id": 1})["arr"] == [1, 2, 3, 42]
