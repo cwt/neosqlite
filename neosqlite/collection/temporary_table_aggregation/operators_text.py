@@ -151,24 +151,29 @@ class OperatorsTextMixin(OperatorsBaseMixin):
         # Join on source rowid to get exact matching rows
         # Also preserve _id column for proper sorting support
         # Store bm25 score in JSON data for $meta: textScore support
+        #
+        # The result table is created via create_temp so the aggregation
+        # context owns its lifecycle; previously it leaked per distinct
+        # search term until connection close (#125).
         json_set_func = f"{self.jsonb.json_function_prefix}_set"
-        self.db.execute(f"DROP TABLE IF EXISTS {result_table_name}")
-        self.db.execute(
-            f"""
-            CREATE TEMP TABLE {result_table_name} AS
+        select_sql = f"""
             SELECT c.id, c._id,
                    json({json_set_func}(c.data, '$._textScore', -bm25({fts_table_name}))) as data
             FROM {current_table} c
             INNER JOIN {fts_table_name} f ON c.rowid = f.src_rowid
             WHERE {fts_table_name} MATCH ?
-        """,
-            [search_term],
-        )
+        """
 
-        # Clean up FTS table
-        self.db.execute(f"DROP TABLE IF EXISTS {fts_table_name}")
+        try:
+            # create_temp supports bound params and records ownership, so
+            # the context drops this table with the rest of the pipeline.
+            result_table = create_temp(
+                {"$text": match_spec}, select_sql, params=[search_term]
+            )
+        finally:
+            self.db.execute(f"DROP TABLE IF EXISTS {fts_table_name}")
 
-        return result_table_name
+        return result_table
 
     def _detect_fts_tokenizer(self) -> str:
         """
