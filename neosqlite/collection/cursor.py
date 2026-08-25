@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from ..sql_utils import quote_table_name
 from .json_path_utils import parse_json_path
 from .jsonb_support import json_data_column
-from .type_utils import validate_session
+from .type_utils import bson_sort_key, validate_session
 
 if TYPE_CHECKING:
     from ..client_session import ClientSession
@@ -1237,14 +1237,17 @@ class Cursor:
                         """
                         val = get_val(doc)
                         if isinstance(val, str):
-                            return val.lower()
-                        return val
+                            val = val.lower()
+                        return bson_sort_key(val)
 
                     return key_func
 
                 sorted_docs.sort(key=make_key(), reverse=reverse)
             else:
-                sorted_docs.sort(key=get_val, reverse=reverse)
+                sorted_docs.sort(
+                    key=lambda doc: bson_sort_key(get_val(doc)),
+                    reverse=reverse,
+                )
         return sorted_docs
 
     def _apply_pagination(

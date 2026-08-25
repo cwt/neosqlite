@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from ...exceptions import MalformedQueryException
 from ..cursor import DESCENDING
+from ..type_utils import bson_sort_key
 from ..expr_evaluator import (
     AggregationContext,
     ExprEvaluator,
@@ -77,13 +78,13 @@ def execute_python_aggregation(
                             """
                             Extract sort key from document context.
                             """
+                            # BSON-ordered key: missing/null sorts first
+                            # ascending (last when reversed), mixed types
+                            # never raise (#102).
                             val = query_engine.collection._get_val(
                                 dc["__doc__"], key
                             )
-                            # Handle None values - sort them last for ascending, first for descending
-                            if val is None:
-                                return (0 if dir == DESCENDING else 1, None)
-                            return (0, val)
+                            return bson_sort_key(val)
 
                         return sort_key
 

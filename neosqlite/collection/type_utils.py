@@ -9,6 +9,7 @@ and provide a single source of truth for type operations.
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Any
 
 # =============================================================================
@@ -122,6 +123,47 @@ def get_bson_type(value: Any) -> str:
             return "object"
         case _:
             return "unknown"
+
+
+def bson_sort_key(value: Any) -> tuple:
+    """
+    Build a total-order sort key following BSON type ordering.
+
+    Missing/None values sort before numbers, then strings, objects, arrays,
+    booleans, and datetimes. Values of the same class compare naturally;
+    values of different classes are ordered by class rank, so mixed
+    populations never raise TypeError (MongoDB never fails a sort on type
+    mixture — it orders by BSON type first).
+
+    Use with sort(reverse=True) for descending order; missing/null then
+    correctly sort last, as in MongoDB.
+
+    Args:
+        value: The value to build a key from (None represents missing)
+
+    Returns:
+        A tuple that compares safely against keys of any other value.
+    """
+    if value is None:
+        return (0, 0)
+    if isinstance(value, bool):
+        # bool must be tested before int (bool subclasses int)
+        return (5, value)
+    if isinstance(value, (int, float)):
+        return (1, value)
+    if isinstance(value, str):
+        return (2, value)
+    if isinstance(value, dict):
+        canonical = tuple(
+            sorted((k, bson_sort_key(v)) for k, v in value.items())
+        )
+        return (3, canonical)
+    if isinstance(value, (list, tuple)):
+        return (4, tuple(bson_sort_key(v) for v in value))
+    if isinstance(value, datetime):
+        return (6, value)
+    # Unknown types: order by class name, then repr — always comparable
+    return (9, type(value).__name__, repr(value))
 
 
 # =============================================================================
@@ -296,6 +338,7 @@ __all__ = [
     "_convert_to_date",
     "_convert_to_null",
     "get_bson_type",
+    "bson_sort_key",
     # Type checking helpers
     "_is_expression",
     "_is_field_reference",

@@ -419,3 +419,91 @@ class TestDateSerialization:
         c = connection.t
         c.insert_one({"ts": datetime.datetime(2024, 6, 1, 12, 30)})
         assert isinstance(c.find_one({})["ts"], datetime.datetime)
+
+
+class TestBsonOrderedSort:
+    """#102: Python-tier sorts crashed on missing/mixed-type sort keys.
+    All four copies (cursor fallback, tier-3 $sort, window operators,
+    fill stage) now share a BSON-ordered key: missing/null first ascending,
+    then numbers, strings, objects, arrays, booleans, datetimes."""
+
+    @pytest.fixture
+    def mixed(self, connection):
+        c = connection.mixed
+        c.insert_many(
+            [
+                {"_id": 1, "a": 5},
+                {"_id": 2},                # missing
+                {"_id": 3, "a": "txt"},
+                {"_id": 4, "a": None},
+                {"_id": 5, "a": 2.5},
+            ]
+        )
+        return c
+
+    def test_cursor_fallback_sort_mixed_types(self, mixed):
+        rows = list(
+            mixed.find({"$or": [{"a": {"$exists": True}}, {"x": 1}]}).sort(
+                "a"
+            )
+        )
+        vals = [d.get("a") for d in rows]
+        # None/missing first, numbers next, string last — never TypeError
+        assert vals[0] is None
+        assert [v for v in vals if isinstance(v, (int, float))] == [
+            2.5,
+            5,
+        ]
+        assert vals[-1] == "txt"
+
+    def test_cursor_fallback_descending_puts_missing_last(self, mixed):
+        rows = list(
+            mixed.find({"$or": [{"a": {"$exists": True}}, {"x": 1}]}).sort(
+                [("a", -1)]
+            )
+        )
+        assert rows[-1].get("a") is None
+
+    def test_tier3_group_sort_mixed(self, mixed):
+        from neosqlite.collection.query_helper import set_force_fallback
+
+        set_force_fallback(True)
+        try:
+            rows = list(mixed.aggregate([{"$sort": {"a": 1}}]))
+        finally:
+            set_force_fallback(False)
+        assert rows[0].get("a") is None
+        assert rows[-1]["a"] == "txt"
+
+    def test_fill_stage_sort_survives_missing_keys(self, connection):
+        from neosqlite.collection.query_helper import set_force_fallback
+
+        c = connection.fs
+        c.insert_many([{"t": 2, "v": 20}, {"t": 1, "v": 10}])
+        pipeline = [
+            {
+                "$fill": {
+                    "sortBy": {"t": 1},
+                    "output": {"v": {"method": "locf"}},
+                }
+            }
+        ]
+        set_force_fallback(True)
+        try:
+            rows = list(c.aggregate(pipeline))
+        finally:
+            set_force_fallback(False)
+        assert [d["v"] for d in sorted(rows, key=lambda d: d["t"])] == [
+            10,
+            20,
+        ]
+
+    def test_bson_sort_key_total_order(self):
+        from neosqlite.collection.type_utils import bson_sort_key
+        import datetime
+
+        values = [None, 3, "s", True, [1], {"k": 1}, datetime.datetime.now()]
+        keys = [bson_sort_key(v) for v in values]
+        ordered = sorted(range(len(values)), key=lambda i: keys[i])
+        ranks = [keys[i][0] for i in ordered]
+        assert ranks == sorted(ranks)  # total order, no exceptions

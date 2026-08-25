@@ -7,6 +7,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
+from ..type_utils import bson_sort_key
+
 if TYPE_CHECKING:
     from .. import Collection
     from ..expr_evaluator import ExprEvaluator
@@ -54,10 +56,10 @@ def process_set_window_fields(
                 is_desc = direction == -1
 
                 def get_sort_val(dc):
-                    val = collection._get_val(dc["__doc__"], field)
-                    if val is None:
-                        return (0 if is_desc else 1, None)
-                    return (0, val)
+                    # BSON-ordered key: safe on mixed/missing values (#102)
+                    return bson_sort_key(
+                        collection._get_val(dc["__doc__"], field)
+                    )
 
                 partition_docs.sort(key=get_sort_val, reverse=is_desc)
 
@@ -287,10 +289,10 @@ def _apply_window_operator(
                 is_desc = direction == -1
 
                 def get_sort_val(dc):
-                    val = collection._get_val(dc["__doc__"], field)
-                    if val is None:
-                        return (0 if is_desc else 1, None)
-                    return (0, val)
+                    # BSON-ordered key: safe on mixed/missing values (#102)
+                    return bson_sort_key(
+                        collection._get_val(dc["__doc__"], field)
+                    )
 
                 docs_to_sort.sort(key=get_sort_val, reverse=is_desc)
 

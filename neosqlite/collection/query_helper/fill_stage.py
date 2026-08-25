@@ -4,6 +4,8 @@ Python implementation of MongoDB $fill aggregation stage.
 
 from typing import Any
 
+from ..type_utils import bson_sort_key
+
 
 def process_fill(
     docs_with_context: list[dict[str, Any]],
@@ -46,10 +48,10 @@ def process_fill(
                 is_desc = direction == -1
 
                 def get_sort_val(dc):
-                    val = collection._get_val(dc["__doc__"], field)
-                    if val is None:
-                        return (0 if is_desc else 1, None)
-                    return (0, val)
+                    # BSON-ordered key: safe on mixed/missing values (#102)
+                    return bson_sort_key(
+                        collection._get_val(dc["__doc__"], field)
+                    )
 
                 partition_docs.sort(key=get_sort_val, reverse=is_desc)
 
