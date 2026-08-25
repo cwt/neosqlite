@@ -7,8 +7,6 @@ lists diverged from template placeholders. Keys now canonicalize literal
 values and hits return the exact stored parameters.
 """
 
-import neosqlite
-
 
 class TestSortDirectionCacheRegression:
     def test_descending_sort_not_served_ascending_from_cache(self, connection):
@@ -29,8 +27,7 @@ class TestSortDirectionCacheRegression:
             ]
         )
         r1 = [
-            (d["a"], d["b"])
-            for d in c.aggregate([{"$sort": {"a": 1, "b": 1}}])
+            (d["a"], d["b"]) for d in c.aggregate([{"$sort": {"a": 1, "b": 1}}])
         ]
         r2 = [
             (d["a"], d["b"])
@@ -52,17 +49,11 @@ class TestCacheHitParamsRegression:
 
     def test_in_list_params_survive_cache_hit(self, connection):
         c = connection.test
-        c.insert_many(
-            [{"t": "a"}, {"t": "b"}, {"t": "c"}]
-        )
+        c.insert_many([{"t": "a"}, {"t": "b"}, {"t": "c"}])
         p = [{"$match": {"t": {"$in": ["a", "b"]}}}]
-        expected = [{"t": "a"}, {"t": "b"}]
-        assert sorted(d["t"] for d in c.aggregate(p)) == [
-            "a",
-            "b",
-        ] or True  # first run builds fresh SQL
-        again = sorted(d["t"] for d in c.aggregate(p))
-        assert again == ["a", "b"]
+        first = sorted(d["t"] for d in c.aggregate(p))  # cache miss
+        again = sorted(d["t"] for d in c.aggregate(p))  # cache hit
+        assert first == again == ["a", "b"]
 
     def test_limit_values_never_share_entries(self, connection):
         c = connection.test
@@ -72,9 +63,7 @@ class TestCacheHitParamsRegression:
         assert len(short) == 2
         assert len(long) == 9
 
-    def test_identical_pipeline_hits_cache_with_exact_results(
-        self, connection
-    ):
+    def test_identical_pipeline_hits_cache_with_exact_results(self, connection):
         c = connection.test
         c.insert_many([{"g": "x", "n": 1}, {"g": "x", "n": 3}])
         p = [

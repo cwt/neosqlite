@@ -377,8 +377,8 @@ class StageBuildersMixin:
         grouped_parts: list[str] = [
             # MongoDB's $bucketAuto reports each bucket's boundaries as an
             # {_id: {min, max}} document computed over the bucketed values.
-            f"MIN(val) AS __bmin",
-            f"MAX(val) AS __bmax",
+            "MIN(val) AS __bmin",
+            "MAX(val) AS __bmax",
         ]
         output_fields: list[str] = []
         for field, acc_spec in output.items():
@@ -738,9 +738,7 @@ class StageBuildersMixin:
             if not agg_result:
                 return None, []
             sql_agg, use_distinct = agg_result
-            expr_sql, expr_params = self.evaluator.build_select_expression(
-                expr
-            )
+            expr_sql, expr_params = self.evaluator.build_select_expression(expr)
             all_params.extend(expr_params)
             distinct_str = "DISTINCT " if use_distinct else ""
             agg_select_parts.append(
@@ -864,9 +862,7 @@ class StageBuildersMixin:
                             case "$eq":
                                 if arg is None:
                                     # MongoDB: null matches null-or-missing (#90)
-                                    where_clauses.append(
-                                        f"{field_sql} IS NULL"
-                                    )
+                                    where_clauses.append(f"{field_sql} IS NULL")
                                 else:
                                     where_clauses.append(f"{field_sql} = ?")
                                     all_params.append(arg)

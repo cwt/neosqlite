@@ -18,19 +18,17 @@ def bucket(connection):
 
 def test_delete_by_name_removes_all_chunks(bucket, connection):
     bucket.upload_from_stream("hello.txt", b"A" * 600_000)  # multi-chunk
-    before = connection.db.execute(
-        "SELECT COUNT(*) FROM fs_chunks"
-    ).fetchone()[0]
+    before = connection.db.execute("SELECT COUNT(*) FROM fs_chunks").fetchone()[
+        0
+    ]
     assert before > 1
 
     bucket.delete_by_name("hello.txt")
 
-    after = connection.db.execute(
-        "SELECT COUNT(*) FROM fs_chunks"
-    ).fetchone()[0]
-    files = connection.db.execute(
-        "SELECT COUNT(*) FROM fs_files"
-    ).fetchone()[0]
+    after = connection.db.execute("SELECT COUNT(*) FROM fs_chunks").fetchone()[
+        0
+    ]
+    files = connection.db.execute("SELECT COUNT(*) FROM fs_files").fetchone()[0]
     assert after == 0, "chunks must be deleted with the file document"
     assert files == 0
 
@@ -44,10 +42,8 @@ def test_multiple_versions_all_deleted_cleanly(bucket, connection):
     for i in range(3):
         bucket.upload_from_stream("f.txt", b"x" * 300_000)
     bucket.delete_by_name("f.txt")
-    chunks = connection.db.execute(
-        "SELECT COUNT(*) FROM fs_chunks"
-    ).fetchone()[0]
-    files = connection.db.execute(
-        "SELECT COUNT(*) FROM fs_files"
-    ).fetchone()[0]
+    chunks = connection.db.execute("SELECT COUNT(*) FROM fs_chunks").fetchone()[
+        0
+    ]
+    files = connection.db.execute("SELECT COUNT(*) FROM fs_files").fetchone()[0]
     assert chunks == 0 and files == 0

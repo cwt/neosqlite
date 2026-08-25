@@ -290,9 +290,7 @@ class SqlQueryBuilderMixin:
                 return text_result
 
             fts_where, fts_params, _ = text_result
-            rest_query = {
-                k: v for k, v in query.items() if k != "$text"
-            }
+            rest_query = {k: v for k, v in query.items() if k != "$text"}
             rest_result = None
             if rest_query:
                 rest_result = self._build_simple_where_clause(rest_query)
@@ -303,7 +301,7 @@ class SqlQueryBuilderMixin:
             rest_where, rest_params, _ = rest_result
             if not rest_where:
                 return text_result
-            rest_conditions = rest_where[len("WHERE "):]
+            rest_conditions = rest_where[len("WHERE ") :]
             return (
                 f"{fts_where.strip()} AND ({rest_conditions})",
                 fts_params + rest_params,

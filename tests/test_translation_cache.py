@@ -240,9 +240,7 @@ class TestTranslationCache:
         # Regression guard for the cache-key collision that served wrong
         # results for repeated pipelines with differing values (#85/#86).
         key4 = cache.make_key([{"$match": {"age": {"$gt": 999}}}])
-        assert (
-            key3 != key4
-        ), "Different literal values must have different keys"
+        assert key3 != key4, "Different literal values must have different keys"
 
     def test_cache_multiple_parameterized_operators_different_order(self):
         """Test cache key is stable regardless of operator order in query.
@@ -288,12 +286,8 @@ class TestTranslationCache:
         )
 
         # $skip
-        assert cache.make_key([{"$skip": 5}]) == cache.make_key(
-            [{"$skip": 5}]
-        )
-        assert cache.make_key([{"$skip": 5}]) != cache.make_key(
-            [{"$skip": 50}]
-        )
+        assert cache.make_key([{"$skip": 5}]) == cache.make_key([{"$skip": 5}])
+        assert cache.make_key([{"$skip": 5}]) != cache.make_key([{"$skip": 50}])
 
         # $sample.size
         assert cache.make_key([{"$sample": {"size": 20}}]) == (
@@ -1827,8 +1821,9 @@ class TestBugFixComparisonOperators:
         )
         return conn, users
 
-    def _run_operator_case(self, op, first, second, expected_first,
-                           expected_second, field="age"):
+    def _run_operator_case(
+        self, op, first, second, expected_first, expected_second, field="age"
+    ):
         conn, users = self._make_conn()
         qe = users.query_engine.sql_tier_aggregator
         qe.clear_cache()

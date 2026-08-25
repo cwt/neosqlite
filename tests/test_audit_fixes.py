@@ -6,7 +6,6 @@ behavior after the fix.
 
 import pytest
 
-import neosqlite
 from neosqlite.exceptions import MalformedQueryException
 
 
@@ -18,9 +17,7 @@ class TestUpdateManyIncMulValidation:
     falls back to the Python tier, which raises MalformedQueryException.
     """
 
-    def test_inc_on_string_field_raises_instead_of_corrupting(
-        self, connection
-    ):
+    def test_inc_on_string_field_raises_instead_of_corrupting(self, connection):
         c = connection.t
         c.insert_many([{"a": "hello"}, {"a": "world"}])
         with pytest.raises(MalformedQueryException):
@@ -190,8 +187,7 @@ class TestTextSearchCombinedFilters:
 
     def test_text_alone_still_matches_all_indexes(self, news):
         found = sorted(
-            d["category"]
-            for d in news.find({"$text": {"$search": "war"}})
+            d["category"] for d in news.find({"$text": {"$search": "war"}})
         )
         assert found == ["business", "politics"]
 

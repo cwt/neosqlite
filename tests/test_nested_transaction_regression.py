@@ -9,8 +9,6 @@ refused before any connection state is touched.
 
 import sqlite3
 
-import neosqlite
-
 
 def test_nested_transaction_does_not_destroy_outer_work(connection):
     col = connection.c1

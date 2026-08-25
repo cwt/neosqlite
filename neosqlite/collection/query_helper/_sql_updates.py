@@ -734,9 +734,7 @@ class SqlUpdatesMixin:
                         json_path = f"'{parse_json_path(field)}'"
                         # Missing/NULL field must take the new value (scalar
                         # min(NULL, x) is NULL), matching MongoDB (#88).
-                        extract_expr = (
-                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path})"
-                        )
+                        extract_expr = f"{self.jsonb.json_function_prefix}_extract(data, {json_path})"
                         set_clauses.append(
                             f"{json_path}, CASE WHEN {extract_expr} IS NULL THEN ? ELSE min({extract_expr}, ?) END"
                         )
@@ -745,9 +743,7 @@ class SqlUpdatesMixin:
                 case "$max":
                     for field, field_val in value.items():
                         json_path = f"'{parse_json_path(field)}'"
-                        extract_expr = (
-                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path})"
-                        )
+                        extract_expr = f"{self.jsonb.json_function_prefix}_extract(data, {json_path})"
                         set_clauses.append(
                             f"{json_path}, CASE WHEN {extract_expr} IS NULL THEN ? ELSE max({extract_expr}, ?) END"
                         )
@@ -1070,9 +1066,7 @@ class SqlUpdatesMixin:
                     json_path = f"'{parse_json_path(field)}'"
                     # Missing/NULL field must take the new value (scalar
                     # min(NULL, x) is NULL), matching MongoDB (#88).
-                    extract_expr = (
-                        f"{self.jsonb.json_function_prefix}_extract(data, {json_path})"
-                    )
+                    extract_expr = f"{self.jsonb.json_function_prefix}_extract(data, {json_path})"
                     clauses.append(
                         f"{json_path}, CASE WHEN {extract_expr} IS NULL THEN ? ELSE min({extract_expr}, ?) END"
                     )
@@ -1091,9 +1085,7 @@ class SqlUpdatesMixin:
             case "$max":
                 for field, field_val in value.items():
                     json_path = f"'{parse_json_path(field)}'"
-                    extract_expr = (
-                        f"{self.jsonb.json_function_prefix}_extract(data, {json_path})"
-                    )
+                    extract_expr = f"{self.jsonb.json_function_prefix}_extract(data, {json_path})"
                     clauses.append(
                         f"{json_path}, CASE WHEN {extract_expr} IS NULL THEN ? ELSE max({extract_expr}, ?) END"
                     )
@@ -1245,9 +1237,7 @@ class SqlUpdatesMixin:
                         # - element exists -> keep current array unchanged
                         # - missing        -> insert into a copy of the array (#89)
                         exists_subquery = f"EXISTS (SELECT 1 FROM json_each(data, {array_path}) WHERE value = ?)"
-                        current_array = (
-                            f"{self.jsonb.json_function_prefix}_extract(data, {array_path})"
-                        )
+                        current_array = f"{self.jsonb.json_function_prefix}_extract(data, {array_path})"
 
                         clauses.append(
                             f"{array_path}, CASE WHEN {exists_subquery} THEN {current_array} ELSE {insert_func}({current_array}, '$[#]', ?) END"
