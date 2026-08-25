@@ -133,12 +133,12 @@ class RawBatchCursor:
             # Build the full query with proper WHERE clause handling
             if where_clause and where_clause.strip():
                 cmd = (
-                    f"SELECT id, {json_data_column(jsonb)} as data "
+                    f"SELECT id, _id, {json_data_column(jsonb)} as data "
                     f"FROM {quote_table_name(self._collection.name)} {where_clause} {order_by}"
                 )
             else:
                 cmd = (
-                    f"SELECT id, {json_data_column(jsonb)} as data "
+                    f"SELECT id, _id, {json_data_column(jsonb)} as data "
                     f"FROM {quote_table_name(self._collection.name)} {order_by}"
                 )
 
@@ -164,7 +164,10 @@ class RawBatchCursor:
                     break
 
                 # Convert rows to documents
-                docs = [self._collection._load(row[0], row[1]) for row in rows]
+                docs = [
+                    self._collection._load_with_stored_id(row[0], row[2], row[1])
+                    for row in rows
+                ]
 
                 # Convert to JSON batch using custom encoder to handle ObjectIds
                 batch_json = "\n".join(

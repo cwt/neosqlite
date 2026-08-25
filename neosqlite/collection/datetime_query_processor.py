@@ -281,12 +281,14 @@ class DateTimeQueryProcessor:
             return None
 
         # Build the SQL query using json_* functions for datetime comparison
-        cmd = f"SELECT id, data FROM {quote_table_name(self.collection.name)} {where_clause}"
+        cmd = f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)} {where_clause}"
 
         try:
             cursor = self.db.execute(cmd, params)
             results = [
-                self.collection._load(row[0], row[1])
+                self.collection._load_with_stored_id(
+                    row[0], row[2], row[1]
+                )
                 for row in cursor.fetchall()
             ]
             return results
@@ -324,7 +326,7 @@ class DateTimeQueryProcessor:
                 base_stage = {"_base": True}
                 temp_table = create_temp(
                     base_stage,
-                    f"SELECT id, data FROM {quote_table_name(self.collection.name)}",
+                    f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)}",
                 )
 
                 # To ensure we use json_* functions for datetime queries,
@@ -363,9 +365,13 @@ class DateTimeQueryProcessor:
                 )
 
                 # Retrieve results from the filtered table
-                cursor = self.db.execute(f"SELECT id, data FROM {result_table}")
+                cursor = self.db.execute(
+                    f"SELECT id, _id, data FROM {result_table}"
+                )
                 results = [
-                    self.collection._load(row[0], row[1])
+                    self.collection._load_with_stored_id(
+                        row[0], row[2], row[1]
+                    )
                     for row in cursor.fetchall()
                 ]
                 return results
