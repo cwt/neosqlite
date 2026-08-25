@@ -703,3 +703,32 @@ class TestGroupByComplexKeys:
         finally:
             set_force_fallback(False)
         assert t2 == t3 == [((1, 2), 3), ((3,), 5)]
+
+
+class TestTier2EmptyGroup:
+    """#104: a constant-key $group over empty input emitted a phantom
+    aggregate row (SQLite bare aggregates always return one row)."""
+
+    def test_constant_key_group_empty_input(self, connection):
+        from neosqlite.collection.temporary_table_aggregation import (
+            TemporaryTableAggregationProcessor,
+        )
+
+        c = connection.g
+        proc = TemporaryTableAggregationProcessor(c)
+        rows = proc.process_pipeline(
+            [{"$match": {"g": "nope"}}, {"$group": {"_id": None, "n": {"$sum": 1}}}]
+        )
+        assert rows == []
+
+    def test_populated_groups_unaffected(self, connection):
+        from neosqlite.collection.temporary_table_aggregation import (
+            TemporaryTableAggregationProcessor,
+        )
+
+        c = connection.g
+        c.insert_many([{"g": "x", "n": 1}, {"g": "x", "n": 2}])
+        proc = TemporaryTableAggregationProcessor(c)
+        assert proc.process_pipeline(
+            [{"$group": {"_id": None, "n": {"$sum": "$n"}}}]
+        ) == [{"_id": None, "n": 3}]

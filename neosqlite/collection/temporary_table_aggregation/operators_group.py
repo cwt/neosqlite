@@ -391,7 +391,9 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         # For grouped results, we need to properly construct the output
         # The _id field should be the group key, and other fields are accumulators
         # We'll create a JSON object with all the fields
-        json_args = self._id_to_json_object_args(select_parts)
+        json_args = ", ".join(
+            f"'{alias}', {alias}" for alias in self._select_aliases(select_parts)
+        )
         json_object_func = f"{self.jsonb.json_function_prefix}_object"
         # Wrap with json() to ensure text output for Python consumption
         # (jsonb_object returns binary JSONB which Python can't read directly)
@@ -412,7 +414,7 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
             group_stage,
             "SELECT ROW_NUMBER() OVER () as id, "
             + f"{json_output_func}({json_args})) as data "
-            + f"FROM {current_table} {group_by_clause}",
+            + self._grouped_source_sql(current_table, select_parts, group_by_clause),
         )
 
         # Store array fields metadata for efficient post-processing
@@ -422,6 +424,44 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         self._array_fields_map[new_table] = array_fields
 
         return new_table
+
+    @staticmethod
+    def _select_aliases(select_parts: list[str]) -> list[str]:
+        """Extract output aliases from 'expression AS alias' fragments.
+
+        The grouped SELECT is wrapped in an outer projection (#104), so
+        json_object must reference the inner ALIASES, not re-evaluate the
+        aggregate expressions (which would need the source `data` column).
+        """
+        aliases = []
+        for part in select_parts:
+            if " AS " in part:
+                alias = part.rsplit(" AS ", 1)[1].strip().strip('"').strip("'")
+                aliases.append(alias)
+            else:
+                aliases.append("column")
+        return aliases
+
+    @staticmethod
+    def _grouped_source_sql(
+        current_table: str, select_parts: list[str], group_by_clause: str
+    ) -> str:
+        """FROM clause for the grouped output (#104).
+
+        With a GROUP BY, empty input naturally yields zero groups. A
+        constant-key group (no GROUP BY) is a bare aggregate that always
+        emits one row in SQLite — even over zero rows — so it computes
+        COUNT(*) alongside and filters it out.
+        """
+        if group_by_clause:
+            return (
+                f"FROM (SELECT {', '.join(select_parts)} "
+                f"FROM {current_table} {group_by_clause})"
+            )
+        return (
+            f"FROM (SELECT {', '.join(select_parts)}, COUNT(*) AS __cnt "
+            f"FROM {current_table}) WHERE __cnt > 0"
+        )
 
     def _id_to_json_object_args(self, select_parts: list[str]) -> str:
         """
