@@ -281,9 +281,34 @@ class SqlQueryBuilderMixin:
         if get_force_fallback():
             return None  # Force fallback to Python implementation
 
-        # Handle text search queries separately
+        # Handle text search queries. When $text is combined with other
+        # conditions, the FTS match is AND-ed with the remaining compiled
+        # conditions instead of replacing them (#91).
         if self._is_text_search_query(query):
-            return self._build_text_search_query(query)
+            text_result = self._build_text_search_query(query)
+            if text_result is None or len(query) == 1:
+                return text_result
+
+            fts_where, fts_params, _ = text_result
+            rest_query = {
+                k: v for k, v in query.items() if k != "$text"
+            }
+            rest_result = None
+            if rest_query:
+                rest_result = self._build_simple_where_clause(rest_query)
+            if rest_result is None:
+                # Remaining conditions need the Python tier; a combined SQL
+                # clause would silently drop them, so fall back entirely.
+                return None
+            rest_where, rest_params, _ = rest_result
+            if not rest_where:
+                return text_result
+            rest_conditions = rest_where[len("WHERE "):]
+            return (
+                f"{fts_where.strip()} AND ({rest_conditions})",
+                fts_params + rest_params,
+                [],
+            )
 
         # Handle $expr queries
         if "$expr" in query:

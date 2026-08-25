@@ -162,3 +162,41 @@ class TestNullMatchSemantics:
         # Both the explicit-null and the missing-field docs match
         assert len(found) == 2
         assert all(d.get("g") is None for d in found)
+
+
+class TestTextSearchCombinedFilters:
+    """#91: $text used to silently drop every sibling filter condition."""
+
+    @pytest.fixture
+    def news(self, connection):
+        c = connection.news
+        c.insert_many(
+            [
+                {"title": "war report", "category": "politics"},
+                {"title": "war economy", "category": "business"},
+            ]
+        )
+        c.create_search_index("title")
+        return c
+
+    def test_text_plus_filter_returns_only_matching_both(self, news):
+        found = sorted(
+            d["category"]
+            for d in news.find(
+                {"category": "politics", "$text": {"$search": "war"}}
+            )
+        )
+        assert found == ["politics"]
+
+    def test_text_alone_still_matches_all_indexes(self, news):
+        found = sorted(
+            d["category"]
+            for d in news.find({"$text": {"$search": "war"}})
+        )
+        assert found == ["business", "politics"]
+
+    def test_text_plus_nonmatching_filter_returns_nothing(self, news):
+        found = list(
+            news.find({"category": "sports", "$text": {"$search": "war"}})
+        )
+        assert found == []
