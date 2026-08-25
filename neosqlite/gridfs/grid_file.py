@@ -394,8 +394,37 @@ class GridIn:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Context manager exit."""
+        """Context manager exit.
+
+        An exception inside the with-body aborts the upload: the partial
+        files document and chunks are removed instead of being committed
+        as a truncated-but-valid file (#127).
+        """
+        if exc_type is not None:
+            try:
+                self.abort()
+            except Exception as abort_error:
+                logger.warning(f"GridIn abort failed: {abort_error}")
+            return
         self.close()
+
+    def abort(self) -> None:
+        """Discard an in-progress upload: remove chunks and files rows."""
+        if self._closed and self._chunk_number == 0:
+            return
+        try:
+            file_int_id = self._get_file_id()
+            self._db.execute(
+                f"DELETE FROM {self._chunks_collection} WHERE files_id = ?",
+                (file_int_id,),
+            )
+            self._db.execute(
+                f"DELETE FROM {self._files_collection} WHERE id = ?",
+                (file_int_id,),
+            )
+            self._db.commit()
+        finally:
+            self._closed = True
 
 
 class GridOut:
@@ -609,6 +638,13 @@ class GridOut:
 
         if size == -1:
             # Read all remaining data
+            if self._length is None:
+                # Abandoned upload: length was never finalized (#127)
+                from .errors import CorruptGridFile
+
+                raise CorruptGridFile(
+                    "File has no finalized length (abandoned upload)"
+                )
             size = self._length - self._position
 
         if size <= 0:
