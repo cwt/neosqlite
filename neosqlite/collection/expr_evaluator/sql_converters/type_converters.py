@@ -212,6 +212,12 @@ class TypeConvertersMixin(BaseSqlMixin):
             case "$toBool":
                 if isinstance(operand, str) and operand.startswith("$"):
                     field_path = operand[1:]
+                    if field_path == "_id":
+                        # _id lives in a dedicated column, not inside the
+                        # data JSON; the SQL tier cannot inspect it there (#113)
+                        raise NotImplementedError(
+                            "$_id not supported in SQL tier (use Python fallback)"
+                        )
                     from ...json_path_utils import parse_json_path
 
                     json_path = parse_json_path(field_path)
@@ -268,6 +274,12 @@ class TypeConvertersMixin(BaseSqlMixin):
                 if isinstance(operand, str) and operand.startswith("$"):
                     # Direct field reference
                     field_path = operand[1:]
+                    if field_path == "_id":
+                        # _id lives in a dedicated column, not inside the
+                        # data JSON; the SQL tier cannot inspect it there (#113)
+                        raise NotImplementedError(
+                            "$_id not supported in SQL tier (use Python fallback)"
+                        )
                     from ...json_path_utils import parse_json_path
 
                     json_path = parse_json_path(field_path)
@@ -299,6 +311,12 @@ class TypeConvertersMixin(BaseSqlMixin):
                 if isinstance(operand, str) and operand.startswith("$"):
                     # Direct field reference
                     field_path = operand[1:]
+                    if field_path == "_id":
+                        # _id lives in a dedicated column, not inside the
+                        # data JSON; the SQL tier cannot inspect it there (#113)
+                        raise NotImplementedError(
+                            "$_id not supported in SQL tier (use Python fallback)"
+                        )
                     from ...json_path_utils import parse_json_path
 
                     json_path = parse_json_path(field_path)

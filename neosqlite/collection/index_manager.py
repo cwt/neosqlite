@@ -105,11 +105,18 @@ class IndexManager:
                 func_prefix = self.jsonb.json_function_prefix
 
                 # Create the index using appropriate JSON/JSONB function
+                if key == "_id":
+                    # _id lives in a dedicated column, not inside data (#113)
+                    index_expr = quote_identifier("_id")
+                else:
+                    index_expr = (
+                        f"{func_prefix}_extract(data, '{parse_json_path(key)}')"
+                    )
                 self.collection.db.execute(
                     (
                         f"CREATE {'UNIQUE ' if unique else ''}INDEX "
                         f"IF NOT EXISTS {quote_identifier(f'idx_{self.collection.name}_{index_name}')} "
-                        f"ON {quote_table_name(self.collection.name)}({func_prefix}_extract(data, '{parse_json_path(key)}'))"
+                        f"ON {quote_table_name(self.collection.name)}({index_expr})"
                     )
                 )
         else:

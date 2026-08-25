@@ -361,3 +361,42 @@ class TestGroupLiteralAccumulatorParity:
             {"name": "n1", "kind": "x"},
             {"name": "n2", "kind": "x"},
         ]
+
+
+class TestIdColumnReferences:
+    """#113: parse_json_path('_id') returns a bare token, so callers that
+    interpolated it into json_extract(data, ...) generated invalid SQL.
+    _id lives in a dedicated column; those sites now reference it directly
+    (and $_id type expressions fall back to the Python tier)."""
+
+    @pytest.fixture
+    def numbered(self, connection):
+        c = connection.t
+        for i in (1, 2, 3):
+            c.insert_one({"_id": i, "v": i})
+        return c
+
+    def test_min_max_on_id(self, numbered):
+        assert list(numbered.find().min([("_id", 2)]))[0]["_id"] == 2
+        assert list(numbered.find().max([("_id", 2)]))[0]["_id"] == 1
+
+    def test_create_index_on_id(self, numbered):
+        numbered.create_index("_id")  # must not raise bad JSON path
+
+    def test_expr_on_id_falls_back_to_python(self, numbered):
+        rows = list(
+            numbered.aggregate([{"$match": {"$expr": {"$gt": ["$_id", 0]}}}])
+        )
+        assert len(rows) == 3
+
+    def test_raw_batch_sort_by_id(self, numbered):
+        import json
+
+        rbc = numbered.find_raw_batches()
+        rbc._sort = {"_id": -1}
+        docs = []
+        for batch in rbc:
+            docs.extend(
+                json.loads(line) for line in batch.decode().splitlines()
+            )
+        assert [d["v"] for d in docs] == [3, 2, 1]

@@ -109,11 +109,18 @@ class RawBatchCursor:
             order_by = ""
             if self._sort:
                 sort_clauses = []
+                table_ref = quote_table_name(self._collection.name)
                 for key, direction in self._sort.items():
-                    sort_clauses.append(
-                        f"{json_func}_extract(data, '{parse_json_path(key)}') "
-                        f"{'DESC' if direction == -1 else 'ASC'}"
-                    )
+                    direction_sql = "DESC" if direction == -1 else "ASC"
+                    if key == "_id":
+                        # _id lives in a dedicated column (#113); ordering by
+                        # it also makes OFFSET pagination deterministic.
+                        sort_clauses.append(f"{table_ref}._id {direction_sql}")
+                    else:
+                        sort_clauses.append(
+                            f"{json_func}_extract(data, '{parse_json_path(key)}') "
+                            f"{direction_sql}"
+                        )
                 order_by = "ORDER BY " + ", ".join(sort_clauses)
 
             # Build the full query with proper WHERE clause handling
