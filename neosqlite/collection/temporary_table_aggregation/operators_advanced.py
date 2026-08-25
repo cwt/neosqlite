@@ -97,23 +97,30 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             self.collection.db.execute(
                 f"CREATE TEMP TABLE {series_table} (val REAL)"
             )
-            self.collection.db.execute(
-                f"INSERT INTO {series_table} (val) VALUES "
-                + "("
-                + "),((".join([str(v) for v in step_series])
-                + ")"
+            # executemany avoids hand-building a multi-row VALUES list (the
+            # old '),(( ' separator produced syntactically invalid SQL and
+            # the stage could never execute — #106)
+            self.collection.db.executemany(
+                f"INSERT INTO {series_table} (val) VALUES (?)",
+                [(v,) for v in step_series],
             )
 
             json_set_func = f"{self.jsonb.json_function_prefix}_set"
+            json_path = parse_json_path(field)
 
+            # MongoDB semantics: originals preserved, plus one generated
+            # document per missing field value inside [lower, upper].
             select_clause = f"""
-                SELECT id, _id,
-                json({json_set_func}(data, '{field}', s.val)) as data
-                FROM {current_table}, {series_table} s
-                WHERE s.val >= {lower_bound} AND s.val <= {upper_bound}
-                AND NOT EXISTS (
+                SELECT id, _id, data FROM {current_table}
+                UNION ALL
+                SELECT ROW_NUMBER() OVER ()
+                       + (SELECT COALESCE(MAX(id), 0) FROM {current_table}) AS id,
+                       NULL AS _id,
+                       json({json_set_func}('{{}}', '{json_path}', s.val)) as data
+                FROM {series_table} s
+                WHERE NOT EXISTS (
                     SELECT 1 FROM {current_table} c
-                    WHERE {json_extract}(c.data, '{field}') = s.val
+                    WHERE {json_extract}(c.data, '{json_path}') = s.val
                 )
             """
 

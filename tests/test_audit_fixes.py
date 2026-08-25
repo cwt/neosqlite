@@ -854,3 +854,29 @@ class TestHybridAddFieldsPreservesGroupId:
             ]
         )
         assert {d["_id"]: d["dbl"] for d in rows} == {"a": 6, "b": 4}
+
+
+class TestTier2Densify:
+    """#106: tier-2 $densify built a malformed multi-row INSERT (never
+    executed) and would have discarded original documents."""
+
+    def test_densify_preserves_originals_and_fills_gaps(self, connection):
+        from neosqlite.collection.temporary_table_aggregation import (
+            TemporaryTableAggregationProcessor,
+        )
+
+        c = connection.d
+        c.insert_many([{"t": 1, "v": "a"}, {"t": 3, "v": "b"}])
+        proc = TemporaryTableAggregationProcessor(c)
+        rows = proc.process_pipeline(
+            [
+                {
+                    "$densify": {
+                        "field": "t",
+                        "range": {"step": 1, "bounds": [0, 4]},
+                    }
+                }
+            ]
+        )
+        pairs = sorted((d.get("t"), d.get("v")) for d in rows)
+        assert pairs == [(0, None), (1, "a"), (2, None), (3, "b"), (4, None)]
