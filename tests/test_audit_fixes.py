@@ -732,3 +732,63 @@ class TestTier2EmptyGroup:
         assert proc.process_pipeline(
             [{"$group": {"_id": None, "n": {"$sum": "$n"}}}]
         ) == [{"_id": None, "n": 3}]
+
+
+class TestTier2FirstLast:
+    """#105: tier-2 $first/$last generated invalid SQL (the group-key
+    expression was qualified with a table alias) and never worked."""
+
+    @pytest.fixture
+    def docs(self, connection):
+        c = connection.f
+        c.insert_many(
+            [
+                {"cat": "a", "v": 10, "tag": "a1"},
+                {"cat": "a", "v": 20, "tag": "a2"},
+                {"cat": "b", "v": 5, "tag": "b1"},
+            ]
+        )
+        return c
+
+    def test_first_last_per_group(self, docs):
+        from neosqlite.collection.temporary_table_aggregation import (
+            TemporaryTableAggregationProcessor,
+        )
+
+        proc = TemporaryTableAggregationProcessor(docs)
+        rows = proc.process_pipeline(
+            [
+                {
+                    "$group": {
+                        "_id": "$cat",
+                        "firstV": {"$first": "$v"},
+                        "lastV": {"$last": "$v"},
+                    }
+                }
+            ]
+        )
+        got = {d["_id"]: d for d in rows}
+        assert got["a"]["firstV"] == 10 and got["a"]["lastV"] == 20
+        assert got["b"]["firstV"] == 5 and got["b"]["lastV"] == 5
+
+    def test_constant_key_first_last(self, docs):
+        from neosqlite.collection.temporary_table_aggregation import (
+            TemporaryTableAggregationProcessor,
+        )
+
+        proc = TemporaryTableAggregationProcessor(docs)
+        assert proc.process_pipeline(
+            [{"$group": {"_id": None, "f": {"$first": "$v"}, "l": {"$last": "$v"}}}]
+        ) == [{"_id": None, "f": 10, "l": 5}]
+
+    def test_null_group_keys_do_not_break(self, docs):
+        from neosqlite.collection.temporary_table_aggregation import (
+            TemporaryTableAggregationProcessor,
+        )
+
+        docs.insert_one({"v": 99})
+        proc = TemporaryTableAggregationProcessor(docs)
+        rows = proc.process_pipeline(
+            [{"$group": {"_id": "$cat", "l": {"$last": "$v"}}}]
+        )
+        assert any(d["_id"] is None and d["l"] == 99 for d in rows)

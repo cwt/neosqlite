@@ -120,6 +120,9 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                     f"$group with expression key {group_id_expr} not supported in SQL tier: {e}"
                 )
 
+        # $first/$last accumulators are materialized via a ranked CTE
+        self._first_last_fields: list[tuple[str, bool, str]] = []
+
         # Handle accumulators
         for field, accumulator in group_spec.items():
             if field == "_id":
@@ -212,68 +215,20 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                 case "$count":
                     select_parts.append(f"COUNT(*) AS {field}")
 
-                case "$first":
-                    # $first gets the first value in the group (by insertion order / minimum id)
-                    # When grouping by $_id, each document is its own group, so just return the value
-                    if expr_field:
-                        if group_id_expr == "$_id" or (
-                            isinstance(group_id_expr, str)
-                            and group_id_expr.lstrip("$") == "_id"
-                        ):
-                            # Special case: grouping by $_id, each doc is its own group
-                            if expr_field == "_id":
-                                select_parts.append(f"_id AS {field}")
-                            else:
-                                select_parts.append(
-                                    f"{json_extract}(data, '{parse_json_path(expr_field)}') AS {field}"
-                                )
-                        elif expr_field == "_id":
-                            select_parts.append(
-                                f"(SELECT first_t._id FROM {current_table} first_t "
-                                f"INNER JOIN (SELECT MIN(sub_t.id) as min_id FROM {current_table} sub_t "
-                                f"WHERE sub_t.{group_by_parts[0]} = {group_by_parts[0]}) first_sub "
-                                f"ON first_t.id = first_sub.min_id) AS {field}"
-                            )
-                        else:
-                            select_parts.append(
-                                f"(SELECT {json_extract}(first_t.data, '{parse_json_path(expr_field)}') "
-                                f"FROM {current_table} first_t "
-                                f"INNER JOIN (SELECT MIN(sub_t.id) as min_id FROM {current_table} sub_t "
-                                f"WHERE sub_t.{group_by_parts[0]} = {group_by_parts[0]}) first_sub "
-                                f"ON first_t.id = first_sub.min_id) AS {field}"
-                            )
-                    # Note: This is a simplified implementation
-                    # A full implementation would need proper ordering within groups
-
-                case "$last":
-                    # $last gets the last value in the group (by insertion order / maximum id)
-                    if expr_field:
-                        if group_id_expr == "$_id" or (
-                            isinstance(group_id_expr, str)
-                            and group_id_expr.lstrip("$") == "_id"
-                        ):
-                            # Special case: grouping by $_id, each doc is its own group
-                            if expr_field == "_id":
-                                select_parts.append(f"_id AS {field}")
-                            else:
-                                select_parts.append(
-                                    f"{json_extract}(data, '{parse_json_path(expr_field)}') AS {field}"
-                                )
-                        elif expr_field == "_id":
-                            select_parts.append(
-                                f"(SELECT last_t._id FROM {current_table} last_t "
-                                f"INNER JOIN (SELECT MAX(sub_t.id) as max_id FROM {current_table} sub_t "
-                                f"WHERE sub_t.{group_by_parts[0]} = {group_by_parts[0]}) last_sub "
-                                f"ON last_t.id = last_sub.max_id) AS {field}"
-                            )
-                        else:
-                            select_parts.append(
-                                f"(SELECT {json_extract}(last_t.data, '{parse_json_path(expr_field)}') "
-                                f"FROM {current_table} last_t "
-                                f"INNER JOIN (SELECT MAX(sub_t.id) as max_id FROM {current_table} sub_t "
-                                f"WHERE sub_t.{group_by_parts[0]} = {group_by_parts[0]}) last_sub "
-                                f"ON last_t.id = last_sub.max_id) AS {field}"
-                            )
+                case "$first" | "$last":
+                    # Implemented via window-function ranking in the source
+                    # CTE (_ranked_source_sql): per group, rn=1 is the first
+                    # row and rd=1 the last, by insertion order (id) — with
+                    # null-safe partitioning on the group key (#105).
+                    if not expr_field:
+                        continue
+                    self._first_last_fields.append(
+                        (
+                            field,
+                            op == "$last",
+                            expr_field,
+                        )
+                    )
 
                 case "$addToSet":
                     # Use json_group_array with DISTINCT
@@ -410,12 +365,25 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                 "$group with parameterized expression key not supported in SQL tier"
             )
 
-        new_table = create_temp(
-            group_stage,
-            "SELECT ROW_NUMBER() OVER () as id, "
-            + f"{json_output_func}({json_args})) as data "
-            + self._grouped_source_sql(current_table, select_parts, group_by_clause),
-        )
+        if self._first_last_fields:
+            query, params = self._ranked_group_query(
+                current_table=current_table,
+                select_parts=select_parts,
+                group_by_parts=group_by_parts,
+                json_args=json_args,
+                json_output_func=json_output_func,
+            )
+        else:
+            query = (
+                "SELECT ROW_NUMBER() OVER () as id, "
+                + f"{json_output_func}({json_args})) as data "
+                + self._grouped_source_sql(
+                    current_table, select_parts, group_by_clause
+                )
+            )
+            params = []
+
+        new_table = create_temp(group_stage, query)
 
         # Store array fields metadata for efficient post-processing
         # This avoids scanning all fields in _get_results_from_table
@@ -441,6 +409,68 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
             else:
                 aliases.append("column")
         return aliases
+
+    def _ranked_group_query(
+        self,
+        current_table: str,
+        select_parts: list[str],
+        group_by_parts: list[str],
+        json_args: str,
+        json_output_func: str,
+    ) -> tuple[str, list]:
+        """Build the $group query when $first/$last are present (#105).
+
+        A ranked CTE assigns per-group row numbers by insertion order (id),
+        partitioned null-safely on the group key; $first/$last become
+        MAX(CASE WHEN rn/rd = 1 ...) aggregates over that ranking.
+        """
+        json_extract = f"{self.jsonb.json_function_prefix}_extract"
+        gk_expr = group_by_parts[0] if group_by_parts else None
+
+        src_cols = ["id AS src_id", "data AS data"]
+        if gk_expr is not None:
+            src_cols.append(f"{gk_expr} AS __gk")
+        partition = "PARTITION BY __gk" if gk_expr is not None else ""
+        cte = (
+            f"WITH src AS (SELECT {', '.join(src_cols)} FROM {current_table}), "
+            f"ranked AS (SELECT src.*, "
+            f"ROW_NUMBER() OVER ({partition} ORDER BY src_id ASC) AS rn, "
+            f"ROW_NUMBER() OVER ({partition} ORDER BY src_id DESC) AS rd "
+            f"FROM src)"
+        )
+
+        agg_parts: list[str] = []
+        for part in select_parts:
+            agg_parts.append(part)
+        for field, is_last, expr_field in self._first_last_fields:
+            if expr_field == "_id":
+                value_sql = "src_id"
+            else:
+                value_sql = f"{json_extract}(data, '{parse_json_path(expr_field)}')"
+            flag = "rd" if is_last else "rn"
+            agg_parts.append(
+                f"MAX(CASE WHEN {flag} = 1 THEN {value_sql} END) AS {field}"
+            )
+
+        inner = f"SELECT {', '.join(agg_parts)} FROM ranked"
+        if gk_expr is not None:
+            inner += " GROUP BY __gk"
+
+        outer_from = f"FROM ({inner})"
+        if not group_by_parts:
+            # Constant-key aggregate: guard the phantom single row (#104)
+            outer_from += " WHERE (SELECT COUNT(*) FROM ranked) > 0"
+
+        aliases = self._select_aliases(select_parts) + [
+            f for f, _, _ in self._first_last_fields
+        ]
+        local_json_args = ", ".join(f"'{a}', {a}" for a in aliases)
+
+        query = (
+            f"{cte} SELECT ROW_NUMBER() OVER () as id, "
+            f"{json_output_func}({local_json_args})) as data {outer_from}"
+        )
+        return query, []
 
     @staticmethod
     def _grouped_source_sql(
