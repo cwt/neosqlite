@@ -214,6 +214,14 @@ class GridFSBucket:
             ON {chunks_coll} (files_id)
         """)
 
+        # UNIQUE(files_id, n): racing writers must not interleave duplicate
+        # chunk indices — reads pick an arbitrary row via fetchone, silently
+        # garbling file content (#128).
+        self._db.execute(f"""
+            CREATE UNIQUE INDEX IF NOT EXISTS {quote_table_name(f"idx_{self._chunks_collection}_files_id_n")}
+            ON {chunks_coll} (files_id, n)
+        """)
+
         # Migrate existing tables to add new columns
         self._migrate_table_schema()
 
@@ -360,22 +368,34 @@ class GridFSBucket:
         """
         Split data into chunks and insert them into the chunks collection.
 
+        Chunks are inserted with executemany inside a single transaction:
+        one INSERT per chunk previously meant one implicit transaction per
+        255 KiB — thousands of fsyncs for a large file (#152).
+
         Args:
             file_id: The ID of the file document
             data: The data to be chunked
         """
-        # Split data into chunks
-        for i in range(0, len(data), self._chunk_size_bytes):
-            chunk_data = data[i : i + self._chunk_size_bytes]
-
-            self._db.execute(
+        rows = [
+            (file_id, i // self._chunk_size_bytes, data[i : i + self._chunk_size_bytes])
+            for i in range(0, len(data), self._chunk_size_bytes)
+        ]
+        if not rows:
+            return
+        self._db.execute("BEGIN")
+        try:
+            self._db.executemany(
                 f"""
                 INSERT INTO {self._chunks_collection}
                 (files_id, n, data)
                 VALUES (?, ?, ?)
             """,
-                (file_id, i // self._chunk_size_bytes, chunk_data),
+                rows,
             )
+            self._db.commit()
+        except Exception:
+            self._db.rollback()
+            raise
 
     def download_to_stream(
         self, file_id: ObjectId | str | int, destination: io.IOBase

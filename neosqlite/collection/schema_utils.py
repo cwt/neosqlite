@@ -30,6 +30,28 @@ def get_table_columns(db_connection: Any, table_name: str) -> set[str]:
     return {row[1] for row in cursor.fetchall()}
 
 
+_table_columns_cache: dict[tuple[int, str], frozenset[str]] = {}
+
+
+def get_table_columns_cached(
+    db_connection: Any, table_name: str
+) -> set[str]:
+    """get_table_columns with a small per-connection cache (#152).
+
+    GridFS constructs many GridOut objects; PRAGMA table_info per object
+    dominated read paths. Cache keyed by id(db)+table, cleared at 128
+    entries (schema changes are rare; the connection pins the id).
+    """
+    key = (id(db_connection), table_name)
+    cols = _table_columns_cache.get(key)
+    if cols is None:
+        cols = frozenset(get_table_columns(db_connection, table_name))
+        if len(_table_columns_cache) >= 128:
+            _table_columns_cache.clear()
+        _table_columns_cache[key] = cols
+    return set(cols)
+
+
 def column_exists(
     db_connection: Any,
     table_name: str,
@@ -46,7 +68,7 @@ def column_exists(
     Returns:
         True if column exists, False otherwise
     """
-    columns = get_table_columns(db_connection, table_name)
+    columns = get_table_columns_cached(db_connection, table_name)
     return column_name in columns
 
 

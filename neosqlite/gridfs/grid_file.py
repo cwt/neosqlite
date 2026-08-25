@@ -73,6 +73,7 @@ class GridIn:
 
         # Stream state
         self._buffer = bytearray()
+        self._buffer_start = 0  # consumed-prefix offset (#152)
         self._chunk_number = 0
         self._position = 0
         self._closed = False
@@ -147,15 +148,21 @@ class GridIn:
         if not isinstance(data, (bytes, bytearray)):
             raise TypeError("data must be bytes or bytearray")
 
-        # Add data to buffer
+        # Add data to buffer. Chunks are consumed via a start offset so a
+        # large single write does not memmove the remainder per chunk — the
+        # old 'del buffer[:n]' pattern was quadratic (#152).
         self._buffer.extend(data)
         self._position += len(data)
         if self._md5_hasher:
             self._md5_hasher.update(data)
 
         # Flush chunks if buffer is full
-        while len(self._buffer) >= self._chunk_size_bytes:
+        while len(self._buffer) - self._buffer_start >= self._chunk_size_bytes:
             self._flush_chunk()
+        # Compact occasionally to keep the bytearray bounded
+        if self._buffer_start > 4 * self._chunk_size_bytes:
+            del self._buffer[: self._buffer_start]
+            self._buffer_start = 0
 
         return len(data)
 
@@ -168,10 +175,12 @@ class GridIn:
         and no file ID has been set, it creates the corresponding file document first.
         The chunk is inserted with its sequence number and associated with the file ID.
         """
-        if len(self._buffer) >= self._chunk_size_bytes:
-            # Extract a chunk from the buffer
-            chunk_data = bytes(self._buffer[: self._chunk_size_bytes])
-            del self._buffer[: self._chunk_size_bytes]
+        if len(self._buffer) - getattr(self, "_buffer_start", 0) >= self._chunk_size_bytes:
+            start = getattr(self, "_buffer_start", 0)
+            chunk_data = bytes(
+                self._buffer[start : start + self._chunk_size_bytes]
+            )
+            self._buffer_start = start + self._chunk_size_bytes
 
             # If this is the first chunk, create the file document
             if self._chunk_number == 0 and self._file_id is None:
@@ -225,7 +234,7 @@ class GridIn:
             # Check if file_id is an ObjectId or integer
             if isinstance(self._file_id, ObjectId):
                 # Store ObjectId in _id column, let SQLite auto-generate id
-                self._db.execute(
+                cur = self._db.execute(
                     f"""
                     INSERT INTO {self._files_collection}
                     (id, _id, filename, chunkSize, uploadDate, metadata, content_type, aliases)
@@ -241,9 +250,11 @@ class GridIn:
                         serialize_aliases(self._aliases),
                     ),
                 )
+                # Cache the rowid: per-chunk lookups were O(chunks) (#152)
+                self._int_file_id = cur.lastrowid
             else:
                 # Integer ID provided
-                self._db.execute(
+                cur = self._db.execute(
                     f"""
                     INSERT INTO {self._files_collection}
                     (id, _id, filename, chunkSize, uploadDate, metadata, content_type, aliases)
@@ -260,6 +271,7 @@ class GridIn:
                         serialize_aliases(self._aliases),
                     ),
                 )
+                self._int_file_id = cur.lastrowid
 
     def _get_file_id(self) -> int:
         """
@@ -280,8 +292,11 @@ class GridIn:
             self._create_file_document()
 
         # Return the integer ID, which can be obtained by looking up the stored _id
+        if getattr(self, "_int_file_id", None) is not None:
+            return self._int_file_id
         if isinstance(self._file_id, ObjectId):
-            # Look up the integer ID for this ObjectId
+            # Look up the integer ID for this ObjectId — cache it: chunked
+            # uploads previously re-ran this SELECT per chunk (#152)
             cursor = self._db.execute(
                 f"SELECT id FROM {self._files_collection} WHERE _id = ?",
                 (str(self._file_id),),
@@ -290,9 +305,11 @@ class GridIn:
                 raise RuntimeError(
                     f"File with ObjectId {self._file_id} not found in database"
                 )
+            self._int_file_id = row[0]
             return row[0]
         elif isinstance(self._file_id, int):
             # If file_id is already an integer, return it as-is
+            self._int_file_id = self._file_id
             return self._file_id
         else:
             # For other types, try to look it up by value
@@ -320,7 +337,8 @@ class GridIn:
             return
 
         # Flush any remaining data in the buffer
-        if self._buffer or self._chunk_number == 0:
+        remaining = bytes(self._buffer[self._buffer_start :])
+        if remaining or self._chunk_number == 0:
             # If no chunks have been written yet, we still need to create the file
             if self._chunk_number == 0:
                 self._create_file_document()
@@ -329,7 +347,7 @@ class GridIn:
             file_int_id = self._get_file_id()
 
             # Write the final chunk (which may be smaller than chunk_size_bytes)
-            if self._buffer:
+            if remaining:
                 self._db.execute(
                     f"""
                     INSERT INTO {self._chunks_collection}
@@ -339,7 +357,7 @@ class GridIn:
                     (
                         file_int_id,
                         self._chunk_number,
-                        bytes(self._buffer),
+                        remaining,
                     ),
                 )
                 self._chunk_number += 1

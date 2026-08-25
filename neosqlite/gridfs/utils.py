@@ -12,6 +12,8 @@ import json
 import logging
 from typing import Any
 
+from ..collection.schema_utils import get_table_columns
+
 logger = logging.getLogger(__name__)
 
 
@@ -154,3 +156,24 @@ __all__ = [
     "deserialize_aliases",
     "force_sync_if_needed",
 ]
+
+
+_table_columns_cache: dict[tuple[int, str], frozenset[str]] = {}
+
+
+def get_table_columns_cached(db_connection: Any, table_name: str) -> set:
+    """get_table_columns with a small per-connection cache (#152).
+
+    GridFS constructs many GridOut objects; PRAGMA table_info per object
+    dominated read paths. The cache is keyed by id(db)+table and cleared
+    whenever it grows past 128 entries (schema changes are rare, and the
+    connection itself pins the id).
+    """
+    key = (id(db_connection), table_name)
+    cols = _table_columns_cache.get(key)
+    if cols is None:
+        cols = frozenset(get_table_columns(db_connection, table_name))
+        if len(_table_columns_cache) >= 128:
+            _table_columns_cache.clear()
+        _table_columns_cache[key] = cols
+    return set(cols)
