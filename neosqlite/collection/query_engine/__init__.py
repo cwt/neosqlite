@@ -374,7 +374,15 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         """
         # 1. Try SQL Tier 1 optimization
         if self.sql_tier_aggregator.can_optimize_pipeline(pipeline):
-            sql, params = self.sql_tier_aggregator.build_pipeline_sql(pipeline)
+            try:
+                sql, params = self.sql_tier_aggregator.build_pipeline_sql(
+                    pipeline
+                )
+            except NotImplementedError as e:
+                # can_optimize_pipeline can accept shapes whose builders
+                # decline; degrade like aggregate() instead of crashing (#159)
+                logger.debug(f"Tier-1 explain declined: {e}")
+                sql, params = None, []
             if sql is not None:
                 # Use EXPLAIN QUERY PLAN to get SQLite's plan
                 explain_sql = f"EXPLAIN QUERY PLAN {sql}"

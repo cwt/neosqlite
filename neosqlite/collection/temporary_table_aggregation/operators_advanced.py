@@ -322,17 +322,18 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
         )
 
         if pipeline:
-            # If pipeline specified, process it
-            # For simplicity, just get all documents
-            other_table = create_temp(
-                {"$unionWith": union_spec},
-                f"SELECT {other_select_cols} FROM {coll_name}",
+            # A sub-pipeline changes which foreign rows are unioned; the
+            # previous code ignored it and unioned everything (#170).
+            # Raise so the pipeline falls back to the Python tier, which
+            # applies the sub-pipeline correctly.
+            raise NotImplementedError(
+                "$unionWith with a sub-pipeline is not supported in the "
+                "SQL tier - use force_fallback or simplify the pipeline"
             )
-        else:
-            other_table = create_temp(
-                {"$unionWith": union_spec},
-                f"SELECT {other_select_cols} FROM {coll_name}",
-            )
+        other_table = create_temp(
+            {"$unionWith": union_spec},
+            f"SELECT {other_select_cols} FROM {coll_name}",
+        )
 
         # Union the two tables with explicit column lists
         result_table = create_temp(

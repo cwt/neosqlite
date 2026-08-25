@@ -176,13 +176,22 @@ class TemporaryTableAggregationProcessor(OperatorsMixin):
                         i += 1
 
                     case "$sort" | "$skip" | "$limit":
-                        # Process consecutive sort/skip/limit stages
+                        # Compose consecutive sort/skip/limit stages in order.
+                        # A $skip after a $limit shrinks the remaining window;
+                        # later limits cap what is left — never overwrite (#170).
                         sort_spec = None
                         skip_value = 0
-                        limit_value = None
+                        limit_value: int | None = None
                         j = i
 
-                        # Process consecutive sort/skip/limit stages
+                        def _apply_skip(cur_skip: int, cur_lim: int | None, n: int) -> int:
+                            return cur_skip + n
+
+                        def _apply_limit(cur_lim: int | None, n: int) -> int | None:
+                            if cur_lim is None or n < cur_lim:
+                                return n
+                            return cur_lim
+
                         while j < len(pipeline):
                             next_stage = pipeline[j]
                             next_stage_name = next(iter(next_stage.keys()))
@@ -191,20 +200,38 @@ class TemporaryTableAggregationProcessor(OperatorsMixin):
                                 case "$sort":
                                     sort_spec = next_stage["$sort"]
                                 case "$skip":
-                                    skip_value = next_stage["$skip"]
+                                    n = int(next_stage["$skip"])
+                                    skip_value = _apply_skip(
+                                        skip_value, limit_value, n
+                                    )
+                                    # A skip consumes from the current window
+                                    if limit_value is not None:
+                                        limit_value -= n
+                                        if limit_value < 0:
+                                            limit_value = 0
                                 case "$limit":
-                                    limit_value = next_stage["$limit"]
+                                    limit_value = _apply_limit(
+                                        limit_value,
+                                        int(next_stage["$limit"]),
+                                    )
                                 case _:
                                     break
                             j += 1
 
-                        current_table = self._process_sort_skip_limit_stage(
-                            create_temp,
-                            current_table,
-                            sort_spec,
-                            skip_value,
-                            limit_value,
-                        )
+                        if limit_value is not None and limit_value <= 0:
+                            # Window fully consumed: synthesize an empty table
+                            current_table = create_temp(
+                                {"$limit": 0},
+                                f"SELECT id, _id, data FROM {current_table} WHERE 0",
+                            )
+                        else:
+                            current_table = self._process_sort_skip_limit_stage(
+                                create_temp,
+                                current_table,
+                                sort_spec,
+                                skip_value,
+                                limit_value,
+                            )
                         i = j  # Skip processed stages
 
                         # Track that we've seen a $sort stage (needed for $first/$last limitation)

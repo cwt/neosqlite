@@ -114,6 +114,9 @@ class SqlAggregationMixin:
                     order_by = "ORDER BY " + ", ".join(sort_clauses)
                 case "$skip":
                     count = stage["$skip"]
+                    # SQLite requires LIMIT when OFFSET is present (#166)
+                    if not limit:
+                        limit = "LIMIT -1"
                     offset = f"OFFSET {count}"
                 case "$limit":
                     count = stage["$limit"]
