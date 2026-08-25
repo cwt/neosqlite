@@ -184,6 +184,39 @@ class SqlQueryBuilderMixin:
 
     # _categorize_id_value removed: _id queries now use _id_column_ref() for
     # strict MongoDB-like semantics (integer _id targets the _id column).
+
+    def _build_containment_clause(
+        self, field: str, extract_expr: str, value: Any
+    ) -> tuple[str, list[Any]]:
+        """Array-containment for plain equality (#99).
+
+        The array may sit at any depth along the dotted path ("a.scores"
+        is a whole array; "students.name" names a leaf inside each element
+        of $.students), so one EXISTS arm is emitted per candidate depth.
+        """
+        json_each_func = self.jsonb.json_each_function
+        segs = field.split(".")
+        arms: list[str] = []
+        params: list[Any] = [value]
+        for k in range(1, len(segs) + 1):
+            arr_path = "'$." + ".".join(segs[:k]) + "'"
+            arr_expr = "json_extract(data, " + arr_path + ")"
+            rest = segs[k:]
+            if rest:
+                leaf_path = "$." + ".".join(rest)
+                elem_pred = "json_extract(value, '" + leaf_path + "') = ?"
+            else:
+                elem_pred = "value = ?"
+            arms.append(
+                "EXISTS (SELECT 1 FROM " + json_each_func + "("
+                + "CASE WHEN json_type(data, " + arr_path + ") = 'array' "
+                + "THEN " + arr_expr + " END"
+                + ") WHERE " + elem_pred + ")"
+            )
+            params.append(value)
+        clause = " OR ".join([extract_expr + " = ?"] + arms)
+        return "(" + clause + ")", params
+
     def _field_has_index(self, field: str) -> bool:
         """True when an index exists whose name encodes this field (#99).
 
@@ -264,36 +297,12 @@ class SqlQueryBuilderMixin:
                     return f"{extract_expr} IS NULL", []
                 if isinstance(value, (dict, list)):
                     return f"{extract_expr} = ?", [value]
-                # MongoDB: {arr: v} also matches when the array CONTAINS v
-                # (#99). Skipped for indexed fields so the OR-form cannot
-                # disable the expression index; those queries keep the
-                # plain sargable equality (array containment there is then
-                # handled by the Python tier when it evaluates the filter).
+                # MongoDB: {arr: v} also matches when the array CONTAINS
+                # v at any depth (#99). Skipped for indexed fields so the
+                # OR-form cannot disable the expression index.
                 if not self._field_has_index(field):
-                    json_each_func = self.jsonb.json_each_function
-                    segs = field.split(".")
-                    if len(segs) > 1:
-                        # Dotted path: match the leaf inside each array
-                        # element ("students.name" -> elements of students)
-                        arr_path = "'$." + ".".join(segs[:-1]) + "'"
-                        leaf = segs[-1]
-                        arr_expr = f"json_extract(data, {arr_path})"
-                        elem_pred = (
-                            f"json_extract(value, '$.{leaf}') = ?"
-                        )
-                    else:
-                        arr_path = json_path
-                        arr_expr = f"json_extract(data, {json_path})"
-                        elem_pred = "value = ?"
-                    contains = (
-                        f"EXISTS (SELECT 1 FROM {json_each_func}("
-                        f"CASE WHEN json_type(data, {arr_path}) = 'array' "
-                        f"THEN {arr_expr} END"
-                        f") WHERE {elem_pred})"
-                    )
-                    return (
-                        f"({extract_expr} = ? OR {contains})",
-                        [value, value],
+                    return self._build_containment_clause(
+                        field, extract_expr, value
                     )
                 return f"{extract_expr} = ?", [value]
 

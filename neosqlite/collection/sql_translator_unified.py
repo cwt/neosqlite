@@ -637,31 +637,34 @@ class SQLClauseBuilder:
                     clauses.append(f"{field_access} = ?")
                     params.append(value)
                 else:
-                    # Simple equality check with array containment (#99)
+                    # Simple equality with array containment at any depth (#99)
                     segs = field.split(".")
-                    if len(segs) > 1:
-                        arr_path = "'$." + ".".join(segs[:-1]) + "'"
-                        elem_pred = (
-                            f"json_extract(value, '$.{segs[-1]}') = ?"
-                        )
+                    arms = [field_access + " = ?"]
+                    params_arm: list[Any] = [value]
+                    for k in range(1, len(segs) + 1):
+                        arr_path = "'$." + ".".join(segs[:k]) + "'"
                         arr_expr = (
-                            f"json_extract({self.data_column}, {arr_path})"
+                            "json_extract("
+                            + self.data_column + ", " + arr_path + ")"
                         )
-                    else:
-                        path_lit = f"'{parse_json_path(field)}'"
-                        arr_path = path_lit
-                        arr_expr = (
-                            f"json_extract({self.data_column}, {path_lit})"
+                        rest = segs[k:]
+                        if rest:
+                            leaf_path = "$." + ".".join(rest)
+                            elem_pred = (
+                                "json_extract(value, '" + leaf_path + "') = ?"
+                            )
+                        else:
+                            elem_pred = "value = ?"
+                        arms.append(
+                            "EXISTS (SELECT 1 FROM "
+                            + self._json_each_function + "(CASE WHEN "
+                            + "json_type(" + self.data_column + ", "
+                            + arr_path + ") = 'array' THEN " + arr_expr
+                            + " END) WHERE " + elem_pred + ")"
                         )
-                        elem_pred = "value = ?"
-                    clauses.append(
-                        f"({field_access} = ? OR EXISTS (SELECT 1 FROM "
-                        f"{self._json_each_function}(CASE WHEN "
-                        f"json_type({self.data_column}, {arr_path}) = 'array' "
-                        f"THEN {arr_expr} END"
-                        f") WHERE {elem_pred}))"
-                    )
-                    params.extend([value, value])
+                        params_arm.append(value)
+                    clauses.append("(" + " OR ".join(arms) + ")")
+                    params.extend(params_arm)
 
         if not clauses:
             return _empty_result()
