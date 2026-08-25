@@ -244,23 +244,20 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             # Create a single result document with all facet fields
             result_doc = facet_results
 
-            # Create a temp table with the combined result
-            result_table_name = f"_facet_combined_{uuid.uuid4().hex[:12]}"
-            self.db.execute(f"""
-                CREATE TEMP TABLE {result_table_name} (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    _id INTEGER,
-                    data TEXT
-                )
-            """)
-
-            # Insert the result document
+            # Create the combined result table through create_temp so the
+            # pipeline context owns it — a raw CREATE TEMP TABLE here leaked
+            # one _facet_combined_* table per aggregation (#124).
+            result_table = create_temp(
+                {"$facet": "_combined"},
+                "SELECT NULL AS id, NULL AS _id, "
+                "'{}' AS data WHERE 0",
+            )
             self.db.execute(
-                f"INSERT INTO {result_table_name} (_id, data) VALUES (?, ?)",
+                f"INSERT INTO {result_table} (_id, data) VALUES (?, ?)",
                 (0, neosqlite_json_dumps(result_doc)),
             )
 
-            return result_table_name
+            return result_table
 
         except Exception as e:
             # Clean up any result tables on error
