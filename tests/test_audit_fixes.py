@@ -79,3 +79,37 @@ class TestMinMaxMissingField:
         assert c.find_one({"_id": 1})["score"] == 9
 
 
+class TestAddToSetNoDocumentNesting:
+    """#89: the fallback $addToSet clause assigned the whole document into
+    the array field — for existing elements via THEN data, and for new ones
+    because json_insert(data, ...) returns the full modified document."""
+
+    def _apply_clause(self, connection, col, value):
+        clause, params = col.query_engine.helpers._build_sql_update_clause(
+            "$addToSet", value
+        )
+        wrapped = f"jsonb_set(data, {clause[0]})"
+        connection.db.execute(
+            f"UPDATE {col.name} SET data = {wrapped} WHERE id = 1", params
+        )
+        connection.db.commit()
+
+    def test_add_to_set_existing_element_keeps_array_intact(self, connection):
+        c = connection.t
+        c.insert_one({"_id": 1, "arr": [1, 2]})
+        self._apply_clause(connection, c, {"arr": 1})
+        doc = c.find_one({"_id": 1})
+        assert doc["arr"] == [1, 2], f"got {doc!r}"
+
+    def test_add_to_set_new_element_appends_via_clause(self, connection):
+        c = connection.t
+        c.insert_one({"_id": 1, "arr": [1, 2]})
+        self._apply_clause(connection, c, {"arr": 3})
+        assert sorted(c.find_one({"_id": 1})["arr"]) == [1, 2, 3]
+
+    def test_add_to_set_via_update_one_stays_correct(self, connection):
+        c = connection.t
+        c.insert_one({"_id": 1, "arr": [1, 2]})
+        c.update_one({"_id": 1}, {"$addToSet": {"arr": 3}})
+        c.update_one({"_id": 1}, {"$addToSet": {"arr": 3}})
+        assert sorted(c.find_one({"_id": 1})["arr"]) == [1, 2, 3]
