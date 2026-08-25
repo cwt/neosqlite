@@ -14,6 +14,22 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_stream_registry: dict[int, dict[str, Any]] = {}
+
+
+def _registry_entry(db: Any) -> dict[str, Any]:
+    """Per-connection registry of active ChangeStreams (#110).
+
+    Keyed by id(db) with a strong reference to db kept in the entry, which
+    pins the id for as long as any stream is registered.
+    """
+    entry = _stream_registry.get(id(db))
+    if entry is None or entry["db"] is not db:
+        entry = {"db": db, "counts": {}, "streams": {}}
+        _stream_registry[id(db)] = entry
+    return entry
+
+
 class ChangeStream:
     """
     A change stream that watches for changes on a collection.
@@ -125,9 +141,21 @@ class ChangeStream:
             )
             """)
 
+        # Register this stream BEFORE creating shared triggers (#110): each
+        # collection's triggers are created once and shared by all streams;
+        # events are consumed via per-stream watermarks instead of deletion.
+        entry = _registry_entry(self._collection.db)
+        counts = entry["counts"]
+        streams: dict[int, ChangeStream] = entry["streams"].setdefault(
+            self._collection.name, {}
+        )
+        streams[id(self)] = self
+        first = counts.get(self._collection.name, 0) == 0
+
         # Create triggers for INSERT, UPDATE, DELETE operations
         # Insert trigger
-        self._collection.db.execute(f"""
+        if first:
+            self._collection.db.execute(f"""
             CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._sanitized_name}_insert_trigger
             AFTER INSERT ON {quote_table_name(self._sanitized_name)}
             BEGIN
@@ -137,8 +165,8 @@ class ChangeStream:
             END
             """)
 
-        # Update trigger
-        self._collection.db.execute(f"""
+            # Update trigger
+            self._collection.db.execute(f"""
             CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._sanitized_name}_update_trigger
             AFTER UPDATE ON {quote_table_name(self._sanitized_name)}
             BEGIN
@@ -148,8 +176,8 @@ class ChangeStream:
             END
             """)
 
-        # Delete trigger
-        self._collection.db.execute(f"""
+            # Delete trigger
+            self._collection.db.execute(f"""
             CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._sanitized_name}_delete_trigger
             AFTER DELETE ON {quote_table_name(self._sanitized_name)}
             BEGIN
@@ -158,43 +186,89 @@ class ChangeStream:
                 VALUES ('{self._sanitized_name}', 'delete', OLD.id, OLD.data, OLD._id);
             END
             """)
+        counts[self._collection.name] = counts.get(self._collection.name, 0) + 1
 
         # Commit the changes
         self._collection.db.commit()
 
+        # Start from "now": only deliver events that occur after open,
+        # unless an explicit resume point was requested (#110 parity).
+        if (
+            self._resume_after is None
+            and self._start_after is None
+            and self._start_at_operation_time is None
+        ):
+            row = self._collection.db.execute(
+                "SELECT COALESCE(MAX(id), 0) FROM _neosqlite_changestream WHERE collection_name = ?",
+                (self._collection.name,),
+            ).fetchone()
+            self._last_id = row[0] if row else 0
+
     def _cleanup_triggers(self):
+        """Drop shared triggers when the LAST stream for this collection
+        closes, and purge its now-unconsumable events (#110, #111).
+
+        Called from close(); the _closed flag is set by the caller.
         """
-        Clean up the triggers when the change stream is closed.
+        entry = _registry_entry(self._collection.db)
+        counts: dict[str, int] = entry["counts"]
+        streams_by_coll: dict[str, dict[int, ChangeStream]] = entry["streams"]
+        streams = streams_by_coll.get(self._collection.name, {})
+        streams.pop(id(self), None)
 
-        This method ensures that triggers created for capturing changes to the
-        collection are properly dropped from the SQLite database when the change
-        stream is no longer needed. This cleanup helps in freeing up resources
-        and avoiding unnecessary logging.
-
-        The method handles exceptions gracefully, ensuring that any errors during
-        the cleanup process are ignored, thus allowing the change stream to close
-        without interruption.
-        """
-
-        if self._closed:
-            return
+        remaining = counts.get(self._collection.name, 0) - 1
+        counts[self._collection.name] = max(remaining, 0)
 
         try:
-            # Drop the triggers
-            self._collection.db.execute(
-                f"DROP TRIGGER IF EXISTS _neosqlite_{self._sanitized_name}_insert_trigger"
-            )
-            self._collection.db.execute(
-                f"DROP TRIGGER IF EXISTS _neosqlite_{self._sanitized_name}_update_trigger"
-            )
-            self._collection.db.execute(
-                f"DROP TRIGGER IF EXISTS _neosqlite_{self._sanitized_name}_delete_trigger"
-            )
-
-            # Note: We don't drop the _neosqlite_changestream table as it might be used by other change streams
+            if remaining <= 0:
+                # Last consumer gone: drop shared triggers and purge rows.
+                self._collection.db.execute(
+                    f"DROP TRIGGER IF EXISTS _neosqlite_{self._sanitized_name}_insert_trigger"
+                )
+                self._collection.db.execute(
+                    f"DROP TRIGGER IF EXISTS _neosqlite_{self._sanitized_name}_update_trigger"
+                )
+                self._collection.db.execute(
+                    f"DROP TRIGGER IF EXISTS _neosqlite_{self._sanitized_name}_delete_trigger"
+                )
+                self._collection.db.execute(
+                    "DELETE FROM _neosqlite_changestream WHERE collection_name = ?",
+                    (self._collection.name,),
+                )
+            else:
+                # Other streams still active: prune only rows every active
+                # stream has already consumed.
+                self._prune_consumed()
+            if counts.get(self._collection.name, 0) == 0:
+                counts.pop(self._collection.name, None)
+                streams_by_coll.pop(self._collection.name, None)
             self._collection.db.commit()
         except Exception as e:
             logger.warning(f"Error during ChangeStream cleanup: {e}")
+
+    def _advance_watermark(self, change_id: int) -> None:
+        self._last_id = change_id
+
+    def _prune_consumed(self) -> None:
+        """Delete events that EVERY active stream on this collection has
+        already consumed (#111). With no co-streams this is just this
+        stream's own watermark."""
+        try:
+            entry = _registry_entry(self._collection.db)
+            streams = entry["streams"].get(self._collection.name, {})
+            marks = [
+                st._last_id
+                for sid, st in streams.items()
+                if not st._closed and sid != id(self)
+            ]
+            watermark = min(marks + [self._last_id])
+            if watermark > 0:
+                self._collection.db.execute(
+                    "DELETE FROM _neosqlite_changestream WHERE collection_name = ? AND id < ?",
+                    (self._collection.name, watermark),
+                )
+        except Exception as e:
+            logger.debug(f"ChangeStream prune skipped: {e}")
 
     def __iter__(self) -> ChangeStream:
         """
@@ -243,22 +317,18 @@ class ChangeStream:
             if time.time() - start_time > timeout:
                 raise StopIteration("Change stream timeout exceeded")
 
-            # Use a transaction to atomically read and delete changes
-            # BEGIN IMMEDIATE acquires a write lock immediately
-            self._collection.db.execute("BEGIN IMMEDIATE")
-            try:
-                cursor = self._collection.db.execute(
-                    """
-                    SELECT id, operation, document_id, document_data, document_id_value, timestamp
-                    FROM _neosqlite_changestream
-                    WHERE collection_name = ? AND id > ?
-                    ORDER BY id
-                    LIMIT ?
-                    """,
-                    (self._collection.name, self._last_id, self._batch_size),
-                )
-
-                rows = cursor.fetchall()
+            cursor = self._collection.db.execute(
+                """
+                SELECT id, operation, document_id, document_data, document_id_value, timestamp
+                FROM _neosqlite_changestream
+                WHERE collection_name = ? AND id > ?
+                ORDER BY id
+                LIMIT ?
+                """,
+                (self._collection.name, self._last_id, self._batch_size),
+            )
+            rows = cursor.fetchall()
+            if rows:
 
                 if rows:
                     # Process the first change
@@ -272,11 +342,6 @@ class ChangeStream:
                         timestamp,
                     ) = row
 
-                    # Delete the processed row atomically within the transaction
-                    self._collection.db.execute(
-                        "DELETE FROM _neosqlite_changestream WHERE id = ?",
-                        (change_id,),
-                    )
 
                     # Get the actual _id of the document
                     # Try to get _id from the stored document_id_value first (this works even for deleted documents)
@@ -413,46 +478,18 @@ class ChangeStream:
                             pass
 
                     if skip_change:
-                        # Commit the transaction (DELETE was already executed)
-                        self._collection.db.commit()
-                        # Update _last_id only after successful commit so that
-                        # a crash mid-commit does not leave _last_id ahead of
-                        # the actually-committed data.
-                        self._last_id = change_id
+                        self._advance_watermark(change_id)
                         continue
 
-                    # Commit the transaction AFTER all processing is complete.
-                    # This ensures that if processing fails, the rollback will
-                    # restore the changestream row (preventing data loss).
-                    self._collection.db.commit()
-
-                    # Update _last_id only after successful commit.
-                    # This guards against crashes between the DELETE and COMMIT:
-                    # if the commit fails, _last_id is not advanced and the row
-                    # will be retried on the next iteration.
+                    # Events are NOT deleted on read (#110): other active
+                    # streams on this collection keep their own watermarks.
                     self._last_id = change_id
+                    self._prune_consumed()
 
                     return change_doc
-                else:
-                    # No changes, rollback the empty transaction
-                    self._collection.db.rollback()
-            except Exception as e:
-                # Rollback on any error
-                try:
-                    self._collection.db.rollback()
-                except Exception as rollback_error:
-                    logger.warning(
-                        f"Failed to rollback after error: {rollback_error}"
-                    )
-                    pass
-                logger.error(f"ChangeStream polling error: {e}", exc_info=True)
-                raise
-
-            # If we had rows to process, change_doc has been returned
-            # If not, loop continues to sleep and retry
-            if not rows:
-                # No changes were found, sleep before retry
-                time.sleep(0.1)
+                del rows
+            # No changes were found; sleep before retrying
+            time.sleep(0.1)
 
     def __enter__(self) -> ChangeStream:
         """

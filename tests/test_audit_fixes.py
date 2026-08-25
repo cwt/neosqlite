@@ -987,3 +987,60 @@ class TestUpsertBaseDocument:
         )
         doc = c.find_one({"z": 9})
         assert doc["p"] == 1 and doc["q"] == 2
+
+
+class TestChangeStreamIsolation:
+    """#110/#111: concurrent streams shared collection-scoped triggers and
+    deleted rows on read (stealing each other's events); unconsumed rows
+    accumulated forever. Streams now share refcounted triggers, consume via
+    per-stream watermarks, and the last close purges remaining events."""
+
+    def test_both_streams_see_same_events(self, connection):
+        c = connection.cs
+        s1, s2 = c.watch(), c.watch()
+        c.insert_one({"n": 1})
+        c.insert_one({"n": 2})
+        ids1 = [next(s1)["documentKey"]["_id"], next(s1)["documentKey"]["_id"]]
+        ids2 = [next(s2)["documentKey"]["_id"], next(s2)["documentKey"]["_id"]]
+        assert ids1 == ids2
+        s1.close()
+        s2.close()
+
+    def test_stream_survives_other_close(self, connection):
+        c = connection.cs2
+        s1, s2 = c.watch(), c.watch()
+        c.insert_one({"n": 1})
+        next(s1)
+        s1.close()  # must NOT drop shared triggers
+        c.insert_one({"n": 2})
+        ev = next(s2)
+        assert ev["documentKey"]["_id"] is not None
+        s2.close()
+
+    def test_new_stream_starts_from_now(self, connection):
+        c = connection.cs3
+        s0 = c.watch()
+        c.insert_one({"n": 1})
+        next(s0)
+        s_late = c.watch()
+        with pytest.raises(StopIteration):
+            next(s_late)  # no replay of pre-open events
+        s0.close()
+        s_late.close()
+
+    def test_last_close_purges_events_and_triggers(self, connection):
+        c = connection.cs4
+        s = c.watch()
+        c.insert_one({"n": 1})  # left unconsumed
+        s.close()
+        rows = connection.db.execute(
+            "SELECT COUNT(*) FROM _neosqlite_changestream"
+            " WHERE collection_name = ?",
+            ("cs4",),
+        ).fetchone()[0]
+        triggers = connection.db.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger'"
+            " AND name LIKE '%cs4%'"
+        ).fetchone()[0]
+        assert rows == 0
+        assert triggers == 0
