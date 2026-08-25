@@ -299,7 +299,14 @@ class DatePythonMixin(BasePythonMixin):
                                     offset_seconds = hours * 3600 + minutes * 60
                                     if tz_str[0] == "-":
                                         offset_seconds = -offset_seconds
-                                    dt = dt.replace(tzinfo=tz.utc)  # Simplified
+                                    # Apply the parsed offset: the string
+                                    # represents local time in that zone;
+                                    # normalize to UTC (#120).
+                                    dt = dt.replace(tzinfo=tz.utc) - (
+                                        datetime.timedelta(
+                                            seconds=offset_seconds
+                                        )
+                                    )
                             except (ValueError, TypeError, AttributeError) as e:
                                 logger.debug(
                                     f"Failed to parse timezone in $dateFromString: {e}"

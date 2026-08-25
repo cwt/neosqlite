@@ -190,13 +190,23 @@ class DateMixin(BaseSqlMixin):
         # and compute the difference directly (julianday-based division
         # is inaccurate for month/year units).
         if unit in ("month", "year"):
+            # Each date sub-expression appears twice, so its parameters must
+            # be bound twice as well — previously this produced
+            # 'uses N, supplied M' crashes on literal dates (#115).
+            # MongoDB $dateDiff counts UNIT BOUNDARIES crossed: year is the
+            # plain calendar-year difference, not floor(months / 12).
             sql = f"""(
                 (strftime('%Y', {date2_sql}) - strftime('%Y', {date1_sql})) * 12
                 + (strftime('%m', {date2_sql}) - strftime('%m', {date1_sql}))
             )"""
             if unit == "year":
-                sql = f"cast({sql} / 12 as integer)"
-            return sql, date2_params + date1_params
+                sql = f"""(
+                    strftime('%Y', {date2_sql}) - strftime('%Y', {date1_sql})
+                )"""
+            return (
+                sql,
+                date2_params + date1_params + date2_params + date1_params,
+            )
 
         # Base calculation: difference in days
         sql = f"(julianday({date2_sql}) - julianday({date1_sql}))"
