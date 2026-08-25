@@ -1072,4 +1072,7 @@ class StageBuildersMixin:
         select_parts = ["id", "_id", "data"]
         if context.has_root:
             select_parts.append("root_data")
-        return f"SELECT {", ".join(select_parts)} FROM {prev_stage}", []
+        return (
+            f"SELECT {', '.join(select_parts)} FROM {prev_stage}",
+            [],
+        )
