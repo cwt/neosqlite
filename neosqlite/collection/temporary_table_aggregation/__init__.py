@@ -367,18 +367,6 @@ class TemporaryTableAggregationProcessor(OperatorsMixin):
                         )
                         i += 1
 
-                    case "$merge":
-                        # $merge not supported in SQL tier for full functionality
-                        raise NotImplementedError(
-                            "$merge not supported in SQL tier - use force_fallback or simplify pipeline"
-                        )
-
-                    case "$redact":
-                        # $redact not supported in SQL tier for full functionality
-                        raise NotImplementedError(
-                            "$redact not supported in SQL tier - use force_fallback or simplify pipeline"
-                        )
-
                     case _:
                         # For unsupported stages, we would need to fall back to Python
                         # But for this demonstration, we'll raise an exception

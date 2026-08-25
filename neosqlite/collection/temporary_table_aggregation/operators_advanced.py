@@ -344,55 +344,27 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
         return result_table
 
     def _process_merge_stage(self, create_temp, current_table, merge_spec):
+        """$merge writes pipeline results into a collection.
+
+        Not implemented in the SQL tier. Raising (instead of silently
+        returning the input) prevents callers from believing a write
+        happened (#141).
         """
-        Process $merge stage - writes results to a collection.
-
-        MongoDB syntax:
-        {
-          $merge: {
-            into: <collection_name>,
-            on: <field>,  // optional
-            whenMatched: <action>,  // optional
-            whenNotMatched: <action>  // optional
-          }
-        }
-        """
-        into = merge_spec.get("into")
-        if isinstance(into, dict):
-            db_name = into.get("db") or ""
-            coll_name = into.get("coll") or ""
-            into = db_name + "." + coll_name
-
-        if not into:
-            return current_table
-
-        # For now, just return current table (actual merge would write to collection)
-        # This is a placeholder - full implementation would INSERT/UPDATE the target
-        return current_table
+        raise NotImplementedError(
+            "$merge is not supported in the temporary-table tier - "
+            "the pipeline will fall back to the Python tier"
+        )
 
     def _process_redact_stage(self, create_temp, current_table, redact_spec):
-        """
-        Process $redact stage - field-level redaction based on conditions.
+        """$redact performs field-level redaction based on conditions.
 
-        MongoDB syntax:
-        {
-          $redact: {
-            $cond: {
-              if: <condition>,
-              then: <level>,
-              else: <level>
-            }
-          }
-        }
-
-        Levels:
-        - $$DESCEND: Include the field and process sub-fields
-        - $$PRUNE: Exclude the field
-        - $$KEEP: Include the field as-is
+        Not implemented in the SQL tier. A silent pass-through would
+        disclose everything $redact is meant to hide (#141).
         """
-        # For now, this is a placeholder - full redaction requires complex expression evaluation
-        # Return current table unchanged
-        return current_table
+        raise NotImplementedError(
+            "$redact is not supported in the temporary-table tier - "
+            "the pipeline will fall back to the Python tier"
+        )
 
     def _process_set_window_fields_stage(
         self,
