@@ -814,10 +814,11 @@ class GridFSBucket:
         Args:
             filename: The name of the file to delete
         """
-        # Get all file IDs with this filename
+        # Chunks are keyed by the integer id column (files_id), not the
+        # logical _id — selecting _id here orphaned every chunk (#92).
         cursor = self._db.execute(
             f"""
-            SELECT _id FROM {self._files_collection}
+            SELECT id FROM {self._files_collection}
             WHERE filename = ?
         """,
             (filename,),
