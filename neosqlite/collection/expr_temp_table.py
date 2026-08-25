@@ -138,7 +138,9 @@ class TempTableExprEvaluator:
             # Build the evaluation query
             result = self._build_tier2_query(expr, collection_name, filter_expr)
             if result[0] is not None:
-                # Cache the translation: WHERE clause template and fields to extract
+                # Cache the translation: WHERE clause template plus the exact
+                # field list and parameters. Keys canonicalize literal values,
+                # so a cache hit implies an identical expression.
                 sql_query, params, temp_tables = result
                 fields = self._extract_field_references(expr)
                 # Extract WHERE clause from the full query for caching
@@ -149,7 +151,9 @@ class TempTableExprEvaluator:
                     temp_tables[-1], "{temp_table}"
                 )
                 self._translation_cache.put(
-                    cache_key, where_clause_template, tuple(fields)
+                    cache_key,
+                    where_clause_template,
+                    (tuple(fields), tuple(params)),
                 )
             return result
 
@@ -229,20 +233,20 @@ class TempTableExprEvaluator:
         self,
         expr: dict[str, Any],
         collection_name: str,
-        cached: tuple[str, tuple[str, ...]],
+        cached: tuple[str, tuple[Any, ...]],
     ) -> tuple[str, list[Any], list[str]]:
         """
         Build query from cached translation.
 
         Args:
-            expr: The original expression (for extracting actual parameter values)
+            expr: The original expression (unused; kept for signature stability)
             collection_name: Collection table name
-            cached: Tuple of (where_clause_template, field_list)
+            cached: Tuple of (where_clause_template, (field_list, param_values))
 
         Returns:
             Tuple of (SQL query, parameters, table_names)
         """
-        where_clause_template, field_list = cached
+        where_clause_template, (field_list, param_values) = cached
 
         # Generate unique temp table name
         temp_table = f"temp_expr_{uuid.uuid4().hex[:8]}"
@@ -254,8 +258,9 @@ class TempTableExprEvaluator:
         # Build WHERE clause by substituting temp table name into template
         where_clause = where_clause_template.replace("{temp_table}", temp_table)
 
-        # Extract parameter values from expression
-        params = self._extract_param_values_from_expr(expr)
+        # Parameters are cached verbatim from the identical expression that
+        # populated the cache — no re-extraction needed.
+        params = list(param_values)
 
         # Build SELECT with json() conversion for Python-space data
         if self.jsonb.jsonb_supported:
@@ -280,62 +285,6 @@ class TempTableExprEvaluator:
             parts = full_query.rsplit("WHERE", 1)
             return parts[1].strip()
         return ""
-
-    def _extract_param_values_from_expr(
-        self, expr: dict[str, Any]
-    ) -> list[Any]:
-        """
-        Extract actual parameter values from expression for cached query.
-        Must follow the exact same traversal order as _convert_expr_to_temp_sql.
-        """
-        values = []
-
-        def extract_from_expr(e: Any) -> None:
-            if not isinstance(e, dict) or len(e) != 1:
-                return
-
-            operator, operands = next(iter(e.items()))
-            match operator:
-                case "$and" | "$or" | "$nor":
-                    if isinstance(operands, list):
-                        for op in operands:
-                            extract_from_expr(op)
-                case "$not":
-                    if isinstance(operands, list) and operands:
-                        extract_from_expr(operands[0])
-                case "$gt" | "$gte" | "$lt" | "$lte" | "$eq" | "$ne" | "$cmp":
-                    if isinstance(operands, list):
-                        for op in operands:
-                            extract_from_operand(op)
-                case "$add" | "$subtract" | "$multiply" | "$divide" | "$mod":
-                    if isinstance(operands, list):
-                        for op in operands:
-                            extract_from_operand(op)
-                case "$cond":
-                    if isinstance(operands, dict):
-                        if "if" in operands:
-                            extract_from_expr(operands["if"])
-                        if "then" in operands:
-                            extract_from_operand(operands["then"])
-                        if "else" in operands:
-                            extract_from_operand(operands["else"])
-                case "$abs" | "$ceil" | "$floor" | "$round":
-                    if isinstance(operands, list) and operands:
-                        extract_from_operand(operands[0])
-
-        def extract_from_operand(op: Any) -> None:
-            if isinstance(op, str) and op.startswith("$"):
-                # Field reference - no parameter
-                pass
-            elif isinstance(op, dict):
-                # Nested expression
-                extract_from_expr(op)
-            else:
-                # Literal value - parameter!
-                values.append(op)
-
-        extract_from_expr(expr)
-        return values
 
     def _build_tier2_query(
         self,

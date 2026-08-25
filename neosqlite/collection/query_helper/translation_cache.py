@@ -4,8 +4,10 @@ Translation Cache for SQL Tier Aggregation.
 This module provides caching for translated pipeline-to-SQL queries,
 with O(1) LRU (Least Recently Used) eviction using OrderedDict.
 
-The cache stores SQL templates (not results), allowing the same translated
-SQL to be reused across multiple query executions with different parameters.
+The cache stores SQL templates together with their exact bound parameters.
+Cache keys canonicalize the full pipeline content (including literal
+values), so a cache hit always corresponds to an identical pipeline and the
+stored parameters are guaranteed to match the template's placeholders.
 """
 
 from __future__ import annotations
@@ -18,11 +20,11 @@ from typing import Any
 class CacheEntry:
     """Single cache entry with hit statistics."""
 
-    __slots__ = ("sql_template", "param_names", "hit_count")
+    __slots__ = ("sql_template", "payload", "hit_count")
 
-    def __init__(self, sql_template: str, param_names: tuple[str, ...]):
+    def __init__(self, sql_template: str, payload: tuple[Any, ...]):
         self.sql_template = sql_template
-        self.param_names = param_names
+        self.payload = payload
         self.hit_count = 0
 
 
@@ -42,8 +44,8 @@ class TranslationCache:
         self._miss_count = 0
         self._hit_count = 0
 
-    def get(self, key: str) -> tuple[str, tuple[str, ...]] | None:
-        """Get cached SQL template by key. Returns (sql, param_names) or None."""
+    def get(self, key: str) -> tuple[str, tuple[Any, ...]] | None:
+        """Get cached SQL template by key. Returns (sql, payload) or None."""
         if self._max_size == 0:
             self._miss_count += 1
             return None
@@ -56,19 +58,25 @@ class TranslationCache:
         self._cache.move_to_end(key)
         entry.hit_count += 1
         self._hit_count += 1
-        return entry.sql_template, entry.param_names
+        return entry.sql_template, entry.payload
 
     def put(
-        self, key: str, sql_template: str, param_names: tuple[str, ...]
+        self, key: str, sql_template: str, payload: tuple[Any, ...]
     ) -> None:
-        """Store SQL template in cache with extracted parameter names."""
+        """Store SQL template in cache with its associated payload.
+
+        The payload is consumer-defined (e.g. the exact bound parameters for
+        the template). It must correspond 1:1 with this exact key, which is
+        guaranteed because ``make_key`` canonicalizes literal values into the
+        key — a cache hit therefore implies an identical pipeline.
+        """
         if self._max_size == 0:
             return  # Cache disabled
         if key in self._cache:
             # Already exists, update and move to end (most recently used)
             entry = self._cache[key]
             entry.sql_template = sql_template
-            entry.param_names = param_names
+            entry.payload = payload
             self._cache.move_to_end(key)
             return
 
@@ -77,74 +85,72 @@ class TranslationCache:
             self._cache.popitem(last=False)
 
         # Add new entry at end (most recent)
-        self._cache[key] = CacheEntry(sql_template, param_names)
+        self._cache[key] = CacheEntry(sql_template, payload)
 
     def make_key(self, pipeline: list[dict[str, Any]]) -> str:
         """
-        Create a cache key from pipeline structure.
+        Create a cache key from the full pipeline content.
 
-        Key includes: operator names + field names + nested operator names.
+        Literal values are canonicalized (type-tagged) into the key so that a
+        cache hit implies an identical pipeline. This is required for
+        correctness: sort directions, limits and other literals may be baked
+        into the cached SQL template rather than bound as parameters.
 
-        Values like $sample.size, $limit, $skip are NOT included in the key because
-        we now parameterize them in SQL (using ?) - the same cached SQL template can
-        be reused with different parameter values.
+        Field references ($field) are preserved verbatim; dicts are sorted
+        for order-insensitivity where ordering is not semantic.
         """
         key_parts = []
         for stage in pipeline:
             stage_name = next(iter(stage.keys()))
             spec = stage[stage_name]
-
-            match spec:
-                case str() as s:
-                    key_parts.append(f"{stage_name}:{s}")
-                case list() as lst:
-                    # Convert dicts/lists to safe structures and sort using str representation
-                    # as key to avoid TypeError with mixed or unorderable types.
-                    safe_lst = [
-                        (
-                            self._extract_structure(x)
-                            if isinstance(x, (dict, list))
-                            else x
-                        )
-                        for x in lst
-                    ]
-                    key_parts.append(
-                        f"{stage_name}:{tuple(sorted(safe_lst, key=str))}"
-                    )
-                case dict() as d:
-                    nested_struct = self._extract_structure(d)
-                    key_parts.append(f"{stage_name}:{nested_struct}")
-                case _:
-                    key_parts.append(stage_name)
+            key_parts.append(f"{stage_name}:{self._canonicalize(spec)}")
         return "|".join(key_parts)
 
-    def _extract_structure(self, obj: Any) -> Any:
+    def _canonicalize(self, value: Any) -> tuple:
         """
-        Recursively convert pipeline dict into a hashable nested tuple.
+        Recursively convert a value into a hashable, type-tagged structure.
 
-        Replaces literal values (numbers, strings, booleans) with '?' placeholder,
-        but PRESERVES field references (strings starting with $) to prevent
-        cache collisions between queries grouping/filtering on different fields.
-
-        Examples:
-        - {"$gt": 25} -> ("$gt", "?")
-        - {"_id": "$dept"} -> ("_id", "$dept")  # Preserved!
-        - {"status": "active"} -> ("status", "?")
+        Type tags distinguish values that Python would otherwise equate
+        (e.g. True vs 1, 1 vs 1.0) so that semantically different pipelines
+        never share a cache entry. Unhashable/exotic objects (ObjectId,
+        datetime, bytes, ...) are represented via their type name and repr,
+        which is stable for equal instances.
         """
-        match obj:
-            case dict() as d:
-                return tuple(
-                    (k, self._extract_structure(v))
-                    for k, v in sorted(d.items())
+        match value:
+            case bool():
+                return ("b", value)
+            case int():
+                return ("i", value)
+            case float():
+                return ("f", repr(value))
+            case str():
+                return ("s", value)
+            case None:
+                return ("z",)
+            case dict():
+                return (
+                    "d",
+                    tuple(
+                        (k, self._canonicalize(v))
+                        for k, v in sorted(value.items())
+                    ),
                 )
-            case list() as lst:
-                return tuple(self._extract_structure(item) for item in lst)
-            case str() as s if s.startswith("$"):
-                return s
-            case int() | float() | bool() | str():
-                return "?"
+            case list() | tuple():
+                return ("l", tuple(self._canonicalize(v) for v in value))
+            case bytes():
+                return ("y", value.hex())
             case _:
-                return "?"
+                return ("o", type(value).__name__, str(value))
+
+    def _extract_structure(self, obj: Any) -> tuple:
+        """
+        Recursively convert a pipeline fragment into a hashable nested tuple.
+
+        Preserves both field references ($field) and literal values so that
+        structurally identical but semantically different fragments (e.g.
+        differing sort directions or comparison bounds) map to distinct keys.
+        """
+        return self._canonicalize(obj)
 
     def get_stats(self) -> dict[str, Any]:
         """Get cache statistics."""
@@ -208,7 +214,7 @@ class TranslationCache:
         return {
             "key": key,
             "sql_template": entry.sql_template,
-            "param_names": entry.param_names,
+            "payload": entry.payload,
             "hit_count": entry.hit_count,
         }
 
@@ -225,7 +231,7 @@ class TranslationCache:
             {
                 "key": key,
                 "sql_preview": entry.sql_template[:100].replace("\n", " "),
-                "param_names": entry.param_names,
+                "payload": entry.payload,
                 "hit_count": entry.hit_count,
             }
             for key, entry in sorted_items

@@ -55,14 +55,22 @@ class TestTranslationCache:
         assert len(result1) == 1
         assert result1[0]["name"] == "Alice"
 
-        # Same structure query - cache hit
-        result2 = list(users.aggregate([{"$match": {"status": "inactive"}}]))
+        # Identical query - cache hit
+        result2 = list(users.aggregate([{"$match": {"status": "active"}}]))
         stats = qe.get_cache_stats()
         assert stats["misses"] == 1
         assert stats["hits"] == 1
         assert stats["hit_rate"] == 0.5
         assert len(result2) == 1
-        assert result2[0]["name"] == "Bob"
+        assert result2[0]["name"] == "Alice"
+
+        # Same structure but different literal value - separate entry
+        # (literals are part of the key so cached params always match)
+        result3 = list(users.aggregate([{"$match": {"status": "inactive"}}]))
+        stats = qe.get_cache_stats()
+        assert stats["misses"] == 2
+        assert len(result3) == 1
+        assert result3[0]["name"] == "Bob"
 
     def test_cache_different_structures(self, connection):
         """Test cache with different pipeline structures."""
@@ -77,13 +85,14 @@ class TestTranslationCache:
         qe = users.query_engine.sql_tier_aggregator
         qe.clear_cache()
 
-        # Different structures create separate cache entries
+        # Different structures (including different literal values) create
+        # separate cache entries
         list(users.aggregate([{"$match": {"status": "active"}}]))
         list(users.aggregate([{"$match": {"age": {"$gt": 20}}}]))
         list(users.aggregate([{"$match": {"status": "inactive"}}]))
 
         stats = qe.get_cache_stats()
-        assert stats["size"] == 2  # Two different field structures
+        assert stats["size"] == 3  # Literal values are part of the key
 
     def test_cache_clear(self, connection):
         """Test clearing cache."""
@@ -150,7 +159,8 @@ class TestTranslationCache:
         qe = users.query_engine.sql_tier_aggregator
         qe.clear_cache()
 
-        # Run queries - different values for same structure hit cache
+        # Run queries - identical pipelines hit cache; differing literals
+        # get their own entries so cached params always match the template
         list(
             users.aggregate([{"$match": {"status": "active"}}])
         )  # miss - builds SQL
@@ -159,14 +169,14 @@ class TestTranslationCache:
         )  # hit - uses cached SQL
         list(
             users.aggregate([{"$match": {"status": "inactive"}}])
-        )  # hit - uses cached SQL, new param
+        )  # miss - distinct literal value
 
         stats = qe.get_cache_stats()
 
         assert stats["enabled"] is True
-        assert stats["hits"] == 2
-        assert stats["misses"] == 1
-        assert stats["hit_rate"] == pytest.approx(2 / 3)
+        assert stats["hits"] == 1
+        assert stats["misses"] == 2
+        assert stats["hit_rate"] == pytest.approx(1 / 3)
 
     def test_cache_dump(self, connection):
         """Test dumping cache contents."""
@@ -221,10 +231,18 @@ class TestTranslationCache:
             key1 != key2
         ), "Cache key collision: age.$gt and score.$gt should differ"
 
-        # Same query with different values should have same key (parameterized)
+        # Identical pipelines share a key...
         key3 = cache.make_key([{"$match": {"age": {"$gt": 25}}}])
+        assert key3 == key1, "Identical pipelines should have the same key"
+
+        # ...but different literal values must NOT share a key, since sort
+        # directions / bounds can be baked into the cached SQL template.
+        # Regression guard for the cache-key collision that served wrong
+        # results for repeated pipelines with differing values (#85/#86).
         key4 = cache.make_key([{"$match": {"age": {"$gt": 999}}}])
-        assert key3 == key4, "Same query structure should have same key"
+        assert (
+            key3 != key4
+        ), "Different literal values must have different keys"
 
     def test_cache_multiple_parameterized_operators_different_order(self):
         """Test cache key is stable regardless of operator order in query.
@@ -249,27 +267,41 @@ class TestTranslationCache:
         assert key3 != key4, "Different fields should have different keys"
 
     def test_cache_parameterized_limit_skip_sample(self):
-        """Test parameterization works for $limit, $skip, $sample."""
+        """Test $limit, $skip, $sample keying includes their literal values.
+
+        Literal values are part of the key: identical pipelines share an
+        entry, differing values get distinct entries (required because these
+        values may be baked into the cached SQL template).
+        """
         from neosqlite.collection.query_helper.translation_cache import (
             TranslationCache,
         )
 
         cache = TranslationCache()
 
-        # $limit with different values should have same key
-        key1 = cache.make_key([{"$limit": 10}])
-        key2 = cache.make_key([{"$limit": 100}])
-        assert key1 == key2, "$limit values should be parameterized"
+        # $limit: same value -> same key; different value -> different key
+        assert cache.make_key([{"$limit": 10}]) == cache.make_key(
+            [{"$limit": 10}]
+        )
+        assert cache.make_key([{"$limit": 10}]) != cache.make_key(
+            [{"$limit": 100}]
+        )
 
-        # $skip with different values should have same key
-        key3 = cache.make_key([{"$skip": 5}])
-        key4 = cache.make_key([{"$skip": 50}])
-        assert key3 == key4, "$skip values should be parameterized"
+        # $skip
+        assert cache.make_key([{"$skip": 5}]) == cache.make_key(
+            [{"$skip": 5}]
+        )
+        assert cache.make_key([{"$skip": 5}]) != cache.make_key(
+            [{"$skip": 50}]
+        )
 
-        # $sample.size with different values should have same key
-        key5 = cache.make_key([{"$sample": {"size": 20}}])
-        key6 = cache.make_key([{"$sample": {"size": 100}}])
-        assert key5 == key6, "$sample.size values should be parameterized"
+        # $sample.size
+        assert cache.make_key([{"$sample": {"size": 20}}]) == (
+            cache.make_key([{"$sample": {"size": 20}}])
+        )
+        assert cache.make_key([{"$sample": {"size": 20}}]) != (
+            cache.make_key([{"$sample": {"size": 100}}])
+        )
 
     def test_cache_count_no_placeholder(self):
         """Test that $count doesn't create unnecessary placeholders.
@@ -284,14 +316,13 @@ class TestTranslationCache:
 
         cache = TranslationCache()
 
-        # $count with different output field names - the SQL is the same
+        # $count with different output field names get distinct keys
+        # (the field name is baked into the generated SQL)
         key1 = cache.make_key([{"$count": "total"}])
         key2 = cache.make_key([{"$count": "count"}])
 
-        # Key includes output field name - this is fine for correctness
-        # though could be optimized to share cache entries
-        assert key1 == "$count:total"
-        assert key2 == "$count:count"
+        assert key1 != key2
+        assert key1 == cache.make_key([{"$count": "total"}])
 
     def test_cache_group_no_collision_different_fields(self):
         """Regression test: $group with different _id fields must not collide.
@@ -1443,7 +1474,9 @@ class TestTier2TranslationCache:
         evaluator.evaluate(expr3, "users", None)
 
         stats = evaluator.get_cache_stats()
-        assert stats["size"] == 2
+        # Literals are part of the key, so expr1/expr3 (differing only in
+        # the compared value) get distinct entries.
+        assert stats["size"] == 3
 
     def test_tier2_cache_clear(self):
         """Test clearing Tier-2 cache."""
@@ -1613,7 +1646,9 @@ class TestTier2TranslationCache:
         expr4 = {"$gt": ["$age", 999]}
         key3 = evaluator._make_expr_key(expr3)
         key4 = evaluator._make_expr_key(expr4)
-        assert key3 == key4, "Same query structure should have same key"
+        # Literals are part of the key: a hit must imply an identical
+        # expression so cached parameters always match the template.
+        assert key3 != key4, "Different literal values must not share a key"
 
     def test_tier2_cache_preserves_field_references(self):
         """Test that field references ($field) are preserved in cache key."""
@@ -1633,7 +1668,7 @@ class TestTier2TranslationCache:
         ), "Different field references should have different keys"
 
     def test_tier2_cache_parameterizes_literals(self):
-        """Test that literal values are parameterized in cache key."""
+        """Test that identical expressions share keys, differing literals don't."""
         from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
 
         conn = neosqlite.Connection(":memory:")
@@ -1645,7 +1680,10 @@ class TestTier2TranslationCache:
         key1 = evaluator._make_expr_key(expr1)
         key2 = evaluator._make_expr_key(expr2)
 
-        assert key1 == key2, "Different literal values should have same key"
+        assert key1 != key2, "Different literal values must not share a key"
+        assert key1 == evaluator._make_expr_key(
+            {"$gt": ["$age", 25]}
+        ), "Identical expressions must share a key"
 
     def test_tier2_cache_with_complex_expression(self):
         """Test Tier-2 cache with complex expressions."""
@@ -1770,15 +1808,14 @@ class TestTier2TranslationCacheIntegration:
 
 
 class TestBugFixComparisonOperators:
-    """Tests for the bug fix in parameter extraction for comparison operators.
+    """Cache correctness for comparison operators across executions.
 
-    Previously, when using comparison operators like $gt, $lt, $gte, etc.,
-    the cached query would fail because the entire operator dict was passed
-    as a SQL parameter instead of the actual value.
+    Literal values are part of the cache key, so pipelines differing only in
+    the compared value build separate entries; re-running an identical
+    pipeline hits the cache and must return exactly the stored parameters.
     """
 
-    def test_cache_hit_with_gt_operator(self):
-        """Test cache hit works correctly with $gt operator."""
+    def _make_conn(self):
         conn = neosqlite.Connection(":memory:", translation_cache=100)
         users = conn.users
         users.insert_many(
@@ -1788,123 +1825,58 @@ class TestBugFixComparisonOperators:
                 {"age": 40, "name": "Charlie"},
             ]
         )
+        return conn, users
 
+    def _run_operator_case(self, op, first, second, expected_first,
+                           expected_second, field="age"):
+        conn, users = self._make_conn()
         qe = users.query_engine.sql_tier_aggregator
         qe.clear_cache()
 
-        # First query - cache miss
-        result1 = list(users.aggregate([{"$match": {"age": {"$gt": 25}}}]))
-        assert len(result1) == 2
-        assert "Bob" in [r["name"] for r in result1]
-        assert "Charlie" in [r["name"] for r in result1]
+        names1 = [
+            r["name"]
+            for r in users.aggregate([{"$match": {field: {op: first}}}])
+        ]
+        assert sorted(names1) == sorted(expected_first)
 
-        stats = qe.get_cache_stats()
-        assert stats["misses"] == 1
-        assert stats["hits"] == 0
-
-        # Second query with different value - cache hit should work now
-        result2 = list(users.aggregate([{"$match": {"age": {"$gt": 35}}}]))
-        assert len(result2) == 1
-        assert result2[0]["name"] == "Charlie"
-
+        # Identical rerun - cache hit, identical results
+        names1b = [
+            r["name"]
+            for r in users.aggregate([{"$match": {field: {op: first}}}])
+        ]
         stats = qe.get_cache_stats()
         assert stats["hits"] == 1
+        assert sorted(names1b) == sorted(expected_first)
 
-    def test_cache_hit_with_lt_operator(self):
-        """Test cache hit works correctly with $lt operator."""
-        conn = neosqlite.Connection(":memory:", translation_cache=100)
-        users = conn.users
-        users.insert_many(
-            [
-                {"age": 20, "name": "Alice"},
-                {"age": 30, "name": "Bob"},
-                {"age": 40, "name": "Charlie"},
-            ]
+        # Different bound - separate entry, correct results
+        names2 = [
+            r["name"]
+            for r in users.aggregate([{"$match": {field: {op: second}}}])
+        ]
+        assert sorted(names2) == sorted(expected_second)
+        conn.close()
+
+    def test_cache_with_gt_operator(self):
+        self._run_operator_case("$gt", 25, 35, ["Bob", "Charlie"], ["Charlie"])
+
+    def test_cache_with_lt_operator(self):
+        self._run_operator_case("$lt", 35, 25, ["Alice", "Bob"], ["Alice"])
+
+    def test_cache_with_gte_operator(self):
+        self._run_operator_case("$gte", 30, 35, ["Bob", "Charlie"], ["Charlie"])
+
+    def test_cache_with_lte_operator(self):
+        self._run_operator_case("$lte", 30, 25, ["Alice", "Bob"], ["Alice"])
+
+    def test_cache_with_ne_operator(self):
+        self._run_operator_case(
+            "$ne",
+            "Bob",
+            "Charlie",
+            ["Alice", "Charlie"],
+            ["Alice", "Bob"],
+            field="name",
         )
-
-        qe = users.query_engine.sql_tier_aggregator
-        qe.clear_cache()
-
-        list(users.aggregate([{"$match": {"age": {"$lt": 35}}}]))
-        stats = qe.get_cache_stats()
-        assert stats["misses"] == 1
-
-        # Cache hit with different value
-        result2 = list(users.aggregate([{"$match": {"age": {"$lt": 25}}}]))
-        assert len(result2) == 1
-        assert result2[0]["name"] == "Alice"
-
-        stats = qe.get_cache_stats()
-        assert stats["hits"] == 1
-
-    def test_cache_hit_with_gte_operator(self):
-        """Test cache hit works correctly with $gte operator."""
-        conn = neosqlite.Connection(":memory:", translation_cache=100)
-        users = conn.users
-        users.insert_many(
-            [
-                {"age": 20, "name": "Alice"},
-                {"age": 30, "name": "Bob"},
-                {"age": 40, "name": "Charlie"},
-            ]
-        )
-
-        qe = users.query_engine.sql_tier_aggregator
-        qe.clear_cache()
-
-        list(users.aggregate([{"$match": {"age": {"$gte": 30}}}]))
-
-        result2 = list(users.aggregate([{"$match": {"age": {"$gte": 35}}}]))
-        assert len(result2) == 1
-
-        stats = qe.get_cache_stats()
-        assert stats["hits"] == 1
-
-    def test_cache_hit_with_lte_operator(self):
-        """Test cache hit works correctly with $lte operator."""
-        conn = neosqlite.Connection(":memory:", translation_cache=100)
-        users = conn.users
-        users.insert_many(
-            [
-                {"age": 20, "name": "Alice"},
-                {"age": 30, "name": "Bob"},
-                {"age": 40, "name": "Charlie"},
-            ]
-        )
-
-        qe = users.query_engine.sql_tier_aggregator
-        qe.clear_cache()
-
-        list(users.aggregate([{"$match": {"age": {"$lte": 30}}}]))
-
-        result2 = list(users.aggregate([{"$match": {"age": {"$lte": 25}}}]))
-        assert len(result2) == 1
-
-        stats = qe.get_cache_stats()
-        assert stats["hits"] == 1
-
-    def test_cache_hit_with_ne_operator(self):
-        """Test cache hit works correctly with $ne operator."""
-        conn = neosqlite.Connection(":memory:", translation_cache=100)
-        users = conn.users
-        users.insert_many(
-            [
-                {"age": 20, "name": "Alice"},
-                {"age": 30, "name": "Bob"},
-                {"age": 40, "name": "Charlie"},
-            ]
-        )
-
-        qe = users.query_engine.sql_tier_aggregator
-        qe.clear_cache()
-
-        list(users.aggregate([{"$match": {"age": {"$ne": 30}}}]))
-
-        result2 = list(users.aggregate([{"$match": {"age": {"$ne": 20}}}]))
-        assert len(result2) == 2
-
-        stats = qe.get_cache_stats()
-        assert stats["hits"] == 1
 
 
 class TestTierChangeCallback:
@@ -2010,186 +1982,6 @@ class TestTierChangeCallback:
 
         assert len(callback_calls) >= 1
         assert callback_calls[-1][1] in ("tier2", "tier3")
-
-
-class TestExtractComparisonValue:
-    """Tests for _extract_comparison_value in SQLTierAggregator."""
-
-    @pytest.fixture
-    def aggregator(self, connection):
-        """Create a SQLTierAggregator instance."""
-        users = connection.users
-        users.insert_one({"a": 1})
-        return users.query_engine.sql_tier_aggregator
-
-    def test_extract_comparison_value_gt(self, aggregator):
-        """Test extracting value from $gt operator."""
-        result = aggregator._extract_comparison_value({"$gt": 25})
-        assert result == 25
-
-    def test_extract_comparison_value_lt(self, aggregator):
-        """Test extracting value from $lt operator."""
-        result = aggregator._extract_comparison_value({"$lt": 10})
-        assert result == 10
-
-    def test_extract_comparison_value_gte(self, aggregator):
-        """Test extracting value from $gte operator."""
-        result = aggregator._extract_comparison_value({"$gte": 5})
-        assert result == 5
-
-    def test_extract_comparison_value_lte(self, aggregator):
-        """Test extracting value from $lte operator."""
-        result = aggregator._extract_comparison_value({"$lte": 100})
-        assert result == 100
-
-    def test_extract_comparison_value_ne(self, aggregator):
-        """Test extracting value from $ne operator."""
-        result = aggregator._extract_comparison_value({"$ne": "active"})
-        assert result == "active"
-
-    def test_extract_comparison_value_eq(self, aggregator):
-        """Test extracting value from $eq operator."""
-        result = aggregator._extract_comparison_value({"$eq": True})
-        assert result is True
-
-    def test_extract_comparison_value_in(self, aggregator):
-        """Test extracting value from $in operator."""
-        result = aggregator._extract_comparison_value({"$in": [1, 2, 3]})
-        assert result == [1, 2, 3]
-
-    def test_extract_comparison_value_nin(self, aggregator):
-        """Test extracting value from $nin operator."""
-        result = aggregator._extract_comparison_value({"$nin": ["a", "b"]})
-        assert result == ["a", "b"]
-
-    def test_extract_comparison_value_empty_dict(self, aggregator):
-        """Test extracting value from empty dict."""
-        result = aggregator._extract_comparison_value({})
-        assert result == {}
-
-    def test_extract_comparison_value_multiple_keys(self, aggregator):
-        """Test extracting value from dict with multiple keys - should return as-is."""
-        result = aggregator._extract_comparison_value({"$gt": 25, "$lt": 50})
-        assert result == {"$gt": 25, "$lt": 50}
-
-    def test_extract_comparison_value_non_operator(self, aggregator):
-        """Test extracting value from non-operator dict."""
-        result = aggregator._extract_comparison_value({"field": "value"})
-        assert result == {"field": "value"}
-
-
-class TestFindValueInDict:
-    """Tests for _find_value_in_dict in SQLTierAggregator."""
-
-    @pytest.fixture
-    def aggregator(self, connection):
-        """Create a SQLTierAggregator instance."""
-        users = connection.users
-        users.insert_one({"a": 1})
-        return users.query_engine.sql_tier_aggregator
-
-    def test_find_value_with_gt_operator(self, aggregator):
-        """Test finding value that has $gt operator."""
-        d = {"age": {"$gt": 25}}
-        result = aggregator._find_value_in_dict(d, "$age")
-        assert result == 25
-
-    def test_find_value_with_lt_operator(self, aggregator):
-        """Test finding value that has $lt operator."""
-        d = {"score": {"$lt": 100}}
-        result = aggregator._find_value_in_dict(d, "$score")
-        assert result == 100
-
-    def test_find_value_with_gte_operator(self, aggregator):
-        """Test finding value that has $gte operator."""
-        d = {"count": {"$gte": 5}}
-        result = aggregator._find_value_in_dict(d, "$count")
-        assert result == 5
-
-    def test_find_value_with_lte_operator(self, aggregator):
-        """Test finding value that has $lte operator."""
-        d = {"amount": {"$lte": 50}}
-        result = aggregator._find_value_in_dict(d, "$amount")
-        assert result == 50
-
-    def test_find_value_with_ne_operator(self, aggregator):
-        """Test finding value that has $ne operator."""
-        d = {"status": {"$ne": "inactive"}}
-        result = aggregator._find_value_in_dict(d, "$status")
-        assert result == "inactive"
-
-    def test_find_value_with_in_operator(self, aggregator):
-        """Test finding value that has $in operator."""
-        d = {"type": {"$in": ["a", "b", "c"]}}
-        result = aggregator._find_value_in_dict(d, "$type")
-        assert result == ["a", "b", "c"]
-
-    def test_find_value_nested(self, aggregator):
-        """Test finding value in nested dict."""
-        d = {"profile": {"age": {"$gt": 30}}}
-        result = aggregator._find_value_in_dict(d, "$age")
-        assert result == 30
-
-
-class TestExtractFieldPathsFromDict:
-    """Tests for _extract_field_paths_from_dict in SQLTierAggregator."""
-
-    @pytest.fixture
-    def aggregator(self, connection):
-        """Create a SQLTierAggregator instance."""
-        users = connection.users
-        users.insert_one({"a": 1})
-        return users.query_engine.sql_tier_aggregator
-
-    def test_extract_simple_field(self, aggregator):
-        """Test extracting simple field path."""
-        d = {"name": "value"}
-        result = aggregator._extract_field_paths_from_dict(d)
-        assert "$name" in result
-
-    def test_extract_field_with_gt_operator(self, aggregator):
-        """Test extracting field with $gt operator."""
-        d = {"age": {"$gt": 25}}
-        result = aggregator._extract_field_paths_from_dict(d)
-        assert "$age" in result
-
-    def test_extract_field_with_multiple_operators(self, aggregator):
-        """Test extracting field with multiple operators."""
-        d = {"age": {"$gt": 25}, "status": {"$eq": "active"}}
-        result = aggregator._extract_field_paths_from_dict(d)
-        assert "$age" in result
-        assert "$status" in result
-
-    def test_extract_nested_field(self, aggregator):
-        """Test extracting nested field."""
-        d = {"profile": {"age": {"$gt": 25}}}
-        result = aggregator._extract_field_paths_from_dict(d)
-        assert "$profile" in result
-        assert "$profile.age" in result
-
-    def test_extract_with_regex_operator(self, aggregator):
-        """Test extracting field with $regex operator."""
-        d = {"name": {"$regex": "^A"}}
-        result = aggregator._extract_field_paths_from_dict(d)
-        assert "$name" in result
-
-    def test_extract_with_exists_operator(self, aggregator):
-        """Test extracting field with $exists operator."""
-        d = {"email": {"$exists": True}}
-        result = aggregator._extract_field_paths_from_dict(d)
-        assert "$email" in result
-
-    def test_extract_with_type_operator(self, aggregator):
-        """Test extracting field with $type operator."""
-        d = {"count": {"$type": "number"}}
-        result = aggregator._extract_field_paths_from_dict(d)
-        assert "$count" in result
-
-    def test_extract_with_elemMatch(self, aggregator):
-        """Test extracting field with $elemMatch operator."""
-        d = {"tags": {"$elemMatch": {"$eq": "urgent"}}}
-        result = aggregator._extract_field_paths_from_dict(d)
-        assert "$tags" in result
 
 
 class TestCacheWithComparisonOperators:
@@ -2339,6 +2131,22 @@ class TestMakeKeySafety:
 
         assert key1 is not None
         assert key2 is not None
+
+    def test_make_key_distinguishes_type_lookalikes(self):
+        """bool/int/float look-alikes must not share cache entries."""
+        from neosqlite.collection.query_helper.translation_cache import (
+            TranslationCache,
+        )
+
+        tc = TranslationCache()
+        keys = {
+            tc.make_key([{"$match": {"a": 1}}]),
+            tc.make_key([{"$match": {"a": True}}]),
+            tc.make_key([{"$match": {"a": 1.0}}]),
+            tc.make_key([{"$match": {"a": "1"}}]),
+            tc.make_key([{"$match": {"a": None}}]),
+        }
+        assert len(keys) == 5
 
 
 @pytest.fixture
