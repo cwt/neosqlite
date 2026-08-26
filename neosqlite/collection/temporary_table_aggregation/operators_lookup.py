@@ -455,7 +455,7 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
                     )
 
                 if local_field == "_id":
-                    local_extract = f"COALESCE({self.jsonb.json_function_prefix}_extract(main_table.data, '$._id'), main_table.id)"
+                    local_extract = f"COALESCE({self.jsonb.json_function_prefix}_extract(main_table.data, '$._id'), main_table._id, main_table.id)"
                 else:
                     # Use ObjectId-aware extraction
                     local_extract = _json_extract_field_with_objectid_support(
@@ -465,14 +465,14 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
                     )
 
                 select_clause = (
-                    f"SELECT main_table.id, "
-                    f"json({json_set_func}({json_set_func}(main_table.data, '$._id', main_table.id), '{parse_json_path(as_field)}', "
+                    f"SELECT main_table.id, main_table._id, "
+                    f"json({json_set_func}(main_table.data, '{parse_json_path(as_field)}', "
                     f"coalesCE(( "
                     f"  SELECT {self.jsonb.json_group_array_function}(json(related.data)) "
                     f"  FROM {pipeline_result_table} as related "
                     f"  WHERE {foreign_extract} = "
                     f"        {local_extract} "
-                    f"), json('[]')))) as data"
+                    f"), json('[]'))) as data"
                 )
 
                 from_clause = f"FROM {current_table} as main_table"
@@ -512,7 +512,7 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
             )
 
         if local_field_str == "_id":
-            local_extract = f"COALESCE({self.jsonb.json_function_prefix}_extract(main_table.data, '$._id'), main_table.id)"
+            local_extract = f"COALESCE({self.jsonb.json_function_prefix}_extract(main_table.data, '$._id'), main_table._id, main_table.id)"
         else:
             # Use ObjectId-aware extraction
             local_extract = _json_extract_field_with_objectid_support(
@@ -522,14 +522,14 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
             )
 
         select_clause = (
-            f"SELECT main_table.id, "
-            f"json({json_set_func}({json_set_func}(main_table.data, '$._id', main_table.id), '{parse_json_path(as_field)}', "
+            f"SELECT main_table.id, main_table._id, "
+            f"json({json_set_func}(main_table.data, '{parse_json_path(as_field)}', "
             f"coalesCE(( "
-            f"  SELECT {self.jsonb.json_group_array_function}(json(related.data)) "
+            f"  SELECT {self.jsonb.json_group_array_function}(json({json_set_func}(related.data, '$._id', related._id))) "
             f"  FROM {from_collection} as related "
             f"  WHERE {foreign_extract} = "
             f"        {local_extract} "
-            f"), json('[]')))) as data"
+            f"), json('[]'))) as data"
         )
 
         from_clause = f"FROM {current_table} as main_table"
@@ -587,7 +587,7 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
             assert local_field is not None, "local_field should not be None"
 
             if local_field == "_id":
-                local_extract = f"CAST(COALESCE({self.jsonb.json_function_prefix}_extract(main_table.data, '$._id'), main_table.id) AS TEXT)"
+                local_extract = f"CAST(COALESCE({self.jsonb.json_function_prefix}_extract(main_table.data, '$._id'), main_table._id, main_table.id) AS TEXT)"
             else:
                 local_extract = _json_extract_field_with_objectid_support(
                     self.jsonb.json_function_prefix,
@@ -596,15 +596,15 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
                 )
 
             select_clause = (
-                f"SELECT main_table.id, "
-                f"json({json_set_func}({json_set_func}(main_table.data, '$._id', main_table.id), '$.{as_field}', "
+                f"SELECT main_table.id, main_table._id, "
+                f"json({json_set_func}(main_table.data, '$.{as_field}', "
                 f"COALESCE(aggregated.results, json('[]')))) as data "
             )
 
             from_clause = (
                 f"FROM {current_table} as main_table "
                 f"LEFT JOIN ("
-                f"  SELECT {join_key}, {self.jsonb.json_group_array_function}(json(data)) as results "
+                f"  SELECT {join_key}, {self.jsonb.json_group_array_function}(json({json_set_func}(data, '$._id', _id))) as results "
                 f"  FROM {hash_table_name} "
                 f"  GROUP BY {join_key}"
                 f") aggregated ON {local_extract} = aggregated.{join_key}"

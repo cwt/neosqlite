@@ -725,7 +725,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
         start_points_sql = f"""
             SELECT
                 p.id as original_id,
-                t.id as found_id,
+                t._id as found_id,
                 t.data as found_data,
                 0 as depth
             FROM {current_table} p
@@ -739,7 +739,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
         recursive_step_sql = f"""
             SELECT
                 r.original_id,
-                t.id as found_id,
+                t._id as found_id,
                 t.data as found_data,
                 r.depth + 1
             FROM {recurse_cte} r
@@ -769,7 +769,8 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             )
             SELECT
                 p.id AS id,
-                json({json_set_func}({json_set_func}(p.data, '$._id', p.id), '{parse_json_path(as_field_str)}',
+                p._id AS _id,
+                json({json_set_func}(p.data, '{parse_json_path(as_field_str)}',
                     COALESCE((
                         SELECT {json_group_func}(
                             json({json_set_func}(sub.found_data, '$._id', sub.found_id {depth_json_sql}))
