@@ -902,18 +902,18 @@ class NeoSQLiteHandler:
 
         if "listDatabases" in cmd_copy or "listdatabases" in cmd_copy:
             databases_info = []
-            total_size = 0
-            for db_name, db_conn in self.databases.items():
-                if self.db_path == ":memory:":
+            if self.db_path == ":memory:":
+                size_on_disk = 0
+                is_empty = True
+            else:
+                try:
+                    size_on_disk = os.path.getsize(self.db_path)
+                    is_empty = False
+                except OSError:
                     size_on_disk = 0
                     is_empty = True
-                else:
-                    try:
-                        size_on_disk = os.path.getsize(self.db_path)
-                        is_empty = False
-                    except OSError:
-                        size_on_disk = 0
-                        is_empty = True
+            total_size = size_on_disk
+            for db_name, db_conn in self.databases.items():
                 databases_info.append(
                     {
                         "name": db_name,
@@ -921,7 +921,6 @@ class NeoSQLiteHandler:
                         "empty": is_empty,
                     }
                 )
-                total_size += size_on_disk
             return request_id, {
                 "ok": 1,
                 "databases": databases_info,
