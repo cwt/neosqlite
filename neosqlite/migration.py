@@ -153,7 +153,6 @@ def migrate_autovacuum(
             # auto_vacuum must be set on the snapshot BEFORE VACUUM so the
             # rebuilt output carries the target mode.
             snap_conn.execute(f"PRAGMA auto_vacuum={target_autovacuum}")
-            escaped_snapshot = snapshot_path.replace("'", "''")
             snap_conn.execute(f"VACUUM INTO '{escaped_dest}'")
         finally:
             snap_conn.close()

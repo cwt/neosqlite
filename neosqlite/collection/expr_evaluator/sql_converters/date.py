@@ -122,7 +122,6 @@ class DateMixin(BaseSqlMixin):
             )
 
         date_sql, date_params = self._convert_operand_to_sql(operands[0])
-        amount = operands[1]  # Should be a literal number
         unit = operands[2] if len(operands) > 2 else "day"  # Default to days
 
         # Validate unit

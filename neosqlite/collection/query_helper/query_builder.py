@@ -13,9 +13,9 @@ from ... import query_operators
 from ...exceptions import MalformedQueryException
 from ...sql_utils import quote_table_name
 from ..expr_evaluator import ExprEvaluator
+from ..index_manager import _load_index_keys
 from ..text_search import unified_text_search
 from ._sql_query_builder import SqlQueryBuilderMixin
-from ..index_manager import _load_index_keys
 
 if TYPE_CHECKING:
     from .. import Collection

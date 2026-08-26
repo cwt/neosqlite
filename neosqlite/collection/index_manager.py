@@ -63,7 +63,6 @@ def _load_index_keys(db, index_name: str) -> list[str] | None:
         return None
 
 
-
 class IndexManager:
     """
     Manages indexes for a NeoSQLite collection.
@@ -160,9 +159,7 @@ class IndexManager:
                     index_expr = (
                         f"{func_prefix}_extract(data, '{parse_json_path(key)}')"
                     )
-                index_name_full = (
-                    f"idx_{self.collection.name}_{index_name}"
-                )
+                index_name_full = f"idx_{self.collection.name}_{index_name}"
                 self.collection.db.execute(
                     (
                         f"CREATE {'UNIQUE ' if unique else ''}INDEX "
@@ -171,9 +168,7 @@ class IndexManager:
                     )
                 )
                 # Real key spec for as_keys=True / optimizer (#158)
-                _store_index_keys(
-                    self.collection.db, index_name_full, [key]
-                )
+                _store_index_keys(self.collection.db, index_name_full, [key])
         else:
             # Compound indexes: must use PyMongo tuple format
             # [("field1", 1), ("field2", -1)]
@@ -203,9 +198,7 @@ class IndexManager:
                 f"{func_prefix}_extract(data, '{parse_json_path(f)}')"
                 for f in fields
             )
-            compound_full_name = (
-                f"idx_{self.collection.name}_{index_name}"
-            )
+            compound_full_name = f"idx_{self.collection.name}_{index_name}"
             self.collection.db.execute(
                 (
                     f"CREATE {'UNIQUE ' if unique else ''}INDEX "
@@ -213,9 +206,7 @@ class IndexManager:
                     f"ON {quote_table_name(self.collection.name)}({index_columns})"
                 )
             )
-            _store_index_keys(
-                self.collection.db, compound_full_name, fields
-            )
+            _store_index_keys(self.collection.db, compound_full_name, fields)
 
     def _create_fts_index(self, field: str, tokenizer: str | None = None):
         """
@@ -557,9 +548,7 @@ class IndexManager:
         else:
             # For compound indexes
             index_name = "_".join(index).replace(".", "_")
-        full_name = (
-            f"idx_{quote_table_name(self.collection.name)}_{index_name}"
-        )
+        full_name = f"idx_{quote_table_name(self.collection.name)}_{index_name}"
         self.collection.db.execute(f"DROP INDEX IF EXISTS {full_name}")
         # Remove the stored key spec (#158)
         try:

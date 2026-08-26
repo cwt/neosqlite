@@ -87,12 +87,8 @@ class StringMixin(BaseSqlMixin):
                 # MongoDB; may split a multibyte sequence at caller's risk,
                 # matching MongoDB's error-prone byte semantics (#117)
                 if len(operands) != 3:
-                    raise ValueError(
-                        "$substrBytes requires exactly 3 operands"
-                    )
-                str_sql, str_params = self._convert_operand_to_sql(
-                    operands[0]
-                )
+                    raise ValueError("$substrBytes requires exactly 3 operands")
+                str_sql, str_params = self._convert_operand_to_sql(operands[0])
                 # start/len are plain integers in MongoDB; inline them so a
                 # single SQL string can reference them repeatedly without
                 # placeholder bookkeeping (#117)
