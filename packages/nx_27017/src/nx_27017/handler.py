@@ -788,6 +788,21 @@ class NeoSQLiteHandler:
                     request_id, cmd_copy, db, coll_name
                 )
 
+            try:
+                collection_exists = coll_name in db.list_collection_names()
+            except Exception:
+                collection_exists = False
+
+            if not collection_exists:
+                return request_id, {
+                    "ok": 1,
+                    "cursor": {
+                        "id": 0,
+                        "ns": f"{db.name}.{coll_name}",
+                        "firstBatch": [],
+                    },
+                }
+
             coll = db[coll_name]
             session_to_use = self._get_or_create_session(command_doc)
             cursor = (
