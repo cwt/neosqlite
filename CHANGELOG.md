@@ -78,6 +78,55 @@ columns while `$$var` references resolve to the current element. The result is a
 
 ---
 
+### Audit Remediation: 86 Issues Resolved (Correctness, Parity, Leaks)
+
+Systematic remediation of all findings from a deep code audit — 11 critical,
+18 high, 30 medium, 17 low severity issues fixed and verified:
+
+- **Translation Cache Correctness**: Cache keys now include literal values (a
+  descending sort could be served from an ascending cached template), and hits
+  return exact stored parameters instead of re-deriving them through a divergent
+  walk that corrupted multi-`$match` pipelines.
+- **MongoDB Null Semantics**: `{f: null}` matches null-or-missing; `$ne` matches
+  absent fields; expression-level `$eq` between two missing fields is true.
+  Applied across find() SQL, Tier-1 match builder, and expression converters.
+- **GridFS Integrity**: `delete_by_name()` no longer orphans chunks; unique
+  `(files_id, n)` index prevents racing writers; aborted context-manager uploads
+  delete partial data instead of committing truncated files; missing chunks raise
+  `CorruptGridFile`; revisions below `-1` resolve correctly.
+- **Update Operator Parity**: `update_many` validates `$inc`/`$mul` targets;
+  `$min`/`$max` handle missing fields; `$addToSet` no longer nests whole
+  documents; `$push $position/$slice` rebuilt with correct ordering semantics.
+- **Aggregation Tier Fixes**: Tier-1 `$group`/`$bucket` honor the CTE column
+  contract; tier-2 `$first`/`$last` via ranked CTE; `$lookup`+pipeline works for
+  multiple matches; positional `$` resolves dotted filters; window default frame
+  is full-partition per MongoDB.
+- **Expression Parity**: Integer booleans across converters (composite predicates
+  no longer break); `$divide` forces REAL division; `$round` ties-to-even;
+  byte-accurate `$substrBytes`; date unit conversion works with dynamic amounts.
+
+### Resource & Lifecycle Fixes
+
+- Temp tables (`$facet`, `$text`, `$expr`) owned by pipeline context — leaks on
+  success/failure paths eliminated; expected fallbacks log at WARNING without tracebacks.
+- ChangeStreams: refcounted shared triggers, watermark consumption (concurrent
+  streams no longer steal events), last-close purge bounds table growth.
+- Savepoint names uniquified; nested `transaction()` refused safely instead of
+  rolling back outer work; bounded caches; GridFS `connect()` releases stale handles.
+
+### Performance
+
+- Eliminated N+1 document loading (raw batches: 16 statements → 2 per 5 docs).
+- Tier-3 `$lookup` builds a hash index once instead of rescanning per document.
+- GridFS: batched chunk inserts, offset-based write buffer, cached file IDs.
+
+### Typed Rollout
+
+- Enabled `check_untyped_defs` project-wide: every function body in `neosqlite/`
+  is now type-checked even without annotations. Demo scripts excluded.
+
+---
+
 ### Strict `_id` Field Parity (High Parity Improvements)
 
 - **Strict `_id` Semantics**: Dropped integer `_id` -> `id` column relaxation. String `_id` values (e.g., `"123"`) are no longer implicitly converted to integers. Range queries (`$gt`, `$lt`) on `_id` now fall back to Python-based evaluation for correct cross-type BSON ordering.
