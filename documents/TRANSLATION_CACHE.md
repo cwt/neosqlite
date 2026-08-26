@@ -8,7 +8,16 @@ The translation cache stores translated SQL templates for:
 1. **Aggregation pipelines** - MongoDB-style stages translated to SQL
 2. **Tier-2 $expr queries** - Complex expressions evaluated using temporary tables
 
-This avoids repeated translation overhead for identical or similar query patterns.
+This avoids repeated translation overhead for repeated query patterns.
+
+> **v1.15.0 correctness note:** Cache keys now canonicalize **literal values**
+> (type-tagged), and cache hits return the exact parameters stored with the
+> template. Earlier versions keyed on structure only and re-derived parameters
+> on hits, which could serve stale SQL — e.g., a descending `$sort` returned
+> ascending order, or a second `{$match: {a: 2}}` pipeline reused the first
+> one's bindings. See `translation_cache.py::_canonicalize`.
+
+
 
 ### Problem
 

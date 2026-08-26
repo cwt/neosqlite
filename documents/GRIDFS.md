@@ -336,3 +336,14 @@ The implementation supports both traditional GridFSBucket API usage and PyMongo-
 
 **Implementation Status**: All core GridFS features have been implemented and are available in the current version. NeoSQLite GridFS now provides 100% API compatibility for common use cases.</content>
 <parameter name="filePath">documents/GRIDFS.md
+
+---
+
+## v1.15.0 Integrity Notes
+
+- `delete_by_name()` now deletes chunks correctly (previously orphaned them).
+- A `UNIQUE(files_id, n)` index prevents duplicate chunk writes from racing writers.
+- Aborting an upload (exception inside `with bucket.open_upload_stream(...)`) deletes
+  partial chunks and the file document instead of committing a truncated file.
+- Missing or unfinalized chunks raise `CorruptGridFile` during reads.
+- Negative revisions (`-2`, `-3`, ...) resolve counting backwards from newest.

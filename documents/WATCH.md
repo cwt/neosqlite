@@ -6,6 +6,13 @@ NeoSQLite provides change stream functionality, similar to PyMongo's, through th
 
 The `watch()` feature is implemented using SQLite triggers. When you start a change stream, triggers are created on the collection's underlying table. These triggers capture any changes and record them in a dedicated `_neosqlite_changestream` table. The `ChangeStream` object then polls this table for new events.
 
+> **v1.15.0 behavior:** Triggers are now **shared per collection** (reference-counted)
+> and events are consumed via **per-stream watermarks** instead of being deleted on
+> read — so concurrent streams on the same collection each see every event, and
+> closing one stream no longer affects others. Events are purged when the last
+> stream for a collection closes, and a new stream starts from "now" (it does not
+> replay pre-open events).
+
 ## Usage
 
 The `watch()` method returns a `ChangeStream` object, which is an iterator. The recommended way to use it is with a `with` statement to ensure resources are properly cleaned up.
