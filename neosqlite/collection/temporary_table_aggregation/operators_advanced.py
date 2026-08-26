@@ -692,9 +692,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                     r_sql = r_sql.replace(f"{func}(data", f"{func}(t.data")
                 # _id clauses reference the quoted table name; alias it to t.
                 # Guarded by the all([...]) check above, so it's a str here.
-                quoted_target = quote_table_name(
-                    str(from_collection)
-                )
+                quoted_target = quote_table_name(str(from_collection))
                 r_sql = r_sql.replace(f"{quoted_target}._id", "t._id")
                 r_sql = r_sql.replace(f"{quoted_target}.id", "t.id")
                 restrict_where = f"AND ({r_sql})"
