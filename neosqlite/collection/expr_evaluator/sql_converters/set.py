@@ -40,8 +40,9 @@ class SetMixin(BaseSqlMixin):
                     operands[1]
                 )
                 # Bidirectional subset check: A ⊆ B AND B ⊆ A.
-                # Each array reference appears twice; for field references
-                # (the common case) this adds no extra parameters.
+                # Each array reference appears twice, so its parameters
+                # must appear twice in the binding list, in SQL order:
+                # array1, array2, array2, array1.
                 sql = f"""
                 (
                   NOT EXISTS (
@@ -61,7 +62,13 @@ class SetMixin(BaseSqlMixin):
                   )
                 )
                 """
-                return sql, array1_params + array2_params
+                return (
+                    sql,
+                    array1_params
+                    + array2_params
+                    + array2_params
+                    + array1_params,
+                )
 
             case "$setIntersection":
                 if len(operands) != 2:

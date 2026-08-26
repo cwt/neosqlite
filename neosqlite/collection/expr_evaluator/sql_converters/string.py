@@ -182,7 +182,15 @@ class StringMixin(BaseSqlMixin):
                     f"(CASE WHEN {string_sql} IS NULL OR {substr_sql} IS NULL "
                     f"THEN -1 ELSE instr({string_sql}, {substr_sql}) - 1 END)"
                 )
-                return sql, string_params + substr_params
+                # Both fragments appear twice; duplicate params in SQL order:
+                # string, substr, string, substr.
+                return (
+                    sql,
+                    string_params
+                    + substr_params
+                    + string_params
+                    + substr_params,
+                )
             case "$strcasecmp":
                 # Case-insensitive string comparison using SQLite's COLLATE NOCASE
                 if len(operands) != 2:
@@ -201,7 +209,12 @@ class StringMixin(BaseSqlMixin):
                         ELSE 0
                     END
                 """
-                return sql, str1_params + str2_params
+                # Both fragments appear twice; duplicate params in SQL order:
+                # str1, str2, str1, str2.
+                return (
+                    sql,
+                    str1_params + str2_params + str1_params + str2_params,
+                )
             case "$substrBytes":
                 # Substring by bytes - SQLite's substr works on characters, not bytes
                 # For ASCII this is the same, for UTF-8 we need special handling
@@ -281,7 +294,9 @@ class StringMixin(BaseSqlMixin):
                         f" replace({string_sql}, '{delim_sql}', '\",\"') ||"
                         f" '\"]') END"
                     )
-                    return sql, string_params
+                    # The string fragment appears twice (null check + replace):
+                    # duplicate its params in SQL order.
+                    return sql, string_params + string_params
                 # Dynamic delimiter: fall back to Python.
                 raise NotImplementedError(
                     "$split with dynamic delimiter not supported in SQL tier"

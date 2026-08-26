@@ -469,4 +469,6 @@ class DateMixin(BaseSqlMixin):
             f"CASE WHEN {string_sql} IS NULL THEN NULL"
             f" ELSE strftime('%Y-%m-%dT%H:%M:%SZ', {string_sql}) END"
         )
-        return sql, string_params
+        # The string fragment appears twice (null check + strftime):
+        # duplicate its params in SQL order.
+        return sql, string_params + string_params
