@@ -1,6 +1,7 @@
 from decimal import Decimal as PyDecimal
 from typing import Any
 
+from bson import Decimal128
 from bson import ObjectId as BsonObjectId
 from bson.int64 import Int64
 
@@ -8,13 +9,14 @@ from neosqlite.objectid import ObjectId as NeoObjectId
 
 
 def convert_neo_to_bson_objectids(doc: Any) -> Any:
-    """Convert NeoSQLite ObjectIds to BSON ObjectIds, and Decimal to float."""
+    """Convert NeoSQLite ObjectIds to BSON ObjectIds, and Decimal to
+    BSON Decimal128 (preserving precision instead of float)."""
 
     def _convert_value(value: Any) -> Any:
         if isinstance(value, NeoObjectId):
             return BsonObjectId(value.binary)
         elif isinstance(value, PyDecimal):
-            return float(value)
+            return Decimal128(value)
         elif isinstance(value, list):
             return [_convert_value(item) for item in value]
         elif isinstance(value, dict):
@@ -32,7 +34,7 @@ def convert_neo_to_bson_objectids(doc: Any) -> Any:
     elif isinstance(doc, list):
         return [_convert_value(item) for item in doc]
     elif isinstance(doc, PyDecimal):
-        return float(doc)
+        return Decimal128(doc)
     elif isinstance(doc, NeoObjectId):
         return BsonObjectId(doc.binary)
     return doc

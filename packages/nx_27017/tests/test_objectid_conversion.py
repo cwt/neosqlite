@@ -63,6 +63,18 @@ class TestConvertObjectIds:
         assert isinstance(res_list[0]["_id"], NeoObjectId)
         assert isinstance(res_list[1]["sub"][0]["_id"], NeoObjectId)
 
+    def test_decimal_preserved_as_decimal128(self):
+        from decimal import Decimal as PyDecimal
+
+        from bson import Decimal128
+
+        value = PyDecimal("0.123456789012345678901234567890")
+        result = convert_neo_to_bson_objectids({"price": value})
+        assert isinstance(result["price"], Decimal128)
+        assert str(result["price"]) == "0.123456789012345678901234567890"
+        # Float conversion would round away the extra precision.
+        assert str(result["price"]) != str(float(value))
+
     def test_convert_json_to_neo_objectids(self):
         oid_str = "507f1f77bcf86cd799439011"
         assert convert_json_to_neo_objectids(None) is None
