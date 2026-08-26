@@ -276,7 +276,6 @@ class NeoSQLiteHandler:
             coll = db.create_collection(coll_name)
         else:
             coll = db[coll_name]
-            coll.create()
 
         docs_to_insert = payload_docs.copy() if payload_docs else []
         for key, value in command_doc.items():

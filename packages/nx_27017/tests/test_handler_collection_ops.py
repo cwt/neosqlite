@@ -248,3 +248,37 @@ class TestCollectionOperations:
         }
         _, response = handler.handle_command(rename_msg)
         assert response["ok"] == 1
+
+    def test_insert_into_existing_collection(self, handler):
+        """Inserting into an already-existing collection must not call
+        create() on the existing table (regression for coll.create()
+        being invoked on the else branch)."""
+        first = {
+            "request_id": 1,
+            "sections": [
+                ("body", {"insert": "users", "$db": "test"}),
+                ("payload_docs", [{"name": "Alice"}]),
+            ],
+        }
+        _, r1 = handler.handle_insert(first)
+        assert r1["ok"] == 1
+
+        second = {
+            "request_id": 2,
+            "sections": [
+                ("body", {"insert": "users", "$db": "test"}),
+                ("payload_docs", [{"name": "Bob"}]),
+            ],
+        }
+        _, r2 = handler.handle_insert(second)
+        assert r2["ok"] == 1
+        assert r2["n"] == 1
+
+        count_msg = {
+            "request_id": 3,
+            "sections": [
+                ("body", {"count": "users", "$db": "test", "query": {}}),
+            ],
+        }
+        _, count_resp = handler.handle_command(count_msg)
+        assert count_resp["n"] == 2
