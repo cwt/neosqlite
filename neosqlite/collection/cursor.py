@@ -383,10 +383,12 @@ class Cursor:
             >>> adults = cursor.to_list()
             >>> first_5 = cursor.to_list(5)
         """
-        results = list(self)
-        if length is not None:
-            return results[:length]
-        return results
+        if length is None:
+            return list(self)
+        # islice bounds work/memory to exactly `length` docs (#153)
+        from itertools import islice
+
+        return list(islice(self, max(length, 0)))
 
     def clone(self) -> Cursor:
         """

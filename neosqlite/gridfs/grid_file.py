@@ -701,8 +701,12 @@ class GridOut:
         ).fetchone()
 
         if row is None:
-            raise NoFile(
-                f"Chunk {chunk_index} for file id {self._int_file_id} not found"
+            # A files document whose chunk vanished mid-read is corruption,
+            # not a missing file (#147)
+            from .errors import CorruptGridFile
+
+            raise CorruptGridFile(
+                f"Chunk {chunk_index} for file id {self._int_file_id} missing"
             )
 
         self._current_chunk_data = row[0]

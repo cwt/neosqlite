@@ -425,6 +425,22 @@ class TempTableExprEvaluator:
         else:
             select_data = f"{collection_name}.data as data"
 
+        # Honor the optional extra filter (AND-ed into the WHERE) (#146)
+        if filter_expr:
+            extra_conds, extra_params = [], []
+            for fkey, fval in filter_expr.items():
+                extract = (
+                    f"{self.jsonb.json_function_prefix}_extract("
+                    f"{collection_name}.{self.data_column}, "
+                    f"'{fkey}')"
+                )
+                extra_conds.append(f"{extract} = ?")
+                extra_params.append(fval)
+            where_clause = (
+                f"{where_clause} AND {' AND '.join(extra_conds)}"
+            )
+            params = list(params) + extra_params
+
         # Build the final query
         query = f"""
             SELECT {temp_table}.id, {temp_table}._id, {select_data}

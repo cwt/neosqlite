@@ -160,11 +160,18 @@ class IndexManager:
                         f"{func_prefix}_extract(data, '{parse_json_path(key)}')"
                     )
                 index_name_full = f"idx_{self.collection.name}_{index_name}"
+                # sparse -> partial index skipping docs missing the field (#146)
+                partial = ""
+                if sparse:
+                    partial = (
+                        f" WHERE {func_prefix}_extract(data, "
+                        f"'{parse_json_path(key)}') IS NOT NULL"
+                    )
                 self.collection.db.execute(
                     (
                         f"CREATE {'UNIQUE ' if unique else ''}INDEX "
                         f"IF NOT EXISTS {quote_identifier(index_name_full)} "
-                        f"ON {quote_table_name(self.collection.name)}({index_expr})"
+                        f"ON {quote_table_name(self.collection.name)}({index_expr}){partial}"
                     )
                 )
                 # Real key spec for as_keys=True / optimizer (#158)

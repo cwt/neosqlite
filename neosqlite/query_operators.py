@@ -573,6 +573,9 @@ def _apply_query_operators(operators: dict[str, Any], value: Any) -> bool:
             else:
                 if not op_func("_temp", operand, temp_doc):
                     return False
+        except MalformedQueryException:
+            # Malformed sub-queries must surface like top-level ones (#163)
+            raise
         except Exception as e:
             logger.debug(f"{e=}")
             return False
@@ -664,7 +667,6 @@ def _type(field: str, value: Any, document: dict[str, Any]) -> bool:
         "number": (int, float),
     }
 
-    # Determine expected type based on value format
     expected_type: type | tuple[type, ...] | None
     if isinstance(value, int):
         expected_type = type_mapping.get(value)
@@ -677,6 +679,13 @@ def _type(field: str, value: Any, document: dict[str, Any]) -> bool:
     else:
         expected_type = value
 
+    # MongoDB: booleans are their own type — a bool never satisfies a
+    # numeric $type (bool subclasses int in Python, so guard it) (#164)
+    numeric_aliases = ("int", "long", "double", "decimal", "number")
+    if isinstance(value, str) and value in numeric_aliases:
+        return isinstance(doc_value, (int, float)) and not isinstance(
+            doc_value, bool
+        )
     return isinstance(doc_value, expected_type)
 
 

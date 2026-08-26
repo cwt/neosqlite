@@ -20,7 +20,7 @@ def quote_identifier(identifier: str) -> str:
         raise ValueError("Identifier cannot be empty")
 
     # Only allow safe alphanumeric + underscore identifiers
-    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", identifier):
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", identifier):
         raise ValueError(
             f"Invalid identifier '{identifier}': must contain only "
             f"alphanumeric characters and underscores, and must not start with a digit"

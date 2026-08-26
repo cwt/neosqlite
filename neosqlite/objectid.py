@@ -195,7 +195,7 @@ class ObjectId:
                 if len(oid) != 24:
                     return False
                 try:
-                    int(oid, 16)  # Try to parse as hex
+                    bytes.fromhex(oid)
                     return True
                 except (TypeError, ValueError) as e:
                     logger.debug(f"Invalid ObjectId hex string '{oid}': {e}")

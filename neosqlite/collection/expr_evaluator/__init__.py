@@ -33,6 +33,13 @@ Note: NeoSQLite extends MongoDB with $log2 (base-2 log) operator.
 """
 
 from __future__ import annotations
+from ..jsonb_support import (
+    supports_jsonb,
+    supports_jsonb_each,
+    _get_json_function_prefix,
+    _get_json_each_function,
+    _get_json_group_array_function,
+)
 
 from typing import TYPE_CHECKING, Any
 

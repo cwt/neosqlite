@@ -388,9 +388,15 @@ def _apply_window_operator(
         if op_name == "$push":
             return values
         if op_name == "$addToSet":
+            # Canonical-key dedupe — O(n) and document-safe (#155)
             unique_values: list[Any] = []
+            seen: set[Any] = set()
+            from .aggregation import _addtoset_key
+
             for v in values:
-                if v not in unique_values:
+                k = _addtoset_key(v)
+                if k not in seen:
+                    seen.add(k)
                     unique_values.append(v)
             return unique_values
         if op_name == "$first":

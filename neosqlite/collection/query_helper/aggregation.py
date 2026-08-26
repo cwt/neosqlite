@@ -28,6 +28,24 @@ if TYPE_CHECKING:
 from ..type_utils import _hashable_group_key
 
 
+def _addtoset_key(value: Any) -> Any:
+    """Hashable canonical form for $addToSet membership (#155)."""
+    import json as _json
+
+    if isinstance(value, dict):
+        return ("d", _json.dumps(value, sort_keys=True, default=str))
+    if isinstance(value, list):
+        return ("l", tuple(_addtoset_key(v) for v in value))
+    if isinstance(value, bool):
+        return ("b", value)
+    if isinstance(value, (int, float)):
+        return ("n", repr(float(value)))
+    if isinstance(value, str):
+        return ("s", value)
+    return ("o", str(value))
+
+
+
 class AggregationMixin(SqlAggregationMixin):
     """
     Mixin class providing aggregation pipeline methods.
@@ -189,12 +207,14 @@ class AggregationMixin(SqlAggregationMixin):
                     case "$push":
                         group.setdefault(field, []).append(value)
                     case "$addToSet":
-                        # Initialize the list if it doesn't exist
-                        if field not in group:
-                            group[field] = []
-                        # Only add the value if it's not already in the list
-                        if value not in group[field]:
-                            group[field].append(value)
+                        bucket = group.setdefault(field, [])
+                        seen_keys = group.setdefault(
+                            f"__keys_{field}", set()
+                        )
+                        k = _addtoset_key(value)
+                        if k not in seen_keys:
+                            seen_keys.add(k)
+                            bucket.append(value)
                     case "$first":
                         # Only set the value if it hasn't been set yet (first document in group)
                         if field not in group:
@@ -348,6 +368,10 @@ class AggregationMixin(SqlAggregationMixin):
                         # For firstN and lastN, values are already in correct order
                         group[field] = value["values"]
 
+        # Strip internal $addToSet bookkeeping keys (#155)
+        for group in grouped_docs.values():
+            for k in [k for k in group if isinstance(k, str) and k.startswith("__keys_")]:
+                del group[k]
         return list(grouped_docs.values())
 
     def _run_subpipeline(
