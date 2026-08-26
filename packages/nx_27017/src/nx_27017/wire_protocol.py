@@ -63,6 +63,7 @@ class WireProtocol:
 
     OP_MSG = 2013
     OP_QUERY = 2004
+    OP_REPLY = 1
 
 
 class ResponseBuilder:
@@ -94,18 +95,22 @@ class ResponseBuilder:
         documents: list[dict[str, Any]],
         flags: int = 0,
     ) -> bytes:
-        sections = []
-        for doc in documents:
-            doc_data = encode(_convert_objectids(doc))
-            sections.append(struct.pack("<B", 0))
-            sections.append(doc_data)
-        body = struct.pack("<I", flags) + b"".join(sections)
+        docs_data = b"".join(
+            encode(_convert_objectids(doc)) for doc in documents
+        )
+        body = (
+            struct.pack("<I", flags)
+            + struct.pack("<q", 0)
+            + struct.pack("<i", 0)
+            + struct.pack("<i", len(documents))
+            + docs_data
+        )
         header = struct.pack(
             "<iiii",
             16 + len(body),
             request_id,
             response_to,
-            WireProtocol.OP_MSG,
+            WireProtocol.OP_REPLY,
         )
         return header + body
 
