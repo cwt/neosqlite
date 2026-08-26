@@ -1066,7 +1066,6 @@ class Cursor:
 
         return where_clause, params
 
-
     def _contains_datetime_operations(self, query: dict[str, Any]) -> bool:
         """
         Check if a query contains datetime operations that should use the datetime processor.

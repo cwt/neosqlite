@@ -101,7 +101,6 @@ def is_datetime_regex(pattern: str) -> bool:
     Returns:
         True if pattern is likely datetime-related, False otherwise
     """
-    import re
 
     if not isinstance(pattern, str):
         return False
@@ -111,9 +110,7 @@ def is_datetime_regex(pattern: str) -> bool:
         return True
 
     # Check if the pattern contains common datetime-related regex patterns
-    return any(
-        ind.search(pattern) for ind in _COMPILED_INDICATORS
-    )
+    return any(ind.search(pattern) for ind in _COMPILED_INDICATORS)
 
 
 __all__ = [

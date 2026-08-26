@@ -13,7 +13,6 @@ import pytest
 from neosqlite.collection import sqlite3
 from neosqlite.collection.datetime_query_processor import (
     DateTimeQueryProcessor,
-    DateTimeQueryProcessor,
 )
 from neosqlite.collection.query_helper import (
     get_force_fallback,
@@ -444,9 +443,7 @@ def test_enhanced_datetime_processor_complex(setup_test_db):
     assert results is not None
 
     # Test with kill switch
-    results = processor.process_datetime_query(
-        query, use_kill_switch=True
-    )
+    results = processor.process_datetime_query(query, use_kill_switch=True)
     assert results is not None
 
 
@@ -655,9 +652,7 @@ def test_enhanced_processor_methods(setup_test_db):
 
         # Test with kill switch
         set_force_fallback(True)
-        results = processor.process_datetime_query(
-            query, use_kill_switch=True
-        )
+        results = processor.process_datetime_query(query, use_kill_switch=True)
         assert results is not None
     finally:
         # Restore original state

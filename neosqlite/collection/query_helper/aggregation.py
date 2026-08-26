@@ -45,7 +45,6 @@ def _addtoset_key(value: Any) -> Any:
     return ("o", str(value))
 
 
-
 class AggregationMixin(SqlAggregationMixin):
     """
     Mixin class providing aggregation pipeline methods.
@@ -208,9 +207,7 @@ class AggregationMixin(SqlAggregationMixin):
                         group.setdefault(field, []).append(value)
                     case "$addToSet":
                         bucket = group.setdefault(field, [])
-                        seen_keys = group.setdefault(
-                            f"__keys_{field}", set()
-                        )
+                        seen_keys = group.setdefault(f"__keys_{field}", set())
                         k = _addtoset_key(value)
                         if k not in seen_keys:
                             seen_keys.add(k)
@@ -370,7 +367,11 @@ class AggregationMixin(SqlAggregationMixin):
 
         # Strip internal $addToSet bookkeeping keys (#155)
         for group in grouped_docs.values():
-            for k in [k for k in group if isinstance(k, str) and k.startswith("__keys_")]:
+            for k in [
+                k
+                for k in group
+                if isinstance(k, str) and k.startswith("__keys_")
+            ]:
                 del group[k]
         return list(grouped_docs.values())
 

@@ -16,7 +16,6 @@ logger = logging.getLogger(__name__)
 
 class OperatorsTextMixin(OperatorsBaseMixin):
 
-
     def _process_text_search_stage(
         self,
         create_temp: Callable,

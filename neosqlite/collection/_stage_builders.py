@@ -1054,4 +1054,3 @@ class StageBuildersMixin:
             "$last": "LAST_VALUE",
         }
         return mapping.get(op)
-

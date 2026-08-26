@@ -436,9 +436,7 @@ class TempTableExprEvaluator:
                 )
                 extra_conds.append(f"{extract} = ?")
                 extra_params.append(fval)
-            where_clause = (
-                f"{where_clause} AND {' AND '.join(extra_conds)}"
-            )
+            where_clause = f"{where_clause} AND {' AND '.join(extra_conds)}"
             params = list(params) + extra_params
 
         # Build the final query

@@ -11,6 +11,7 @@ from .base import BasePythonMixin
 # Order: Null < Numbers < Strings < Objects < Arrays <
 #        BinData < ObjectId < Boolean < Date < Timestamp < Regex
 
+
 def _bson_sort_key(value: Any) -> tuple[int, Any]:
     """Return a sort key tuple that encodes BSON comparison order.
 

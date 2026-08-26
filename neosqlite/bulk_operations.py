@@ -344,11 +344,15 @@ class BulkOperationExecutor:
                             delete_res = self._collection.delete_one(f)
                         deleted_count += delete_res.deleted_count
 
-            self._collection.db.execute(f"RELEASE SAVEPOINT {self._savepoint_name}")
+            self._collection.db.execute(
+                f"RELEASE SAVEPOINT {self._savepoint_name}"
+            )
             released = True
         except Exception as e:
             logger.debug(f"{e=}")
-            self._collection.db.execute(f"ROLLBACK TO SAVEPOINT {self._savepoint_name}")
+            self._collection.db.execute(
+                f"ROLLBACK TO SAVEPOINT {self._savepoint_name}"
+            )
             raise e
         finally:
             if not released:
@@ -423,11 +427,15 @@ class BulkOperationExecutor:
                     logger.warning(f"Unordered bulk operation failed: {e}")
                     continue
 
-            self._collection.db.execute(f"RELEASE SAVEPOINT {self._savepoint_name}")
+            self._collection.db.execute(
+                f"RELEASE SAVEPOINT {self._savepoint_name}"
+            )
             released = True
         except Exception as e:
             logger.debug(f"{e=}")
-            self._collection.db.execute(f"ROLLBACK TO SAVEPOINT {self._savepoint_name}")
+            self._collection.db.execute(
+                f"ROLLBACK TO SAVEPOINT {self._savepoint_name}"
+            )
             raise e
         finally:
             if not released:
