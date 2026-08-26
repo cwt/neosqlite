@@ -394,11 +394,8 @@ class NeoSQLiteHandler:
                     end_session: Any = None
                     if isinstance(sid, dict):
                         sid = _extract_session_id(sid)
-                    elif isinstance(sid, bytes):
-                        from bson import Binary
-
-                        if isinstance(sid, Binary):
-                            sid = sid.hex()
+                    if isinstance(sid, bytes):
+                        sid = sid.hex()
                     if sid:
                         end_session = self._sessions.pop(sid, None)
                     if end_session:
