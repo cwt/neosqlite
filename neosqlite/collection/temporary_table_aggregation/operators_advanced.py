@@ -678,12 +678,25 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                 r_sql = r_sql.strip()
                 if r_sql.upper().startswith("WHERE "):
                     r_sql = r_sql[6:]  # Remove "WHERE " prefix
-                r_sql = r_sql.replace(
-                    "json_extract(data", "json_extract(t.data"
+                # The WHERE clause was built against the target collection's
+                # own table (standalone FROM context). Inside the JOIN below
+                # the target is only addressable as alias t, so retarget
+                # every data-column function reference to t.data.
+                for func in (
+                    "json_extract",
+                    "jsonb_extract",
+                    "json_type",
+                    "json_each",
+                    "jsonb_each",
+                ):
+                    r_sql = r_sql.replace(f"{func}(data", f"{func}(t.data")
+                # _id clauses reference the quoted table name; alias it to t.
+                # Guarded by the all([...]) check above, so it's a str here.
+                quoted_target = quote_table_name(
+                    str(from_collection)
                 )
-                r_sql = r_sql.replace(
-                    "jsonb_extract(data", "jsonb_extract(t.data"
-                )
+                r_sql = r_sql.replace(f"{quoted_target}._id", "t._id")
+                r_sql = r_sql.replace(f"{quoted_target}.id", "t.id")
                 restrict_where = f"AND ({r_sql})"
                 restrict_params = (
                     r_params * 2
