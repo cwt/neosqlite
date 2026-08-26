@@ -56,7 +56,8 @@ class ArrayMixin(BaseSqlMixin):
                     operands[1]
                 )
                 sql = f"EXISTS (SELECT 1 FROM {json_each}({array_sql}) WHERE value = {value_sql})"
-                return sql, value_params + array_params
+                # Bind in SQL order: array placeholders come first.
+                return sql, array_params + value_params
             case "$isArray":
                 if len(operands) != 1:
                     raise ValueError("$isArray requires exactly 1 operand")

@@ -418,6 +418,24 @@ class TestStringOperatorsSQL:
         assert "REGEXP" in sql
         assert params == ["(?i)^hello"]
 
+    def test_regexFind_sql_param_order(self):
+        """$regexFind binds the pattern placeholder before input params."""
+        evaluator = ExprEvaluator()
+        expr = {"$regexFind": {"input": "Hello World", "regex": "World"}}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "REGEXP_FIND" in sql
+        assert params == ["World", "Hello World"]
+
+    def test_regexFindAll_sql_param_order(self):
+        """$regexFindAll binds the pattern placeholder before input params."""
+        evaluator = ExprEvaluator()
+        expr = {"$regexFindAll": {"input": "ab ab", "regex": "ab"}}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        assert "REGEXP_FIND_ALL" in sql
+        assert params == ["ab", "ab ab"]
+
     def test_replaceAll_sql(self):
         """Test $replaceAll SQL conversion."""
         evaluator = ExprEvaluator()

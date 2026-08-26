@@ -256,7 +256,8 @@ class StringMixin(BaseSqlMixin):
                 pattern = self._build_pattern_with_options(regex, options)
 
                 sql = f"json(REGEXP_FIND(?, {input_sql}))"
-                return sql, input_params + [pattern]
+                # Bind in SQL order: the pattern placeholder comes first.
+                return sql, [pattern] + input_params
             case "$regexFindAll":
                 # $regexFindAll format: {input, regex, options?}
                 if not isinstance(operands, dict) or "input" not in operands:
@@ -272,7 +273,8 @@ class StringMixin(BaseSqlMixin):
                 pattern = self._build_pattern_with_options(regex, options)
 
                 sql = f"json(REGEXP_FIND_ALL(?, {input_sql}))"
-                return sql, input_params + [pattern]
+                # Bind in SQL order: the pattern placeholder comes first.
+                return sql, [pattern] + input_params
             case "$split":
                 if not isinstance(operands, list) or len(operands) != 2:
                     raise ValueError("$split requires [string, delimiter]")

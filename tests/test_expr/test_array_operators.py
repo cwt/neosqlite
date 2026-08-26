@@ -135,6 +135,17 @@ class TestArrayOperatorsSQL:
         assert "json_each" in sql
         assert params == [5]
 
+    def test_in_sql_param_order(self):
+        """Test $in binds params in SQL order (array before value)."""
+        evaluator = ExprEvaluator()
+        expr = {"$in": [1, [1, 2, 3]]}
+        sql, params = evaluator._evaluate_sql_tier1(expr)
+        assert sql is not None
+        # The array operand's placeholder precedes the value's.
+        assert sql.index("json_each") < sql.index("value = ?")
+        assert params[0] == "[1, 2, 3]"
+        assert params[1] == 1
+
     def test_isArray_sql(self):
         """Test $isArray SQL conversion."""
         evaluator = ExprEvaluator()

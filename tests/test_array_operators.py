@@ -424,6 +424,54 @@ class TestSortArrayOperator:
             assert sorted_items[2]["value"] == 1
 
 
+class TestInOperator:
+    """Test $in with literal operands (parameter binding order)."""
+
+    def test_in_literal_value_literal_array(self):
+        """$in with two literals binds params in SQL order (array first)."""
+        with neosqlite.Connection(":memory:") as conn:
+            coll = conn.test_collection
+            coll.insert_one({"x": 1})
+
+            result = list(
+                coll.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "hit": {"$in": [1, [1, 2, 3]]},
+                                "miss": {"$in": [9, [1, 2, 3]]},
+                            }
+                        }
+                    ]
+                )
+            )
+
+            assert len(result) == 1
+            assert result[0]["hit"]
+            assert not result[0]["miss"]
+
+    def test_in_literal_string_value_literal_array(self):
+        """$in with two string literals binds params in SQL order."""
+        with neosqlite.Connection(":memory:") as conn:
+            coll = conn.test_collection
+            coll.insert_one({"x": 1})
+
+            result = list(
+                coll.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "hit": {"$in": ["z", ["a", "z"]]},
+                            }
+                        }
+                    ]
+                )
+            )
+
+            assert len(result) == 1
+            assert result[0]["hit"]
+
+
 class TestArrayOperatorsKillSwitch:
     """Test array operators with kill switch."""
 
