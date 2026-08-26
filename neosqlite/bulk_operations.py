@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from abc import ABC
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -204,6 +205,9 @@ class BulkOperationExecutor:
         """
         self._collection = collection
         self._ordered = ordered
+        # Unique per executor so interleaved executors cannot pop each
+        # other's savepoint off the shared connection's stack (#138)
+        self._savepoint_name = f"bulk_ops_{uuid.uuid4().hex[:12]}"
         self._operations: list[BulkOperation] = []
 
     def add(self, operation):
@@ -312,7 +316,7 @@ class BulkOperationExecutor:
         deleted_count = 0
         upserted_count = 0
 
-        self._collection.db.execute("SAVEPOINT bulk_operations")
+        self._collection.db.execute(f"SAVEPOINT {self._savepoint_name}")
         released = False
         try:
             for op in self._operations:
@@ -340,17 +344,17 @@ class BulkOperationExecutor:
                             delete_res = self._collection.delete_one(f)
                         deleted_count += delete_res.deleted_count
 
-            self._collection.db.execute("RELEASE SAVEPOINT bulk_operations")
+            self._collection.db.execute(f"RELEASE SAVEPOINT {self._savepoint_name}")
             released = True
         except Exception as e:
             logger.debug(f"{e=}")
-            self._collection.db.execute("ROLLBACK TO SAVEPOINT bulk_operations")
+            self._collection.db.execute(f"ROLLBACK TO SAVEPOINT {self._savepoint_name}")
             raise e
         finally:
             if not released:
                 try:
                     self._collection.db.execute(
-                        "RELEASE SAVEPOINT bulk_operations"
+                        f"RELEASE SAVEPOINT {self._savepoint_name}"
                     )
                 except Exception as e:
                     logger.warning(
@@ -387,7 +391,7 @@ class BulkOperationExecutor:
         deleted_count = 0
         upserted_count = 0
 
-        self._collection.db.execute("SAVEPOINT bulk_operations")
+        self._collection.db.execute(f"SAVEPOINT {self._savepoint_name}")
         released = False
         try:
             for op in self._operations:
@@ -419,17 +423,17 @@ class BulkOperationExecutor:
                     logger.warning(f"Unordered bulk operation failed: {e}")
                     continue
 
-            self._collection.db.execute("RELEASE SAVEPOINT bulk_operations")
+            self._collection.db.execute(f"RELEASE SAVEPOINT {self._savepoint_name}")
             released = True
         except Exception as e:
             logger.debug(f"{e=}")
-            self._collection.db.execute("ROLLBACK TO SAVEPOINT bulk_operations")
+            self._collection.db.execute(f"ROLLBACK TO SAVEPOINT {self._savepoint_name}")
             raise e
         finally:
             if not released:
                 try:
                     self._collection.db.execute(
-                        "RELEASE SAVEPOINT bulk_operations"
+                        f"RELEASE SAVEPOINT {self._savepoint_name}"
                     )
                 except Exception as e:
                     logger.warning(

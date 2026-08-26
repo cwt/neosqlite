@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -57,7 +58,7 @@ class ClientSession:
         # SQLite transaction logic
         if self.client.db.in_transaction:
             # Use SAVEPOINT for nested transactions
-            self._savepoint_name = f"session_tx_{id(self)}"
+            self._savepoint_name = f"session_tx_{uuid.uuid4().hex[:12]}"
             self.client.db.execute(f"SAVEPOINT {self._savepoint_name}")
             self._is_savepoint = True
         else:
