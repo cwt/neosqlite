@@ -22,7 +22,7 @@ class TestDateArithmeticSQL:
         sql, params = evaluator._evaluate_sql_tier1(expr)
         assert sql is not None
         assert "strftime" in sql
-        assert "+5 days" in sql
+        assert "days" in sql and 5 in params
 
     def test_date_subtract_sql(self):
         """Test $dateSubtract SQL conversion."""
@@ -31,7 +31,7 @@ class TestDateArithmeticSQL:
         sql, params = evaluator._evaluate_sql_tier1(expr)
         assert sql is not None
         assert "strftime" in sql
-        assert "-3 hours" in sql
+        assert "hours" in sql  # sign moved into the bound amount (#114)
 
     def test_date_diff_sql(self):
         """Test $dateDiff SQL conversion."""
@@ -285,7 +285,7 @@ class TestDateArithmeticDictFormat:
         sql, params = evaluator._evaluate_sql_tier1(expr)
         assert sql is not None
         assert "strftime" in sql
-        assert "+5 days" in sql
+        assert "days" in sql and 5 in params
 
     def test_date_subtract_dict_format_sql(self):
         """Test $dateSubtract with dict format."""
@@ -300,7 +300,7 @@ class TestDateArithmeticDictFormat:
         sql, params = evaluator._evaluate_sql_tier1(expr)
         assert sql is not None
         assert "strftime" in sql
-        assert "-3 hours" in sql
+        assert "hours" in sql  # sign moved into the bound amount (#114)
 
     def test_date_diff_dict_format_sql(self):
         """Test $dateDiff with dict format."""

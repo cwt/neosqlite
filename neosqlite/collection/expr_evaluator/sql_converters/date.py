@@ -138,43 +138,39 @@ class DateMixin(BaseSqlMixin):
         if not isinstance(unit, str) or unit not in valid_units:
             raise ValueError(f"{operator} unit must be one of: {valid_units}")
 
-        # Handle year/month specially (SQLite doesn't support directly)
-        if unit == "year":
-            amount = amount * 12
-            unit = "month"
+        # Unit conversion happens IN SQL SPACE so dynamic amounts (field
+        # references) convert correctly — the previous code multiplied only
+        # Python literals, silently adding months for unit:"year" (#114).
+        unit_factors = {
+            "year": ("month", 12),
+            "month": ("month", 1),
+            "week": ("day", 7),
+            "day": ("day", 1),
+            "hour": ("hour", 1),
+            "minute": ("minute", 1),
+            "second": ("second", 1),
+        }
+        sqlite_unit, factor = unit_factors[unit]
 
         # Determine sign based on operator
         sign = "+" if operator == "$dateAdd" else "-"
 
-        # Handle week conversion to days
-        sqlite_unit = unit
-        if unit == "week":
-            sqlite_unit = "day"
-            if isinstance(amount, (int, float)):
-                amount = amount * 7
+        amount_sql, amount_params = self._convert_operand_to_sql(operands[1])
+        if factor != 1:
+            amount_sql = f"(({amount_sql}) * {factor})"
+        if sign == "-":
+            amount_sql = f"-({amount_sql})"
 
-        # Build the modifier
-        if isinstance(amount, (int, float)):
-            modifier = f"'{sign}{amount} {sqlite_unit}s'"
-            # Use strftime with 'T' separator and 'Z' suffix so
-            # neosqlite_json_loads recognizes the result as a UTC ISO
-            # date and converts it back to a timezone-aware datetime
-            sql = f"strftime('%Y-%m-%dT%H:%M:%SZ', {date_sql}, {modifier})"
-            return sql, date_params
-        else:
-            # Amount is a field reference - need to use CASE or build dynamically
-            # For simplicity, we'll use printf to build the modifier
-            amount_sql, amount_params = self._convert_operand_to_sql(
-                operands[1]
-            )
-            if sign == "-":
-                amount_sql = f"-({amount_sql})"
-
-            # Use strftime with 'T' separator and 'Z' suffix so
-            # neosqlite_json_loads recognizes the result as a UTC ISO
-            # date and converts it back to a timezone-aware datetime
-            sql = f"strftime('%Y-%m-%dT%H:%M:%SZ', {date_sql}, printf('%+d {sqlite_unit}s', {amount_sql}))"
-            return sql, date_params + amount_params
+        # Use strftime with 'T' separator and 'Z' suffix so
+        # neosqlite_json_loads recognizes the result as a UTC ISO date and
+        # converts it back to a timezone-aware datetime. printf('%+d', x)
+        # truncates fractional amounts for every unit — documented
+        # divergence from the Python tier's full timedelta arithmetic.
+        sql = (
+            f"strftime('%Y-%m-%dT%H:%M:%SZ', {date_sql}, "
+            f"printf('%+d {sqlite_unit}s', {amount_sql}))"
+        )
+        return sql, date_params + amount_params
 
     def _convert_date_diff_operator(
         self, operands: list[Any]
