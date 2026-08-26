@@ -80,6 +80,17 @@ def is_datetime_value(value: Any) -> bool:
     return False
 
 
+_INDICATOR_SOURCES = [
+    r"\\d\{4\}-\\d\{2\}-\\d\{2\}",
+    r"\\d\{2\}/\\d\{2\}/\\d\{4\}",
+    r"\\d\{4\}/\\d\{2\}/\\d\{2\}",
+    r"\\d\{2\}-\\d\{2\}-\\d\{4\}",
+    r"\\d\{4\}-\\d\{2\}-\\d\{2\}T\\d\{2\}:\d{2}:\d{2}",
+]
+
+_COMPILED_INDICATORS = [re.compile(ind) for ind in _INDICATOR_SOURCES]
+
+
 def is_datetime_regex(pattern: str) -> bool:
     """
     Check if a regex pattern is likely to be for datetime matching.
@@ -100,19 +111,9 @@ def is_datetime_regex(pattern: str) -> bool:
         return True
 
     # Check if the pattern contains common datetime-related regex patterns
-    datetime_indicators = [
-        r"\\d\{4\}-\\d\{2\}-\\d\{2\}",  # Date format: \d{4}-\d{2}-\d{2}
-        r"\\d\{2\}/\\d\{2\}/\\d\{4\}",  # US date format: \d{2}/\d{2}/\d{4}
-        r"\\d\{4\}/\\d\{2\}/\\d\{2\}",  # Alternative date format: \d{4}/\d{2}/\d{2}
-        r"\\d\{2\}-\\d\{2\}-\\d\{4\}",  # Common date format: \d{2}-\d{2}-\d{4}
-        r"\\d\{4\}-\\d\{2\}-\\d\{2\}T\\d\{2\}:\\d\{2\}:\\d\{2\}",  # Datetime format
-    ]
-
-    for indicator in datetime_indicators:
-        if re.search(indicator, pattern):
-            return True
-
-    return False
+    return any(
+        ind.search(pattern) for ind in _COMPILED_INDICATORS
+    )
 
 
 __all__ = [

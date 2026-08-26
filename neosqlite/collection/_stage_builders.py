@@ -152,7 +152,13 @@ class StageBuildersMixin:
             for value in spec.values()
         )
 
-        include_id = spec.get("_id", 1) == 1
+        # Single authoritative _id decision (the later recompute here was
+        # dead — the append below already happened) (#144)
+        include_id = (
+            ("_id" in spec and spec["_id"] != 0)
+            if has_expressions_or_refs
+            else spec.get("_id", 1) == 1
+        )
         if include_id:
             select_parts.append("_id")
 
@@ -160,11 +166,6 @@ class StageBuildersMixin:
             select_parts.append("data AS root_data")
         elif context.has_root:
             select_parts.append("root_data")
-
-        if has_expressions_or_refs:
-            include_id = "_id" in spec and spec["_id"] != 0
-        else:
-            include_id = spec.get("_id", 1) == 1
 
         json_extract_func = f"{self.jsonb.json_function_prefix}_extract"
         json_obj_func = f"{self.jsonb.json_function_prefix}_object"

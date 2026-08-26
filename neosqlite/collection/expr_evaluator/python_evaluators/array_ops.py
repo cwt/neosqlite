@@ -10,19 +10,6 @@ from .base import BasePythonMixin
 # BSON comparison order groups (lower = earlier in sort).
 # Order: Null < Numbers < Strings < Objects < Arrays <
 #        BinData < ObjectId < Boolean < Date < Timestamp < Regex
-_BSON_TYPE_ORDER: dict[type | str, int] = {
-    type(None): 0,
-    int: 1,
-    float: 1,
-    str: 2,
-    dict: 3,
-    list: 4,
-    bytes: 5,
-    bytearray: 5,
-    bool: 6,
-    datetime: 7,
-}
-
 
 def _bson_sort_key(value: Any) -> tuple[int, Any]:
     """Return a sort key tuple that encodes BSON comparison order.
