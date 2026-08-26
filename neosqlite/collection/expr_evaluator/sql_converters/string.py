@@ -1,4 +1,14 @@
-"""SQL converters for string operators."""
+"""SQL converters for string operators.
+
+Known, documented divergences from MongoDB in the SQL tier (the Python
+tier is authoritative):
+- lower()/upper() fold ASCII only; MongoDB folds Unicode.
+- $concat silently coerces booleans to '0'/'1' text; MongoDB errors.
+- Legacy $substr with negative length follows SQLite substr semantics.
+
+All other operators match MongoDB semantics, including byte-accurate
+$substrBytes and empty-find $replaceAll (#117).
+"""
 
 from __future__ import annotations
 
