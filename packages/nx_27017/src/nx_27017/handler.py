@@ -1387,15 +1387,34 @@ class NeoSQLiteHandler:
         import platform
         from datetime import datetime, timezone
 
-        try:
-            import resource
+        resident_mem = 0
+        virtual_mem = 0
+        if platform.system() == "Linux":
+            try:
+                with open("/proc/self/statm") as statm:
+                    parts = statm.read().split()
+                page_size = os.sysconf("SC_PAGE_SIZE")
+                virtual_mem = int(parts[0]) * page_size
+                resident_mem = int(parts[1]) * page_size
+            except (OSError, ValueError, IndexError):
+                pass
+        if resident_mem == 0 and virtual_mem == 0:
+            try:
+                import resource
 
-            rusage = resource.getrusage(resource.RUSAGE_SELF)
-            resident_mem = rusage.ru_maxrss * 1024
-            virtual_mem = rusage.ru_maxrss * 1024
-        except (ImportError, AttributeError):
-            resident_mem = 0
-            virtual_mem = 0
+                rusage = resource.getrusage(resource.RUSAGE_SELF)
+                if (
+                    platform.system() == "Darwin"
+                    or platform.system().startswith("FreeBSD")
+                ):
+                    resident_mem = rusage.ru_maxrss
+                    virtual_mem = rusage.ru_maxrss
+                else:
+                    resident_mem = rusage.ru_maxrss * 1024
+                    virtual_mem = rusage.ru_maxrss * 1024
+            except (ImportError, AttributeError):
+                resident_mem = 0
+                virtual_mem = 0
 
         uptime_seconds = time.time() - self.start_time
         uptime_millis = int(uptime_seconds * 1000)
