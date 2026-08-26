@@ -230,6 +230,15 @@ class TestArrayOperatorsSQL:
         assert "json_extract" in sql
         assert "DESC" in sql
 
+    def test_sortArray_with_numeric_sortby_sql(self):
+        """Test $sortArray with numeric sortBy (1/-1) SQL conversion."""
+        evaluator = ExprEvaluator()
+        for sort_by, expected_order in ((1, "ASC"), (-1, "DESC")):
+            expr = {"$sortArray": {"input": "$items", "sortBy": sort_by}}
+            sql, params = evaluator._evaluate_sql_tier1(expr)
+            assert sql is not None
+            assert f"ORDER BY value {expected_order}" in sql
+
     def test_maxN_sql(self):
         """Test $maxN SQL conversion."""
         evaluator = ExprEvaluator()

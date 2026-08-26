@@ -239,6 +239,12 @@ def test_array_operators(evaluator):
         evaluator, {"$sortArray": {"input": [3, 1, 2], "sortBy": None}}, doc
     ) == [1, 2, 3]
     assert eval_py(
+        evaluator, {"$sortArray": {"input": [3, 1, 2], "sortBy": 1}}, doc
+    ) == [1, 2, 3]
+    assert eval_py(
+        evaluator, {"$sortArray": {"input": [3, 1, 2], "sortBy": -1}}, doc
+    ) == [3, 2, 1]
+    assert eval_py(
         evaluator,
         {"$sortArray": {"input": [{"x": 2}, {"x": 1}], "sortBy": {"x": 1}}},
         doc,

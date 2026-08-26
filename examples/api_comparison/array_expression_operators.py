@@ -49,8 +49,8 @@ def compare_array_operators():
         neo_collection = neo_conn.test_collection
         neo_collection.insert_many(
             [
-                {"name": "A", "scores": [10, 20, 30]},
-                {"name": "B", "scores": [40, 50]},
+                {"name": "A", "scores": [30, 10, 20]},
+                {"name": "B", "scores": [50, 40]},
             ]
         )
 
@@ -324,8 +324,8 @@ def compare_array_operators():
         mongo_collection.delete_many({})
         mongo_collection.insert_many(
             [
-                {"name": "A", "scores": [10, 20, 30]},
-                {"name": "B", "scores": [40, 50]},
+                {"name": "A", "scores": [30, 10, 20]},
+                {"name": "B", "scores": [50, 40]},
             ]
         )
 

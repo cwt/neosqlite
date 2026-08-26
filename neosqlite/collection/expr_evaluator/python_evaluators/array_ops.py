@@ -324,6 +324,17 @@ class ArrayPythonMixin(BasePythonMixin):
                 if sort_by is None:
                     return _bson_sort(array)
 
+                # Numeric sortBy: 1 (ascending) or -1 (descending) by value.
+                if (
+                    isinstance(sort_by, (int, float))
+                    and not isinstance(sort_by, bool)
+                    and sort_by in (1, -1)
+                ):
+                    sorted_array = _bson_sort(array)
+                    if sort_by == -1:
+                        return list(reversed(sorted_array))
+                    return sorted_array
+
                 # Sort by field (for array of objects)
                 if isinstance(sort_by, dict):
                     # Get first field and direction

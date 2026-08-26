@@ -334,6 +334,58 @@ class TestSortArrayOperator:
             assert sorted_items[1]["name"] == "B"
             assert sorted_items[2]["name"] == "C"
 
+    def test_sortArray_numeric_sortby_ascending(self):
+        """Test $sortArray with numeric sortBy: 1 sorts by value ascending."""
+        with neosqlite.Connection(":memory:") as conn:
+            coll = conn.test_collection
+            coll.insert_one({"values": [30, 10, 20]})
+
+            result = list(
+                coll.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "sorted": {
+                                    "$sortArray": {
+                                        "input": "$values",
+                                        "sortBy": 1,
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+
+            assert len(result) == 1
+            assert result[0]["sorted"] == [10, 20, 30]
+
+    def test_sortArray_numeric_sortby_descending(self):
+        """Test $sortArray with numeric sortBy: -1 sorts by value descending."""
+        with neosqlite.Connection(":memory:") as conn:
+            coll = conn.test_collection
+            coll.insert_one({"values": [30, 10, 20]})
+
+            result = list(
+                coll.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "sorted": {
+                                    "$sortArray": {
+                                        "input": "$values",
+                                        "sortBy": -1,
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                )
+            )
+
+            assert len(result) == 1
+            assert result[0]["sorted"] == [30, 20, 10]
+
     def test_sortArray_objects_descending(self):
         """Test $sortArray with array of objects descending."""
         with neosqlite.Connection(":memory:") as conn:

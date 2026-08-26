@@ -245,7 +245,8 @@ class ArrayMixin(BaseSqlMixin):
                     )
                 return sql, array_params + n_params
             case "$sortArray":
-                # MongoDB: { $sortArray: { input: <array>, sortBy: {<f>: <dir>} } }
+                # MongoDB: { $sortArray: { input: <array>, sortBy: <spec> } }
+                # where <spec> is { <field>: <dir> }, 1, or -1.
                 if not isinstance(operands, dict):
                     raise ValueError("$sortArray requires a dictionary")
                 array_operand = operands.get("input")
@@ -256,12 +257,16 @@ class ArrayMixin(BaseSqlMixin):
                     array_operand
                 )
                 json_ga = self.json_group_array_function
-                if sort_by is None:
+                if sort_by is None or (
+                    isinstance(sort_by, (int, float))
+                    and not isinstance(sort_by, bool)
+                    and sort_by in (1, -1)
+                ):
                     # Sort by value.  SQLite json_each converts JSON
                     # true/false to integers, so boolean vs number
                     # distinction is not preserved (same as the
                     # json_group_array approach used by $firstN etc.).
-                    order = "ASC"
+                    order = "DESC" if sort_by == -1 else "ASC"
                     order_expr = "value"
                 elif isinstance(sort_by, dict):
                     field = next(iter(sort_by.keys()))
@@ -273,7 +278,9 @@ class ArrayMixin(BaseSqlMixin):
                         f"value, '{parse_json_path(field)}')"
                     )
                 else:
-                    raise ValueError("$sortArray sortBy must be a dict or null")
+                    raise ValueError(
+                        "$sortArray sortBy must be a dict, 1, -1, or null"
+                    )
                 if self.jsonb.jsonb_supported:
                     sql = (
                         f"(SELECT json({json_ga}(value ORDER BY {order_expr} {order})) FROM"
