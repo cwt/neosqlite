@@ -206,7 +206,10 @@ def aggregation_pipeline_context(db_connection, pipeline_id: str | None = None):
     except Exception as e:
         # Rollback on error
         db_connection.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name}")
-        logger.error(f"Temporary table aggregation error: {e}", exc_info=True)
+        # Expected tier degradation (unsupported SQL shapes) — log at
+        # WARNING without a traceback; ERROR + traceback buried real
+        # failures under routine fallback noise (#169)
+        logger.warning(f"Temporary table aggregation error: {e}")
         raise
     finally:
         # Cleanup
