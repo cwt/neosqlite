@@ -8,6 +8,7 @@ index analysis, and pipeline optimization.
 from typing import TYPE_CHECKING, Any
 
 from ...sql_utils import quote_table_name
+from ..index_manager import _load_index_keys
 
 if TYPE_CHECKING:
     from .. import Collection
@@ -42,11 +43,15 @@ class QueryOptimizerMixin:
         indexes = self.collection.db.execute(cmd, (like_pattern,)).fetchall()
 
         indexed_fields = []
+        prefix_len = len(f"idx_{quote_table_name(self.collection.name)}_")
         for idx in indexes:
-            # Extract key name from index name (idx_collection_key -> key)
-            key_name = idx[0][
-                len(f"idx_{quote_table_name(self.collection.name)}_") :
-            ]
+            index_name = idx[0]
+            stored = _load_index_keys(self.collection.db, index_name)
+            if stored:
+                indexed_fields.extend(stored)
+                continue
+            # Legacy fallback: derive from the (lossy) index name
+            key_name = index_name[prefix_len:]
             # Convert underscores back to dots for nested keys
             key_name = key_name.replace("_", ".")
             # Skip the automatically created _id index since it should be hidden

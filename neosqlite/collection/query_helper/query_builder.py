@@ -15,6 +15,7 @@ from ...sql_utils import quote_table_name
 from ..expr_evaluator import ExprEvaluator
 from ..text_search import unified_text_search
 from ._sql_query_builder import SqlQueryBuilderMixin
+from ..index_manager import _load_index_keys
 
 if TYPE_CHECKING:
     from .. import Collection
@@ -181,7 +182,14 @@ class QueryBuilderMixin(SqlQueryBuilderMixin):
                                             f"{quote_table_name(self.collection.name)}_"
                                         ) : -4
                                     ]
-                                    field_name = index_name.replace("_", ".")
+                                    stored_keys = _load_index_keys(
+                                        self.collection.db, fts_table_name
+                                    )
+                                    field_name = (
+                                        stored_keys[0]
+                                        if stored_keys
+                                        else index_name.replace("_", ".")
+                                    )
                                     try:
                                         field_value = self.collection._get_val(
                                             document, field_name

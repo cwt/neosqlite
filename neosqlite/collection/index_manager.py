@@ -16,6 +16,54 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_INDEX_KEYS_TABLE = "neosqlite_index_keys"
+
+
+def _ensure_index_keys_table(db) -> None:
+    db.execute(
+        f"CREATE TABLE IF NOT EXISTS {_INDEX_KEYS_TABLE} ("
+        "index_name TEXT PRIMARY KEY, keys_json TEXT NOT NULL)"
+    )
+
+
+def _store_index_keys(db, index_name: str, keys: list[str]) -> None:
+    """Record the real key spec for an index (#158).
+
+    Index NAMES lossily encode fields (dots became underscores), so
+    list_indexes(as_keys=True) and the query optimizer previously
+    reconstructed keys with .replace("_", ".") — mangling compound
+    indexes and underscored field names alike.
+    """
+    import json as _json
+
+    _ensure_index_keys_table(db)
+    db.execute(
+        f"INSERT OR REPLACE INTO {_INDEX_KEYS_TABLE} "
+        f"(index_name, keys_json) VALUES (?, ?)",
+        (index_name, _json.dumps(keys)),
+    )
+
+
+def _load_index_keys(db, index_name: str) -> list[str] | None:
+    try:
+        row = db.execute(
+            f"SELECT keys_json FROM {_INDEX_KEYS_TABLE} WHERE index_name = ?",
+            (index_name,),
+        ).fetchone()
+    except Exception:
+        return None  # table not created yet / mocked db
+    if row is None:
+        return None
+    import json as _json
+
+    try:
+        keys = _json.loads(row[0])
+        return keys if isinstance(keys, list) else None
+    except Exception:
+        return None
+
+
+
 class IndexManager:
     """
     Manages indexes for a NeoSQLite collection.
@@ -112,12 +160,19 @@ class IndexManager:
                     index_expr = (
                         f"{func_prefix}_extract(data, '{parse_json_path(key)}')"
                     )
+                index_name_full = (
+                    f"idx_{self.collection.name}_{index_name}"
+                )
                 self.collection.db.execute(
                     (
                         f"CREATE {'UNIQUE ' if unique else ''}INDEX "
-                        f"IF NOT EXISTS {quote_identifier(f'idx_{self.collection.name}_{index_name}')} "
+                        f"IF NOT EXISTS {quote_identifier(index_name_full)} "
                         f"ON {quote_table_name(self.collection.name)}({index_expr})"
                     )
+                )
+                # Real key spec for as_keys=True / optimizer (#158)
+                _store_index_keys(
+                    self.collection.db, index_name_full, [key]
                 )
         else:
             # Compound indexes: must use PyMongo tuple format
@@ -148,12 +203,18 @@ class IndexManager:
                 f"{func_prefix}_extract(data, '{parse_json_path(f)}')"
                 for f in fields
             )
+            compound_full_name = (
+                f"idx_{self.collection.name}_{index_name}"
+            )
             self.collection.db.execute(
                 (
                     f"CREATE {'UNIQUE ' if unique else ''}INDEX "
-                    f"IF NOT EXISTS {quote_identifier(f'idx_{self.collection.name}_{index_name}')} "
+                    f"IF NOT EXISTS {quote_identifier(compound_full_name)} "
                     f"ON {quote_table_name(self.collection.name)}({index_columns})"
                 )
+            )
+            _store_index_keys(
+                self.collection.db, compound_full_name, fields
             )
 
     def _create_fts_index(self, field: str, tokenizer: str | None = None):
@@ -184,6 +245,11 @@ class IndexManager:
             CREATE VIRTUAL TABLE IF NOT EXISTS {fts_table_name}
             USING FTS5({index_name}, {tokenizer_clause})
             """)
+        # Record the real field so as_keys/optimizer need not guess from
+        # the underscore-mangled name (#158)
+        _store_index_keys(
+            self.collection.db, fts_table_name.lstrip('"').rstrip('"'), [field]
+        )
 
         # For nested fields with arrays, use json_tree() to index all matching values
         # Convert field path to json_tree fullkey pattern (e.g., "comments.text" -> "$.comments[*].text")
@@ -444,7 +510,11 @@ class IndexManager:
                 # like MongoDB's automatic _id index
                 if idx[0] == f"idx_{quote_table_name(self.collection.name)}_id":
                     continue
-                # Extract key name from index name (idx_collection_key -> key)
+                stored = _load_index_keys(self.collection.db, idx[0])
+                if stored:
+                    result.append(list(stored))
+                    continue
+                # Legacy fallback: derive from the (lossy) index name
                 key_name = idx[0][
                     len(f"idx_{quote_table_name(self.collection.name)}_") :
                 ]
@@ -484,15 +554,21 @@ class IndexManager:
         if isinstance(index, str):
             # For single indexes
             index_name = index.replace(".", "_")
-            self.collection.db.execute(
-                f"DROP INDEX IF EXISTS idx_{quote_table_name(self.collection.name)}_{index_name}"
-            )
         else:
             # For compound indexes
             index_name = "_".join(index).replace(".", "_")
+        full_name = (
+            f"idx_{quote_table_name(self.collection.name)}_{index_name}"
+        )
+        self.collection.db.execute(f"DROP INDEX IF EXISTS {full_name}")
+        # Remove the stored key spec (#158)
+        try:
             self.collection.db.execute(
-                f"DROP INDEX IF EXISTS idx_{quote_table_name(self.collection.name)}_{index_name}"
+                f"DELETE FROM {_INDEX_KEYS_TABLE} WHERE index_name = ?",
+                (full_name,),
             )
+        except Exception:
+            pass
 
     def drop_indexes(self):
         """
