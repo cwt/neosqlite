@@ -33,17 +33,18 @@
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
-## Latest Release: v1.14.15
+## Latest Release: v1.15.0
 
-NeoSQLite v1.14.15 is a **security and data integrity patch release** addressing SQL injection vectors via unquoted collection names and fixing several data-loss edge cases.
+NeoSQLite v1.15.0 is a **major correctness and parity release** resolving all 86 findings from a deep code audit, plus 16 new SQL-tier expression converters, Tier-1 `$group` activation, and full body-level type checking.
 
 **Key Fixes:**
-- **SQL Injection Hardening** — Applied `quote_table_name()` to cursor SQL f-strings and GridFS legacy migration.
-- **Data Integrity** — Fixed ChangeStream `_last_id` ordering (moved after commit), `__del__` accidental commit (now rolls back), and GridIn empty/exact-chunk MD5.
-- **Correctness** — ChangeStream ensures `_id` column exists before triggers; `with_options()` clones get independent `_collections` dicts.
-- **New: `query_only` Command** — Get/set SQLite read-only mode via `conn.command("query_only")`.
+- **Translation Cache Correctness** — Cache keys include literal values; hits return exact parameters. Fixes silently wrong results on repeated aggregation pipelines.
+- **MongoDB Null Semantics** — `{f: null}` matches null-or-missing; `$ne` matches absent fields, across all tiers.
+- **GridFS Integrity** — Chunk orphaning fixed; unique chunk index; aborted uploads roll back; corruption raises `CorruptGridFile`.
+- **Aggregation Tier Activation** — Tier-1 `$group`/`$bucket`/`$bucketAuto` now run in the fast SQL tier.
+- **Typed Rollout** — `check_untyped_defs` enabled: every function body in `neosqlite/` is type-checked.
 
-For full details, see [documents/releases/v1.14.15.md](documents/releases/v1.14.15.md).
+For full details, see [documents/releases/v1.15.0.md](documents/releases/v1.15.0.md).
 
 ## Installation
 

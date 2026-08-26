@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## NEXT
+## 1.15.0
 
 ### Expression Operators: Massive SQL Tier Expansion (16 new SQL converters)
 
@@ -63,9 +63,9 @@ Python fallback code is untouched and always available.
   All 381 comparison tests pass (363 passed, 18 skipped, 0 failed — 100%).
 
 ### Test Results
-- **Unit Tests**: 2,825 passed (was 2,791; +34 new tests covering SQL conversion,
-  Python-SQL consistency, kill-switch verification, and integration)
-- **Code Coverage**: ~81.7%
+- **Unit Tests**: 2,862 passed (includes +34 SQL conversion / parity tests and
+  audit regression suites; dead-code tests removed with their subjects)
+- **Code Coverage**: ~81.4%
 
 ### Deep Dive: `$filter` / `$map` Variable Binding
 
