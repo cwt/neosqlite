@@ -64,13 +64,13 @@ class ArrayMixin(BaseSqlMixin):
                 operand = operands[0]
                 if isinstance(operand, str) and operand.startswith("$"):
                     field_path = operand[1:]
-                    sql = f"CASE WHEN json_type({self.data_column}, '{parse_json_path(field_path)}') = 'array' THEN json('true') ELSE json('false') END"
+                    sql = f"CASE WHEN json_type({self.data_column}, '{parse_json_path(field_path)}') = 'array' THEN 1 ELSE 0 END"
                     return sql, []
                 else:
                     value_sql, value_params = self._convert_operand_to_sql(
                         operand
                     )
-                    sql = f"CASE WHEN json_type({value_sql}) = 'array' THEN json('true') ELSE json('false') END"
+                    sql = f"CASE WHEN json_type({value_sql}) = 'array' THEN 1 ELSE 0 END"
                     return sql, value_params
             case "$sum" | "$avg" | "$min" | "$max":
                 if len(operands) != 1:

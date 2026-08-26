@@ -185,7 +185,7 @@ class StringMixin(BaseSqlMixin):
                 options = operands.get("options", "")
                 pattern = self._build_pattern_with_options(regex, options)
 
-                sql = f"CASE WHEN {input_sql} REGEXP ? THEN json('true') ELSE json('false') END"
+                sql = f"CASE WHEN {input_sql} REGEXP ? THEN 1 ELSE 0 END"
                 return sql, input_params + [pattern]
             case "$regexFind":
                 # $regexFind format: {input, regex, options?}

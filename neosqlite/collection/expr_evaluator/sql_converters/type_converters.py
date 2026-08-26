@@ -223,13 +223,13 @@ class TypeConvertersMixin(BaseSqlMixin):
                     json_path = parse_json_path(field_path)
                     type_expr = f"json_type({self.data_column}, '{json_path}')"
                     sql = (
-                        f"CASE WHEN {type_expr} = 'null' THEN json('false') "
-                        f"WHEN {type_expr} = 'false' THEN json('false') "
-                        f"WHEN {type_expr} = 'true' THEN json('true') "
-                        f"WHEN {type_expr} IN ('integer', 'real') THEN CASE WHEN {value_sql} != 0 THEN json('true') ELSE json('false') END "
-                        f"WHEN {type_expr} = 'text' THEN CASE WHEN length({value_sql}) > 0 THEN json('true') ELSE json('false') END "
-                        f"WHEN {type_expr} IN ('array', 'object') THEN json('true') "
-                        f"ELSE json('false') END"
+                        f"CASE WHEN {type_expr} = 'null' THEN 0 "
+                        f"WHEN {type_expr} = 'false' THEN 0 "
+                        f"WHEN {type_expr} = 'true' THEN 1 "
+                        f"WHEN {type_expr} IN ('integer', 'real') THEN CASE WHEN {value_sql} != 0 THEN 1 ELSE 0 END "
+                        f"WHEN {type_expr} = 'text' THEN CASE WHEN length({value_sql}) > 0 THEN 1 ELSE 0 END "
+                        f"WHEN {type_expr} IN ('array', 'object') THEN 1 "
+                        f"ELSE 0 END"
                     )
                 else:
                     inferred_type = None
@@ -245,20 +245,20 @@ class TypeConvertersMixin(BaseSqlMixin):
                     if inferred_type == "bool":
                         sql = f"{value_sql}"
                     elif inferred_type == "number":
-                        sql = f"CASE WHEN {value_sql} != 0 THEN json('true') ELSE json('false') END"
+                        sql = f"CASE WHEN {value_sql} != 0 THEN 1 ELSE 0 END"
                     elif inferred_type == "string":
-                        sql = f"CASE WHEN length({value_sql}) > 0 THEN json('true') ELSE json('false') END"
+                        sql = f"CASE WHEN length({value_sql}) > 0 THEN 1 ELSE 0 END"
                     elif inferred_type in ("array", "object"):
-                        sql = "json('true')"
+                        sql = "1"
                         value_params = []
                     elif inferred_type == "null":
-                        sql = "json('false')"
+                        sql = "0"
                         value_params = []
                     else:
                         sql = (
-                            f"CASE WHEN typeof({value_sql}) = 'text' THEN CASE WHEN length({value_sql}) > 0 THEN json('true') ELSE json('false') END "
-                            f"WHEN typeof({value_sql}) = 'null' THEN json('false') "
-                            f"ELSE CASE WHEN {value_sql} != 0 THEN json('true') ELSE json('false') END END"
+                            f"CASE WHEN typeof({value_sql}) = 'text' THEN CASE WHEN length({value_sql}) > 0 THEN 1 ELSE 0 END "
+                            f"WHEN typeof({value_sql}) = 'null' THEN 0 "
+                            f"ELSE CASE WHEN {value_sql} != 0 THEN 1 ELSE 0 END END"
                         )
             case "$toDecimal":
                 # SQLite doesn't have native Decimal128, use REAL
@@ -284,7 +284,7 @@ class TypeConvertersMixin(BaseSqlMixin):
 
                     json_path = parse_json_path(field_path)
                     type_expr = f"json_type({self.data_column}, '{json_path}')"
-                    sql = f"CASE WHEN {type_expr} IN ('integer', 'real') THEN json('true') ELSE json('false') END"
+                    sql = f"CASE WHEN {type_expr} IN ('integer', 'real') THEN 1 ELSE 0 END"
                 else:
                     # Computed expression or literal - try to infer type
                     inferred_type = None
@@ -298,10 +298,10 @@ class TypeConvertersMixin(BaseSqlMixin):
                         inferred_type = self._get_literal_bson_type(operand)
 
                     if inferred_type == "number":
-                        sql = "json('true')"
+                        sql = "1"
                         value_params = []
                     elif inferred_type is not None:
-                        sql = "json('false')"
+                        sql = "0"
                         value_params = []
                     else:
                         raise NotImplementedError(
