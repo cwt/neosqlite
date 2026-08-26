@@ -1,5 +1,64 @@
 # CHANGELOG
 
+## 1.15.1
+
+### SQL Tier Binding & Correctness Fixes
+
+Follow-up patch fixing SQL-tier bugs surfaced while verifying v1.15.0 against
+MongoDB. Six of these were introduced by the v1.15.0 refactoring/expansion
+cycle and were **invisible to users** — the tiered engine caught the failures
+and silently fell back to the authoritative Python tier, so results were always
+correct. The remainder are pre-existing latent bugs that predate v1.14.15.
+
+- **Expression converter parameter mismatches (#171)**: `$setEquals`, `$split`,
+  `$dateFromString`, `$indexOfBytes`, `$strcasecmp`, and `$cmp` duplicated
+  parameterized SQL fragments (CASE branches, EXISTS arms) without duplicating
+  their parameters, causing "Incorrect number of bindings supplied" and a
+  silent Python fallback. Params are now duplicated in SQL order.
+- **`$graphLookup` restrict clause column qualification (#172)**:
+  `restrictSearchWithMatch` WHERE clauses are built against the target
+  collection as a standalone `FROM`, but embedded in a two-table JOIN.
+  Unqualified `json_type(data, ...)`/`json_each(data, ...)` references caused
+  "ambiguous column name: data" and quoted-table `_id` references caused
+  "no such column" — both fell back to Python. All data-column function
+  references now retarget to the `t.` alias.
+- **`$sortArray` numeric `sortBy` (#173)**: MongoDB accepts `sortBy: 1`/`-1`
+  (sort by element value). The SQL converter rejected it and the Python
+  evaluator silently returned the array unsorted. Both tiers now sort by
+  value ascending/descending.
+- **Parameter binding order in `$in`, `$regexFind`, `$regexFindAll` (#174)**:
+  when both operands were literals, parameters were bound to the wrong
+  placeholders and Tier-1 executed with swapped semantics — `$in` evaluated
+  the array where the value belonged and the regex find operators used the
+  input as the pattern, silently returning wrong results. Params now bind in
+  SQL order.
+- **Real `_id` through tier-2 `$lookup`/`$graphLookup` (#175)**: both stages
+  injected the auto-increment `id` column as `$._id`, corrupting the primary
+  key whenever `_id` differed from `id` and making `$lookup` on `_id` return
+  empty arrays. The `_id` column is now preserved end-to-end, and joined
+  documents embed their real foreign `_id`, matching Tier-1 and MongoDB.
+
+### Documentation & Maintenance
+
+- Noted v1.15.0 behavior changes in `TRANSLATION_CACHE.md`, `WATCH.md`, and
+  `GRIDFS.md`.
+- Updated dependencies and lock files.
+- Code formatting pass.
+
+### Test Results
+
+- **Unit Tests**: 2,870 passed (0 failed)
+- **API Comparison (NeoSQLite vs MongoDB)**: 0 failed
+
+### Correctness Transparency Note
+
+See the v1.15.1 release notes for the full statement. In short: the large
+fix count in v1.15.0 and this release reflects work done **inside** their
+respective release cycles — no released version shipped with those bugs, and
+most were additionally shielded by the Python fallback tier.
+
+---
+
 ## 1.15.0
 
 ### Expression Operators: Massive SQL Tier Expansion (16 new SQL converters)
