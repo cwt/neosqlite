@@ -194,6 +194,9 @@ class StringPythonMixin(BasePythonMixin):
                     )
                 if string is None:
                     return None
+                # MongoDB: empty find returns the input unchanged (#117)
+                if str(find) == "":
+                    return str(string)
                 return str(string).replace(str(find), str(replacement))
             case "$replaceOne":
                 # Handle MongoDB dict format: {input, find, replacement}

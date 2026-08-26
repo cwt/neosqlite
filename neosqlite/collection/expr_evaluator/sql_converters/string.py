@@ -43,6 +43,8 @@ class StringMixin(BaseSqlMixin):
                 sql = f"({' || '.join(sql_parts)})"
                 return sql, all_params
             case "$toLower":
+                if not isinstance(operands, list):
+                    operands = [operands]
                 if len(operands) != 1:
                     raise ValueError("$toLower requires exactly 1 operand")
                 value_sql, value_params = self._convert_operand_to_sql(
@@ -51,6 +53,8 @@ class StringMixin(BaseSqlMixin):
                 sql = f"lower({value_sql})"
                 return sql, value_params
             case "$toUpper":
+                if not isinstance(operands, list):
+                    operands = [operands]
                 if len(operands) != 1:
                     raise ValueError("$toUpper requires exactly 1 operand")
                 value_sql, value_params = self._convert_operand_to_sql(
@@ -68,6 +72,39 @@ class StringMixin(BaseSqlMixin):
                 # (#117). length() on BLOB counts bytes.
                 sql = f"length(CAST({value_sql} AS BLOB))"
                 return sql, value_params
+            case "$substrBytes":
+                # Operate on the UTF-8 BLOB so offsets are byte-based like
+                # MongoDB; may split a multibyte sequence at caller's risk,
+                # matching MongoDB's error-prone byte semantics (#117)
+                if len(operands) != 3:
+                    raise ValueError(
+                        "$substrBytes requires exactly 3 operands"
+                    )
+                str_sql, str_params = self._convert_operand_to_sql(
+                    operands[0]
+                )
+                # start/len are plain integers in MongoDB; inline them so a
+                # single SQL string can reference them repeatedly without
+                # placeholder bookkeeping (#117)
+                start, ln = operands[1], operands[2]
+                if (
+                    isinstance(start, bool)
+                    or not isinstance(start, int)
+                    or isinstance(ln, bool)
+                    or not isinstance(ln, int)
+                ):
+                    raise NotImplementedError(
+                        "$substrBytes requires integer start and length"
+                    )
+                # substr over the BLOB yields BLOB; wrap back to TEXT so
+                # JSON functions can store the result
+                sql = (
+                    f"(CASE WHEN ({start}) < 0 THEN '' "
+                    f"WHEN ({ln}) < 0 "
+                    f"THEN CAST(substr(CAST({str_sql} AS BLOB), ({start}) + 1) AS TEXT) "
+                    f"ELSE CAST(substr(CAST({str_sql} AS BLOB), ({start}) + 1, ({ln})) AS TEXT) END)"
+                )
+                return sql, str_params
             case "$substr":
                 if len(operands) != 3:
                     raise ValueError("$substr requires exactly 3 operands")

@@ -97,6 +97,7 @@ class CoreMixin(BaseSqlMixin):
                 | "$toUpper"
                 | "$strLenBytes"
                 | "$substr"
+                | "$substrBytes"
                 | "$trim"
                 | "$ltrim"
                 | "$rtrim"

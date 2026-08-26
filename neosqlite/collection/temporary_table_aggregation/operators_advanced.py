@@ -472,6 +472,16 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                 window_parts.append(frame_clause)
 
             if window_parts:
+                # MongoDB default window (no explicit `window` doc) spans
+                # the ENTIRE partition; SQLite's implicit frame with ORDER BY
+                # is RANGE UNBOUNDED PRECEDING → CURRENT ROW (running totals),
+                # so pin the full-partition frame explicitly (#118-adjacent,
+                # matches test_window_complex_partition & MongoDB docs).
+                if not frame_clause and sort_clause:
+                    window_parts.append(
+                        "RANGE BETWEEN UNBOUNDED PRECEDING AND "
+                        "UNBOUNDED FOLLOWING"
+                    )
                 window_sql = (
                     f"{sql_func}({sql_operand}) OVER ({' '.join(window_parts)})"
                 )
