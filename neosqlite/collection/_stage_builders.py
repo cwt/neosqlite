@@ -648,9 +648,8 @@ class StageBuildersMixin:
         if is_date_field:
             return None, []
 
-        if isinstance(step, int):
-            step_value = step
-        elif isinstance(step, float):
+        step_value: float
+        if isinstance(step, (int, float)):
             step_value = step
         else:
             return None, []

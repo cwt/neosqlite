@@ -591,7 +591,7 @@ class Cursor:
                 f"SELECT id, _id, {json_data_column(jsonb)} as data "
                 f"FROM {quote_table_name(self._collection.name)}{sort_clause}{pagination_clause}"
             )
-            params = ()
+            params = []
 
         # Get the query plan from SQLite
 

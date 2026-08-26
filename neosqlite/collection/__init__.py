@@ -45,6 +45,12 @@ class Collection:
     updating, deleting, and querying documents.
     """
 
+    # Optional per-instance options set by with_options() (#typed rollout)
+    _codec_options: Any | None
+    _read_preference: Any | None
+    _write_concern: Any | None
+    _read_concern: Any | None
+
     def __init__(
         self,
         db: sqlite3.Connection,

@@ -220,9 +220,15 @@ class QueryHelper(
                 self.collection.name,
                 None,  # Filter expr not used yet
             )
-            if tier2_result[0] is not None:
-                # Success - return the full query with cleanup tables
-                return tier2_result
+            tier2_query = tier2_result[0]
+            if tier2_query is not None:
+                # Success - return the full query with cleanup tables.
+                # Narrow the SQL element to str for the declared type (#typed).
+                return (
+                    tier2_query,
+                    tier2_result[1],
+                    tier2_result[2],
+                )
 
             # If Tier 2 fails, fall back to Tier 1
             sql_expr, params = tier1_evaluator.evaluate(
@@ -232,9 +238,10 @@ class QueryHelper(
                 return None
 
             # Build WHERE clause with other fields
-            return self._combine_expr_with_other_fields(
+            combined = self._combine_expr_with_other_fields(
                 sql_expr, params, query, expr
             )
+            return combined
 
         else:
             # Tier 1: Direct SQL evaluation

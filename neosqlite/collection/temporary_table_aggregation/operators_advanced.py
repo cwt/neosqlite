@@ -195,8 +195,8 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             )
 
         # Process each sub-pipeline and store results
-        facet_results = {}
-        result_tables = []
+        facet_results: dict[str, Any] = {}
+        result_tables: list[str] = []
 
         try:
             for facet_name, sub_pipeline in facet_spec.items():
