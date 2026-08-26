@@ -122,6 +122,10 @@ def migrate_autovacuum(
     original_backup_path = backup_files[db_path]
     temp_new_path = f"{db_path}.temp_autovacuum_{timestamp}"
 
+    # Escape single quotes for the VACUUM INTO literal (#167); paths with
+    # quotes are legal on Unix and previously aborted the migration.
+    escaped_dest = temp_new_path.replace("'", "''")
+
     try:
         conn = sqlite3.connect(original_backup_path)
         conn.isolation_level = None
@@ -135,10 +139,39 @@ def migrate_autovacuum(
         if os.path.exists(temp_new_path):
             os.remove(temp_new_path)
 
-        conn.execute(f"VACUUM INTO '{temp_new_path}'")
+        # Consistent snapshot ON DISK via the sqlite backup API: it
+        # streams pages incrementally (no full-RAM load, safe for
+        # multi-GB databases) and cannot tear even if another connection
+        # commits mid-copy (#167).
+        snapshot_path = f"{db_path}.snapshot_{timestamp}"
+        if os.path.exists(snapshot_path):
+            os.remove(snapshot_path)
+
+        snap_conn = sqlite3.connect(snapshot_path)
+        try:
+            conn.backup(snap_conn)
+            # auto_vacuum must be set on the snapshot BEFORE VACUUM so the
+            # rebuilt output carries the target mode.
+            snap_conn.execute(f"PRAGMA auto_vacuum={target_autovacuum}")
+            escaped_snapshot = snapshot_path.replace("'", "''")
+            snap_conn.execute(f"VACUUM INTO '{escaped_dest}'")
+        finally:
+            snap_conn.close()
         conn.close()
 
+        # Honor the requested journal mode on the OUTPUT database —
+        # previously this parameter was dead (#167). Applied after the
+        # file exists, since journal_mode is persistent per-file.
+        out_conn = sqlite3.connect(temp_new_path)
+        try:
+            out_conn.execute(f"PRAGMA journal_mode={target_journal_mode}")
+        finally:
+            out_conn.close()
+
         shutil.move(temp_new_path, db_path)
+
+        if os.path.exists(snapshot_path):
+            os.remove(snapshot_path)
 
         for backup_path in backup_files.values():
             if os.path.exists(backup_path):
@@ -156,6 +189,13 @@ def migrate_autovacuum(
         for original_path, backup_path in backup_files.items():
             if os.path.exists(backup_path):
                 shutil.move(backup_path, original_path)
+        # Remove transient artifacts so a retry starts clean (#167)
+        for leftover in (snapshot_path, temp_new_path):
+            try:
+                if os.path.exists(leftover):
+                    os.remove(leftover)
+            except OSError:
+                pass
         raise
 
 
