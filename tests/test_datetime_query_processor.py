@@ -13,7 +13,7 @@ import pytest
 from neosqlite.collection import sqlite3
 from neosqlite.collection.datetime_query_processor import (
     DateTimeQueryProcessor,
-    EnhancedDateTimeQueryProcessor,
+    DateTimeQueryProcessor,
 )
 from neosqlite.collection.query_helper import (
     get_force_fallback,
@@ -286,11 +286,11 @@ def test_python_tier_fallback(setup_test_db):
 def test_enhanced_datetime_processor(setup_test_db):
     """Test the enhanced datetime processor."""
     collection, db, db_path = setup_test_db
-    processor = EnhancedDateTimeQueryProcessor(collection)
+    processor = DateTimeQueryProcessor(collection)
 
     # Test basic functionality
     query = {"created_at": {"$gte": "2023-01-01T00:00:00"}}
-    results = processor.process_complex_datetime_query(query)
+    results = processor.process_datetime_query(query)
 
     # Should return results (when not using kill switch)
     if not processor.is_kill_switch_enabled():
@@ -436,15 +436,15 @@ def test_datetime_in_nin_operations():
 def test_enhanced_datetime_processor_complex(setup_test_db):
     """Test the enhanced datetime processor with complex queries."""
     collection, db, db_path = setup_test_db
-    processor = EnhancedDateTimeQueryProcessor(collection)
+    processor = DateTimeQueryProcessor(collection)
 
     # Test the enhanced method directly
     query = {"created_at": {"$gte": "2023-01-01T00:00:00"}}
-    results = processor.process_complex_datetime_query(query)
+    results = processor.process_datetime_query(query)
     assert results is not None
 
     # Test with kill switch
-    results = processor.process_complex_datetime_query(
+    results = processor.process_datetime_query(
         query, use_kill_switch=True
     )
     assert results is not None
@@ -464,11 +464,11 @@ def test_sql_tier_exception_handling(setup_test_db):
 def test_process_with_enhanced_python_tier(setup_test_db):
     """Test the enhanced Python tier functionality."""
     collection, db, db_path = setup_test_db
-    processor = EnhancedDateTimeQueryProcessor(collection)
+    processor = DateTimeQueryProcessor(collection)
 
     # Test the enhanced Python tier method directly
     query = {"created_at": {"$gte": "2023-01-01T00:00:00"}}
-    results = processor._process_with_enhanced_python_tier(query)
+    results = processor._process_with_python_tier(query)
     assert results is not None
 
 
@@ -496,13 +496,13 @@ def test_temp_table_tier(setup_test_db):
 def test_apply_datetime_query(setup_test_db):
     """Test the _apply_datetime_query method."""
     collection, db, db_path = setup_test_db
-    processor = EnhancedDateTimeQueryProcessor(collection)
+    processor = DateTimeQueryProcessor(collection)
 
     # Test with a sample document and query
     doc = {"created_at": "2023-02-15T10:30:00", "name": "test"}
     query = {"created_at": {"$gte": "2023-01-01T00:00:00"}}
 
-    result = processor._apply_datetime_query(query, doc)
+    result = processor.process_datetime_query(query, [doc])
     assert result  # Should match the query
 
 
@@ -637,9 +637,9 @@ def test_datetime_value_edge_cases():
 
 
 def test_enhanced_processor_methods(setup_test_db):
-    """Test methods in EnhancedDateTimeQueryProcessor."""
+    """Test methods in DateTimeQueryProcessor."""
     collection, db, db_path = setup_test_db
-    processor = EnhancedDateTimeQueryProcessor(collection)
+    processor = DateTimeQueryProcessor(collection)
 
     # Store original state
     original_state = get_force_fallback()
@@ -650,12 +650,12 @@ def test_enhanced_processor_methods(setup_test_db):
 
         # Test complex datetime query method
         query = {"created_at": {"$gte": "2023-01-01T00:00:00"}}
-        results = processor.process_complex_datetime_query(query)
+        results = processor.process_datetime_query(query)
         assert results is not None
 
         # Test with kill switch
         set_force_fallback(True)
-        results = processor.process_complex_datetime_query(
+        results = processor.process_datetime_query(
             query, use_kill_switch=True
         )
         assert results is not None

@@ -78,14 +78,6 @@ class StageBuildersMixin:
                 return self._build_set_window_fields_sql(
                     stage_spec, prev_stage, context, preserve_root
                 )
-            case "$graphLookup":
-                return self._build_graph_lookup_sql(
-                    stage_spec, prev_stage, context, preserve_root
-                )
-            case "$fill":
-                return self._build_fill_sql(
-                    stage_spec, prev_stage, context, preserve_root
-                )
             case "$sample":
                 return self._build_sample_sql(stage_spec, prev_stage, context)
             case "$bucket":
@@ -1062,17 +1054,3 @@ class StageBuildersMixin:
         }
         return mapping.get(op)
 
-    def _build_graph_lookup_sql(self, spec, prev_stage, context, preserve_root):
-        return None, []  # Fallback
-
-    def _build_fill_sql(self, spec, prev_stage, context, preserve_root):
-        return None, []  # Fallback
-
-    def _build_passthrough_sql(self, prev_stage, context):
-        select_parts = ["id", "_id", "data"]
-        if context.has_root:
-            select_parts.append("root_data")
-        return (
-            f"SELECT {', '.join(select_parts)} FROM {prev_stage}",
-            [],
-        )

@@ -70,36 +70,6 @@ def column_exists(
     return column_name in columns
 
 
-def add_column_if_not_exists(
-    db_connection: Any,
-    table_name: str,
-    column_name: str,
-    column_type: str = "TEXT",
-) -> bool:
-    """
-    Add column if it doesn't exist.
-
-    Args:
-        db_connection: SQLite database connection
-        table_name: Name of the table
-        column_name: Name of the column to add
-        column_type: SQL type for the new column (default: TEXT)
-
-    Returns:
-        True if column was added, False if it already existed
-    """
-    if column_exists(db_connection, table_name, column_name):
-        return False
-
-    from ..sql_utils import quote_table_name
-
-    db_connection.execute(
-        f"ALTER TABLE {quote_table_name(table_name)} "
-        f"ADD COLUMN {column_name} {column_type}"
-    )
-    return True
-
-
 def create_unique_index_on_id(
     db_connection: Any,
     table_name: str,
@@ -185,7 +155,6 @@ def get_table_info(db_connection: Any, table_name: str) -> dict[str, Any]:
 __all__ = [
     "get_table_columns",
     "column_exists",
-    "add_column_if_not_exists",
     "create_unique_index_on_id",
     "get_table_info",
 ]

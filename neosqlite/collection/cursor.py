@@ -1064,37 +1064,6 @@ class Cursor:
 
         return where_clause, params
 
-    def _get_collate_clause(self) -> str:
-        """
-        Get the SQL COLLATE clause based on collation settings.
-
-        Returns:
-            str: COLLATE clause or empty string if no collation is set
-
-        Note:
-            Maps MongoDB collation locales to SQLite collations:
-            - Case-insensitive locales → NOCASE
-            - Default/unknown → BINARY (case-sensitive)
-            Custom collations can be registered via Connection tokenizers.
-
-        Note: COLLATE is applied to ORDER BY clauses, not WHERE clauses.
-        For WHERE clause string comparisons, use _apply_collation_to_expr().
-        """
-        if not self._collation:
-            return ""
-
-        strength = self._collation.get("strength", 3)
-        case_level = self._collation.get("caseLevel", False)
-
-        # Determine collation based on settings
-        # Strength 1-2: Ignore case/diacritics → NOCASE
-        # Strength 3+: Respect case → BINARY (default)
-        if strength <= 2 or not case_level:
-            # Case-insensitive comparison
-            return " COLLATE NOCASE"
-        else:
-            # Case-sensitive comparison (default SQLite behavior)
-            return ""
 
     def _contains_datetime_operations(self, query: dict[str, Any]) -> bool:
         """

@@ -7,65 +7,10 @@ which handles automatic conversion between integer IDs and ObjectIds in queries.
 
 from neosqlite.collection.type_correction import (
     normalize_id_query_for_db,
-    normalize_objectid_for_db_query,
 )
 
 
 # Tests for normalize_objectid_for_db_query function
-def test_normalize_objectid_for_db_query_with_objectid():
-    """Test normalize_objectid_for_db_query with ObjectId."""
-    from neosqlite.objectid import ObjectId
-
-    oid = ObjectId()
-    result = normalize_objectid_for_db_query(oid)
-    assert result == str(oid)
-    assert isinstance(result, str)
-
-
-def test_normalize_objectid_for_db_query_with_valid_hex_string():
-    """Test normalize_objectid_for_db_query with valid ObjectId hex string."""
-    valid_hex = "507f1f77bcf86cd799439011"  # 24-character hex string
-    result = normalize_objectid_for_db_query(valid_hex)
-    assert result == valid_hex
-    assert isinstance(result, str)
-
-
-def test_normalize_objectid_for_db_query_with_invalid_hex_string():
-    """Test normalize_objectid_for_db_query with invalid hex string."""
-    invalid_hex = "invalid_hex_string_123456"  # Invalid ObjectId hex
-    result = normalize_objectid_for_db_query(invalid_hex)
-    assert result == invalid_hex
-    assert isinstance(result, str)
-
-
-def test_normalize_objectid_for_db_query_with_short_string():
-    """Test normalize_objectid_for_db_query with short string (not ObjectId)."""
-    short_str = "12345"
-    result = normalize_objectid_for_db_query(short_str)
-    assert result == short_str
-
-
-def test_normalize_objectid_for_db_query_with_int():
-    """Test normalize_objectid_for_db_query with integer."""
-    int_val = 123
-    result = normalize_objectid_for_db_query(int_val)
-    assert result == int_val
-
-
-def test_normalize_objectid_for_db_query_with_none():
-    """Test normalize_objectid_for_db_query with None."""
-    result = normalize_objectid_for_db_query(None)
-    assert result is None
-
-
-def test_normalize_objectid_for_db_query_with_float():
-    """Test normalize_objectid_for_db_query with float."""
-    float_val = 3.14
-    result = normalize_objectid_for_db_query(float_val)
-    assert result == float_val
-
-
-# Tests for normalize_id_query_for_db function
 def test_normalize_id_query_for_db_basic():
     """Test basic normalization of _id field."""
     query = {"_id": 123}

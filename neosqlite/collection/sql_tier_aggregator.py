@@ -140,8 +140,6 @@ class SQLTierAggregator(StageBuildersMixin):
         """Check if all expressions in a stage can be optimized in SQL."""
         stage_name = next(iter(stage.keys()))
         spec = stage[stage_name]
-        if stage_name == "$graphLookup":
-            return True
         return self._check_expression_support(spec)
 
     def _check_expression_support(self, obj: Any) -> bool:
@@ -224,11 +222,8 @@ class SQLTierAggregator(StageBuildersMixin):
             all_params.extend(stage_params)
             prev_stage = cte_name
 
-        with_keyword = (
-            "WITH RECURSIVE"
-            if any("$graphLookup" in stage for stage in pipeline)
-            else "WITH"
-        )
+        # No $graphLookup support in this tier: plain WITH is sufficient.
+        with_keyword = "WITH"
         select_cols = "id, _id, data"
         if needs_root:
             select_cols = "id, _id, root_data, data"

@@ -15,51 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class OperatorsTextMixin(OperatorsBaseMixin):
-    def _matches_text_search(
-        self, document: dict[str, Any], search_term: str
-    ) -> bool:
-        """
-        Apply Python-based text search to a document.
 
-        This method uses the unified_text_search function to determine if a document
-        matches a given search term. It's used as a fallback when text search cannot
-        be efficiently handled with SQL queries, particularly in cases involving
-        unwound elements or complex text search operations.
-
-        Args:
-            document (dict[str, Any]): The document to search in
-            search_term (str): The term to search for
-
-        Returns:
-            bool: True if the document matches the text search, False otherwise
-        """
-
-        from neosqlite.collection.text_search import unified_text_search
-
-        return unified_text_search(document, search_term)
-
-    def _batch_insert_documents(
-        self, table_name: str, documents: list[tuple]
-    ) -> None:
-        """
-        Insert multiple documents into a temporary table efficiently.
-
-        This method provides an optimized way to insert multiple documents into a
-        temporary table by using a single INSERT statement with multiple value sets.
-        It's used primarily in the text search processing where documents need to be
-        filtered and inserted into a result table.
-
-        Args:
-            table_name (str): The name of the table to insert into
-            documents (list[tuple]): List of (id, data) tuples to insert
-        """
-        if not documents:
-            return
-
-        placeholders = ",".join(["(?,?)"] * len(documents))
-        query = f"INSERT INTO {table_name} (id, data) VALUES {placeholders}"
-        flat_params = [item for doc_tuple in documents for item in doc_tuple]
-        self.db.execute(query, flat_params)
 
     def _process_text_search_stage(
         self,

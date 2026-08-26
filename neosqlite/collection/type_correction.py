@@ -44,26 +44,6 @@ def _convert_list_item(item: Any) -> Any:
             return item
 
 
-def normalize_objectid_for_db_query(value: Any) -> str:
-    """
-    Normalize an ObjectId value for database queries, converting ObjectId objects
-    to string representations and validating hex strings.
-
-    Args:
-        value: The value to normalize (ObjectId, hex string, or other)
-
-    Returns:
-        The normalized string representation suitable for database queries
-    """
-    match value:
-        case ObjectId():
-            return str(value)
-        case str() if _is_valid_objectid_hex(value):
-            return value
-        case _:
-            return value
-
-
 def normalize_id_query_for_db(query: dict[str, Any]) -> dict[str, Any]:
     """
     Normalize ID types in a query dictionary to correct common mismatches.
