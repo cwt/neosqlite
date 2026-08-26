@@ -1,5 +1,6 @@
 """NeoSQLite handler for MongoDB commands and SQLite operations."""
 
+import functools
 import logging
 import os
 import threading
@@ -31,6 +32,23 @@ from nx_27017.wire_protocol import (
 )
 
 logger = logging.getLogger("nx_27017")
+
+
+def _serialize(func):
+    """Serialize access to the shared SQLite connection.
+
+    The handler uses a single SQLite connection that is not safe for
+    concurrent use from multiple threads. This decorator guarantees that only
+    one handler operation touches the connection at a time, regardless of
+    which thread the async/server runtime schedules it on.
+    """
+
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        with self._db_lock:
+            return func(self, *args, **kwargs)
+
+    return wrapper
 
 
 class NeoSQLiteHandler:
@@ -84,6 +102,14 @@ class NeoSQLiteHandler:
         self._connections_lock = threading.Lock()
         self._sessions: dict[str, Any] = {}
         self._sessions_lock = threading.Lock()
+
+        # A single SQLite connection is shared by all request handlers. SQLite
+        # connections are not safe for concurrent use from multiple threads,
+        # so every public handler entry point serializes access through this
+        # reentrant lock. check_same_thread=False allows the connection to be
+        # touched from whichever thread the async/server runtime schedules it
+        # on, while the lock guarantees only one operation uses it at a time.
+        self._db_lock = threading.RLock()
 
         if db_path == ":memory:":
             self.conn = Connection(
@@ -201,6 +227,7 @@ class NeoSQLiteHandler:
         logger.debug(f"adapter.handle_insert result: {result}")
         return request_id, result
 
+    @_serialize
     def handle_insert(self, msg: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         request_id = msg["request_id"]
         sections = msg["sections"]
@@ -312,6 +339,7 @@ class NeoSQLiteHandler:
 
         return request_id, {"ok": 1, "n": 0}
 
+    @_serialize
     def handle_command(  # noqa: E501
         self, msg: dict[str, Any]
     ) -> tuple[int, dict[str, Any]]:
@@ -1566,6 +1594,7 @@ class NeoSQLiteHandler:
             },
         }
 
+    @_serialize
     def handle_query(
         self, msg: dict[str, Any]
     ) -> tuple[int, list[dict[str, Any]]]:
