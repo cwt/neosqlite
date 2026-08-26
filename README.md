@@ -33,18 +33,20 @@
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history.
 
-## Latest Release: v1.15.0
+## Latest Release: v1.15.1
 
-NeoSQLite v1.15.0 is a **major correctness and parity release** resolving all 86 findings from a deep code audit, plus 16 new SQL-tier expression converters, Tier-1 `$group` activation, and full body-level type checking.
+NeoSQLite v1.15.1 is a **focused correctness patch** fixing ten SQL-tier bugs surfaced while verifying v1.15.0 against real MongoDB. All fixes are backward compatible.
 
 **Key Fixes:**
-- **Translation Cache Correctness** — Cache keys include literal values; hits return exact parameters. Fixes silently wrong results on repeated aggregation pipelines.
-- **MongoDB Null Semantics** — `{f: null}` matches null-or-missing; `$ne` matches absent fields, across all tiers.
-- **GridFS Integrity** — Chunk orphaning fixed; unique chunk index; aborted uploads roll back; corruption raises `CorruptGridFile`.
-- **Aggregation Tier Activation** — Tier-1 `$group`/`$bucket`/`$bucketAuto` now run in the fast SQL tier.
-- **Typed Rollout** — `check_untyped_defs` enabled: every function body in `neosqlite/` is type-checked.
+- **Converter Parameter Mismatches** — `$setEquals`, `$split`, `$dateFromString`, `$indexOfBytes`, `$strcasecmp`, `$cmp` no longer emit binding errors and silently fall back.
+- **`$graphLookup` Restrict Clause** — `restrictSearchWithMatch` works inside the recursive JOIN (was "ambiguous column name: data").
+- **`$sortArray` Numeric `sortBy`** — MongoDB-valid `sortBy: 1` / `-1` now sorts by element value in both tiers.
+- **Parameter Binding Order** — `$in`, `$regexFind`, `$regexFindAll` with literal operands no longer return silently wrong results.
+- **Real `_id` Preservation** — tier-2 `$lookup` and `$graphLookup` keep the logical `_id` instead of injecting the auto-increment id.
 
-For full details, see [documents/releases/v1.15.0.md](documents/releases/v1.15.0.md).
+**Transparency note:** most of these were introduced and fixed within their own release cycles and never shipped broken — the tiered architecture silently falls back to the authoritative Python tier, so results were always correct. See the release notes for details.
+
+For full details, see [documents/releases/v1.15.1.md](documents/releases/v1.15.1.md). Previous release highlights are in [documents/releases/v1.15.0.md](documents/releases/v1.15.0.md).
 
 ## Installation
 
