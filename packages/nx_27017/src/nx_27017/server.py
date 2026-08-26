@@ -8,6 +8,7 @@ import logging
 import socket
 import struct
 import threading
+import uuid
 
 from nx_27017.handler import NeoSQLiteHandler
 from nx_27017.wire_protocol import (
@@ -36,6 +37,7 @@ async def handle_client(
 ):
     """Handle a single client connection."""
     handler.increment_connections()
+    conn_id = str(uuid.uuid4())
     try:
         while True:
             header_bytes = bytearray(16)
@@ -81,6 +83,7 @@ async def handle_client(
                 case WireProtocol.OP_MSG:
                     try:
                         msg = OP_MSG.parse(full_message)
+                        msg["_conn_id"] = conn_id
 
                         is_insert = False
                         for section_type, section_data in msg["sections"]:
@@ -126,6 +129,7 @@ async def handle_client(
 
                 case WireProtocol.OP_QUERY:
                     msg = OP_QUERY.parse(full_message)
+                    msg["_conn_id"] = conn_id
                     orig_request_id = msg["request_id"]
                     try:
                         request_id, docs = await asyncio.to_thread(
@@ -159,6 +163,7 @@ async def handle_client(
         pass
     finally:
         handler.decrement_connections()
+        handler.close_streams_for_connection(conn_id)
         writer.close()
         with contextlib.suppress(Exception):
             await writer.wait_closed()
@@ -170,6 +175,7 @@ def handle_client_threaded(
 ):
     """Handle a single client connection (threaded version)."""
     handler.increment_connections()
+    conn_id = str(uuid.uuid4())
     try:
         with client_socket:
             while True:
@@ -219,6 +225,7 @@ def handle_client_threaded(
                 if opcode == WireProtocol.OP_MSG:
                     try:
                         msg = OP_MSG.parse(full_message)
+                        msg["_conn_id"] = conn_id
 
                         is_insert = False
                         for section_type, section_data in msg["sections"]:
@@ -255,6 +262,7 @@ def handle_client_threaded(
 
                 elif opcode == WireProtocol.OP_QUERY:
                     msg = OP_QUERY.parse(full_message)
+                    msg["_conn_id"] = conn_id
                     orig_request_id = msg["request_id"]
                     _, docs = handler.handle_query(msg)
                     response_request_id = _get_next_request_id()
@@ -280,6 +288,7 @@ def handle_client_threaded(
         logger.exception(f"Unexpected error in client thread: {e}")
     finally:
         handler.decrement_connections()
+        handler.close_streams_for_connection(conn_id)
 
 
 def run_server_threaded(

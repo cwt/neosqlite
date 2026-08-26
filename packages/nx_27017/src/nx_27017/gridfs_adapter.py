@@ -10,7 +10,6 @@ operations on GridFS collections (fs.files, fs.chunks, etc.) and route them
 to the appropriate NeoSQLite GridFSBucket methods.
 """
 
-import io
 import logging
 from typing import Any
 
@@ -651,66 +650,6 @@ class GridFSAdapter:
             logger.error(f"GridFS update error: {e}")
             return {"ok": 0, "errmsg": str(e)}
 
-    def handle_upload(
-        self,
-        filename: str,
-        data: bytes,
-        metadata: dict | None = None,
-        chunk_size: int | None = None,
-    ) -> dict[str, Any]:
-        """Handle file upload to GridFS.
-
-        Args:
-            filename: Name of the file
-            data: File content as bytes
-            metadata: Optional metadata dictionary
-            chunk_size: Optional chunk size
-
-        Returns:
-            MongoDB-style response with fileId
-        """
-        self._ensure_bucket()
-
-        try:
-            if isinstance(data, str):
-                data = data.encode("utf-8")
-
-            source = io.BytesIO(data)
-
-            file_id = self._get_bucket().upload_from_stream(
-                filename,
-                source,
-                chunk_size_bytes=chunk_size,
-                metadata=metadata,
-            )
-
-            return {"ok": 1, "fileId": file_id}
-        except Exception as e:
-            logger.error(f"GridFS upload error: {e}")
-            return {"ok": 0, "errmsg": str(e)}
-
-    def handle_download(self, file_id: Any) -> dict[str, Any]:
-        """Handle file download from GridFS.
-
-        Args:
-            file_id: ID of the file to download
-
-        Returns:
-            MongoDB-style response with file data
-        """
-        self._ensure_bucket()
-
-        try:
-            file_id = self._convert_objectid(file_id)
-
-            grid_out = self._get_bucket().open_download_stream(file_id)
-            data = grid_out.read()
-
-            return {"ok": 1, "data": data}
-        except Exception as e:
-            logger.error(f"GridFS download error: {e}")
-            return {"ok": 0, "errmsg": str(e)}
-
     def create_indexes(self) -> dict[str, Any]:
         """Create indexes on GridFS collections.
 
@@ -774,21 +713,3 @@ def _get_gridfs_bucket_name(coll_name: str) -> str | None:
     if coll_name.endswith(".chunks"):
         return coll_name.rsplit(".chunks", 1)[0]
     return None
-
-
-def _convert_gridfs_collection_name(coll_name: str) -> str:
-    """Convert MongoDB-style GridFS collection name to NeoSQLite-style.
-
-    Args:
-        coll_name: MongoDB-style collection name (e.g., "fs.files")
-
-    Returns:
-        NeoSQLite-style collection name (e.g., "fs_files")
-    """
-    if coll_name.endswith(".files"):
-        bucket = coll_name.rsplit(".files", 1)[0]
-        return f"{bucket}_files"
-    elif coll_name.endswith(".chunks"):
-        bucket = coll_name.rsplit(".chunks", 1)[0]
-        return f"{bucket}_chunks"
-    return coll_name

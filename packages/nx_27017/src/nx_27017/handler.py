@@ -8,8 +8,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from bson import ObjectId as BsonObjectId
-
 from neosqlite import Connection
 from nx_27017.changestream import (
     ChangeStreamManager,
@@ -155,27 +153,6 @@ class NeoSQLiteHandler:
         """Extract bucket name from GridFS collection name, or None if not GridFS."""
         return _get_gridfs_bucket_name(coll_name)
 
-    def _get_gridfs_bucket(self, db: Connection, coll_name: str) -> Any | None:
-        """Get GridFSBucket for a GridFS collection."""
-        from neosqlite.gridfs import GridFSBucket
-
-        bucket_name = _get_gridfs_bucket_name(coll_name)
-        if bucket_name is None:
-            return None
-        return GridFSBucket(db.db, bucket_name=bucket_name)
-
-    def _convert_gridfs_result(self, grid_out) -> dict:
-        """Convert GridOut to MongoDB-compatible dict."""
-        return {
-            "_id": grid_out._id,
-            "filename": grid_out.filename,
-            "length": grid_out.length,
-            "chunkSize": grid_out.chunk_size,
-            "uploadDate": grid_out.upload_date,
-            "md5": grid_out.md5,
-            "metadata": grid_out.metadata,
-        }
-
     def _handle_gridfs_insert(
         self,
         request_id: int,
@@ -223,68 +200,6 @@ class NeoSQLiteHandler:
         result = adapter.handle_insert(docs, is_files=is_files)
         logger.debug(f"adapter.handle_insert result: {result}")
         return request_id, result
-
-    def _gridfs_insert_file(self, bucket, doc: dict) -> BsonObjectId:
-        """Insert a file document into GridFS files collection."""
-        from datetime import datetime
-
-        from bson import ObjectId
-
-        file_id = doc.get("_id") or ObjectId()
-        filename = doc.get("filename", "")
-        length = doc.get("length", 0)
-        chunk_size = doc.get("chunkSize", bucket._chunk_size_bytes)
-        upload_date = doc.get("uploadDate")
-        if isinstance(upload_date, datetime):
-            upload_date = upload_date.isoformat()
-        elif upload_date is None:
-            upload_date = datetime.now().isoformat()
-        md5 = doc.get("md5")
-        metadata = doc.get("metadata", {})
-
-        bucket._db.execute(
-            f"""
-            INSERT INTO {bucket._files_collection}
-            (id, _id, filename, length, chunkSize, uploadDate, md5, metadata, content_type, aliases)
-            VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-            (
-                str(file_id),
-                filename,
-                length,
-                chunk_size,
-                upload_date,
-                md5,
-                str(metadata) if isinstance(metadata, dict) else metadata,
-                None,
-                None,
-            ),
-        )
-
-        return file_id
-
-    def _gridfs_insert_chunk(self, bucket, doc: dict) -> BsonObjectId:
-        """Insert a chunk document into GridFS chunks collection."""
-        from bson import ObjectId
-
-        chunk_id = doc.get("_id") or ObjectId()
-        files_id = doc.get("files_id")
-        n = doc.get("n", 0)
-        data = doc.get("data", b"")
-
-        if isinstance(files_id, ObjectId):
-            files_id = str(files_id)
-
-        bucket._db.execute(
-            f"""
-            INSERT INTO {bucket._chunks_collection}
-            (_id, files_id, n, data)
-            VALUES (?, ?, ?, ?)
-        """,
-            (str(chunk_id) if chunk_id else None, files_id, n, data),
-        )
-
-        return chunk_id
 
     def handle_insert(self, msg: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         request_id = msg["request_id"]
@@ -949,7 +864,11 @@ class NeoSQLiteHandler:
                 # Check if this is a change stream request
                 if is_change_stream_pipeline(pipeline):
                     return self._handle_change_stream(
-                        request_id, coll_name, pipeline, db
+                        request_id,
+                        coll_name,
+                        pipeline,
+                        db,
+                        owner=msg.get("_conn_id"),
                     )
 
                 coll = db[coll_name]
@@ -1125,6 +1044,28 @@ class NeoSQLiteHandler:
                         "nextBatch": [],
                     },
                 }
+
+        if "killCursors" in cmd_copy:
+            cursor_ids = cmd_copy.get("cursors", [])
+            cursors_killed = []
+            cursors_not_found = []
+            for raw_cid in cursor_ids:
+                try:
+                    cid = int(raw_cid)
+                except (TypeError, ValueError):
+                    cursors_not_found.append(raw_cid)
+                    continue
+                if self._change_stream_manager.get_stream(cid) is not None:
+                    self._change_stream_manager.close_stream(cid)
+                    cursors_killed.append(cid)
+                else:
+                    cursors_not_found.append(cid)
+            return request_id, {
+                "ok": 1,
+                "cursorsKilled": cursors_killed,
+                "cursorsNotFound": cursors_not_found,
+                "cursorsAlive": [],
+            }
 
         logger.info(f"Calling db.command with: {cmd_copy}")
         cmd_result = db.command(cmd_copy)
@@ -1394,48 +1335,13 @@ class NeoSQLiteHandler:
 
         return request_id, {"ok": 1, "n": removed}
 
-    def _handle_aggregate(
-        self, request_id: int, command_doc: dict, db: Connection
-    ) -> tuple[int, dict[str, Any]]:
-        coll_name = command_doc.get("aggregate")
-        if not coll_name:
-            for key in command_doc:
-                if key not in (
-                    "$db",
-                    "pipeline",
-                    "cursor",
-                    "lsid",
-                ) and not key.startswith("$"):
-                    coll_name = key
-                    break
-
-        if not coll_name:
-            return request_id, {"ok": 0, "errmsg": "No collection specified"}
-
-        coll = db[coll_name]
-        pipeline = command_doc.get("pipeline", [])
-
-        try:
-            cursor = coll.aggregate(pipeline)
-            docs = list(cursor)
-            return request_id, {
-                "ok": 1,
-                "cursor": {
-                    "id": 0,
-                    "ns": f"{db.name}.{coll_name}",
-                    "firstBatch": docs,
-                },
-            }
-        except Exception as e:
-            logger.error(f"Error in aggregate: {e}")
-            return request_id, {"ok": 0, "errmsg": str(e)}
-
     def _handle_change_stream(
         self,
         request_id: int,
         coll_name: str,
         pipeline: list[dict],
         db: Connection,
+        owner: Any = None,
     ) -> tuple[int, dict[str, Any]]:
         """Handle change stream aggregate command."""
         try:
@@ -1447,6 +1353,7 @@ class NeoSQLiteHandler:
                 start_at_operation_time=options.get("start_at_operation_time"),
                 full_document=options.get("full_document"),
                 db_name=db.name,
+                owner=owner,
             )
 
             # Return empty batch initially - change streams start empty
@@ -1463,51 +1370,15 @@ class NeoSQLiteHandler:
             logger.error(f"Error in change stream: {e}")
             return request_id, {"ok": 0, "errmsg": str(e)}
 
-    def _handle_count(
-        self, request_id: int, command_doc: dict, db: Connection
-    ) -> tuple[int, dict[str, Any]]:
-        coll_name = command_doc.get("count")
-        if not coll_name:
-            for key in command_doc:
-                if key not in ("$db", "query", "lsid") and not key.startswith(
-                    "$"
-                ):
-                    coll_name = key
-                    break
+    def close_streams_for_connection(self, conn_id: Any) -> None:
+        """Close all change streams opened by a given client connection.
 
-        if not coll_name:
-            return request_id, {"ok": 0, "errmsg": "No collection specified"}
-
-        coll = db[coll_name]
-        filter_query = command_doc.get("query", {})
-
-        count = coll.count_documents(filter_query)
-        return request_id, {"ok": 1, "n": count}
-
-    def _handle_distinct(
-        self, request_id: int, command_doc: dict, db: Connection
-    ) -> tuple[int, dict[str, Any]]:
-        coll_name = command_doc.get("distinct")
-        if not coll_name:
-            for key in command_doc:
-                if key not in (
-                    "$db",
-                    "key",
-                    "query",
-                    "lsid",
-                ) and not key.startswith("$"):
-                    coll_name = key
-                    break
-
-        if not coll_name:
-            return request_id, {"ok": 0, "errmsg": "No collection specified"}
-
-        coll = db[coll_name]
-        key = command_doc.get("key", "")
-        filter_query = command_doc.get("query", {})
-
-        values = coll.distinct(key, filter_query)
-        return request_id, {"ok": 1, "values": values}
+        Called when a client disconnects so its change streams (and their
+        registered listeners) do not leak for the life of the process.
+        """
+        if conn_id is None:
+            return
+        self._change_stream_manager.close_streams_for_owner(conn_id)
 
     def _handle_server_status(
         self, request_id: int, db: Connection
@@ -1687,6 +1558,7 @@ class NeoSQLiteHandler:
                 {
                     "request_id": msg["request_id"],
                     "sections": [("body", query)],
+                    "_conn_id": msg.get("_conn_id"),
                 }
             )
             return result[0], [result[1]]

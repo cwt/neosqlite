@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -26,6 +27,7 @@ class ChangeStreamCursor:
         start_at_operation_time: datetime | None = None,
         full_document: str | None = None,
         db_name: str = "test",
+        owner: Any = None,
     ):
         self.collection_name = collection_name
         self.pipeline = pipeline
@@ -33,6 +35,7 @@ class ChangeStreamCursor:
         self.start_at_operation_time = start_at_operation_time
         self.full_document = full_document or "default"
         self.db_name = db_name
+        self._owner = owner
         self._id = next(_cursor_id_counter)  # Integer cursor ID
         self._stream_id = str(
             uuid.uuid4()
@@ -51,19 +54,6 @@ class ChangeStreamCursor:
             if isinstance(stage, dict) and "$match" in stage:
                 return stage["$match"]
         return {}
-
-    def close(self) -> None:
-        """Close the change stream."""
-        self._closed = True
-
-    def is_closed(self) -> bool:
-        """Check if the change stream is closed."""
-        return self._closed
-
-    def to_list(self) -> list[dict]:
-        """Return all changes (for initial response)."""
-        # Change streams initially return empty batch
-        return []
 
     def get_resume_token(self) -> dict:
         """Get the resume token for this change stream."""
@@ -115,6 +105,7 @@ class ChangeStreamManager:
     def __init__(self) -> None:
         self._streams: dict[int, ChangeStreamCursor] = {}
         self._listeners: dict[str, list[Callable]] = {}
+        self._lock = threading.Lock()
 
     def create_stream(
         self,
@@ -124,8 +115,14 @@ class ChangeStreamManager:
         start_at_operation_time: datetime | None = None,
         full_document: str | None = None,
         db_name: str = "test",
+        owner: Any = None,
     ) -> ChangeStreamCursor:
-        """Create a new change stream."""
+        """Create a new change stream.
+
+        Args:
+            owner: Opaque identifier (e.g. a per-connection id) used to close
+                all streams belonging to a single owner on disconnect.
+        """
         stream = ChangeStreamCursor(
             collection_name=collection_name,
             pipeline=pipeline,
@@ -133,38 +130,59 @@ class ChangeStreamManager:
             start_at_operation_time=start_at_operation_time,
             full_document=full_document,
             db_name=db_name,
+            owner=owner,
         )
-        self._streams[stream._id] = stream
+        with self._lock:
+            self._streams[stream._id] = stream
 
-        # Register listener for collection changes
-        if collection_name not in self._listeners:
-            self._listeners[collection_name] = []
-        self._listeners[collection_name].append(stream._on_change)
+            # Register listener for collection changes
+            if collection_name not in self._listeners:
+                self._listeners[collection_name] = []
+            self._listeners[collection_name].append(stream._on_change)
 
         logger.debug(
             f"Created change stream {stream._id} for collection {collection_name}"
         )
         return stream
 
-    def close_stream(self, stream_id: int) -> None:
-        """Close a change stream and unregister its listener."""
-        if stream_id in self._streams:
-            stream = self._streams.pop(stream_id)
-            stream.close()
-            if stream.collection_name in self._listeners:
-                try:
-                    self._listeners[stream.collection_name].remove(
-                        stream._on_change
-                    )
-                except ValueError:
-                    pass
-                if not self._listeners[stream.collection_name]:
-                    del self._listeners[stream.collection_name]
-            logger.debug(f"Closed change stream {stream_id}")
-
     def get_stream(self, stream_id: int) -> ChangeStreamCursor | None:
         """Get a change stream by ID."""
-        return self._streams.get(stream_id)
+        with self._lock:
+            return self._streams.get(stream_id)
+
+    def _unregister_stream(self, stream: ChangeStreamCursor) -> None:
+        """Remove a stream's listener under the manager lock (caller holds lock)."""
+        stream._closed = True
+        if stream.collection_name in self._listeners:
+            try:
+                self._listeners[stream.collection_name].remove(
+                    stream._on_change
+                )
+            except ValueError:
+                pass
+            if not self._listeners[stream.collection_name]:
+                del self._listeners[stream.collection_name]
+
+    def close_stream(self, stream_id: int) -> None:
+        """Close a change stream and unregister its listener."""
+        with self._lock:
+            stream = self._streams.pop(stream_id, None)
+        if stream is None:
+            return
+        with self._lock:
+            self._unregister_stream(stream)
+        logger.debug(f"Closed change stream {stream_id}")
+
+    def close_streams_for_owner(self, owner: Any) -> None:
+        """Close every stream created by the given owner (e.g. a connection)."""
+        with self._lock:
+            owned = [
+                stream
+                for stream in self._streams.values()
+                if stream._owner == owner
+            ]
+        for stream in owned:
+            self.close_stream(stream._id)
 
     def notify_change(
         self,
@@ -175,10 +193,12 @@ class ChangeStreamManager:
         update_description: dict | None = None,
     ) -> None:
         """Notify all change streams of a change."""
-        if collection_name not in self._listeners:
-            return
+        with self._lock:
+            if collection_name not in self._listeners:
+                return
+            listeners = list(self._listeners[collection_name])
 
-        for listener in list(self._listeners[collection_name]):
+        for listener in listeners:
             try:
                 listener(
                     operation_type, document, document_key, update_description
