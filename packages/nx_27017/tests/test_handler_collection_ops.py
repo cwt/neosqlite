@@ -72,6 +72,41 @@ class TestCollectionOperations:
         assert response["ok"] == 1
         assert response["numIndexesAfter"] >= response["numIndexesBefore"]
 
+    def test_insert_after_drop_recreates_collection(self, handler):
+        """Inserting into a collection that was dropped (leaving a stale
+        in-memory cache entry) must transparently re-create the table
+        instead of raising 'already exists' or 'no such table'.
+        """
+        insert_msg = {
+            "request_id": 1,
+            "sections": [
+                ("body", {"insert": "items", "$db": "test"}),
+                ("payload_docs", [{"x": 1}]),
+            ],
+        }
+        handler.handle_insert(insert_msg)
+
+        # Simulate the comparison harness cleanup dropping the physical
+        # table while the in-memory collection cache keeps a stale entry.
+        handler.conn["items"].drop()
+
+        reinsert_msg = {
+            "request_id": 2,
+            "sections": [
+                ("body", {"insert": "items", "$db": "test"}),
+                ("payload_docs", [{"x": 2}, {"x": 3}]),
+            ],
+        }
+        handler.handle_insert(reinsert_msg)
+
+        find_msg = {
+            "request_id": 3,
+            "sections": [("body", {"find": "items", "$db": "test"})],
+        }
+        _, response = handler.handle_command(find_msg)
+        assert response["ok"] == 1
+        assert len(response["cursor"]["firstBatch"]) == 2
+
     def test_drop_indexes(self, handler):
         """Test dropIndexes command."""
         insert_msg = {

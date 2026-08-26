@@ -299,10 +299,16 @@ class NeoSQLiteHandler:
                 request_id, coll_name, docs_to_insert, db
             )
 
-        if coll_name not in db._collections:
-            coll = db.create_collection(coll_name)
-        else:
-            coll = db[coll_name]
+        # Ensure the collection's underlying table exists. get_collection
+        # only registers the collection in-memory; (re)create the table if it
+        # is missing. This handles both brand-new collections and collections
+        # dropped between operations: a dropped collection leaves a stale entry
+        # in the in-memory cache, so db.create_collection would raise
+        # "already exists" on the next insert. CREATE TABLE IF NOT EXISTS keeps
+        # coll.create() safe for already-existing collections.
+        coll = db[coll_name]
+        if coll_name not in db.list_collection_names():
+            coll.create()
 
         docs_to_insert = payload_docs.copy() if payload_docs else []
         for key, value in command_doc.items():
