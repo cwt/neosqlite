@@ -1,3 +1,17 @@
+---
+type: design_doc
+title: "NeoSQLite $lookup Implementation"
+description: "Design and architecture of $lookup join stages across CTE, temporary table, and Python fallback tiers."
+tags:
+  - lookup
+  - joins
+  - aggregation
+  - temp-tables
+timestamp: 2026-03-12T03:42:00Z
+version: "1.15.1"
+lifecycle: active
+---
+
 # NeoSQLite $lookup Implementation
 
 ## Overview

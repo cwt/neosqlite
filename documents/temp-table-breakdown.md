@@ -1,3 +1,17 @@
+---
+type: design_doc
+title: "Temporary Table Aggregation Refactor Plan"
+description: "Structural refactor plan for modularizing temporary_table_aggregation.py into dedicated sub-modules."
+tags:
+  - refactor
+  - temp-tables
+  - aggregation
+  - modularization
+timestamp: 2026-07-13T09:12:00Z
+version: "1.15.1"
+lifecycle: completed
+---
+
 # Temporary Table Aggregation — Refactor Plan
 
 **Goal:** Split `neosqlite/collection/temporary_table_aggregation.py` (~4,285 lines) into a

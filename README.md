@@ -31,7 +31,7 @@
 - **Configurable Journal Mode**: WAL (default), DELETE, MEMORY, and more.
 - **Security Hardening**: Built-in SQL injection protection via centralized identifier quoting.
 
-See [CHANGELOG.md](CHANGELOG.md) for the full history.
+See [Release Notes](documents/releases/) for the full history.
 
 ## Latest Release: v1.15.1
 
@@ -211,11 +211,11 @@ db = Connection("app.db", journal_mode=JournalMode.WAL)  # Default
 
 | Topic | Link |
 |-------|------|
+| Knowledge Base / Docs | [documents/](documents/) |
 | Release Notes | [documents/releases/](documents/releases/) |
-| Changelog | [CHANGELOG.md](CHANGELOG.md) |
-| GridFS | [documents/GRIDFS.md](documents/GRIDFS.md) |
-| Text Search | [documents/TEXT_SEARCH.md](documents/TEXT_SEARCH.md) |
-| Aggregation Optimization | [documents/AGGREGATION_PIPELINE_OPTIMIZATION.md](documents/AGGREGATION_PIPELINE_OPTIMIZATION.md) |
+| GridFS | [documents/gridfs.md](documents/gridfs.md) |
+| Text Search | [documents/text-search.md](documents/text-search.md) |
+| Aggregation Optimization | [documents/aggregation-pipeline-optimization.md](documents/aggregation-pipeline-optimization.md) |
 | NX-27017 Server | [packages/nx_27017/README.md](packages/nx_27017/README.md) |
 | API Comparison | [examples/api_comparison/README.md](examples/api_comparison/README.md) |
 

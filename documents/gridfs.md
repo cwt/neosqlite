@@ -1,3 +1,18 @@
+---
+type: api_spec
+title: "NeoSQLite GridFS Documentation"
+description: "Specification and developer guide for NeoSQLite GridFS and GridFSBucket implementations with PyMongo compatibility."
+tags:
+  - gridfs
+  - files
+  - chunks
+  - storage
+  - pymongo
+timestamp: 2026-08-26T07:23:00Z
+version: "1.15.1"
+lifecycle: active
+---
+
 # NeoSQLite GridFS Documentation
 
 This comprehensive guide covers NeoSQLite's GridFS implementation, including API compatibility with PyMongo, key differences, migration considerations, and all available features.
@@ -335,7 +350,7 @@ The implementation supports both traditional GridFSBucket API usage and PyMongo-
 ---
 
 **Implementation Status**: All core GridFS features have been implemented and are available in the current version. NeoSQLite GridFS now provides 100% API compatibility for common use cases.</content>
-<parameter name="filePath">documents/GRIDFS.md
+<parameter name="filePath">documents/gridfs.md
 
 ---
 

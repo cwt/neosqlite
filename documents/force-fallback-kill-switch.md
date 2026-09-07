@@ -1,3 +1,17 @@
+---
+type: guide
+title: "Force Fallback Kill Switch"
+description: "Guide to using NEOSQLITE_FORCE_FALLBACK for debugging, differential benchmarking, and fallback testing."
+tags:
+  - debugging
+  - fallback
+  - kill-switch
+  - benchmarks
+timestamp: 2026-03-12T03:42:00Z
+version: "1.15.1"
+lifecycle: active
+---
+
 # Force Fallback Kill Switch
 
 ## Overview

@@ -1,3 +1,17 @@
+---
+type: api_spec
+title: "Text Search in NeoSQLite"
+description: "Complete documentation of FTS5 full-text search, $text operator, and custom ICU language tokenizer support."
+tags:
+  - fts5
+  - text-search
+  - full-text
+  - indexing
+timestamp: 2026-04-05T16:33:00Z
+version: "1.15.1"
+lifecycle: active
+---
+
 # Text Search in NeoSQLite
 
 NeoSQLite supports efficient text search using the `$text` operator, which leverages SQLite's FTS5 (Full-Text Search) extension.

@@ -160,4 +160,6 @@ if __name__ == "__main__":
     print(
         "- https://hg.sr.ht/~cwt/fts5-icu-tokenizer for building custom tokenizers"
     )
-    print("- The TEXT_SEARCH.md documentation in the neosqlite repository")
+    print(
+        "- The documents/text-search.md documentation in the neosqlite repository"
+    )

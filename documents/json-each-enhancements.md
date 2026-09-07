@@ -1,3 +1,17 @@
+---
+type: design_doc
+title: "NeoSQLite json_each() Enhancements"
+description: "Performance optimizations leveraging SQLite json_each() virtual table for efficient array querying."
+tags:
+  - json-each
+  - performance
+  - arrays
+  - sql-tier
+timestamp: 2026-03-12T03:42:00Z
+version: "1.15.1"
+lifecycle: active
+---
+
 # NeoSQLite json_each() Enhancements
 
 ## Overview
@@ -230,7 +244,7 @@ pipeline = [
 - `documents/JSON_EACH_ENHANCEMENT_ROADMAP.md`: Updated roadmap
 - `documents/JSON_EACH_ENHANCEMENTS_SUMMARY.md`: Implementation summary
 - `documents/TEXT_SEARCH_JSON_EACH_INTEGRATION.md`: Detailed implementation (new)
-- `documents/PyMongo_API_Comparison.md`: Updated API comparison
+- `documents/pymongo-api-comparison.md`: Updated API comparison
 
 ## Future Enhancements
 

@@ -1,3 +1,17 @@
+---
+type: evaluation
+title: "NeoSQLite API Feasibility Assessment"
+description: "Technical feasibility analysis of mapping PyMongo methods to SQLite storage and SQL query primitives."
+tags:
+  - feasibility
+  - pymongo
+  - api
+  - evaluation
+timestamp: 2026-03-18T07:54:00Z
+version: "1.15.1"
+lifecycle: active
+---
+
 # NeoSQLite API Feasibility Assessment
 
 ## Overview

@@ -1,3 +1,17 @@
+---
+type: architecture_guideline
+title: "Advanced Index-Aware Optimization"
+description: "Techniques and strategies for optimizing query execution by leveraging existing SQLite indexes in NeoSQLite."
+tags:
+  - optimization
+  - indexing
+  - query-planner
+  - performance
+timestamp: 2026-03-12T03:42:00Z
+version: "1.15.1"
+lifecycle: active
+---
+
 # Advanced Index-Aware Optimization
 
 ## Overview

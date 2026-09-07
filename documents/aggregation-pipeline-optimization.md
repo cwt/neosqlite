@@ -1,3 +1,17 @@
+---
+type: architecture_guideline
+title: "Aggregation Pipeline Optimization"
+description: "Architecture, design, and benchmarks for translating MongoDB aggregation pipeline stages to native SQLite CTE queries."
+tags:
+  - aggregation
+  - cte
+  - sql-tier
+  - performance
+timestamp: 2026-03-18T07:54:00Z
+version: "1.15.1"
+lifecycle: active
+---
+
 # Aggregation Pipeline Optimization
 
 **Status:** ✅ **COMPLETE**  
@@ -825,7 +839,7 @@ These operators **always** use Tier 3 (Python fallback).
 ### Related Documentation
 
 - `documents/TODO/TIER_OPTIMIZATION_PLAN.md` - Original optimization plan
-- `documents/FORCE_FALLBACK_KILL_SWITCH.md` - Kill switch documentation
+- `documents/force-fallback-kill-switch.md` - Kill switch documentation
 
 ### External References
 

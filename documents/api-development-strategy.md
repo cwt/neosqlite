@@ -1,3 +1,17 @@
+---
+type: architecture_guideline
+title: "NeoSQLite API Development Strategy"
+description: "Strategic approach, principles, and execution phases for implementing PyMongo APIs in NeoSQLite."
+tags:
+  - strategy
+  - api
+  - architecture
+  - roadmap
+timestamp: 2026-03-18T07:54:00Z
+version: "1.15.1"
+lifecycle: active
+---
+
 # NeoSQLite API Development Strategy
 
 ## Executive Summary

@@ -1,3 +1,18 @@
+---
+type: roadmap
+title: "Vector Search Integration Plan"
+description: "Architecture and roadmap for integrating vector search embeddings using sqlite-vec extension."
+tags:
+  - vector-search
+  - sqlite-vec
+  - embeddings
+  - ai
+  - roadmap
+timestamp: 2026-04-10T04:30:00Z
+version: "1.15.1"
+lifecycle: proposed
+---
+
 # Vector Search Integration - Final Plan
 
 Related GitHub issue: <https://github.com/cwt/neosqlite/issues/68>

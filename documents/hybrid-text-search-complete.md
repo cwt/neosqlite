@@ -1,3 +1,17 @@
+---
+type: design_doc
+title: "NeoSQLite Hybrid Text Search Processing Enhancement"
+description: "Specification for hybrid SQLite FTS5 full-text search combined with aggregation pipelines."
+tags:
+  - fts5
+  - text-search
+  - aggregation
+  - hybrid
+timestamp: 2026-03-12T03:42:00Z
+version: "1.15.1"
+lifecycle: active
+---
+
 # NeoSQLite Hybrid Text Search Processing Enhancement
 
 ## Overview

@@ -1,3 +1,17 @@
+---
+type: architecture_guideline
+title: "NeoSQLite Performance Optimization Guide"
+description: "In-depth guide covering benchmark results, query optimization, indexing strategies, and SQLite pragma configurations."
+tags:
+  - performance
+  - benchmarks
+  - tuning
+  - pragmas
+timestamp: 2026-03-12T07:56:00Z
+version: "1.15.1"
+lifecycle: active
+---
+
 # NeoSQLite Performance Optimization Guide
 
 ## Overview

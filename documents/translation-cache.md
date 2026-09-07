@@ -1,3 +1,17 @@
+---
+type: design_doc
+title: "SQL Translation Caching"
+description: "Design and benchmarks of the LRU translation caching mechanism for repeated aggregation pipelines and $expr queries."
+tags:
+  - caching
+  - lru
+  - translation
+  - performance
+timestamp: 2026-08-26T07:23:00Z
+version: "1.15.1"
+lifecycle: active
+---
+
 # SQL Translation Caching
 
 This document describes the translation caching mechanism in NeoSQLite, which provides significant performance improvements for repeated aggregation queries and `$expr` queries.

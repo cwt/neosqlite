@@ -1,3 +1,17 @@
+---
+type: reference
+title: "PyMongo API Comparison"
+description: "Comprehensive method-by-method reference comparing PyMongo and NeoSQLite API coverage, status, and behavior."
+tags:
+  - pymongo
+  - api-comparison
+  - compatibility
+  - reference
+timestamp: 2026-04-05T16:33:00Z
+version: "1.15.1"
+lifecycle: active
+---
+
 # PyMongo API Comparison
 
 **Last Updated**: March 16, 2026
@@ -857,12 +871,12 @@ NeoSQLite maintains comprehensive PyMongo compatibility tests:
 
 #### NeoSQLite Documentation
 - [README.md](../README.md) - Installation and quickstart
-- [CHANGELOG.md](../CHANGELOG.md) - Version history
-- [GRIDFS.md](GRIDFS.md) - GridFS implementation details
-- [TEXT_SEARCH.md](TEXT_SEARCH.md) - Text search capabilities
-- [EXPR_IMPLEMENTATION.md](EXPR_IMPLEMENTATION.md) - $expr operator framework
-- [API_FEASIBILITY_ASSESSMENT.md](API_FEASIBILITY_ASSESSMENT.md) - Technical feasibility analysis
-- [API_DEVELOPMENT_STRATEGY.md](API_DEVELOPMENT_STRATEGY.md) - Strategic implementation approach
+- [Release Notes](releases/index.md) - Version history
+- [gridfs.md](gridfs.md) - GridFS implementation details
+- [text-search.md](text-search.md) - Text search capabilities
+- [expr-implementation.md](expr-implementation.md) - $expr operator framework
+- [api-feasibility-assessment.md](api-feasibility-assessment.md) - Technical feasibility analysis
+- [api-development-strategy.md](api-development-strategy.md) - Strategic implementation approach
 
 ---
 

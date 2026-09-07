@@ -1,3 +1,18 @@
+---
+type: runbook
+title: "Database Maintenance Guide"
+description: "Operational guide covering auto-vacuum, database compaction, journal mode configuration, and dbStats commands in NeoSQLite."
+tags:
+  - maintenance
+  - vacuum
+  - compact
+  - storage
+  - journal-mode
+timestamp: 2026-03-19T08:40:00Z
+version: "1.15.1"
+lifecycle: active
+---
+
 # Database Maintenance Guide
 
 > **NeoSQLite 1.12+**
@@ -722,7 +737,7 @@ AUTOVACUUM_MIGRATION=0   # Disable (default)
 - [SQLite AutoVacuum Documentation](https://www.sqlite.org/pragma.html#pragma_auto_vacuum)
 - [SQLite VACUUM Command](https://www.sqlite.org/lang_vacuum.html)
 - [MongoDB compact Command](https://www.mongodb.com/docs/manual/reference/command/compact/)
-- [NeoSQLite Journal Mode Guide](./JOURNAL_MODE.md) (if available)
+- [NeoSQLite Journal Mode Configuration (v1.9.1 Release Notes)](./releases/v1.9.1.md)
 
 ---
 

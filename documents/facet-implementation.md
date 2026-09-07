@@ -1,3 +1,17 @@
+---
+type: design_doc
+title: "Facet Implementation in NeoSQLite"
+description: "Implementation specification for running multiple independent aggregation sub-pipelines via $facet in NeoSQLite."
+tags:
+  - facet
+  - aggregation
+  - multi-pipeline
+  - design
+timestamp: 2026-03-18T07:54:00Z
+version: "1.15.1"
+lifecycle: active
+---
+
 # $facet Implementation in NeoSQLite
 
 ## Overview

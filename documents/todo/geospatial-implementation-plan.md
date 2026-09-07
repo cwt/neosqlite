@@ -1,3 +1,17 @@
+---
+type: roadmap
+title: "NeoSQLite Geospatial API Implementation Plan"
+description: "Architecture and roadmap for implementing 2D and 2Dsphere geospatial queries using SpatiaLite with pure-Python fallbacks."
+tags:
+  - geospatial
+  - spatialite
+  - gis
+  - roadmap
+timestamp: 2026-03-12T03:42:00Z
+version: "1.15.1"
+lifecycle: proposed
+---
+
 # NeoSQLite Geospatial API Implementation Plan
 
 ## Overview

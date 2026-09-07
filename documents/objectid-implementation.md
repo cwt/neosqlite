@@ -1,3 +1,17 @@
+---
+type: api_spec
+title: "ObjectId Implementation in NeoSQLite"
+description: "Full specification of the 12-byte BSON-compatible ObjectId class and its binary SQLite storage format."
+tags:
+  - objectid
+  - bson
+  - identity
+  - compatibility
+timestamp: 2026-07-12T02:54:00Z
+version: "1.15.1"
+lifecycle: active
+---
+
 # ObjectId Implementation in NeoSQLite
 
 ## Overview

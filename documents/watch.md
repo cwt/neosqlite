@@ -1,3 +1,17 @@
+---
+type: api_spec
+title: "Change Streams with watch() in NeoSQLite"
+description: "Change stream implementation using SQLite triggers and changelog tables for collection.watch() without replica sets."
+tags:
+  - change-streams
+  - watch
+  - triggers
+  - events
+timestamp: 2026-08-26T07:23:00Z
+version: "1.15.1"
+lifecycle: active
+---
+
 # Change Streams with watch() in NeoSQLite
 
 NeoSQLite provides change stream functionality, similar to PyMongo's, through the `collection.watch()` method. This allows you to listen for data changes (inserts, updates, and deletes) in a collection.

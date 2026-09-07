@@ -1,6 +1,20 @@
+---
+type: api_spec
+title: "Aggregation Expressions Quick Start Guide"
+description: "Reference and usage guide for MongoDB aggregation expression operators supported across SQL and Python tiers in NeoSQLite."
+tags:
+  - aggregation
+  - expressions
+  - sql-tier
+  - operators
+timestamp: 2026-03-12T03:42:00Z
+version: "1.15.1"
+lifecycle: active
+---
+
 # Aggregation Expressions - Quick Start Guide
 
-**Quick Reference:** For comprehensive documentation including performance benchmarks, operator support matrix, and technical details, see [AGGREGATION_PIPELINE_OPTIMIZATION.md](AGGREGATION_PIPELINE_OPTIMIZATION.md).
+**Quick Reference:** For comprehensive documentation including performance benchmarks, operator support matrix, and technical details, see [aggregation-pipeline-optimization.md](aggregation-pipeline-optimization.md).
 
 ---
 
@@ -48,7 +62,7 @@ All operators from `$expr` queries work in aggregation pipelines:
 | **Array** | `$size`, `$in`, `$isArray` |
 | **Object** | `$mergeObjects`, `$getField`, `$setField` |
 
-**Full list:** See [AGGREGATION_PIPELINE_OPTIMIZATION.md](AGGREGATION_PIPELINE_OPTIMIZATION.md#operator-support-matrix)
+**Full list:** See [aggregation-pipeline-optimization.md](aggregation-pipeline-optimization.md#operator-support-matrix)
 
 ---
 
@@ -305,4 +319,4 @@ For comprehensive documentation including:
 - Implementation details
 - Known limitations
 
-See **[AGGREGATION_PIPELINE_OPTIMIZATION.md](AGGREGATION_PIPELINE_OPTIMIZATION.md)**
+See **[aggregation-pipeline-optimization.md](aggregation-pipeline-optimization.md)**

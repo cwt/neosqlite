@@ -1,3 +1,17 @@
+---
+type: design_doc
+title: "NeoSQLite $expr Operator Implementation"
+description: "Architecture and evaluation strategy for the MongoDB $expr operator with tiered SQL translation and Python evaluation fallback."
+tags:
+  - expr
+  - query-operators
+  - sql-tier
+  - python-fallback
+timestamp: 2026-04-06T04:45:00Z
+version: "1.15.1"
+lifecycle: active
+---
+
 # NeoSQLite $expr Operator Implementation
 
 ## Overview
@@ -905,7 +919,7 @@ set_force_fallback(True)
 set_force_fallback(False)
 ```
 
-See `FORCE_FALLBACK_KILL_SWITCH.md` for details.
+See `force-fallback-kill-switch.md` for details.
 
 ## Testing
 

@@ -1,3 +1,18 @@
+---
+type: policy
+title: "NeoSQLite Testing Strategy"
+description: "Testing philosophy, coverage targets, test suites, and differential verification testing against real MongoDB."
+tags:
+  - testing
+  - qa
+  - pytest
+  - verification
+  - differential-testing
+timestamp: 2026-03-12T03:42:00Z
+version: "1.15.1"
+lifecycle: active
+---
+
 # NeoSQLite Testing Strategy
 
 ## Overview
