@@ -684,6 +684,74 @@ class TestEdgeCases:
             assert len(results) == 1
             assert len(results[0]["product"]) == 1
 
+    def test_lookup_hash_table_with_string_foreign_field_no_malformed_json(
+        self, caplog
+    ):
+        """
+        Test that creating a lookup hash table on a string foreignField does not
+        erroneously encounter malformed JSON or fall back to row-by-row processing.
+        """
+        import logging
+
+        with (
+            caplog.at_level(logging.WARNING),
+            neosqlite.Connection(":memory:") as conn,
+        ):
+            posts = conn.blog_posts
+            comments = conn.blog_comments
+
+            posts.insert_one({"_id": "p1", "title": "Post 1"})
+            comments.insert_many(
+                [
+                    {
+                        "_id": "c1",
+                        "parent_post": "p1",
+                        "comment_author": "cwt",
+                        "text": "Hello",
+                    },
+                    {
+                        "_id": "c2",
+                        "parent_post": "p2",
+                        "comment_author": "other",
+                        "text": "World",
+                    },
+                ]
+            )
+
+            # Pipeline with $filter using $$ aggregation variable forces Tier 2
+            pipeline = [
+                {"$match": {"_id": "p1"}},
+                {
+                    "$lookup": {
+                        "from": "blog_comments",
+                        "localField": "_id",
+                        "foreignField": "parent_post",
+                        "as": "comments",
+                    }
+                },
+                {
+                    "$addFields": {
+                        "comments": {
+                            "$filter": {
+                                "input": "$comments",
+                                "as": "c",
+                                "cond": {
+                                    "$in": ["$$c.comment_author", ["cwt"]]
+                                },
+                            }
+                        }
+                    }
+                },
+            ]
+
+            results = list(posts.aggregate(pipeline))
+            assert len(results) == 1
+            assert len(results[0]["comments"]) == 1
+            assert results[0]["comments"][0]["_id"] == "c1"
+
+            # Verify that malformed JSON error was not encountered
+            assert "malformed JSON" not in caplog.text
+
 
 """
 Tests for temporary table aggregation fixes.

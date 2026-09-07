@@ -304,12 +304,14 @@ class SqlUpdatesMixin:
             final_select = f"{base_ordered} LIMIT {slice_value}"
         else:
             # Negative slice: keep the last n elements. Take them off a
-            # reversed scan, then restore original order via rowid.
+            # reversed scan, then restore original order via blk, ord.
             reversed_scan = (
-                f"SELECT value FROM ({union_sql}) "
+                f"SELECT value, blk, ord FROM ({union_sql}) "
                 f"ORDER BY blk DESC, ord DESC LIMIT {-int(slice_value)}"
             )
-            final_select = f"SELECT value FROM ({reversed_scan}) ORDER BY rowid"
+            final_select = (
+                f"SELECT value FROM ({reversed_scan}) ORDER BY blk ASC, ord ASC"
+            )
 
         fragment = (
             f"{json_path}, (SELECT json_group_array(value) "

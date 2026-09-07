@@ -39,6 +39,7 @@ def _json_extract_field_with_objectid_support(
     json_function_prefix: str,
     field_name: str,
     is_local_field: bool = True,
+    data_column: str = "data",
 ) -> str:
     """
     Generate SQL expression to extract a field value with ObjectId support.
@@ -50,6 +51,7 @@ def _json_extract_field_with_objectid_support(
         json_function_prefix: The JSON function prefix (json or jsonb)
         field_name: The field name to extract
         is_local_field: Whether this is a local field (True) or foreign field (False)
+        data_column: The column or qualified column reference containing the JSON data
 
     Returns:
         SQL expression string
@@ -57,16 +59,22 @@ def _json_extract_field_with_objectid_support(
     if field_name == "_id":
         return "_id" if is_local_field else "_id"
 
+    from ..json_path_utils import parse_json_path
+
     json_extract = f"{json_function_prefix}_extract"
-    base_extract = f"{json_extract}(data, '$.{field_name}')"
+    json_path = parse_json_path(field_name)
+    base_extract = f"{json_extract}({data_column}, '{json_path}')"
+    oid_check = (
+        f"{json_extract}({data_column}, '{json_path}.__neosqlite_objectid__')"
+    )
+    oid_id = f"{json_extract}({data_column}, '{json_path}.id')"
 
     # Check if the field is an ObjectId and extract the actual ID string
     # ObjectId is stored as: {"__neosqlite_objectid__":true,"id":"<oid_string>"}
     return (
         f"CASE "
         f"WHEN {base_extract} IS NULL THEN NULL "
-        f"WHEN json_extract({base_extract}, '$.__neosqlite_objectid__') = 1 THEN "
-        f"  json_extract({base_extract}, '$.id') "
+        f"WHEN {oid_check} = 1 THEN {oid_id} "
         f"ELSE CAST({base_extract} AS TEXT) "
         f"END"
     )
