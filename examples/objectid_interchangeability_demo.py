@@ -134,7 +134,7 @@ def demonstrate_mongodb_integration():
     except Exception as e:
         print(f"   MongoDB connection test skipped: {e}")
         print(
-            "   (Run 'podman run -d --name mongo -p 27017:27017 mongo:latest' to test)"
+            "   (Run 'podman run -d --name mongo -p 27017:27017 mongo:8.2.12' to test)"
         )
 
 

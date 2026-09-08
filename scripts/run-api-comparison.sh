@@ -5,11 +5,17 @@
 # This script:
 # 1. Checks for podman or docker availability (podman preferred)
 # 2. On macOS ARM: prefers native mongodb-community via Homebrew if available
-# 3. Pulls the latest MongoDB image (if using containers)
+# 3. Pulls the MongoDB image (pinned to mongo:8.2.12 if using containers)
 # 4. Runs MongoDB container with exposed port (single node, NOT replica set)
 # 5. Executes the API comparison Python script
 # 6. Reports compatibility statistics
 # 7. Cleans up the container or native MongoDB data
+#
+# Note on MongoDB Image Pinning:
+# The container image is pinned to `mongo:8.2.12`. MongoDB 8.0/8.3+ introduced a strict
+# kernel check (validateRseqKernelCompat / SERVER-121912) that causes mongod to abort
+# at startup on Linux kernels >= 6.19. The mongo:8.2.12 image supports MongoDB 8.0+
+# operators (such as $sigmoid) while running cleanly on Linux 6.19+ kernels.
 #
 # Note: MongoDB is run as a single node (not a replica set) for simplicity.
 # This means change streams (watch()) cannot be tested in this comparison,
@@ -33,7 +39,7 @@ NC='\033[0m' # No Color
 
 # Configuration
 MONGODB_PORT=27017
-MONGODB_IMAGE="mongo:latest"
+MONGODB_IMAGE="mongo:8.2.12"
 CONTAINER_NAME="neosqlite_mongodb_test"
 COMPARISON_SCRIPT="$(dirname "$0")/../examples/api_comparison_main.py"
 

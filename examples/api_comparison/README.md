@@ -8,19 +8,19 @@ This package tests NeoSQLite's MongoDB API compatibility by running the same ope
 
 ## Test Results
 
-### API Comparison Tests (v1.9.2)
+### API Comparison Tests (v1.15.1)
 
-| Metric | v1.8.0 | v1.9.0 | v1.9.1 | **v1.9.2** |
-|--------|--------|--------|--------|------------|
-| **Total Tests** | 304 | 373 | 369 | **371** |
-| **Passed** | 300 | 362 | 358 | **359** |
-| **Skipped** | 4 | 11 | 11 | **12** |
-| **Failed** | 0 | 0 | 0 | **0** |
-| **Compatibility** | 100% | 100% | 100% | **100%** |
+| Metric | v1.8.0 | v1.9.0 | v1.9.1 | v1.9.2 | **v1.15.1** |
+|--------|--------|--------|--------|--------|-------------|
+| **Total Tests** | 304 | 373 | 369 | 371 | **381** |
+| **Passed** | 300 | 362 | 358 | 359 | **363** |
+| **Skipped** | 4 | 11 | 11 | 12 | **18** |
+| **Failed** | 0 | 0 | 0 | 0 | **0** |
+| **Compatibility** | 100% | 100% | 100% | 100% | **100%** |
 
-*Note: These numbers may change during development as new APIs are added or test coverage improves. The decrease in total tests from v1.9.0 is due to deduplication during test module reorganization.*
+*Note: Tested against MongoDB 8.x using the pinned `mongo:8.2.12` container image.*
 
-**Note on Skipped Tests**: The 11 skipped tests are due to architectural differences or environment limitations, not missing implementations:
+**Note on Skipped Tests**: The 18 skipped tests are due to architectural differences or environment limitations, not missing implementations:
 1. `options()` - NeoSQLite returns detailed SQLite schema info (`{'columns': [...], 'indexes': [...]}`) while MongoDB returns `{}`. Backend-specific difference.
 2. `$log2` - **NeoSQLite extension** using SQLite's native `log2()` function. Raises `UserWarning` about MongoDB incompatibility.
 3. `watch()` (Collection & Database) - **Fully implemented in NeoSQLite** via SQLite triggers but cannot be compared because MongoDB requires a replica set for change streams.
@@ -30,6 +30,7 @@ This package tests NeoSQLite's MongoDB API compatibility by running the same ope
 7. `where()` - **NeoSQLite implementation** using Python function filter. MongoDB uses JavaScript `$where` which requires a JS engine.
 8. `$function` - **Not supported in NeoSQLite**. Raises `NotImplementedError` with guidance to use `$expr` or Python post-processing.
 9. `$accumulator` - **Not supported in NeoSQLite**. Raises `NotImplementedError` with guidance to use built-in accumulators or Python post-processing.
+10. `$contains` - **NeoSQLite extension** for substring search.
 
 All comparable MongoDB APIs are tested with 100% compatibility.
 
@@ -80,11 +81,26 @@ api_comparison/
 
 ## Usage
 
-### Run All Comparisons
+### Run Automated Comparison Suite (Recommended)
+
+The automated script manages the container lifecycle using the pinned `mongo:8.2.12` image (with Podman or Docker), runs all 381 comparison tests, and cleans up:
 
 ```bash
-cd examples
-python api_comparison/runner.py
+./scripts/run-api-comparison.sh
+```
+
+To run the automated performance benchmark suite:
+
+```bash
+./scripts/run-api-benchmark.sh -b 10
+```
+
+### Run All Comparisons Manually
+
+Ensure MongoDB is running locally on port 27017, then:
+
+```bash
+python examples/api_comparison_main.py
 ```
 
 ### Run Specific Category
@@ -251,6 +267,7 @@ COMPARISON_FUNCTIONS = [
 - NeoSQLite installed
 - PyMongo installed
 - MongoDB server running on localhost:27017 (optional, tests will skip MongoDB if unavailable)
+  - When running via container (Podman or Docker) or using `./scripts/run-api-comparison.sh` / `./scripts/run-api-benchmark.sh`, the image is pinned to `mongo:8.2.12`. MongoDB 8.0/8.3+ introduced a kernel check (`validateRseqKernelCompat` / SERVER-121912) that causes `mongod` to abort on startup when run on Linux kernels >= 6.19. The `mongo:8.2.12` image supports MongoDB 8.0+ operators (such as `$sigmoid`) while running cleanly on Linux 6.19+ and 7.x kernels.
 
 ## Known Limitations
 

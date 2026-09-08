@@ -14,9 +14,9 @@ lifecycle: active
 
 # PyMongo API Comparison
 
-**Last Updated**: March 16, 2026
-**NeoSQLite Version**: v1.9.2
-**PyMongo Compatibility**: 100% (372 API tests: 360 passed, 12 skipped by design, 0 failed)
+**Last Updated**: September 8, 2026
+**NeoSQLite Version**: v1.15.1
+**PyMongo Compatibility**: 100% (381 API tests: 363 passed, 18 skipped by design, 0 failed)
 
 ---
 
@@ -853,9 +853,10 @@ GridFS automatically migrates from older conventions:
 ### Testing Infrastructure
 
 NeoSQLite maintains comprehensive PyMongo compatibility tests:
-- **372 API comparison tests** (360 passed, 12 skipped by design)
+- **381 API comparison tests** (363 passed, 18 skipped by design)
 - **100% compatibility** for all comparable features
 - **Automated reporting** with detailed compatibility metrics
+- **Verified against MongoDB 8.x** — Container image pinned to `mongo:8.2.12` to ensure stability across Linux kernels >= 6.19 (avoiding SERVER-121912 allocator checks) while supporting MongoDB 8.0+ operators such as `$sigmoid`.
 - **Kill switch verification** - All APIs tested with/without Python fallback
 
 ### References

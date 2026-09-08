@@ -126,13 +126,13 @@ collection.insert_one({"name": "test"})  # Works!
 
 | Metric | Result |
 |--------|--------|
-| **Total Tests** | 379 |
-| **Passed** | 361 |
+| **Total Tests** | 381 |
+| **Passed** | 363 |
 | **Skipped** | 18 (architectural differences) |
 | **Failed** | 0 |
 | **Compatibility** | **100%** |
 
-Skipped tests are due to MongoDB requiring a replica set (change streams, transactions) or NeoSQLite extensions (`$log2`, `$contains`). All comparable APIs pass.
+Skipped tests are due to MongoDB requiring a replica set (change streams, transactions) or NeoSQLite extensions (`$log2`, `$contains`). All comparable APIs pass. Tested against MongoDB 8.x (`mongo:8.2.12` pinned container image).
 
 Run the comparison yourself: `./scripts/run-api-comparison.sh`
 
