@@ -33,20 +33,18 @@
 
 See [Release Notes](documents/releases/) for the full history.
 
-## Latest Release: v1.15.1
+## Latest Release: v1.15.2
 
-NeoSQLite v1.15.1 is a **focused correctness patch** fixing ten SQL-tier bugs surfaced while verifying v1.15.0 against real MongoDB. All fixes are backward compatible.
+NeoSQLite v1.15.2 is a **correctness, stability, and documentation release** fixing SQL-tier bugs in temporary table `$lookup` and negative `$slice` array updates, hardening the NX-27017 wire protocol server (v0.6.3), and updating dependencies. All fixes are backward compatible.
 
-**Key Fixes:**
-- **Converter Parameter Mismatches** — `$setEquals`, `$split`, `$dateFromString`, `$indexOfBytes`, `$strcasecmp`, `$cmp` no longer emit binding errors and silently fall back.
-- **`$graphLookup` Restrict Clause** — `restrictSearchWithMatch` works inside the recursive JOIN (was "ambiguous column name: data").
-- **`$sortArray` Numeric `sortBy`** — MongoDB-valid `sortBy: 1` / `-1` now sorts by element value in both tiers.
-- **Parameter Binding Order** — `$in`, `$regexFind`, `$regexFindAll` with literal operands no longer return silently wrong results.
-- **Real `_id` Preservation** — tier-2 `$lookup` and `$graphLookup` keep the logical `_id` instead of injecting the auto-increment id.
+**Key Highlights:**
+- **`$lookup` String Foreign Field Fix** — Tier-2 hash table creation on string foreign fields no longer fails with SQLite `malformed JSON`.
+- **Negative `$slice` Update Ordering** — `$push` updates with negative `$slice` now reliably preserve array ordering without relying on invalid subquery rowids.
+- **NX-27017 Server Hardening (v0.6.3)** — Serialized thread access to shared SQLite connections, eliminated change-stream memory leaks, and preserved Decimal128 precision.
+- **Pinned Container Testing** — Pinned differential API test runner to `mongo:8.2.12` for reliable testing on Linux kernels $\ge$ 6.19.
+- **Knowledge Base Migration** — Fully migrated documentation to Google Open Knowledge Format (OKF) v0.2.
 
-**Transparency note:** most of these were introduced and fixed within their own release cycles and never shipped broken — the tiered architecture silently falls back to the authoritative Python tier, so results were always correct. See the release notes for details.
-
-For full details, see [documents/releases/v1.15.1.md](documents/releases/v1.15.1.md). Previous release highlights are in [documents/releases/v1.15.0.md](documents/releases/v1.15.0.md).
+For full details, see [documents/releases/v1.15.2.md](documents/releases/v1.15.2.md). Previous release highlights are in [documents/releases/v1.15.1.md](documents/releases/v1.15.1.md).
 
 ## Installation
 

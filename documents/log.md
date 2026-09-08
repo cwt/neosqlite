@@ -6,14 +6,30 @@ tags:
   - log
   - bundle
   - changelog
-timestamp: 2026-09-07T00:00:00Z
-version: "1.15.1"
+timestamp: 2026-09-08T15:30:00Z
+version: "1.15.2"
 lifecycle: active
 ---
 
 # NeoSQLite Knowledge Base Bundle Log
 
 This document records the chronological history of structural changes, additions, deprecations, and refactoring operations performed on the NeoSQLite Open Knowledge Format (OKF) bundle.
+
+---
+
+## 2026-09-08 — Release v1.15.2
+
+### Summary
+Published release notes for v1.15.2 (`documents/releases/v1.15.2.md`), updated release history index, and documented MongoDB container image pinning to `mongo:8.2.12` for Linux kernel $\ge$ 6.19 compatibility across testing guides.
+
+### Key Modifications
+1. **Added `v1.15.2.md` Release Notes**:
+   - Comprehensive documentation of SQL-tier fixes (`$lookup` string foreign field extraction, negative `$slice` array update ordering).
+   - Documented NX-27017 v0.6.3 server hardening fixes.
+   - Added detailed Correctness Transparency Note with verification scripts and honest remediation instructions.
+2. **Updated Documentation Metadata**:
+   - Bumped OKF bundle metadata to v1.15.2 in `documents/index.md`, `documents/releases/index.md`, and `documents/pymongo-api-comparison.md`.
+   - Updated root `README.md` Latest Release section.
 
 ---
 

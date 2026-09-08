@@ -8,9 +8,9 @@ This package tests NeoSQLite's MongoDB API compatibility by running the same ope
 
 ## Test Results
 
-### API Comparison Tests (v1.15.1)
+### API Comparison Tests (v1.15.2)
 
-| Metric | v1.8.0 | v1.9.0 | v1.9.1 | v1.9.2 | **v1.15.1** |
+| Metric | v1.8.0 | v1.9.0 | v1.9.1 | v1.9.2 | **v1.15.2** |
 |--------|--------|--------|--------|--------|-------------|
 | **Total Tests** | 304 | 373 | 369 | 371 | **381** |
 | **Passed** | 300 | 362 | 358 | 359 | **363** |
