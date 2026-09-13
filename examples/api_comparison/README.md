@@ -8,22 +8,22 @@ This package tests NeoSQLite's MongoDB API compatibility by running the same ope
 
 ## Test Results
 
-### API Comparison Tests (v1.15.2)
+### API Comparison Tests (v1.16.0)
 
-| Metric | v1.8.0 | v1.9.0 | v1.9.1 | v1.9.2 | **v1.15.2** |
-|--------|--------|--------|--------|--------|-------------|
-| **Total Tests** | 304 | 373 | 369 | 371 | **381** |
-| **Passed** | 300 | 362 | 358 | 359 | **363** |
-| **Skipped** | 4 | 11 | 11 | 12 | **18** |
-| **Failed** | 0 | 0 | 0 | 0 | **0** |
-| **Compatibility** | 100% | 100% | 100% | 100% | **100%** |
+| Metric | v1.8.0 | v1.9.0 | v1.9.1 | v1.9.2 | v1.15.2 | **v1.16.0** |
+|--------|--------|--------|--------|--------|---------|-------------|
+| **Total Tests** | 304 | 373 | 369 | 371 | 381 | **395** |
+| **Passed** | 300 | 362 | 358 | 359 | 363 | **375** |
+| **Skipped** | 4 | 11 | 11 | 12 | 18 | **20** |
+| **Failed** | 0 | 0 | 0 | 0 | 0 | **0** |
+| **Compatibility** | 100% | 100% | 100% | 100% | 100% | **100%** |
 
 *Note: Tested against MongoDB 8.x using the pinned `mongo:8.2.12` container image.*
 
-**Note on Skipped Tests**: The 18 skipped tests are due to architectural differences or environment limitations, not missing implementations:
+**Note on Skipped Tests**: The 20 skipped tests are due to architectural differences or environment limitations, not missing implementations:
 1. `options()` - NeoSQLite returns detailed SQLite schema info (`{'columns': [...], 'indexes': [...]}`) while MongoDB returns `{}`. Backend-specific difference.
 2. `$log2` - **NeoSQLite extension** using SQLite's native `log2()` function. Raises `UserWarning` about MongoDB incompatibility.
-3. `watch()` (Collection & Database) - **Fully implemented in NeoSQLite** via SQLite triggers but cannot be compared because MongoDB requires a replica set for change streams.
+3. `watch()` (Collection & Database) - **Fully implemented in NeoSQLite** via SQLite triggers but cannot be compared because MongoDB requires a replica set for change streams. Same for the v1.16.0 `watch resume_after` and `watch $match pipeline` checks (NeoSQLite side exercised; MongoDB semantics covered in unit tests).
 4. `transaction_commit` / `transaction_abort` / `with_transaction` - **Fully implemented in NeoSQLite** via `ClientSession` but skipped in comparison because MongoDB requires a replica set for multi-document transactions.
 5. `db_path` (Collection & Database) - **NeoSQLite extension** providing the underlying SQLite database file path. No MongoDB equivalent.
 6. `initialize_ordered_bulk_op()` / `initialize_unordered_bulk_op()` - **Deprecated in NeoSQLite** to match PyMongo 4.x behavior.

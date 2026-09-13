@@ -57,6 +57,47 @@ def compare_change_streams():
         except Exception as e:
             print(f"Mongo watch: Error - {e} (requires replica set)")
 
+    # NeoSQLite-only hardening: resume tokens and $match pipeline filtering.
+    # These need a replica set on the MongoDB side, so they are exercised
+    # against NeoSQLite here and covered differentially in unit tests.
+    neo_resume_ok = False
+    neo_match_ok = False
+    with neosqlite.Connection(":memory:") as neo_conn:
+        jobs = neo_conn.jobs
+        set_accumulation_mode(True)
+        try:
+            first = jobs.watch(max_await_time_ms=2000)
+            jobs.insert_one({"status": "pending", "n": 1})
+            jobs.insert_one({"status": "done", "n": 2})
+            seen = next(first)
+            token = first.resume_token
+            first.close()
+            resumed = jobs.watch(resume_after=token, max_await_time_ms=2000)
+            replayed = next(resumed)
+            resumed.close()
+            neo_resume_ok = (
+                token is not None
+                and replayed["documentKey"] != seen["documentKey"]
+            )
+            print("Neo watch resume_after: Supported")
+        except Exception as e:
+            print(f"Neo watch resume_after: Error - {e}")
+
+        try:
+            filtered = jobs.watch(
+                pipeline=[{"$match": {"fullDocument.status": "pending"}}],
+                full_document="updateLookup",
+                max_await_time_ms=2000,
+            )
+            jobs.insert_one({"status": "pending", "n": 3})
+            jobs.insert_one({"status": "done", "n": 4})
+            change = next(filtered)
+            filtered.close()
+            neo_match_ok = change["fullDocument"]["status"] == "pending"
+            print("Neo watch $match pipeline: Supported")
+        except Exception as e:
+            print(f"Neo watch $match pipeline: Error - {e}")
+
     # Mark MongoDB as skipped in benchmark mode when not on replica set
     # NX-27017 backend: Both NeoSQLite and NX-27017 support change streams
     # Real MongoDB standalone: Skip because replica set not available
@@ -87,3 +128,21 @@ def compare_change_streams():
             mongo_results="OK" if mongo_watch_ok else "FAIL",
             skip_reason=None,
         )
+
+    # Resume tokens and pipeline filtering require a replica set on the
+    # MongoDB side; NeoSQLite behavior is verified here and against
+    # MongoDB semantics in unit tests.
+    reporter.record_comparison(
+        "Change Streams",
+        "watch resume_after",
+        neo_results="OK" if neo_resume_ok else "FAIL",
+        mongo_results=None,
+        skip_reason="Requires MongoDB replica set; covered in unit tests",
+    )
+    reporter.record_comparison(
+        "Change Streams",
+        "watch $match pipeline",
+        neo_results="OK" if neo_match_ok else "FAIL",
+        mongo_results=None,
+        skip_reason="Requires MongoDB replica set; covered in unit tests",
+    )

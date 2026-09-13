@@ -44,6 +44,8 @@ def compare_database_methods():
     neo_cursor_command = False
     neo_deref = False
     neo_with_options = False
+    neo_get_database = False
+    neo_drop_database = False
 
     with neosqlite.Connection(":memory:") as neo_conn:
         set_accumulation_mode(True)
@@ -254,6 +256,37 @@ def compare_database_methods():
                 end_neo_timing()
         print(f"Neo with_options(): {'OK' if neo_with_options else 'FAIL'}")
 
+        # 14. Test get_database() - ONLY time if MongoDB is available
+        if mongo_available:
+            start_neo_timing()
+        try:
+            neo_get_database = (
+                neo_conn.get_database("test_database") is neo_conn
+            )
+        except Exception as e:
+            print(f"Neo get_database: Error - {e}")
+        finally:
+            if mongo_available:
+                end_neo_timing()
+        print(f"Neo get_database: {'OK' if neo_get_database else 'FAIL'}")
+
+        # 15. Test drop_database() on an isolated connection so the
+        # shared test connection above is left intact.
+        try:
+            with neosqlite.Connection(":memory:") as scratch:
+                scratch.create_collection("drop_me").insert_one({"a": 1})
+                if mongo_available:
+                    start_neo_timing()
+                try:
+                    scratch.drop_database()
+                finally:
+                    if mongo_available:
+                        end_neo_timing()
+                neo_drop_database = scratch.list_collection_names() == []
+        except Exception as e:
+            print(f"Neo drop_database: Error - {e}")
+        print(f"Neo drop_database: {'OK' if neo_drop_database else 'FAIL'}")
+
     # Initialize MongoDB result variables
     mongo_client = False
     mongo_get_collection = False
@@ -267,6 +300,8 @@ def compare_database_methods():
     mongo_cursor_command = False
     mongo_deref = False
     mongo_with_options = False
+    mongo_get_database = False
+    mongo_drop_database = False
 
     if mongo_available:
         client = get_mongo_client()
@@ -467,6 +502,36 @@ def compare_database_methods():
                 f"Mongo with_options(): {'OK' if mongo_with_options else 'FAIL'}"
             )
 
+            # 13. Test get_database()
+            start_mongo_timing()
+            try:
+                scratch_db = client.get_database("test_drop_db_scratch")
+                mongo_get_database = scratch_db.name == "test_drop_db_scratch"
+            except Exception as e:
+                print(f"Mongo get_database: Error - {e}")
+            finally:
+                end_mongo_timing()
+            print(
+                f"Mongo get_database: {'OK' if mongo_get_database else 'FAIL'}"
+            )
+
+            # 14. Test drop_database() on the scratch database so the
+            # shared test database above is left intact.
+            start_mongo_timing()
+            try:
+                scratch_db.create_collection("drop_me").insert_one({"a": 1})
+                client.drop_database("test_drop_db_scratch")
+                mongo_drop_database = (
+                    "test_drop_db_scratch" not in client.list_database_names()
+                )
+            except Exception as e:
+                print(f"Mongo drop_database: Error - {e}")
+            finally:
+                end_mongo_timing()
+            print(
+                f"Mongo drop_database: {'OK' if mongo_drop_database else 'FAIL'}"
+            )
+
             # Cleanup
             for coll_name in [
                 "test_get_coll",
@@ -569,5 +634,19 @@ def compare_database_methods():
         "with_options",
         neo_with_options if neo_with_options else "FAIL",
         mongo_with_options if mongo_with_options else None,
+        skip_reason="MongoDB not available" if not mongo_available else None,
+    )
+    reporter.record_comparison(
+        "Database Methods",
+        "get_database",
+        neo_get_database if neo_get_database else "FAIL",
+        mongo_get_database if mongo_get_database else None,
+        skip_reason="MongoDB not available" if not mongo_available else None,
+    )
+    reporter.record_comparison(
+        "Database Methods",
+        "drop_database",
+        neo_drop_database if neo_drop_database else "FAIL",
+        mongo_drop_database if mongo_drop_database else None,
         skip_reason="MongoDB not available" if not mongo_available else None,
     )

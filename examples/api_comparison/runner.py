@@ -40,6 +40,7 @@ from .expr_type_conversion_operators import compare_expr_type_conversion
 from .expression_operators import compare_expression_operators
 from .fill_stage import compare_fill_stage
 from .find_and_modify import compare_find_and_modify
+from .find_option_kwargs import compare_find_option_kwargs
 from .graphlookup import compare_graph_lookup
 from .gridfs import compare_gridfs_operations
 from .index_operations import compare_index_operations
@@ -60,6 +61,7 @@ from .search_index import compare_search_index_operations
 from .session_transactions import compare_session_methods
 from .string_operators import compare_string_operators
 from .text_search import compare_text_search
+from .ttl_index_expiry import compare_ttl_index_expiry
 from .type_operator import compare_type_operator
 from .type_operators import compare_type_operators
 from .update_array_modifiers import compare_update_modifiers
@@ -103,6 +105,8 @@ COMPARISON_FUNCTIONS = [
     ("Bulk Executors", compare_bulk_operation_executors),
     # Query Features
     ("Find & Modify", compare_find_and_modify),
+    ("find() Option Kwargs", compare_find_option_kwargs),
+    ("TTL Index Expiry", compare_ttl_index_expiry),
     ("Distinct", compare_distinct),
     ("Nested Queries", compare_nested_field_queries),
     ("$elemMatch", compare_elemmatch_operator),

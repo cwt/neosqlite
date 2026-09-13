@@ -18,10 +18,17 @@
 # operators (such as $sigmoid) while running cleanly on Linux 6.19+ kernels.
 #
 # Note: MongoDB is run as a single node (not a replica set) for simplicity.
-# This means change streams (watch()) cannot be tested in this comparison,
+# This means change streams (watch()) cannot be compared differentially,
 # as MongoDB requires a replica set for change streams. NeoSQLite's watch()
 # implementation is fully functional and tested independently via SQLite triggers
-# (see tests/test_changestream.py).
+# (see tests/test_changestream.py and tests/test_watch_job_queue.py); the
+# comparison exercises the NeoSQLite side only for resume_after tokens and
+# $match pipeline filtering (see examples/api_comparison/change_streams.py).
+#
+# New in v1.16.0, this comparison also covers find() limit/skip/sort kwargs
+# (examples/api_comparison/find_option_kwargs.py), TTL index declaration and
+# fresh-document expiry behavior (examples/api_comparison/ttl_index_expiry.py),
+# and get_database()/drop_database() (examples/api_comparison/database_methods.py).
 #
 # Additionally, $log2 is a NeoSQLite extension using SQLite's native log2() function.
 # It raises a UserWarning about MongoDB incompatibility. For MongoDB compatibility,
