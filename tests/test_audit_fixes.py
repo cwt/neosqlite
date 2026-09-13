@@ -1011,7 +1011,8 @@ class TestChangeStreamIsolation:
     """#110/#111: concurrent streams shared collection-scoped triggers and
     deleted rows on read (stealing each other's events); unconsumed rows
     accumulated forever. Streams now share refcounted triggers, consume via
-    per-stream watermarks, and the last close purges remaining events."""
+    per-stream watermarks, and the last close drops triggers while retaining
+    bounded recent history for resume_after replay."""
 
     def test_both_streams_see_same_events(self, connection):
         c = connection.cs
@@ -1047,6 +1048,8 @@ class TestChangeStreamIsolation:
         s_late.close()
 
     def test_last_close_purges_events_and_triggers(self, connection):
+        from neosqlite.changestream import _RESUME_RETENTION_ROWS
+
         c = connection.cs4
         s = c.watch()
         c.insert_one({"n": 1})  # left unconsumed
@@ -1060,5 +1063,22 @@ class TestChangeStreamIsolation:
             "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger'"
             " AND name LIKE '%cs4%'"
         ).fetchone()[0]
-        assert rows == 0
+        # Triggers are dropped, but bounded recent history is retained so a
+        # later watch(resume_after=token) can still replay crash-restart gaps.
+        assert rows <= _RESUME_RETENTION_ROWS
         assert triggers == 0
+
+    def test_last_close_retains_history_for_resume(self, connection):
+        c = connection.cs5
+        s = c.watch()
+        c.insert_one({"n": 1})
+        first = next(s)
+        token = s.resume_token
+        s.close()
+        replayed = c.watch(resume_after=token, max_await_time_ms=200)
+        c.insert_one({"n": 2})
+        try:
+            second = next(replayed)
+        finally:
+            replayed.close()
+        assert second["documentKey"]["_id"] != first["documentKey"]["_id"]

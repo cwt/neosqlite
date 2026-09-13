@@ -16,6 +16,119 @@ logger = logging.getLogger(__name__)
 
 _stream_registry: dict[int, dict[str, Any]] = {}
 
+# Rows of history retained per collection when the last stream closes, so a
+# later ``watch(resume_after=token)`` can still replay recent events instead
+# of finding an empty table. Bounds table growth for crash-restart resume.
+_RESUME_RETENTION_ROWS = 1000
+
+
+def _parse_resume_id(token: Any) -> int:
+    """Extract the changelog row id from a NeoSQLite resume token.
+
+    Our resume token is the change event's ``_id`` field, i.e.
+    ``{"id": <changelog row id>}``. Raw ints and ``{"_id": {...}}``
+    wrappers are also accepted.
+
+    Raises:
+        ValueError: If the token has none of the known shapes.
+    """
+    candidate = token
+    if isinstance(candidate, dict) and set(candidate) == {"_id"}:
+        candidate = candidate["_id"]
+    if isinstance(candidate, dict) and set(candidate) == {"id"}:
+        candidate = candidate["id"]
+    if isinstance(candidate, bool) or not isinstance(candidate, int):
+        raise ValueError(
+            "Invalid resume token: expected {'id': <int>} as returned in "
+            f"change events' _id field, got {token!r}"
+        )
+    return candidate
+
+
+def _get_dotted(document: Any, path: str) -> Any:
+    current = document
+    for part in path.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current[part]
+    return current
+
+
+def _match_operators(value: Any, operators: dict[str, Any]) -> bool:
+    for op, expected in operators.items():
+        if op == "$eq":
+            if value != expected:
+                return False
+        elif op == "$ne":
+            if value == expected:
+                return False
+        elif op == "$gt":
+            if not (value is not None and value > expected):
+                return False
+        elif op == "$gte":
+            if not (value is not None and value >= expected):
+                return False
+        elif op == "$lt":
+            if not (value is not None and value < expected):
+                return False
+        elif op == "$lte":
+            if not (value is not None and value <= expected):
+                return False
+        elif op == "$in":
+            if value not in expected:
+                return False
+        elif op == "$nin":
+            if value in expected:
+                return False
+        elif op == "$exists":
+            exists = value is not None
+            if bool(expected) != exists:
+                return False
+        else:
+            logger.debug("Unsupported $match operator %r; no match", op)
+            return False
+    return True
+
+
+def _match_filter(document: dict[str, Any], spec: dict[str, Any]) -> bool:
+    for key, condition in spec.items():
+        if key == "$and":
+            if not all(_match_filter(document, sub) for sub in condition):
+                return False
+        elif key == "$or":
+            if not any(_match_filter(document, sub) for sub in condition):
+                return False
+        elif key == "$nor":
+            if any(_match_filter(document, sub) for sub in condition):
+                return False
+        elif isinstance(condition, dict) and any(
+            k.startswith("$") for k in condition
+        ):
+            if not _match_operators(_get_dotted(document, key), condition):
+                return False
+        else:
+            if _get_dotted(document, key) != condition:
+                return False
+    return True
+
+
+def _pipeline_matches(
+    change: dict[str, Any], pipeline: list[dict[str, Any]]
+) -> bool:
+    """Library-side pipeline filtering (minimal useful subset).
+
+    Only ``$match`` stages are evaluated; any other stage is accepted and
+    ignored (debug-logged), matching the documented subset.
+    """
+    for stage in pipeline:
+        if not isinstance(stage, dict) or set(stage) != {"$match"}:
+            logger.debug("Ignoring unsupported change-stream stage: %r", stage)
+            continue
+        spec = stage["$match"]
+        if not isinstance(spec, dict) or not _match_filter(change, spec):
+            return False
+    return True
+
 
 def _registry_entry(db: Any) -> dict[str, Any]:
     """Per-connection registry of active ChangeStreams (#110).
@@ -66,6 +179,10 @@ class ChangeStream:
             session (Any, optional): The session to use for the change stream.
             start_after (dict[str, Any], optional): A document ID to start the change stream from.
         """
+        if resume_after is not None and start_after is not None:
+            raise ValueError(
+                "resume_after and start_after are mutually exclusive"
+            )
         self._collection = collection
         self._pipeline = pipeline or []
         self._full_document = full_document
@@ -81,6 +198,7 @@ class ChangeStream:
         # In a more advanced implementation, we could use SQLite's update hooks
         self._closed = False
         self._last_id = 0
+        self._last_token_id: int | None = None
 
         self._sanitized_name = self._sanitize_collection_name(collection.name)
 
@@ -193,11 +311,20 @@ class ChangeStream:
 
         # Start from "now": only deliver events that occur after open,
         # unless an explicit resume point was requested (#110 parity).
-        if (
-            self._resume_after is None
-            and self._start_after is None
-            and self._start_at_operation_time is None
-        ):
+        token = (
+            self._resume_after
+            if self._resume_after is not None
+            else self._start_after
+        )
+        if token is not None:
+            # Replay rows after the token instead of starting from now.
+            self._last_id = _parse_resume_id(token)
+        else:
+            if self._start_at_operation_time is not None:
+                logger.debug(
+                    "start_at_operation_time is accepted but has no "
+                    "operation-time concept in NeoSQLite; starting from now"
+                )
             row = self._collection.db.execute(
                 "SELECT COALESCE(MAX(id), 0) FROM _neosqlite_changestream WHERE collection_name = ?",
                 (self._collection.name,),
@@ -221,7 +348,9 @@ class ChangeStream:
 
         try:
             if remaining <= 0:
-                # Last consumer gone: drop shared triggers and purge rows.
+                # Last consumer gone: drop shared triggers and retain only
+                # recent rows so a later resume_after token can still replay
+                # (bounded growth for crash-restart resume).
                 self._collection.db.execute(
                     f"DROP TRIGGER IF EXISTS _neosqlite_{self._sanitized_name}_insert_trigger"
                 )
@@ -232,8 +361,16 @@ class ChangeStream:
                     f"DROP TRIGGER IF EXISTS _neosqlite_{self._sanitized_name}_delete_trigger"
                 )
                 self._collection.db.execute(
-                    "DELETE FROM _neosqlite_changestream WHERE collection_name = ?",
-                    (self._collection.name,),
+                    "DELETE FROM _neosqlite_changestream "
+                    "WHERE collection_name = ? AND id NOT IN ("
+                    "SELECT id FROM _neosqlite_changestream "
+                    "WHERE collection_name = ? "
+                    "ORDER BY id DESC LIMIT ?)",
+                    (
+                        self._collection.name,
+                        self._collection.name,
+                        _RESUME_RETENTION_ROWS,
+                    ),
                 )
             else:
                 # Other streams still active: prune only rows every active
@@ -280,6 +417,23 @@ class ChangeStream:
         iteration.
         """
         return self
+
+    @property
+    def resume_token(self) -> dict[str, int] | None:
+        """
+        Resume token for the most recently returned change event.
+
+        Pass it as ``watch(resume_after=token)`` to replay events after a
+        worker restart without missing committed changes or processing any
+        event twice.
+
+        Returns:
+            dict | None: ``{"id": <changelog row id>}``, or None when no
+                event has been returned yet.
+        """
+        if self._last_token_id is None:
+            return None
+        return {"id": self._last_token_id}
 
     def __next__(self) -> dict[str, Any]:
         """
@@ -480,9 +634,17 @@ class ChangeStream:
                         self._advance_watermark(change_id)
                         continue
 
+                    if self._pipeline and not _pipeline_matches(
+                        change_doc, self._pipeline
+                    ):
+                        self._advance_watermark(change_id)
+                        self._prune_consumed()
+                        continue
+
                     # Events are NOT deleted on read (#110): other active
                     # streams on this collection keep their own watermarks.
                     self._last_id = change_id
+                    self._last_token_id = change_id
                     self._prune_consumed()
 
                     return change_doc
