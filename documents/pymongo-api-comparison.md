@@ -7,15 +7,15 @@ tags:
   - api-comparison
   - compatibility
   - reference
-timestamp: 2026-04-05T16:33:00Z
-version: "1.15.2"
+timestamp: 2026-09-13T00:00:00Z
+version: "1.16.0"
 lifecycle: active
 ---
 
 # PyMongo API Comparison
 
-**Last Updated**: September 8, 2026
-**NeoSQLite Version**: v1.15.2
+**Last Updated**: September 13, 2026
+**NeoSQLite Version**: v1.16.0
 **PyMongo Compatibility**: 100% (381 API tests: 363 passed, 18 skipped by design, 0 failed)
 
 ---

@@ -6,8 +6,8 @@ tags:
   - index
   - releases
   - changelog
-timestamp: 2026-09-08T15:30:00Z
-version: "1.15.2"
+timestamp: 2026-09-13T00:00:00Z
+version: "1.16.0"
 lifecycle: active
 ---
 
@@ -19,6 +19,7 @@ This directory contains individual release notes and detailed changelogs for eac
 
 | Version | Release Date | Highlights & Summary |
 | :--- | :--- | :--- |
+| [v1.16.0](./v1.16.0.md) | 2026-09-13 | NeoSQLite v1.16.0 is a feature release delivering PyMongo modern API parity, TTL index expiry, and change-stream hardening for SQLite-backed job queues. |
 | [v1.15.2](./v1.15.2.md) | 2026-09-08 | NeoSQLite v1.15.2 is a correctness, stability, and documentation release fixing SQL-tier bugs in $lookup and array updates, hardening NX-27017, and updating dependencies. |
 | [v1.15.1](./v1.15.1.md) | 2026-08-26 | NeoSQLite v1.15.1 is a focused correctness patch fixing ten SQL-tier bugs (across five areas) surfaced while verifying v1.15.0 against real MongoDB. All fixes are backward compa... |
 | [v1.15.0](./v1.15.0.md) | 2026-08-26 | NeoSQLite v1.15.0 is a major correctness and parity release resolving all 86 findings from a deep code audit, alongside 16 new SQL-tier expression converters, Tier-1 $group acti... |

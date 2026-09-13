@@ -16,6 +16,7 @@
 - **Lazy Cursor**: `find()` returns a memory-efficient cursor for iterating over results.
 - **Raw Batch Support**: `find_raw_batches()` returns raw JSON data in batches for efficient processing.
 - **Advanced Indexing**: Single-key, compound-key, nested-key indexes, and FTS5 text search.
+- **TTL Indexes**: `expireAfterSeconds` expiry with lazy auto-purge and an opt-in background sweeper.
 - **ACID Transactions**: Full `ClientSession` API with PyMongo 4.x parity using SQLite SAVEPOINTs.
 - **Change Streams**: Native SQLite triggers for `watch()` — no replica set required.
 - **Advanced Aggregation**: `$setWindowFields`, `$graphLookup`, `$fill`, streaming `$facet`, and more.
@@ -33,18 +34,17 @@
 
 See [Release Notes](documents/releases/) for the full history.
 
-## Latest Release: v1.15.2
+## Latest Release: v1.16.0
 
-NeoSQLite v1.15.2 is a **correctness, stability, and documentation release** fixing SQL-tier bugs in temporary table `$lookup` and negative `$slice` array updates, hardening the NX-27017 wire protocol server (v0.6.3), and updating dependencies. All fixes are backward compatible.
+NeoSQLite v1.16.0 is a **feature release** delivering PyMongo modern API parity, TTL index expiry, and change-stream hardening for SQLite-backed job queues. All additions are backward compatible.
 
 **Key Highlights:**
-- **`$lookup` String Foreign Field Fix** — Tier-2 hash table creation on string foreign fields no longer fails with SQLite `malformed JSON`.
-- **Negative `$slice` Update Ordering** — `$push` updates with negative `$slice` now reliably preserve array ordering without relying on invalid subquery rowids.
-- **NX-27017 Server Hardening (v0.6.3)** — Serialized thread access to shared SQLite connections, eliminated change-stream memory leaks, and preserved Decimal128 precision.
-- **Pinned Container Testing** — Pinned differential API test runner to `mongo:8.2.12` for reliable testing on Linux kernels $\ge$ 6.19.
-- **Knowledge Base Migration** — Fully migrated documentation to Google Open Knowledge Format (OKF) v0.2.
+- **PyMongo Modern Parity** — `find()` accepts `limit`/`skip`/`sort` kwargs; `create_index()` accepts `expireAfterSeconds` and other options; new `get_database()`/`drop_database()` helpers.
+- **TTL Index Expiry** — `expireAfterSeconds` declaration with `purge_expired()`, lazy auto-purge on reads, and an opt-in background sweeper.
+- **Change-Stream Hardening** — `resume_after`/`start_after` tokens, library-side `$match` filtering, and a documented drain-then-tail job-queue recipe.
+- **48 New Tests** — Full suite green (2,919 passed) with the force-fallback kill switch both on and off.
 
-For full details, see [documents/releases/v1.15.2.md](documents/releases/v1.15.2.md). Previous release highlights are in [documents/releases/v1.15.1.md](documents/releases/v1.15.1.md).
+For full details, see [documents/releases/v1.16.0.md](documents/releases/v1.16.0.md). Previous release highlights are in [documents/releases/v1.15.2.md](documents/releases/v1.15.2.md).
 
 ## Installation
 

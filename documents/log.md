@@ -6,14 +6,29 @@ tags:
   - log
   - bundle
   - changelog
-timestamp: 2026-09-08T15:30:00Z
-version: "1.15.2"
+timestamp: 2026-09-13T00:00:00Z
+version: "1.16.0"
 lifecycle: active
 ---
 
 # NeoSQLite Knowledge Base Bundle Log
 
 This document records the chronological history of structural changes, additions, deprecations, and refactoring operations performed on the NeoSQLite Open Knowledge Format (OKF) bundle.
+
+---
+
+## 2026-09-13 — Release v1.16.0
+
+### Summary
+Minor feature release: PyMongo modern parity, TTL index expiry, and change-stream hardening for job queues.
+
+### Key Modifications
+1. **Added `releases/v1.16.0.md` Release Notes**:
+   - Documents `find()` option kwargs, TTL declaration/expiry, and `watch()` resume/filtering with migration notes.
+2. **Bumped version to v1.16.0**:
+   - `pyproject.toml`, `README.md` (Latest Release + TTL feature bullet), `documents/index.md`, `documents/releases/index.md`, `documents/pymongo-api-comparison.md`, and the feature docs shipping in this release (`watch.md`, `ttl-indexes.md`, `todo/` proposals).
+3. **Updated comparison matrix**:
+   - `find()` kwargs, TTL declaration/`purge_expired()`/`get_ttl_specs()`, `get_database()`/`drop_database()`, and `watch()` resume/`$match` rows.
 
 ---
 

@@ -8,7 +8,7 @@ tags:
   - triggers
   - events
 timestamp: 2026-09-13T00:00:00Z
-version: "1.15.2"
+version: "1.16.0"
 lifecycle: active
 ---
 
