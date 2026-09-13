@@ -34,17 +34,16 @@
 
 See [Release Notes](documents/releases/) for the full history.
 
-## Latest Release: v1.16.0
+## Latest Release: v1.16.1
 
-NeoSQLite v1.16.0 is a **feature release** delivering PyMongo modern API parity, TTL index expiry, and change-stream hardening for SQLite-backed job queues. All additions are backward compatible.
+NeoSQLite v1.16.1 is a **correctness patch** adding Python-level ObjectId ordering and fixing `_id` range queries and counts. Fully backward compatible.
 
 **Key Highlights:**
-- **PyMongo Modern Parity** — `find()` accepts `limit`/`skip`/`sort` kwargs; `create_index()` accepts `expireAfterSeconds` and other options; new `get_database()`/`drop_database()` helpers.
-- **TTL Index Expiry** — `expireAfterSeconds` declaration with `purge_expired()`, lazy auto-purge on reads, and an opt-in background sweeper.
-- **Change-Stream Hardening** — `resume_after`/`start_after` tokens, library-side `$match` filtering, and a documented drain-then-tail job-queue recipe.
-- **48 New Tests** — Full suite green (2,919 passed) with the force-fallback kill switch both on and off.
+- **ObjectId Ordering** — `__lt__`/`__le__`/`__gt__`/`__ge__` over the 12-byte BSON byte order, mirroring `bson`.
+- **`_id` Ranges Fixed** — `find()`/`count_documents()` with ObjectId `$gt`/`$lt` ranges return correct results on both tiers (previously empty results / `ProgrammingError`).
+- **Cursor Pagination** — the standard `{_id: {$gt: cursor}}` + `sort(_id)` + `limit(n)` pattern now works verbatim.
 
-For full details, see [documents/releases/v1.16.0.md](documents/releases/v1.16.0.md). Previous release highlights are in [documents/releases/v1.15.2.md](documents/releases/v1.15.2.md).
+For full details, see [documents/releases/v1.16.1.md](documents/releases/v1.16.1.md). Previous release highlights are in [documents/releases/v1.16.0.md](documents/releases/v1.16.0.md).
 
 ## Installation
 

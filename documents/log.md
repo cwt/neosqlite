@@ -7,13 +7,28 @@ tags:
   - bundle
   - changelog
 timestamp: 2026-09-13T00:00:00Z
-version: "1.16.0"
+version: "1.16.1"
 lifecycle: active
 ---
 
 # NeoSQLite Knowledge Base Bundle Log
 
 This document records the chronological history of structural changes, additions, deprecations, and refactoring operations performed on the NeoSQLite Open Knowledge Format (OKF) bundle.
+
+---
+
+## 2026-09-13 — Release v1.16.1
+
+### Summary
+Correctness patch: Python-level ObjectId ordering plus `_id` range fallback.
+
+### Key Modifications
+1. **Added `releases/v1.16.1.md` Release Notes**:
+   - Documents ObjectId ordering dunders, the `_id` range find/count fixes, and cursor-pagination notes with migration guidance.
+2. **Bumped version to v1.16.1**:
+   - `pyproject.toml`, `README.md` (Latest Release), `documents/index.md`, `documents/releases/index.md`, `documents/objectid-implementation.md`, and `documents/pymongo-api-comparison.md`.
+3. **Updated ObjectId spec**:
+   - Operators bullet now lists ordering dunders alongside equality/hashing.
 
 ---
 
