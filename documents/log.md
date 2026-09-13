@@ -7,13 +7,28 @@ tags:
   - bundle
   - changelog
 timestamp: 2026-09-13T00:00:00Z
-version: "1.16.1"
+version: "1.16.2"
 lifecycle: active
 ---
 
 # NeoSQLite Knowledge Base Bundle Log
 
 This document records the chronological history of structural changes, additions, deprecations, and refactoring operations performed on the NeoSQLite Open Knowledge Format (OKF) bundle.
+
+---
+
+## 2026-09-13 — Release v1.16.2
+
+### Summary
+Correctness patch: dotted GridFS metadata filters plus `fs.chunks` delegation.
+
+### Key Modifications
+1. **Added `releases/v1.16.2.md` Release Notes**:
+   - Documents the `GridOutCursor` dotted `metadata.*`/`aliases.*` fix, the unknown-filter `1=0` guard, and the `fs.chunks.find()` direct-query fix with migration guidance.
+2. **Bumped version to v1.16.2**:
+   - `pyproject.toml`, `README.md` (Latest Release), `documents/index.md`, `documents/releases/index.md`, `documents/gridfs.md`, and `documents/pymongo-api-comparison.md`.
+3. **Updated GridFS spec**:
+   - Frontmatter version bump; dotted `metadata.*` find patterns now actually filter via `json_extract` instead of returning the whole bucket.
 
 ---
 

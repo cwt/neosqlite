@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import json
 import logging
+import re
 from typing import Any
 
 from .._sqlite import sqlite3
@@ -88,9 +90,7 @@ class GridIn:
         """
         return serialize_aliases(self._aliases)
 
-    def _serialize_metadata(
-        self, metadata: dict[str, Any] | None
-    ) -> str | None:
+    def _serialize_metadata(self, metadata: dict[str, Any] | None) -> str | None:
         """
         Serialize metadata to JSON string.
 
@@ -102,9 +102,7 @@ class GridIn:
         """
         return serialize_metadata(metadata)
 
-    def _deserialize_metadata(
-        self, metadata_str: str | None
-    ) -> dict[str, Any] | None:
+    def _deserialize_metadata(self, metadata_str: str | None) -> dict[str, Any] | None:
         """
         Deserialize metadata from JSON string.
 
@@ -180,9 +178,7 @@ class GridIn:
             >= self._chunk_size_bytes
         ):
             start = getattr(self, "_buffer_start", 0)
-            chunk_data = bytes(
-                self._buffer[start : start + self._chunk_size_bytes]
-            )
+            chunk_data = bytes(self._buffer[start : start + self._chunk_size_bytes])
             self._buffer_start = start + self._chunk_size_bytes
 
             # If this is the first chunk, create the file document
@@ -476,9 +472,7 @@ class GridOut:
             has_content_type = column_exists(
                 self._db, self._files_collection, "content_type"
             )
-            has_aliases = column_exists(
-                self._db, self._files_collection, "aliases"
-            )
+            has_aliases = column_exists(self._db, self._files_collection, "aliases")
         except (AttributeError, TypeError) as e:
             # Handle mocked databases in tests - assume old schema
             logger.debug(f"{e=}")
@@ -524,9 +518,7 @@ class GridOut:
         row_idx += 1
         metadata_str = row[row_idx]
         row_idx += 1
-        self._stored_oid = row[
-            row_idx
-        ]  # Store the _id value (ObjectId hex string)
+        self._stored_oid = row[row_idx]  # Store the _id value (ObjectId hex string)
         row_idx += 1
 
         # Handle optional columns with defaults
@@ -597,9 +589,7 @@ class GridOut:
         """
         return self._actual_id
 
-    def _deserialize_metadata(
-        self, metadata_str: str | None
-    ) -> dict[str, Any] | None:
+    def _deserialize_metadata(self, metadata_str: str | None) -> dict[str, Any] | None:
         """
         Deserialize metadata from JSON string.
 
@@ -642,9 +632,7 @@ class GridOut:
                 # Abandoned upload: length was never finalized (#127)
                 from .errors import CorruptGridFile
 
-                raise CorruptGridFile(
-                    "File has no finalized length (abandoned upload)"
-                )
+                raise CorruptGridFile("File has no finalized length (abandoned upload)")
             size = self._length - self._position
 
         if size <= 0:
@@ -660,16 +648,12 @@ class GridOut:
 
             # Calculate how much we can read from the current chunk
             chunk_offset = self._position % self._chunk_size
-            bytes_available_in_chunk = (
-                len(self._current_chunk_data) - chunk_offset
-            )
+            bytes_available_in_chunk = len(self._current_chunk_data) - chunk_offset
             bytes_to_read = min(size - bytes_read, bytes_available_in_chunk)
 
             # Read from the current chunk
             result.extend(
-                self._current_chunk_data[
-                    chunk_offset : chunk_offset + bytes_to_read
-                ]
+                self._current_chunk_data[chunk_offset : chunk_offset + bytes_to_read]
             )
 
             # Update position
@@ -765,6 +749,314 @@ class GridOut:
         self.close()
 
 
+def _mongo_dot_subpath_to_json_path(subpath: str) -> str | None:
+    """Convert a MongoDB dotted subpath to a SQLite JSON path.
+
+    Handles numeric segments as array indices (``tags.0`` -> ``$.tags[0]``)
+    and quotes field names containing special characters.
+
+    Args:
+        subpath: Dotted path below ``metadata``/``aliases`` (e.g. ``size``,
+            ``nested.a``, ``tags.0``).
+
+    Returns:
+        SQLite JSON path (e.g. ``$.size``) or None if invalid.
+    """
+    if not subpath or subpath.startswith(".") or subpath.endswith("."):
+        return None
+    if ".." in subpath:
+        return None
+    parts = subpath.split(".")
+    out = "$"
+    for part in parts:
+        if not part:
+            return None
+        if part.isdigit():
+            out += f"[{part}]"
+        elif part.startswith("["):
+            # Already bracketed (e.g. "[0]") — append directly.
+            out += part
+        elif "[" in part:
+            # Field with trailing indices (e.g. "tags[0]").
+            out += f".{part}"
+        else:
+            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", part):
+                out += f".{part}"
+            else:
+                esc = part.replace("\\", "\\\\").replace('"', '\\"')
+                out += f'."{esc}"'
+    return out
+
+
+def _normalize_json_query_value(value: Any) -> Any:
+    """Normalize a query value for SQLite binding."""
+    if isinstance(value, ObjectId):
+        return str(value)
+    if isinstance(value, datetime.datetime):
+        return value.isoformat()
+    if isinstance(value, datetime.date):
+        return value.isoformat()
+    return value
+
+
+def _append_json_column_equality(
+    column: str,
+    json_path_sql: str,
+    value: Any,
+    where_conditions: list[str],
+    params: list[Any],
+) -> None:
+    """Append a direct-equality clause for a JSON column + path."""
+    extract = f"json_extract({column}, {json_path_sql})"
+    json_type = f"json_type({column}, {json_path_sql})"
+    if value is None:
+        # MongoDB: {field: null} matches null-or-missing.
+        where_conditions.append(f"{extract} IS NULL")
+    elif isinstance(value, (dict, list)):
+        where_conditions.append(f"{extract} = json(?)")
+        params.append(json.dumps(value, default=str))
+    elif isinstance(value, re.Pattern):
+        where_conditions.append(f"{extract} LIKE ?")
+        params.append(f"%{value.pattern}%")
+    else:
+        norm = _normalize_json_query_value(value)
+        where_conditions.append(
+            f"({extract} = ? OR "
+            f"({json_type} = 'array' AND EXISTS "
+            f"(SELECT 1 FROM json_each({column}, {json_path_sql}) "
+            f"WHERE value = ?)))"
+        )
+        params.extend([norm, norm])
+
+
+def _append_json_column_operators(
+    column: str,
+    json_path_sql: str,
+    operators: dict[str, Any],
+    where_conditions: list[str],
+    params: list[Any],
+) -> None:
+    """Append operator clauses (e.g. $gt, $in) for a JSON column + path."""
+    extract = f"json_extract({column}, {json_path_sql})"
+    json_type = f"json_type({column}, {json_path_sql})"
+    each = f"json_each({column}, {json_path_sql})"
+    # $options only modifies $regex — pull it out once.
+    regex_options = operators.get("$options", "")
+
+    for op, op_val in operators.items():
+        if op == "$options":
+            continue
+        match op:
+            case "$eq":
+                _append_json_column_equality(
+                    column, json_path_sql, op_val, where_conditions, params
+                )
+            case "$ne":
+                if op_val is None:
+                    where_conditions.append(f"{extract} IS NOT NULL")
+                elif isinstance(op_val, (dict, list)):
+                    where_conditions.append(f"{extract} IS NOT json(?)")
+                    params.append(json.dumps(op_val, default=str))
+                elif isinstance(op_val, re.Pattern):
+                    where_conditions.append(
+                        f"({extract} IS NULL OR {extract} NOT LIKE ?)"
+                    )
+                    params.append(f"%{op_val.pattern}%")
+                else:
+                    norm = _normalize_json_query_value(op_val)
+                    where_conditions.append(
+                        f"({extract} IS NULL OR "
+                        f"({extract} != ? AND "
+                        f"({json_type} != 'array' OR NOT EXISTS "
+                        f"(SELECT 1 FROM {each} WHERE value = ?))))"
+                    )
+                    params.extend([norm, norm])
+            case "$gt" | "$gte" | "$lt" | "$lte":
+                sql_op = {"$gt": ">", "$gte": ">=", "$lt": "<", "$lte": "<="}[op]
+                if isinstance(op_val, (dict, list)):
+                    where_conditions.append("1=0")
+                    continue
+                norm = _normalize_json_query_value(op_val)
+                where_conditions.append(
+                    f"({extract} {sql_op} ? OR "
+                    f"({json_type} = 'array' AND EXISTS "
+                    f"(SELECT 1 FROM {each} WHERE value {sql_op} ?)))"
+                )
+                params.extend([norm, norm])
+            case "$in":
+                if not isinstance(op_val, (list, tuple)):
+                    where_conditions.append("1=0")
+                    continue
+                if not op_val:
+                    where_conditions.append("1=0")
+                    continue
+                has_null = any(v is None for v in op_val)
+                non_nulls = [
+                    _normalize_json_query_value(v)
+                    if not isinstance(v, (dict, list))
+                    else json.dumps(v, default=str)
+                    for v in op_val
+                    if v is not None
+                ]
+                # JSON objects/arrays need json() comparison; split them out.
+                scalar_vals = [
+                    v
+                    for v, orig in zip(non_nulls, [x for x in op_val if x is not None])
+                    if not isinstance(orig, (dict, list))
+                ]
+                json_vals = [
+                    v
+                    for v, orig in zip(non_nulls, [x for x in op_val if x is not None])
+                    if isinstance(orig, (dict, list))
+                ]
+                or_parts: list[str] = []
+                in_params: list[Any] = []
+                if scalar_vals:
+                    placeholders = ", ".join("?" * len(scalar_vals))
+                    or_parts.append(f"{extract} IN ({placeholders})")
+                    in_params.extend(scalar_vals)
+                    or_parts.append(
+                        f"({json_type} = 'array' AND EXISTS "
+                        f"(SELECT 1 FROM {each} WHERE value IN ({placeholders})))"
+                    )
+                    in_params.extend(scalar_vals)
+                for jv in json_vals:
+                    or_parts.append(f"{extract} = json(?)")
+                    in_params.append(jv)
+                if has_null:
+                    or_parts.append(f"{extract} IS NULL")
+                if or_parts:
+                    where_conditions.append("(" + " OR ".join(or_parts) + ")")
+                    params.extend(in_params)
+                else:
+                    where_conditions.append("1=0")
+            case "$nin":
+                if not isinstance(op_val, (list, tuple)):
+                    where_conditions.append("1=0")
+                    continue
+                if not op_val:
+                    where_conditions.append("1=1")
+                    continue
+                has_null = any(v is None for v in op_val)
+                non_nulls = [
+                    _normalize_json_query_value(v)
+                    for v in op_val
+                    if v is not None and not isinstance(v, (dict, list))
+                ]
+                if has_null:
+                    # Exclude null/missing plus any non-null matches.
+                    if non_nulls:
+                        placeholders = ", ".join("?" * len(non_nulls))
+                        where_conditions.append(
+                            f"({extract} IS NOT NULL AND {extract} NOT IN "
+                            f"({placeholders}) AND ({json_type} != 'array' OR "
+                            f"NOT EXISTS (SELECT 1 FROM {each} WHERE value IN "
+                            f"({placeholders}))))"
+                        )
+                        params.extend(non_nulls)
+                        params.extend(non_nulls)
+                    else:
+                        where_conditions.append(f"{extract} IS NOT NULL")
+                else:
+                    if non_nulls:
+                        placeholders = ", ".join("?" * len(non_nulls))
+                        where_conditions.append(
+                            f"({extract} IS NULL OR {extract} NOT IN "
+                            f"({placeholders})) AND ({json_type} != 'array' OR "
+                            f"NOT EXISTS (SELECT 1 FROM {each} WHERE value IN "
+                            f"({placeholders})))"
+                        )
+                        params.extend(non_nulls)
+                        params.extend(non_nulls)
+                    else:
+                        # Only dict/list values — fall back to no-match guard.
+                        where_conditions.append("1=0")
+            case "$regex":
+                pattern = (
+                    op_val.pattern if isinstance(op_val, re.Pattern) else str(op_val)
+                )
+                if isinstance(regex_options, str) and "i" in regex_options.lower():
+                    where_conditions.append(
+                        f"({extract} LIKE ? ESCAPE '\\' COLLATE NOCASE OR "
+                        f"({json_type} = 'array' AND EXISTS "
+                        f"(SELECT 1 FROM {each} WHERE value LIKE ? "
+                        f"ESCAPE '\\' COLLATE NOCASE)))"
+                    )
+                else:
+                    where_conditions.append(
+                        f"({extract} LIKE ? ESCAPE '\\' OR "
+                        f"({json_type} = 'array' AND EXISTS "
+                        f"(SELECT 1 FROM {each} WHERE value LIKE ? "
+                        f"ESCAPE '\\')))"
+                    )
+                params.extend([f"%{pattern}%", f"%{pattern}%"])
+            case "$exists":
+                if not isinstance(op_val, bool):
+                    where_conditions.append("1=0")
+                elif op_val:
+                    where_conditions.append(f"{json_type} IS NOT NULL")
+                else:
+                    where_conditions.append(f"{json_type} IS NULL")
+            case "$size":
+                try:
+                    size_val = int(op_val)  # type: ignore[arg-type]
+                except (TypeError, ValueError):
+                    where_conditions.append("1=0")
+                    continue
+                where_conditions.append(
+                    f"({json_type} = 'array' AND "
+                    f"json_array_length({column}, {json_path_sql}) = ?)"
+                )
+                params.append(size_val)
+            case "$all":
+                if not isinstance(op_val, (list, tuple)) or not op_val:
+                    where_conditions.append("1=0")
+                    continue
+                for elem in op_val:
+                    if isinstance(elem, (dict, list)):
+                        where_conditions.append("1=0")
+                        continue
+                    norm = _normalize_json_query_value(elem)
+                    where_conditions.append(
+                        f"EXISTS (SELECT 1 FROM {each} WHERE value = ?)"
+                    )
+                    params.append(norm)
+            case _:
+                logger.debug(f"Unsupported GridFS metadata operator '{op}'")
+                where_conditions.append("1=0")
+
+
+def _append_dotted_json_condition(
+    column: str,
+    subpath: str,
+    value: Any,
+    where_conditions: list[str],
+    params: list[Any],
+) -> None:
+    """Append a dotted (e.g. ``metadata.size``) filter clause."""
+    json_path = _mongo_dot_subpath_to_json_path(subpath)
+    if json_path is None:
+        logger.debug(f"Invalid dotted GridFS filter path '{column}.{subpath}'")
+        where_conditions.append("1=0")
+        return
+    json_path_sql = f"'{json_path.replace(chr(39), chr(39) * 2)}'"
+    if isinstance(value, dict) and any(
+        isinstance(k, str) and k.startswith("$") for k in value
+    ):
+        _append_json_column_operators(
+            column, json_path_sql, value, where_conditions, params
+        )
+    elif isinstance(value, dict):
+        # Nested document equality, e.g. {"metadata.a": {"b": 1}}.
+        _append_json_column_equality(
+            column, json_path_sql, value, where_conditions, params
+        )
+    else:
+        _append_json_column_equality(
+            column, json_path_sql, value, where_conditions, params
+        )
+
+
 class GridOutCursor:
     """
     A cursor for iterating over GridFS files.
@@ -793,169 +1085,218 @@ class GridOutCursor:
 
         # Build query based on filter
         where_clause = ""
-        params = []
+        params: list[Any] = []
 
         if filter:
-            where_conditions = []
-            for key, value in filter.items():
+            where_conditions: list[str] = []
+
+            def _append_one(
+                key: str,
+                value: Any,
+                conds: list[str],
+                plist: list[Any],
+            ) -> None:
+                # Logical operators: never silently drop — build recursively.
+                if key in ("$and", "$or", "$nor"):
+                    if not isinstance(value, (list, tuple)):
+                        logger.debug(f"Invalid '{key}' GridFS filter: {value!r}")
+                        conds.append("1=0")
+                        return
+                    sub_clauses: list[str] = []
+                    sub_params: list[Any] = []
+                    for subfilter in value:
+                        if not isinstance(subfilter, dict):
+                            conds.append("1=0")
+                            return
+                        if not subfilter:
+                            sub_clauses.append("(1=1)")
+                            continue
+                        temp_conds: list[str] = []
+                        temp_params: list[Any] = []
+                        for sk, sv in subfilter.items():
+                            _append_one(sk, sv, temp_conds, temp_params)
+                        if temp_conds:
+                            sub_clauses.append("(" + " AND ".join(temp_conds) + ")")
+                            sub_params.extend(temp_params)
+                        else:
+                            sub_clauses.append("(1=1)")
+                    if not sub_clauses:
+                        conds.append("1=1" if key in ("$and", "$nor") else "1=0")
+                        return
+                    if key == "$and":
+                        conds.append("(" + " AND ".join(sub_clauses) + ")")
+                    elif key == "$or":
+                        conds.append("(" + " OR ".join(sub_clauses) + ")")
+                    else:  # $nor
+                        # NULL-safe negation: inner conditions yield NULL
+                        # for missing/null fields; plain NOT NULL is NULL
+                        # (excluded) instead of TRUE. IS NOT TRUE treats
+                        # NULL as non-match, matching MongoDB $nor.
+                        conds.append(
+                            "("
+                            + " AND ".join(f"({c} IS NOT TRUE)" for c in sub_clauses)
+                            + ")"
+                        )
+                    plist.extend(sub_params)
+                    return
+
+                if isinstance(key, str) and key.startswith("$"):
+                    logger.debug(f"Unsupported GridFS filter operator '{key}'")
+                    conds.append("1=0")
+                    return
+
+                # Dotted paths (e.g. {"metadata.url": ...}) — previously
+                # fell through the match below and returned the whole
+                # bucket (#1.16.1 report).
+                if isinstance(key, str) and "." in key:
+                    top, _, sub = key.partition(".")
+                    if top in ("metadata", "aliases"):
+                        _append_dotted_json_condition(top, sub, value, conds, plist)
+                    else:
+                        # Dotted query on a scalar/unknown top-level field
+                        # can never match — but must not match everything.
+                        logger.debug(f"Unsupported dotted GridFS filter '{key}'")
+                        conds.append("1=0")
+                    return
+
                 match key:
                     case "_id":
                         # Handle ObjectId hex strings and other ID formats
                         if isinstance(value, ObjectId):
-                            where_conditions.append("_id = ?")
-                            params.append(str(value))
+                            conds.append("_id = ?")
+                            plist.append(str(value))
                         elif isinstance(value, str) and len(value) == 24:
                             # Check if it's a valid ObjectId hex string
                             try:
                                 ObjectId(value)
-                                where_conditions.append("_id = ?")
-                                params.append(value)
+                                conds.append("_id = ?")
+                                plist.append(value)
                             except ValueError as e:
                                 # Not a valid ObjectId, treat as regular string
                                 logger.debug(
                                     f"ID '{value}' is not a valid ObjectId: {e}"
                                 )
-                                where_conditions.append("_id = ?")
-                                params.append(value)
+                                conds.append("_id = ?")
+                                plist.append(value)
                         else:
                             # Handle other types
-                            where_conditions.append("_id = ?")
-                            params.append(value)
+                            conds.append("_id = ?")
+                            plist.append(value)
                     case "id":
                         # For 'id' queries, we look in the integer id column
-                        where_conditions.append("id = ?")
-                        params.append(value)
+                        conds.append("id = ?")
+                        plist.append(value)
                     case "filename":
                         if isinstance(value, dict):
                             # Handle operators like {"$regex": "pattern"}, {"$ne": "name"}, etc.
                             for op, val in value.items():
                                 match op:
                                     case "$regex":
-                                        where_conditions.append(
-                                            "filename LIKE ?"
-                                        )
-                                        params.append(f"%{val}%")
+                                        conds.append("filename LIKE ?")
+                                        plist.append(f"%{val}%")
                                     case "$ne":
-                                        where_conditions.append("filename != ?")
-                                        params.append(val)
+                                        conds.append("filename != ?")
+                                        plist.append(val)
                                     case "$eq":
-                                        where_conditions.append("filename = ?")
-                                        params.append(val)
+                                        conds.append("filename = ?")
+                                        plist.append(val)
                                     case _:
                                         # For unsupported operators, fall back to exact match
-                                        where_conditions.append("filename = ?")
-                                        params.append(str(value))
+                                        conds.append("filename = ?")
+                                        plist.append(str(value))
                         else:
                             # Direct value comparison
-                            where_conditions.append("filename = ?")
-                            params.append(value)
+                            conds.append("filename = ?")
+                            plist.append(value)
                     case "length":
                         if isinstance(value, dict):
                             # Handle operators like {"$gt": 1000}, {"$lt": 5000}, etc.
                             for op, val in value.items():
                                 match op:
                                     case "$gt":
-                                        where_conditions.append("length > ?")
-                                        params.append(val)
+                                        conds.append("length > ?")
+                                        plist.append(val)
                                     case "$gte":
-                                        where_conditions.append("length >= ?")
-                                        params.append(val)
+                                        conds.append("length >= ?")
+                                        plist.append(val)
                                     case "$lt":
-                                        where_conditions.append("length < ?")
-                                        params.append(val)
+                                        conds.append("length < ?")
+                                        plist.append(val)
                                     case "$lte":
-                                        where_conditions.append("length <= ?")
-                                        params.append(val)
+                                        conds.append("length <= ?")
+                                        plist.append(val)
                                     case "$eq":
-                                        where_conditions.append("length = ?")
-                                        params.append(val)
+                                        conds.append("length = ?")
+                                        plist.append(val)
                                     case "$ne":
-                                        where_conditions.append("length != ?")
-                                        params.append(val)
+                                        conds.append("length != ?")
+                                        plist.append(val)
                         else:
                             # Direct value comparison
-                            where_conditions.append("length = ?")
-                            params.append(value)
+                            conds.append("length = ?")
+                            plist.append(value)
                     case "chunkSize":
                         if isinstance(value, dict):
                             # Handle operators like {"$gt": 1000}, {"$lt": 5000}, etc.
                             for op, val in value.items():
                                 match op:
                                     case "$gt":
-                                        where_conditions.append("chunkSize > ?")
-                                        params.append(val)
+                                        conds.append("chunkSize > ?")
+                                        plist.append(val)
                                     case "$gte":
-                                        where_conditions.append(
-                                            "chunkSize >= ?"
-                                        )
-                                        params.append(val)
+                                        conds.append("chunkSize >= ?")
+                                        plist.append(val)
                                     case "$lt":
-                                        where_conditions.append("chunkSize < ?")
-                                        params.append(val)
+                                        conds.append("chunkSize < ?")
+                                        plist.append(val)
                                     case "$lte":
-                                        where_conditions.append(
-                                            "chunkSize <= ?"
-                                        )
-                                        params.append(val)
+                                        conds.append("chunkSize <= ?")
+                                        plist.append(val)
                                     case "$eq":
-                                        where_conditions.append("chunkSize = ?")
-                                        params.append(val)
+                                        conds.append("chunkSize = ?")
+                                        plist.append(val)
                                     case "$ne":
-                                        where_conditions.append(
-                                            "chunkSize != ?"
-                                        )
-                                        params.append(val)
+                                        conds.append("chunkSize != ?")
+                                        plist.append(val)
                         else:
                             # Direct value comparison
-                            where_conditions.append("chunkSize = ?")
-                            params.append(value)
+                            conds.append("chunkSize = ?")
+                            plist.append(value)
                     case "uploadDate":
                         if isinstance(value, dict):
                             # Handle operators like {"$gt": date}, {"$lt": date}, etc.
                             for op, val in value.items():
                                 match op:
                                     case "$gt":
-                                        where_conditions.append(
-                                            "uploadDate > ?"
-                                        )
-                                        params.append(val)
+                                        conds.append("uploadDate > ?")
+                                        plist.append(val)
                                     case "$gte":
-                                        where_conditions.append(
-                                            "uploadDate >= ?"
-                                        )
-                                        params.append(val)
+                                        conds.append("uploadDate >= ?")
+                                        plist.append(val)
                                     case "$lt":
-                                        where_conditions.append(
-                                            "uploadDate < ?"
-                                        )
-                                        params.append(val)
+                                        conds.append("uploadDate < ?")
+                                        plist.append(val)
                                     case "$lte":
-                                        where_conditions.append(
-                                            "uploadDate <= ?"
-                                        )
-                                        params.append(val)
+                                        conds.append("uploadDate <= ?")
+                                        plist.append(val)
                                     case "$eq":
-                                        where_conditions.append(
-                                            "uploadDate = ?"
-                                        )
-                                        params.append(val)
+                                        conds.append("uploadDate = ?")
+                                        plist.append(val)
                                     case "$ne":
-                                        where_conditions.append(
-                                            "uploadDate != ?"
-                                        )
-                                        params.append(val)
+                                        conds.append("uploadDate != ?")
+                                        plist.append(val)
                         else:
                             # Direct value comparison
-                            where_conditions.append("uploadDate = ?")
-                            params.append(value)
+                            conds.append("uploadDate = ?")
+                            plist.append(value)
                     case "md5":
                         if isinstance(value, dict) and "$ne" in value:
-                            where_conditions.append("md5 != ?")
-                            params.append(value["$ne"])
+                            conds.append("md5 != ?")
+                            plist.append(value["$ne"])
                         else:
                             # Direct value comparison
-                            where_conditions.append("md5 = ?")
-                            params.append(value)
+                            conds.append("md5 = ?")
+                            plist.append(value)
                     # For metadata, we do a simple string match (basic implementation)
                     # In a full implementation, we'd parse the JSON, but for now we'll do substring matching
                     case "metadata":
@@ -964,41 +1305,45 @@ class GridOutCursor:
                             for op, val in value.items():
                                 match op:
                                     case "$regex":
-                                        where_conditions.append(
-                                            "metadata LIKE ?"
-                                        )
-                                        params.append(f"%{val}%")
+                                        conds.append("metadata LIKE ?")
+                                        plist.append(f"%{val}%")
                                     case "$ne":
-                                        where_conditions.append("metadata != ?")
-                                        params.append(
+                                        conds.append("metadata != ?")
+                                        plist.append(
                                             str(val)
                                             if not isinstance(val, str)
                                             else val
                                         )
                                     case _:
                                         # For other operators, convert to string and match
-                                        where_conditions.append(
-                                            "metadata LIKE ?"
-                                        )
-                                        params.append(f"%{op}%{val}%")
+                                        conds.append("metadata LIKE ?")
+                                        plist.append(f"%{op}%{val}%")
                         else:
                             # Direct metadata string matching
-                            where_conditions.append("metadata LIKE ?")
-                            params.append(f"%{value}%")
+                            conds.append("metadata LIKE ?")
+                            plist.append(f"%{value}%")
                     case "aliases":
                         # Check if the value is in the aliases JSON array
-                        where_conditions.append(
+                        conds.append(
                             "EXISTS (SELECT 1 FROM json_each(aliases) WHERE value = ?)"
                         )
-                        params.append(value)
-                    case "content_type":
+                        plist.append(value)
+                    case "content_type" | "contentType":
                         if isinstance(value, dict) and "$ne" in value:
-                            where_conditions.append("content_type != ?")
-                            params.append(value["$ne"])
+                            conds.append("content_type != ?")
+                            plist.append(value["$ne"])
                         else:
                             # Direct value comparison
-                            where_conditions.append("content_type = ?")
-                            params.append(value)
+                            conds.append("content_type = ?")
+                            plist.append(value)
+                    case _:
+                        # Unknown top-level field: must not silently match
+                        # everything — match nothing instead.
+                        logger.debug(f"Unsupported GridFS filter field '{key}'")
+                        conds.append("1=0")
+
+            for _k, _v in filter.items():
+                _append_one(_k, _v, where_conditions, params)
 
             if where_conditions:
                 where_clause = "WHERE " + " AND ".join(where_conditions)

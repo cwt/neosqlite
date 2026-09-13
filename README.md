@@ -34,16 +34,16 @@
 
 See [Release Notes](documents/releases/) for the full history.
 
-## Latest Release: v1.16.1
+## Latest Release: v1.16.2
 
-NeoSQLite v1.16.1 is a **correctness patch** adding Python-level ObjectId ordering and fixing `_id` range queries and counts. Fully backward compatible.
+NeoSQLite v1.16.2 is a **correctness patch** fixing `GridOutCursor` silently dropping dotted `metadata.*` filters and `fs.chunks` delegation. Fully backward compatible.
 
 **Key Highlights:**
-- **ObjectId Ordering** — `__lt__`/`__le__`/`__gt__`/`__ge__` over the 12-byte BSON byte order, mirroring `bson`.
-- **`_id` Ranges Fixed** — `find()`/`count_documents()` with ObjectId `$gt`/`$lt` ranges return correct results on both tiers (previously empty results / `ProgrammingError`).
-- **Cursor Pagination** — the standard `{_id: {$gt: cursor}}` + `sort(_id)` + `limit(n)` pattern now works verbatim.
+- **Dotted Metadata Filters Fixed** — `bucket.find({"metadata.url": ...})` and `{"metadata.size": 720}` now filter via `json_extract` instead of returning the whole bucket.
+- **No More Silent Whole-Bucket Matches** — unknown fields/operators match nothing; `$nor` is NULL-safe.
+- **`fs.chunks.find()` Fixed** — chunks queries return real chunk dicts instead of files.
 
-For full details, see [documents/releases/v1.16.1.md](documents/releases/v1.16.1.md). Previous release highlights are in [documents/releases/v1.16.0.md](documents/releases/v1.16.0.md).
+For full details, see [documents/releases/v1.16.2.md](documents/releases/v1.16.2.md). Previous release highlights are in [documents/releases/v1.16.1.md](documents/releases/v1.16.1.md).
 
 ## Installation
 
