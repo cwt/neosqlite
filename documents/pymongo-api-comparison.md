@@ -170,7 +170,7 @@ These operators now provide clear error messages suggesting alternatives, matchi
 | `replace_one()` | ✅ | With upsert support |
 | `delete_one()` | ✅ | |
 | `delete_many()` | ✅ | |
-| `find()` | ✅ | Returns Cursor object |
+| `find()` | ✅ | Returns Cursor object; accepts `limit`/`skip`/`sort` kwargs |
 | `find_one()` | ✅ | With projection support |
 | `find_one_and_delete()` | ✅ | Atomic find-modify-delete |
 | `find_one_and_replace()` | ✅ | Atomic find-modify-replace |
@@ -209,8 +209,8 @@ These operators now provide clear error messages suggesting alternatives, matchi
 
 | Operation | Status | Notes |
 |-----------|--------|-------|
-| `create_index()` | ✅ | Single-key, compound, nested indexes |
-| `create_indexes()` | ✅ | Batch index creation |
+| `create_index()` | ✅ | Single-key, compound, nested indexes; `expireAfterSeconds` TTL declaration |
+| `create_indexes()` | ✅ | Batch index creation (incl. TTL via `IndexModel`) |
 | `list_indexes()` | ✅ | Returns cursor over indexes |
 | `drop_index()` | ✅ | Drop by name or specification |
 | `drop_indexes()` | ✅ | Drop all indexes |
@@ -230,7 +230,7 @@ These operators now provide clear error messages suggesting alternatives, matchi
 | `estimated_document_count()` | ✅ | Fast metadata-based estimate (accepts options for API compatibility) |
 | `distinct()` | ✅ | Distinct values for a key |
 | `find_raw_batches()` | ✅ | Raw batch cursor for large datasets |
-| `watch()` | ✅ | Change streams via SQLite triggers (MongoDB requires replica set) |
+| `watch()` | ✅ | Change streams via SQLite triggers (MongoDB requires replica set); resume tokens + `$match` pipeline filtering |
 | `to_list()` | ✅ | Convert cursor to list |
 | `clone()` | ✅ | Create unevaluated cursor copy |
 | `explain()` | ✅ | Query execution plan via SQLite EXPLAIN |
@@ -265,6 +265,8 @@ These operators now provide clear error messages suggesting alternatives, matchi
 | `create_collection()` | ✅ | Create collection with options |
 | `drop_collection()` | ✅ | Drop a collection |
 | `get_collection()` | ✅ | Get collection with custom options |
+| `get_database()` | ✅ | Returns self (single-file DB compat helper) |
+| `drop_database()` | ✅ | Test/debug helper: drops all tables |
 | `watch()` | ✅ | Database-level change streams |
 | `aggregate()` | ✅ | Database-level aggregation |
 | `command()` | ✅ | Run database commands (includes 'validate') |

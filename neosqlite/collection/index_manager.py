@@ -18,6 +18,72 @@ logger = logging.getLogger(__name__)
 
 _INDEX_KEYS_TABLE = "neosqlite_index_keys"
 
+_TTL_META_TABLE = "_neosqlite_ttl_indexes"
+_TTL_MAX_SECONDS = 2147483647
+
+
+def _ensure_ttl_table(db) -> None:
+    db.execute(
+        f"CREATE TABLE IF NOT EXISTS {_TTL_META_TABLE} ("
+        "index_name TEXT PRIMARY KEY, "
+        "collection_name TEXT NOT NULL, "
+        "field TEXT NOT NULL, "
+        "expire_after_seconds INTEGER NOT NULL)"
+    )
+
+
+def _store_ttl_option(
+    db, index_name: str, collection_name: str, field: str, expire: int
+) -> None:
+    _ensure_ttl_table(db)
+    db.execute(
+        f"INSERT OR REPLACE INTO {_TTL_META_TABLE} "
+        "(index_name, collection_name, field, expire_after_seconds) "
+        "VALUES (?, ?, ?, ?)",
+        (index_name, collection_name, field, expire),
+    )
+
+
+def _load_ttl_option(db, index_name: str) -> int | None:
+    try:
+        row = db.execute(
+            f"SELECT expire_after_seconds FROM {_TTL_META_TABLE} "
+            "WHERE index_name = ?",
+            (index_name,),
+        ).fetchone()
+    except Exception:
+        return None
+    if row is None:
+        return None
+    try:
+        return int(row[0])
+    except (TypeError, ValueError):
+        return None
+
+
+def _delete_ttl_option(db, index_name: str) -> None:
+    try:
+        db.execute(
+            f"DELETE FROM {_TTL_META_TABLE} WHERE index_name = ?",
+            (index_name,),
+        )
+    except Exception:
+        pass
+
+
+def _validate_expire_after_seconds(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(
+            "expireAfterSeconds must be an integer, "
+            f"got {type(value).__name__}"
+        )
+    if value < 0 or value > _TTL_MAX_SECONDS:
+        raise ValueError(
+            "expireAfterSeconds must be within 0 and "
+            f"{_TTL_MAX_SECONDS} inclusive, got {value}"
+        )
+    return value
+
 
 def _ensure_index_keys_table(db) -> None:
     db.execute(
@@ -93,7 +159,10 @@ class IndexManager:
         fts: bool = False,
         tokenizer: str | None = None,
         datetime_field: bool = False,
-    ):
+        expireAfterSeconds: int | None = None,
+        name: str | None = None,
+        **kwargs: Any,
+    ) -> str:
         """
         Create an index on the specified key(s) for this collection.
 
@@ -109,11 +178,42 @@ class IndexManager:
             fts: Boolean indicating whether to create an FTS index for text search.
             tokenizer: Optional tokenizer to use for FTS index (e.g., 'icu', 'icu_th').
             datetime_field: Boolean indicating whether this is a datetime field that requires special indexing.
+            expireAfterSeconds: Optional TTL in seconds (MongoDB-compatible declaration).
+                Stored in ``_neosqlite_ttl_indexes`` metadata; expiry behavior is
+                owned by the TTL engine (lazy ``purge_expired`` + optional sweeper).
+                Single-field indexes only.
+            name: Optional custom index name (accepted for PyMongo compat;
+                SQLite name is still auto-generated).
+            **kwargs: Additional PyMongo index options (e.g. ``background``).
+                Accepted and ignored.
+
+        Returns:
+            str: The generated SQLite index name.
         """
+        expire: int | None = None
+        if expireAfterSeconds is not None:
+            expire = _validate_expire_after_seconds(expireAfterSeconds)
+        if name is not None:
+            logger.debug(
+                "Custom index name %r accepted but SQLite name "
+                "is auto-generated",
+                name,
+            )
+        if kwargs:
+            logger.debug("Ignoring extra index options: %r", sorted(kwargs))
+        if expire is not None and (fts or datetime_field):
+            raise ValueError(
+                "expireAfterSeconds requires a single-field "
+                "non-FTS, non-datetime index"
+            )
         # For datetime fields, use special indexing.
         if datetime_field:
             if isinstance(key, str):
                 self._create_datetime_index(key, unique=unique)
+                index_name_full = (
+                    f"idx_{self.collection.name}_{key.replace('.', '_')}_utc"
+                )
+                return index_name_full
             else:
                 raise ValueError("Compound datetime indexes are not supported")
         elif (
@@ -125,6 +225,7 @@ class IndexManager:
             field, index_type = key[0]
             if index_type == "text":
                 self._create_fts_index(field, tokenizer)
+                return f"{self.collection.name}_{field.replace('.', '_')}_fts"
             else:
                 # Create index name (replace dots with underscores for valid identifiers)
                 index_name = field.replace(".", "_")
@@ -140,10 +241,22 @@ class IndexManager:
                         f"ON {quote_table_name(self.collection.name)}({func_prefix}_extract(data, '{parse_json_path(field)}'))"
                     )
                 )
+                index_name_full = f"idx_{self.collection.name}_{index_name}"
+                _store_index_keys(self.collection.db, index_name_full, [field])
+                if expire is not None:
+                    _store_ttl_option(
+                        self.collection.db,
+                        index_name_full,
+                        self.collection.name,
+                        field,
+                        expire,
+                    )
+                return index_name_full
         elif isinstance(key, str):
             if fts:
                 # Create FTS index with optional tokenizer
                 self._create_fts_index(key, tokenizer)
+                return f"{self.collection.name}_{key.replace('.', '_')}_fts"
             else:
                 # Create index name (replace dots with underscores for valid identifiers)
                 index_name = key.replace(".", "_")
@@ -176,6 +289,15 @@ class IndexManager:
                 )
                 # Real key spec for as_keys=True / optimizer (#158)
                 _store_index_keys(self.collection.db, index_name_full, [key])
+                if expire is not None:
+                    _store_ttl_option(
+                        self.collection.db,
+                        index_name_full,
+                        self.collection.name,
+                        key,
+                        expire,
+                    )
+                return index_name_full
         else:
             # Compound indexes: must use PyMongo tuple format
             # [("field1", 1), ("field2", -1)]
@@ -195,6 +317,11 @@ class IndexManager:
                     f'[("field1", 1), ("field2", -1)]. Got: {key}'
                 )
 
+            if expire is not None:
+                raise ValueError(
+                    "expireAfterSeconds requires a single-field index; "
+                    "compound indexes do not support TTL"
+                )
             index_name = "_".join(fields).replace(".", "_")
 
             # Determine which function to use based on JSONB support
@@ -214,6 +341,7 @@ class IndexManager:
                 )
             )
             _store_index_keys(self.collection.db, compound_full_name, fields)
+            return compound_full_name
 
     def _create_fts_index(self, field: str, tokenizer: str | None = None):
         """
@@ -391,57 +519,64 @@ class IndexManager:
             sparse: bool = bool(doc.get("sparse", False))
             fts: bool = bool(doc.get("fts", False))
             tokenizer: str | None = doc.get("tokenizer")
+            datetime_field: bool = bool(doc.get("datetime_field", False))
+            expire_after: Any = doc.get("expireAfterSeconds")
+            custom_name: Any = doc.get("name")
+            extra: dict[str, Any] = {
+                k: v
+                for k, v in doc.items()
+                if k
+                not in {
+                    "key",
+                    "unique",
+                    "sparse",
+                    "fts",
+                    "tokenizer",
+                    "datetime_field",
+                    "expireAfterSeconds",
+                    "name",
+                }
+            }
+
+            def _make_opts() -> dict[str, Any]:
+                opts: dict[str, Any] = {
+                    "unique": unique,
+                    "sparse": sparse,
+                    "fts": fts,
+                    "tokenizer": tokenizer,
+                    "datetime_field": datetime_field,
+                }
+                if expire_after is not None:
+                    opts["expireAfterSeconds"] = expire_after
+                if custom_name is not None:
+                    opts["name"] = custom_name
+                opts.update(extra)
+                return opts
 
             # Convert key dict to the format expected by create_index
             match key:
                 case dict():
                     if len(key) == 1:
                         field = list(key.keys())[0]
-                        self.create_index(
-                            field,
-                            unique=unique,
-                            sparse=sparse,
-                            fts=fts,
-                            tokenizer=tokenizer,
-                        )
-                        index_name = field.replace(".", "_")
+                        returned = self.create_index(field, **_make_opts())
+                        index_name = returned[
+                            len(f"idx_{self.collection.name}_") :
+                        ]
                     else:
                         tuple_key = [(f, d) for f, d in key.items()]
-                        self.create_index(
-                            tuple_key,
-                            unique=unique,
-                            sparse=sparse,
-                            fts=fts,
-                            tokenizer=tokenizer,
-                        )
-                        index_name = "_".join(key.keys()).replace(".", "_")
+                        returned = self.create_index(tuple_key, **_make_opts())
+                        index_name = returned[
+                            len(f"idx_{self.collection.name}_") :
+                        ]
                 case str():
-                    self.create_index(
-                        key,
-                        unique=unique,
-                        sparse=sparse,
-                        fts=fts,
-                        tokenizer=tokenizer,
-                    )
-                    index_name = key.replace(".", "_")
+                    returned = self.create_index(key, **_make_opts())
+                    index_name = returned[len(f"idx_{self.collection.name}_") :]
                 case [str()]:
-                    self.create_index(
-                        key[0],
-                        unique=unique,
-                        sparse=sparse,
-                        fts=fts,
-                        tokenizer=tokenizer,
-                    )
-                    index_name = key[0].replace(".", "_")
+                    returned = self.create_index(key[0], **_make_opts())
+                    index_name = returned[len(f"idx_{self.collection.name}_") :]
                 case list() if isinstance(key[0], tuple):
-                    self.create_index(
-                        key,
-                        unique=unique,
-                        sparse=sparse,
-                        fts=fts,
-                        tokenizer=tokenizer,
-                    )
-                    index_name = "_".join(k[0] for k in key).replace(".", "_")
+                    returned = self.create_index(key, **_make_opts())
+                    index_name = returned[len(f"idx_{self.collection.name}_") :]
                 case _:
                     raise ValueError(f"Invalid key specification: {key}")
 
@@ -557,7 +692,7 @@ class IndexManager:
             index_name = "_".join(index).replace(".", "_")
         full_name = f"idx_{quote_table_name(self.collection.name)}_{index_name}"
         self.collection.db.execute(f"DROP INDEX IF EXISTS {full_name}")
-        # Remove the stored key spec (#158)
+        # Remove the stored key spec (#158) and TTL metadata
         try:
             self.collection.db.execute(
                 f"DELETE FROM {_INDEX_KEYS_TABLE} WHERE index_name = ?",
@@ -565,6 +700,7 @@ class IndexManager:
             )
         except Exception:
             pass
+        _delete_ttl_option(self.collection.db, full_name)
 
     def drop_indexes(self):
         """
@@ -577,6 +713,7 @@ class IndexManager:
         for index in indexes:
             # Extract the actual index name from the full name
             self.collection.db.execute(f"DROP INDEX IF EXISTS {index}")
+            _delete_ttl_option(self.collection.db, index)
 
     def index_information(self) -> dict[str, Any]:
         """
@@ -641,6 +778,10 @@ class IndexManager:
                             index_info["key"] = {keys[0]: 1}
                         else:
                             index_info["key"] = {key: 1 for key in keys}
+
+                expire_opt = _load_ttl_option(self.collection.db, idx_name)
+                if expire_opt is not None:
+                    index_info["expireAfterSeconds"] = expire_opt
 
                 info[idx_name] = index_info
 

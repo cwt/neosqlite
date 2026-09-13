@@ -703,6 +703,15 @@ class Collection:
         projection: dict[str, Any] | None = None,
         hint: str | None = None,
         session: ClientSession | None = None,
+        limit: int | None = None,
+        skip: int | None = None,
+        sort: (
+            list[tuple[str, int]]
+            | dict[str, int]
+            | str
+            | tuple[str, int]
+            | None
+        ) = None,
         **kwargs: Any,
     ) -> Cursor:
         """
@@ -716,15 +725,53 @@ class Collection:
             projection: Field projection (not supported for GridFS collections)
             hint: Index hint (not supported for GridFS collections)
             session: A ClientSession for transactions.
+            limit: Maximum docs to return (0/None = no limit, PyMongo parity).
+            skip: Number of docs to skip (0/None = none, PyMongo parity).
+            sort: Sort spec as list of (key, direction) tuples, dict,
+                ``(key, direction)`` tuple, or single field name.
+            **kwargs: Back-compat aliases (``limit``, ``skip``, ``sort`` may
+                also arrive here from older call sites).
 
         Returns:
             Cursor or GridOutCursor: Query results
         """
+        if "limit" in kwargs and limit is None:
+            limit = kwargs.pop("limit")
+        if "skip" in kwargs and skip is None:
+            skip = kwargs.pop("skip")
+        if "sort" in kwargs and sort is None:
+            sort = kwargs.pop("sort")
+        if kwargs:
+            logger.debug("Ignoring extra find options: %r", sorted(kwargs))
+
         # Check if this is a GridFS system collection
         if self._is_gridfs_collection():
             return self._find_as_gridfs(filter, session=session)
 
-        return self.query_engine.find(filter, projection, hint, session=session)
+        cursor = self.query_engine.find(
+            filter, projection, hint, session=session
+        )
+        if skip:
+            cursor = cursor.skip(int(skip))
+        if limit:
+            cursor = cursor.limit(int(limit))
+        if sort is not None:
+            cursor = cursor.sort(self._normalize_sort_spec(sort))
+        return cursor
+
+    @staticmethod
+    def _normalize_sort_spec(
+        sort: list[tuple[str, int]] | dict[str, int] | str | tuple[str, int],
+    ) -> list[tuple[str, int]]:
+        if isinstance(sort, str):
+            return [(sort, 1)]
+        if isinstance(sort, dict):
+            return [(key, int(direction)) for key, direction in sort.items()]
+        if isinstance(sort, tuple):
+            if len(sort) == 2 and isinstance(sort[0], str):
+                return [(sort[0], int(sort[1]))]
+            return [(key, int(direction)) for key, direction in sort]
+        return [(key, int(direction)) for key, direction in list(sort)]
 
     def _is_gridfs_collection(self) -> bool:
         """
@@ -1051,13 +1098,30 @@ class Collection:
         fts: bool = False,
         tokenizer: str | None = None,
         datetime_field: bool = False,
-    ):
+        expireAfterSeconds: int | None = None,
+        name: str | None = None,
+        **kwargs: Any,
+    ) -> str:
         """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.create_index`.
+        Create an index, PyMongo-compatible.
+
+        Accepts ``expireAfterSeconds`` for TTL declaration (stored in
+        ``_neosqlite_ttl_indexes``; expiry behavior is owned by the TTL
+        engine) plus ``name`` and other extra options for compatibility.
+
+        Returns the generated SQLite index name.
         """
-        self.indexes.create_index(
-            key, reindex, sparse, unique, fts, tokenizer, datetime_field
+        return self.indexes.create_index(
+            key,
+            reindex,
+            sparse,
+            unique,
+            fts,
+            tokenizer,
+            datetime_field,
+            expireAfterSeconds=expireAfterSeconds,
+            name=name,
+            **kwargs,
         )
 
     def create_search_index(

@@ -52,6 +52,7 @@ class Connection:
         self.debug: bool = kwargs.pop("debug", False)
         self._is_clone = kwargs.pop("_is_clone", False)
 
+
         self._codec_options = kwargs.pop("codec_options", None)
         self._read_preference = kwargs.pop("read_preference", None)
         self._write_concern = kwargs.pop("write_concern", None)
@@ -467,6 +468,13 @@ class Connection:
         # Evict the cached Collection so later access doesn't resurrect a
         # table-less object (#132)
         self._collections.pop(name, None)
+        try:
+            self.db.execute(
+                "DELETE FROM _neosqlite_ttl_indexes WHERE collection_name = ?",
+                (name,),
+            )
+        except Exception:
+            pass
         # Drop FTS5 virtual tables and their shadow tables, which are
         # separate schema objects that would otherwise outlive the
         # collection forever (#132)
@@ -534,6 +542,63 @@ class Connection:
             )
         return self._collections[name]
 
+    def get_database(
+        self, name: str | None = None, **kwargs: Any
+    ) -> Connection:
+        """
+        Get a database handle (PyMongo compat).
+
+        NeoSQLite is a single-database file: the ``Connection`` is both
+        client and database. This helper returns ``self`` so app code
+        written against ``MongoClient.get_database(name)`` keeps working.
+
+        Args:
+            name: Optional database name. When given and different from the
+                current ``self.name``, it is accepted and ignored (debug-logged).
+            **kwargs: Extra options, accepted and ignored.
+
+        Returns:
+            Connection: Itself.
+        """
+        if name is not None and name != self.name and name != self._db_path:
+            logger.debug(
+                "get_database(%r) ignored: NeoSQLite has a single "
+                "database %r",
+                name,
+                self.name,
+            )
+        return self
+
+    def drop_database(self, name: str | None = None, **kwargs: Any) -> None:
+        """
+        Drop the database (PyMongo compat, test/debug helper).
+
+        Drops every user table in the SQLite file (all collections plus
+        internal ``_neosqlite_*`` / FTS helper tables, which are recreated
+        on demand). ``sqlite_%`` system tables are left alone.
+
+        Args:
+            name: Optional database name. Accepted and ignored; the single
+                underlying file is always the drop target.
+            **kwargs: Extra options, accepted and ignored.
+        """
+        if name is not None and name != self.name and name != self._db_path:
+            logger.debug(
+                "drop_database(%r): dropping single NeoSQLite database %r",
+                name,
+                self.name,
+            )
+        try:
+            names = self.list_collection_names()
+        except Exception:
+            names = list(self._collections.keys())
+        for table_name in list(names):
+            try:
+                self.drop_collection(table_name)
+            except Exception as exc:
+                logger.debug("drop_database skipped %r: %s", table_name, exc)
+        self.db.commit()
+
     def rename_collection(self, old_name: str, new_name: str) -> None:
         """
         Rename a collection.
@@ -571,6 +636,14 @@ class Connection:
                 f"ALTER TABLE {quote_table_name(old_name)} "
                 f"RENAME TO {quote_table_name(new_name)}"
             )
+        try:
+            self.db.execute(
+                "UPDATE _neosqlite_ttl_indexes SET collection_name = ? "
+                "WHERE collection_name = ?",
+                (new_name, old_name),
+            )
+        except Exception:
+            pass
 
     def list_collection_names(self) -> list[str]:
         """
