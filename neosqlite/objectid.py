@@ -251,6 +251,38 @@ class ObjectId:
         """Check inequality with another ObjectId."""
         return not self.__eq__(other)
 
+    def _compare_bytes(self, other: Any) -> bytes | None:
+        """Return the 12-byte value to order against, if comparable."""
+        match other:
+            case ObjectId():
+                return other._id
+            case _:
+                return None
+
+    def __lt__(self, other: Any) -> bool:
+        """Order by the 12-byte big-endian value (BSON byte order)."""
+        if (other_id := self._compare_bytes(other)) is None:
+            return NotImplemented
+        return self._id < other_id
+
+    def __le__(self, other: Any) -> bool:
+        """Order by the 12-byte big-endian value (BSON byte order)."""
+        if (other_id := self._compare_bytes(other)) is None:
+            return NotImplemented
+        return self._id <= other_id
+
+    def __gt__(self, other: Any) -> bool:
+        """Order by the 12-byte big-endian value (BSON byte order)."""
+        if (other_id := self._compare_bytes(other)) is None:
+            return NotImplemented
+        return self._id > other_id
+
+    def __ge__(self, other: Any) -> bool:
+        """Order by the 12-byte big-endian value (BSON byte order)."""
+        if (other_id := self._compare_bytes(other)) is None:
+            return NotImplemented
+        return self._id >= other_id
+
     def __hash__(self) -> int:
         """Return a hash value for this ObjectId."""
         return hash(self._id)

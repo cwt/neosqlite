@@ -159,6 +159,24 @@ class SQLOperatorTranslator:
 
             value = neosqlite_json_dumps_for_sql(value)
 
+        # ObjectId values cannot be bound as SQL parameters, and _id range
+        # comparisons need BSON type-strict semantics (only ObjectIds ever
+        # match an ObjectId comparison). Fall back to Python, which orders
+        # ObjectIds by their 12-byte value.
+        from ..objectid import ObjectId
+
+        def _contains_object_id(node: Any) -> bool:
+            if isinstance(node, ObjectId):
+                return True
+            if isinstance(node, (list, tuple)):
+                for item in node:
+                    if isinstance(item, ObjectId):
+                        return True
+            return False
+
+        if _contains_object_id(value):
+            return None, []
+
         # Check if this is a datetime comparison that should be wrapped with datetime() function
         from datetime import datetime
 
