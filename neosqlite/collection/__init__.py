@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import warnings
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 from neosqlite.collection.json_helpers import neosqlite_json_loads
@@ -75,6 +76,7 @@ class Collection:
         self.indexes = IndexManager(self)
         self.query_engine = QueryEngine(self)
         self._options = kwargs
+        self._ttl_specs_cache: list[dict[str, Any]] | None = None
 
         if create:
             self.create(**kwargs)
@@ -462,6 +464,7 @@ class Collection:
 
         # Update the collection name
         self.name = new_name
+        self._invalidate_ttl_cache()
 
     def options(self) -> dict[str, Any]:
         """
@@ -748,6 +751,7 @@ class Collection:
         if self._is_gridfs_collection():
             return self._find_as_gridfs(filter, session=session)
 
+        self._auto_purge_ttl()
         cursor = self.query_engine.find(
             filter, projection, hint, session=session
         )
@@ -876,6 +880,7 @@ class Collection:
                 return doc
             return None
 
+        self._auto_purge_ttl()
         return self.query_engine.find_one(filter, projection, hint)
 
     def count_documents(
@@ -1111,18 +1116,21 @@ class Collection:
 
         Returns the generated SQLite index name.
         """
-        return self.indexes.create_index(
-            key,
-            reindex,
-            sparse,
-            unique,
-            fts,
-            tokenizer,
-            datetime_field,
-            expireAfterSeconds=expireAfterSeconds,
-            name=name,
-            **kwargs,
-        )
+        try:
+            return self.indexes.create_index(
+                key,
+                reindex,
+                sparse,
+                unique,
+                fts,
+                tokenizer,
+                datetime_field,
+                expireAfterSeconds=expireAfterSeconds,
+                name=name,
+                **kwargs,
+            )
+        finally:
+            self._invalidate_ttl_cache()
 
     def create_search_index(
         self,
@@ -1206,7 +1214,10 @@ class Collection:
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.drop_index`.
         """
-        self.indexes.drop_index(index)
+        try:
+            self.indexes.drop_index(index)
+        finally:
+            self._invalidate_ttl_cache()
 
     def drop_search_index(self, index: str):
         """
@@ -1220,7 +1231,10 @@ class Collection:
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.drop_indexes`.
         """
-        self.indexes.drop_indexes()
+        try:
+            self.indexes.drop_indexes()
+        finally:
+            self._invalidate_ttl_cache()
 
     def index_information(self) -> dict[str, Any]:
         """
@@ -1228,6 +1242,80 @@ class Collection:
         core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.index_information`.
         """
         return self.indexes.index_information()
+
+    def get_ttl_specs(self) -> list[dict[str, Any]]:
+        """
+        List TTL index specs declared on this collection.
+
+        Returns:
+            list[dict]: Each dict has ``index_name``, ``collection_name``,
+                ``field`` and ``expireAfterSeconds`` keys.
+        """
+        return self.indexes.get_ttl_specs()
+
+    def _ttl_specs_cached(self) -> list[dict[str, Any]]:
+        cached = self.__dict__.get("_ttl_specs_cache")
+        if cached is None:
+            cached = self.get_ttl_specs()
+            self._ttl_specs_cache = cached
+        return cached
+
+    def _invalidate_ttl_cache(self) -> None:
+        self._ttl_specs_cache = None
+
+    def purge_expired(self, now: datetime | None = None) -> int:
+        """
+        Delete documents expired under this collection's TTL indexes.
+
+        A document expires when ``now >= field_value + expireAfterSeconds``.
+        Both UTC datetimes (ISO strings) and numeric epoch seconds are
+        supported for the indexed field. Deletions are plain deletes and
+        fire normal ``watch()`` events.
+
+        Args:
+            now: Reference time (timezone-aware preferred; naive is assumed
+                UTC). Defaults to current UTC time. Accepts an explicit value
+                so tests need not sleep.
+
+        Returns:
+            int: Number of documents deleted.
+        """
+        specs = self._ttl_specs_cached()
+        if not specs:
+            return 0
+        if now is None:
+            ref = datetime.now(timezone.utc)
+        elif now.tzinfo is None:
+            ref = now.replace(tzinfo=timezone.utc)
+        else:
+            ref = now
+        total = 0
+        for spec in specs:
+            field = spec["field"]
+            expire = int(spec["expireAfterSeconds"])
+            cutoff = ref - timedelta(seconds=expire)
+            try:
+                result = self.delete_many({field: {"$lt": cutoff}})
+                total += result.deleted_count
+            except Exception as exc:
+                logger.debug("TTL datetime purge skipped: %s", exc)
+            try:
+                result = self.delete_many({field: {"$lt": cutoff.timestamp()}})
+                total += result.deleted_count
+            except Exception as exc:
+                logger.debug("TTL epoch purge skipped: %s", exc)
+        return total
+
+    def _auto_purge_ttl(self) -> None:
+        try:
+            if not self._ttl_specs_cached():
+                return
+        except Exception:
+            return
+        try:
+            self.purge_expired()
+        except Exception as exc:
+            logger.debug("TTL auto-purge skipped: %s", exc)
 
     # --- Other methods ---
     @property
@@ -1410,6 +1498,7 @@ class Collection:
         this method, the collection will no longer exist in the database.
         """
         self.db.execute(f"DROP TABLE IF EXISTS {quote_table_name(self.name)}")
+        self._invalidate_ttl_cache()
 
     def watch(
         self,

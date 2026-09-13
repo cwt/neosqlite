@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import threading
 from contextlib import contextmanager
 from typing import Any, Iterator, Literal
 
@@ -46,12 +47,21 @@ class Connection:
                         Can be 0/NONE, 1/FULL, 2/INCREMENTAL, or "NONE"/"FULL"/"INCREMENTAL".
                         If database has different auto_vacuum setting, migration may be triggered.
                       - translation_cache: SQL translation cache size (default: 100, 0 to disable)
+                      - ttl_sweep_interval_s: Optional TTL background sweep interval
+                        in seconds (default: None = disabled). When set, a daemon
+                        thread periodically deletes documents expired under
+                        ``expireAfterSeconds`` indexes. File-based DBs only;
+                        ``:memory:`` skips the thread.
         """
         self._collections: dict[str, Collection] = {}
         self._tokenizers: list[tuple[str, str]] = kwargs.pop("tokenizers", [])
         self.debug: bool = kwargs.pop("debug", False)
         self._is_clone = kwargs.pop("_is_clone", False)
-
+        self._ttl_sweep_interval: float | None = kwargs.pop(
+            "ttl_sweep_interval_s", None
+        )
+        self._ttl_stop: threading.Event = threading.Event()
+        self._ttl_thread: threading.Thread | None = None
 
         self._codec_options = kwargs.pop("codec_options", None)
         self._read_preference = kwargs.pop("read_preference", None)
@@ -80,6 +90,7 @@ class Connection:
         self._closed = False
         if not self._is_clone:
             self.connect(*args, **kwargs)
+            self._start_ttl_sweeper()
 
     @property
     def db_path(self) -> str:
@@ -267,6 +278,11 @@ class Connection:
         """
         if getattr(self, "_is_clone", False) or getattr(self, "_closed", False):
             return
+
+        try:
+            self._stop_ttl_sweeper()
+        except Exception:
+            pass
 
         # Clean up collections before closing the database
         self.cleanup()
@@ -598,6 +614,98 @@ class Connection:
             except Exception as exc:
                 logger.debug("drop_database skipped %r: %s", table_name, exc)
         self.db.commit()
+
+    def sweep_ttl_once(self) -> int:
+        """
+        Run one TTL sweep over all collections.
+
+        Opens a short-lived helper connection to the same file (so the
+        background thread never shares the main ``sqlite3`` handle) and
+        calls ``purge_expired()`` on every collection with TTL specs.
+
+        Returns:
+            int: Total number of expired documents deleted.
+        """
+        if getattr(self, "_closed", False):
+            return 0
+        if self._db_path == ":memory:":
+            return 0
+        total = 0
+        helper: Connection | None = None
+        try:
+            from .collection.index_manager import list_ttl_specs
+
+            probe = Connection(
+                self._db_path, ttl_sweep_interval_s=None, _is_clone=True
+            )
+            probe.db = sqlite3.connect(self._db_path)
+            helper = probe
+            specs = list_ttl_specs(probe.db)
+            by_collection: dict[str, bool] = {}
+            for spec in specs:
+                by_collection[spec["collection_name"]] = True
+            for coll_name in by_collection:
+                try:
+                    coll = helper.get_collection(coll_name)
+                    total += coll.purge_expired()
+                except Exception as exc:
+                    logger.debug("TTL sweep skipped %r: %s", coll_name, exc)
+            try:
+                helper.db.commit()
+            except Exception:
+                pass
+        except Exception as exc:
+            logger.debug("TTL sweep failed: %s", exc)
+        finally:
+            if helper is not None:
+                try:
+                    helper.db.close()
+                except Exception:
+                    pass
+        return total
+
+    def _start_ttl_sweeper(self) -> None:
+        interval = getattr(self, "_ttl_sweep_interval", None)
+        if interval is None:
+            return
+        try:
+            interval_f = float(interval)
+        except (TypeError, ValueError):
+            logger.debug("Invalid ttl_sweep_interval_s=%r; disabled", interval)
+            return
+        if interval_f <= 0:
+            return
+        if self._db_path == ":memory:":
+            logger.debug("TTL sweeper disabled for :memory: databases")
+            return
+        if getattr(self, "_is_clone", False):
+            return
+        self._ttl_sweep_interval = interval_f
+        self._ttl_stop.clear()
+        thread = threading.Thread(
+            target=self._ttl_sweep_loop,
+            name="neosqlite-ttl-sweeper",
+            daemon=True,
+        )
+        self._ttl_thread = thread
+        thread.start()
+
+    def _ttl_sweep_loop(self) -> None:
+        interval = float(self._ttl_sweep_interval or 60.0)
+        while not self._ttl_stop.wait(interval):
+            try:
+                self.sweep_ttl_once()
+            except Exception as exc:
+                logger.debug("TTL sweep loop error: %s", exc)
+
+    def _stop_ttl_sweeper(self) -> None:
+        stop = getattr(self, "_ttl_stop", None)
+        if stop is not None:
+            stop.set()
+        thread = getattr(self, "_ttl_thread", None)
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2.0)
+        self._ttl_thread = None
 
     def rename_collection(self, old_name: str, new_name: str) -> None:
         """

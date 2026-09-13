@@ -40,6 +40,7 @@ Welcome to the NeoSQLite structured knowledge base, organized according to the *
 | [GridFS Documentation](./gridfs.md) | `api_spec` | Specification and guide for `GridFS` and `GridFSBucket` implementations. |
 | [Text Search in NeoSQLite](./text-search.md) | `api_spec` | Full-text search using SQLite FTS5, `$text`, and custom tokenizers. |
 | [Change Streams with watch()](./watch.md) | `api_spec` | Change stream support via native SQLite triggers without replica sets. |
+| [TTL Indexes and Document Expiry](./ttl-indexes.md) | `api_spec` | `expireAfterSeconds` declaration with lazy and background expiry. |
 | [ObjectId Implementation](./objectid-implementation.md) | `api_spec` | 12-byte BSON-compatible ObjectId and binary SQLite storage format. |
 | [Aggregation Expressions Guide](./aggregation-expression-guide.md) | `api_spec` | Reference and usage guide for expression operators in aggregation. |
 | [PyMongo API Comparison](./pymongo-api-comparison.md) | `reference` | Comprehensive method-by-method PyMongo compatibility matrix. |

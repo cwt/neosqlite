@@ -211,6 +211,8 @@ These operators now provide clear error messages suggesting alternatives, matchi
 |-----------|--------|-------|
 | `create_index()` | ✅ | Single-key, compound, nested indexes; `expireAfterSeconds` TTL declaration |
 | `create_indexes()` | ✅ | Batch index creation (incl. TTL via `IndexModel`) |
+| `purge_expired()` | ✅ | NeoSQLite extension: delete TTL-expired docs (lazy + explicit) |
+| `get_ttl_specs()` | ✅ | NeoSQLite extension: list TTL index specs |
 | `list_indexes()` | ✅ | Returns cursor over indexes |
 | `drop_index()` | ✅ | Drop by name or specification |
 | `drop_indexes()` | ✅ | Drop all indexes |

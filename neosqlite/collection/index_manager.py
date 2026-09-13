@@ -85,6 +85,39 @@ def _validate_expire_after_seconds(value: Any) -> int:
     return value
 
 
+def list_ttl_specs(db, collection_name: str | None = None) -> list[dict]:
+    """List TTL index specs, optionally filtered by collection."""
+    try:
+        if collection_name is None:
+            rows = db.execute(
+                f"SELECT index_name, collection_name, field, "
+                f"expire_after_seconds FROM {_TTL_META_TABLE}"
+            ).fetchall()
+        else:
+            rows = db.execute(
+                f"SELECT index_name, collection_name, field, "
+                f"expire_after_seconds FROM {_TTL_META_TABLE} "
+                "WHERE collection_name = ?",
+                (collection_name,),
+            ).fetchall()
+    except Exception:
+        return []
+    specs = []
+    for index_name, coll, field, expire in rows:
+        try:
+            specs.append(
+                {
+                    "index_name": index_name,
+                    "collection_name": coll,
+                    "field": field,
+                    "expireAfterSeconds": int(expire),
+                }
+            )
+        except (TypeError, ValueError):
+            continue
+    return specs
+
+
 def _ensure_index_keys_table(db) -> None:
     db.execute(
         f"CREATE TABLE IF NOT EXISTS {_INDEX_KEYS_TABLE} ("
@@ -190,6 +223,10 @@ class IndexManager:
         Returns:
             str: The generated SQLite index name.
         """
+        try:
+            self.collection.__dict__["_ttl_specs_cache"] = None
+        except Exception:
+            pass
         expire: int | None = None
         if expireAfterSeconds is not None:
             expire = _validate_expire_after_seconds(expireAfterSeconds)
@@ -683,6 +720,10 @@ class IndexManager:
             index (str or list): The name of the index to drop. If a list is provided,
                                  it represents a compound index.
         """
+        try:
+            self.collection.__dict__["_ttl_specs_cache"] = None
+        except Exception:
+            pass
         # With native JSON indexing, we just need to drop the index
         if isinstance(index, str):
             # For single indexes
@@ -709,6 +750,10 @@ class IndexManager:
         This method retrieves the list of indexes using the list_indexes method
         and drops each one.
         """
+        try:
+            self.collection.__dict__["_ttl_specs_cache"] = None
+        except Exception:
+            pass
         indexes = self.list_indexes()
         for index in indexes:
             # Extract the actual index name from the full name
@@ -792,6 +837,16 @@ class IndexManager:
             pass
 
         return info
+
+    def get_ttl_specs(self) -> list[dict]:
+        """
+        List TTL index specs declared on this collection.
+
+        Returns:
+            list[dict]: Each dict has ``index_name``, ``collection_name``,
+                ``field`` and ``expireAfterSeconds`` keys.
+        """
+        return list_ttl_specs(self.collection.db, self.collection.name)
 
     def create_search_index(
         self,
