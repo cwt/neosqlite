@@ -17,6 +17,57 @@ This document records the chronological history of structural changes, additions
 
 ---
 
+## 2026-09-13 — Implement micronote.pub Migration TODOs
+
+### Summary
+Implemented all three `micronote.pub` migration proposals with per-feature unit tests; full suite (2917 passed), mypy, ruff, and black clean.
+
+### Key Modifications
+1. **PyMongo modern parity** (`tests/test_pymongo_modern_parity.py`):
+   - `find()` honors `limit`/`skip`/`sort` kwargs; `create_index()` accepts `expireAfterSeconds`/`name`/extra options with TTL metadata in `_neosqlite_ttl_indexes`; `Connection.get_database()`/`drop_database()` compat helpers.
+2. **TTL index support** (`tests/test_ttl_index_support.py`, `documents/ttl-indexes.md`):
+   - `purge_expired()` plus auto-purge on `find`/`find_one`; opt-in `Connection(ttl_sweep_interval_s=...)` background sweeper and `sweep_ttl_once()`.
+3. **Watch job-queue hardening** (`tests/test_watch_job_queue.py`, `examples/watch_job_queue.py`):
+   - `resume_after`/`start_after` replay with `resume_token` property and bounded retention; library-side `$match` pipeline filtering; documented drain-then-tail recipe in `documents/watch.md`.
+4. **Marked proposals implemented** in `documents/todo/` and refreshed `documents/pymongo-api-comparison.md`.
+
+---
+
+## 2026-09-13 — Trim TODOs After micronote.pub Modernization Decision
+
+### Summary
+`micronote.pub` will modernize to modern PyMongo/`GridFSBucket` usage, so deprecated-API shims are dropped from the NeoSQLite roadmap. Removed two proposals, added one trimmed modern-parity proposal.
+
+### Key Modifications
+1. **Removed `pymongo-legacy-compat.md`** (superseded):
+   - Deprecated shims (`count`, `remove`, `update`, legacy `GridFS` layout) move to the app.
+2. **Removed `gridfs-legacy-query-compat.md`** (superseded):
+   - App adopts `GridFSBucket` with `metadata={url,kind,size}` natively.
+3. **Added `pymongo-modern-parity.md`**:
+   - Tracks only modern gaps: `find(limit/skip/sort)` kwargs, index options, `drop_database`/`get_database`.
+4. **Updated `ttl-index-support.md`, `todo/index.md`**.
+
+---
+
+## 2026-09-13 — micronote.pub Migration TODOs
+
+### Summary
+Added four OKF `roadmap` proposals under `documents/todo/` covering the missing pieces required to migrate `micronote.pub` from MongoDB/Celery/GridFS to NeoSQLite, and updated the todo index.
+
+### Key Modifications
+1. **Added `pymongo-legacy-compat.md`**:
+   - Shims for `count`, `Cursor.count`, `remove`, `update`, `find(limit/skip/sort)` kwargs, `create_index(expireAfterSeconds)`, `drop_database`/`get_database`.
+2. **Added `ttl-index-support.md`**:
+   - `expireAfterSeconds` declaration plus lazy/background expiry for `cache2`-style caches.
+3. **Added `gridfs-legacy-query-compat.md`**:
+   - Top-level `url/size/kind` → `metadata.*` query translation and `uploadDate` alias for `MediaCache`.
+4. **Added `watch-job-queue-hardening.md`**:
+   - Resume tokens, pipeline filtering, and a documented `watch()` job-queue recipe to replace Celery.
+5. **Updated `todo/index.md`**:
+   - Cataloged the four new proposals, bumped bundle metadata to v1.15.2.
+
+---
+
 ## 2026-09-08 — Release v1.15.2
 
 ### Summary
