@@ -109,7 +109,9 @@ class Collection:
         document: dict[str, Any] = neosqlite_json_loads(data)
 
         # If stored_id is provided, parse it. Otherwise look it up or use the auto-increment id
-        final_id = self._parse_stored_id(stored_id) if stored_id is not None else None
+        final_id = (
+            self._parse_stored_id(stored_id) if stored_id is not None else None
+        )
         if final_id is None:
             final_id = self._get_stored_id(id)
 
@@ -143,7 +145,9 @@ class Collection:
                 try:
                     return neosqlite_json_loads(s)
                 except Exception as e:
-                    logger.debug(f"Failed to parse JSON string in _get_id_value: {e}")
+                    logger.debug(
+                        f"Failed to parse JSON string in _get_id_value: {e}"
+                    )
                     return s
             case _:
                 return stored_id
@@ -241,7 +245,9 @@ class Collection:
                 return doc_id
         except Exception as e:
             # If there's any error retrieving the _id, return None
-            logger.debug(f"Error in _get_stored_id for collection '{self.name}': {e}")
+            logger.debug(
+                f"Error in _get_stored_id for collection '{self.name}': {e}"
+            )
             return None
 
     @property
@@ -386,7 +392,9 @@ class Collection:
                 create_unique_index_on_id(self.db, self.name)
         except Exception as e:
             # If we can't add the column, continue without it (for backward compatibility)
-            logger.debug(f"Failed to add _id column to collection '{self.name}': {e}")
+            logger.debug(
+                f"Failed to add _id column to collection '{self.name}': {e}"
+            )
             pass
 
     def __getattr__(self, name: str) -> Any:
@@ -441,7 +449,9 @@ class Collection:
         }
         prefix = old_name + "_"
         fts_rows = [
-            (t,) for t in all_tables if t.startswith(prefix) and t.endswith("_fts")
+            (t,)
+            for t in all_tables
+            if t.startswith(prefix) and t.endswith("_fts")
         ]
         for (fts_name,) in fts_rows:
             if not fts_name.startswith(f"{old_name}_"):
@@ -478,7 +488,9 @@ class Collection:
             if count_row := self.db.execute(
                 f"SELECT COUNT(*) FROM {quote_table_name(self.name)}"
             ).fetchone():
-                options["count"] = int(count_row[0]) if count_row[0] is not None else 0
+                options["count"] = (
+                    int(count_row[0]) if count_row[0] is not None else 0
+                )
             else:
                 options["count"] = 0
 
@@ -491,7 +503,9 @@ class Collection:
             return options
         except sqlite3.Error as e:
             # If we can't get detailed information, return basic info
-            logger.debug(f"Failed to get collection details for '{self.name}': {e}")
+            logger.debug(
+                f"Failed to get collection details for '{self.name}': {e}"
+            )
             options["columns"] = []
             options["indexes"] = []
             options["count"] = 0
@@ -695,7 +709,11 @@ class Collection:
         limit: int | None = None,
         skip: int | None = None,
         sort: (
-            list[tuple[str, int]] | dict[str, int] | str | tuple[str, int] | None
+            list[tuple[str, int]]
+            | dict[str, int]
+            | str
+            | tuple[str, int]
+            | None
         ) = None,
         **kwargs: Any,
     ) -> Cursor:
@@ -734,7 +752,9 @@ class Collection:
             return self._find_as_gridfs(filter, session=session)
 
         self._auto_purge_ttl()
-        cursor = self.query_engine.find(filter, projection, hint, session=session)
+        cursor = self.query_engine.find(
+            filter, projection, hint, session=session
+        )
         if skip:
             cursor = cursor.skip(int(skip))
         if limit:
@@ -859,7 +879,9 @@ class Collection:
                                     where_parts.append("1=0")
                                 else:
                                     placeholders = ", ".join("?" * len(op_val))
-                                    where_parts.append(f"{column} IN ({placeholders})")
+                                    where_parts.append(
+                                        f"{column} IN ({placeholders})"
+                                    )
                                     params.extend(op_val)
                             case _:
                                 where_parts.append("1=0")
@@ -869,7 +891,9 @@ class Collection:
             else:
                 # Unknown chunk field — match nothing, never everything.
                 where_parts.append("1=0")
-        where_clause = "WHERE " + " AND ".join(where_parts) if where_parts else ""
+        where_clause = (
+            "WHERE " + " AND ".join(where_parts) if where_parts else ""
+        )
         query = f"SELECT _id, files_id, n, data FROM {table} {where_clause}"
         cursor = self.db.execute(query, params)
         return [
@@ -1391,7 +1415,10 @@ class Collection:
         Returns:
             Any: The read preference.
         """
-        if hasattr(self, "_read_preference") and self._read_preference is not None:
+        if (
+            hasattr(self, "_read_preference")
+            and self._read_preference is not None
+        ):
             return self._read_preference
         return self.database.read_preference if self.database else None
 

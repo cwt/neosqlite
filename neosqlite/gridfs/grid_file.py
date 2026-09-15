@@ -90,7 +90,9 @@ class GridIn:
         """
         return serialize_aliases(self._aliases)
 
-    def _serialize_metadata(self, metadata: dict[str, Any] | None) -> str | None:
+    def _serialize_metadata(
+        self, metadata: dict[str, Any] | None
+    ) -> str | None:
         """
         Serialize metadata to JSON string.
 
@@ -102,7 +104,9 @@ class GridIn:
         """
         return serialize_metadata(metadata)
 
-    def _deserialize_metadata(self, metadata_str: str | None) -> dict[str, Any] | None:
+    def _deserialize_metadata(
+        self, metadata_str: str | None
+    ) -> dict[str, Any] | None:
         """
         Deserialize metadata from JSON string.
 
@@ -178,7 +182,9 @@ class GridIn:
             >= self._chunk_size_bytes
         ):
             start = getattr(self, "_buffer_start", 0)
-            chunk_data = bytes(self._buffer[start : start + self._chunk_size_bytes])
+            chunk_data = bytes(
+                self._buffer[start : start + self._chunk_size_bytes]
+            )
             self._buffer_start = start + self._chunk_size_bytes
 
             # If this is the first chunk, create the file document
@@ -472,7 +478,9 @@ class GridOut:
             has_content_type = column_exists(
                 self._db, self._files_collection, "content_type"
             )
-            has_aliases = column_exists(self._db, self._files_collection, "aliases")
+            has_aliases = column_exists(
+                self._db, self._files_collection, "aliases"
+            )
         except (AttributeError, TypeError) as e:
             # Handle mocked databases in tests - assume old schema
             logger.debug(f"{e=}")
@@ -518,7 +526,9 @@ class GridOut:
         row_idx += 1
         metadata_str = row[row_idx]
         row_idx += 1
-        self._stored_oid = row[row_idx]  # Store the _id value (ObjectId hex string)
+        self._stored_oid = row[
+            row_idx
+        ]  # Store the _id value (ObjectId hex string)
         row_idx += 1
 
         # Handle optional columns with defaults
@@ -589,7 +599,9 @@ class GridOut:
         """
         return self._actual_id
 
-    def _deserialize_metadata(self, metadata_str: str | None) -> dict[str, Any] | None:
+    def _deserialize_metadata(
+        self, metadata_str: str | None
+    ) -> dict[str, Any] | None:
         """
         Deserialize metadata from JSON string.
 
@@ -632,7 +644,9 @@ class GridOut:
                 # Abandoned upload: length was never finalized (#127)
                 from .errors import CorruptGridFile
 
-                raise CorruptGridFile("File has no finalized length (abandoned upload)")
+                raise CorruptGridFile(
+                    "File has no finalized length (abandoned upload)"
+                )
             size = self._length - self._position
 
         if size <= 0:
@@ -648,12 +662,16 @@ class GridOut:
 
             # Calculate how much we can read from the current chunk
             chunk_offset = self._position % self._chunk_size
-            bytes_available_in_chunk = len(self._current_chunk_data) - chunk_offset
+            bytes_available_in_chunk = (
+                len(self._current_chunk_data) - chunk_offset
+            )
             bytes_to_read = min(size - bytes_read, bytes_available_in_chunk)
 
             # Read from the current chunk
             result.extend(
-                self._current_chunk_data[chunk_offset : chunk_offset + bytes_to_read]
+                self._current_chunk_data[
+                    chunk_offset : chunk_offset + bytes_to_read
+                ]
             )
 
             # Update position
@@ -872,7 +890,9 @@ def _append_json_column_operators(
                     )
                     params.extend([norm, norm])
             case "$gt" | "$gte" | "$lt" | "$lte":
-                sql_op = {"$gt": ">", "$gte": ">=", "$lt": "<", "$lte": "<="}[op]
+                sql_op = {"$gt": ">", "$gte": ">=", "$lt": "<", "$lte": "<="}[
+                    op
+                ]
                 if isinstance(op_val, (dict, list)):
                     where_conditions.append("1=0")
                     continue
@@ -892,21 +912,27 @@ def _append_json_column_operators(
                     continue
                 has_null = any(v is None for v in op_val)
                 non_nulls = [
-                    _normalize_json_query_value(v)
-                    if not isinstance(v, (dict, list))
-                    else json.dumps(v, default=str)
+                    (
+                        _normalize_json_query_value(v)
+                        if not isinstance(v, (dict, list))
+                        else json.dumps(v, default=str)
+                    )
                     for v in op_val
                     if v is not None
                 ]
                 # JSON objects/arrays need json() comparison; split them out.
                 scalar_vals = [
                     v
-                    for v, orig in zip(non_nulls, [x for x in op_val if x is not None])
+                    for v, orig in zip(
+                        non_nulls, [x for x in op_val if x is not None]
+                    )
                     if not isinstance(orig, (dict, list))
                 ]
                 json_vals = [
                     v
-                    for v, orig in zip(non_nulls, [x for x in op_val if x is not None])
+                    for v, orig in zip(
+                        non_nulls, [x for x in op_val if x is not None]
+                    )
                     if isinstance(orig, (dict, list))
                 ]
                 or_parts: list[str] = []
@@ -973,9 +999,14 @@ def _append_json_column_operators(
                         where_conditions.append("1=0")
             case "$regex":
                 pattern = (
-                    op_val.pattern if isinstance(op_val, re.Pattern) else str(op_val)
+                    op_val.pattern
+                    if isinstance(op_val, re.Pattern)
+                    else str(op_val)
                 )
-                if isinstance(regex_options, str) and "i" in regex_options.lower():
+                if (
+                    isinstance(regex_options, str)
+                    and "i" in regex_options.lower()
+                ):
                     where_conditions.append(
                         f"({extract} LIKE ? ESCAPE '\\' COLLATE NOCASE OR "
                         f"({json_type} = 'array' AND EXISTS "
@@ -1099,7 +1130,9 @@ class GridOutCursor:
                 # Logical operators: never silently drop — build recursively.
                 if key in ("$and", "$or", "$nor"):
                     if not isinstance(value, (list, tuple)):
-                        logger.debug(f"Invalid '{key}' GridFS filter: {value!r}")
+                        logger.debug(
+                            f"Invalid '{key}' GridFS filter: {value!r}"
+                        )
                         conds.append("1=0")
                         return
                     sub_clauses: list[str] = []
@@ -1116,12 +1149,16 @@ class GridOutCursor:
                         for sk, sv in subfilter.items():
                             _append_one(sk, sv, temp_conds, temp_params)
                         if temp_conds:
-                            sub_clauses.append("(" + " AND ".join(temp_conds) + ")")
+                            sub_clauses.append(
+                                "(" + " AND ".join(temp_conds) + ")"
+                            )
                             sub_params.extend(temp_params)
                         else:
                             sub_clauses.append("(1=1)")
                     if not sub_clauses:
-                        conds.append("1=1" if key in ("$and", "$nor") else "1=0")
+                        conds.append(
+                            "1=1" if key in ("$and", "$nor") else "1=0"
+                        )
                         return
                     if key == "$and":
                         conds.append("(" + " AND ".join(sub_clauses) + ")")
@@ -1134,7 +1171,9 @@ class GridOutCursor:
                         # NULL as non-match, matching MongoDB $nor.
                         conds.append(
                             "("
-                            + " AND ".join(f"({c} IS NOT TRUE)" for c in sub_clauses)
+                            + " AND ".join(
+                                f"({c} IS NOT TRUE)" for c in sub_clauses
+                            )
                             + ")"
                         )
                     plist.extend(sub_params)
@@ -1151,11 +1190,15 @@ class GridOutCursor:
                 if isinstance(key, str) and "." in key:
                     top, _, sub = key.partition(".")
                     if top in ("metadata", "aliases"):
-                        _append_dotted_json_condition(top, sub, value, conds, plist)
+                        _append_dotted_json_condition(
+                            top, sub, value, conds, plist
+                        )
                     else:
                         # Dotted query on a scalar/unknown top-level field
                         # can never match — but must not match everything.
-                        logger.debug(f"Unsupported dotted GridFS filter '{key}'")
+                        logger.debug(
+                            f"Unsupported dotted GridFS filter '{key}'"
+                        )
                         conds.append("1=0")
                     return
 

@@ -7,7 +7,7 @@ tags:
   - releases
   - changelog
 timestamp: 2026-09-13T00:00:00Z
-version: "1.16.2"
+version: "1.16.3"
 lifecycle: active
 ---
 
@@ -19,6 +19,7 @@ This directory contains individual release notes and detailed changelogs for eac
 
 | Version | Release Date | Highlights & Summary |
 | :--- | :--- | :--- |
+| [v1.16.3](./v1.16.3.md) | 2026-09-15 | NeoSQLite v1.16.3 is a correctness patch fixing datetime queries returning field-less documents for rows stored as JSONB. |
 | [v1.16.2](./v1.16.2.md) | 2026-09-13 | NeoSQLite v1.16.2 is a correctness patch fixing GridOutCursor silently dropping dotted metadata filters and fs.chunks delegation. |
 | [v1.16.1](./v1.16.1.md) | 2026-09-13 | NeoSQLite v1.16.1 is a correctness patch adding Python-level ObjectId ordering and fixing _id range queries and counts. |
 | [v1.16.0](./v1.16.0.md) | 2026-09-13 | NeoSQLite v1.16.0 is a feature release delivering PyMongo modern API parity, TTL index expiry, and change-stream hardening for SQLite-backed job queues. |

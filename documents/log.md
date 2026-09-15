@@ -7,13 +7,28 @@ tags:
   - bundle
   - changelog
 timestamp: 2026-09-13T00:00:00Z
-version: "1.16.2"
+version: "1.16.3"
 lifecycle: active
 ---
 
 # NeoSQLite Knowledge Base Bundle Log
 
 This document records the chronological history of structural changes, additions, deprecations, and refactoring operations performed on the NeoSQLite Open Knowledge Format (OKF) bundle.
+
+---
+
+## 2026-09-15 — Release v1.16.3
+
+### Summary
+Correctness patch: datetime queries returned field-less documents for rows stored as JSONB.
+
+### Key Modifications
+1. **Added `releases/v1.16.3.md` Release Notes**:
+   - Documents the raw `data` SELECT in `DateTimeQueryProcessor` (SQL tier and temporary-table tier), the resulting `Skipping corrupted document` warnings and `{_id, __neosqlite_corrupted__}` stubs, and the `json_data_column()` fix with migration guidance.
+2. **Bumped version to v1.16.3**:
+   - `pyproject.toml`, `README.md` (Latest Release), `documents/index.md`, `documents/releases/index.md`, and `documents/pymongo-api-comparison.md`.
+3. **No spec document changes required**:
+   - The fix is read-path-only and reuses the `json_data_column` conversion contract already described in `documents/temp-table-breakdown.md`.
 
 ---
 

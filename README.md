@@ -34,16 +34,16 @@
 
 See [Release Notes](documents/releases/) for the full history.
 
-## Latest Release: v1.16.2
+## Latest Release: v1.16.3
 
-NeoSQLite v1.16.2 is a **correctness patch** fixing `GridOutCursor` silently dropping dotted `metadata.*` filters and `fs.chunks` delegation. Fully backward compatible.
+NeoSQLite v1.16.3 is a **correctness patch** fixing datetime queries returning field-less documents for rows stored as JSONB. Fully backward compatible.
 
 **Key Highlights:**
-- **Dotted Metadata Filters Fixed** — `bucket.find({"metadata.url": ...})` and `{"metadata.size": 720}` now filter via `json_extract` instead of returning the whole bucket.
-- **No More Silent Whole-Bucket Matches** — unknown fields/operators match nothing; `$nor` is NULL-safe.
-- **`fs.chunks.find()` Fixed** — chunks queries return real chunk dicts instead of files.
+- **Datetime Queries Return Full Documents** — the SQL tier and temporary-table tier now convert JSONB rows with `json(data)` before decoding, like every other read path.
+- **No More "Skipping corrupted document"** — updated rows decode again instead of returning `{_id, __neosqlite_corrupted__}` stubs.
+- **Read-Path Only** — no storage format, schema, or API changes.
 
-For full details, see [documents/releases/v1.16.2.md](documents/releases/v1.16.2.md). Previous release highlights are in [documents/releases/v1.16.1.md](documents/releases/v1.16.1.md).
+For full details, see [documents/releases/v1.16.3.md](documents/releases/v1.16.3.md). Previous release highlights are in [documents/releases/v1.16.2.md](documents/releases/v1.16.2.md).
 
 ## Installation
 
