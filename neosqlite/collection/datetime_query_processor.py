@@ -21,7 +21,7 @@ from typing import Any
 from ..sql_utils import quote_table_name
 
 logger = logging.getLogger(__name__)
-from .jsonb_support import JSONBContext
+from .jsonb_support import JSONBContext, json_data_column
 from .query_helper import QueryHelper
 from .sql_translator_unified import SQLFieldAccessor, SQLTranslator
 from .temporary_table_aggregation import (
@@ -281,7 +281,10 @@ class DateTimeQueryProcessor:
             return None
 
         # Build the SQL query using json_* functions for datetime comparison
-        cmd = f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)} {where_clause}"
+        cmd = (
+            f"SELECT id, _id, {json_data_column(self.jsonb.jsonb_supported)} as data "
+            f"FROM {quote_table_name(self.collection.name)} {where_clause}"
+        )
 
         try:
             cursor = self.db.execute(cmd, params)
@@ -324,7 +327,8 @@ class DateTimeQueryProcessor:
                 base_stage = {"_base": True}
                 temp_table = create_temp(
                     base_stage,
-                    f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)}",
+                    f"SELECT id, _id, {json_data_column(self.jsonb.jsonb_supported)} as data "
+                    f"FROM {quote_table_name(self.collection.name)}",
                 )
 
                 # To ensure we use json_* functions for datetime queries,
@@ -364,7 +368,8 @@ class DateTimeQueryProcessor:
 
                 # Retrieve results from the filtered table
                 cursor = self.db.execute(
-                    f"SELECT id, _id, data FROM {result_table}"
+                    f"SELECT id, _id, {json_data_column(self.jsonb.jsonb_supported)} as data "
+                    f"FROM {result_table}"
                 )
                 results = [
                     self.collection._load_with_stored_id(row[0], row[2], row[1])

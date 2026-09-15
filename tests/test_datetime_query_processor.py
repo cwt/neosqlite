@@ -10,6 +10,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from neosqlite import Connection
 from neosqlite.collection import sqlite3
 from neosqlite.collection.datetime_query_processor import (
     DateTimeQueryProcessor,
@@ -834,6 +835,58 @@ def test_datetime_timezone_normalization_in_queries(setup_test_db):
     assert pst_results is not None
     assert ist_results is not None
     assert no_tz_results is not None
+
+
+def test_datetime_query_returns_documents_updated_with_jsonb(tmp_path):
+    """Datetime filters must return full documents after JSONB ($set) updates."""
+    db = Connection(str(tmp_path / "datetime_jsonb.db"))
+    collection = db["things"]
+    inserted = collection.insert_one(
+        {"name": "x", "when": datetime.datetime.now(datetime.timezone.utc)}
+    )
+    collection.update_one(
+        {"_id": inserted.inserted_id}, {"$set": {"status": "pending"}}
+    )
+
+    docs = list(
+        collection.find(
+            {
+                "status": "pending",
+                "when": {"$lte": datetime.datetime.now(datetime.timezone.utc)},
+            }
+        )
+    )
+
+    assert len(docs) == 1
+    assert docs[0]["name"] == "x"
+    assert docs[0]["status"] == "pending"
+    assert "__neosqlite_corrupted__" not in docs[0]
+
+
+def test_temp_table_tier_returns_documents_updated_with_jsonb(tmp_path):
+    """The temporary-table tier must also decode JSONB rows before returning."""
+    db = Connection(str(tmp_path / "datetime_jsonb_temp.db"))
+    collection = db["things"]
+    inserted = collection.insert_one(
+        {"name": "x", "when": datetime.datetime.now(datetime.timezone.utc)}
+    )
+    collection.update_one(
+        {"_id": inserted.inserted_id}, {"$set": {"status": "pending"}}
+    )
+    processor = DateTimeQueryProcessor(collection)
+
+    results = processor._process_with_temp_table_tier(
+        {
+            "status": "pending",
+            "when": {"$lte": datetime.datetime.now(datetime.timezone.utc)},
+        }
+    )
+
+    assert results is not None
+    assert len(results) == 1
+    assert results[0]["name"] == "x"
+    assert results[0]["status"] == "pending"
+    assert "__neosqlite_corrupted__" not in results[0]
 
 
 if __name__ == "__main__":
