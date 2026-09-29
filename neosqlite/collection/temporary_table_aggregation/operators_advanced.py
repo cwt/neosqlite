@@ -328,7 +328,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             )
         other_table = create_temp(
             {"$unionWith": union_spec},
-            f"SELECT {other_select_cols} FROM {coll_name}",
+            f"SELECT {other_select_cols} FROM {quote_table_name(coll_name)}",
         )
 
         # Union the two tables with explicit column lists
@@ -727,7 +727,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                 t.data as found_data,
                 0 as depth
             FROM {current_table} p
-            JOIN {from_collection} t ON {target_to_sql} = {start_with_sql}
+            JOIN {quote_table_name(str(from_collection))} t ON {target_to_sql} = {start_with_sql}
             WHERE 1=1 {restrict_where}
         """
 
@@ -741,7 +741,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                 t.data as found_data,
                 r.depth + 1
             FROM {recurse_cte} r
-            JOIN {from_collection} t ON {target_to_sql} = {recurse_from_sql}
+            JOIN {quote_table_name(str(from_collection))} t ON {target_to_sql} = {recurse_from_sql}
             WHERE 1=1 {max_depth_cond} {restrict_where}
         """
 

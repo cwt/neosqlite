@@ -9,6 +9,8 @@ This module reproduces three specific errors seen in production:
 These tests are designed to reproduce the errors so that fixes can be validated.
 """
 
+import pytest
+
 import neosqlite
 from neosqlite import Binary
 
@@ -776,6 +778,54 @@ class TestEdgeCases:
             assert "got" not in res[0]
             assert "x" not in res[0]
             assert "users,sqlite_sequence" not in str(res[0])
+
+    def test_union_with_collection_name_sql_injection_prevented(self):
+        """Test that malicious 'coll' payload cannot inject SQL expressions in $unionWith."""
+        with neosqlite.Connection(":memory:") as conn:
+            conn.users.insert_one({"_id": 1, "name": "alice"})
+            conn.secret.insert_one({"_id": 1, "secret_key": "12345"})
+            payload = "(select id, _id, data from secret)"
+            with pytest.raises(ValueError, match="Invalid identifier"):
+                list(conn.users.aggregate([{"$unionWith": {"coll": payload}}]))
+
+    def test_graph_lookup_collection_name_sql_injection_prevented(self):
+        """Test that malicious 'from' payload cannot inject SQL expressions in $graphLookup."""
+        with neosqlite.Connection(":memory:") as conn:
+            conn.users.insert_one({"_id": 1, "name": "alice"})
+            conn.secret.insert_one({"_id": 1, "secret_key": "12345"})
+            payload = "(select id, _id, data from secret)"
+            pipeline = [
+                {
+                    "$graphLookup": {
+                        "from": payload,
+                        "startWith": "$name",
+                        "connectFromField": "name",
+                        "connectToField": "name",
+                        "as": "hierarchy",
+                    }
+                }
+            ]
+            with pytest.raises(ValueError, match="Invalid identifier"):
+                list(conn.users.aggregate(pipeline))
+
+    def test_lookup_collection_name_sql_injection_prevented(self):
+        """Test that malicious 'from' payload cannot inject SQL expressions in $lookup."""
+        with neosqlite.Connection(":memory:") as conn:
+            conn.users.insert_one({"_id": 1, "name": "alice"})
+            conn.secret.insert_one({"_id": 1, "secret_key": "12345"})
+            payload = "(select id, _id, data from secret)"
+            pipeline = [
+                {
+                    "$lookup": {
+                        "from": payload,
+                        "localField": "_id",
+                        "foreignField": "user_id",
+                        "as": "matched",
+                    }
+                }
+            ]
+            with pytest.raises(ValueError, match="Invalid identifier"):
+                list(conn.users.aggregate(pipeline))
 
 
 """

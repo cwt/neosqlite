@@ -526,7 +526,7 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
             f"json({json_set_func}(main_table.data, '{parse_json_path(as_field)}', "
             f"coalesCE(( "
             f"  SELECT {self.jsonb.json_group_array_function}(json({json_set_func}(related.data, '$._id', related._id))) "
-            f"  FROM {from_collection} as related "
+            f"  FROM {quote_table_name(from_collection)} as related "
             f"  WHERE {foreign_extract} = "
             f"        {local_extract} "
             f"), json('[]'))) as data"
