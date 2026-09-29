@@ -724,3 +724,33 @@ def test_objectid_is_valid_with_exception():
         "1234567890123456789012g4"  # Contains 'g' which is invalid hex
     )
     assert ObjectId.is_valid(bad_hex_like_string) is False
+
+
+def test_concurrent_objectid_generation_no_duplicates():
+    """Verify concurrent threads generating ObjectIds do not produce duplicates."""
+    import sys
+    import threading
+
+    generated = []
+    lock = threading.Lock()
+
+    def worker():
+        local_ids = []
+        for _ in range(5000):
+            local_ids.append(ObjectId())
+        with lock:
+            generated.extend(local_ids)
+
+    old_interval = sys.getswitchinterval()
+    try:
+        sys.setswitchinterval(1e-6)
+        threads = [threading.Thread(target=worker) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        sys.setswitchinterval(old_interval)
+
+    assert len(generated) == 40000
+    assert len(set(generated)) == 40000

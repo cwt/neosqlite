@@ -119,16 +119,15 @@ class ObjectId:
 
             # Increment counter and keep only 3 bytes
             cls._counter = (cls._counter + 1) % 0x1000000
+            counter_val = cls._counter
+            random_bytes = cls._random_bytes
 
         # Build the 12-byte ObjectId according to MongoDB specification:
         # 4 bytes: timestamp (Unix timestamp, big-endian)
         timestamp = int(time.time()).to_bytes(4, "big")
 
-        # 5 bytes: random value (big-endian)
-        random_bytes = cls._random_bytes
-
         # 3 bytes: counter (big-endian)
-        counter = cls._counter.to_bytes(3, "big")
+        counter = counter_val.to_bytes(3, "big")
 
         return timestamp + random_bytes + counter
 
@@ -164,16 +163,15 @@ class ObjectId:
 
             # Increment counter and keep only 3 bytes
             cls._counter = (cls._counter + 1) % 0x1000000
+            counter_val = cls._counter
+            random_bytes = cls._random_bytes
 
         # Build the 12-byte ObjectId according to MongoDB specification:
         # 4 bytes: provided timestamp (big-endian)
         timestamp_bytes = timestamp.to_bytes(4, "big")
 
-        # 5 bytes: random value (big-endian)
-        random_bytes = cls._random_bytes
-
         # 3 bytes: counter (big-endian)
-        counter = cls._counter.to_bytes(3, "big")
+        counter = counter_val.to_bytes(3, "big")
 
         return timestamp_bytes + random_bytes + counter
 
