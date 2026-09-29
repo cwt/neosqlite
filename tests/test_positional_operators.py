@@ -391,3 +391,128 @@ class TestPositionalKillSwitch:
             )
             assert doc_normal["values"] == doc_fallback["values"]
             assert doc_normal["values"] == [0, 0, 0]
+
+
+class TestUpdateManyPositional:
+    """Test update_many with positional operators and array filters."""
+
+    def test_update_many_positional_dollar(self):
+        """Test update_many with $ operator updates first matching element across all documents."""
+        with neosqlite.Connection(":memory:") as conn:
+            coll = conn.test_collection
+            coll.insert_many(
+                [
+                    {"_id": 1, "scores": [80, 90, 100]},
+                    {"_id": 2, "scores": [70, 90, 85]},
+                    {"_id": 3, "scores": [60, 65, 70]},
+                ]
+            )
+
+            result = coll.update_many(
+                {"scores": 90}, {"$set": {"scores.$": 95}}
+            )
+
+            assert result.matched_count == 2
+            assert result.modified_count == 2
+
+            doc1 = coll.find_one({"_id": 1})
+            doc2 = coll.find_one({"_id": 2})
+            doc3 = coll.find_one({"_id": 3})
+
+            assert doc1["scores"] == [80, 95, 100]
+            assert doc2["scores"] == [70, 95, 85]
+            assert doc3["scores"] == [60, 65, 70]
+
+    def test_update_many_positional_dollar_modified_count(self):
+        """Test update_many accurately counts modified documents when values are unchanged."""
+        with neosqlite.Connection(":memory:") as conn:
+            coll = conn.test_collection
+            coll.insert_many(
+                [
+                    {"_id": 1, "scores": [80, 95, 100]},
+                    {"_id": 2, "scores": [70, 90, 85]},
+                ]
+            )
+
+            # Both match the filter, but doc1 already has 95 at the matching position
+            result = coll.update_many(
+                {"scores": {"$in": [90, 95]}}, {"$set": {"scores.$": 95}}
+            )
+
+            assert result.matched_count == 2
+            assert result.modified_count == 1
+
+            assert coll.find_one({"_id": 1})["scores"] == [80, 95, 100]
+            assert coll.find_one({"_id": 2})["scores"] == [70, 95, 85]
+
+    def test_update_many_array_filters(self):
+        """Test update_many with array_filters updates filtered elements across documents."""
+        with neosqlite.Connection(":memory:") as conn:
+            coll = conn.test_collection
+            coll.insert_many(
+                [
+                    {"_id": 1, "scores": [80, 90, 100, 90]},
+                    {"_id": 2, "scores": [70, 90, 85, 92]},
+                ]
+            )
+
+            result = coll.update_many(
+                {},
+                {"$set": {"scores.$[elem]": 95}},
+                array_filters=[{"elem": {"$gte": 90}}],
+            )
+
+            assert result.matched_count == 2
+            assert result.modified_count == 2
+
+            doc1 = coll.find_one({"_id": 1})
+            doc2 = coll.find_one({"_id": 2})
+
+            assert doc1["scores"] == [80, 95, 95, 95]
+            assert doc2["scores"] == [70, 95, 85, 95]
+
+    def test_update_many_upsert_when_no_match(self):
+        """Test update_many with upsert=True inserts document when no documents match."""
+        with neosqlite.Connection(":memory:") as conn:
+            coll = conn.test_collection
+            result = coll.update_many(
+                {"item": "book", "qty": 0},
+                {"$set": {"status": "out_of_stock"}},
+                upsert=True,
+            )
+
+            assert result.matched_count == 0
+            assert result.modified_count == 0
+            assert result.upserted_id is not None
+
+            doc = coll.find_one({"_id": result.upserted_id})
+            assert doc is not None
+            assert doc["item"] == "book"
+            assert doc["qty"] == 0
+            assert doc["status"] == "out_of_stock"
+
+    def test_update_many_force_fallback_positional(self):
+        """Test update_many with positional operators when force fallback is enabled."""
+        with neosqlite.Connection(":memory:") as conn:
+            coll = conn.test_collection
+            coll.insert_many(
+                [
+                    {"_id": 1, "scores": [80, 90, 100]},
+                    {"_id": 2, "scores": [70, 90, 85]},
+                ]
+            )
+
+            original_state = get_force_fallback()
+            try:
+                set_force_fallback(True)
+                result = coll.update_many(
+                    {"scores": 90}, {"$set": {"scores.$": 99}}
+                )
+
+                assert result.matched_count == 2
+                assert result.modified_count == 2
+
+                assert coll.find_one({"_id": 1})["scores"] == [80, 99, 100]
+                assert coll.find_one({"_id": 2})["scores"] == [70, 99, 85]
+            finally:
+                set_force_fallback(original_state)

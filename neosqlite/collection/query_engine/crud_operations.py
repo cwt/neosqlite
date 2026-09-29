@@ -354,6 +354,8 @@ class CRUDOperationsMixin(QueryEngineProtocol):
                 if not isinstance(op_value, dict):
                     return None
                 for field_path, push_spec in op_value.items():
+                    if "$" in field_path or field_path.startswith("[]"):
+                        return None
                     if not isinstance(push_spec, dict):
                         return None
                     has_modifiers = {"$position", "$slice"} & push_spec.keys()
@@ -446,29 +448,49 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         # Try to use SQLTranslator for the WHERE clause
         where_clause, where_params = self.sql_translator.translate_match(filter)
 
-        # Get the update clause using existing helper
-        update_result = self.helpers._build_update_clause(update)
+        # Fast path check: positional operators ($), array_filters, upsert, and force fallback
+        # cannot execute directly via SQL update.
+        from ..query_helper.utils import get_force_fallback
 
-        # Guard $inc/$mul against non-numeric target fields: SQLite would
-        # silently coerce ('hello' + 1 == 1), corrupting string data.
-        # Validation failure falls through to the per-document Python tier,
-        # mirroring update_one's fast-path behavior (#87).
-        if (
-            where_clause is not None
-            and update_result is not None
-            and ("$inc" in update or "$mul" in update)
-        ):
-            from ..query_helper.update_operations import UpdateOperationsMixin
+        can_use_fast_path = (
+            not array_filters and not upsert and not get_force_fallback()
+        )
+        if can_use_fast_path:
+            for op, val in update.items():
+                if isinstance(val, dict):
+                    for field_path in val.keys():
+                        if "$" in field_path or field_path.startswith("[]"):
+                            can_use_fast_path = False
+                            break
+                if not can_use_fast_path:
+                    break
 
-            if not UpdateOperationsMixin._validate_inc_mul_types_sql(
-                self.collection.db,
-                self.collection.name,
-                where_clause,
-                where_params,
-                update,
-                self.jsonb.jsonb_supported,
+        update_result = None
+        if can_use_fast_path:
+            update_result = self.helpers._build_update_clause(update)
+
+            # Guard $inc/$mul against non-numeric target fields: SQLite would
+            # silently coerce ('hello' + 1 == 1), corrupting string data.
+            # Validation failure falls through to the per-document Python tier,
+            # mirroring update_one's fast-path behavior (#87).
+            if (
+                where_clause is not None
+                and update_result is not None
+                and ("$inc" in update or "$mul" in update)
             ):
-                update_result = None
+                from ..query_helper.update_operations import (
+                    UpdateOperationsMixin,
+                )
+
+                if not UpdateOperationsMixin._validate_inc_mul_types_sql(
+                    self.collection.db,
+                    self.collection.name,
+                    where_clause,
+                    where_params,
+                    update,
+                    self.jsonb.jsonb_supported,
+                ):
+                    update_result = None
 
         if where_clause is not None and update_result is not None:
             set_clause, set_params = update_result
@@ -480,8 +502,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
                 upserted_id=None,
             )
 
-        # Fallback for complex queries
-        # Reuse the already-translated where_clause from line 438
+        # Fallback for complex queries, positional operators, array_filters, or Python tier
         if where_clause is not None:
             cmd = f"SELECT id FROM {quote_table_name(self.collection.name)} {where_clause}"
             cursor = self.collection.db.execute(cmd, where_params)
@@ -493,6 +514,18 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             for doc in docs:
                 int_doc_id = self._get_integer_id_for_oid(doc["_id"])
                 ids.append(int_doc_id)
+
+        if not ids and upsert:
+            new_doc = build_upsert_base_document(filter)
+            updated_doc, _ = self.helpers._internal_update(
+                0, update, new_doc, array_filters, filter
+            )
+            inserted_id = self.insert_one(updated_doc).inserted_id
+            return UpdateResult(
+                matched_count=0,
+                modified_count=0,
+                upserted_id=inserted_id,
+            )
 
         modified_count = 0
         for int_doc_id in ids:
@@ -508,8 +541,11 @@ class CRUDOperationsMixin(QueryEngineProtocol):
                 doc = self.collection._load_with_stored_id(
                     int_id, data, stored_id
                 )
-                self.helpers._internal_update(int_doc_id, update, doc)
-                modified_count += 1
+                _, was_modified = self.helpers._internal_update(
+                    int_doc_id, update, doc, array_filters, filter
+                )
+                if was_modified:
+                    modified_count += 1
         return UpdateResult(
             matched_count=len(ids),
             modified_count=modified_count,
