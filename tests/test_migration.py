@@ -489,3 +489,38 @@ class TestMigrationEdgeCases:
             == AutoVacuumMode.FULL
         )
         conn.close()
+
+    def test_migrate_with_uncheckpointed_wal(self, tmp_path):
+        """Test migration preserves uncheckpointed WAL data even with active readers."""
+        db_path = str(tmp_path / "test_wal_uncheckpointed.db")
+        conn = sqlite3.connect(db_path)
+        conn.execute("PRAGMA auto_vacuum=0")
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("CREATE TABLE t0 (x INTEGER)")
+        conn.commit()
+
+        reader = sqlite3.connect(db_path)
+        reader.execute("BEGIN")
+        reader.execute("SELECT * FROM t0")
+
+        writer = sqlite3.connect(db_path)
+        writer.execute("CREATE TABLE t (x INTEGER)")
+        writer.executemany(
+            "INSERT INTO t VALUES (?)", [(i,) for i in range(50)]
+        )
+        writer.commit()
+        writer.close()
+
+        result = migrate_autovacuum(db_path, AutoVacuumMode.FULL)
+        assert result is True
+
+        reader.close()
+
+        verify_conn = sqlite3.connect(db_path)
+        assert (
+            verify_conn.execute("PRAGMA auto_vacuum").fetchone()[0]
+            == AutoVacuumMode.FULL
+        )
+        rows = verify_conn.execute("SELECT count(*) FROM t").fetchone()[0]
+        assert rows == 50
+        verify_conn.close()

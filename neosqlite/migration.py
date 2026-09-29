@@ -53,7 +53,7 @@ def checkpoint_and_prepare_for_migration(
     """
     # Ensure all WAL data is written to main file
     try:
-        db.execute("PRAGMA wal_checkpoint(FULL)")
+        db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     except Exception as e:
         logger.warning(f"WAL checkpoint failed during migration: {e}")
         pass
@@ -97,6 +97,7 @@ def migrate_autovacuum(
     try:
         if not needs_migration(conn, target_autovacuum):
             return False
+        checkpoint_and_prepare_for_migration(conn)
     finally:
         conn.close()
 
@@ -107,19 +108,20 @@ def migrate_autovacuum(
     wal_path = f"{db_path}-wal"
     shm_path = f"{db_path}-shm"
 
-    files_to_backup = [db_path]
+    original_backup_path = f"{db_path}.backup_{timestamp}"
+    backup_files: dict[str, str] = {db_path: original_backup_path}
+    shutil.copy2(db_path, original_backup_path)
+
+    wal_backup_path = f"{original_backup_path}-wal"
     if os.path.exists(wal_path):
-        files_to_backup.append(wal_path)
+        shutil.copy2(wal_path, wal_backup_path)
+        backup_files[wal_path] = wal_backup_path
+
+    shm_backup_path = f"{original_backup_path}-shm"
     if os.path.exists(shm_path):
-        files_to_backup.append(shm_path)
+        shutil.copy2(shm_path, shm_backup_path)
+        backup_files[shm_path] = shm_backup_path
 
-    backup_files: dict[str, str] = {}
-    for file_path in files_to_backup:
-        backup_path = f"{file_path}.backup_{timestamp}"
-        shutil.copy2(file_path, backup_path)
-        backup_files[file_path] = backup_path
-
-    original_backup_path = backup_files[db_path]
     temp_new_path = f"{db_path}.temp_autovacuum_{timestamp}"
 
     # Escape single quotes for the VACUUM INTO literal (#167); paths with
@@ -129,6 +131,7 @@ def migrate_autovacuum(
     try:
         conn = sqlite3.connect(original_backup_path)
         conn.isolation_level = None
+        checkpoint_and_prepare_for_migration(conn)
 
         old_journal = conn.execute("PRAGMA journal_mode").fetchone()[0]
         if old_journal != "wal":
