@@ -597,7 +597,7 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
 
             select_clause = (
                 f"SELECT main_table.id, main_table._id, "
-                f"json({json_set_func}(main_table.data, '$.{as_field}', "
+                f"json({json_set_func}(main_table.data, '{parse_json_path(as_field)}', "
                 f"COALESCE(aggregated.results, json('[]')))) as data "
             )
 

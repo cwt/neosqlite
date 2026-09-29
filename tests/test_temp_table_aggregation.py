@@ -752,6 +752,31 @@ class TestEdgeCases:
             # Verify that malformed JSON error was not encountered
             assert "malformed JSON" not in caplog.text
 
+    def test_lookup_hash_join_as_field_sql_injection_prevented(self):
+        """Test that malicious 'as' field payload cannot inject SQL expressions in hash join."""
+        with neosqlite.Connection(":memory:") as conn:
+            conn.users.insert_one({"_id": 1, "name": "alice"})
+            conn.orders.insert_one({"_id": 1, "user_id": 1, "total": 100})
+            payload = (
+                "got', (select group_concat(name) from sqlite_master), '$.x"
+            )
+            pipeline = [
+                {
+                    "$lookup": {
+                        "from": "orders",
+                        "localField": "_id",
+                        "foreignField": "user_id",
+                        "as": payload,
+                    }
+                }
+            ]
+            res = list(conn.users.aggregate(pipeline))
+            assert len(res) == 1
+            # Injected subquery result should not be exfiltrated and injected keys shouldn't exist
+            assert "got" not in res[0]
+            assert "x" not in res[0]
+            assert "users,sqlite_sequence" not in str(res[0])
+
 
 """
 Tests for temporary table aggregation fixes.
