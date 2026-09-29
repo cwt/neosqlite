@@ -8,6 +8,7 @@ import logging
 import socket
 import struct
 import threading
+import time
 import uuid
 
 from nx_27017.handler import NeoSQLiteHandler
@@ -313,7 +314,17 @@ def run_server_threaded(
 
     try:
         while True:
-            client_socket, addr = server_socket.accept()
+            try:
+                client_socket, addr = server_socket.accept()
+            except OSError as e:
+                if (
+                    getattr(server_socket, "_closed", False)
+                    or server_socket.fileno() == -1
+                ):
+                    break
+                logger.warning(f"Error accepting connection: {e}")
+                time.sleep(0.05)
+                continue
             logger.info(f"Accepted connection from {addr}")
 
             client_thread = threading.Thread(
