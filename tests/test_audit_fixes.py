@@ -1482,3 +1482,57 @@ class TestCmpNullComparisons:
                 assert results[0]["cmp_res"] == 1
             finally:
                 set_force_fallback(False)
+
+
+class TestUpdateModifiedCount:
+    """Accurate modified_count tracking for update_one and update_many."""
+
+    def test_update_one_noop_modified_count(self, connection):
+        c = connection.t_up_one_noop
+        c.insert_one({"_id": 1, "a": 10})
+        res = c.update_one({"_id": 1}, {"$set": {"a": 10}})
+        assert res.matched_count == 1
+        assert res.modified_count == 0
+
+    def test_update_many_noop_and_partial_modified_count(self, connection):
+        c = connection.t_up_many_noop
+        c.insert_many(
+            [
+                {"_id": 1, "a": 10, "b": 1},
+                {"_id": 2, "a": 10, "b": 2},
+                {"_id": 3, "a": 20, "b": 3},
+            ]
+        )
+        res = c.update_many({}, {"$set": {"a": 10}})
+        assert res.matched_count == 3
+        assert res.modified_count == 1
+
+        res2 = c.update_many({}, {"$set": {"a": 10}})
+        assert res2.matched_count == 3
+        assert res2.modified_count == 0
+
+    def test_update_many_array_filters_forwarding(self, connection):
+        c = connection.t_up_af
+        c.insert_many(
+            [
+                {"_id": 1, "grades": [75, 80, 85]},
+                {"_id": 2, "grades": [90, 95, 100]},
+            ]
+        )
+        res = c.update_many(
+            {},
+            {"$set": {"grades.$[elem]": 100}},
+            array_filters=[{"elem": {"$gte": 85}}],
+        )
+        assert res.matched_count == 2
+        assert res.modified_count == 2
+        assert c.find_one({"_id": 1})["grades"] == [75, 80, 100]
+        assert c.find_one({"_id": 2})["grades"] == [100, 100, 100]
+
+        res2 = c.update_many(
+            {},
+            {"$set": {"grades.$[elem]": 100}},
+            array_filters=[{"elem": {"$gte": 85}}],
+        )
+        assert res2.matched_count == 2
+        assert res2.modified_count == 0

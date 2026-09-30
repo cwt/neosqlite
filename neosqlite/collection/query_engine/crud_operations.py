@@ -106,13 +106,6 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         filter = self.helpers._normalize_id_query(filter)
 
-        # Try fast path: use simple SQL UPDATE without fetching document first
-        # This only works for simple operations that don't need to read the document
-        if not array_filters and not upsert:
-            fast_result = self._try_fast_update_one(filter, update)
-            if fast_result is not None:
-                return fast_result
-
         # Fall back to the original implementation that fetches the document first
         # Find the document using the filter, but we need to work with integer IDs internally
         # For internal operations, we need to retrieve the document differently to get the integer id
@@ -299,125 +292,6 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             self.collection.db, self.collection.name, oid
         )
 
-    def _try_fast_update_one(
-        self,
-        filter: dict[str, Any],
-        update: dict[str, Any],
-    ) -> UpdateResult | None:
-        """
-        Try to use a fast SQL UPDATE without fetching the document first.
-
-        This method attempts to execute a simple UPDATE in a single SQL statement
-        without needing to first SELECT the document. This is much faster for
-        simple field updates.
-
-        Args:
-            filter: The query filter
-            update: The update operations
-
-        Returns:
-            UpdateResult if fast path was successful, None otherwise
-        """
-        from ..query_helper.utils import get_force_fallback
-
-        if get_force_fallback():
-            return None
-
-        simple_ops = {
-            "$set",
-            "$min",
-            "$max",
-            "$unset",
-            "$currentDate",
-            "$inc",
-            "$mul",
-            "$setOnInsert",
-        }
-        complex_ops = {
-            "$pull",
-            "$pullAll",
-            "$pop",
-            "$addToSet",
-            "$rename",
-        }
-
-        update_keys = set(update.keys())
-        if update_keys & complex_ops:
-            return None
-
-        if not update_keys.issubset(simple_ops | {"$push"}):
-            return None
-
-        for op_key in update_keys:
-            op_value = update[op_key]
-            if op_key == "$push":
-                if not isinstance(op_value, dict):
-                    return None
-                for field_path, push_spec in op_value.items():
-                    if "$" in field_path or field_path.startswith("[]"):
-                        return None
-                    if not isinstance(push_spec, dict):
-                        return None
-                    has_modifiers = {"$position", "$slice"} & push_spec.keys()
-                    if has_modifiers:
-                        return None
-            elif isinstance(op_value, dict):
-                for field_path in op_value.keys():
-                    if "$" in field_path or field_path.startswith("[]"):
-                        return None
-
-        update_result = self.helpers._build_update_clause(update)
-        if update_result is None:
-            return None
-
-        set_clause, set_params = update_result
-
-        where_clause, where_params = self.sql_translator.translate_match(filter)
-        if where_clause is None:
-            return None
-
-        if "$inc" in update_keys or "$mul" in update_keys:
-            from ..query_helper.update_operations import UpdateOperationsMixin
-
-            if not UpdateOperationsMixin._validate_inc_mul_types_sql(
-                self.collection.db,
-                self.collection.name,
-                where_clause,
-                where_params,
-                update,
-                self.jsonb.jsonb_supported,
-            ):
-                return None
-
-        try:
-            # For update_one, we MUST only update a single document.
-            # Since standard SQLite doesn't support LIMIT in UPDATE (without a compile flag),
-            # we use a subquery with LIMIT 1 to identify the specific row.
-            cmd = (
-                f"UPDATE {quote_table_name(self.collection.name)} "
-                f"SET {set_clause} "
-                f"WHERE id IN (SELECT id FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1)"
-            )
-            cursor = self.collection.db.execute(cmd, set_params + where_params)
-
-            if cursor.rowcount > 0:
-                return UpdateResult(
-                    matched_count=1,
-                    modified_count=1,
-                    upserted_id=None,
-                )
-            elif cursor.rowcount == 0:
-                return UpdateResult(
-                    matched_count=0,
-                    modified_count=0,
-                    upserted_id=None,
-                )
-        except Exception as e:
-            logger.debug(f"Update operation failed: {e}")
-            return None
-
-        return None
-
     def update_many(
         self,
         filter: dict[str, Any],
@@ -447,60 +321,6 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         filter = self.helpers._normalize_id_query(filter)
         # Try to use SQLTranslator for the WHERE clause
         where_clause, where_params = self.sql_translator.translate_match(filter)
-
-        # Fast path check: positional operators ($), array_filters, upsert, and force fallback
-        # cannot execute directly via SQL update.
-        from ..query_helper.utils import get_force_fallback
-
-        can_use_fast_path = (
-            not array_filters and not upsert and not get_force_fallback()
-        )
-        if can_use_fast_path:
-            for op, val in update.items():
-                if isinstance(val, dict):
-                    for field_path in val.keys():
-                        if "$" in field_path or field_path.startswith("[]"):
-                            can_use_fast_path = False
-                            break
-                if not can_use_fast_path:
-                    break
-
-        update_result = None
-        if can_use_fast_path:
-            update_result = self.helpers._build_update_clause(update)
-
-            # Guard $inc/$mul against non-numeric target fields: SQLite would
-            # silently coerce ('hello' + 1 == 1), corrupting string data.
-            # Validation failure falls through to the per-document Python tier,
-            # mirroring update_one's fast-path behavior (#87).
-            if (
-                where_clause is not None
-                and update_result is not None
-                and ("$inc" in update or "$mul" in update)
-            ):
-                from ..query_helper.update_operations import (
-                    UpdateOperationsMixin,
-                )
-
-                if not UpdateOperationsMixin._validate_inc_mul_types_sql(
-                    self.collection.db,
-                    self.collection.name,
-                    where_clause,
-                    where_params,
-                    update,
-                    self.jsonb.jsonb_supported,
-                ):
-                    update_result = None
-
-        if where_clause is not None and update_result is not None:
-            set_clause, set_params = update_result
-            cmd = f"UPDATE {quote_table_name(self.collection.name)} SET {set_clause} {where_clause}"
-            cursor = self.collection.db.execute(cmd, set_params + where_params)
-            return UpdateResult(
-                matched_count=cursor.rowcount,
-                modified_count=cursor.rowcount,
-                upserted_id=None,
-            )
 
         # Fallback for complex queries, positional operators, array_filters, or Python tier
         if where_clause is not None:

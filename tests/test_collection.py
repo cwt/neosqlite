@@ -1652,15 +1652,13 @@ def test_update_operations_comprehensive(collection):
     assert charlie["senior"]
 
     # Test $unset operator
-    result = collection.update_many(
-        {"name": "Alice"}, {"$unset": {"senior": ""}}
-    )
+    result = collection.update_many({"name": "Bob"}, {"$unset": {"senior": ""}})
     assert result.matched_count == 1
     assert result.modified_count == 1
 
     # Verify the senior field was removed
-    alice = collection.find_one({"name": "Alice"})
-    assert "senior" not in alice
+    bob = collection.find_one({"name": "Bob"})
+    assert "senior" not in bob
 
     # Test $rename operator
     result = collection.update_many(
