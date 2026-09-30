@@ -308,8 +308,19 @@ class SQLOperatorTranslator:
                     # Array values need Python for correct semantics
                     if isinstance(value, (list, tuple)):
                         return None, []
-                    sql = f"{field_access} != ?"
-                    params = [value]
+                    if value is None:
+                        if field_access == "_id":
+                            sql = f"{field_access} IS NOT NULL"
+                        elif "extract(" in field_access:
+                            type_field_access = field_access.replace(
+                                "jsonb_extract(", "json_type("
+                            ).replace("json_extract(", "json_type(")
+                            sql = f"{type_field_access} IS NOT 'null'"
+                        else:
+                            sql = f"{field_access} IS NOT NULL"
+                    else:
+                        sql = f"{field_access} != ?"
+                        params = [value]
                 case "$in":
                     if isinstance(value, (list, tuple)):
                         if not value:

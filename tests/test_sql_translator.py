@@ -228,6 +228,16 @@ class TestSQLOperatorTranslator:
         result = translator.translate_operator("field", "$ne", "value")
         assert result == ("field != ?", ["value"])
 
+    def test_translate_operator_ne_null(self):
+        """Test translation of $ne with null value."""
+        translator = SQLOperatorTranslator()
+        result = translator.translate_operator(
+            "json_extract(data, '$.field')", "$ne", None
+        )
+        assert result == ("json_type(data, '$.field') IS NOT 'null'", [])
+        result_id = translator.translate_operator("_id", "$ne", None)
+        assert result_id == ("_id IS NOT NULL", [])
+
     def test_translate_operator_in(self):
         """Test translation of $in operator falls back to Python for non-_id fields."""
         translator = SQLOperatorTranslator()

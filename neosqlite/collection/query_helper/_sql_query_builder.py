@@ -653,10 +653,10 @@ class SqlQueryBuilderMixin:
                     if isinstance(op_val, (list, tuple)):
                         return None, []
                     if op_val is None:
-                        # MongoDB: {$ne: null} excludes only JSON null,
-                        # not missing fields — IS NOT handles both (#90)
+                        # MongoDB: {$ne: null} matches non-null values AND missing fields.
+                        # SQLite json_type returns 'null' for JSON null and NULL when missing.
                         clauses.append(
-                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) IS NOT NULL"
+                            f"json_type(data, {json_path}) IS NOT 'null'"
                         )
                     elif is_datetime_indexed:
                         clauses.append(

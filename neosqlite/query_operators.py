@@ -30,6 +30,21 @@ def _get_nested_field(field: str, document: dict[str, Any]) -> Any:
     return doc_value
 
 
+def _field_exists(field: str, document: dict[str, Any]) -> bool:
+    """Check if a field exists in the document, handling dot notation."""
+    if "." not in field:
+        return field in document
+    doc_value: Any = document
+    field_parts = field.split(".")
+    for i, path in enumerate(field_parts):
+        if not isinstance(doc_value, dict) or path not in doc_value:
+            return False
+        if i == len(field_parts) - 1:
+            return True
+        doc_value = doc_value[path]
+    return False
+
+
 def _get_int_value(field: str, document: dict[str, Any]) -> int | None:
     """
     Get field value and convert to int, returning None if not possible.
@@ -302,6 +317,7 @@ def _ne(field: str, value: Any, document: dict[str, Any]) -> bool:
     Compare a field value with a given value using the not equal operator.
 
     MongoDB semantics: {field: {$ne: value}} matches if:
+    - The field does not exist in the document (missing fields match $ne, including {$ne: null})
     - The field value does not equal the value (scalar-to-scalar or array-to-array)
     - The field is an array NOT containing the value (array does not contain element)
 
@@ -313,6 +329,8 @@ def _ne(field: str, value: Any, document: dict[str, Any]) -> bool:
     Returns:
         bool: True if the field value is not equal to the given value, False otherwise.
     """
+    if not _field_exists(field, document):
+        return True
     doc_value = _get_nested_field(field, document)
     # MongoDB array semantics: check if value is NOT in array
     if isinstance(doc_value, list):
@@ -405,23 +423,8 @@ def _exists(field: str, value: bool, document: dict[str, Any]) -> bool:
     if not isinstance(value, bool):
         raise MalformedQueryException("'$exists' must be supplied a boolean")
 
-    # Handle nested fields
-    if "." in field:
-        doc_value: Any = document
-        field_parts = field.split(".")
-        for i, path in enumerate(field_parts):
-            if not isinstance(doc_value, dict) or path not in doc_value:
-                # Field doesn't exist
-                return not value
-            if i == len(field_parts) - 1:
-                # We've reached the final field
-                return value
-            doc_value = doc_value.get(path, None)
-        # Should be unreachable as the loop returns for the last element,
-        # but required for static type checking.
-        return not value
-    else:
-        return (field in document) if value else (field not in document)
+    exists = _field_exists(field, document)
+    return exists if value else not exists
 
 
 def _regex(

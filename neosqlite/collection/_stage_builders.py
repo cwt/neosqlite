@@ -859,10 +859,21 @@ class StageBuildersMixin:
                                     where_clauses.append(f"{field_sql} = ?")
                                     all_params.append(arg)
                             case "$ne":
-                                # IS NOT (unlike !=) matches rows where the
-                                # field is missing/NULL, as MongoDB does (#90)
-                                where_clauses.append(f"{field_sql} IS NOT ?")
-                                all_params.append(arg)
+                                if arg is None:
+                                    if field == "_id":
+                                        where_clauses.append(
+                                            f"{field_sql} IS NOT NULL"
+                                        )
+                                    else:
+                                        json_path = parse_json_path(field)
+                                        where_clauses.append(
+                                            f"json_type(data, '{json_path}') IS NOT 'null'"
+                                        )
+                                else:
+                                    where_clauses.append(
+                                        f"{field_sql} IS NOT ?"
+                                    )
+                                    all_params.append(arg)
                             case "$in":
                                 if isinstance(arg, (list, tuple)):
                                     json_path = parse_json_path(field)
