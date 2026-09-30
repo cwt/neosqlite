@@ -80,6 +80,7 @@ class GridIn:
         self._position = 0
         self._closed = False
         self._md5_hasher = None if disable_md5 else hashlib.md5()
+        self._file_document_created = False
 
     def _serialize_aliases(self) -> str | None:
         """
@@ -188,7 +189,7 @@ class GridIn:
             self._buffer_start = start + self._chunk_size_bytes
 
             # If this is the first chunk, create the file document
-            if self._chunk_number == 0 and self._file_id is None:
+            if self._chunk_number == 0:
                 self._create_file_document()
 
             # Insert the chunk
@@ -213,12 +214,16 @@ class GridIn:
         upload date, and serialized metadata. If no file ID is provided, it generates
         a new ObjectId for the file.
         """
+        if getattr(self, "_file_document_created", False):
+            return
+        self._file_document_created = True
+
         upload_date = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
         if self._file_id is None:
             # Generate an ObjectId for the new file
             oid = ObjectId()
-            self._db.execute(
+            cur = self._db.execute(
                 f"""
                 INSERT INTO {self._files_collection}
                 (id, _id, filename, chunkSize, uploadDate, metadata, content_type, aliases)
@@ -235,6 +240,7 @@ class GridIn:
                 ),
             )
             self._file_id = oid  # Store the ObjectId
+            self._int_file_id = cur.lastrowid
         else:
             # Check if file_id is an ObjectId or integer
             if isinstance(self._file_id, ObjectId):
@@ -293,7 +299,7 @@ class GridIn:
         Raises:
             RuntimeError: If the file cannot be found in the database
         """
-        if self._file_id is None:
+        if not getattr(self, "_file_document_created", False):
             self._create_file_document()
 
         # Return the integer ID, which can be obtained by looking up the stored _id

@@ -2702,3 +2702,28 @@ def test_custom_chunk_size_upload_and_download(connection):
 
     grid_out2 = bucket.open_download_stream(custom_oid)
     assert grid_out2.read() == data
+
+
+def test_open_upload_stream_with_id_objectid_streaming(connection):
+    """Test that open_upload_stream_with_id works with custom ObjectId across multiple chunks."""
+    from neosqlite.objectid import ObjectId
+
+    # Use small chunk size so multiple chunks are flushed during writing
+    chunk_size = 64
+    bucket = GridFSBucket(connection.db, chunk_size_bytes=chunk_size)
+    custom_oid = ObjectId()
+    data = b"0123456789abcdef" * 10  # 160 bytes -> 3 chunks
+
+    with bucket.open_upload_stream_with_id(
+        custom_oid, "streaming_custom_oid.txt"
+    ) as upload_stream:
+        # Write piece by piece to trigger _flush_chunk
+        upload_stream.write(
+            data[:70]
+        )  # exceeds 64, triggers first _flush_chunk
+        upload_stream.write(data[70:])
+
+    # Download back and verify
+    grid_out = bucket.open_download_stream(custom_oid)
+    assert grid_out.read() == data
+    assert grid_out._id == custom_oid
