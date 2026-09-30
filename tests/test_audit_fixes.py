@@ -2360,3 +2360,56 @@ class TestStartTransactionContextManager:
                     users.insert_one({"name": "Charlie"}, session=session)
                     raise RuntimeError("forced failure")
         assert users.count_documents({}) == 0
+
+
+class TestRenameCollectionUnaccessedFTS:
+    """Connection.rename_collection() on unaccessed collection renames FTS tables and indexes."""
+
+    def test_rename_unaccessed_collection_renames_fts_and_indexes(
+        self, connection
+    ):
+        c = connection.orig_articles
+        c.insert_one({"title": "Advanced Python", "tag": "tech"})
+        c.create_index("tag")
+        c.create_index("title", fts=True)
+
+        # Evict from Connection._collections to simulate an unaccessed collection
+        connection._collections.pop("orig_articles", None)
+        assert "orig_articles" not in connection._collections
+
+        # Rename collection via Connection.rename_collection
+        connection.rename_collection("orig_articles", "renamed_articles")
+
+        new_c = connection.renamed_articles
+        # Verify index was renamed and list_indexes works
+        indexes = new_c.list_indexes()
+        assert "idx_renamed_articles_tag" in indexes
+        assert new_c.list_indexes(as_keys=True) == [["tag"]]
+
+        # Verify FTS tables were renamed
+        tables = [
+            r[0]
+            for r in connection.db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        ]
+        assert "renamed_articles_title_fts" in tables
+        assert not any(t.startswith("orig_articles") for t in tables)
+
+        # Verify full-text search works on renamed collection
+        results = list(new_c.find({"$text": {"$search": "Python"}}))
+        assert len(results) == 1
+        assert results[0]["title"] == "Advanced Python"
+
+        # Verify drop_collection removes all FTS tables cleanly
+        connection.drop_collection("renamed_articles")
+        remaining = [
+            r[0]
+            for r in connection.db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        ]
+        assert not any(
+            t.startswith("renamed_articles") or t.startswith("orig_articles")
+            for t in remaining
+        )

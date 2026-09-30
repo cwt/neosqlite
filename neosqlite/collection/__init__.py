@@ -469,6 +469,45 @@ class Collection:
                 f"RENAME TO {quote_table_name(new_fts)}"
             )
 
+        # Rename regular indexes so list_indexes() continues to find them
+        rows = self.db.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name=? AND sql IS NOT NULL",
+            (new_name,),
+        ).fetchall()
+        old_prefix = f"idx_{old_name}_"
+        for idx_name, idx_sql in rows:
+            if idx_name.startswith(old_prefix):
+                suffix = idx_name[len(old_prefix) :]
+                new_idx_name = f"idx_{new_name}_{suffix}"
+                self.db.execute(
+                    f"DROP INDEX IF EXISTS {quote_table_name(idx_name)}"
+                )
+                new_sql = idx_sql.replace(idx_name, new_idx_name, 1)
+                self.db.execute(new_sql)
+                try:
+                    self.db.execute(
+                        "UPDATE neosqlite_index_keys SET index_name = ? WHERE index_name = ?",
+                        (new_idx_name, idx_name),
+                    )
+                except Exception:
+                    pass
+
+        # Rename triggers on the table (such as FTS sync triggers)
+        trig_rows = self.db.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type='trigger' AND tbl_name=? AND sql IS NOT NULL",
+            (new_name,),
+        ).fetchall()
+        old_trig_prefix = f"{old_name}_"
+        for trig_name, trig_sql in trig_rows:
+            if trig_name.startswith(old_trig_prefix):
+                suffix = trig_name[len(old_trig_prefix) :]
+                new_trig_name = f"{new_name}_{suffix}"
+                self.db.execute(
+                    f"DROP TRIGGER IF EXISTS {quote_table_name(trig_name)}"
+                )
+                new_trig_sql = trig_sql.replace(trig_name, new_trig_name, 1)
+                self.db.execute(new_trig_sql)
+
         # Update the collection name
         self.name = new_name
         self._invalidate_ttl_cache()

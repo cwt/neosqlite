@@ -736,14 +736,10 @@ class Connection:
         # Rename the collection (cache entry may not exist for tables that
         # were never accessed through this Connection — #133)
         cached = self._collections.pop(old_name, None)
-        if cached is not None:
-            cached.rename(new_name)
-            self._collections[new_name] = cached
-        else:
-            self.db.execute(
-                f"ALTER TABLE {quote_table_name(old_name)} "
-                f"RENAME TO {quote_table_name(new_name)}"
-            )
+        if cached is None:
+            cached = Collection(self.db, old_name, database=self)
+        cached.rename(new_name)
+        self._collections[new_name] = cached
         try:
             self.db.execute(
                 "UPDATE _neosqlite_ttl_indexes SET collection_name = ? "
