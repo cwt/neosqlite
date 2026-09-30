@@ -876,22 +876,63 @@ class StageBuildersMixin:
                                     all_params.append(arg)
                             case "$in":
                                 if isinstance(arg, (list, tuple)):
+                                    if not arg:
+                                        where_clauses.append("0")
+                                        continue
+                                    has_null = any(v is None for v in arg)
+                                    non_null = [v for v in arg if v is not None]
                                     json_path = parse_json_path(field)
-                                    placeholders = ", ".join("?" for _ in arg)
-                                    where_clauses.append(
-                                        f"EXISTS (SELECT 1 FROM {self.jsonb.json_each_function}(data, '{json_path}') WHERE json_each.value IN ({placeholders}))"
-                                    )
-                                    all_params.extend(arg)
+                                    if has_null:
+                                        if non_null:
+                                            placeholders = ", ".join(
+                                                "?" for _ in non_null
+                                            )
+                                            where_clauses.append(
+                                                f"(EXISTS (SELECT 1 FROM {self.jsonb.json_each_function}(data, '{json_path}') WHERE json_each.value IN ({placeholders}) OR json_each.value IS NULL) OR json_type(data, '{json_path}') IS NULL)"
+                                            )
+                                            all_params.extend(non_null)
+                                        else:
+                                            where_clauses.append(
+                                                f"(EXISTS (SELECT 1 FROM {self.jsonb.json_each_function}(data, '{json_path}') WHERE json_each.value IS NULL) OR json_type(data, '{json_path}') IS NULL)"
+                                            )
+                                    else:
+                                        placeholders = ", ".join(
+                                            "?" for _ in non_null
+                                        )
+                                        where_clauses.append(
+                                            f"EXISTS (SELECT 1 FROM {self.jsonb.json_each_function}(data, '{json_path}') WHERE json_each.value IN ({placeholders}))"
+                                        )
+                                        all_params.extend(non_null)
                                 else:
                                     return None, []
                             case "$nin":
                                 if isinstance(arg, (list, tuple)):
+                                    if not arg:
+                                        continue
+                                    has_null = any(v is None for v in arg)
+                                    non_null = [v for v in arg if v is not None]
                                     json_path = parse_json_path(field)
-                                    placeholders = ", ".join("?" for _ in arg)
-                                    where_clauses.append(
-                                        f"NOT EXISTS (SELECT 1 FROM {self.jsonb.json_each_function}(data, '{json_path}') WHERE json_each.value IN ({placeholders}))"
-                                    )
-                                    all_params.extend(arg)
+                                    if has_null:
+                                        if non_null:
+                                            placeholders = ", ".join(
+                                                "?" for _ in non_null
+                                            )
+                                            where_clauses.append(
+                                                f"(NOT EXISTS (SELECT 1 FROM {self.jsonb.json_each_function}(data, '{json_path}') WHERE json_each.value IN ({placeholders}) OR json_each.value IS NULL) AND json_type(data, '{json_path}') IS NOT NULL AND json_type(data, '{json_path}') != 'null')"
+                                            )
+                                            all_params.extend(non_null)
+                                        else:
+                                            where_clauses.append(
+                                                f"(NOT EXISTS (SELECT 1 FROM {self.jsonb.json_each_function}(data, '{json_path}') WHERE json_each.value IS NULL) AND json_type(data, '{json_path}') IS NOT NULL AND json_type(data, '{json_path}') != 'null')"
+                                            )
+                                    else:
+                                        placeholders = ", ".join(
+                                            "?" for _ in non_null
+                                        )
+                                        where_clauses.append(
+                                            f"NOT EXISTS (SELECT 1 FROM {self.jsonb.json_each_function}(data, '{json_path}') WHERE json_each.value IN ({placeholders}))"
+                                        )
+                                        all_params.extend(non_null)
                                 else:
                                     return None, []
                             case "$all":

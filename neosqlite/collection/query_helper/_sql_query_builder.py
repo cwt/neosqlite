@@ -158,12 +158,40 @@ class SqlQueryBuilderMixin:
             if op == "$in" or op == "$nin":
                 if not isinstance(op_val, list) or not op_val:
                     return None
-                ph = ", ".join("?" for _ in op_val)
+                has_null = any(v is None for v in op_val)
+                non_null = [v for v in op_val if v is not None]
                 if op == "$in":
-                    clauses.append(f"{id_col} IN ({ph})")
+                    if has_null:
+                        if non_null:
+                            ph = ", ".join("?" for _ in non_null)
+                            clauses.append(
+                                f"({id_col} IN ({ph}) OR {id_col} IS NULL)"
+                            )
+                            params.extend(
+                                _normalize_id_value(v) for v in non_null
+                            )
+                        else:
+                            clauses.append(f"{id_col} IS NULL")
+                    else:
+                        ph = ", ".join("?" for _ in op_val)
+                        clauses.append(f"{id_col} IN ({ph})")
+                        params.extend(_normalize_id_value(v) for v in op_val)
                 else:
-                    clauses.append(f"{id_col} NOT IN ({ph})")
-                params.extend(_normalize_id_value(v) for v in op_val)
+                    if has_null:
+                        if non_null:
+                            ph = ", ".join("?" for _ in non_null)
+                            clauses.append(
+                                f"({id_col} NOT IN ({ph}) AND {id_col} IS NOT NULL)"
+                            )
+                            params.extend(
+                                _normalize_id_value(v) for v in non_null
+                            )
+                        else:
+                            clauses.append(f"{id_col} IS NOT NULL")
+                    else:
+                        ph = ", ".join("?" for _ in op_val)
+                        clauses.append(f"{id_col} NOT IN ({ph})")
+                        params.extend(_normalize_id_value(v) for v in op_val)
 
             elif op == "$ne":
                 if isinstance(op_val, list):
@@ -673,27 +701,93 @@ class SqlQueryBuilderMixin:
                 case "$in":
                     json_each_func = self.jsonb.json_each_function
                     if isinstance(op_val, (list, tuple)):
-                        placeholders = ", ".join("?" for _ in op_val)
+                        if not op_val:
+                            clauses.append("0")
+                            continue
+                        has_null = any(v is None for v in op_val)
+                        non_null = [v for v in op_val if v is not None]
                         if json_path == "value":
-                            clauses.append(f"value IN ({placeholders})")
+                            if has_null:
+                                if non_null:
+                                    placeholders = ", ".join(
+                                        "?" for _ in non_null
+                                    )
+                                    clauses.append(
+                                        f"(value IN ({placeholders}) OR value IS NULL)"
+                                    )
+                                    params.extend(non_null)
+                                else:
+                                    clauses.append("value IS NULL")
+                            else:
+                                placeholders = ", ".join("?" for _ in non_null)
+                                clauses.append(f"value IN ({placeholders})")
+                                params.extend(non_null)
                         else:
-                            clauses.append(
-                                f"EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each WHERE json_each.value IN ({placeholders}))"
-                            )
-                        params.extend(op_val)
+                            if has_null:
+                                if non_null:
+                                    placeholders = ", ".join(
+                                        "?" for _ in non_null
+                                    )
+                                    clauses.append(
+                                        f"(EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each WHERE json_each.value IN ({placeholders}) OR json_each.value IS NULL) OR json_type(data, {json_path}) IS NULL)"
+                                    )
+                                    params.extend(non_null)
+                                else:
+                                    clauses.append(
+                                        f"(EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each WHERE json_each.value IS NULL) OR json_type(data, {json_path}) IS NULL)"
+                                    )
+                            else:
+                                placeholders = ", ".join("?" for _ in non_null)
+                                clauses.append(
+                                    f"EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each WHERE json_each.value IN ({placeholders}))"
+                                )
+                                params.extend(non_null)
                     else:
                         return None, []
                 case "$nin":
                     json_each_func = self.jsonb.json_each_function
                     if isinstance(op_val, (list, tuple)):
-                        placeholders = ", ".join("?" for _ in op_val)
+                        if not op_val:
+                            clauses.append("1")
+                            continue
+                        has_null = any(v is None for v in op_val)
+                        non_null = [v for v in op_val if v is not None]
                         if json_path == "value":
-                            clauses.append(f"value NOT IN ({placeholders})")
+                            if has_null:
+                                if non_null:
+                                    placeholders = ", ".join(
+                                        "?" for _ in non_null
+                                    )
+                                    clauses.append(
+                                        f"(value NOT IN ({placeholders}) AND value IS NOT NULL)"
+                                    )
+                                    params.extend(non_null)
+                                else:
+                                    clauses.append("value IS NOT NULL")
+                            else:
+                                placeholders = ", ".join("?" for _ in op_val)
+                                clauses.append(f"value NOT IN ({placeholders})")
+                                params.extend(op_val)
                         else:
-                            clauses.append(
-                                f"NOT EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each WHERE json_each.value IN ({placeholders}))"
-                            )
-                        params.extend(op_val)
+                            if has_null:
+                                if non_null:
+                                    placeholders = ", ".join(
+                                        "?" for _ in non_null
+                                    )
+                                    clauses.append(
+                                        f"(NOT EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each WHERE json_each.value IN ({placeholders}) OR json_each.value IS NULL) AND json_type(data, {json_path}) IS NOT NULL AND json_type(data, {json_path}) != 'null')"
+                                    )
+                                    params.extend(non_null)
+                                else:
+                                    clauses.append(
+                                        f"(NOT EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each WHERE json_each.value IS NULL) AND json_type(data, {json_path}) IS NOT NULL AND json_type(data, {json_path}) != 'null')"
+                                    )
+                            else:
+                                placeholders = ", ".join("?" for _ in op_val)
+                                clauses.append(
+                                    f"NOT EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each WHERE json_each.value IN ({placeholders}))"
+                                )
+                                params.extend(op_val)
                     else:
                         return None, []
                 case "$all":

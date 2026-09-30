@@ -326,7 +326,8 @@ class SQLOperatorTranslator:
                         if not value:
                             return None, []
                         if field_access == "_id":
-                            # For _id field, SQL IN works correctly (scalar comparison)
+                            has_null = any(v is None for v in value)
+                            non_null = [v for v in value if v is not None]
                             if value and all(
                                 isinstance(v, (str, datetime))
                                 and self._is_datetime_value(v)
@@ -337,6 +338,16 @@ class SQLOperatorTranslator:
                                 )
                                 sql = f"datetime({field_access}) IN ({placeholders})"
                                 params = [to_iso(v) for v in value]
+                            elif has_null:
+                                if non_null:
+                                    placeholders = ", ".join(
+                                        "?" for _ in non_null
+                                    )
+                                    sql = f"({field_access} IN ({placeholders}) OR {field_access} IS NULL)"
+                                    params = non_null
+                                else:
+                                    sql = f"{field_access} IS NULL"
+                                    params = []
                             else:
                                 placeholders = ", ".join("?" for _ in value)
                                 sql = f"{field_access} IN ({placeholders})"
@@ -348,6 +359,8 @@ class SQLOperatorTranslator:
                         if not value:
                             return None, []
                         if field_access == "_id":
+                            has_null = any(v is None for v in value)
+                            non_null = [v for v in value if v is not None]
                             # For _id field, SQL NOT IN works correctly (scalar comparison)
                             if value and all(
                                 isinstance(v, (str, datetime))
@@ -359,6 +372,16 @@ class SQLOperatorTranslator:
                                 )
                                 sql = f"datetime({field_access}) NOT IN ({placeholders})"
                                 params = [to_iso(v) for v in value]
+                            elif has_null:
+                                if non_null:
+                                    placeholders = ", ".join(
+                                        "?" for _ in non_null
+                                    )
+                                    sql = f"({field_access} NOT IN ({placeholders}) AND {field_access} IS NOT NULL)"
+                                    params = non_null
+                                else:
+                                    sql = f"{field_access} IS NOT NULL"
+                                    params = []
                             else:
                                 placeholders = ", ".join("?" for _ in value)
                                 sql = f"{field_access} NOT IN ({placeholders})"

@@ -1314,3 +1314,67 @@ class TestFindOneAndProjection:
         assert "secret" not in doc_after
         assert doc_after["name"] == "Alice"
         assert doc_after["count"] == 3
+
+
+class TestInNullSemantics:
+    """$in: [null] and $nin: [null] semantics."""
+
+    @pytest.fixture
+    def docs(self, connection):
+        c = connection.t_in_null
+        c.insert_many(
+            [
+                {"_id": 1, "a": None, "b": 10},
+                {"_id": 2, "b": 20},
+                {"_id": 3, "a": 100, "b": 30},
+                {"_id": 4, "a": [1, None, 2], "b": 40},
+                {"_id": 5, "a": [3, 4], "b": 50},
+            ]
+        )
+        return c
+
+    def test_in_only_null(self, docs):
+        results = sorted(d["_id"] for d in docs.find({"a": {"$in": [None]}}))
+        assert results == [1, 2, 4]
+
+    def test_in_null_and_values(self, docs):
+        results = sorted(
+            d["_id"] for d in docs.find({"a": {"$in": [100, None]}})
+        )
+        assert results == [1, 2, 3, 4]
+
+    def test_in_null_aggregation(self, docs):
+        results = sorted(
+            d["_id"]
+            for d in docs.aggregate([{"$match": {"a": {"$in": [None]}}}])
+        )
+        assert results == [1, 2, 4]
+
+    def test_in_null_python_fallback(self, docs):
+        from neosqlite.collection.query_helper import set_force_fallback
+
+        set_force_fallback(True)
+        try:
+            results = sorted(
+                d["_id"] for d in docs.find({"a": {"$in": [None]}})
+            )
+            assert results == [1, 2, 4]
+        finally:
+            set_force_fallback(False)
+
+    def test_nin_null(self, docs):
+        results = sorted(d["_id"] for d in docs.find({"a": {"$nin": [None]}}))
+        assert results == [3, 5]
+
+    def test_nin_null_and_values(self, docs):
+        results = sorted(
+            d["_id"] for d in docs.find({"a": {"$nin": [100, None]}})
+        )
+        assert results == [5]
+
+    def test_in_id_null(self, connection):
+        c = connection.t_in_id
+        c.insert_many([{"_id": 1, "v": "a"}, {"_id": 2, "v": "b"}])
+        results = list(c.find({"_id": {"$in": [1, None]}}))
+        assert len(results) == 1
+        assert results[0]["_id"] == 1
