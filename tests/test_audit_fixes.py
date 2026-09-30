@@ -2337,3 +2337,26 @@ class TestWatchInsideTransaction:
         assert not connection.db.in_transaction
         assert list(c.find({"x": 100})) == []
         stream.close()
+
+
+class TestStartTransactionContextManager:
+    """with session.start_transaction(): commits on success and rolls back on exception."""
+
+    def test_start_transaction_context_manager_commit(self, connection):
+        users = connection.tx_ctx_users
+        with connection.start_session() as session:
+            with session.start_transaction():
+                users.insert_one({"name": "Alice"}, session=session)
+                users.insert_one({"name": "Bob"}, session=session)
+        assert users.count_documents({}) == 2
+
+    def test_start_transaction_context_manager_abort(self, connection):
+        import pytest
+
+        users = connection.tx_ctx_users_abort
+        with connection.start_session() as session:
+            with pytest.raises(RuntimeError):
+                with session.start_transaction():
+                    users.insert_one({"name": "Charlie"}, session=session)
+                    raise RuntimeError("forced failure")
+        assert users.count_documents({}) == 0

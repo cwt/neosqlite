@@ -13,6 +13,29 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class _TransactionContext:
+    """Context manager returned by ClientSession.start_transaction()."""
+
+    def __init__(self, session: ClientSession) -> None:
+        self._session = session
+
+    def __enter__(self) -> ClientSession:
+        return self._session
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
+        if exc_type is not None:
+            if self._session.in_transaction:
+                self._session.abort_transaction()
+        else:
+            if self._session.in_transaction:
+                self._session.commit_transaction()
+
+
 class ClientSession:
     """
     Represents a client session for transactions in NeoSQLite.
@@ -45,12 +68,18 @@ class ClientSession:
         """
         return self._in_transaction
 
-    def start_transaction(self, write_concern: dict[str, Any] | None = None):
+    def start_transaction(
+        self, write_concern: dict[str, Any] | None = None
+    ) -> _TransactionContext:
         """
         Start a new transaction.
 
         Args:
             write_concern (dict, optional): Write concern for the transaction.
+
+        Returns:
+            _TransactionContext: Context manager that commits on exit
+                and aborts on exception.
         """
         if self._in_transaction:
             raise InvalidOperation("Transaction already in progress")
@@ -67,6 +96,7 @@ class ClientSession:
             self._is_savepoint = False
 
         self._in_transaction = True
+        return _TransactionContext(self)
 
     def commit_transaction(self):
         """
