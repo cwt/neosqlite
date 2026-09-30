@@ -123,6 +123,18 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         # $first/$last accumulators are materialized via a ranked CTE
         self._first_last_fields: list[tuple[str, bool, str]] = []
 
+        def _format_literal_sql(val: Any) -> str:
+            if val is None:
+                return "NULL"
+            if isinstance(val, bool):
+                return "1" if val else "0"
+            if isinstance(val, (int, float)):
+                return str(val)
+            if isinstance(val, str):
+                escaped = val.replace("'", "''")
+                return f"'{escaped}'"
+            return f"'{val}'"
+
         # Handle accumulators
         for field, accumulator in group_spec.items():
             if field == "_id":
@@ -143,11 +155,19 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                     "or post-process results in Python."
                 )
 
-            # Extract field name from expression
+            # Extract field name from expression or identify literal values
+            is_literal = False
+            literal_value = None
             if isinstance(expr, str) and expr.startswith("$"):
                 expr_field = expr[1:]
-            elif isinstance(expr, (int, float)):
-                expr_field = None  # Literal value
+            elif (
+                isinstance(expr, (int, float, bool))
+                or expr is None
+                or (isinstance(expr, str) and not expr.startswith("$"))
+            ):
+                expr_field = None
+                is_literal = True
+                literal_value = expr
             elif isinstance(expr, dict):
                 # Expression object (e.g., {'title': '$title', 'author': '$author'})
                 # This is valid for $push and $addToSet
@@ -166,9 +186,13 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
 
             match op:
                 case "$sum":
-                    if expr == 1:
-                        # Count operation
-                        select_parts.append(f"COUNT(*) AS {field}")
+                    if is_literal:
+                        if literal_value == 1:
+                            select_parts.append(f"COUNT(*) AS {field}")
+                        else:
+                            select_parts.append(
+                                f"SUM({_format_literal_sql(literal_value)}) AS {field}"
+                            )
                     elif expr_field:
                         if expr_field == "_id":
                             select_parts.append(f"SUM(_id) AS {field}")
@@ -180,7 +204,11 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                         select_parts.append(f"SUM({expr}) AS {field}")
 
                 case "$avg":
-                    if expr_field:
+                    if is_literal:
+                        select_parts.append(
+                            f"AVG({_format_literal_sql(literal_value)}) AS {field}"
+                        )
+                    elif expr_field:
                         if expr_field == "_id":
                             select_parts.append(f"AVG(_id) AS {field}")
                         else:
@@ -191,7 +219,11 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                         select_parts.append(f"AVG({expr}) AS {field}")
 
                 case "$min":
-                    if expr_field:
+                    if is_literal:
+                        select_parts.append(
+                            f"MIN({_format_literal_sql(literal_value)}) AS {field}"
+                        )
+                    elif expr_field:
                         if expr_field == "_id":
                             select_parts.append(f"MIN(_id) AS {field}")
                         else:
@@ -202,7 +234,11 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                         select_parts.append(f"MIN({expr}) AS {field}")
 
                 case "$max":
-                    if expr_field:
+                    if is_literal:
+                        select_parts.append(
+                            f"MAX({_format_literal_sql(literal_value)}) AS {field}"
+                        )
+                    elif expr_field:
                         if expr_field == "_id":
                             select_parts.append(f"MAX(_id) AS {field}")
                         else:
@@ -216,19 +252,18 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                     select_parts.append(f"COUNT(*) AS {field}")
 
                 case "$first" | "$last":
-                    # Implemented via window-function ranking in the source
-                    # CTE (_ranked_source_sql): per group, rn=1 is the first
-                    # row and rd=1 the last, by insertion order (id) — with
-                    # null-safe partitioning on the group key (#105).
-                    if not expr_field:
-                        continue
-                    self._first_last_fields.append(
-                        (
-                            field,
-                            op == "$last",
-                            expr_field,
+                    if is_literal:
+                        select_parts.append(
+                            f"{_format_literal_sql(literal_value)} AS {field}"
                         )
-                    )
+                    elif expr_field:
+                        self._first_last_fields.append(
+                            (
+                                field,
+                                op == "$last",
+                                expr_field,
+                            )
+                        )
 
                 case "$addToSet":
                     # Use json_group_array with DISTINCT
@@ -267,6 +302,10 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
 
                         select_parts.append(
                             f"{json_group_array}(DISTINCT {json_object_func}({', '.join(obj_args)})) AS {field}"
+                        )
+                    elif is_literal:
+                        select_parts.append(
+                            f"{json_group_array}(DISTINCT {_format_literal_sql(literal_value)}) AS {field}"
                         )
                     elif expr_field:
                         if expr_field == "_id":
@@ -319,6 +358,10 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                         )
                         # Store literal values as params (though they can't be used in CREATE TABLE AS SELECT)
                         # For now, we inline literal values
+                    elif is_literal:
+                        select_parts.append(
+                            f"{json_group_array}({_format_literal_sql(literal_value)}) AS {field}"
+                        )
                     elif expr_field:
                         if expr_field == "_id":
                             select_parts.append(

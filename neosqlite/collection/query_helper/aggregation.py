@@ -152,7 +152,7 @@ class AggregationMixin(SqlAggregationMixin):
                     # Evaluate expression for each document
                     value = evaluator._evaluate_expr_python(key, doc)
                 # Handle literal values (e.g., $sum: 1 for counting)
-                elif isinstance(key, (int, float)):
+                elif isinstance(key, (int, float, bool)) or key is None:
                     value = key
                 elif isinstance(key, dict):
                     # Check if this is one of our new N-value operators
@@ -165,8 +165,18 @@ class AggregationMixin(SqlAggregationMixin):
                         else:
                             value = None
                     else:
-                        # Complex expression like {"$multiply": [...]}, not supported in Python fallback
-                        continue
+                        # Template dict or literal dict
+                        resolved_dict = {}
+                        for dk, dv in key.items():
+                            if isinstance(dv, str) and dv.startswith("$"):
+                                resolved_dict[dk] = self.collection._get_val(
+                                    doc, dv
+                                )
+                            else:
+                                resolved_dict[dk] = deepcopy(dv)
+                        value = resolved_dict
+                elif isinstance(key, list):
+                    value = deepcopy(key)
                 elif isinstance(key, str) and key.startswith("$"):
                     value = self.collection._get_val(doc, key)
                 else:

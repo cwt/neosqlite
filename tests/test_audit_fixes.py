@@ -1740,3 +1740,87 @@ class TestDensifyStepValidation:
                 list(c.aggregate(pipeline_neg))
         finally:
             set_force_fallback(old_state)
+
+
+class TestGroupLiteralAccumulators:
+    """$group accumulator expressions with literals (e.g. $first: 1,
+    $last: "constant") must not be dropped and must yield the literal values."""
+
+    def test_group_literal_accumulators_in_all_tiers(self, connection):
+        c = connection.t_group_literals
+        c.insert_many(
+            [
+                {"grp": "A", "val": 10},
+                {"grp": "A", "val": 20},
+                {"grp": "B", "val": 30},
+            ]
+        )
+        pipeline = [
+            {
+                "$group": {
+                    "_id": "$grp",
+                    "first_lit": {"$first": 1},
+                    "last_lit": {"$last": "constant"},
+                    "first_str": {"$first": "hello"},
+                    "sum_lit": {"$sum": 5},
+                    "avg_lit": {"$avg": 10},
+                    "min_lit": {"$min": 7},
+                    "max_lit": {"$max": 7},
+                    "push_lit": {"$push": "item"},
+                    "set_lit": {"$addToSet": 99},
+                    "first_bool": {"$first": True},
+                    "first_null": {"$first": None},
+                }
+            }
+        ]
+
+        def get_id(doc):
+            return doc["_id"]
+
+        # Standard execution (SQL / temp-table)
+        res_sql = sorted(c.aggregate(pipeline), key=get_id)
+        assert len(res_sql) == 2
+        assert res_sql[0]["_id"] == "A"
+        assert res_sql[0]["first_lit"] == 1
+        assert res_sql[0]["last_lit"] == "constant"
+        assert res_sql[0]["first_str"] == "hello"
+        assert res_sql[0]["sum_lit"] == 10
+        assert res_sql[0]["avg_lit"] == 10.0
+        assert res_sql[0]["min_lit"] == 7
+        assert res_sql[0]["max_lit"] == 7
+        assert res_sql[0]["push_lit"] == ["item", "item"]
+        assert res_sql[0]["set_lit"] == [99]
+        assert res_sql[0]["first_null"] is None
+
+        assert res_sql[1]["_id"] == "B"
+        assert res_sql[1]["first_lit"] == 1
+        assert res_sql[1]["last_lit"] == "constant"
+        assert res_sql[1]["first_str"] == "hello"
+        assert res_sql[1]["sum_lit"] == 5
+        assert res_sql[1]["avg_lit"] == 10.0
+        assert res_sql[1]["min_lit"] == 7
+        assert res_sql[1]["max_lit"] == 7
+        assert res_sql[1]["push_lit"] == ["item"]
+        assert res_sql[1]["set_lit"] == [99]
+        assert res_sql[1]["first_null"] is None
+
+        # Python fallback execution
+        from neosqlite.collection.query_helper.utils import (
+            get_force_fallback,
+            set_force_fallback,
+        )
+
+        old_state = get_force_fallback()
+        try:
+            set_force_fallback(True)
+            res_py = sorted(c.aggregate(pipeline), key=get_id)
+            assert res_py[0]["first_lit"] == res_sql[0]["first_lit"]
+            assert res_py[0]["last_lit"] == res_sql[0]["last_lit"]
+            assert res_py[0]["push_lit"] == res_sql[0]["push_lit"]
+            assert res_py[0]["set_lit"] == res_sql[0]["set_lit"]
+            assert res_py[0]["sum_lit"] == res_sql[0]["sum_lit"]
+            assert res_py[0]["avg_lit"] == res_sql[0]["avg_lit"]
+            assert res_py[0]["first_null"] is None
+            assert res_py[1]["push_lit"] == res_sql[1]["push_lit"]
+        finally:
+            set_force_fallback(old_state)
