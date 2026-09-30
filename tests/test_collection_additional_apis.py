@@ -351,8 +351,8 @@ class TestInitializeUnorderedBulkOp:
         assert doc["qty"] == 10
 
     def test_unordered_bulk_continues_on_error(self, collection):
-        """Test that unordered bulk continues despite errors."""
-        from neosqlite import InsertOne
+        """Test that unordered bulk continues despite errors and raises BulkWriteError."""
+        from neosqlite import BulkWriteError, InsertOne
 
         collection.create_index("item", unique=True)
         collection.insert_one({"item": "a"})
@@ -366,11 +366,14 @@ class TestInitializeUnorderedBulkOp:
         # This should still execute (unordered)
         bulk.add(InsertOne({"item": "c"}))
 
-        # Unordered bulk should continue on errors, not raise
-        result = bulk.execute()
+        # Unordered bulk should continue on errors, and raise BulkWriteError with results
+        with raises(BulkWriteError) as exc_info:
+            bulk.execute()
 
         # "b" and "c" should be inserted, "a" should fail (duplicate)
-        assert result.inserted_count == 2
+        assert exc_info.value.details["nInserted"] == 2
+        assert len(exc_info.value.details["writeErrors"]) == 1
+        assert exc_info.value.details["writeErrors"][0]["index"] == 1
         assert collection.count_documents({}) == 3
         assert collection.find_one({"item": "a"}) is not None
         assert collection.find_one({"item": "b"}) is not None

@@ -20,6 +20,7 @@ from .collection.cursor import ASCENDING, DESCENDING, Cursor
 from .collection.raw_batch_cursor import RawBatchCursor
 from .connection import Connection
 from .exceptions import (
+    BulkWriteError,
     CollectionInvalid,
     InvalidOperation,
     MalformedDocument,
@@ -33,7 +34,14 @@ from .options import (
     ReadPreference,
     WriteConcern,
 )
-from .requests import DeleteOne, InsertOne, UpdateOne
+from .requests import (
+    DeleteMany,
+    DeleteOne,
+    InsertOne,
+    ReplaceOne,
+    UpdateMany,
+    UpdateOne,
+)
 from .results import (
     BulkWriteResult,
     DeleteResult,
@@ -58,6 +66,7 @@ __all__ = [
     "AutoVacuumMode",
     "Binary",
     "BulkOperationExecutor",
+    "BulkWriteError",
     "BulkWriteResult",
     "ChangeStream",
     "CodecOptions",
@@ -66,6 +75,7 @@ __all__ = [
     "Connection",
     "Cursor",
     "DESCENDING",
+    "DeleteMany",
     "DeleteOne",
     "DeleteResult",
     "InsertManyResult",
@@ -78,6 +88,8 @@ __all__ = [
     "RawBatchCursor",
     "ReadConcern",
     "ReadPreference",
+    "ReplaceOne",
+    "UpdateMany",
     "UpdateOne",
     "UpdateResult",
     "WriteConcern",

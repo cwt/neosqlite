@@ -1,4 +1,5 @@
 #!/bin/bash
+export PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring
 
 OS_NAME=$(uname -s)
 case "$OS_NAME" in

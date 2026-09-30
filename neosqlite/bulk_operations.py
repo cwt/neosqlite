@@ -12,6 +12,8 @@ if TYPE_CHECKING:
 
     from .client_session import ClientSession
 
+from .exceptions import BulkWriteError
+from .requests import _parse_bulk_request
 from .results import BulkWriteResult
 
 logger = logging.getLogger(__name__)
@@ -39,6 +41,15 @@ class UpdateOperation(BulkOperation):
     update: dict[str, Any]
     upsert: bool = False
     multi: bool = False
+
+
+@dataclass(slots=True)
+class ReplaceOperation(BulkOperation):
+    """Represents a replace operation in a bulk operation."""
+
+    filter: dict[str, Any]
+    replacement: dict[str, Any]
+    upsert: bool = False
 
 
 @dataclass(slots=True)
@@ -174,13 +185,16 @@ class BulkOperationContext:
         Returns:
             BulkOperationContext: The current context object for chaining further operations.
         """
-        replacement_doc = {k: v for k, v in replacement.items() if k != "_id"}
+        replacement_doc = (
+            {k: v for k, v in replacement.items() if k != "_id"}
+            if isinstance(replacement, dict)
+            else replacement
+        )
         self._bulk_operations.append(
-            UpdateOperation(
+            ReplaceOperation(
                 filter=self._filter,
-                update={"$set": replacement_doc},
+                replacement=replacement_doc,
                 upsert=self._upsert,
-                multi=False,
             )
         )
         self._upsert = False  # Reset upsert flag
@@ -214,7 +228,8 @@ class BulkOperationExecutor:
         """
         Add an operation to the bulk operations list.
 
-        For PyMongo API compatibility, accepts InsertOne, UpdateOne, DeleteOne operations.
+        For PyMongo API compatibility, accepts InsertOne, UpdateOne, DeleteOne,
+        ReplaceOne, UpdateMany, DeleteMany, and duck-typed operations.
 
         Args:
             operation: The operation to add (InsertOne, UpdateOne, DeleteOne, etc.)
@@ -222,29 +237,50 @@ class BulkOperationExecutor:
         Returns:
             BulkOperationExecutor: The current executor for chaining
         """
-        # Handle PyMongo-style operation objects
-        if hasattr(operation, "document"):
-            # InsertOne
+        op_type, kwargs = _parse_bulk_request(operation)
+        if op_type == "insert_one":
             self._operations.append(
-                InsertOperation(document=operation.document)
+                InsertOperation(document=kwargs["document"])
             )
-        elif hasattr(operation, "filter") and hasattr(operation, "update"):
-            # UpdateOne or ReplaceOne
-            multi = getattr(operation, "multi", False)
-            upsert = getattr(operation, "upsert", False)
+        elif op_type == "update_one":
             self._operations.append(
                 UpdateOperation(
-                    filter=operation.filter,
-                    update=operation.update,
-                    upsert=upsert,
-                    multi=multi,
+                    filter=kwargs["filter"],
+                    update=kwargs["update"],
+                    upsert=kwargs["upsert"],
+                    multi=False,
                 )
             )
-        elif hasattr(operation, "filter") and not hasattr(operation, "update"):
-            # DeleteOne or DeleteMany
-            multi = getattr(operation, "multi", False)
+        elif op_type == "update_many":
             self._operations.append(
-                DeleteOperation(filter=operation.filter, multi=multi)
+                UpdateOperation(
+                    filter=kwargs["filter"],
+                    update=kwargs["update"],
+                    upsert=kwargs["upsert"],
+                    multi=True,
+                )
+            )
+        elif op_type == "replace_one":
+            replacement = kwargs["replacement"]
+            replacement_doc = (
+                {k: v for k, v in replacement.items() if k != "_id"}
+                if isinstance(replacement, dict)
+                else replacement
+            )
+            self._operations.append(
+                ReplaceOperation(
+                    filter=kwargs["filter"],
+                    replacement=replacement_doc,
+                    upsert=kwargs["upsert"],
+                )
+            )
+        elif op_type == "delete_one":
+            self._operations.append(
+                DeleteOperation(filter=kwargs["filter"], multi=False)
+            )
+        elif op_type == "delete_many":
+            self._operations.append(
+                DeleteOperation(filter=kwargs["filter"], multi=True)
             )
         return self
 
@@ -298,6 +334,102 @@ class BulkOperationExecutor:
         else:
             return self._execute_unordered(session=session)
 
+    def _execute(
+        self, ordered: bool, session: ClientSession | None = None
+    ) -> BulkWriteResult:
+        inserted_count = 0
+        matched_count = 0
+        modified_count = 0
+        deleted_count = 0
+        upserted_count = 0
+        upserted_ids: dict[int, Any] = {}
+        write_errors: list[dict[str, Any]] = []
+
+        for idx, op in enumerate(self._operations):
+            try:
+                match op:
+                    case InsertOperation(document=doc):
+                        self._collection.insert_one(doc, session=session)
+                        inserted_count += 1
+                    case UpdateOperation(
+                        filter=f, update=u, upsert=up, multi=multi
+                    ):
+                        if multi:
+                            update_res = self._collection.update_many(
+                                f, u, upsert=up, session=session
+                            )
+                        else:
+                            update_res = self._collection.update_one(
+                                f, u, upsert=up, session=session
+                            )
+                        matched_count += update_res.matched_count
+                        modified_count += update_res.modified_count
+                        if update_res.upserted_id is not None:
+                            upserted_count += 1
+                            upserted_ids[idx] = update_res.upserted_id
+                    case ReplaceOperation(filter=f, replacement=r, upsert=up):
+                        replace_res = self._collection.replace_one(
+                            f, r, upsert=up, session=session
+                        )
+                        matched_count += replace_res.matched_count
+                        modified_count += replace_res.modified_count
+                        if replace_res.upserted_id is not None:
+                            upserted_count += 1
+                            upserted_ids[idx] = replace_res.upserted_id
+                    case DeleteOperation(filter=f, multi=multi):
+                        if multi:
+                            delete_res = self._collection.delete_many(
+                                f, session=session
+                            )
+                        else:
+                            delete_res = self._collection.delete_one(
+                                f, session=session
+                            )
+                        deleted_count += delete_res.deleted_count
+            except Exception as e:
+                from ._sqlite import sqlite3
+
+                code = (
+                    11000
+                    if "UNIQUE" in str(e).upper()
+                    or isinstance(e, sqlite3.IntegrityError)
+                    else 8
+                )
+                write_errors.append(
+                    {
+                        "index": idx,
+                        "code": code,
+                        "errmsg": str(e),
+                        "op": op,
+                    }
+                )
+                if ordered:
+                    break
+
+        if write_errors:
+            error_details = {
+                "writeErrors": write_errors,
+                "writeConcernErrors": [],
+                "nInserted": inserted_count,
+                "nUpserted": upserted_count,
+                "nMatched": matched_count,
+                "nModified": modified_count,
+                "nRemoved": deleted_count,
+                "upserted": [
+                    {"index": i, "_id": oid} for i, oid in upserted_ids.items()
+                ],
+            }
+            raise BulkWriteError(error_details)
+
+        return BulkWriteResult(
+            inserted_count=inserted_count,
+            matched_count=matched_count,
+            modified_count=modified_count,
+            deleted_count=deleted_count,
+            upserted_count=upserted_count,
+            upserted_ids=upserted_ids,
+        )
+
     def _execute_ordered(
         self, session: ClientSession | None = None
     ) -> BulkWriteResult:
@@ -310,69 +442,7 @@ class BulkOperationExecutor:
         Returns:
             BulkWriteResult: A result object containing the counts of inserted, matched, modified, deleted, and upserted documents.
         """
-        inserted_count = 0
-        matched_count = 0
-        modified_count = 0
-        deleted_count = 0
-        upserted_count = 0
-
-        self._collection.db.execute(f"SAVEPOINT {self._savepoint_name}")
-        released = False
-        try:
-            for op in self._operations:
-                match op:
-                    case InsertOperation(document=doc):
-                        self._collection.insert_one(doc)
-                        inserted_count += 1
-                    case UpdateOperation(
-                        filter=f, update=u, upsert=up, multi=multi
-                    ):
-                        if multi:
-                            update_res = self._collection.update_many(f, u)
-                        else:
-                            update_res = self._collection.update_one(
-                                f, u, upsert=up
-                            )
-                        matched_count += update_res.matched_count
-                        modified_count += update_res.modified_count
-                        if update_res.upserted_id:
-                            upserted_count += 1
-                    case DeleteOperation(filter=f, multi=multi):
-                        if multi:
-                            delete_res = self._collection.delete_many(f)
-                        else:
-                            delete_res = self._collection.delete_one(f)
-                        deleted_count += delete_res.deleted_count
-
-            self._collection.db.execute(
-                f"RELEASE SAVEPOINT {self._savepoint_name}"
-            )
-            released = True
-        except Exception as e:
-            logger.debug(f"{e=}")
-            self._collection.db.execute(
-                f"ROLLBACK TO SAVEPOINT {self._savepoint_name}"
-            )
-            raise e
-        finally:
-            if not released:
-                try:
-                    self._collection.db.execute(
-                        f"RELEASE SAVEPOINT {self._savepoint_name}"
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to release savepoint 'bulk_operations': {e}"
-                    )
-                    pass
-
-        return BulkWriteResult(
-            inserted_count=inserted_count,
-            matched_count=matched_count,
-            modified_count=modified_count,
-            deleted_count=deleted_count,
-            upserted_count=upserted_count,
-        )
+        return self._execute(ordered=True, session=session)
 
     def _execute_unordered(
         self, session: ClientSession | None = None
@@ -389,70 +459,4 @@ class BulkOperationExecutor:
         Returns:
             BulkWriteResult: A result object containing the counts of inserted, matched, modified, deleted, and upserted documents.
         """
-        inserted_count = 0
-        matched_count = 0
-        modified_count = 0
-        deleted_count = 0
-        upserted_count = 0
-
-        self._collection.db.execute(f"SAVEPOINT {self._savepoint_name}")
-        released = False
-        try:
-            for op in self._operations:
-                try:
-                    match op:
-                        case InsertOperation(document=doc):
-                            self._collection.insert_one(doc)
-                            inserted_count += 1
-                        case UpdateOperation(
-                            filter=f, update=u, upsert=up, multi=multi
-                        ):
-                            if multi:
-                                update_res = self._collection.update_many(f, u)
-                            else:
-                                update_res = self._collection.update_one(
-                                    f, u, upsert=up
-                                )
-                            matched_count += update_res.matched_count
-                            modified_count += update_res.modified_count
-                            if update_res.upserted_id:
-                                upserted_count += 1
-                        case DeleteOperation(filter=f, multi=multi):
-                            if multi:
-                                delete_res = self._collection.delete_many(f)
-                            else:
-                                delete_res = self._collection.delete_one(f)
-                            deleted_count += delete_res.deleted_count
-                except Exception as e:
-                    logger.warning(f"Unordered bulk operation failed: {e}")
-                    continue
-
-            self._collection.db.execute(
-                f"RELEASE SAVEPOINT {self._savepoint_name}"
-            )
-            released = True
-        except Exception as e:
-            logger.debug(f"{e=}")
-            self._collection.db.execute(
-                f"ROLLBACK TO SAVEPOINT {self._savepoint_name}"
-            )
-            raise e
-        finally:
-            if not released:
-                try:
-                    self._collection.db.execute(
-                        f"RELEASE SAVEPOINT {self._savepoint_name}"
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to release savepoint 'bulk_operations': {e}"
-                    )
-                    pass
-
-        return BulkWriteResult(
-            inserted_count=inserted_count,
-            matched_count=matched_count,
-            modified_count=modified_count,
-            deleted_count=deleted_count,
-            upserted_count=upserted_count,
-        )
+        return self._execute(ordered=False, session=session)

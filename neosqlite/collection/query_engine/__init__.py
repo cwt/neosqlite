@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 from neosqlite.collection.jsonb_support import JSONBContext
 
 from ...bulk_operations import BulkOperationExecutor
-from ...requests import DeleteOne, InsertOne, UpdateOne
+from ...requests import _parse_bulk_request
 from ...results import BulkWriteResult
 from ..expr_evaluator import ExprEvaluator
 from ..query_helper import QueryHelper
@@ -478,12 +478,13 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         Args:
             requests: List of write operations to execute.
             ordered: If true, operations will be performed in order and will
-                     raise an exception if a single operation fails.
+                     stop and raise BulkWriteError if an operation fails.
+                     If false, operations will continue executing and will
+                     raise BulkWriteError at the end if any operations failed.
             session (ClientSession, optional): A ClientSession for transactions.
 
         Returns:
-            BulkWriteResult: A result object containing the number of matched,
-                             modified, and inserted documents.
+            BulkWriteResult: A result object containing counts and upserted_ids.
         """
         validate_session(session, self.collection._database)
         inserted_count = 0
@@ -491,37 +492,99 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         modified_count = 0
         deleted_count = 0
         upserted_count = 0
+        upserted_ids: dict[int, Any] = {}
+        write_errors: list[dict[str, Any]] = []
 
-        released = False
-        self.collection.db.execute("SAVEPOINT bulk_write")
-        try:
-            for req in requests:
-                match req:
-                    case InsertOne(document=doc):
-                        self.insert_one(doc, session=session)
-                        inserted_count += 1
-                    case UpdateOne(filter=f, update=u, upsert=up):
-                        update_res = self.update_one(f, u, up, session=session)
-                        matched_count += update_res.matched_count
-                        modified_count += update_res.modified_count
-                        if update_res.upserted_id:
-                            upserted_count += 1
-                    case DeleteOne(filter=f):
-                        delete_res = self.delete_one(f, session=session)
-                        deleted_count += delete_res.deleted_count
-            self.collection.db.execute("RELEASE SAVEPOINT bulk_write")
-            released = True
-        except Exception as e:
-            logger.debug(f"Error in bulk_write: {e}")
-            self.collection.db.execute("ROLLBACK TO SAVEPOINT bulk_write")
-            raise e
-        finally:
-            if not released:
-                try:
-                    self.collection.db.execute("RELEASE SAVEPOINT bulk_write")
-                except Exception as e:
-                    logger.debug(f"Failed to release bulk_write savepoint: {e}")
-                    pass
+        for idx, req in enumerate(requests):
+            try:
+                op_type, kwargs = _parse_bulk_request(req)
+                if op_type == "insert_one":
+                    self.insert_one(kwargs["document"], session=session)
+                    inserted_count += 1
+                elif op_type == "update_one":
+                    update_res = self.update_one(
+                        kwargs["filter"],
+                        kwargs["update"],
+                        upsert=kwargs["upsert"],
+                        array_filters=kwargs.get("array_filters"),
+                        session=session,
+                    )
+                    matched_count += update_res.matched_count
+                    modified_count += update_res.modified_count
+                    if update_res.upserted_id is not None:
+                        upserted_count += 1
+                        upserted_ids[idx] = update_res.upserted_id
+                elif op_type == "update_many":
+                    update_res = self.update_many(
+                        kwargs["filter"],
+                        kwargs["update"],
+                        upsert=kwargs["upsert"],
+                        array_filters=kwargs.get("array_filters"),
+                        session=session,
+                    )
+                    matched_count += update_res.matched_count
+                    modified_count += update_res.modified_count
+                    if update_res.upserted_id is not None:
+                        upserted_count += 1
+                        upserted_ids[idx] = update_res.upserted_id
+                elif op_type == "replace_one":
+                    replace_res = self.replace_one(
+                        kwargs["filter"],
+                        kwargs["replacement"],
+                        upsert=kwargs["upsert"],
+                        session=session,
+                    )
+                    matched_count += replace_res.matched_count
+                    modified_count += replace_res.modified_count
+                    if replace_res.upserted_id is not None:
+                        upserted_count += 1
+                        upserted_ids[idx] = replace_res.upserted_id
+                elif op_type == "delete_one":
+                    delete_res = self.delete_one(
+                        kwargs["filter"], session=session
+                    )
+                    deleted_count += delete_res.deleted_count
+                elif op_type == "delete_many":
+                    delete_res = self.delete_many(
+                        kwargs["filter"], session=session
+                    )
+                    deleted_count += delete_res.deleted_count
+            except Exception as e:
+                from ..._sqlite import sqlite3
+
+                code = (
+                    11000
+                    if "UNIQUE" in str(e).upper()
+                    or isinstance(e, sqlite3.IntegrityError)
+                    else 8
+                )
+                write_errors.append(
+                    {
+                        "index": idx,
+                        "code": code,
+                        "errmsg": str(e),
+                        "op": req,
+                    }
+                )
+                if ordered:
+                    break
+
+        if write_errors:
+            from ...exceptions import BulkWriteError
+
+            error_details = {
+                "writeErrors": write_errors,
+                "writeConcernErrors": [],
+                "nInserted": inserted_count,
+                "nUpserted": upserted_count,
+                "nMatched": matched_count,
+                "nModified": modified_count,
+                "nRemoved": deleted_count,
+                "upserted": [
+                    {"index": i, "_id": oid} for i, oid in upserted_ids.items()
+                ],
+            }
+            raise BulkWriteError(error_details)
 
         return BulkWriteResult(
             inserted_count=inserted_count,
@@ -529,6 +592,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
             modified_count=modified_count,
             deleted_count=deleted_count,
             upserted_count=upserted_count,
+            upserted_ids=upserted_ids,
         )
 
     def _aggregate_with_quez(

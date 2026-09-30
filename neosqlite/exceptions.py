@@ -1,3 +1,6 @@
+from typing import Any
+
+
 class MalformedQueryException(Exception):
     """
     Exception raised when a query is malformed.
@@ -28,3 +31,13 @@ class InvalidOperation(Exception):
     """
 
     pass
+
+
+class BulkWriteError(Exception):
+    """
+    Exception raised when a bulk write operation has errors.
+    """
+
+    def __init__(self, results: dict[str, Any]):
+        self.details = results
+        super().__init__(str(results))

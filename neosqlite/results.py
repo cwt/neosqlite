@@ -144,6 +144,7 @@ class BulkWriteResult:
         modified_count: int,
         deleted_count: int,
         upserted_count: int,
+        upserted_ids: dict[int, Any] | None = None,
     ):
         """
         Initialize a BulkWriteResult object with counts of various operations.
@@ -154,9 +155,11 @@ class BulkWriteResult:
             modified_count (int): The number of documents that were modified.
             deleted_count (int): The number of documents that were deleted.
             upserted_count (int): The number of documents that were upserted.
+            upserted_ids (dict[int, Any], optional): Mapping of operation index to upserted _id.
         """
         self.inserted_count = inserted_count
         self.matched_count = matched_count
         self.modified_count = modified_count
         self.deleted_count = deleted_count
         self.upserted_count = upserted_count
+        self.upserted_ids = upserted_ids if upserted_ids is not None else {}

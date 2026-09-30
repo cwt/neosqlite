@@ -7,7 +7,12 @@ from typing import Tuple, Type
 from pytest import raises
 
 import neosqlite
-from neosqlite import DeleteOne, InsertOne, UpdateOne
+from neosqlite import (
+    BulkWriteError,
+    DeleteOne,
+    InsertOne,
+    UpdateOne,
+)
 from neosqlite.collection import sqlite3
 
 # Handle both standard sqlite3 and pysqlite3 exceptions
@@ -135,27 +140,42 @@ def test_bulk_write_ordered_parameter(collection):
 
 
 def test_bulk_write_ordered_vs_unordered_behavior(collection):
-    """Test that ordered and unordered parameters are accepted (behavior may be same for now)."""
-    # Since our implementation executes operations sequentially anyway,
-    # both ordered=True and ordered=False should work the same way
-    # This test ensures the parameter is accepted without error
+    """Test difference between ordered and unordered bulk write error handling."""
+    collection.create_index("x", unique=True)
+    collection.insert_one({"x": 10})
 
+    # requests:
+    # 0: Insert x=1 (success)
+    # 1: Insert x=10 (fail: duplicate)
+    # 2: Insert x=2 (should not run in ordered=True, should run in ordered=False)
     requests = [
-        InsertOne({"test": "ordered"}),
-        UpdateOne({"test": "ordered"}, {"$set": {"updated": True}}),
+        InsertOne({"x": 1}),
+        InsertOne({"x": 10}),
+        InsertOne({"x": 2}),
     ]
 
-    # Both should work without error
-    result_ordered = collection.bulk_write(requests, ordered=True)
-    assert result_ordered.inserted_count == 1
-    assert result_ordered.matched_count == 1
+    # ordered=True: stops after failing at index 1
+    with raises(BulkWriteError) as exc_info:
+        collection.bulk_write(requests, ordered=True)
+    err = exc_info.value.details
+    assert err["nInserted"] == 1
+    assert len(err["writeErrors"]) == 1
+    assert err["writeErrors"][0]["index"] == 1
+    assert collection.find_one({"x": 1}) is not None
+    assert collection.find_one({"x": 2}) is None
 
-    # Clear collection
-    collection.db.execute(f"DELETE FROM {collection.name}")
+    # Clear inserted documents except initial
+    collection.delete_many({"x": {"$ne": 10}})
 
-    result_unordered = collection.bulk_write(requests, ordered=False)
-    assert result_unordered.inserted_count == 1
-    assert result_unordered.matched_count == 1
+    # ordered=False: continues after failure at index 1 and executes index 2
+    with raises(BulkWriteError) as exc_info:
+        collection.bulk_write(requests, ordered=False)
+    err = exc_info.value.details
+    assert err["nInserted"] == 2
+    assert len(err["writeErrors"]) == 1
+    assert err["writeErrors"][0]["index"] == 1
+    assert collection.find_one({"x": 1}) is not None
+    assert collection.find_one({"x": 2}) is not None
 
 
 def test_bulk_write_ordered_with_mixed_operations(collection):
@@ -214,6 +234,7 @@ def test_bulk_write_with_upsert(collection):
     requests = [UpdateOne({"a": 1}, {"$set": {"a": 10}}, upsert=True)]
     result = collection.bulk_write(requests)
     assert result.upserted_count == 1
+    assert 0 in result.upserted_ids
     assert collection.count_documents({}) == 1
 
 
@@ -224,10 +245,13 @@ def test_bulk_write_rollback(collection):
         InsertOne({"a": 2}),
         InsertOne({"a": 1}),  # This will fail
     ]
-    with raises(IntegrityError):
+    with raises(BulkWriteError) as exc_info:
         collection.bulk_write(requests)
-    assert collection.count_documents({}) == 1
-    assert collection.find_one({"a": 2}) is None
+    assert exc_info.value.details["nInserted"] == 1
+    assert len(exc_info.value.details["writeErrors"]) == 1
+    assert exc_info.value.details["writeErrors"][0]["index"] == 1
+    assert collection.count_documents({}) == 2
+    assert collection.find_one({"a": 2}) is not None
 
 
 def test_bulk_write_ordered_parameter_from_collection_bulk(collection):
@@ -272,3 +296,73 @@ def test_bulk_write_ordered_parameter_from_collection_bulk(collection):
     assert collection.find_one({"a": 10}) is not None
     assert collection.find_one({"a": 4}) is not None
     assert collection.find_one({"a": 2}) is None
+
+
+def test_bulk_operation_executor_ordered_and_unordered(collection):
+    collection.create_index("b", unique=True)
+    collection.insert_one({"b": 10})
+
+    # Ordered executor
+    ordered_op = collection.initialize_ordered_bulk_op()
+    ordered_op.insert({"b": 1})
+    ordered_op.insert({"b": 10})  # duplicate error
+    ordered_op.insert({"b": 2})
+    with raises(BulkWriteError) as exc_info:
+        ordered_op.execute()
+    assert exc_info.value.details["nInserted"] == 1
+    assert len(exc_info.value.details["writeErrors"]) == 1
+    assert exc_info.value.details["writeErrors"][0]["index"] == 1
+    assert collection.find_one({"b": 1}) is not None
+    assert collection.find_one({"b": 2}) is None
+
+    collection.delete_many({"b": {"$ne": 10}})
+
+    # Unordered executor
+    unordered_op = collection.initialize_unordered_bulk_op()
+    unordered_op.insert({"b": 1})
+    unordered_op.insert({"b": 10})  # duplicate error
+    unordered_op.insert({"b": 2})
+    with raises(BulkWriteError) as exc_info:
+        unordered_op.execute()
+    assert exc_info.value.details["nInserted"] == 2
+    assert len(exc_info.value.details["writeErrors"]) == 1
+    assert exc_info.value.details["writeErrors"][0]["index"] == 1
+    assert collection.find_one({"b": 1}) is not None
+    assert collection.find_one({"b": 2}) is not None
+
+
+def test_bulk_write_pymongo_operations(collection):
+    import pymongo.operations as p_ops
+
+    requests = [
+        p_ops.InsertOne({"k": 1, "v": "a"}),
+        p_ops.InsertOne({"k": 2, "v": "b"}),
+        p_ops.UpdateOne({"k": 1}, {"$set": {"v": "updated_a"}}),
+        p_ops.UpdateMany(
+            {"v": {"$regex": "^updated_"}}, {"$set": {"flag": True}}
+        ),
+        p_ops.ReplaceOne({"k": 2}, {"k": 2, "v": "replaced_b"}),
+        p_ops.DeleteOne({"k": 1}),
+        p_ops.DeleteMany({"k": 2}),
+    ]
+    result = collection.bulk_write(requests)
+    assert result.inserted_count == 2
+    assert result.matched_count >= 2
+    assert result.modified_count >= 2
+    assert result.deleted_count == 2
+    assert collection.count_documents({}) == 0
+
+
+def test_bulk_operation_executor_add_pymongo_and_duck_typed(collection):
+    import pymongo.operations as p_ops
+
+    executor = collection.initialize_ordered_bulk_op()
+    executor.add(p_ops.InsertOne({"c": 1}))
+    executor.add(p_ops.UpdateOne({"c": 1}, {"$set": {"c": 2}}))
+    executor.add(p_ops.ReplaceOne({"c": 2}, {"c": 3, "name": "three"}))
+    executor.add(p_ops.DeleteOne({"c": 3}))
+    res = executor.execute()
+    assert res.inserted_count == 1
+    assert res.matched_count == 2
+    assert res.deleted_count == 1
+    assert collection.count_documents({}) == 0
