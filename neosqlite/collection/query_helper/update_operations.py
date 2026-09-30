@@ -18,9 +18,14 @@ from ..json_helpers import (
 
 logger = logging.getLogger(__name__)
 
+from ...query_operators import (
+    _field_exists,
+    _get_nested_field,
+)
 from ._sql_updates import SqlUpdatesMixin
 from .positional_update import (
     _apply_positional_update,
+    _matches_filter,
     _set_nested_field,
 )
 from .utils import (
@@ -233,10 +238,25 @@ class UpdateOperationsMixin(SqlUpdatesMixin):
                                 current_list.append(val)
                 case "$pull":
                     for k, v in value.items():
-                        if k in doc_to_update:
-                            doc_to_update[k] = [
-                                item for item in doc_to_update[k] if item != v
-                            ]
+                        if "." in k:
+                            if _field_exists(k, doc_to_update):
+                                arr = _get_nested_field(k, doc_to_update)
+                                if isinstance(arr, list):
+                                    new_arr = [
+                                        item
+                                        for item in arr
+                                        if not _matches_filter(item, v)
+                                    ]
+                                    _set_nested_field(doc_to_update, k, new_arr)
+                        else:
+                            if k in doc_to_update and isinstance(
+                                doc_to_update[k], list
+                            ):
+                                doc_to_update[k] = [
+                                    item
+                                    for item in doc_to_update[k]
+                                    if not _matches_filter(item, v)
+                                ]
                 case "$pullAll":
                     for k, v in value.items():
                         if k in doc_to_update and isinstance(v, (list, tuple)):

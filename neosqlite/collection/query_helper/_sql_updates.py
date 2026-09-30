@@ -124,10 +124,12 @@ class SqlUpdatesMixin:
                 if op in {"$pull", "$pullAll"}:
                     op_spec = update_spec[op]
                     if isinstance(op_spec, dict):
-                        for field in op_spec.keys():
+                        for field, pull_val in op_spec.items():
                             if field not in original_doc or not isinstance(
                                 original_doc.get(field), list
                             ):
+                                return False
+                            if op == "$pull" and isinstance(pull_val, dict):
                                 return False
 
         return (
@@ -974,6 +976,8 @@ class SqlUpdatesMixin:
                 case "$pull":
                     # SQL optimization for $pull: filter array elements using json_each
                     for field, pull_value in value.items():
+                        if isinstance(pull_value, dict):
+                            return None
                         json_path = f"'{parse_json_path(field)}'"
                         converted_val = _convert_bytes_to_binary(pull_value)
                         if isinstance(converted_val, (dict, list, Binary)):

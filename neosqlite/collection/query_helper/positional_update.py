@@ -373,7 +373,7 @@ def _resolve_filter_value(
     return current
 
 
-def _matches_filter(elem: Any, filter_spec: dict[str, Any]) -> bool:
+def _matches_filter(elem: Any, filter_spec: dict[str, Any] | Any) -> bool:
     """
     Check if an array element matches a filter specification.
 
@@ -393,15 +393,28 @@ def _matches_filter(elem: Any, filter_spec: dict[str, Any]) -> bool:
         # Apply query operators to scalar value
         return _matches_query_operators(elem, filter_spec)
 
-    # Handle dict element with dict filter
+    # Handle dict element with direct query operators (e.g. {$type: "object"})
+    if all(k.startswith("$") for k in filter_spec.keys()):
+        return _matches_query_operators(elem, filter_spec)
+
+    # Handle dict element with field filter
+    from neosqlite.query_operators import _field_exists, _get_nested_field
+
     for key, expected_value in filter_spec.items():
-        if key not in elem:
+        exists = _field_exists(key, elem)
+        if not exists:
+            if (
+                isinstance(expected_value, dict)
+                and expected_value.get("$exists") is False
+            ):
+                continue
             return False
+        elem_val = _get_nested_field(key, elem)
         if isinstance(expected_value, dict):
             # Handle query operators in filter
-            if not _matches_query_operators(elem[key], expected_value):
+            if not _matches_query_operators(elem_val, expected_value):
                 return False
-        elif elem[key] != expected_value:
+        elif elem_val != expected_value:
             return False
 
     return True
@@ -424,16 +437,16 @@ def _matches_query_operators(value: Any, operators: dict[str, Any]) -> bool:
                 if value != expected:
                     return False
             case "$gt":
-                if not (value > expected):
+                if value is None or expected is None or not (value > expected):
                     return False
             case "$gte":
-                if not (value >= expected):
+                if value is None or expected is None or not (value >= expected):
                     return False
             case "$lt":
-                if not (value < expected):
+                if value is None or expected is None or not (value < expected):
                     return False
             case "$lte":
-                if not (value <= expected):
+                if value is None or expected is None or not (value <= expected):
                     return False
             case "$ne":
                 if value == expected:
@@ -453,6 +466,29 @@ def _matches_query_operators(value: Any, operators: dict[str, Any]) -> bool:
                     isinstance(value, (list, tuple)) and len(value) == expected
                 ):
                     return False
+            case "$regex":
+                import re
+
+                flags = 0
+                if "$options" in operators:
+                    opts = operators["$options"]
+                    if "i" in opts:
+                        flags |= re.IGNORECASE
+                    if "m" in opts:
+                        flags |= re.MULTILINE
+                    if "s" in opts:
+                        flags |= re.DOTALL
+                pattern = (
+                    expected.pattern
+                    if hasattr(expected, "pattern")
+                    else str(expected)
+                )
+                if not isinstance(value, str) or not re.search(
+                    pattern, value, flags
+                ):
+                    return False
+            case "$options":
+                continue
             case "$type":
                 from ..type_utils import get_bson_type
 

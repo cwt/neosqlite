@@ -1536,3 +1536,108 @@ class TestUpdateModifiedCount:
         )
         assert res2.matched_count == 2
         assert res2.modified_count == 0
+
+
+class TestPullOperatorConditions:
+    """$pull operator with query conditions on scalar and document array elements."""
+
+    def test_pull_scalar_condition_operator(self, connection):
+        c = connection.t_pull_scalar
+        c.insert_many(
+            [
+                {"_id": 1, "scores": [0, 45, 60, 85, 95]},
+                {"_id": 2, "scores": [20, 30, 40]},
+            ]
+        )
+        res = c.update_many({}, {"$pull": {"scores": {"$gte": 80}}})
+        assert res.matched_count == 2
+        assert res.modified_count == 1
+        assert c.find_one({"_id": 1})["scores"] == [0, 45, 60]
+        assert c.find_one({"_id": 2})["scores"] == [20, 30, 40]
+
+    def test_pull_document_element_condition(self, connection):
+        c = connection.t_pull_doc
+        c.insert_one(
+            {
+                "_id": 1,
+                "results": [
+                    {"item": "A", "score": 60},
+                    {"item": "B", "score": 85},
+                    {"item": "C", "score": 90},
+                ],
+            }
+        )
+        res = c.update_one(
+            {"_id": 1},
+            {"$pull": {"results": {"score": {"$gte": 80}}}},
+        )
+        assert res.matched_count == 1
+        assert res.modified_count == 1
+        doc = c.find_one({"_id": 1})
+        assert doc["results"] == [{"item": "A", "score": 60}]
+
+    def test_pull_nested_field_condition(self, connection):
+        c = connection.t_pull_nested
+        c.insert_one(
+            {
+                "_id": 1,
+                "data": {
+                    "vals": [1, 5, 10, 15],
+                },
+            }
+        )
+        res = c.update_one(
+            {"_id": 1},
+            {"$pull": {"data.vals": {"$gt": 5}}},
+        )
+        assert res.matched_count == 1
+        assert res.modified_count == 1
+        doc = c.find_one({"_id": 1})
+        assert doc["data"]["vals"] == [1, 5]
+
+    def test_pull_regex_and_type_condition(self, connection):
+        c = connection.t_pull_regex
+        c.insert_one(
+            {
+                "_id": 1,
+                "tags": ["apple", "banana", "AVOCADO", "cherry", 123, None],
+            }
+        )
+        c.update_one(
+            {"_id": 1},
+            {"$pull": {"tags": {"$regex": "^a", "$options": "i"}}},
+        )
+        assert c.find_one({"_id": 1})["tags"] == [
+            "banana",
+            "cherry",
+            123,
+            None,
+        ]
+
+        c.update_one(
+            {"_id": 1},
+            {"$pull": {"tags": {"$type": "int"}}},
+        )
+        assert c.find_one({"_id": 1})["tags"] == ["banana", "cherry", None]
+
+    def test_pull_size_and_in_condition(self, connection):
+        c = connection.t_pull_size
+        c.insert_one(
+            {
+                "_id": 1,
+                "lists": [[1, 2], [1, 2, 3], [4]],
+                "vals": [10, 20, 30, 40],
+            }
+        )
+        c.update_one(
+            {"_id": 1},
+            {
+                "$pull": {
+                    "lists": {"$size": 2},
+                    "vals": {"$in": [10, 30]},
+                }
+            },
+        )
+        doc = c.find_one({"_id": 1})
+        assert doc["lists"] == [[1, 2, 3], [4]]
+        assert doc["vals"] == [20, 40]
