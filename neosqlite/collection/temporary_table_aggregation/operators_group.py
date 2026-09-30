@@ -136,6 +136,13 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
             if isinstance(val, str):
                 escaped = val.replace("'", "''")
                 return f"'{escaped}'"
+            if isinstance(val, (dict, list)):
+                import json
+
+                json_str = json.dumps(val, separators=(",", ":")).replace(
+                    "'", "''"
+                )
+                return f"json('{json_str}')"
             return f"'{val}'"
 
         # Handle accumulators
@@ -314,12 +321,31 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                                     obj_args.append(
                                         f"'{key}', {json_extract}(data, '{parse_json_path(field_name)}')"
                                     )
-                            elif isinstance(val, (int, float, str)):
-                                # Literal value - inline directly
+                            elif (
+                                isinstance(
+                                    val, (int, float, str, bool, dict, list)
+                                )
+                                or val is None
+                            ):
                                 if isinstance(val, str):
                                     escaped_val = val.replace("'", "''")
                                     obj_args.append(
                                         f"'{key}', json_quote('{escaped_val}')"
+                                    )
+                                elif isinstance(val, (dict, list)):
+                                    import json
+
+                                    json_str = json.dumps(
+                                        val, separators=(",", ":")
+                                    ).replace("'", "''")
+                                    obj_args.append(
+                                        f"'{key}', json('{json_str}')"
+                                    )
+                                elif val is None:
+                                    obj_args.append(f"'{key}', NULL")
+                                elif isinstance(val, bool):
+                                    obj_args.append(
+                                        f"'{key}', {1 if val else 0}"
                                     )
                                 else:
                                     obj_args.append(f"'{key}', {val}")
@@ -387,13 +413,33 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                                     obj_args.append(
                                         f"'{key}', {json_extract}(data, '{parse_json_path(field_name)}')"
                                     )
-                            elif isinstance(val, (int, float, str)):
+                            elif (
+                                isinstance(
+                                    val, (int, float, str, bool, dict, list)
+                                )
+                                or val is None
+                            ):
                                 # Literal value - inline directly (CREATE TABLE AS SELECT doesn't support params)
                                 if isinstance(val, str):
                                     # Escape single quotes for SQL
                                     escaped_val = val.replace("'", "''")
                                     obj_args.append(
                                         f"'{key}', json_quote('{escaped_val}')"
+                                    )
+                                elif isinstance(val, (dict, list)):
+                                    import json
+
+                                    json_str = json.dumps(
+                                        val, separators=(",", ":")
+                                    ).replace("'", "''")
+                                    obj_args.append(
+                                        f"'{key}', json('{json_str}')"
+                                    )
+                                elif val is None:
+                                    obj_args.append(f"'{key}', NULL")
+                                elif isinstance(val, bool):
+                                    obj_args.append(
+                                        f"'{key}', {1 if val else 0}"
                                     )
                                 else:
                                     obj_args.append(f"'{key}', {val}")

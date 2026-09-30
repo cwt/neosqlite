@@ -583,6 +583,9 @@ class TestUnwindScalars:
             TemporaryTableAggregationProcessor,
         )
 
+        def _sort_key(tup):
+            return (tup[0], tup[2] if tup[2] is not None else -1)
+
         proc = TemporaryTableAggregationProcessor(docs)
         for spec in (
             {"$unwind": "$a"},
@@ -597,16 +600,115 @@ class TestUnwindScalars:
             set_force_fallback(True)
             try:
                 t3 = sorted(
-                    (d["_id"], str(d.get("a")), d.get("idx"))
-                    for d in docs.aggregate([spec])
+                    (
+                        (d["_id"], d.get("a"), d.get("idx"))
+                        for d in docs.aggregate([spec])
+                    ),
+                    key=_sort_key,
                 )
             finally:
                 set_force_fallback(False)
             t2 = sorted(
-                (d["_id"], str(d.get("a")), d.get("idx"))
-                for d in proc.process_pipeline([spec])
+                (
+                    (d["_id"], d.get("a"), d.get("idx"))
+                    for d in proc.process_pipeline([spec])
+                ),
+                key=_sort_key,
             )
             assert t3 == t2, spec
+
+        d6_t2 = [
+            d
+            for d in proc.process_pipeline([{"$unwind": "$a"}])
+            if d["_id"] == 6
+        ][0]
+        assert isinstance(d6_t2["a"], dict)
+        assert d6_t2["a"] == {"n": 1}
+
+    def test_sort_array_object_elements(self, docs):
+        from neosqlite.collection.query_helper import set_force_fallback
+        from neosqlite.collection.temporary_table_aggregation import (
+            TemporaryTableAggregationProcessor,
+        )
+
+        c = docs.database["test_sort_arr"]
+        c.drop()
+        c.create()
+        c.insert_one({"_id": 1, "items": [{"n": 3}, {"n": 1}, {"n": 2}]})
+
+        pipeline = [
+            {
+                "$project": {
+                    "sorted": {
+                        "$sortArray": {
+                            "input": "$items",
+                            "sortBy": {"n": 1},
+                        }
+                    }
+                }
+            }
+        ]
+
+        # Tier 1
+        res_t1 = list(c.aggregate(pipeline))
+        assert res_t1[0]["sorted"] == [{"n": 1}, {"n": 2}, {"n": 3}]
+        assert all(isinstance(x, dict) for x in res_t1[0]["sorted"])
+
+        # Tier 2
+        proc = TemporaryTableAggregationProcessor(c)
+        res_t2 = proc.process_pipeline(pipeline)
+        assert res_t2[0]["sorted"] == [{"n": 1}, {"n": 2}, {"n": 3}]
+        assert all(isinstance(x, dict) for x in res_t2[0]["sorted"])
+
+        # Tier 3
+        set_force_fallback(True)
+        try:
+            res_t3 = list(c.aggregate(pipeline))
+            assert res_t3[0]["sorted"] == [{"n": 1}, {"n": 2}, {"n": 3}]
+            assert all(isinstance(x, dict) for x in res_t3[0]["sorted"])
+        finally:
+            set_force_fallback(False)
+
+    def test_unwind_project_missing_fields_omitted(self, docs):
+        from neosqlite.collection.query_helper import set_force_fallback
+        from neosqlite.collection.temporary_table_aggregation import (
+            TemporaryTableAggregationProcessor,
+        )
+
+        pipeline = [
+            {"$unwind": {"path": "$a", "preserveNullAndEmptyArrays": True}},
+            {"$project": {"a": 1, "idx": "$idx", "b": 1}},
+        ]
+
+        def _id_key(d):
+            return (d["_id"], str(d.get("a")))
+
+        res_t1 = sorted(docs.aggregate(pipeline), key=_id_key)
+        proc = TemporaryTableAggregationProcessor(docs)
+        res_t2 = sorted(proc.process_pipeline(pipeline), key=_id_key)
+
+        set_force_fallback(True)
+        try:
+            res_t3 = sorted(docs.aggregate(pipeline), key=_id_key)
+        finally:
+            set_force_fallback(False)
+
+        assert res_t1 == res_t2 == res_t3
+
+        doc3 = [d for d in res_t2 if d["_id"] == 3][0]
+        assert "a" not in doc3
+        assert "b" not in doc3
+        assert "idx" not in doc3
+
+        doc4 = [d for d in res_t2 if d["_id"] == 4][0]
+        assert "a" not in doc4
+        assert doc4.get("b") == 9
+        assert "idx" not in doc4
+
+        doc5 = [d for d in res_t2 if d["_id"] == 5][0]
+        assert "a" in doc5 and doc5["a"] is None
+        assert "b" not in doc5
+        assert "idx" not in doc5
 
 
 class TestPushPositionAndSlice:

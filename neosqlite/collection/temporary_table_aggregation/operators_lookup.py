@@ -17,6 +17,16 @@ logger = logging.getLogger(__name__)
 HASH_JOIN_MEMORY_THRESHOLD = 100 * 1024 * 1024  # 100 MB default threshold
 
 
+def _serialize_lookup_key(key_val: Any) -> str | None:
+    if key_val is None:
+        return None
+    if isinstance(key_val, (dict, list)):
+        import json
+
+        return json.dumps(key_val, separators=(",", ":"))
+    return str(key_val)
+
+
 class OperatorsLookupMixin(OperatorsBaseMixin):
     def _create_lookup_hash_table(
         self,
@@ -77,7 +87,7 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
                                     (row_number := row_number + 1),
                                     doc.get("_id"),
                                     neosqlite_json_dumps(doc),
-                                    str(doc.get("_id")),
+                                    _serialize_lookup_key(doc.get("_id")),
                                 ),
                             )
                     else:
@@ -91,11 +101,7 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
                                     (row_number := row_number + 1),
                                     doc.get("_id"),
                                     neosqlite_json_dumps(doc),
-                                    (
-                                        str(key_val)
-                                        if key_val is not None
-                                        else None
-                                    ),
+                                    _serialize_lookup_key(key_val),
                                 ),
                             )
             else:
@@ -197,13 +203,11 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
 
                 # Extract the foreign field value
                 if foreign_field == "_id":
-                    key_val = (
-                        str(doc_underscore_id) if doc_underscore_id else None
-                    )
+                    key_val = _serialize_lookup_key(doc_underscore_id)
                 else:
                     # Navigate nested field path
                     key_val = self._extract_field_value(doc, foreign_field)
-                    key_val = str(key_val) if key_val is not None else None
+                    key_val = _serialize_lookup_key(key_val)
 
                 # Insert into hash table
                 self.db.execute(

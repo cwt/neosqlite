@@ -561,6 +561,7 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
 
         # Build key-value pairs for json_object
         json_parts = []
+        missing_removals = []
         all_params: list[Any] = []
 
         for field, value in project_spec.items():
@@ -607,6 +608,10 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
                     json_parts.append(
                         f"{json_extract_func}(data, '{parse_json_path(source_field)}')"
                     )
+                    missing_removals.append(
+                        f"CASE WHEN json_type(data, '{parse_json_path(source_field)}') IS NULL "
+                        f"THEN '{parse_json_path(field)}' ELSE '$.__none__' END"
+                    )
 
             elif value == 1:
                 # Simple inclusion: copy field from data
@@ -614,12 +619,19 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
                 json_parts.append(
                     f"{json_extract_func}(data, '{parse_json_path(field)}')"
                 )
+                missing_removals.append(
+                    f"CASE WHEN json_type(data, '{parse_json_path(field)}') IS NULL "
+                    f"THEN '{parse_json_path(field)}' ELSE '$.__none__' END"
+                )
 
             # value == 0 is exclusion — skip in inclusion mode
 
         # Build the reconstructed data column
         if json_parts:
             data_expr = f"{json_obj_func}({', '.join(json_parts)})"
+            if missing_removals:
+                json_remove_func = f"{self.jsonb.json_function_prefix}_remove"
+                data_expr = f"{json_remove_func}({data_expr}, {', '.join(missing_removals)})"
         else:
             # No fields projected — empty object
             data_expr = f"{json_obj_func}()"

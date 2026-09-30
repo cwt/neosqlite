@@ -216,6 +216,8 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
                 f"{quote_table_name(self.collection.name)}._id as _id",
             ]
 
+            unwound_val = "CASE WHEN je.type IN ('object', 'array') THEN json(je.value) ELSE je.value END"
+
             # Handle includeArrayIndex option
             if include_index:
                 # Add array index as a new field in the data
@@ -226,7 +228,7 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
                     f"  {self.jsonb.json_function_prefix}_set("
                     f"    {quote_table_name(self.collection.name)}.data,"
                     f"    '{parse_json_path(field_name)}',"
-                    f"    je.value"
+                    f"    {unwound_val}"
                     f"  ),"
                     f"  '{index_field}',"
                     f"  CAST(je.key AS INTEGER)"
@@ -238,7 +240,7 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
                     f"{self.jsonb.json_function_prefix}_set("
                     f"  {quote_table_name(self.collection.name)}.data,"
                     f"  '{parse_json_path(field_name)}',"
-                    f"  je.value"
+                    f"  {unwound_val}"
                     f") as data"
                 )
 
@@ -248,7 +250,8 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
             # CASE-wrapped so that non-null scalars iterate as a single-
             # element array (MongoDB semantics) instead of crashing
             # json_each with malformed JSON; null/missing stays NULL and
-            # yields no rows (#96).
+            # yields no rows (#96). Object scalars are parsed with json()
+            # so json_array preserves their object type.
             table_ref = quote_table_name(self.collection.name)
             extracted = (
                 f"{json_extract_func}({table_ref}.data, "
@@ -260,7 +263,7 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
                 f"CASE"
                 f" WHEN json_type({extracted}) = 'array' THEN {extracted}"
                 f" WHEN json_type({extracted}) IS NULL THEN NULL"
-                f" ELSE json_array({extracted})"
+                f" ELSE json_array(CASE WHEN json_type({extracted}) = 'object' THEN json({extracted}) ELSE {extracted} END)"
                 f"END"
                 f") as je"
             )

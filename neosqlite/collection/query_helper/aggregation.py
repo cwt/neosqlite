@@ -517,6 +517,17 @@ class AggregationMixin(SqlAggregationMixin):
                 )
                 pass  # Ignore cleanup errors
 
+    def _field_exists(self, doc: dict[str, Any], field_path: str) -> bool:
+        """Check if a field or nested field path exists in a document."""
+        if not isinstance(doc, dict):
+            return False
+        curr: Any = doc
+        for part in field_path.split("."):
+            if not isinstance(curr, dict) or part not in curr:
+                return False
+            curr = curr[part]
+        return True
+
     def _apply_projection(
         self,
         projection: dict[str, Any],
@@ -592,13 +603,16 @@ class AggregationMixin(SqlAggregationMixin):
                     else:
                         # Regular field reference
                         field_name = value[1:]
-                        projected_doc[key] = self.collection._get_val(
-                            document, field_name
-                        )
+                        if self._field_exists(document, field_name):
+                            projected_doc[key] = self.collection._get_val(
+                                document, field_name
+                            )
                 elif value == 1:
                     # Simple inclusion
-                    if key in doc:
-                        projected_doc[key] = doc[key]
+                    if self._field_exists(document, key):
+                        projected_doc[key] = self.collection._get_val(
+                            document, key
+                        )
                 # value == 0 is exclusion, skip it
 
             if include_id and "_id" in doc:
@@ -609,8 +623,8 @@ class AggregationMixin(SqlAggregationMixin):
         # Inclusion mode (no expressions)
         if any(v == 1 for v in projection.values()):
             for key, value in projection.items():
-                if value == 1 and key in doc:
-                    projected_doc[key] = doc[key]
+                if value == 1 and self._field_exists(document, key):
+                    projected_doc[key] = self.collection._get_val(document, key)
             if include_id and "_id" in doc:
                 projected_doc["_id"] = doc["_id"]
             return projected_doc

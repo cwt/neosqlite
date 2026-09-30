@@ -170,44 +170,84 @@ class StageBuildersMixin:
         json_extract_func = f"{self.jsonb.json_function_prefix}_extract"
         json_obj_func = f"{self.jsonb.json_function_prefix}_object"
 
-        json_parts = []
+        is_exclusion = not any(
+            value == 1
+            or _is_expression(value)
+            or (isinstance(value, str) and value.startswith("$"))
+            for field, value in spec.items()
+            if field != "_id"
+        )
 
-        for field, value in spec.items():
-            if field == "_id":
-                continue
-
-            if _is_expression(value):
-                agg_ctx = AggregationContext()
-                agg_ctx.stage_index = context.stage_index
-                expr_sql, expr_params = self.evaluator.build_select_expression(
-                    value, context=agg_ctx
+        if is_exclusion:
+            fields_to_remove = [
+                field
+                for field, value in spec.items()
+                if value == 0 and field != "_id"
+            ]
+            if fields_to_remove:
+                json_remove_func = f"{self.jsonb.json_function_prefix}_remove"
+                path_args = ", ".join(
+                    f"'{parse_json_path(f)}'" for f in fields_to_remove
                 )
-                if expr_sql is None:
-                    return None, []
-                all_params.extend(expr_params)
-                json_parts.append(f"'{field}'")
-                json_parts.append(expr_sql)
-                context.add_computed_field(field, expr_sql)
-            elif isinstance(value, str) and value.startswith("$"):
-                source_field = value[1:]
-                if source_field == "_id":
+                data_expr = f"json({json_remove_func}(data, {path_args}))"
+            else:
+                data_expr = "data"
+        else:
+            json_parts = []
+            missing_removals = []
+
+            for field, value in spec.items():
+                if field == "_id":
+                    continue
+
+                if _is_expression(value):
+                    agg_ctx = AggregationContext()
+                    agg_ctx.stage_index = context.stage_index
+                    expr_sql, expr_params = (
+                        self.evaluator.build_select_expression(
+                            value, context=agg_ctx
+                        )
+                    )
+                    if expr_sql is None:
+                        return None, []
+                    all_params.extend(expr_params)
                     json_parts.append(f"'{field}'")
-                    json_parts.append("_id")
-                else:
+                    json_parts.append(expr_sql)
+                    context.add_computed_field(field, expr_sql)
+                elif isinstance(value, str) and value.startswith("$"):
+                    source_field = value[1:]
+                    if source_field == "_id":
+                        json_parts.append(f"'{field}'")
+                        json_parts.append("_id")
+                    else:
+                        json_parts.append(f"'{field}'")
+                        json_parts.append(
+                            f"{json_extract_func}(data, '{parse_json_path(source_field)}')"
+                        )
+                        missing_removals.append(
+                            f"CASE WHEN json_type(data, '{parse_json_path(source_field)}') IS NULL "
+                            f"THEN '{parse_json_path(field)}' ELSE '$.__none__' END"
+                        )
+                elif value == 1:
                     json_parts.append(f"'{field}'")
                     json_parts.append(
-                        f"{json_extract_func}(data, '{parse_json_path(source_field)}')"
+                        f"{json_extract_func}(data, '{parse_json_path(field)}')"
                     )
-            elif value == 1:
-                json_parts.append(f"'{field}'")
-                json_parts.append(
-                    f"{json_extract_func}(data, '{parse_json_path(field)}')"
-                )
+                    missing_removals.append(
+                        f"CASE WHEN json_type(data, '{parse_json_path(field)}') IS NULL "
+                        f"THEN '{parse_json_path(field)}' ELSE '$.__none__' END"
+                    )
 
-        if json_parts:
-            data_expr = f"json({json_obj_func}({', '.join(json_parts)}))"
-        else:
-            data_expr = "json({})"
+            if json_parts:
+                base_obj = f"{json_obj_func}({', '.join(json_parts)})"
+                if missing_removals:
+                    json_remove_func = (
+                        f"{self.jsonb.json_function_prefix}_remove"
+                    )
+                    base_obj = f"{json_remove_func}({base_obj}, {', '.join(missing_removals)})"
+                data_expr = f"json({base_obj})"
+            else:
+                data_expr = "json('{}')"
 
         select_parts.append(f"{data_expr} AS data")
 

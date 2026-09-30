@@ -282,7 +282,7 @@ class Collection:
             key = key[1:]
         val: Any = item
         for k in key.split("."):
-            if val is None:
+            if not isinstance(val, dict):
                 return None
             val = val.get(k)
         return val
