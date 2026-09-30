@@ -17,6 +17,7 @@ import os
 import random
 import threading
 import time
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -285,16 +286,18 @@ class ObjectId:
         """Return a hash value for this ObjectId."""
         return hash(self._id)
 
-    def generation_time(self) -> float:
+    @property
+    def generation_time(self) -> datetime:
         """
-        Get the generation time of this ObjectId as a Unix timestamp.
+        Get the generation time of this ObjectId as a timezone-aware UTC datetime.
 
         Returns:
-            Unix timestamp of when this ObjectId was created
+            UTC datetime of when this ObjectId was created
         """
         # First 4 bytes contain the timestamp
         timestamp_bytes = self._id[:4]
-        return int.from_bytes(timestamp_bytes, "big")
+        timestamp = int.from_bytes(timestamp_bytes, "big")
+        return datetime.fromtimestamp(timestamp, tz=timezone.utc)
 
     def encode_for_storage(self) -> dict:
         """

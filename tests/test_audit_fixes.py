@@ -2288,3 +2288,29 @@ class TestDateToStringMillisecond:
             assert docs[2]["ms"] == "005"
         finally:
             set_force_fallback(old_state)
+
+
+class TestObjectIdGenerationTime:
+    """ObjectId.generation_time is a property returning a timezone-aware UTC datetime."""
+
+    def test_generation_time_property(self):
+        import datetime
+        from datetime import timezone
+
+        from neosqlite.objectid import ObjectId
+
+        ts = 1700000000
+        oid = ObjectId(ts)
+        gen_time = oid.generation_time
+        assert isinstance(gen_time, datetime.datetime)
+        assert gen_time.tzinfo == timezone.utc
+        assert gen_time == datetime.datetime.fromtimestamp(ts, tz=timezone.utc)
+
+        now_before = datetime.datetime.now(timezone.utc) - datetime.timedelta(
+            seconds=1
+        )
+        fresh_oid = ObjectId()
+        now_after = datetime.datetime.now(timezone.utc) + datetime.timedelta(
+            seconds=1
+        )
+        assert now_before <= fresh_oid.generation_time <= now_after
