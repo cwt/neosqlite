@@ -320,9 +320,14 @@ class CorePythonMixin(BasePythonMixin):
         left = self._evaluate_operand_python(operands[0], document)
         right = self._evaluate_operand_python(operands[1], document)
 
-        if left < right:
+        from ...type_utils import bson_sort_key
+
+        left_key = bson_sort_key(left)
+        right_key = bson_sort_key(right)
+
+        if left_key < right_key:
             return -1
-        elif left > right:
+        elif left_key > right_key:
             return 1
         else:
             return 0

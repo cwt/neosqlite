@@ -654,8 +654,16 @@ class TempTableExprEvaluator:
             operands[1], temp_table
         )
 
-        sql = f"(CASE WHEN {left_sql} < {right_sql} THEN -1 WHEN {left_sql} > {right_sql} THEN 1 ELSE 0 END)"
-        return sql, left_params + right_params
+        sql = (
+            f"(CASE "
+            f"WHEN ({left_sql}) IS NULL AND ({right_sql}) IS NULL THEN 0 "
+            f"WHEN ({left_sql}) IS NULL THEN -1 "
+            f"WHEN ({right_sql}) IS NULL THEN 1 "
+            f"WHEN ({left_sql}) < ({right_sql}) THEN -1 "
+            f"WHEN ({left_sql}) > ({right_sql}) THEN 1 "
+            f"ELSE 0 END)"
+        )
+        return sql, (left_params + right_params) * 4
 
     def _convert_math_to_temp_sql(
         self, operator: str, operands: list[Any], temp_table: str

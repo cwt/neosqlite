@@ -1378,3 +1378,107 @@ class TestInNullSemantics:
         results = list(c.find({"_id": {"$in": [1, None]}}))
         assert len(results) == 1
         assert results[0]["_id"] == 1
+
+
+class TestCmpNullComparisons:
+    """$cmp operator comparisons with null/None across tiers."""
+
+    @pytest.fixture
+    def docs(self, connection):
+        c = connection.t_cmp_null
+        c.insert_many(
+            [
+                {"_id": 1, "val": None},
+                {"_id": 2, "val": 10},
+                {"_id": 3, "val": 20},
+                {"_id": 4},
+            ]
+        )
+        return c
+
+    def test_cmp_null_vs_int_python_fallback(self, docs):
+        from neosqlite.collection.query_helper import set_force_fallback
+
+        set_force_fallback(True)
+        try:
+            results = list(
+                docs.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "_id": 1,
+                                "cmp_res": {"$cmp": ["$val", 10]},
+                            }
+                        },
+                        {"$sort": {"_id": 1}},
+                    ]
+                )
+            )
+            assert [d["cmp_res"] for d in results] == [-1, 0, 1, -1]
+        finally:
+            set_force_fallback(False)
+
+    def test_cmp_null_vs_int_sql(self, docs):
+        from neosqlite.collection.query_helper import set_force_fallback
+
+        set_force_fallback(False)
+        results = list(
+            docs.aggregate(
+                [
+                    {
+                        "$project": {
+                            "_id": 1,
+                            "cmp_res": {"$cmp": ["$val", 10]},
+                        }
+                    },
+                    {"$sort": {"_id": 1}},
+                ]
+            )
+        )
+        assert [d["cmp_res"] for d in results] == [-1, 0, 1, -1]
+
+    def test_cmp_null_vs_null(self, docs):
+        from neosqlite.collection.query_helper import set_force_fallback
+
+        for fallback in (False, True):
+            set_force_fallback(fallback)
+            try:
+                results = list(
+                    docs.aggregate(
+                        [
+                            {"$match": {"_id": 1}},
+                            {
+                                "$project": {
+                                    "_id": 1,
+                                    "cmp_res": {"$cmp": ["$val", None]},
+                                }
+                            },
+                        ]
+                    )
+                )
+                assert results[0]["cmp_res"] == 0
+            finally:
+                set_force_fallback(False)
+
+    def test_cmp_int_vs_null(self, docs):
+        from neosqlite.collection.query_helper import set_force_fallback
+
+        for fallback in (False, True):
+            set_force_fallback(fallback)
+            try:
+                results = list(
+                    docs.aggregate(
+                        [
+                            {"$match": {"_id": 1}},
+                            {
+                                "$project": {
+                                    "_id": 1,
+                                    "cmp_res": {"$cmp": [10, "$val"]},
+                                }
+                            },
+                        ]
+                    )
+                )
+                assert results[0]["cmp_res"] == 1
+            finally:
+                set_force_fallback(False)
