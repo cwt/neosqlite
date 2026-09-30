@@ -1641,3 +1641,59 @@ class TestPullOperatorConditions:
         doc = c.find_one({"_id": 1})
         assert doc["lists"] == [[1, 2, 3], [4]]
         assert doc["vals"] == [20, 40]
+
+
+class TestBucketNoPhantomBuckets:
+    """Python and SQL tier $bucket must not generate phantom buckets for
+    values >= boundaries[-1]. Values outside boundaries must fall into the
+    default bucket."""
+
+    def test_bucket_no_phantom_and_default_routing(self, connection):
+        c = connection.t_bucket_phantom
+        c.insert_many(
+            [
+                {"val": -5},
+                {"val": 5},
+                {"val": 15},
+                {"val": 20},
+                {"val": 25},
+                {"val": None},
+                {"other": 1},  # missing val
+            ]
+        )
+        pipeline = [
+            {
+                "$bucket": {
+                    "groupBy": "$val",
+                    "boundaries": [0, 10, 20],
+                    "default": "Other",
+                    "output": {"count": {"$sum": 1}},
+                }
+            }
+        ]
+
+        # Test standard execution (SQL / temp-table)
+        res_sql = list(c.aggregate(pipeline))
+        assert {r["_id"]: r["count"] for r in res_sql} == {
+            0: 1,
+            10: 1,
+            "Other": 5,
+        }
+
+        # Test Python fallback execution
+        from neosqlite.collection.query_helper.utils import (
+            get_force_fallback,
+            set_force_fallback,
+        )
+
+        old_state = get_force_fallback()
+        try:
+            set_force_fallback(True)
+            res_py = list(c.aggregate(pipeline))
+            assert {r["_id"]: r["count"] for r in res_py} == {
+                0: 1,
+                10: 1,
+                "Other": 5,
+            }
+        finally:
+            set_force_fallback(old_state)

@@ -541,38 +541,43 @@ def execute_python_aggregation(
                     doc = dc["__doc__"]
                     val = query_engine.collection._get_val(doc, group_by)
 
-                    # Skip documents with None values
-                    if val is None:
-                        continue
-
                     # Determine bucket - use lower boundary as key (MongoDB behavior)
                     bucket_key: Any = default_label
-                    try:
-                        for i in range(len(sorted_boundaries) - 1):
-                            if (
-                                sorted_boundaries[i]
-                                <= val
-                                < sorted_boundaries[i + 1]
-                            ):
-                                bucket_key = sorted_boundaries[
-                                    i
-                                ]  # Use lower boundary as _id
-                                break
-                        else:
-                            # Last bucket (inclusive) - use last boundary
-                            if val >= sorted_boundaries[-1]:
-                                bucket_key = sorted_boundaries[-1]
-                    except TypeError:
-                        # Comparison failed (e.g., mixed types), use default
-                        bucket_key = default_label
+                    if val is not None:
+                        try:
+                            for i in range(len(sorted_boundaries) - 1):
+                                if (
+                                    sorted_boundaries[i]
+                                    <= val
+                                    < sorted_boundaries[i + 1]
+                                ):
+                                    bucket_key = sorted_boundaries[
+                                        i
+                                    ]  # Use lower boundary as _id
+                                    break
+                        except TypeError:
+                            # Comparison failed (e.g., mixed types), use default
+                            bucket_key = default_label
 
                     if bucket_key not in buckets:
                         buckets[bucket_key] = []
                     buckets[bucket_key].append(doc)
 
+                def _bucket_sort_key(item: tuple[Any, Any]) -> tuple[int, Any]:
+                    key = item[0]
+                    if key is None:
+                        return (0, "")
+                    if isinstance(key, (int, float)):
+                        return (1, key)
+                    if isinstance(key, str):
+                        return (2, key)
+                    return (3, str(key))
+
                 # Build output documents
                 new_docs = []
-                for bucket_id, bucket_docs in sorted(buckets.items()):
+                for bucket_id, bucket_docs in sorted(
+                    buckets.items(), key=_bucket_sort_key
+                ):
                     output_doc: dict[str, Any] = {"_id": bucket_id}
                     for field_name, accumulator in output_spec.items():
                         if "$sum" in accumulator:

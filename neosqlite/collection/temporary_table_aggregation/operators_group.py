@@ -723,13 +723,14 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
             case_parts.append(
                 f"WHEN {self._build_group_by_expr(group_by)} >= {lower} AND {self._build_group_by_expr(group_by)} < {upper} THEN {lower}"
             )
-        # Last bucket (inclusive upper bound) - use the last boundary as _id
-        last_lower = sorted_boundaries[-1]
-        case_parts.append(
-            f"WHEN {self._build_group_by_expr(group_by)} >= {last_lower} THEN {last_lower}"
-        )
         # Default case - use the default label
-        case_parts.append(f"ELSE '{default_label}'")
+        if default_label is None:
+            case_parts.append("ELSE NULL")
+        elif isinstance(default_label, (int, float)):
+            case_parts.append(f"ELSE {default_label}")
+        else:
+            escaped = str(default_label).replace("'", "''")
+            case_parts.append(f"ELSE '{escaped}'")
 
         case_expr = "CASE " + " ".join(case_parts) + " END"
 

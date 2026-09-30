@@ -272,7 +272,7 @@ class StageBuildersMixin:
     def _build_bucket_sql(self, spec, prev_stage, context):
         group_by = spec.get("groupBy")
         boundaries = spec.get("boundaries")
-        default = spec.get("default")
+        default = spec.get("default", "Other")
         output = spec.get("output", {"count": {"$sum": 1}})
 
         if not group_by or not boundaries:
