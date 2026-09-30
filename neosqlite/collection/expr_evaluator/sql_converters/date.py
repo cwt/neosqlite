@@ -15,6 +15,15 @@ _DATE_FMT_SPECIFIERS = frozenset(
 )
 
 
+def _replace_format_specifier(fmt: str, spec: str, replacement: str) -> str:
+    """Replace a format specifier while preserving escaped %% sequences."""
+    parts = fmt.split("%%")
+    out = []
+    for p in parts:
+        out.append(p.replace(spec, replacement))
+    return "%%".join(out)
+
+
 def _validate_strftime_format(fmt: str) -> str:
     """Validate a MongoDB date format before strftime interpolation (#119).
 
@@ -36,7 +45,7 @@ def _validate_strftime_format(fmt: str) -> str:
             i += 2
         else:
             i += 1
-    return fmt.replace("%L", "%f")
+    return _replace_format_specifier(fmt, "%L", "__NEOSQLITE_MS__")
 
 
 class DateMixin(BaseSqlMixin):
@@ -324,12 +333,20 @@ class DateMixin(BaseSqlMixin):
         date_sql = self._extract_date_sql(date_sql)
 
         # Convert MongoDB format to SQLite strftime format.
-        # %L (milliseconds) -> %f (fractional seconds). The format is
-        # validated against an allow-list first (#119).
+        # %L (milliseconds) is replaced with a placeholder substituted by
+        # substr(strftime('%f', ...), 4, 3) because SQLite's %f is SS.SSS (#BUG-31).
         sqlite_fmt = _validate_strftime_format(fmt)
 
-        sql = f"strftime('{sqlite_fmt}', {date_sql})"
-        return sql, date_params
+        if "__NEOSQLITE_MS__" in sqlite_fmt:
+            sql = (
+                f"replace(strftime('{sqlite_fmt}', {date_sql}), "
+                f"'__NEOSQLITE_MS__', "
+                f"substr(strftime('%f', {date_sql}), 4, 3))"
+            )
+            return sql, date_params + date_params
+        else:
+            sql = f"strftime('{sqlite_fmt}', {date_sql})"
+            return sql, date_params
 
     def _convert_date_trunc_operator(
         self, operands: Any

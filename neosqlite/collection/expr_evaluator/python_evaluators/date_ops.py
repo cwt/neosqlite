@@ -353,20 +353,15 @@ class DatePythonMixin(BasePythonMixin):
                     return None
 
                 # Convert MongoDB format to Python strftime format
-                # MongoDB uses %Y, %m, %d, %H, %M, %S, %L (milliseconds), %Z (timezone)
-                python_fmt = fmt.replace("%L", "%f")[
-                    :19
-                ]  # %f gives microseconds, we'll truncate
+                # %L is milliseconds (3 digits, 000-999)
+                ms_val = f"{date_val.microsecond // 1000:03d}"
+                parts = fmt.split("%%")
+                out_parts = []
+                for p in parts:
+                    out_parts.append(p.replace("%L", ms_val))
+                python_fmt = "%%".join(out_parts)
 
                 result = date_val.strftime(python_fmt)
-
-                # Handle milliseconds (%L)
-                if "%L" in fmt:
-                    ms = date_val.microsecond // 1000
-                    result = result.replace(
-                        str(date_val.microsecond)[:3].zfill(3), str(ms).zfill(3)
-                    )
-
                 return result
             case "$dateFromParts":
                 # Handle MongoDB dict format: {year, month, day, hour, minute, second, millisecond, timezone}

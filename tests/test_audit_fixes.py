@@ -2172,3 +2172,119 @@ class TestDateAddMonthClamping:
             )
         finally:
             set_force_fallback(old_state)
+
+
+class TestDateToStringMillisecond:
+    """$dateToString with %L format specifier produces 3-digit padded milliseconds in both tiers."""
+
+    def test_sql_tier_date_to_string_millisecond(self, connection):
+        import datetime
+        from datetime import timezone
+
+        c = connection.dt_str_sql
+        c.insert_many(
+            [
+                {
+                    "_id": 1,
+                    "d": datetime.datetime(
+                        2024, 1, 15, 10, 30, 45, 123456, tzinfo=timezone.utc
+                    ),
+                },
+                {
+                    "_id": 2,
+                    "d": datetime.datetime(
+                        2024, 1, 15, 10, 30, 45, 5000, tzinfo=timezone.utc
+                    ),
+                },
+            ]
+        )
+
+        res = list(
+            c.aggregate(
+                [
+                    {
+                        "$project": {
+                            "full": {
+                                "$dateToString": {
+                                    "format": "%Y-%m-%d %H:%M:%S.%L",
+                                    "date": "$d",
+                                }
+                            },
+                            "ms": {
+                                "$dateToString": {
+                                    "format": "%L",
+                                    "date": "$d",
+                                }
+                            },
+                        }
+                    }
+                ]
+            )
+        )
+        assert len(res) == 2
+        docs = {doc["_id"]: doc for doc in res}
+        assert docs[1]["full"] == "2024-01-15 10:30:45.123"
+        assert docs[1]["ms"] == "123"
+        assert docs[2]["full"] == "2024-01-15 10:30:45.005"
+        assert docs[2]["ms"] == "005"
+
+    def test_python_tier_date_to_string_millisecond(self, connection):
+        import datetime
+        from datetime import timezone
+
+        from neosqlite.collection.query_helper.utils import (
+            get_force_fallback,
+            set_force_fallback,
+        )
+
+        c = connection.dt_str_py
+        c.insert_many(
+            [
+                {
+                    "_id": 1,
+                    "d": datetime.datetime(
+                        2024, 1, 15, 10, 30, 45, 123456, tzinfo=timezone.utc
+                    ),
+                },
+                {
+                    "_id": 2,
+                    "d": datetime.datetime(
+                        2024, 1, 15, 10, 30, 45, 5000, tzinfo=timezone.utc
+                    ),
+                },
+            ]
+        )
+
+        old_state = get_force_fallback()
+        try:
+            set_force_fallback(True)
+            res = list(
+                c.aggregate(
+                    [
+                        {
+                            "$project": {
+                                "full": {
+                                    "$dateToString": {
+                                        "format": "%Y-%m-%d %H:%M:%S.%L",
+                                        "date": "$d",
+                                    }
+                                },
+                                "ms": {
+                                    "$dateToString": {
+                                        "format": "%L",
+                                        "date": "$d",
+                                    }
+                                },
+                            }
+                        }
+                    ]
+                )
+            )
+            assert len(res) == 2
+            docs = {doc["_id"]: doc for doc in res}
+            assert docs[1]["full"] == "2024-01-15 10:30:45.123"
+            assert docs[1]["ms"] == "123"
+            assert docs[2]["full"] == "2024-01-15 10:30:45.005"
+            assert docs[2]["ms"] == "005"
+        finally:
+            set_force_fallback(old_state)
