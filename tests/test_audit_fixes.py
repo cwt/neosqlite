@@ -2314,3 +2314,26 @@ class TestObjectIdGenerationTime:
             seconds=1
         )
         assert now_before <= fresh_oid.generation_time <= now_after
+
+
+class TestWatchInsideTransaction:
+    """watch() inside an open transaction does not commit it."""
+
+    def test_watch_does_not_commit_active_transaction(self, connection):
+        c = connection.watch_tx_test
+        c.insert_one({"init": 1})
+
+        session = connection.start_session()
+        session.start_transaction()
+        assert connection.db.in_transaction
+
+        c.insert_one({"x": 100}, session=session)
+        assert connection.db.in_transaction
+
+        stream = c.watch(session=session)
+        assert connection.db.in_transaction
+
+        session.abort_transaction()
+        assert not connection.db.in_transaction
+        assert list(c.find({"x": 100})) == []
+        stream.close()

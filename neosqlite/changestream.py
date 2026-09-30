@@ -306,8 +306,9 @@ class ChangeStream:
             """)
         counts[self._collection.name] = counts.get(self._collection.name, 0) + 1
 
-        # Commit the changes
-        self._collection.db.commit()
+        # Commit the changes only if not inside an active transaction
+        if not self._collection.db.in_transaction:
+            self._collection.db.commit()
 
         # Start from "now": only deliver events that occur after open,
         # unless an explicit resume point was requested (#110 parity).
@@ -379,7 +380,8 @@ class ChangeStream:
             if counts.get(self._collection.name, 0) == 0:
                 counts.pop(self._collection.name, None)
                 streams_by_coll.pop(self._collection.name, None)
-            self._collection.db.commit()
+            if not self._collection.db.in_transaction:
+                self._collection.db.commit()
         except Exception as e:
             logger.warning(f"Error during ChangeStream cleanup: {e}")
 
