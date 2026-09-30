@@ -20,6 +20,26 @@ from .sql_utils import quote_table_name
 logger = logging.getLogger(__name__)
 
 
+def _is_internal_collection_name(name: str) -> bool:
+    """
+    Check if a table name is internal to SQLite or NeoSQLite
+    (e.g., SQLite system tables, NeoSQLite metadata, FTS virtual/shadow tables).
+    """
+    if not name or not isinstance(name, str):
+        return True
+    if name.startswith("sqlite_"):
+        return True
+    if name.startswith("_neosqlite_") or name.startswith("neosqlite_"):
+        return True
+    if name == "__command_results__":
+        return True
+    if name.endswith("_fts") or "_fts_" in name:
+        return True
+    if name.startswith("temp_text_fts_"):
+        return True
+    return False
+
+
 class Connection:
     """
     Represents a connection to an NeoSQLite database.
@@ -613,6 +633,18 @@ class Connection:
                 self.drop_collection(table_name)
             except Exception as exc:
                 logger.debug("drop_database skipped %r: %s", table_name, exc)
+        try:
+            cursor = self.db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            )
+            for row in cursor.fetchall():
+                tbl = row[0]
+                if _is_internal_collection_name(tbl):
+                    self.db.execute(
+                        f"DROP TABLE IF EXISTS {quote_table_name(tbl)}"
+                    )
+        except Exception as exc:
+            logger.debug("drop_database internal tables cleanup: %s", exc)
         self.db.commit()
 
     def sweep_ttl_once(self) -> int:
@@ -755,12 +787,16 @@ class Connection:
 
         Returns:
             list[str]: A list of all collection names in the database,
-            excluding internal SQLite tables (sqlite_sequence, sqlite_stat*, etc.)
+            excluding internal SQLite tables and NeoSQLite internal tables.
         """
         cursor = self.db.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
         )
-        return [row[0] for row in cursor.fetchall()]
+        return [
+            row[0]
+            for row in cursor.fetchall()
+            if not _is_internal_collection_name(row[0])
+        ]
 
     def list_collections(self) -> list[dict[str, Any]]:
         """
@@ -774,7 +810,9 @@ class Connection:
             "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
         )
         return [
-            {"name": row[0], "options": row[1]} for row in cursor.fetchall()
+            {"name": row[0], "options": row[1]}
+            for row in cursor.fetchall()
+            if not _is_internal_collection_name(row[0])
         ]
 
     # ------------------------------------------------------------------

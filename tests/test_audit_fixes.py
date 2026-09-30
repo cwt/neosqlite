@@ -2562,3 +2562,45 @@ def test_cursor_command_does_not_create_physical_table(connection):
         ).fetchall()
     ]
     assert "__command_results__" not in tables
+
+
+def test_list_collection_names_filters_internal_and_fts_tables(connection):
+    coll = connection.test_user_coll
+    coll.insert_one({"title": "hello world", "tags": ["test"]})
+
+    # Create FTS index which creates virtual table and shadow tables
+    coll.create_search_index("title")
+
+    # Create TTL index which creates _neosqlite_ttl_indexes / neosqlite_index_keys
+    coll.create_index("created_at", expireAfterSeconds=3600)
+
+    # Simulate internal changestream table
+    connection.db.execute(
+        "CREATE TABLE IF NOT EXISTS _neosqlite_changestream (id INTEGER PRIMARY KEY)"
+    )
+
+    all_raw_tables = [
+        row[0]
+        for row in connection.db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    ]
+    assert any(t.endswith("_fts") for t in all_raw_tables)
+    assert any("_fts_" in t for t in all_raw_tables)
+    assert any(
+        t.startswith(("_neosqlite_", "neosqlite_")) for t in all_raw_tables
+    )
+
+    coll_names = connection.list_collection_names()
+    assert "test_user_coll" in coll_names
+    assert not any(t.startswith("sqlite_") for t in coll_names)
+    assert not any(
+        t.startswith(("_neosqlite_", "neosqlite_")) for t in coll_names
+    )
+    assert "__command_results__" not in coll_names
+    assert not any(t.endswith("_fts") for t in coll_names)
+    assert not any("_fts_" in t for t in coll_names)
+
+    colls = connection.list_collections()
+    coll_names_from_colls = [c["name"] for c in colls]
+    assert coll_names_from_colls == coll_names
