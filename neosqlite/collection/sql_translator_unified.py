@@ -203,8 +203,16 @@ class SQLOperatorTranslator:
 
         # If it's a datetime comparison, wrap both field and value with datetime() to match indexing strategy
         if is_datetime_comparison:
-            # Wrap the field access with datetime() function for consistency with datetime indexes
-            datetime_field_access = f"datetime({field_access})"
+            # Wrap the field access with datetime() function for consistency with datetime indexes.
+            # Handles both {"$date": "..."} objects and plain ISO date strings.
+            if field_access.endswith("')"):
+                date_path_access = field_access[:-2] + '."$date"\')'
+                field_for_datetime = (
+                    f"COALESCE({date_path_access}, {field_access})"
+                )
+            else:
+                field_for_datetime = field_access
+            datetime_field_access = f"datetime({field_for_datetime})"
             match operator:
                 case "$eq":
                     sql = f"{datetime_field_access} = datetime(?)"

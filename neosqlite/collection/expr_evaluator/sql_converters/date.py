@@ -42,6 +42,13 @@ def _validate_strftime_format(fmt: str) -> str:
 class DateMixin(BaseSqlMixin):
     """$year / $month / $dayOfMonth / $dateAdd / $dateSubtract / $dateDiff → SQL."""
 
+    def _extract_date_sql(self, sql_expr: str) -> str:
+        """Extract ISO date string from potential {"$date": ...} JSON object or direct string."""
+        if sql_expr.endswith("')"):
+            date_path = sql_expr[:-2] + '."$date"\')'
+            return f"COALESCE({date_path}, {sql_expr})"
+        return sql_expr
+
     def _convert_date_operator(
         self, operator: str, operands: Any
     ) -> tuple[str, list[Any]]:
@@ -54,6 +61,7 @@ class DateMixin(BaseSqlMixin):
             raise ValueError(f"{operator} requires exactly 1 operand")
 
         value_sql, value_params = self._convert_operand_to_sql(operands[0])
+        value_sql = self._extract_date_sql(value_sql)
 
         # SQLite strftime format codes
         match operator:
@@ -122,6 +130,7 @@ class DateMixin(BaseSqlMixin):
             )
 
         date_sql, date_params = self._convert_operand_to_sql(operands[0])
+        date_sql = self._extract_date_sql(date_sql)
         unit = operands[2] if len(operands) > 2 else "day"  # Default to days
 
         # Validate unit
@@ -160,15 +169,12 @@ class DateMixin(BaseSqlMixin):
         if sign == "-":
             amount_sql = f"-({amount_sql})"
 
-        # Use strftime with 'T' separator and 'Z' suffix so
-        # neosqlite_json_loads recognizes the result as a UTC ISO date and
-        # converts it back to a timezone-aware datetime. printf('%+d', x)
-        # truncates fractional amounts for every unit — documented
-        # divergence from the Python tier's full timedelta arithmetic.
-        sql = (
+        # Output as {"$date": ...} so neosqlite_json_loads decodes back to datetime
+        strftime_expr = (
             f"strftime('%Y-%m-%dT%H:%M:%SZ', {date_sql}, "
             f"printf('%+d {sqlite_unit}s', {amount_sql}))"
         )
+        sql = f"json_object('$date', {strftime_expr})"
         return sql, date_params + amount_params
 
     def _convert_date_diff_operator(
@@ -195,6 +201,8 @@ class DateMixin(BaseSqlMixin):
 
         date1_sql, date1_params = self._convert_operand_to_sql(operands[0])
         date2_sql, date2_params = self._convert_operand_to_sql(operands[1])
+        date1_sql = self._extract_date_sql(date1_sql)
+        date2_sql = self._extract_date_sql(date2_sql)
         unit = operands[2] if len(operands) > 2 else "day"
 
         # Validate unit
@@ -287,6 +295,7 @@ class DateMixin(BaseSqlMixin):
                 )
 
         date_sql, date_params = self._convert_operand_to_sql(date_operand)
+        date_sql = self._extract_date_sql(date_sql)
 
         # Convert MongoDB format to SQLite strftime format.
         # %L (milliseconds) -> %f (fractional seconds). The format is
@@ -318,10 +327,9 @@ class DateMixin(BaseSqlMixin):
             )
 
         date_sql, date_params = self._convert_operand_to_sql(date_operand)
+        date_sql = self._extract_date_sql(date_sql)
 
         # Map MongoDB truncation units to strftime format strings.
-        # The output includes 'T' separator and 'Z' suffix so
-        # neosqlite_json_loads recognizes it as a UTC ISO date.
         unit_formats: dict[str, str] = {
             "year": "%Y-01-01T00:00:00Z",
             "month": "%Y-%m-01T00:00:00Z",
@@ -337,7 +345,7 @@ class DateMixin(BaseSqlMixin):
             )
 
         fmt = unit_formats[unit]
-        sql = f"strftime('{fmt}', {date_sql})"
+        sql = f"json_object('$date', strftime('{fmt}', {date_sql}))"
         return sql, date_params
 
     def _convert_date_from_parts_operator(
@@ -374,10 +382,8 @@ class DateMixin(BaseSqlMixin):
 
         all_params = params + mp + dp + hp + mip + sp + msp
 
-        # Build ISO 8601 string via printf + strftime.
-        # The 'T' separator and 'Z' suffix ensure neosqlite_json_loads
-        # recognises the result as a UTC datetime.
-        sql = (
+        # Build ISO 8601 string via printf + strftime wrapped in json_object('$date', ...).
+        iso_str = (
             f"strftime('%Y-%m-%dT%H:%M:%fZ',"
             f" printf('%04d', CAST({year_sql} AS INTEGER)) || '-' ||"
             f" printf('%02d', {month_sql}) || '-' ||"
@@ -387,6 +393,7 @@ class DateMixin(BaseSqlMixin):
             f" printf('%02d', {second_sql}) || '.' ||"
             f" printf('%03d', {ms_sql}))"
         )
+        sql = f"json_object('$date', {iso_str})"
         return sql, all_params
 
     def _convert_date_to_parts_operator(
@@ -414,6 +421,7 @@ class DateMixin(BaseSqlMixin):
             )
 
         date_sql, date_params = self._convert_operand_to_sql(date_operand)
+        date_sql = self._extract_date_sql(date_sql)
 
         sql = (
             f"json_object("
@@ -462,12 +470,10 @@ class DateMixin(BaseSqlMixin):
             date_string_operand
         )
 
-        # Use strftime to convert ISO string back to a standardised format.
-        # The 'T' separator and 'Z' suffix make neosqlite_json_loads produce UTC.
-        # COALESCE handles on_null: returns NULL if input is NULL.
+        # Output as {"$date": ...} so neosqlite_json_loads decodes back to datetime.
         sql = (
             f"CASE WHEN {string_sql} IS NULL THEN NULL"
-            f" ELSE strftime('%Y-%m-%dT%H:%M:%SZ', {string_sql}) END"
+            f" ELSE json_object('$date', strftime('%Y-%m-%dT%H:%M:%SZ', {string_sql})) END"
         )
         # The string fragment appears twice (null check + strftime):
         # duplicate its params in SQL order.

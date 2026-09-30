@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 
 import neosqlite
 from neosqlite.collection.expr_evaluator import ExprEvaluator
+from neosqlite.collection.json_helpers import neosqlite_json_loads
 
 
 class TestDateOperatorsSQL:
@@ -402,7 +403,11 @@ class TestDateFromPartsSQL:
                 row = conn.db.execute(f"SELECT {sql} FROM t", params).fetchone()
                 sq = row[0] if row else None
                 if sq:
-                    sq_dt = datetime.fromisoformat(sq.replace("Z", "+00:00"))
+                    sq_dt = (
+                        neosqlite_json_loads(sq)
+                        if sq.startswith("{")
+                        else datetime.fromisoformat(sq.replace("Z", "+00:00"))
+                    )
                     assert sq_dt.year == py.year
                     assert sq_dt.month == py.month
                     assert sq_dt.day == py.day
@@ -563,7 +568,11 @@ class TestDateFromStringSQL:
             row = conn.db.execute(f"SELECT {sql} FROM t", params).fetchone()
             sq = row[0] if row else None
         if sq:
-            sq_dt = datetime.fromisoformat(sq.replace("Z", "+00:00"))
+            sq_dt = (
+                neosqlite_json_loads(sq)
+                if sq.startswith("{")
+                else datetime.fromisoformat(sq.replace("Z", "+00:00"))
+            )
             assert sq_dt.year == py.year
             assert sq_dt.month == py.month
             assert sq_dt.day == py.day

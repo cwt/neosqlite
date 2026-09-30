@@ -41,9 +41,12 @@ class NeoSQLiteJSONEncoder(json.JSONEncoder):
             logger.debug(f"ObjectId module not available for encoding: {e}")
             pass  # ObjectId module not available
 
-        # Handle date/datetime objects - convert to ISO format string.
-        # datetime is a subclass of date, so this covers both (#112).
-        if isinstance(obj, (datetime, date)):
+        # Handle date/datetime objects.
+        # datetime is encoded as BSON extended JSON {"$date": ...} to preserve type.
+        # Plain date is encoded as ISO format string (#112).
+        if isinstance(obj, datetime):
+            return {"$date": obj.isoformat()}
+        if isinstance(obj, date):
             return obj.isoformat()
 
         return super().default(obj)
@@ -82,11 +85,7 @@ def neosqlite_json_dumps_for_sql(obj: Any, **kwargs) -> str:
 
 def neosqlite_json_loads(s: str, **kwargs) -> Any:
     """
-    Custom JSON loads function that handles Binary objects and ISO date strings.
-
-    For MongoDB compatibility, ISO 8601 date strings are automatically converted
-    back to datetime objects, matching MongoDB's behavior where dates are stored
-    as BSON Date type and returned as datetime objects.
+    Custom JSON loads function that handles Binary objects, ObjectId, and $date objects.
 
     Args:
         s: JSON string to deserialize
@@ -96,35 +95,22 @@ def neosqlite_json_loads(s: str, **kwargs) -> Any:
         Deserialized object
     """
 
-    def walk_list(lst: list) -> list[Any]:
-        res: list[Any] = []
-        for item in lst:
-            if isinstance(item, list):
-                res.append(walk_list(item))
-            elif isinstance(item, str) and ISO_DATE_PATTERN.match(item):
-                try:
-                    res.append(
-                        datetime.fromisoformat(item.replace("Z", "+00:00"))
-                    )
-                except ValueError:
-                    res.append(item)
-            else:
-                res.append(item)
-        return res
-
     def object_hook(dct: dict[str, Any]) -> Any:
         """
-        Decodes Binary objects, ObjectId objects, and ISO date strings from JSON deserialization.
+        Decodes Binary objects, ObjectId objects, and $date objects from JSON deserialization.
 
         Args:
             dct: The dictionary to decode.
 
         Returns:
-            The decoded object or the original dictionary if no Binary/ObjectId object is found.
+            The decoded object or the original dictionary.
         """
         if isinstance(dct, dict):
             if "__neosqlite_binary__" in dct:
-                return Binary.decode_from_storage(dct)
+                try:
+                    return Binary.decode_from_storage(dct)
+                except (ValueError, KeyError, TypeError):
+                    return dct
             if "__neosqlite_objectid__" in dct:
                 try:
                     from neosqlite.objectid import ObjectId
@@ -133,25 +119,21 @@ def neosqlite_json_loads(s: str, **kwargs) -> Any:
                 except (ValueError, ImportError, KeyError) as e:
                     logger.debug(f"{e=}")
                     pass
-
-        # Convert ISO date strings back to datetime for MongoDB compatibility
-        for key, value in dct.items():
-            if isinstance(value, str) and ISO_DATE_PATTERN.match(value):
+            if "$date" in dct and isinstance(dct["$date"], (str, int, float)):
                 try:
-                    dct[key] = datetime.fromisoformat(
-                        value.replace("Z", "+00:00")
+                    if isinstance(dct["$date"], str):
+                        return datetime.fromisoformat(
+                            dct["$date"].replace("Z", "+00:00")
+                        )
+                    from datetime import timezone
+
+                    return datetime.fromtimestamp(
+                        dct["$date"] / 1000.0, tz=timezone.utc
                     )
-                except ValueError as e:
-                    logger.debug(
-                        f"Failed to parse ISO date string '{value}': {e}"
-                    )
-                    pass  # Not a valid date string, keep as string
-            elif isinstance(value, list):
-                dct[key] = walk_list(value)
+                except (ValueError, OSError):
+                    pass
+
         return dct
 
     kwargs["object_hook"] = object_hook
-    res = json.loads(s, **kwargs)
-    if isinstance(res, list):
-        res = walk_list(res)
-    return res
+    return json.loads(s, **kwargs)
