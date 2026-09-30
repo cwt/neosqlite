@@ -6,6 +6,7 @@ behavior after the fix.
 
 import pytest
 
+import neosqlite
 from neosqlite.exceptions import MalformedQueryException
 
 
@@ -2413,3 +2414,46 @@ class TestRenameCollectionUnaccessedFTS:
             t.startswith("renamed_articles") or t.startswith("orig_articles")
             for t in remaining
         )
+
+
+def test_collection_find_one_validates_and_passes_session(connection):
+    c = connection.test_find_one_session
+    c.insert_one({"a": 1, "b": 2})
+
+    session = connection.start_session()
+    doc = c.find_one({"a": 1}, session=session)
+    assert doc is not None
+    assert doc["b"] == 2
+
+    # Verify session from another connection raises ValueError
+    other_conn = neosqlite.Connection(":memory:")
+    other_session = other_conn.start_session()
+    with pytest.raises(
+        ValueError, match="Session belongs to a different Connection"
+    ):
+        c.find_one({"a": 1}, session=other_session)
+    other_session.end_session()
+    other_conn.close()
+    session.end_session()
+
+
+def test_gridfs_collection_find_one_validates_session(connection):
+    from neosqlite.gridfs import GridFSBucket
+
+    bucket = GridFSBucket(connection.db)
+    file_id = bucket.upload_from_stream("test.txt", b"hello world")
+
+    files_col = connection["fs_files"]
+    session = connection.start_session()
+    doc = files_col.find_one({"_id": str(file_id)}, session=session)
+    assert doc is not None
+    session.end_session()
+
+    other_conn = neosqlite.Connection(":memory:")
+    other_session = other_conn.start_session()
+    with pytest.raises(
+        ValueError, match="Session belongs to a different Connection"
+    ):
+        files_col.find_one({"_id": str(file_id)}, session=other_session)
+    other_session.end_session()
+    other_conn.close()

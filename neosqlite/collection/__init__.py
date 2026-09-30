@@ -987,14 +987,16 @@ class Collection:
         """
         # Check if this is a GridFS system collection
         if self._is_gridfs_collection():
-            cursor = self._find_as_gridfs(filter)
+            cursor = self._find_as_gridfs(filter, session=session)
             # Return first result or None
             for doc in cursor:
                 return doc
             return None
 
         self._auto_purge_ttl()
-        return self.query_engine.find_one(filter, projection, hint)
+        return self.query_engine.find_one(
+            filter, projection, hint, session=session
+        )
 
     def count_documents(
         self, filter: dict[str, Any], session: ClientSession | None = None
