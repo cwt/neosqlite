@@ -2643,3 +2643,62 @@ def test_gridin_md5_for_partial_chunk(connection):
     grid_out = bucket.open_download_stream(file_id)
     assert grid_out.md5 == expected_md5
     assert grid_out.length == chunk_size + 512
+
+
+def test_custom_chunk_size_upload_and_download(connection):
+    """Test that custom chunk_size_bytes is respected during upload and download."""
+    from neosqlite.objectid import ObjectId
+
+    bucket = GridFSBucket(connection.db)
+    custom_chunk_size = 64
+    data = (
+        b"abcdefgh" * 50
+    )  # 400 bytes, which should produce 7 chunks (6*64 + 16)
+
+    # Test upload_from_stream with custom chunk_size_bytes
+    file_id = bucket.upload_from_stream(
+        "custom_chunk.txt", data, chunk_size_bytes=custom_chunk_size
+    )
+
+    # Check chunkSize in fs_files
+    cursor = bucket._db.execute(
+        "SELECT id, chunkSize FROM fs_files WHERE _id = ?", (str(file_id),)
+    )
+    row = cursor.fetchone()
+    assert row is not None
+    int_id, stored_chunk_size = row
+    assert stored_chunk_size == custom_chunk_size
+
+    # Check chunks count in fs_chunks
+    cursor = bucket._db.execute(
+        "SELECT COUNT(*) FROM fs_chunks WHERE files_id = ?", (int_id,)
+    )
+    assert cursor.fetchone()[0] == 7
+
+    # Download back and verify data integrity
+    grid_out = bucket.open_download_stream(file_id)
+    assert grid_out.read() == data
+
+    # Test upload_from_stream_with_id with custom chunk_size_bytes
+    custom_oid = ObjectId()
+    bucket.upload_from_stream_with_id(
+        custom_oid,
+        "custom_chunk_id.txt",
+        data,
+        chunk_size_bytes=custom_chunk_size,
+    )
+    cursor = bucket._db.execute(
+        "SELECT id, chunkSize FROM fs_files WHERE _id = ?", (str(custom_oid),)
+    )
+    row = cursor.fetchone()
+    assert row is not None
+    int_id, stored_chunk_size = row
+    assert stored_chunk_size == custom_chunk_size
+
+    cursor = bucket._db.execute(
+        "SELECT COUNT(*) FROM fs_chunks WHERE files_id = ?", (int_id,)
+    )
+    assert cursor.fetchone()[0] == 7
+
+    grid_out2 = bucket.open_download_stream(custom_oid)
+    assert grid_out2.read() == data

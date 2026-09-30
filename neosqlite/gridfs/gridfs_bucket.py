@@ -335,6 +335,8 @@ class GridFSBucket:
         # Insert file metadata first
         upload_date = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
+        chunk_size = chunk_size_bytes or self._chunk_size_bytes
+
         cursor = self._db.execute(
             f"""
             INSERT INTO {self._files_collection}
@@ -345,7 +347,7 @@ class GridFSBucket:
                 str(file_oid),  # Store ObjectId as hex string
                 filename,
                 len(data),
-                self._chunk_size_bytes,
+                chunk_size,
                 upload_date,
                 md5_hash,
                 serialize_metadata(metadata),
@@ -357,14 +359,16 @@ class GridFSBucket:
             raise RuntimeError("Failed to get file ID")
 
         # Split data into chunks and insert them
-        self._insert_chunks(file_id, data)
+        self._insert_chunks(file_id, data, chunk_size_bytes=chunk_size)
 
         # Force sync if write concern requires it
         self._force_sync_if_needed()
 
         return file_oid
 
-    def _insert_chunks(self, file_id: int, data: bytes):
+    def _insert_chunks(
+        self, file_id: int, data: bytes, chunk_size_bytes: int | None = None
+    ):
         """
         Split data into chunks and insert them into the chunks collection.
 
@@ -375,14 +379,16 @@ class GridFSBucket:
         Args:
             file_id: The ID of the file document
             data: The data to be chunked
+            chunk_size_bytes: Bytes per chunk (defaults to bucket's chunk_size_bytes)
         """
+        chunk_size = chunk_size_bytes or self._chunk_size_bytes
         rows = [
             (
                 file_id,
-                i // self._chunk_size_bytes,
-                data[i : i + self._chunk_size_bytes],
+                i // chunk_size,
+                data[i : i + chunk_size],
             )
-            for i in range(0, len(data), self._chunk_size_bytes)
+            for i in range(0, len(data), chunk_size)
         ]
         if not rows:
             return
@@ -770,7 +776,9 @@ class GridFSBucket:
             file_int_id = file_id
 
         # Split data into chunks and insert them
-        self._insert_chunks(file_int_id, data)
+        self._insert_chunks(
+            file_int_id, data, chunk_size_bytes=chunk_size_bytes
+        )
 
         # Force sync if write concern requires it
         self._force_sync_if_needed()
