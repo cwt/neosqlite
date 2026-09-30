@@ -591,26 +591,14 @@ class SqlUpdatesMixin:
                         set_clauses.append(f"{json_path}, {bit_expr}")
                 case "$currentDate":
                     # SQL implementation for $currentDate
+                    json_obj_func = _get_json_function(
+                        "object", self.jsonb.jsonb_supported
+                    )
                     for field, type_spec in value.items():
                         json_path = f"'{parse_json_path(field)}'"
-                        # Determine type: true defaults to date, { $type: "timestamp" } or { $type: "date" }
-                        if (
-                            isinstance(type_spec, dict)
-                            and type_spec.get("$type") == "timestamp"
-                        ):
-                            type_value = "timestamp"
-                        else:
-                            type_value = "date"
-                        # Set to current datetime ISO string
-                        if type_value == "timestamp":
-                            set_clauses.append(
-                                f"{json_path}, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
-                            )
-                        else:
-                            # For date type, match Python's datetime.now().isoformat() format
-                            set_clauses.append(
-                                f"{json_path}, strftime('%Y-%m-%dT%H:%M:%f', 'now')"
-                            )
+                        set_clauses.append(
+                            f"{json_path}, {json_obj_func}('$date', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+                        )
                 case "$rename":
                     # SQL implementation for $rename using single UPDATE
                     # Combine json_set and json_remove in a single operation
@@ -829,27 +817,14 @@ class SqlUpdatesMixin:
                         # No fields to unset
                         return None
                 case "$currentDate":
+                    json_obj_func = _get_json_function(
+                        "object", self.jsonb.jsonb_supported
+                    )
                     for field, type_spec in value.items():
                         json_path = f"'{parse_json_path(field)}'"
-                        # Determine type: true defaults to date, { $type: "timestamp" } or { $type: "date" }
-                        if (
-                            isinstance(type_spec, dict)
-                            and type_spec.get("$type") == "timestamp"
-                        ):
-                            type_value = "timestamp"
-                        else:
-                            type_value = "date"
-                        # Set to current datetime ISO string to match Python implementation
-                        # Use strftime for consistent ISO format (Python uses isoformat() like '2026-03-15T12:34:56.789012')
-                        if type_value == "timestamp":
-                            set_clauses.append(
-                                f"{json_path}, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
-                            )
-                        else:
-                            # For date type, match Python's datetime.now().isoformat() format
-                            set_clauses.append(
-                                f"{json_path}, strftime('%Y-%m-%dT%H:%M:%f', 'now')"
-                            )
+                        set_clauses.append(
+                            f"{json_path}, {json_obj_func}('$date', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+                        )
                 case "$pop":
                     # For $pop, we use json_remove
                     if not _supports_relative_json_indexing():
@@ -1336,26 +1311,14 @@ class SqlUpdatesMixin:
                         params.extend(converted_values)
             case "$currentDate":
                 # SQL implementation for $currentDate
+                json_obj_func = _get_json_function(
+                    "object", self.jsonb.jsonb_supported
+                )
                 for field, type_spec in value.items():
                     json_path = f"'{parse_json_path(field)}'"
-                    # Determine type: true defaults to date, { $type: "timestamp" } or { $type: "date" }
-                    if (
-                        isinstance(type_spec, dict)
-                        and type_spec.get("$type") == "timestamp"
-                    ):
-                        type_value = "timestamp"
-                    else:
-                        type_value = "date"
-                    # Set to current datetime ISO string to match Python implementation
-                    if type_value == "timestamp":
-                        clauses.append(
-                            f"{json_path}, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
-                        )
-                    else:
-                        # For date type, match Python's datetime.now().isoformat() format
-                        clauses.append(
-                            f"{json_path}, strftime('%Y-%m-%dT%H:%M:%f', 'now')"
-                        )
+                    clauses.append(
+                        f"{json_path}, {json_obj_func}('$date', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
+                    )
             case "$setOnInsert":
                 # $setOnInsert only applies on upsert (doc_id == 0)
                 # For existing documents (doc_id != 0), this is a no-op

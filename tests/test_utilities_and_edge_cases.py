@@ -671,10 +671,13 @@ def test_perform_python_update_operations():
         )
         assert modified
         assert "lastModified" in result
-        # Check that it's an ISO datetime string
+        # Check that it's a datetime object or ISO string
         from datetime import datetime
 
-        datetime.fromisoformat(result["lastModified"])
+        if isinstance(result["lastModified"], str):
+            datetime.fromisoformat(result["lastModified"])
+        else:
+            assert isinstance(result["lastModified"], datetime)
 
         # Test $setOnInsert operation (only applies on upsert, doc_id=0)
         update_spec = {"$setOnInsert": {"createdAt": "2023-01-01"}}

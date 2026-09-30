@@ -2604,3 +2604,57 @@ def test_list_collection_names_filters_internal_and_fts_tables(connection):
     colls = connection.list_collections()
     coll_names_from_colls = [c["name"] for c in colls]
     assert coll_names_from_colls == coll_names
+
+
+def test_date_diff_with_nested_date_expressions(connection):
+    from datetime import datetime, timezone
+
+    c = connection.test_datediff_nested
+    c.insert_many(
+        [
+            {
+                "event": "A",
+                "date": datetime(2024, 6, 15, 14, 30, 0, tzinfo=timezone.utc),
+            },
+            {
+                "event": "B",
+                "date": datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+            },
+        ]
+    )
+    pipeline = [
+        {
+            "$project": {
+                "days_diff": {
+                    "$dateDiff": {
+                        "startDate": "$date",
+                        "endDate": {
+                            "$dateAdd": {
+                                "startDate": "$date",
+                                "amount": 1,
+                                "unit": "day",
+                            }
+                        },
+                        "unit": "day",
+                    }
+                }
+            }
+        }
+    ]
+    results = list(c.aggregate(pipeline))
+    assert len(results) == 2
+    assert results[0]["days_diff"] == 1
+    assert results[1]["days_diff"] == 1
+
+
+def test_current_date_update_stores_datetime(connection):
+    from datetime import datetime
+
+    c = connection.test_current_date_dt
+    c.insert_one({"name": "Alice"})
+    c.update_one({"name": "Alice"}, {"$currentDate": {"updated_at": True}})
+
+    doc = c.find_one({"name": "Alice"})
+    assert doc is not None
+    assert "updated_at" in doc
+    assert isinstance(doc["updated_at"], datetime)

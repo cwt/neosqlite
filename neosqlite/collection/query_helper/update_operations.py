@@ -7,7 +7,7 @@ The SQL implementation lives in _sql_updates.py (SqlUpdatesMixin).
 
 import logging
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from ...exceptions import MalformedQueryException
@@ -320,7 +320,11 @@ class UpdateOperationsMixin(SqlUpdatesMixin):
                             doc_to_update[k] = v
                 case "$currentDate":
                     for k, type_spec in value.items():
-                        doc_to_update[k] = datetime.now().isoformat()
+                        now_val = datetime.now(timezone.utc)
+                        if "." in k:
+                            _set_nested_field(doc_to_update, k, now_val)
+                        else:
+                            doc_to_update[k] = now_val
                 case "$setOnInsert":
                     # Only apply on upsert (doc_id == 0)
                     if doc_id == 0:

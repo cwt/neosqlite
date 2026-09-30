@@ -53,9 +53,46 @@ class DateMixin(BaseSqlMixin):
 
     def _extract_date_sql(self, sql_expr: str) -> str:
         """Extract ISO date string from potential {"$date": ...} JSON object or direct string."""
-        if sql_expr.endswith("')"):
-            date_path = sql_expr[:-2] + '."$date"\')'
-            return f"COALESCE({date_path}, {sql_expr})"
+        s = sql_expr.strip()
+        while s.startswith("(") and s.endswith(")"):
+            depth = 0
+            matched = True
+            for c in s[:-1]:
+                if c == "(":
+                    depth += 1
+                elif c == ")":
+                    depth -= 1
+                    if depth == 0:
+                        matched = False
+                        break
+            if matched and depth == 1:
+                s = s[1:-1].strip()
+            else:
+                break
+
+        for prefix in (
+            "json_object('$date',",
+            'json_object("$date",',
+            "jsonb_object('$date',",
+            'jsonb_object("$date",',
+        ):
+            if s.startswith(prefix) and s.endswith(")"):
+                depth = 0
+                matched = True
+                for c in s[len(prefix.split("(")[0]) : -1]:
+                    if c == "(":
+                        depth += 1
+                    elif c == ")":
+                        depth -= 1
+                        if depth == 0:
+                            matched = False
+                            break
+                if matched and depth == 1:
+                    return s[len(prefix) : -1].strip()
+
+        if s.endswith("')"):
+            date_path = s[:-2] + '."$date"\')'
+            return f"COALESCE({date_path}, {s})"
         return sql_expr
 
     def _convert_date_operator(

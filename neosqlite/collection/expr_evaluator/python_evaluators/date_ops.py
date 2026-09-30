@@ -190,6 +190,11 @@ class DatePythonMixin(BasePythonMixin):
                 if start is None or end is None:
                     return None
 
+                if isinstance(start, dict) and "$date" in start:
+                    start = start["$date"]
+                if isinstance(end, dict) and "$date" in end:
+                    end = end["$date"]
+
                 # Parse dates
                 if isinstance(start, str):
                     try:
@@ -208,6 +213,12 @@ class DatePythonMixin(BasePythonMixin):
                     end, datetime
                 ):
                     return None
+
+                # Normalize timezone awareness between start and end
+                if start.tzinfo is not None and end.tzinfo is None:
+                    end = end.replace(tzinfo=start.tzinfo)
+                elif start.tzinfo is None and end.tzinfo is not None:
+                    start = start.replace(tzinfo=end.tzinfo)
 
                 # Calculate difference
                 delta = end - start
