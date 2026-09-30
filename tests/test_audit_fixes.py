@@ -2547,3 +2547,18 @@ def test_string_24_char_id_not_coerced_to_objectid(connection):
     assert doc_replaced is not None
     assert isinstance(doc_replaced["_id"], str)
     assert doc_replaced["_id"] == str_id
+
+
+def test_cursor_command_does_not_create_physical_table(connection):
+    cursor = connection.cursor_command({"ping": 1})
+    results = list(cursor)
+    assert len(results) == 1
+    assert results[0].get("ok") == 1
+
+    tables = [
+        row[0]
+        for row in connection.db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    ]
+    assert "__command_results__" not in tables

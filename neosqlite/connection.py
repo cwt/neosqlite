@@ -881,7 +881,9 @@ class Connection:
 
         # Use a safe dummy collection name for AggregationCursor
         # We don't want to use existing collection names because some might be reserved (e.g. sqlite_sequence)
-        collection = self["__command_results__"]
+        collection = Collection(
+            self.db, "__command_results__", database=self, create=False
+        )
 
         # Create an AggregationCursor with the pre-computed results
         cursor = AggregationCursor(collection, [])
