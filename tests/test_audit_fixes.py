@@ -1824,3 +1824,110 @@ class TestGroupLiteralAccumulators:
             assert res_py[1]["push_lit"] == res_sql[1]["push_lit"]
         finally:
             set_force_fallback(old_state)
+
+
+class TestGroupPushRootVariable:
+    """$group with {"$push": "$$ROOT"} must push the full document,
+    not nulls."""
+
+    def test_group_push_root_in_python_and_sql_tiers(self, connection):
+        c = connection.t_group_root
+        c.insert_many(
+            [
+                {"_id": 1, "grp": "A", "val": 10},
+                {"_id": 2, "grp": "A", "val": 20},
+                {"_id": 3, "grp": "B", "val": 30},
+            ]
+        )
+        pipeline = [
+            {
+                "$group": {
+                    "_id": "$grp",
+                    "items": {"$push": "$$ROOT"},
+                    "first_doc": {"$first": "$$ROOT"},
+                }
+            }
+        ]
+
+        def get_id(doc):
+            return doc["_id"]
+
+        # Standard tier
+        res_sql = sorted(c.aggregate(pipeline), key=get_id)
+        assert len(res_sql) == 2
+        assert len(res_sql[0]["items"]) == 2
+        assert res_sql[0]["items"][0]["val"] == 10
+        assert res_sql[0]["items"][1]["val"] == 20
+        assert res_sql[0]["first_doc"]["val"] == 10
+        assert len(res_sql[1]["items"]) == 1
+        assert res_sql[1]["items"][0]["val"] == 30
+        assert res_sql[1]["first_doc"]["val"] == 30
+
+        # Python tier
+        from neosqlite.collection.query_helper.utils import (
+            get_force_fallback,
+            set_force_fallback,
+        )
+
+        old_state = get_force_fallback()
+        try:
+            set_force_fallback(True)
+            res_py = sorted(c.aggregate(pipeline), key=get_id)
+            assert len(res_py) == 2
+            assert len(res_py[0]["items"]) == 2
+            assert res_py[0]["items"][0]["val"] == 10
+            assert res_py[0]["items"][1]["val"] == 20
+            assert res_py[0]["first_doc"]["val"] == 10
+            assert len(res_py[1]["items"]) == 1
+            assert res_py[1]["items"][0]["val"] == 30
+            assert res_py[1]["first_doc"]["val"] == 30
+        finally:
+            set_force_fallback(old_state)
+
+    def test_group_root_template_and_fields(self, connection):
+        c = connection.t_group_root_tmpl
+        c.insert_many(
+            [
+                {"_id": 1, "grp": "A", "val": 10},
+                {"_id": 2, "grp": "A", "val": 20},
+            ]
+        )
+        pipeline = [
+            {
+                "$group": {
+                    "_id": "$grp",
+                    "docs": {
+                        "$push": {
+                            "doc_id": "$$ROOT._id",
+                            "doc_val": "$$CURRENT.val",
+                        }
+                    },
+                    "last_doc": {"$last": "$$ROOT"},
+                    "first_val": {"$first": "$$ROOT.val"},
+                    "last_val": {"$last": "$$CURRENT.val"},
+                }
+            }
+        ]
+
+        def get_id(doc):
+            return doc["_id"]
+
+        from neosqlite.collection.query_helper.utils import (
+            get_force_fallback,
+            set_force_fallback,
+        )
+
+        old_state = get_force_fallback()
+        try:
+            set_force_fallback(True)
+            res = sorted(c.aggregate(pipeline), key=get_id)
+            assert len(res) == 1
+            assert res[0]["docs"] == [
+                {"doc_id": 1, "doc_val": 10},
+                {"doc_id": 2, "doc_val": 20},
+            ]
+            assert res[0]["last_doc"]["val"] == 20
+            assert res[0]["first_val"] == 10
+            assert res[0]["last_val"] == 20
+        finally:
+            set_force_fallback(old_state)

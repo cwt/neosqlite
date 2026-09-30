@@ -160,7 +160,21 @@ class AggregationMixin(SqlAggregationMixin):
                         # These operators use dict format with "input" field
                         # Extract the input field and get its value
                         input_field = key.get("input", key.get("values", ""))
-                        if input_field:
+                        if input_field in ("$$ROOT", "$$CURRENT"):
+                            value = deepcopy(doc)
+                        elif isinstance(
+                            input_field, str
+                        ) and input_field.startswith("$$ROOT."):
+                            value = self.collection._get_val(
+                                doc, "$" + input_field[7:]
+                            )
+                        elif isinstance(
+                            input_field, str
+                        ) and input_field.startswith("$$CURRENT."):
+                            value = self.collection._get_val(
+                                doc, "$" + input_field[10:]
+                            )
+                        elif input_field:
                             value = self.collection._get_val(doc, input_field)
                         else:
                             value = None
@@ -168,7 +182,24 @@ class AggregationMixin(SqlAggregationMixin):
                         # Template dict or literal dict
                         resolved_dict = {}
                         for dk, dv in key.items():
-                            if isinstance(dv, str) and dv.startswith("$"):
+                            if isinstance(dv, str) and dv in (
+                                "$$ROOT",
+                                "$$CURRENT",
+                            ):
+                                resolved_dict[dk] = deepcopy(doc)
+                            elif isinstance(dv, str) and dv.startswith(
+                                "$$ROOT."
+                            ):
+                                resolved_dict[dk] = self.collection._get_val(
+                                    doc, "$" + dv[7:]
+                                )
+                            elif isinstance(dv, str) and dv.startswith(
+                                "$$CURRENT."
+                            ):
+                                resolved_dict[dk] = self.collection._get_val(
+                                    doc, "$" + dv[10:]
+                                )
+                            elif isinstance(dv, str) and dv.startswith("$"):
                                 resolved_dict[dk] = self.collection._get_val(
                                     doc, dv
                                 )
@@ -177,6 +208,12 @@ class AggregationMixin(SqlAggregationMixin):
                         value = resolved_dict
                 elif isinstance(key, list):
                     value = deepcopy(key)
+                elif isinstance(key, str) and key in ("$$ROOT", "$$CURRENT"):
+                    value = deepcopy(doc)
+                elif isinstance(key, str) and key.startswith("$$ROOT."):
+                    value = self.collection._get_val(doc, "$" + key[7:])
+                elif isinstance(key, str) and key.startswith("$$CURRENT."):
+                    value = self.collection._get_val(doc, "$" + key[10:])
                 elif isinstance(key, str) and key.startswith("$"):
                     value = self.collection._get_val(doc, key)
                 else:

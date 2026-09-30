@@ -73,6 +73,9 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         select_parts = []
         group_by_parts = []
         array_fields = []  # Track fields that are arrays (from $push/$addToSet)
+        object_fields = (
+            []
+        )  # Track fields that are JSON objects (from $first/$last with $$ROOT)
 
         # Handle _id (group key)
         if group_id_expr is None:
@@ -158,7 +161,13 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
             # Extract field name from expression or identify literal values
             is_literal = False
             literal_value = None
-            if isinstance(expr, str) and expr.startswith("$"):
+            if isinstance(expr, str) and expr in ("$$ROOT", "$$CURRENT"):
+                expr_field = expr
+            elif isinstance(expr, str) and expr.startswith("$$ROOT."):
+                expr_field = expr[7:]
+            elif isinstance(expr, str) and expr.startswith("$$CURRENT."):
+                expr_field = expr[10:]
+            elif isinstance(expr, str) and expr.startswith("$"):
                 expr_field = expr[1:]
             elif (
                 isinstance(expr, (int, float, bool))
@@ -257,6 +266,8 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                             f"{_format_literal_sql(literal_value)} AS {field}"
                         )
                     elif expr_field:
+                        if expr_field in ("$$ROOT", "$$CURRENT"):
+                            object_fields.append(field)
                         self._first_last_fields.append(
                             (
                                 field,
@@ -278,7 +289,24 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                         )
                         obj_args = []
                         for key, val in expr.items():
-                            if isinstance(val, str) and val.startswith("$"):
+                            if isinstance(val, str) and val in (
+                                "$$ROOT",
+                                "$$CURRENT",
+                            ):
+                                obj_args.append(f"'{key}', json(data)")
+                            elif isinstance(val, str) and val.startswith(
+                                "$$ROOT."
+                            ):
+                                obj_args.append(
+                                    f"'{key}', {json_extract}(data, '{parse_json_path(val[7:])}')"
+                                )
+                            elif isinstance(val, str) and val.startswith(
+                                "$$CURRENT."
+                            ):
+                                obj_args.append(
+                                    f"'{key}', {json_extract}(data, '{parse_json_path(val[10:])}')"
+                                )
+                            elif isinstance(val, str) and val.startswith("$"):
                                 field_name = val[1:]
                                 if field_name == "_id":
                                     obj_args.append(f"'{key}', _id")
@@ -312,6 +340,10 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                             select_parts.append(
                                 f"{json_group_array}(DISTINCT _id) AS {field}"
                             )
+                        elif expr_field in ("$$ROOT", "$$CURRENT"):
+                            select_parts.append(
+                                f"{json_group_array}(DISTINCT json(data)) AS {field}"
+                            )
                         else:
                             select_parts.append(
                                 f"{json_group_array}(DISTINCT {json_extract}(data, '{parse_json_path(expr_field)}')) AS {field}"
@@ -330,7 +362,24 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                         )
                         obj_args = []
                         for key, val in expr.items():
-                            if isinstance(val, str) and val.startswith("$"):
+                            if isinstance(val, str) and val in (
+                                "$$ROOT",
+                                "$$CURRENT",
+                            ):
+                                obj_args.append(f"'{key}', json(data)")
+                            elif isinstance(val, str) and val.startswith(
+                                "$$ROOT."
+                            ):
+                                obj_args.append(
+                                    f"'{key}', {json_extract}(data, '{parse_json_path(val[7:])}')"
+                                )
+                            elif isinstance(val, str) and val.startswith(
+                                "$$CURRENT."
+                            ):
+                                obj_args.append(
+                                    f"'{key}', {json_extract}(data, '{parse_json_path(val[10:])}')"
+                                )
+                            elif isinstance(val, str) and val.startswith("$"):
                                 field_name = val[1:]
                                 if field_name == "_id":
                                     obj_args.append(f"'{key}', _id")
@@ -366,6 +415,10 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                         if expr_field == "_id":
                             select_parts.append(
                                 f"{json_group_array}(_id) AS {field}"
+                            )
+                        elif expr_field in ("$$ROOT", "$$CURRENT"):
+                            select_parts.append(
+                                f"{json_group_array}(json(data)) AS {field}"
                             )
                         else:
                             select_parts.append(
@@ -433,6 +486,10 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
             self._array_fields_map = {}
         self._array_fields_map[new_table] = array_fields
 
+        if not hasattr(self, "_object_fields_map"):
+            self._object_fields_map = {}
+        self._object_fields_map[new_table] = object_fields
+
         return new_table
 
     @staticmethod
@@ -487,6 +544,8 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         for field, is_last, expr_field in self._first_last_fields:
             if expr_field == "_id":
                 value_sql = "src_id"
+            elif expr_field in ("$$ROOT", "$$CURRENT"):
+                value_sql = "json(data)"
             else:
                 value_sql = (
                     f"{json_extract}(data, '{parse_json_path(expr_field)}')"
@@ -728,6 +787,25 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                                     f"Failed to parse array field '{key}' JSON: {e}"
                                 )
                                 pass  # Keep as string if parsing fails
+
+                object_fields = getattr(self, "_object_fields_map", {}).get(
+                    table_name, []
+                )
+                for key in object_fields:
+                    if key in doc:
+                        value = doc[key]
+                        if (
+                            isinstance(value, str)
+                            and value.startswith("{")
+                            and value.endswith("}")
+                        ):
+                            try:
+                                doc[key] = neosqlite_json_loads(value)
+                            except Exception as e:
+                                logger.debug(
+                                    f"Failed to parse object field '{key}' JSON: {e}"
+                                )
+                                pass
 
                 results.append(doc)
         return results
