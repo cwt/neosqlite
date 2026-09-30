@@ -1082,3 +1082,47 @@ class TestChangeStreamIsolation:
         finally:
             replayed.close()
         assert second["documentKey"]["_id"] != first["documentKey"]["_id"]
+
+
+class TestUserBinaryDictionaryPreservation:
+    """User dictionaries containing '__neosqlite_binary__' must not be treated as corrupted."""
+
+    def test_user_dict_with_binary_key_missing_data(self, connection):
+        c = connection.t_user_binary_1
+        c.insert_one(
+            {"user_shape": {"__neosqlite_binary__": True, "tag": "test"}}
+        )
+        doc = c.find_one({})
+        assert doc is not None
+        assert "__neosqlite_corrupted__" not in doc
+        assert doc["user_shape"] == {
+            "__neosqlite_binary__": True,
+            "tag": "test",
+        }
+
+    def test_user_dict_with_binary_key_invalid_base64(self, connection):
+        c = connection.t_user_binary_2
+        c.insert_one(
+            {
+                "user_shape": {
+                    "__neosqlite_binary__": True,
+                    "data": "not_valid_b64!!!",
+                }
+            }
+        )
+        doc = c.find_one({})
+        assert doc is not None
+        assert "__neosqlite_corrupted__" not in doc
+        assert doc["user_shape"] == {
+            "__neosqlite_binary__": True,
+            "data": "not_valid_b64!!!",
+        }
+
+    def test_actual_storage_corruption_still_detected(self, connection):
+        c = connection.t_corrupt
+        c.insert_one({"x": 1})
+        connection.db.execute("UPDATE t_corrupt SET data = '{not valid json'")
+        connection.db.commit()
+        doc = c.find_one({})
+        assert doc is not None
+        assert doc.get("__neosqlite_corrupted__") is True

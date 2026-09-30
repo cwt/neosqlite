@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import warnings
 from datetime import datetime, timedelta, timezone
@@ -170,7 +171,13 @@ class Collection:
             if isinstance(data, bytes):
                 data = data.decode("utf-8")
             document: dict[str, Any] = neosqlite_json_loads(data)
-        except (UnicodeDecodeError, ValueError, TypeError) as e:
+            if not isinstance(document, dict):
+                logger.warning(
+                    f"Skipping corrupted document (id={id_val}): parsed data is not a dict"
+                )
+                _id = self._resolve_stored_id(stored_id_val, id_val)
+                return {"_id": _id, "__neosqlite_corrupted__": True}
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError) as e:
             logger.warning(f"Skipping corrupted document (id={id_val}): {e}")
             # Return a minimal document with just the _id to allow processing to continue
             # The document won't match most filters anyway
