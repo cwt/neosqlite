@@ -2727,3 +2727,28 @@ def test_open_upload_stream_with_id_objectid_streaming(connection):
     grid_out = bucket.open_download_stream(custom_oid)
     assert grid_out.read() == data
     assert grid_out._id == custom_oid
+
+
+def test_gridin_commit_on_non_autocommit_connection(tmp_path):
+    """Test that GridIn explicitly commits on non-autocommit connections so data is persisted."""
+    import sqlite3 as std_sqlite3
+
+    db_path = str(tmp_path / "non_autocommit.db")
+
+    # Connect with standard non-autocommit connection
+    conn1 = std_sqlite3.connect(db_path, isolation_level="")
+    bucket1 = GridFSBucket(conn1)
+    data = b"persisted content on non-autocommit connection"
+    with bucket1.open_upload_stream("test.txt") as upload_stream:
+        upload_stream.write(data)
+    file_id = upload_stream._file_id
+
+    # Close connection WITHOUT calling conn1.commit() explicitly
+    conn1.close()
+
+    # Re-open database with a new connection and verify data is still there
+    conn2 = std_sqlite3.connect(db_path, isolation_level="")
+    bucket2 = GridFSBucket(conn2)
+    grid_out = bucket2.open_download_stream(file_id)
+    assert grid_out.read() == data
+    conn2.close()

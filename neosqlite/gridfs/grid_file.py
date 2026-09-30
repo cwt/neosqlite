@@ -395,6 +395,11 @@ class GridIn:
         # Force sync if write concern requires it
         self._force_sync_if_needed()
 
+        try:
+            self._db.commit()
+        except Exception:
+            pass
+
         self._closed = True
 
     def __enter__(self) -> GridIn:
