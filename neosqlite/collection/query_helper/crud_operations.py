@@ -45,7 +45,9 @@ class CRUDOperationsMixin:
         from copy import deepcopy
 
         from ...exceptions import MalformedDocument
-        from ..json_helpers import neosqlite_json_dumps
+        from ..json_helpers import (
+            neosqlite_json_dumps,
+        )
         from .utils import _convert_bytes_to_binary
 
         if not isinstance(document, dict):
@@ -55,9 +57,16 @@ class CRUDOperationsMixin:
 
         doc_to_insert = deepcopy(document)
         original_has_id = "_id" in doc_to_insert
-        doc_to_insert.pop(
-            "_id", None
-        )  # Remove _id from doc_to_insert to avoid duplication
+
+        # Handle _id generation if not provided in the document
+        if not original_has_id or document["_id"] is None:
+            # Generate a new ObjectId for the _id field
+            generated_id: ObjectId | Any = ObjectId()
+        else:
+            # If _id was provided in the original document, keep the original value as-is
+            generated_id = document["_id"]
+
+        doc_to_insert["_id"] = generated_id
 
         # Convert any bytes objects to Binary objects for proper JSON serialization
         doc_to_insert = _convert_bytes_to_binary(doc_to_insert)
@@ -75,32 +84,6 @@ class CRUDOperationsMixin:
                 )
             else:
                 raise ValueError("Invalid JSON document")
-
-        # Handle _id generation if not provided in the document
-        if not original_has_id:
-            # Generate a new ObjectId for the _id field
-            generated_id: ObjectId | Any = ObjectId()
-        else:
-            # If _id was provided in the original document, use that value in the _id column
-            provided_id = document["_id"]
-
-            if provided_id is None:
-                # If _id was explicitly set to None, generate a new ObjectId
-                generated_id = ObjectId()
-            elif isinstance(provided_id, str) and len(provided_id) == 24:
-                try:
-                    generated_id = ObjectId(provided_id)
-                except ValueError as e:
-                    # If it's not a valid ObjectId string, keep the original
-                    logger.debug(
-                        f"Provided _id '{provided_id}' is not a valid ObjectId: {e}"
-                    )
-                    generated_id = provided_id
-            elif isinstance(provided_id, ObjectId):
-                generated_id = provided_id
-            else:
-                # For other types, keep the original value
-                generated_id = provided_id
 
         # Insert with the _id value in the dedicated column
         cursor = self.collection.db.execute(
@@ -134,11 +117,32 @@ class CRUDOperationsMixin:
             doc_id (Any): The ID of the document to replace (can be ObjectId, int, etc.).
             replacement (dict[str, Any]): The new document to replace the existing one.
         """
+        from ..json_helpers import neosqlite_json_loads
+
         # Convert the doc_id to integer ID for internal operations
         int_doc_id = self._get_integer_id_for_oid(doc_id)
+        replacement_copy = dict(replacement)
+        if "_id" not in replacement_copy:
+            cursor = self.collection.db.execute(
+                f"SELECT data, _id FROM {quote_table_name(self.collection.name)} WHERE id = ?",
+                (int_doc_id,),
+            )
+            if row := cursor.fetchone():
+                if row[0]:
+                    try:
+                        orig_doc = neosqlite_json_loads(row[0])
+                        if "_id" in orig_doc:
+                            replacement_copy["_id"] = orig_doc["_id"]
+                    except Exception:
+                        pass
+                if "_id" not in replacement_copy and row[1] is not None:
+                    replacement_copy["_id"] = self.collection._parse_stored_id(
+                        row[1]
+                    )
+
         self.collection.db.execute(
             f"UPDATE {quote_table_name(self.collection.name)} SET data = ? WHERE id = ?",
-            (neosqlite_json_dumps(replacement), int_doc_id),
+            (neosqlite_json_dumps(replacement_copy), int_doc_id),
         )
 
     def _internal_delete(self, doc_id: Any):

@@ -109,6 +109,9 @@ class Collection:
             data = data.decode("utf-8")
         document: dict[str, Any] = neosqlite_json_loads(data)
 
+        if "_id" in document:
+            return document
+
         # If stored_id is provided, parse it. Otherwise look it up or use the auto-increment id
         final_id = (
             self._parse_stored_id(stored_id) if stored_id is not None else None
@@ -132,14 +135,6 @@ class Collection:
         match stored_id:
             case None:
                 return None
-            case str() as s if len(s) == 24:
-                try:
-                    return ObjectId(s)
-                except (ValueError, ImportError) as e:
-                    logger.debug(
-                        f"Failed to parse stored _id value '{s}' as ObjectId: {e}"
-                    )
-                    return s
             case str() as s if (s.startswith("{") and s.endswith("}")) or (
                 s.startswith("[") and s.endswith("]")
             ):
@@ -184,7 +179,10 @@ class Collection:
             _id = self._resolve_stored_id(stored_id_val, id_val)
             return {"_id": _id, "__neosqlite_corrupted__": True}
 
-        # Use the stored _id value if available, otherwise fall back to the auto-increment id
+        if "_id" in document:
+            return document
+
+        # Fallback for documents stored without _id in data
         _id = self._resolve_stored_id(stored_id_val, id_val)
 
         document["_id"] = _id
@@ -204,17 +202,7 @@ class Collection:
             ObjectId or the original stored_id_val, or fallback_id.
         """
         if stored_id_val is not None:
-            # Try to decode as ObjectId if it looks like one
-            if isinstance(stored_id_val, str) and len(stored_id_val) == 24:
-                try:
-                    return ObjectId(stored_id_val)
-                except ValueError as e:
-                    logger.debug(
-                        f"Failed to parse stored _id value '{stored_id_val}' as ObjectId: {e}"
-                    )
-                    return stored_id_val
-            else:
-                return stored_id_val
+            return self._parse_stored_id(stored_id_val)
         else:
             # Fallback to the auto-increment ID for backward compatibility
             return fallback_id

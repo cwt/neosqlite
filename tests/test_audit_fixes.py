@@ -2503,3 +2503,47 @@ def test_aggregate_negative_limit_raises_error(connection):
     # Zero limit in aggregation should return 0 documents
     res_zero = list(c.aggregate([{"$limit": 0}]))
     assert len(res_zero) == 0
+
+
+def test_string_24_char_id_not_coerced_to_objectid(connection):
+    from neosqlite.objectid import ObjectId
+
+    c = connection.test_str_id
+    str_id = "507f1f77bcf86cd799439011"
+    c.insert_one({"_id": str_id, "name": "string_doc"})
+
+    # Fetch document and verify _id is str, NOT ObjectId
+    doc = c.find_one({"name": "string_doc"})
+    assert doc is not None
+    assert isinstance(doc["_id"], str)
+    assert not isinstance(doc["_id"], ObjectId)
+    assert doc["_id"] == str_id
+
+    # Query directly by string _id
+    doc_by_id = c.find_one({"_id": str_id})
+    assert doc_by_id is not None
+    assert isinstance(doc_by_id["_id"], str)
+    assert doc_by_id["_id"] == str_id
+
+    # Insert genuine ObjectId and verify it stays ObjectId
+    oid = ObjectId("507f1f77bcf86cd799439012")
+    c.insert_one({"_id": oid, "name": "oid_doc"})
+    doc_oid = c.find_one({"name": "oid_doc"})
+    assert doc_oid is not None
+    assert isinstance(doc_oid["_id"], ObjectId)
+    assert doc_oid["_id"] == oid
+
+    # Verify auto-generated ObjectId is still ObjectId
+    res = c.insert_one({"name": "auto_doc"})
+    assert isinstance(res.inserted_id, ObjectId)
+    doc_auto = c.find_one({"name": "auto_doc"})
+    assert doc_auto is not None
+    assert isinstance(doc_auto["_id"], ObjectId)
+    assert doc_auto["_id"] == res.inserted_id
+
+    # Verify replace_one preserves string _id
+    c.replace_one({"name": "string_doc"}, {"name": "string_doc_replaced"})
+    doc_replaced = c.find_one({"name": "string_doc_replaced"})
+    assert doc_replaced is not None
+    assert isinstance(doc_replaced["_id"], str)
+    assert doc_replaced["_id"] == str_id
