@@ -245,3 +245,33 @@ def build_upsert_base_document(filter_doc: dict[str, Any]) -> dict[str, Any]:
         else:
             add(key, value)
     return base
+
+
+def sanitize_fts_query(search_term: str) -> str:
+    """Sanitize and format a MongoDB $text search string for SQLite FTS5.
+
+    SQLite FTS5 treats special characters like quotes, colons, hyphens, and leading
+    boolean operators (NOT, AND, OR) as query syntax. If unescaped, malformed queries
+    cause OperationalError (syntax error or 'no such column').
+
+    This function extracts quoted phrases and bare words, quoting individual terms safely
+    so they are evaluated as literals by SQLite FTS5.
+    """
+    if not isinstance(search_term, str) or not search_term.strip():
+        return ""
+
+    pattern = r'"([^"]*)"|(\S+)'
+    tokens: list[str] = []
+    for phrase, word in re.findall(pattern, search_term):
+        if phrase:
+            p = phrase.strip()
+            if p:
+                escaped = p.replace('"', '""')
+                tokens.append('"' + escaped + '"')
+        elif word:
+            w = word.replace('"', "").strip()
+            if w:
+                escaped = w.replace('"', '""')
+                tokens.append('"' + escaped + '"')
+
+    return " ".join(tokens)

@@ -14,6 +14,7 @@ from ...sql_utils import quote_table_name
 from ..json_helpers import neosqlite_json_dumps_for_sql
 from ..json_path_utils import parse_json_path
 from ..type_correction import normalize_id_query_for_db
+from .utils import sanitize_fts_query
 
 if TYPE_CHECKING:
     from .. import Collection
@@ -83,6 +84,10 @@ class SqlQueryBuilderMixin:
         if not isinstance(search_term, str):
             return None
 
+        sanitized_term = sanitize_fts_query(search_term)
+        if not sanitized_term:
+            return "WHERE 0", [], []
+
         # Find FTS tables for this collection
         cursor = self.collection.db.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE ?",
@@ -107,7 +112,7 @@ class SqlQueryBuilderMixin:
             subqueries.append(
                 f"SELECT rowid FROM {fts_table_name} WHERE {index_name} MATCH ?"
             )
-            params.append(search_term.lower())
+            params.append(sanitized_term.lower())
 
         # Combine all subqueries with UNION to get documents matching in ANY FTS index
         union_query = " UNION ".join(subqueries)

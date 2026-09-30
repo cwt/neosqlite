@@ -9,6 +9,7 @@ from ...sql_utils import quote_table_name
 from ..jsonb_support import (
     _get_json_tree_function,
 )
+from ..query_helper.utils import sanitize_fts_query
 from .operators_base import OperatorsBaseMixin
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,17 @@ class OperatorsTextMixin(OperatorsBaseMixin):
         if not isinstance(search_term, str):
             raise ValueError("$text search term must be a string")
 
+        sanitized_term = sanitize_fts_query(search_term)
+        json_set_func = f"{self.jsonb.json_function_prefix}_set"
+        if not sanitized_term:
+            select_sql = f"""
+                SELECT c.id, c._id,
+                       json({json_set_func}(c.data, '$._textScore', 0.0)) as data
+                FROM {current_table} c
+                WHERE 0
+            """
+            return create_temp({"$text": match_spec}, select_sql, params=[])
+
         # Detect tokenizer from existing FTS index on the collection
         tokenizer_clause = self._detect_fts_tokenizer()
 
@@ -109,7 +121,6 @@ class OperatorsTextMixin(OperatorsBaseMixin):
         # The result table is created via create_temp so the aggregation
         # context owns its lifecycle; previously it leaked per distinct
         # search term until connection close (#125).
-        json_set_func = f"{self.jsonb.json_function_prefix}_set"
         select_sql = f"""
             SELECT c.id, c._id,
                    json({json_set_func}(c.data, '$._textScore', -bm25({fts_table_name}))) as data
@@ -122,7 +133,7 @@ class OperatorsTextMixin(OperatorsBaseMixin):
             # create_temp supports bound params and records ownership, so
             # the context drops this table with the rest of the pipeline.
             result_table = create_temp(
-                {"$text": match_spec}, select_sql, params=[search_term]
+                {"$text": match_spec}, select_sql, params=[sanitized_term]
             )
         finally:
             self.db.execute(f"DROP TABLE IF EXISTS {fts_table_name}")

@@ -1126,3 +1126,96 @@ class TestUserBinaryDictionaryPreservation:
         doc = c.find_one({})
         assert doc is not None
         assert doc.get("__neosqlite_corrupted__") is True
+
+
+class TestFtsQuerySanitization:
+    """FTS5 $text query sanitization tests for quotes, colons, hyphens, and leading NOT."""
+
+    @pytest.fixture
+    def fts_coll(self, connection):
+        coll = connection.t_fts_test
+        coll.insert_many(
+            [
+                {
+                    "title": "Doc1",
+                    "content": "hello:world test:term unclosed word",
+                },
+                {"title": "Doc2", "content": "hyphen-word and normal text"},
+                {"title": "Doc3", "content": "leading NOT search text"},
+                {"title": "Doc4", "content": "exact phrase match here"},
+                {
+                    "title": "Doc5",
+                    "content": "test:term unclosed -word and NOT in text",
+                },
+            ]
+        )
+        coll.create_index("content", fts=True)
+        return coll
+
+    def test_fts_colon_in_query(self, fts_coll):
+        results = list(fts_coll.find({"$text": {"$search": "test:term"}}))
+        titles = [d["title"] for d in results]
+        assert "Doc1" in titles
+        assert "Doc5" in titles
+
+        # Solitary colon should not crash
+        results = list(fts_coll.find({"$text": {"$search": ":"}}))
+        assert len(results) == 0
+
+    def test_fts_quotes_in_query(self, fts_coll):
+        # Unclosed quote
+        results = list(fts_coll.find({"$text": {"$search": '"unclosed'}}))
+        titles = [d["title"] for d in results]
+        assert "Doc1" in titles
+        assert "Doc5" in titles
+
+        # Solitary quote
+        results = list(fts_coll.find({"$text": {"$search": '"'}}))
+        assert len(results) == 0
+
+        # Exact phrase in quotes
+        results = list(fts_coll.find({"$text": {"$search": '"exact phrase"'}}))
+        assert len(results) == 1
+        assert results[0]["title"] == "Doc4"
+
+    def test_fts_hyphen_in_query(self, fts_coll):
+        results = list(fts_coll.find({"$text": {"$search": "-word"}}))
+        assert len(results) >= 1
+
+        # Solitary hyphen should not crash
+        results = list(fts_coll.find({"$text": {"$search": "-"}}))
+        assert len(results) == 0
+
+    def test_fts_leading_not_in_query(self, fts_coll):
+        results = list(fts_coll.find({"$text": {"$search": "NOT search"}}))
+        assert len(results) == 1
+        assert results[0]["title"] == "Doc3"
+
+        # Solitary NOT should not crash
+        results = list(fts_coll.find({"$text": {"$search": "NOT"}}))
+        titles = [d["title"] for d in results]
+        assert "Doc3" in titles
+        assert "Doc5" in titles
+
+    def test_fts_complex_malformed_string(self, fts_coll):
+        # Combination of colon, quote, hyphen, and NOT
+        results = list(
+            fts_coll.find(
+                {"$text": {"$search": 'test:term "unclosed -word NOT'}}
+            )
+        )
+        assert len(results) == 1
+        assert results[0]["title"] == "Doc5"
+
+    def test_fts_aggregation_pipeline_sanitization(self, fts_coll):
+        # In aggregation temp-table text search stage
+        pipeline = [{"$match": {"$text": {"$search": 'test:term "unclosed'}}}]
+        results = list(fts_coll.aggregate(pipeline))
+        titles = [d["title"] for d in results]
+        assert "Doc1" in titles
+        assert "Doc5" in titles
+
+        # Empty/whitespace search in aggregation
+        pipeline = [{"$match": {"$text": {"$search": '   "'}}}]
+        results = list(fts_coll.aggregate(pipeline))
+        assert len(results) == 0
