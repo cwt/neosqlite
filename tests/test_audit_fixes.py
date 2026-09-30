@@ -2457,3 +2457,49 @@ def test_gridfs_collection_find_one_validates_session(connection):
         files_col.find_one({"_id": str(file_id)}, session=other_session)
     other_session.end_session()
     other_conn.close()
+
+
+def test_find_negative_and_zero_limit(connection):
+    c = connection.test_neg_limit
+    docs = [{"_id": i, "val": i * 10} for i in range(10)]
+    c.insert_many(docs)
+
+    # find().limit(-1) should return 1 document, not all documents
+    res_neg_1 = list(c.find().limit(-1))
+    assert len(res_neg_1) == 1
+
+    # find().limit(-3) should return 3 documents
+    res_neg_3 = list(c.find().limit(-3))
+    assert len(res_neg_3) == 3
+
+    # find(limit=-2) argument
+    res_kwarg = list(c.find(limit=-2))
+    assert len(res_kwarg) == 2
+
+    # find().limit(0) should return all documents (no limit)
+    res_zero = list(c.find().limit(0))
+    assert len(res_zero) == 10
+
+    # Fallback Python-eval path with negative limit
+    res_fallback = list(c.find({"$expr": {"$gte": ["$val", 0]}}).limit(-2))
+    assert len(res_fallback) == 2
+
+    # Cursor.alive property with negative limit
+    cursor = c.find().limit(-2)
+    assert cursor.alive is True
+    list(cursor)
+    assert cursor.alive is False
+
+
+def test_aggregate_negative_limit_raises_error(connection):
+    c = connection.test_neg_limit_agg
+    c.insert_many([{"_id": i} for i in range(5)])
+
+    with pytest.raises(
+        ValueError, match=r"The \$limit stage requires a non-negative integer"
+    ):
+        list(c.aggregate([{"$limit": -1}]))
+
+    # Zero limit in aggregation should return 0 documents
+    res_zero = list(c.aggregate([{"$limit": 0}]))
+    assert len(res_zero) == 0

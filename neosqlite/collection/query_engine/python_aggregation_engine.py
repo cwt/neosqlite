@@ -97,6 +97,14 @@ def execute_python_aggregation(
                 docs_with_context = docs_with_context[count:]
             case "$limit":
                 count = stage["$limit"]
+                if (
+                    not isinstance(count, int)
+                    or isinstance(count, bool)
+                    or count < 0
+                ):
+                    raise ValueError(
+                        f"The $limit stage requires a non-negative integer, got {count}"
+                    )
                 docs_with_context = docs_with_context[:count]
             case "$project":
                 projection = stage["$project"]

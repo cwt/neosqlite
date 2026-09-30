@@ -214,9 +214,18 @@ class TemporaryTableAggregationProcessor(OperatorsMixin):
                                         if limit_value < 0:
                                             limit_value = 0
                                 case "$limit":
+                                    lim_val = next_stage["$limit"]
+                                    if (
+                                        not isinstance(lim_val, int)
+                                        or isinstance(lim_val, bool)
+                                        or lim_val < 0
+                                    ):
+                                        raise ValueError(
+                                            f"The $limit stage requires a non-negative integer, got {lim_val}"
+                                        )
                                     limit_value = _apply_limit(
                                         limit_value,
-                                        int(next_stage["$limit"]),
+                                        lim_val,
                                     )
                                 case _:
                                     break

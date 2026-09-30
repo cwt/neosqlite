@@ -551,12 +551,16 @@ class SqlQueryBuilderMixin:
         Returns:
             A SQL LIMIT/OFFSET clause string, or empty string.
         """
+        if limit == 0:
+            limit = None
+
         if limit is None and skip == 0:
             return ""
 
         clause = ""
         if limit is not None:
-            clause = f" LIMIT {limit}"
+            actual_limit = abs(limit)
+            clause = f" LIMIT {actual_limit}"
             if skip > 0:
                 clause += f" OFFSET {skip}"
         elif skip > 0:

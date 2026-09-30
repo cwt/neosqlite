@@ -1163,8 +1163,8 @@ class NeoSQLiteHandler:
 
                 docs = sorted(docs, key=_sort_key)
 
-            if limit > 0:
-                docs = docs[:limit]
+            if limit != 0:
+                docs = docs[: abs(limit)]
 
             return request_id, {
                 "ok": 1,
@@ -1207,8 +1207,8 @@ class NeoSQLiteHandler:
 
             if skip > 0:
                 docs = docs[skip:]
-            if limit > 0:
-                docs = docs[:limit]
+            if limit != 0:
+                docs = docs[: abs(limit)]
 
             return request_id, {
                 "ok": 1,
@@ -1635,7 +1635,7 @@ class NeoSQLiteHandler:
             command_doc["find"] = collection
             if skip > 0:
                 command_doc["skip"] = skip
-            if limit > 0:
+            if limit != 0:
                 command_doc["limit"] = limit
             _, response = self._handle_gridfs_find(
                 msg["request_id"], command_doc, db, collection
@@ -1655,14 +1655,14 @@ class NeoSQLiteHandler:
                 cursor = cursor.sort(list(sort.items()))
             if skip > 0:
                 cursor = cursor.skip(skip)
-            if query_limit > 0:
+            if query_limit != 0:
                 cursor = cursor.limit(query_limit)
             docs = list(cursor)
         else:
             cursor = coll.find(query)
             if skip > 0:
                 cursor = cursor.skip(skip)
-            if limit > 0:
+            if limit != 0:
                 cursor = cursor.limit(limit)
             docs = list(cursor)
 

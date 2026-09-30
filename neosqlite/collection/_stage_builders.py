@@ -1003,6 +1003,10 @@ class StageBuildersMixin:
         )
 
     def _build_limit_sql(self, spec, prev_stage, context):
+        if not isinstance(spec, int) or isinstance(spec, bool) or spec < 0:
+            raise ValueError(
+                f"The $limit stage requires a non-negative integer, got {spec}"
+            )
         select_parts = ["id", "_id", "data"]
         if context.has_root:
             select_parts.append("root_data")

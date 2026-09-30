@@ -120,6 +120,14 @@ class SqlAggregationMixin:
                     offset = f"OFFSET {count}"
                 case "$limit":
                     count = stage["$limit"]
+                    if (
+                        not isinstance(count, int)
+                        or isinstance(count, bool)
+                        or count < 0
+                    ):
+                        raise ValueError(
+                            f"The $limit stage requires a non-negative integer, got {count}"
+                        )
                     limit = f"LIMIT {count}"
                 case "$group":
                     # Check if this is a $unwind + $group pattern we can optimize

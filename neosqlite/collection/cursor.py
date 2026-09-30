@@ -473,12 +473,10 @@ class Cursor:
         """
         # Cursor is alive if we haven't retrieved any documents yet
         # or if we haven't reached the limit
-        if self._limit is not None:
-            return self._retrieved < self._limit
-        # Without limit, cursor is considered alive until iteration starts
-        # After iteration, check if we got any results
         if hasattr(self, "_exhausted"):
             return False  # iteration completed (#157)
+        if self._limit is not None and self._limit != 0:
+            return self._retrieved < abs(self._limit)
         return self._retrieved == 0
 
     @property
@@ -1249,8 +1247,8 @@ class Cursor:
         skipped = islice(docs, self._skip, None)
 
         # Apply limit if specified
-        if self._limit is not None:
-            return list(islice(skipped, self._limit))
+        if self._limit is not None and self._limit != 0:
+            return list(islice(skipped, abs(self._limit)))
         return list(skipped)
 
     def _apply_projection(

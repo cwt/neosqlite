@@ -149,8 +149,8 @@ class RawBatchCursor:
             while True:
                 # Calculate how many records to fetch in this batch
                 batch_limit = self._batch_size
-                if self._limit is not None:
-                    remaining_limit = self._limit - total_returned
+                if self._limit is not None and self._limit != 0:
+                    remaining_limit = abs(self._limit) - total_returned
                     if remaining_limit <= 0:
                         break
                     batch_limit = min(batch_limit, remaining_limit)
@@ -187,7 +187,11 @@ class RawBatchCursor:
                     break
 
                 # If we've hit our limit, we're done
-                if self._limit is not None and total_returned >= self._limit:
+                if (
+                    self._limit is not None
+                    and self._limit != 0
+                    and total_returned >= abs(self._limit)
+                ):
                     break
         else:
             # Fallback to the original method for complex queries

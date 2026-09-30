@@ -793,12 +793,16 @@ class SQLClauseBuilder:
         Returns:
             LIMIT and OFFSET clauses as a string
         """
+        if limit_value == 0:
+            limit_value = None
+
         limit_clause = ""
         if limit_value is not None:
+            actual_limit = abs(limit_value)
             if skip_value > 0:
-                limit_clause = f"LIMIT {limit_value} OFFSET {skip_value}"
+                limit_clause = f"LIMIT {actual_limit} OFFSET {skip_value}"
             else:
-                limit_clause = f"LIMIT {limit_value}"
+                limit_clause = f"LIMIT {actual_limit}"
         elif skip_value > 0:
             # SQLite requires LIMIT when using OFFSET
             limit_clause = f"LIMIT -1 OFFSET {skip_value}"
