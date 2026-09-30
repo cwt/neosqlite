@@ -1219,3 +1219,83 @@ class TestFtsQuerySanitization:
         pipeline = [{"$match": {"$text": {"$search": '   "'}}}]
         results = list(fts_coll.aggregate(pipeline))
         assert len(results) == 0
+
+
+class TestFindOneAndProjection:
+    """find_one_and_* methods must apply projection in SQL and fallback paths."""
+
+    def test_find_one_and_delete_projection(self, connection):
+        c = connection.t_fop_delete
+        c.insert_one({"name": "Alice", "secret": "s3cr3t", "role": "admin"})
+
+        doc = c.find_one_and_delete(
+            {"name": "Alice"},
+            projection={"secret": 0},
+        )
+        assert doc is not None
+        assert "secret" not in doc
+        assert doc["name"] == "Alice"
+        assert doc["role"] == "admin"
+        assert "_id" in doc
+
+        # Exclude _id
+        c.insert_one({"name": "Bob", "secret": "s3cr3t", "role": "user"})
+        doc2 = c.find_one_and_delete(
+            {"name": "Bob"},
+            projection={"_id": 0, "name": 1},
+        )
+        assert doc2 == {"name": "Bob"}
+
+    def test_find_one_and_replace_projection(self, connection):
+        c = connection.t_fop_replace
+        c.insert_one({"name": "Alice", "secret": "s3cr3t", "role": "admin"})
+
+        # return_document=False (returns original document with projection)
+        doc = c.find_one_and_replace(
+            {"name": "Alice"},
+            {"name": "AliceUpdated", "secret": "new_secret", "role": "admin"},
+            projection={"secret": 0},
+            return_document=False,
+        )
+        assert doc is not None
+        assert "secret" not in doc
+        assert doc["name"] == "Alice"
+
+        # return_document=True (returns replaced document with projection)
+        doc_after = c.find_one_and_replace(
+            {"name": "AliceUpdated"},
+            {"name": "AliceFinal", "secret": "final_secret", "role": "admin"},
+            projection={"secret": 0},
+            return_document=True,
+        )
+        assert doc_after is not None
+        assert "secret" not in doc_after
+        assert doc_after["name"] == "AliceFinal"
+
+    def test_find_one_and_update_projection(self, connection):
+        c = connection.t_fop_update
+        c.insert_one({"name": "Alice", "secret": "s3cr3t", "count": 1})
+
+        # return_document=False (returns original document with projection)
+        doc = c.find_one_and_update(
+            {"name": "Alice"},
+            {"$inc": {"count": 1}},
+            projection={"secret": 0},
+            return_document=False,
+        )
+        assert doc is not None
+        assert "secret" not in doc
+        assert doc["name"] == "Alice"
+        assert doc["count"] == 1
+
+        # return_document=True (returns updated document with projection)
+        doc_after = c.find_one_and_update(
+            {"name": "Alice"},
+            {"$inc": {"count": 1}},
+            projection={"secret": 0},
+            return_document=True,
+        )
+        assert doc_after is not None
+        assert "secret" not in doc_after
+        assert doc_after["name"] == "Alice"
+        assert doc_after["count"] == 3

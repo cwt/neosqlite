@@ -162,7 +162,7 @@ class FindOperationsMixin(QueryEngineProtocol):
         where_clause, params = self.sql_translator.translate_match(filter)
         if not where_clause:
             # Fallback: use Python-based approach for complex queries
-            cursor = self.find(filter, projection, session=session)
+            cursor = self.find(filter, session=session)
             if sort:
                 cursor.sort(sort)
             try:
@@ -170,6 +170,8 @@ class FindOperationsMixin(QueryEngineProtocol):
                 if doc:
                     int_doc_id = self._get_integer_id_for_oid(doc["_id"])
                     self.helpers._internal_delete(int_doc_id)
+                    if projection is not None:
+                        doc = self.helpers._apply_projection(projection, doc)
                     return doc
             except StopIteration:
                 pass
@@ -190,9 +192,12 @@ class FindOperationsMixin(QueryEngineProtocol):
             cursor = self.collection.db.execute(cmd, params)
             if row := cursor.fetchone():
                 int_id, stored_id, data = row
-                return self.collection._load_with_stored_id(
+                doc = self.collection._load_with_stored_id(
                     int_id, data, stored_id
                 )
+                if projection is not None:
+                    doc = self.helpers._apply_projection(projection, doc)
+                return doc
             return None
         else:
             # Tier-1 (Fallback): Two-step process (SELECT then DELETE)
@@ -210,6 +215,8 @@ class FindOperationsMixin(QueryEngineProtocol):
                     int_id, data, stored_id
                 )
                 self.helpers._internal_delete(int_id)
+                if projection is not None:
+                    doc = self.helpers._apply_projection(projection, doc)
                 return doc
             return None
 
@@ -259,7 +266,7 @@ class FindOperationsMixin(QueryEngineProtocol):
         where_clause, params = self.sql_translator.translate_match(filter)
         if not where_clause:
             # Fallback: use Python-based approach for complex queries
-            cursor = self.find(filter, projection, session=session)
+            cursor = self.find(filter, session=session)
             if sort:
                 cursor.sort(sort)
             try:
@@ -271,6 +278,8 @@ class FindOperationsMixin(QueryEngineProtocol):
                         return self.find_one(
                             {"_id": doc["_id"]}, projection, session=session
                         )
+                    if projection is not None:
+                        doc = self.helpers._apply_projection(projection, doc)
                     return doc
             except StopIteration:
                 pass
@@ -316,9 +325,18 @@ class FindOperationsMixin(QueryEngineProtocol):
                     )
                     update_row = update_cursor.fetchone()
                     if update_row:
-                        return self.collection._load_with_stored_id(
+                        doc = self.collection._load_with_stored_id(
                             update_row[0], update_row[2], update_row[1]
                         )
+                        if projection is not None:
+                            doc = self.helpers._apply_projection(
+                                projection, doc
+                            )
+                        return doc
+                if projection is not None:
+                    original_doc = self.helpers._apply_projection(
+                        projection, original_doc
+                    )
                 return original_doc
             # No document found, handle upsert
             if upsert:
@@ -350,6 +368,10 @@ class FindOperationsMixin(QueryEngineProtocol):
                         {"_id": original_doc["_id"]},
                         projection,
                         session=session,
+                    )
+                if projection is not None:
+                    original_doc = self.helpers._apply_projection(
+                        projection, original_doc
                     )
                 return original_doc
 
@@ -411,7 +433,7 @@ class FindOperationsMixin(QueryEngineProtocol):
         where_clause, params = self.sql_translator.translate_match(filter)
         if not where_clause:
             # Fallback: use Python-based approach for complex queries
-            cursor = self.find(filter, projection, session=session)
+            cursor = self.find(filter, session=session)
             if sort:
                 cursor.sort(sort)
             try:
@@ -434,6 +456,8 @@ class FindOperationsMixin(QueryEngineProtocol):
                         return self.find_one(
                             {"_id": doc["_id"]}, projection, session=session
                         )
+                    if projection is not None:
+                        doc = self.helpers._apply_projection(projection, doc)
                     return doc
             except StopIteration:
                 pass
@@ -480,6 +504,10 @@ class FindOperationsMixin(QueryEngineProtocol):
                         projection,
                         session=session,
                     )
+                if projection is not None:
+                    original_doc = self.helpers._apply_projection(
+                        projection, original_doc
+                    )
                 return original_doc
             # No document found, handle upsert
             if upsert:
@@ -520,6 +548,10 @@ class FindOperationsMixin(QueryEngineProtocol):
                         {"_id": original_doc["_id"]},
                         projection,
                         session=session,
+                    )
+                if projection is not None:
+                    original_doc = self.helpers._apply_projection(
+                        projection, original_doc
                     )
                 return original_doc
 
