@@ -1697,3 +1697,46 @@ class TestBucketNoPhantomBuckets:
             }
         finally:
             set_force_fallback(old_state)
+
+
+class TestDensifyStepValidation:
+    """$densify step must be greater than 0; step <= 0 must raise ValueError."""
+
+    def test_densify_step_zero_or_negative_raises_error(self, connection):
+        c = connection.t_densify_step
+        c.insert_many([{"val": 1}, {"val": 5}])
+
+        pipeline_zero = [
+            {
+                "$densify": {
+                    "field": "val",
+                    "range": {"bounds": [1, 5], "step": 0},
+                }
+            }
+        ]
+        with pytest.raises(ValueError, match="greater than 0"):
+            list(c.aggregate(pipeline_zero))
+
+        from neosqlite.collection.query_helper.utils import (
+            get_force_fallback,
+            set_force_fallback,
+        )
+
+        old_state = get_force_fallback()
+        try:
+            set_force_fallback(True)
+            with pytest.raises(ValueError, match="greater than 0"):
+                list(c.aggregate(pipeline_zero))
+
+            pipeline_neg = [
+                {
+                    "$densify": {
+                        "field": "val",
+                        "range": {"bounds": [1, 5], "step": -1},
+                    }
+                }
+            ]
+            with pytest.raises(ValueError, match="greater than 0"):
+                list(c.aggregate(pipeline_neg))
+        finally:
+            set_force_fallback(old_state)

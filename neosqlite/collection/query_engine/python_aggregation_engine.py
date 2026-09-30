@@ -994,6 +994,15 @@ def execute_python_aggregation(
                     step = range_spec.get("step", 1)
                     unit = range_spec.get("unit", None)  # For dates
 
+                    if (
+                        step is None
+                        or not isinstance(step, (int, float))
+                        or step <= 0
+                    ):
+                        raise ValueError(
+                            f"$densify step must be greater than 0, got {step}"
+                        )
+
                     # Determine if we're working with dates or numbers
                     is_date = unit is not None
 

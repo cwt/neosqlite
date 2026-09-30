@@ -51,6 +51,11 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
         step = range_spec.get("step")
         bounds = range_spec.get("bounds")
 
+        if step is not None and isinstance(step, (int, float)) and step <= 0:
+            raise ValueError(
+                f"$densify step must be greater than 0, got {step}"
+            )
+
         if not step or not bounds:
             raise NotImplementedError(
                 "$densify requires step and bounds - use force_fallback or simplify pipeline"
