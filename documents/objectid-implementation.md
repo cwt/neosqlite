@@ -7,8 +7,8 @@ tags:
   - bson
   - identity
   - compatibility
-timestamp: 2026-09-13T00:00:00Z
-version: "1.16.1"
+timestamp: 2026-09-30T00:00:00Z
+version: "1.17.0"
 lifecycle: active
 ---
 
@@ -32,7 +32,7 @@ Located in `neosqlite/objectid.py`, the ObjectId class generates 12-byte values 
 
 - **Thread Safety**: Uses proper locking for counter incrementation
 - **Validation**: `is_valid()` method for hex string validation
-- **Time Extraction**: `generation_time()` returns creation timestamp
+- **Time Extraction**: `generation_time` property returns creation timestamp as a timezone-aware UTC datetime
 - **Serialization**: JSON-compatible via `encode_for_storage()` and `decode_from_storage()`
 - **String Representations**: `__str__()`, `__repr__()`, and `hex` property
 - **Operators**: Full equality, ordering (`__lt__`, `__le__`, `__gt__`, `__ge__` over the 12-byte BSON byte order; `TypeError` on other types like `bson`), and hashing with `__eq__`, `__ne__`, `__hash__`

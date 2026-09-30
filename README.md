@@ -34,16 +34,18 @@
 
 See [Release Notes](documents/releases/) for the full history.
 
-## Latest Release: v1.16.3
+## Latest Release: v1.17.0
 
-NeoSQLite v1.16.3 is a **correctness patch** fixing datetime queries returning field-less documents for rows stored as JSONB. Fully backward compatible.
+NeoSQLite v1.17.0 is a **minor feature and parity release** delivering comprehensive transactional hardening, PyMongo API parity expansions, and 100% compatibility across the differential test suite. Fully backward compatible.
 
 **Key Highlights:**
-- **Datetime Queries Return Full Documents** — the SQL tier and temporary-table tier now convert JSONB rows with `json(data)` before decoding, like every other read path.
-- **No More "Skipping corrupted document"** — updated rows decode again instead of returning `{_id, __neosqlite_corrupted__}` stubs.
-- **Read-Path Only** — no storage format, schema, or API changes.
+- **Transaction Context Managers & Session Propagation** — `ClientSession.start_transaction()` supports the Python context manager protocol (`with session.start_transaction(): ...`), with strict session validation and pass-through across operations like `find_one(..., session=session)`.
+- **Full Bulk Write Architecture & Parity** — Added `BulkWriteError`, `upserted_ids`, duck-typed request matching, and full `ordered=True` vs `ordered=False` execution semantics with failure accumulation.
+- **Aggregation System Variables & Expressions** — Added support for `$$ROOT` and `$$CURRENT` system variables and dictionary template expressions in `$group` accumulators, `%L` millisecond formatting in `$dateToString`, and composable `$dateDiff` with nested date arithmetic expressions.
+- **Data Safety, Storage Integrity & Security Hardening** — Ensured WAL checkpointing and compliant backup file naming during auto-vacuum migration, prevented SQL injection in `$lookup` aliases and collection names, sanitized FTS5 queries against syntax injection, prevented silent GridFS data loss on non-autocommit connections, and eliminated thread race conditions in `ObjectId` counter generation.
+- **Type & Query Parity** — Converted `ObjectId.generation_time` to a timezone-aware UTC datetime property; `$currentDate` now sets proper BSON Date objects deserialized as Python `datetime.datetime`; exact `_id` types are preserved without string-to-ObjectId coercion; and `list_collection_names()` cleanly excludes internal SQLite, metadata, and FTS5 shadow tables.
 
-For full details, see [documents/releases/v1.16.3.md](documents/releases/v1.16.3.md). Previous release highlights are in [documents/releases/v1.16.2.md](documents/releases/v1.16.2.md).
+For full details, see [documents/releases/v1.17.0.md](documents/releases/v1.17.0.md). Previous release highlights are in [documents/releases/v1.16.3.md](documents/releases/v1.16.3.md).
 
 ## Installation
 

@@ -6,14 +6,35 @@ tags:
   - log
   - bundle
   - changelog
-timestamp: 2026-09-13T00:00:00Z
-version: "1.16.3"
+timestamp: 2026-09-30T00:00:00Z
+version: "1.17.0"
 lifecycle: active
 ---
 
 # NeoSQLite Knowledge Base Bundle Log
 
 This document records the chronological history of structural changes, additions, deprecations, and refactoring operations performed on the NeoSQLite Open Knowledge Format (OKF) bundle.
+
+---
+
+## 2026-09-30 — Release v1.17.0
+
+### Summary
+Feature and parity release: transaction context managers, full bulk write semantics, aggregation system variables, data integrity hardening, and 100% differential API compatibility across 42 resolved findings.
+
+### Key Modifications
+1. **Added `releases/v1.17.0.md` Release Notes**:
+   - Comprehensive documentation of transaction context managers, `BulkWriteError` and unordered execution, aggregation system variables (`$$ROOT`/`$$CURRENT`), composable `$dateDiff`, 24-character string `_id` preservation, timezone-aware `ObjectId.generation_time`, `$currentDate` datetime parity, storage integrity (WAL checkpointing during auto-vacuum migration), and measured test metrics (3,009 passed, 100% differential parity).
+2. **Updated Release Notes Index (`documents/releases/index.md`)**:
+   - Added `v1.17.0` entry to the chronological table and bumped frontmatter version to `1.17.0`.
+3. **Updated Root Knowledge Base Index (`documents/index.md`)**:
+   - Bumped frontmatter version to `1.17.0` and extended release notes subdirectories range to `(v1.0.0 through v1.17.0)`.
+4. **Updated PyMongo API Comparison (`documents/pymongo-api-comparison.md`)**:
+   - Bumped frontmatter version and header version to `v1.17.0` (100% compatibility, 375 passed, 20 skipped by design, 0 failed).
+5. **Updated ObjectId Specification (`documents/objectid-implementation.md`)**:
+   - Bumped frontmatter version to `1.17.0` and documented `generation_time` property returning a timezone-aware UTC datetime.
+6. **Bumped version to v1.17.0**:
+   - `pyproject.toml` and `README.md` (Latest Release).
 
 ---
 
