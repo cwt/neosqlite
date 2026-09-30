@@ -1931,3 +1931,244 @@ class TestGroupPushRootVariable:
             assert res[0]["last_val"] == 20
         finally:
             set_force_fallback(old_state)
+
+
+class TestDateAddMonthClamping:
+    """$dateAdd month arithmetic clamps to last day of target month instead of rolling over."""
+
+    def test_sql_tier_date_add_month_clamping(self, connection):
+        import datetime
+        from datetime import timezone
+
+        c = connection.date_clamp_sql
+        c.insert_many(
+            [
+                {
+                    "_id": 1,
+                    "name": "jan31_leap",
+                    "d": datetime.datetime(
+                        2024, 1, 31, 10, 0, 0, tzinfo=timezone.utc
+                    ),
+                },
+                {
+                    "_id": 2,
+                    "name": "jan31_nonleap",
+                    "d": datetime.datetime(
+                        2023, 1, 31, 10, 0, 0, tzinfo=timezone.utc
+                    ),
+                },
+                {
+                    "_id": 3,
+                    "name": "feb29_leap",
+                    "d": datetime.datetime(
+                        2024, 2, 29, 10, 0, 0, tzinfo=timezone.utc
+                    ),
+                },
+                {
+                    "_id": 4,
+                    "name": "mar31",
+                    "d": datetime.datetime(
+                        2024, 3, 31, 10, 0, 0, tzinfo=timezone.utc
+                    ),
+                },
+                {
+                    "_id": 5,
+                    "name": "aug31",
+                    "d": datetime.datetime(
+                        2024, 8, 31, 10, 0, 0, tzinfo=timezone.utc
+                    ),
+                },
+                {
+                    "_id": 6,
+                    "name": "jan15",
+                    "d": datetime.datetime(
+                        2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc
+                    ),
+                },
+            ]
+        )
+
+        # Test $dateAdd 1 month
+        res = list(
+            c.find(
+                {
+                    "$expr": {
+                        "$eq": [
+                            {"$dateAdd": ["$d", 1, "month"]},
+                            datetime.datetime(
+                                2024, 2, 29, 10, 0, 0, tzinfo=timezone.utc
+                            ),
+                        ]
+                    }
+                }
+            )
+        )
+        assert len(res) == 1
+        assert res[0]["_id"] == 1
+
+        res = list(
+            c.find(
+                {
+                    "$expr": {
+                        "$eq": [
+                            {"$dateAdd": ["$d", 1, "month"]},
+                            datetime.datetime(
+                                2023, 2, 28, 10, 0, 0, tzinfo=timezone.utc
+                            ),
+                        ]
+                    }
+                }
+            )
+        )
+        assert len(res) == 1
+        assert res[0]["_id"] == 2
+
+        # Test $dateSubtract 1 month
+        res = list(
+            c.find(
+                {
+                    "$expr": {
+                        "$eq": [
+                            {"$dateSubtract": ["$d", 1, "month"]},
+                            datetime.datetime(
+                                2024, 2, 29, 10, 0, 0, tzinfo=timezone.utc
+                            ),
+                        ]
+                    }
+                }
+            )
+        )
+        assert len(res) == 1
+        assert res[0]["_id"] == 4
+
+        # Test $dateAdd 1 year from leap day
+        res = list(
+            c.find(
+                {
+                    "$expr": {
+                        "$eq": [
+                            {"$dateAdd": ["$d", 1, "year"]},
+                            datetime.datetime(
+                                2025, 2, 28, 10, 0, 0, tzinfo=timezone.utc
+                            ),
+                        ]
+                    }
+                }
+            )
+        )
+        assert len(res) == 1
+        assert res[0]["_id"] == 3
+
+        # Test non-clamping day preservation
+        res = list(
+            c.find(
+                {
+                    "$expr": {
+                        "$eq": [
+                            {"$dateAdd": ["$d", 1, "month"]},
+                            datetime.datetime(
+                                2024, 2, 15, 10, 0, 0, tzinfo=timezone.utc
+                            ),
+                        ]
+                    }
+                }
+            )
+        )
+        assert len(res) == 1
+        assert res[0]["_id"] == 6
+
+        # Test aggregation pipeline
+        docs = list(
+            c.aggregate(
+                [
+                    {"$match": {"_id": 1}},
+                    {"$project": {"clamped": {"$dateAdd": ["$d", 1, "month"]}}},
+                ]
+            )
+        )
+        assert len(docs) == 1
+        assert docs[0]["clamped"] == datetime.datetime(
+            2024, 2, 29, 10, 0, 0, tzinfo=timezone.utc
+        )
+
+    def test_python_tier_date_add_month_clamping(self, connection):
+        import datetime
+        from datetime import timezone
+
+        from neosqlite.collection.query_helper.utils import (
+            get_force_fallback,
+            set_force_fallback,
+        )
+
+        c = connection.date_clamp_py
+        c.insert_many(
+            [
+                {
+                    "_id": 1,
+                    "name": "jan31_leap",
+                    "d": datetime.datetime(
+                        2024, 1, 31, 10, 0, 0, tzinfo=timezone.utc
+                    ),
+                },
+                {
+                    "_id": 2,
+                    "name": "jan31_nonleap",
+                    "d": datetime.datetime(
+                        2023, 1, 31, 10, 0, 0, tzinfo=timezone.utc
+                    ),
+                },
+                {
+                    "_id": 3,
+                    "name": "feb29_leap",
+                    "d": datetime.datetime(
+                        2024, 2, 29, 10, 0, 0, tzinfo=timezone.utc
+                    ),
+                },
+                {
+                    "_id": 4,
+                    "name": "mar31",
+                    "d": datetime.datetime(
+                        2024, 3, 31, 10, 0, 0, tzinfo=timezone.utc
+                    ),
+                },
+            ]
+        )
+
+        old_state = get_force_fallback()
+        try:
+            set_force_fallback(True)
+            res = list(
+                c.aggregate(
+                    [
+                        {"$match": {"_id": 1}},
+                        {
+                            "$project": {
+                                "clamped": {"$dateAdd": ["$d", 1, "month"]}
+                            }
+                        },
+                    ]
+                )
+            )
+            assert len(res) == 1
+            assert res[0]["clamped"] == datetime.datetime(
+                2024, 2, 29, 10, 0, 0, tzinfo=timezone.utc
+            )
+
+            res = list(
+                c.aggregate(
+                    [
+                        {"$match": {"_id": 2}},
+                        {
+                            "$project": {
+                                "clamped": {"$dateAdd": ["$d", 1, "month"]}
+                            }
+                        },
+                    ]
+                )
+            )
+            assert len(res) == 1
+            assert res[0]["clamped"] == datetime.datetime(
+                2023, 2, 28, 10, 0, 0, tzinfo=timezone.utc
+            )
+        finally:
+            set_force_fallback(old_state)

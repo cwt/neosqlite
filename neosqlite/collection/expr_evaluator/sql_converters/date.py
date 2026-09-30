@@ -169,6 +169,32 @@ class DateMixin(BaseSqlMixin):
         if sign == "-":
             amount_sql = f"-({amount_sql})"
 
+        if sqlite_unit == "month":
+            # MongoDB $dateAdd clamps to the last day of the target month
+            # instead of rolling over to the next month (e.g. Jan 31 + 1 month -> Feb 28/29).
+            strftime_expr = (
+                f"CASE WHEN {date_sql} IS NULL OR {amount_sql} IS NULL THEN NULL "
+                f"ELSE printf('%s-%02dT%sZ', "
+                f"strftime('%Y-%m', {date_sql}, 'start of month', printf('%+d months', {amount_sql})), "
+                f"min("
+                f"cast(strftime('%d', {date_sql}) as integer), "
+                f"cast(strftime('%d', {date_sql}, 'start of month', printf('%+d months', ({amount_sql}) + 1), '-1 day') as integer)"
+                f"), "
+                f"strftime('%H:%M:%S', {date_sql})) END"
+            )
+            sql = f"json_object('$date', {strftime_expr})"
+            all_params = (
+                date_params
+                + amount_params
+                + date_params
+                + amount_params
+                + date_params
+                + date_params
+                + amount_params
+                + date_params
+            )
+            return sql, all_params
+
         # Output as {"$date": ...} so neosqlite_json_loads decodes back to datetime
         strftime_expr = (
             f"strftime('%Y-%m-%dT%H:%M:%SZ', {date_sql}, "
