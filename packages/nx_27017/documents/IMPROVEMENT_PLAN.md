@@ -102,5 +102,7 @@ Missed / broken (priority order):
   drop-then-recreate via PyMongo left a table-less object), with
   `tests/test_collection.py::test_drop_then_recreate_collection`.
   Replica-set features (tx/changestreams on the real side) need a
-  single-node RS with host-visible hostname — still open (standalone
-  8.2.12 covers core only).
+  single-node RS with host-visible hostname: covered by
+  `run-api-nx-vs-mongo.sh --with-podman --replset` (host-networked
+  podman container, verified electing primary), pending only the
+  tx/changestream differential cases themselves.

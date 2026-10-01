@@ -227,7 +227,7 @@ async def run_all():
         await real_client.admin.command("ping")
     except Exception as exc:
         print(f"Real MongoDB unreachable at {REAL_MONGO_URI}: {exc}")
-        print("Hint: rerun the shell wrapper with --with-docker.")
+        print("Hint: rerun the shell wrapper with --with-podman.")
         return 2
 
     nx_db = nx_client["compat"]

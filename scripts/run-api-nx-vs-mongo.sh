@@ -52,9 +52,12 @@ WITH_CONTAINER=false
 SERVER_STARTED=false
 CONTAINER_STARTED=false
 
+WITH_REPLSET=false
+
 for arg in "$@"; do
     case "$arg" in
         --with-docker|--with-podman|--with-container) WITH_CONTAINER=true ;;
+        --replset) WITH_REPLSET=true ;;
         --nx-port=*) NX27017_PORT="${arg#--nx-port=}" ;;
         --real-mongo-port=*) REAL_MONGO_PORT="${arg#--real-mongo-port=}" ;;
     esac
@@ -176,9 +179,18 @@ run_nx27017_server() {
     wait_for_port "$NX27017_HOST" "$NX27017_PORT" "NX-27017"
 }
 
+mongo_ping() {
+    timeout 5 python3 -c "
+from pymongo import MongoClient
+c = MongoClient('$REAL_MONGO_URI', serverSelectionTimeoutMS=4000)
+c.admin.command('ping')
+c.close()
+" 2>/dev/null
+}
+
 ensure_real_mongo() {
     info "Checking real MongoDB 8.2.12 at $REAL_MONGO_HOST:$REAL_MONGO_PORT..."
-    if timeout 2 bash -c "echo > /dev/tcp/$REAL_MONGO_HOST/$REAL_MONGO_PORT" 2>/dev/null; then
+    if mongo_ping; then
         success "Real MongoDB is reachable (no strict kernel check will be applied)"
         return 0
     fi
@@ -187,18 +199,40 @@ ensure_real_mongo() {
             error "No container runtime found (need podman or docker)"
             return 1
         fi
-        info "Starting real MongoDB ($REAL_MONGO_IMAGE) via $CONTAINER_RUNTIME..."
-        $CONTAINER_RUNTIME run -d --rm --name "$REAL_MONGO_CONTAINER" \
-            -p "$REAL_MONGO_PORT:27017" "$REAL_MONGO_IMAGE" \
-            --replSet rs0 >/dev/null
-        CONTAINER_STARTED=true
-        # Best-effort single-node replica set init (needed for transactions/change streams).
-        sleep 5
-        $CONTAINER_RUNTIME exec "$REAL_MONGO_CONTAINER" mongosh --quiet --eval \
-            'try { rs.initiate({_id:"rs0", members:[{_id:0, host:"localhost:27017"}]}) } catch(e) { print(e.message) }' \
-            >/dev/null 2>&1 || true
-        wait_for_port "$REAL_MONGO_HOST" "$REAL_MONGO_PORT" "Real MongoDB 8.2.12"
-        return 0
+        # Drop leftovers from previous runs (manual or interrupted).
+        $CONTAINER_RUNTIME rm -f "$REAL_MONGO_CONTAINER" >/dev/null 2>&1 || true
+        if [ "$WITH_REPLSET" = true ]; then
+            # Single-node replica set over host networking so the member
+            # hostname (127.0.0.1:PORT) is valid inside and outside the
+            # container. Needed for transactions/change streams.
+            info "Starting real MongoDB ($REAL_MONGO_IMAGE) via $CONTAINER_RUNTIME (replica set)..."
+            $CONTAINER_RUNTIME run -d --rm --name "$REAL_MONGO_CONTAINER" \
+                --network=host "$REAL_MONGO_IMAGE" \
+                --port "$REAL_MONGO_PORT" --replSet rs0 >/dev/null
+            CONTAINER_STARTED=true
+            sleep 6
+            $CONTAINER_RUNTIME exec "$REAL_MONGO_CONTAINER" mongosh --port "$REAL_MONGO_PORT" --quiet --eval \
+                'try { rs.initiate({_id:"rs0", members:[{_id:0, host:"127.0.0.1:'$REAL_MONGO_PORT'"}]}) } catch(e) { print(e.message) }' \
+                >/dev/null 2>&1 || true
+        else
+            # Standalone (no --replSet): writes work, transactions and
+            # change streams on the real side do not. Enough for core.
+            info "Starting real MongoDB ($REAL_MONGO_IMAGE) via $CONTAINER_RUNTIME (standalone)..."
+            $CONTAINER_RUNTIME run -d --rm --name "$REAL_MONGO_CONTAINER" \
+                -p "$REAL_MONGO_PORT:27017" "$REAL_MONGO_IMAGE" >/dev/null
+            CONTAINER_STARTED=true
+        fi
+        local attempt=0
+        while [ $attempt -lt 30 ]; do
+            if mongo_ping; then
+                success "Real MongoDB 8.2.12 is ready"
+                return 0
+            fi
+            attempt=$((attempt + 1))
+            sleep 2
+        done
+        error "Real MongoDB failed to become ready"
+        return 1
     fi
     error "Real MongoDB not reachable at $REAL_MONGO_URI (hint: rerun with --with-podman)"
     return 1
@@ -216,9 +250,14 @@ run_comparison() {
     export NX_URI REAL_MONGO_URI
     # Lenient mode: kernel/host/version field noise never fails the build.
     export NX_COMPAT_LENIENT=true
-    if (cd "$SCRIPT_DIR" && PYTHONPATH="$PROJECT_ROOT" python3 "$(basename "$COMPARISON_SCRIPT")"); then
-        success "Wire-vs-wire comparison completed!"
+    (cd "$SCRIPT_DIR" && PYTHONPATH="$PROJECT_ROOT" python3 "$(basename "$COMPARISON_SCRIPT")")
+    local code=$?
+    if [ $code -eq 0 ]; then
+        success "Wire-vs-wire comparison completed - fully compatible!"
         return 0
+    elif [ $code -eq 2 ]; then
+        error "Comparison infra failure (an endpoint was unreachable)"
+        return 1
     else
         warn "Wire-vs-wire comparison found functional diffs (see report above)"
         return 0
