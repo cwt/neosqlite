@@ -498,6 +498,7 @@ class TestMigrationEdgeCases:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("CREATE TABLE t0 (x INTEGER)")
         conn.commit()
+        conn.close()
 
         reader = sqlite3.connect(db_path)
         reader.execute("BEGIN")
