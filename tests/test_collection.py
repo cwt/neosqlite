@@ -1952,3 +1952,19 @@ def test_collection_with_options():
     coll2.insert_one({"a": 1})
     assert coll.count_documents({}) == 1
     conn.close()
+
+
+def test_drop_then_recreate_collection(tmp_path):
+    """Collection.drop() must evict the connection cache so a later
+    create_collection() really recreates the table (wire-found NX bug:
+    drop via PyMongo then re-create left a table-less cached object)."""
+    import neosqlite
+
+    with neosqlite.Connection(str(tmp_path / "recreate.db")) as conn:
+        conn["items"].insert_one({"x": 1})
+        conn["items"].drop()
+        assert "items" not in conn.list_collection_names()
+        conn.create_collection("items")
+        assert "items" in conn.list_collection_names()
+        conn["items"].insert_one({"x": 2})
+        assert conn["items"].count_documents({}) == 1

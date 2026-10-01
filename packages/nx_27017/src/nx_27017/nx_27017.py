@@ -76,6 +76,27 @@ Examples:
         ),
     )
     parser.add_argument(
+        "--data-dir",
+        dest="data_dir",
+        default=None,
+        help=(
+            "Multi-database directory: one <db>.db file per logical "
+            "database, created on demand (P0 multi-DB isolation). "
+            "Takes precedence over --db. Use 'memory' for isolated "
+            "in-memory databases."
+        ),
+    )
+    parser.add_argument(
+        "--single-db-compat",
+        dest="single_db_compat",
+        action="store_true",
+        help=(
+            "Force legacy single-file behavior (all logical databases share "
+            "one SQLite connection). Default unless --data-dir or a "
+            "directory --db is given."
+        ),
+    )
+    parser.add_argument(
         "--host",
         default="127.0.0.1",
         help="Host to bind to (default: 127.0.0.1)",

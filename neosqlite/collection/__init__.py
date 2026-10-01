@@ -1602,6 +1602,15 @@ class Collection:
         """
         self.db.execute(f"DROP TABLE IF EXISTS {quote_table_name(self.name)}")
         self._invalidate_ttl_cache()
+        # Evict the cached Collection so a later create_collection() really
+        # recreates the table instead of reusing this table-less object
+        # (same hazard as Connection.drop_collection, cf. #132).
+        try:
+            database = self.__dict__.get("_database")
+            if database is not None:
+                database._collections.pop(self.name, None)
+        except Exception:
+            pass
 
     def watch(
         self,

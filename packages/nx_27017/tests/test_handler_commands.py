@@ -193,7 +193,7 @@ class TestSessions:
         assert "id" in response["session"]
         assert "$oid" in response["session"]["id"]
         session_id = response["session"]["id"]["$oid"]
-        assert session_id in handler._sessions
+        assert handler._find_session(session_id, "admin") is not None
 
     def test_commit_transaction(self, handler):
         start_msg = {
@@ -204,7 +204,8 @@ class TestSessions:
         session_id = start_response["session"]["id"]["$oid"]
 
         with handler._sessions_lock:
-            session = handler._sessions[session_id]
+            session = handler._find_session(session_id, "admin")
+            assert session is not None
             session.start_transaction()
 
         commit_msg = {
@@ -232,7 +233,8 @@ class TestSessions:
         session_id = start_response["session"]["id"]["$oid"]
 
         with handler._sessions_lock:
-            session = handler._sessions[session_id]
+            session = handler._find_session(session_id, "admin")
+            assert session is not None
             session.start_transaction()
 
         abort_msg = {
@@ -330,7 +332,7 @@ class TestSessions:
         }
         _, start_response = handler.handle_command(start_msg)
         session_id = start_response["session"]["id"]["$oid"]
-        assert session_id in handler._sessions
+        assert handler._find_session(session_id, "admin") is not None
 
         end_msg = {
             "request_id": 22,

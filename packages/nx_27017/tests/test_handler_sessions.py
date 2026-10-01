@@ -29,7 +29,7 @@ class TestEndSessions:
         endSessions must still be cleaned up - regression where only
         Binary-typed ids were converted to a key."""
         sid_bytes = os.urandom(16)
-        key = sid_bytes.hex()
+        key = (sid_bytes.hex(), "test")
         fake = _FakeSession()
         handler._sessions[key] = fake
 
@@ -47,7 +47,7 @@ class TestEndSessions:
     def test_end_sessions_cleans_binary_id(self, handler):
         """The standard bson.Binary id form is also cleaned up."""
         sid_bytes = os.urandom(16)
-        key = sid_bytes.hex()
+        key = (sid_bytes.hex(), "test")
         fake = _FakeSession()
         handler._sessions[key] = fake
 

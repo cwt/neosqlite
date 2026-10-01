@@ -159,6 +159,12 @@ def run_as_daemon(args: argparse.Namespace):
     if args.db_path != "memory" and not os.path.isabs(args.db_path):
         args.db_path = os.path.abspath(args.db_path)
 
+    data_dir = getattr(args, "data_dir", None)
+    if data_dir not in (None, "memory", ":memory:") and not os.path.isabs(
+        data_dir
+    ):
+        args.data_dir = os.path.abspath(data_dir)
+
     if args.fts5_tokenizers:
         args.fts5_tokenizers = [
             (name, os.path.abspath(path)) for name, path in args.fts5_tokenizers
@@ -227,7 +233,11 @@ def run_server_sync(args: argparse.Namespace):
     )
 
     handler = NeoSQLiteHandler(
-        db_path, tokenizers=tokenizers, journal_mode=args.journal_mode
+        db_path,
+        tokenizers=tokenizers,
+        journal_mode=args.journal_mode,
+        data_dir=getattr(args, "data_dir", None),
+        single_db_compat=getattr(args, "single_db_compat", False),
     )
 
     try:
