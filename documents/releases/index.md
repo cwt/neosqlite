@@ -6,8 +6,8 @@ tags:
   - index
   - releases
   - changelog
-timestamp: 2026-09-30T00:00:00Z
-version: "1.17.0"
+timestamp: 2026-10-01T00:00:00Z
+version: "1.17.1"
 lifecycle: active
 ---
 
@@ -19,6 +19,7 @@ This directory contains individual release notes and detailed changelogs for eac
 
 | Version | Release Date | Highlights & Summary |
 | :--- | :--- | :--- |
+| [v1.17.1](./v1.17.1.md) | 2026-10-01 | NeoSQLite v1.17.1 is a correctness and API parity release resolving Tier-2 aggregation serialization discrepancies, achieving 100% NX-27017 wire protocol compatibility, and eliminating test ResourceWarnings. |
 | [v1.17.0](./v1.17.0.md) | 2026-09-30 | NeoSQLite v1.17.0 is a feature and parity release delivering transaction context managers, full bulk write semantics, aggregation system variables, data integrity hardening, and 100% differential API compatibility. |
 | [v1.16.3](./v1.16.3.md) | 2026-09-15 | NeoSQLite v1.16.3 is a correctness patch fixing datetime queries returning field-less documents for rows stored as JSONB. |
 | [v1.16.2](./v1.16.2.md) | 2026-09-13 | NeoSQLite v1.16.2 is a correctness patch fixing GridOutCursor silently dropping dotted metadata filters and fs.chunks delegation. |
