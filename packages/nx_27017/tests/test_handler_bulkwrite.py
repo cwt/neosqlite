@@ -240,3 +240,41 @@ class TestOptionForwarding:
         )
         assert res["ok"] == 1
         assert res["nModified"] == 1
+
+
+class TestWriteConcernMapping:
+    def _insert_wc(self, handler, wc, req=20):
+        _, res = handler.handle_insert(
+            {
+                "request_id": req,
+                "sections": [
+                    (
+                        "body",
+                        {
+                            "insert": "wc",
+                            "$db": "test",
+                            "writeConcern": wc,
+                        },
+                    ),
+                    ("payload_docs", [{"x": 1}]),
+                ],
+            }
+        )
+        return res
+
+    def test_w0_maps_to_synchronous_off(self, handler):
+        assert self._insert_wc(handler, {"w": 0})["ok"] == 1
+        level = handler.get_database("test").db.execute(
+            "PRAGMA synchronous"
+        ).fetchone()[0]
+        assert level == 0
+
+    def test_journaled_maps_to_full(self, handler):
+        assert self._insert_wc(handler, {"j": True}, req=21)["ok"] == 1
+        level = handler.get_database("test").db.execute(
+            "PRAGMA synchronous"
+        ).fetchone()[0]
+        assert level == 2
+
+    def test_majority_accepted_without_effect(self, handler):
+        assert self._insert_wc(handler, {"w": "majority"}, req=22)["ok"] == 1

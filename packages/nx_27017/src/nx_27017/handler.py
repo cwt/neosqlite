@@ -225,6 +225,7 @@ class NeoSQLiteHandler:
         self._db_lock = threading.RLock()
         self._dict_lock = threading.Lock()
         self._locks: dict[str, threading.RLock] = {}
+        self._applied_wc: dict[str, str] = {}
         # Live data cursors for find/aggregate pagination:
         # id -> {"ns": str, "db": str, "docs": list, "pos": int,
         #         "owner": Any}. Guarded by _cursors_lock.
@@ -395,6 +396,31 @@ class NeoSQLiteHandler:
             return _DEFAULT_BATCH_SIZE
         return size if size > 0 else _DEFAULT_BATCH_SIZE
 
+    @staticmethod
+    def _fit_bson_budget(
+        docs: list[dict[str, Any]], limit: int = MAX_BSON_DOCUMENT_SIZE
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Split docs so the head fits in a BSON size budget.
+
+        Always keeps at least one document in the head (an oversized
+        single document is returned as-is; real MongoDB would error,
+        NX documents the leniency).
+        """
+        from bson import BSON
+
+        head: list[dict[str, Any]] = []
+        used = 0
+        for doc in docs:
+            try:
+                size = len(BSON.encode(doc))
+            except Exception:
+                size = len(repr(doc))
+            if head and used + size > limit:
+                break
+            head.append(doc)
+            used += size
+        return head, docs[len(head) :]
+
     def _split_first_batch(
         self,
         docs: list[dict[str, Any]],
@@ -404,8 +430,8 @@ class NeoSQLiteHandler:
         owner: Any = None,
     ) -> tuple[list[dict[str, Any]], int]:
         """Split docs into (firstBatch, cursorId), storing the remainder."""
-        first = docs[:batch_size]
-        rest = docs[batch_size:]
+        first, rest = self._fit_bson_budget(docs[:batch_size])
+        rest = rest + docs[batch_size:]
         if not rest:
             return first, 0
         cursor_id = next(_data_cursor_id_counter)
@@ -427,8 +453,8 @@ class NeoSQLiteHandler:
             if entry is None:
                 return None
             docs = entry["docs"]
-            batch = docs[:batch_size]
-            rest = docs[batch_size:]
+            batch, rest = self._fit_bson_budget(docs[:batch_size])
+            rest = rest + docs[batch_size:]
             ns = entry["ns"]
             if rest:
                 entry["docs"] = rest
@@ -482,6 +508,28 @@ class NeoSQLiteHandler:
                 for (sid, _db), sess in self._sessions.items()
                 if sid == session_id and sess.in_transaction
             ]
+
+    def _apply_write_concern(
+        self, db: Connection, db_name: str, write_concern: Any
+    ) -> None:
+        """Map a writeConcern document onto SQLite PRAGMAs for one database.
+
+        w:0 -> synchronous=OFF, w:1 -> NORMAL, j:true -> FULL (see
+        Connection._apply_write_concern). w:majority/w:2+ and wtimeoutMS
+        have no single-node meaning and are accepted without effect.
+        Re-applies only on change per database.
+        """
+        if not isinstance(write_concern, dict) or not write_concern:
+            return
+        key = repr(sorted(write_concern.items()))
+        with self._dict_lock:
+            if self._applied_wc.get(db_name) == key:
+                return
+            self._applied_wc[db_name] = key
+        try:
+            db._apply_write_concern(write_concern)
+        except Exception as exc:
+            logger.debug("writeConcern apply skipped: %s", exc)
 
     def _find_session(
         self, session_id: str, db_name: str
@@ -700,6 +748,7 @@ class NeoSQLiteHandler:
         session_to_use = self._get_or_create_session(
             command_doc, db, db_name
         )
+        self._apply_write_concern(db, db_name, command_doc.get("writeConcern"))
 
         if docs_to_insert:
             # Per-document loop (not one insert_many) so a duplicate key
@@ -1185,6 +1234,9 @@ class NeoSQLiteHandler:
             session_to_use = self._get_or_create_session(
                 command_doc, db, db_name
             )
+            self._apply_write_concern(
+                db, db_name, cmd_copy.get("writeConcern")
+            )
 
             if remove:
                 try:
@@ -1263,6 +1315,9 @@ class NeoSQLiteHandler:
             coll = db[coll_name]
             session_to_use = self._get_or_create_session(
                 command_doc, db, db_name
+            )
+            self._apply_write_concern(
+                db, db_name, cmd_copy.get("writeConcern")
             )
             ordered = cmd_copy.get("ordered", True)
             matched = 0
@@ -2050,6 +2105,9 @@ class NeoSQLiteHandler:
                     sess = self._get_or_create_session(
                         command_doc, target, ns_db or "test"
                     )
+                    self._apply_write_concern(
+                        target, ns_db or "test", cmd.get("writeConcern")
+                    )
                     target[ns_coll].insert_one(doc, session=sess)
                     n_inserted += 1
                     if not errors_only:
@@ -2065,6 +2123,9 @@ class NeoSQLiteHandler:
                     target = self.get_database(ns_db or "test")
                     sess = self._get_or_create_session(
                         command_doc, target, ns_db or "test"
+                    )
+                    self._apply_write_concern(
+                        target, ns_db or "test", cmd.get("writeConcern")
                     )
                     coll = target[ns_coll]
                     is_replace = not any(
@@ -2113,6 +2174,9 @@ class NeoSQLiteHandler:
                     target = self.get_database(ns_db or "test")
                     sess = self._get_or_create_session(
                         command_doc, target, ns_db or "test"
+                    )
+                    self._apply_write_concern(
+                        target, ns_db or "test", cmd.get("writeConcern")
                     )
                     coll = target[ns_coll]
                     if multi:
@@ -2184,6 +2248,9 @@ class NeoSQLiteHandler:
         coll = db[coll_name]
         session_to_use = self._get_or_create_session(
             command_doc, db, db_name
+        )
+        self._apply_write_concern(
+            db, db_name, command_doc.get("writeConcern")
         )
         deletes = command_doc.get("deletes", [])
         ordered = command_doc.get("ordered", True)
@@ -2471,6 +2538,12 @@ class NeoSQLiteHandler:
     def handle_query(
         self, msg: dict[str, Any]
     ) -> tuple[int, list[dict[str, Any]]]:
+        """Handle legacy OP_QUERY (frozen).
+
+        OP_QUERY was removed server-side in MongoDB 5.1; every modern
+        driver uses OP_MSG. This path stays as a find-only (plus $cmd
+        passthrough) fallback and is intentionally not extended.
+        """
         query = msg["query"]
         collection = msg["collection"]
         db_name = msg.get("db", "admin")

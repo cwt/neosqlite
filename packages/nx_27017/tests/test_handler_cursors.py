@@ -139,3 +139,58 @@ class TestAggregatePagination:
             req=3,
         )
         assert len(res2["cursor"]["nextBatch"]) == 90
+
+
+class TestBsonBudget:
+    def test_fit_keeps_at_least_one(self):
+        from nx_27017.handler import NeoSQLiteHandler
+
+        head, tail = NeoSQLiteHandler._fit_bson_budget(
+            [{"a": 1}, {"b": 2}], limit=10**9
+        )
+        assert (head, tail) == ([{"a": 1}, {"b": 2}], [])
+
+    def test_large_docs_paginate_by_bytes(self, tmp_path):
+        from nx_27017.handler import NeoSQLiteHandler
+
+        h = NeoSQLiteHandler(str(tmp_path / "big.db"))
+        try:
+            big = "x" * (2 * 1024 * 1024)
+            _, _ = h.handle_insert(
+                {
+                    "request_id": 1,
+                    "sections": [
+                        ("body", {"insert": "big", "$db": "test"}),
+                        ("payload_docs", [{"v": big} for _ in range(3)]),
+                    ],
+                }
+            )
+            _, res = h.handle_command(
+                {
+                    "request_id": 2,
+                    "sections": [
+                        ("body", {"find": "big", "filter": {}, "$db": "test"})
+                    ],
+                }
+            )
+            # 3 x 2MB docs exceed 16MB only combined with overhead? No:
+            # 6MB total fits, so a single batch. Force the budget small
+            # via direct split instead.
+            docs = [{"v": big} for _ in range(10)]
+            first, cid = h._split_first_batch(
+                docs,
+                101,
+                "test.big",
+                "test",
+            )
+            assert 0 < len(first) < 10
+            assert cid != 0
+            delivered = list(first)
+            while cid != 0:
+                nxt = h._getmore_data(cid, 101)
+                assert nxt is not None
+                delivered.extend(nxt["nextBatch"])
+                cid = nxt["id"]
+            assert len(delivered) == 10
+        finally:
+            h.close_all()

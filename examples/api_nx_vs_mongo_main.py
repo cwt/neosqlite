@@ -311,6 +311,83 @@ async def compare_admin(nx_client, real_client, nx_db, real_db):
     await real_db["compat_admin"].drop()
 
 
+async def _tx_outcome(coll):
+    """Commit-then-abort observable outcome on one collection."""
+    await coll.drop()
+    async with coll.database.client.start_session() as session:
+        await session.start_transaction()
+        await coll.insert_one({"_id": 1}, session=session)
+        await session.commit_transaction()
+        committed = await coll.count_documents({})
+        await session.start_transaction()
+        await coll.insert_one({"_id": 2}, session=session)
+        await session.abort_transaction()
+        aborted = await coll.count_documents({})
+    return {"committed": committed, "aborted": aborted}
+
+
+async def _watch_events(coll, payloads):
+    """Open a change stream, apply payloads, collect operation types."""
+    import asyncio
+
+    events = []
+    stream = await coll.watch(max_await_time_ms=2000)
+    try:
+        writer = asyncio.create_task(_write_payloads(coll, payloads))
+        try:
+            async with asyncio.timeout(15):
+                async for event in stream:
+                    events.append(
+                        (
+                            event.get("operationType"),
+                            (event.get("fullDocument") or {}).get("v"),
+                        )
+                    )
+                    if len(events) >= len(payloads):
+                        break
+        except TimeoutError:
+            pass
+        await writer
+    finally:
+        await stream.close()
+    return events
+
+
+async def _write_payloads(coll, payloads):
+    import asyncio
+
+    await asyncio.sleep(0.5)
+    for payload in payloads:
+        await coll.insert_one(payload)
+
+
+async def compare_tx_cs(nx_db, real_db, real_is_rs):
+    """Transactions + change streams (real side needs a replica set)."""
+    check(
+        "tx.commit-abort",
+        await _tx_outcome(nx_db["compat_tx"]),
+        await _tx_outcome(real_db["compat_tx"])
+        if real_is_rs
+        else {"committed": 1, "aborted": 1},
+    )
+    if not real_is_rs:
+        print("  SKIP changestream-vs-real (standalone has no change streams)")
+        nx_events = await _watch_events(
+            nx_db["compat_cs"], [{"v": "a"}, {"v": "b"}]
+        )
+        check(
+            "changestream.nx-only",
+            nx_events,
+            [("insert", "a"), ("insert", "b")],
+        )
+        return
+    check(
+        "changestream.insert",
+        await _watch_events(nx_db["compat_cs"], [{"v": "a"}, {"v": "b"}]),
+        await _watch_events(real_db["compat_cs"], [{"v": "a"}, {"v": "b"}]),
+    )
+
+
 async def run_all():
     from pymongo import AsyncMongoClient
 
@@ -331,6 +408,12 @@ async def run_all():
         print(f"Real MongoDB unreachable at {REAL_MONGO_URI}: {exc}")
         print("Hint: rerun the shell wrapper with --with-podman.")
         return 2
+    try:
+        hello = await real_client.admin.command("hello")
+    except Exception:
+        hello = {}
+    real_is_rs = bool(hello.get("setName"))
+    print(f"Real replica set: {hello.get('setName', 'standalone')}")
 
     nx_db = nx_client["compat"]
     real_db = real_client["compat"]
@@ -338,6 +421,8 @@ async def run_all():
     await compare_core(nx_db, real_db)
     print("== bulk ==")
     await compare_bulk(nx_db, real_db)
+    print("== tx+changestream ==")
+    await compare_tx_cs(nx_db, real_db, real_is_rs)
     print("== admin ==")
     await compare_admin(nx_client, real_client, nx_db, real_db)
 

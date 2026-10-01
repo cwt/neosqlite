@@ -141,3 +141,17 @@ Missed / broken (priority order):
   upload/download/rename/delete verified identical live. Generic dotted
   collection names remain unsupported (core `quote_table_name` rejects
   dots; GridFS underscore tables are unaffected).
+
+## 8. P2 notes (done 2026-10-01, benchmark medians of 3 runs, 3k docs)
+
+- In-process vs TCP+BSON on localhost: bulk insert 0.037s vs 0.071s
+  (~1.9x wire tax), count ~0ms vs 0.021s (one RTT ~0.7ms dominates),
+  find-all 0.009s vs 0.039s (~30 getMore round trips at batch 101).
+  Conclusion: NX costs ~2x on writes, ~30ms per 3k-doc scan; acceptable
+  for a compat shim, and the reason to prefer direct NeoSQLite for
+  bulk ingest.
+- Full-suite A/B (v1.17.1 vs P1 tip) on `run-api-nx-27017.sh`: 3.87s vs
+  3.90s — no throughput regression. A stale server on :27017 can
+  double-bind alongside the new one (SO_REUSEADDR) and look like
+  slowness; both comparison scripts now abort on occupied ports and
+  fail fast on dead children instead of burning the 30s wait.
