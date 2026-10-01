@@ -280,6 +280,8 @@ class GridFSAdapter:
         """Convert ObjectId from various formats."""
         if oid is None:
             return None
+        if isinstance(oid, dict) and "$eq" in oid:
+            oid = oid["$eq"]
         if isinstance(oid, ObjectId):
             return oid
         if isinstance(oid, dict) and "$oid" in oid:
@@ -549,21 +551,49 @@ class GridFSAdapter:
         try:
             chunks = []
             files_id = filter_query.get("files_id")
-            if files_id is not None:
+            if isinstance(files_id, dict) and "$eq" in files_id:
+                files_id = files_id["$eq"]
+            if isinstance(files_id, (ObjectId, str, int)):
                 file_int_id = self._get_bucket()._get_integer_id_for_file(
                     files_id
                 )
                 if file_int_id is not None:
+                    n_filter = filter_query.get("n")
+                    where_clauses = ["files_id = ?"]
+                    params: list[Any] = [file_int_id]
+                    if isinstance(n_filter, dict):
+                        for op, val in n_filter.items():
+                            match op:
+                                case "$gte":
+                                    where_clauses.append("n >= ?")
+                                    params.append(val)
+                                case "$gt":
+                                    where_clauses.append("n > ?")
+                                    params.append(val)
+                                case "$lte":
+                                    where_clauses.append("n <= ?")
+                                    params.append(val)
+                                case "$lt":
+                                    where_clauses.append("n < ?")
+                                    params.append(val)
+                                case "$eq":
+                                    where_clauses.append("n = ?")
+                                    params.append(val)
+                    elif isinstance(n_filter, int):
+                        where_clauses.append("n = ?")
+                        params.append(n_filter)
+
+                    where_sql = " AND ".join(where_clauses)
                     cursor = self._db.execute(
                         f"""SELECT _id, files_id, n, data FROM {self._get_bucket()._chunks_collection}
-                           WHERE files_id = ? ORDER BY n""",
-                        (file_int_id,),
+                           WHERE {where_sql} ORDER BY n""",
+                        params,
                     )
                     for row in cursor.fetchall():
                         chunks.append(
                             {
                                 "_id": row[0],
-                                "files_id": row[1],
+                                "files_id": files_id,
                                 "n": row[2],
                                 "data": row[3],
                             }

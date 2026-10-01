@@ -1215,6 +1215,18 @@ class GridOutCursor:
 
                 match key:
                     case "_id":
+                        if isinstance(value, dict):
+                            if "$eq" in value:
+                                value = value["$eq"]
+                            elif "$in" in value:
+                                in_vals = value["$in"]
+                                placeholders = ", ".join("?" for _ in in_vals)
+                                conds.append(f"_id IN ({placeholders})")
+                                for v in in_vals:
+                                    plist.append(
+                                        str(v) if isinstance(v, ObjectId) else v
+                                    )
+                                return
                         # Handle ObjectId hex strings and other ID formats
                         if isinstance(value, ObjectId):
                             conds.append("_id = ?")
@@ -1235,7 +1247,11 @@ class GridOutCursor:
                         else:
                             # Handle other types
                             conds.append("_id = ?")
-                            plist.append(value)
+                            plist.append(
+                                str(value)
+                                if isinstance(value, ObjectId)
+                                else value
+                            )
                     case "id":
                         # For 'id' queries, we look in the integer id column
                         conds.append("id = ?")

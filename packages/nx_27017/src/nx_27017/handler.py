@@ -460,6 +460,16 @@ class NeoSQLiteHandler:
             db[coll_name].drop()
             return request_id, {"ok": 1}
 
+        if "dropDatabase" in cmd_copy or "dropdatabase" in cmd_copy:
+            target_db = cmd_copy.pop("dropDatabase", None) or cmd_copy.pop(
+                "dropdatabase", None
+            )
+            dropped_name = (
+                db_name if target_db in (1, True, None, "") else str(target_db)
+            )
+            self.databases.pop(dropped_name, None)
+            return request_id, {"dropped": dropped_name, "ok": 1}
+
         if "renameCollection" in cmd_copy:
             old_name = cmd_copy.pop("renameCollection")
             to_name = cmd_copy.pop("to", None)
@@ -499,6 +509,7 @@ class NeoSQLiteHandler:
                 sparse = index_spec.get("sparse", False)
                 fts = index_spec.get("fts", False)
                 tokenizer = index_spec.get("tokenizer")
+                expire_after = index_spec.get("expireAfterSeconds")
 
                 if isinstance(key, dict):
                     # Convert {"field": 1, "field2": -1} to [("field", 1), ("field2", -1)]
@@ -506,18 +517,19 @@ class NeoSQLiteHandler:
                 else:
                     keys_list = key
 
-                idx_name = coll.create_index(
-                    keys_list,
-                    unique=unique,
-                    sparse=sparse,
-                    fts=fts,
-                    tokenizer=tokenizer,
-                )
-                if name and name != idx_name:
-                    logger.warning(
-                        f"Index name mismatch: requested '{name}', got '{idx_name}'"
-                    )
-                created_names.append(idx_name)
+                idx_kwargs: dict[str, Any] = {
+                    "unique": unique,
+                    "sparse": sparse,
+                    "fts": fts,
+                    "tokenizer": tokenizer,
+                }
+                if name:
+                    idx_kwargs["name"] = name
+                if expire_after is not None:
+                    idx_kwargs["expireAfterSeconds"] = expire_after
+
+                idx_name = coll.create_index(keys_list, **idx_kwargs)
+                created_names.append(name if name else idx_name)
             return request_id, {
                 "ok": 1,
                 "createdCollectionAutomatically": False,
@@ -1247,6 +1259,8 @@ class NeoSQLiteHandler:
             file_ids = []
             for delete in deletes:
                 file_id = delete.get("q", {}).get("_id")
+                if isinstance(file_id, dict) and "$eq" in file_id:
+                    file_id = file_id["$eq"]
                 if file_id:
                     file_ids.append(file_id)
 
@@ -1505,7 +1519,6 @@ class NeoSQLiteHandler:
 
         try:
             coll = db[coll_name]
-            index_names = coll.list_indexes()
         except Exception:
             return request_id, {
                 "ok": 1,
@@ -1516,17 +1529,32 @@ class NeoSQLiteHandler:
                 },
             }
 
-        index_list = []
-        prefix = f"idx_{coll.name}_"
-        for idx_name in index_names:
-            if idx_name in (f"{prefix}id", "_id_"):
-                key = {"_id": 1}
-            elif idx_name.startswith(prefix):
-                key_str = idx_name[len(prefix) :]
-                key = {key_str: 1}
-            else:
-                key = {idx_name: 1}
-            index_list.append({"v": 2, "key": key, "name": idx_name})
+        index_list = [{"v": 2, "key": {"_id": 1}, "name": "_id_"}]
+        try:
+            info_dict = coll.index_information()
+            prefix = f"idx_{coll.name}_"
+            for idx_name, info in info_dict.items():
+                key = info.get("key")
+                if not key:
+                    if idx_name in (f"{prefix}id", "_id_"):
+                        key = {"_id": 1}
+                    elif idx_name.startswith(prefix):
+                        key_str = idx_name[len(prefix) :]
+                        key = {key_str: 1}
+                    else:
+                        key = {idx_name: 1}
+                entry: dict[str, Any] = {
+                    "v": info.get("v", 2),
+                    "key": key,
+                    "name": idx_name,
+                }
+                if info.get("unique"):
+                    entry["unique"] = True
+                if "expireAfterSeconds" in info:
+                    entry["expireAfterSeconds"] = info["expireAfterSeconds"]
+                index_list.append(entry)
+        except Exception as e:
+            logger.debug(f"Failed to get index_information: {e}")
 
         return request_id, {
             "ok": 1,

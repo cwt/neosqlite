@@ -724,14 +724,41 @@ class IndexManager:
             self.collection.__dict__["_ttl_specs_cache"] = None
         except Exception:
             pass
-        # With native JSON indexing, we just need to drop the index
+        cursor = self.collection.db.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=?",
+            (self.collection.name,),
+        )
+        existing = {row[0] for row in cursor.fetchall()}
+
+        candidates = []
         if isinstance(index, str):
-            # For single indexes
-            index_name = index.replace(".", "_")
+            candidates.append(index)
+            base = index.replace(".", "_")
+            candidates.append(
+                f"idx_{quote_table_name(self.collection.name)}_{base}"
+            )
+            if base.endswith("_1"):
+                candidates.append(
+                    f"idx_{quote_table_name(self.collection.name)}_{base[:-2]}"
+                )
+            elif base.endswith("_-1"):
+                candidates.append(
+                    f"idx_{quote_table_name(self.collection.name)}_{base[:-3]}"
+                )
         else:
-            # For compound indexes
-            index_name = "_".join(index).replace(".", "_")
-        full_name = f"idx_{quote_table_name(self.collection.name)}_{index_name}"
+            base = "_".join(index).replace(".", "_")
+            candidates.append(
+                f"idx_{quote_table_name(self.collection.name)}_{base}"
+            )
+
+        full_name = None
+        for cand in candidates:
+            if cand in existing:
+                full_name = cand
+                break
+        if full_name is None:
+            full_name = candidates[1] if len(candidates) > 1 else candidates[0]
+
         self.collection.db.execute(f"DROP INDEX IF EXISTS {full_name}")
         # Remove the stored key spec (#158) and TTL metadata
         try:
