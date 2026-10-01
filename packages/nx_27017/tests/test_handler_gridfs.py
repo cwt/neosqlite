@@ -251,3 +251,57 @@ class TestGridFSOperations:
             find_upd_res["cursor"]["firstBatch"][0]["filename"]
             == "renamed_test.txt"
         )
+
+
+class TestGridFSDottedRouting:
+    """Dotted fs.files/fs.chunks names route to the bucket (P1-8)."""
+
+    def _cmd(self, handler, body, req=10):
+        _, res = handler.handle_command(
+            {"request_id": req, "sections": [("body", body)]}
+        )
+        return res
+
+    def test_drop_dotted_collections(self, handler):
+        res = self._cmd(
+            handler, {"drop": "fs.files", "$db": "test"}, req=11
+        )
+        assert res == {"ok": 1}
+        res = self._cmd(
+            handler, {"drop": "fs.chunks", "$db": "test"}, req=12
+        )
+        assert res == {"ok": 1}
+        # Idempotent like real MongoDB.
+        res = self._cmd(
+            handler, {"drop": "fs.files", "$db": "test"}, req=13
+        )
+        assert res == {"ok": 1}
+
+    def test_distinct_filename(self, handler):
+        res = self._cmd(
+            handler,
+            {
+                "distinct": "fs.files",
+                "key": "filename",
+                "query": {},
+                "$db": "test",
+            },
+            req=14,
+        )
+        assert res["ok"] == 1
+        assert sorted(res["values"]) == ["data.json", "test.txt"]
+
+    def test_find_sort_direction_desc(self, handler):
+        res = self._cmd(
+            handler,
+            {
+                "find": "fs.files",
+                "filter": {},
+                "sort": {"uploadDate": -1},
+                "$db": "test",
+            },
+            req=15,
+        )
+        docs = res["cursor"]["firstBatch"]
+        dates = [doc["uploadDate"] for doc in docs]
+        assert dates == sorted(dates, reverse=True)

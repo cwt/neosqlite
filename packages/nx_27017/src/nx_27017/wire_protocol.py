@@ -20,7 +20,10 @@ MAX_MESSAGE_SIZE_BYTES = 48_000_000
 MAX_WRITE_BATCH_SIZE = 100_000
 
 MIN_WIRE_VERSION = 17
-MAX_WIRE_VERSION = 21
+# 25 == MongoDB 8.0: unlocks the client-level bulkWrite command (which NX
+# implements). Nothing above 25 is advertised: PyMongo gates no features
+# on 26/27 that NX supports.
+MAX_WIRE_VERSION = 25
 
 DEFAULT_SESSION_TIMEOUT_MINUTES = 30
 DEFAULT_MAX_CONNECTIONS = 1000

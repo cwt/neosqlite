@@ -176,6 +176,108 @@ async def compare_core(nx_db, real_db):
     )
 
 
+async def _bulk_details(coll, models, ordered):
+    """Run bulk models, returning comparable (counts, errors) details."""
+    from pymongo.errors import BulkWriteError
+
+    try:
+        result = await coll.bulk_write(models, ordered=ordered)
+        return {
+            "inserted": result.inserted_count,
+            "matched": result.matched_count,
+            "modified": result.modified_count,
+            "upserted": result.upserted_count,
+            "errors": [],
+        }
+    except BulkWriteError as exc:
+        details = exc.details
+        return {
+            "inserted": details.get("nInserted"),
+            "matched": details.get("nMatched"),
+            "modified": details.get("nModified"),
+            "upserted": details.get("nUpserted"),
+            "errors": [
+                (w.get("index"), w.get("code"))
+                for w in details.get("writeErrors", [])
+            ],
+        }
+
+
+async def compare_bulk(nx_db, real_db):
+    """Bulk write semantics: ordered/unordered errors, upserts."""
+    from pymongo import DeleteOne, InsertOne, UpdateOne
+
+    for coll in (nx_db["compat_bulk"], real_db["compat_bulk"]):
+        try:
+            await coll.drop()
+        except Exception:
+            pass
+    check(
+        "bulk.ordered-dup",
+        await _bulk_details(
+            nx_db["compat_bulk"],
+            [
+                InsertOne({"_id": 1}),
+                InsertOne({"_id": 1}),
+                UpdateOne({"_id": 1}, {"$set": {"v": 1}}),
+            ],
+            True,
+        ),
+        await _bulk_details(
+            real_db["compat_bulk"],
+            [
+                InsertOne({"_id": 1}),
+                InsertOne({"_id": 1}),
+                UpdateOne({"_id": 1}, {"$set": {"v": 1}}),
+            ],
+            True,
+        ),
+    )
+    for coll in (nx_db["compat_bulk"], real_db["compat_bulk"]):
+        await coll.drop()
+    check(
+        "bulk.unordered-dup",
+        await _bulk_details(
+            nx_db["compat_bulk"],
+            [
+                InsertOne({"_id": 1}),
+                InsertOne({"_id": 1}),
+                UpdateOne({"_id": 1}, {"$set": {"v": 5}}),
+            ],
+            False,
+        ),
+        await _bulk_details(
+            real_db["compat_bulk"],
+            [
+                InsertOne({"_id": 1}),
+                InsertOne({"_id": 1}),
+                UpdateOne({"_id": 1}, {"$set": {"v": 5}}),
+            ],
+            False,
+        ),
+    )
+    for coll in (nx_db["compat_bulk"], real_db["compat_bulk"]):
+        await coll.drop()
+    check(
+        "bulk.upsert",
+        await _bulk_details(
+            nx_db["compat_bulk"],
+            [UpdateOne({"_id": 42}, {"$set": {"v": 1}}, upsert=True)],
+            True,
+        ),
+        await _bulk_details(
+            real_db["compat_bulk"],
+            [UpdateOne({"_id": 42}, {"$set": {"v": 1}}, upsert=True)],
+            True,
+        ),
+    )
+    check(
+        "estimated_document_count",
+        await nx_db["compat_bulk"].estimated_document_count(),
+        await real_db["compat_bulk"].estimated_document_count(),
+    )
+
+
 async def compare_admin(nx_client, real_client, nx_db, real_db):
     """Collection/index admin commands on both endpoints."""
     check(
@@ -234,6 +336,8 @@ async def run_all():
     real_db = real_client["compat"]
     print("== core ==")
     await compare_core(nx_db, real_db)
+    print("== bulk ==")
+    await compare_bulk(nx_db, real_db)
     print("== admin ==")
     await compare_admin(nx_client, real_client, nx_db, real_db)
 

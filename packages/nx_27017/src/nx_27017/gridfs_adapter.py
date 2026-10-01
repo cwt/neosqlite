@@ -115,6 +115,21 @@ class GridFSAdapter:
                     f"_ensure_gridfs_schema: All required columns exist in {files_table}"
                 )
 
+            chunks_exists = (
+                self._db.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' "
+                    "AND name=?",
+                    (chunks_table,),
+                ).fetchone()
+                is not None
+            )
+            if not chunks_exists:
+                # _ensure_bucket() recreates it via CREATE TABLE IF EXISTS.
+                logger.debug(
+                    f"Chunks table '{chunks_table}' missing; "
+                    "leaving creation to GridFSBucket"
+                )
+                return
             cursor = self._db.execute(f"PRAGMA table_info('{chunks_table}')")
             chunks_columns = {row[1] for row in cursor.fetchall()}
             logger.debug(

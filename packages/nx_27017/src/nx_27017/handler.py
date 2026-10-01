@@ -50,6 +50,48 @@ _data_cursor_id_counter = count(10**12)
 _DEFAULT_BATCH_SIZE = 101
 
 
+def _search_index_fields(spec: dict[str, Any]) -> list[str]:
+    """Extract FTS field names from an Atlas-style search index spec.
+
+    Understands ``definition.mappings.fields`` maps, ``definition.fields``
+    lists, ``definition.field`` / plain-string definitions, and falls back
+    to the spec ``name``. Raises ValueError when no field is derivable.
+    """
+    definition = spec.get("definition", {})
+    if isinstance(definition, str):
+        return [definition]
+    if isinstance(definition, dict):
+        mappings = definition.get("mappings")
+        if isinstance(mappings, dict):
+            fields = mappings.get("fields")
+            if isinstance(fields, dict) and fields:
+                return [str(field) for field in fields]
+        fields = definition.get("fields")
+        if isinstance(fields, (list, tuple)) and fields:
+            return [str(field) for field in fields]
+        field = definition.get("field")
+        if isinstance(field, str) and field:
+            return [field]
+    name = spec.get("name")
+    if isinstance(name, str) and name:
+        return [name]
+    raise ValueError(f"No text field derivable from {spec!r}")
+
+
+def _bulk_write_error(exc: Exception, index: int) -> dict[str, Any]:
+    """Build a MongoDB-style writeError document for a failed bulk op."""
+    from neosqlite._sqlite import sqlite3
+
+    message = str(exc)
+    if "UNIQUE" in message.upper() or isinstance(
+        exc, sqlite3.IntegrityError
+    ):
+        code = 11000
+    else:
+        code = 8
+    return {"index": index, "code": code, "errmsg": message}
+
+
 def _sanitize_db_name(db_name: Any) -> str:
     """Validate a logical database name for file mapping.
 
@@ -660,12 +702,28 @@ class NeoSQLiteHandler:
         )
 
         if docs_to_insert:
-            result = coll.insert_many(docs_to_insert, session=session_to_use)
-            return request_id, {
+            # Per-document loop (not one insert_many) so a duplicate key
+            # becomes a writeErrors entry instead of failing the batch:
+            # ordered stops at the first error, unordered collects them.
+            ordered = command_doc.get("ordered", True)
+            inserted_ids: list[Any] = []
+            write_errors: list[dict[str, Any]] = []
+            for idx, doc in enumerate(docs_to_insert):
+                try:
+                    res = coll.insert_one(doc, session=session_to_use)
+                    inserted_ids.append(res.inserted_id)
+                except Exception as exc:
+                    write_errors.append(_bulk_write_error(exc, idx))
+                    if ordered:
+                        break
+            response: dict[str, Any] = {
                 "ok": 1,
-                "n": len(result.inserted_ids),
-                "insertedIds": result.inserted_ids,
+                "n": len(inserted_ids),
+                "insertedIds": inserted_ids,
             }
+            if write_errors:
+                response["writeErrors"] = write_errors
+            return request_id, response
 
         return request_id, {"ok": 1, "n": 0}
 
@@ -680,6 +738,8 @@ class NeoSQLiteHandler:
         command_doc = None
         payload_updates = []
         payload_deletes = []
+        payload_ops: list[dict[str, Any]] = []
+        payload_nsinfo: list[dict[str, Any]] = []
         for section_type, doc in sections:
             if section_type == "body":
                 command_doc = doc
@@ -689,6 +749,12 @@ class NeoSQLiteHandler:
                         payload_updates = doc["updates"]
                     if "deletes" in doc:
                         payload_deletes = doc["deletes"]
+                    # bulkWrite ships ops (and sometimes nsInfo) as a
+                    # document sequence rather than inline in the body.
+                    if "ops" in doc:
+                        payload_ops = doc["ops"]
+                    if "nsInfo" in doc:
+                        payload_nsinfo = doc["nsInfo"]
 
         if not command_doc:
             return request_id, {"ok": 0, "errmsg": "No command document"}
@@ -797,6 +863,37 @@ class NeoSQLiteHandler:
                     "ok": 0,
                     "errmsg": f"Cannot drop internal table: {coll_name}",
                 }
+            if self._is_gridfs_collection(coll_name):
+                # Dotted names (fs.files) cannot be tables in NeoSQLite;
+                # drop the backing bucket instead.
+                from neosqlite.gridfs import GridFSBucket
+
+                bucket_name = self._get_gridfs_bucket_name(coll_name)
+                if bucket_name is None:
+                    return request_id, {
+                        "ok": 0,
+                        "errmsg": "Invalid GridFS collection",
+                    }
+                try:
+                    _sanitize_db_name(bucket_name)
+                except ValueError:
+                    return request_id, {
+                        "ok": 0,
+                        "errmsg": f"Invalid bucket name: {bucket_name!r}",
+                    }
+                # Like real MongoDB, dropping one side leaves the other
+                # (possibly orphaned) alone. Sanitized above: no quotes
+                # possible, double-quoting keeps dashes valid.
+                if coll_name.endswith(".chunks"):
+                    target_table = f"{bucket_name}_chunks"
+                else:
+                    target_table = f"{bucket_name}_files"
+                db.db.execute(f'DROP TABLE IF EXISTS "{target_table}"')
+                try:
+                    db.db.commit()
+                except Exception:
+                    pass
+                return request_id, {"ok": 1}
             db[coll_name].drop()
             return request_id, {"ok": 1}
 
@@ -961,6 +1058,79 @@ class NeoSQLiteHandler:
                 "nIndexesWas": num_before,
             }
 
+        if "createSearchIndexes" in cmd_copy or (
+            "createsearchindexes" in cmd_copy
+        ):
+            key = (
+                "createSearchIndexes"
+                if "createSearchIndexes" in cmd_copy
+                else "createsearchindexes"
+            )
+            coll_name = cmd_copy.pop(key)
+            specs = cmd_copy.pop("indexes", [])
+            coll = db[coll_name]
+            created = []
+            for spec in specs:
+                if not isinstance(spec, dict):
+                    continue
+                try:
+                    fields = _search_index_fields(spec)
+                except ValueError as exc:
+                    return request_id, {"ok": 0, "errmsg": str(exc)}
+                tokenizer = spec.get("tokenizer")
+                if not isinstance(tokenizer, str):
+                    tokenizer = None
+                for field in fields:
+                    coll.create_search_index(field, tokenizer=tokenizer)
+                    created.append({"name": spec.get("name", field)})
+            return request_id, {"ok": 1, "indexesCreated": created}
+
+        if "updateSearchIndex" in cmd_copy or "updatesearchindex" in cmd_copy:
+            key = (
+                "updateSearchIndex"
+                if "updateSearchIndex" in cmd_copy
+                else "updatesearchindex"
+            )
+            coll_name = cmd_copy.pop(key)
+            name = cmd_copy.get("name", "")
+            definition = cmd_copy.get("definition", {})
+            coll = db[coll_name]
+            try:
+                fields = _search_index_fields(
+                    {"name": name, "definition": definition}
+                )
+            except ValueError:
+                fields = [name] if name else []
+            if not fields:
+                return request_id, {
+                    "ok": 0,
+                    "errmsg": "updateSearchIndex requires a name or "
+                    "a definition with text fields",
+                }
+            tokenizer = None
+            if isinstance(definition, dict):
+                tok = definition.get("tokenizer")
+                if isinstance(tok, str):
+                    tokenizer = tok
+            coll.update_search_index(fields[0], tokenizer=tokenizer)
+            return request_id, {"ok": 1}
+
+        if "dropSearchIndex" in cmd_copy or "dropsearchindex" in cmd_copy:
+            key = (
+                "dropSearchIndex"
+                if "dropSearchIndex" in cmd_copy
+                else "dropsearchindex"
+            )
+            coll_name = cmd_copy.pop(key)
+            name = cmd_copy.get("name", "")
+            if not name:
+                return request_id, {
+                    "ok": 0,
+                    "errmsg": "dropSearchIndex requires 'name'",
+                }
+            db[coll_name].drop_search_index(name)
+            return request_id, {"ok": 1}
+
         if "delete" in cmd_copy:
             coll_name = cmd_copy.pop("delete")
             if self._is_gridfs_collection(coll_name):
@@ -973,6 +1143,13 @@ class NeoSQLiteHandler:
             if "deletes" not in cmd_copy and payload_deletes:
                 cmd_copy["deletes"] = payload_deletes
             return self._handle_delete(request_id, cmd_copy, db, db_name)
+
+        if "bulkWrite" in cmd_copy:
+            if "ops" not in cmd_copy and payload_ops:
+                cmd_copy["ops"] = payload_ops
+            if "nsInfo" not in cmd_copy and payload_nsinfo:
+                cmd_copy["nsInfo"] = payload_nsinfo
+            return self._handle_bulk_write(request_id, cmd_copy, command_doc)
 
         if "upload" in cmd_copy:
             return self._handle_gridfs_upload(request_id, cmd_copy, db)
@@ -1087,36 +1264,70 @@ class NeoSQLiteHandler:
             session_to_use = self._get_or_create_session(
                 command_doc, db, db_name
             )
+            ordered = cmd_copy.get("ordered", True)
+            matched = 0
             modified = 0
+            upserted: list[dict[str, Any]] = []
+            write_errors: list[dict[str, Any]] = []
 
-            for update in updates:
+            for idx, update in enumerate(updates):
                 q = update.get("q", {})
                 u = update.get("u", {})
                 q = self._convert_objectids(q)
                 u = self._convert_objectids(u)
                 multi = update.get("multi", False)
                 upsert = update.get("upsert", False)
+                array_filters = update.get("arrayFilters")
 
                 # Change events are captured trigger-side (see changestream
                 # module), so no per-operation fan-out is needed here. This
                 # also covers bulk writes, which never passed through here.
-                is_replace = not any(k.startswith("$") for k in u.keys())
-                if is_replace:
-                    upd_result = coll.replace_one(
-                        q, u, upsert=upsert, session=session_to_use
+                try:
+                    is_replace = not any(k.startswith("$") for k in u.keys())
+                    if is_replace:
+                        upd_result = coll.replace_one(
+                            q, u, upsert=upsert, session=session_to_use
+                        )
+                    elif multi:
+                        upd_result = coll.update_many(
+                            q,
+                            u,
+                            upsert=upsert,
+                            array_filters=array_filters,
+                            session=session_to_use,
+                        )
+                    else:
+                        upd_result = coll.update_one(
+                            q,
+                            u,
+                            upsert=upsert,
+                            array_filters=array_filters,
+                            session=session_to_use,
+                        )
+                except Exception as exc:
+                    write_errors.append(_bulk_write_error(exc, idx))
+                    if ordered:
+                        break
+                    continue
+                matched += upd_result.matched_count
+                modified += upd_result.modified_count
+                if upd_result.upserted_id is not None:
+                    # Wire n counts an upserted doc as matched (real
+                    # MongoDB reports n:1 for an upsert-insert).
+                    matched += 1
+                    upserted.append(
+                        {"index": idx, "_id": upd_result.upserted_id}
                     )
-                    modified += upd_result.modified_count
-                elif multi:
-                    upd_result = coll.update_many(
-                        q, u, upsert=upsert, session=session_to_use
-                    )
-                    modified += upd_result.modified_count
-                else:
-                    upd_result = coll.update_one(
-                        q, u, upsert=upsert, session=session_to_use
-                    )
-                    modified += upd_result.modified_count
-            return request_id, {"ok": 1, "n": modified, "nModified": modified}
+            response = {
+                "ok": 1,
+                "n": matched,
+                "nModified": modified,
+            }
+            if upserted:
+                response["upserted"] = upserted
+            if write_errors:
+                response["writeErrors"] = write_errors
+            return request_id, response
 
         if "find" in cmd_copy:
             coll_name = cmd_copy.pop("find")
@@ -1199,8 +1410,39 @@ class NeoSQLiteHandler:
             try:
                 coll_name = cmd_copy.pop("count")
                 query = cmd_copy.pop("query", {})
+                limit = cmd_copy.pop("limit", None)
+                skip = cmd_copy.pop("skip", None)
+                if self._is_gridfs_collection(coll_name):
+                    adapter, _bucket = create_gridfs_adapter(
+                        db.db, coll_name
+                    )
+                    if adapter is None:
+                        return request_id, {
+                            "ok": 0,
+                            "errmsg": "Invalid GridFS collection",
+                        }
+                    filt = self._convert_objectids(query or {})
+                    if coll_name.endswith(".chunks"):
+                        docs = adapter.handle_chunks_find(filt)
+                    else:
+                        docs = adapter.handle_find(filt)
+                    if skip:
+                        docs = docs[int(skip) :]
+                    if limit:
+                        docs = docs[: int(limit)]
+                    return request_id, {"ok": 1, "n": len(docs)}
                 coll = db[coll_name]
-                count = coll.count_documents(query)
+                if limit is None and skip is None:
+                    count = coll.count_documents(query)
+                else:
+                    # count with limit/skip (legacy count command): apply
+                    # pagination over the match set.
+                    cursor = coll.find(query)
+                    if skip:
+                        cursor = cursor.skip(int(skip))
+                    if limit:
+                        cursor = cursor.limit(int(limit))
+                    count = len(list(cursor))
                 return request_id, {"ok": 1, "n": count}
             except Exception as e:
                 logger.error(f"Error in count: {e}")
@@ -1211,6 +1453,10 @@ class NeoSQLiteHandler:
                 coll_name = cmd_copy.pop("distinct")
                 key = cmd_copy.pop("key", "")
                 query = cmd_copy.pop("query", {})
+                if self._is_gridfs_collection(coll_name):
+                    return self._handle_gridfs_distinct(
+                        request_id, coll_name, key, query, db
+                    )
                 coll = db[coll_name]
                 values = coll.distinct(key, query)
                 return request_id, {"ok": 1, "values": values}
@@ -1222,6 +1468,16 @@ class NeoSQLiteHandler:
             try:
                 coll_name = cmd_copy.pop("aggregate")
                 pipeline = cmd_copy.pop("pipeline", [])
+
+                # Atlas-style search index listing arrives as an
+                # aggregation stage; serve it from NeoSQLite FTS metadata.
+                if any(
+                    isinstance(stage, dict) and "$listSearchIndexes" in stage
+                    for stage in pipeline
+                ):
+                    return self._handle_list_search_indexes(
+                        request_id, db, coll_name, db_name
+                    )
 
                 # Check if this is a change stream request
                 if is_change_stream_pipeline(pipeline):
@@ -1543,12 +1799,30 @@ class NeoSQLiteHandler:
                 sort_list = (
                     list(sort.items()) if isinstance(sort, dict) else sort
                 )
-
-                def _sort_key(doc: dict) -> tuple:
-                    """Extract sort key values from document."""
-                    return tuple(doc.get(k, v) for k, v in sort_list)
-
-                docs = sorted(docs, key=_sort_key)
+                # Stable multi-key sort honoring per-key direction
+                # (1/-1). Missing keys sort Mongo-style: first in
+                # ascending, last in descending.
+                for sort_key, direction in reversed(list(sort_list)):
+                    reverse = int(direction) < 0
+                    present = [
+                        doc for doc in docs if doc.get(sort_key) is not None
+                    ]
+                    missing = [
+                        doc for doc in docs if doc.get(sort_key) is None
+                    ]
+                    try:
+                        present.sort(
+                            key=lambda doc: doc.get(sort_key),
+                            reverse=reverse,
+                        )
+                    except TypeError:
+                        present.sort(
+                            key=lambda doc: str(doc.get(sort_key)),
+                            reverse=reverse,
+                        )
+                    docs = (
+                        missing + present if not reverse else present + missing
+                    )
 
             if limit != 0:
                 docs = docs[: abs(limit)]
@@ -1609,6 +1883,37 @@ class NeoSQLiteHandler:
         except Exception as e:
             logger.error(f"GridFS chunks find error: {e}")
             return request_id, {"ok": 0, "errmsg": str(e)}
+
+    def _handle_gridfs_distinct(
+        self,
+        request_id: int,
+        coll_name: str,
+        key: str,
+        query: dict[str, Any],
+        db: Connection,
+    ) -> tuple[int, dict[str, Any]]:
+        """Distinct over a GridFS collection via the bucket adapter."""
+        try:
+            adapter, _bucket = create_gridfs_adapter(db.db, coll_name)
+            if adapter is None:
+                return request_id, {
+                    "ok": 0,
+                    "errmsg": "Invalid GridFS collection",
+                }
+            filt = self._convert_objectids(query or {})
+            if coll_name.endswith(".chunks"):
+                docs = adapter.handle_chunks_find(filt)
+            else:
+                docs = adapter.handle_find(filt)
+            seen: list[Any] = []
+            for doc in docs:
+                value = doc.get(key) if isinstance(doc, dict) else None
+                if value not in seen:
+                    seen.append(value)
+            return request_id, {"ok": 1, "values": seen}
+        except Exception as exc:
+            logger.error(f"GridFS distinct error: {exc}")
+            return request_id, {"ok": 0, "errmsg": str(exc)}
 
     def _handle_gridfs_delete(
         self, request_id: int, cmd_copy: dict, db: Connection, coll_name: str
@@ -1707,6 +2012,152 @@ class NeoSQLiteHandler:
             logger.error(f"GridFS download error: {e}")
             return request_id, {"ok": 0, "errmsg": str(e)}
 
+    def _handle_bulk_write(
+        self, request_id: int, cmd: dict, command_doc: dict
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle the client-level bulkWrite command (MongoDB 8.0+).
+
+        Fans each op out to the target namespace's collection. Ops may span
+        databases; each runs under its own database session (cross-file
+        atomicity is unsupported and documented).
+        """
+        ns_info = cmd.get("nsInfo", [])
+        namespaces = [
+            entry.get("ns", "") if isinstance(entry, dict) else ""
+            for entry in ns_info
+        ]
+        ops = cmd.get("ops", [])
+        ordered = cmd.get("ordered", True)
+        errors_only = cmd.get("errorsOnly", False)
+
+        results: list[dict[str, Any]] = []
+        n_inserted = 0
+        n_matched = 0
+        n_modified = 0
+        n_upserted = 0
+        n_deleted = 0
+        n_errors = 0
+
+        for idx, op in enumerate(ops):
+            if not isinstance(op, dict):
+                continue
+            try:
+                if "insert" in op:
+                    ns_idx = int(op["insert"])
+                    doc = self._convert_objectids(op.get("document", {}))
+                    ns_db, _, ns_coll = namespaces[ns_idx].partition(".")
+                    target = self.get_database(ns_db or "test")
+                    sess = self._get_or_create_session(
+                        command_doc, target, ns_db or "test"
+                    )
+                    target[ns_coll].insert_one(doc, session=sess)
+                    n_inserted += 1
+                    if not errors_only:
+                        results.append({"ok": 1, "idx": idx, "n": 1})
+                elif "update" in op:
+                    ns_idx = int(op["update"])
+                    filt = self._convert_objectids(op.get("filter", {}))
+                    mods = self._convert_objectids(op.get("updateMods", {}))
+                    multi = bool(op.get("multi", False))
+                    upsert = bool(op.get("upsert", False))
+                    array_filters = op.get("arrayFilters")
+                    ns_db, _, ns_coll = namespaces[ns_idx].partition(".")
+                    target = self.get_database(ns_db or "test")
+                    sess = self._get_or_create_session(
+                        command_doc, target, ns_db or "test"
+                    )
+                    coll = target[ns_coll]
+                    is_replace = not any(
+                        k.startswith("$") for k in mods.keys()
+                    )
+                    if is_replace:
+                        res = coll.replace_one(
+                            filt, mods, upsert=upsert, session=sess
+                        )
+                    elif multi:
+                        res = coll.update_many(
+                            filt,
+                            mods,
+                            upsert=upsert,
+                            array_filters=array_filters,
+                            session=sess,
+                        )
+                    else:
+                        res = coll.update_one(
+                            filt,
+                            mods,
+                            upsert=upsert,
+                            array_filters=array_filters,
+                            session=sess,
+                        )
+                    n_matched += res.matched_count
+                    n_modified += res.modified_count
+                    if res.upserted_id is not None:
+                        n_matched += 1
+                        n_upserted += 1
+                    if not errors_only:
+                        entry: dict[str, Any] = {
+                            "ok": 1,
+                            "idx": idx,
+                            "n": res.matched_count,
+                            "nModified": res.modified_count,
+                        }
+                        if res.upserted_id is not None:
+                            entry["upserted"] = {"_id": res.upserted_id}
+                        results.append(entry)
+                elif "delete" in op:
+                    ns_idx = int(op["delete"])
+                    filt = self._convert_objectids(op.get("filter", {}))
+                    multi = bool(op.get("multi", False))
+                    ns_db, _, ns_coll = namespaces[ns_idx].partition(".")
+                    target = self.get_database(ns_db or "test")
+                    sess = self._get_or_create_session(
+                        command_doc, target, ns_db or "test"
+                    )
+                    coll = target[ns_coll]
+                    if multi:
+                        res = coll.delete_many(filt, session=sess)
+                    else:
+                        res = coll.delete_one(filt, session=sess)
+                    n_deleted += res.deleted_count
+                    if not errors_only:
+                        results.append(
+                            {"ok": 1, "idx": idx, "n": res.deleted_count}
+                        )
+                else:
+                    raise ValueError(f"Unsupported bulkWrite op: {sorted(op)}")
+            except Exception as exc:
+                err = _bulk_write_error(exc, idx)
+                n_errors += 1
+                results.append(
+                    {
+                        "ok": 0,
+                        "idx": idx,
+                        "code": err["code"],
+                        "errmsg": err["errmsg"],
+                        "n": 0,
+                    }
+                )
+                if ordered:
+                    break
+
+        return request_id, {
+            "ok": 1,
+            "cursor": {
+                "id": 0,
+                "ns": "admin.$cmd.bulkWrite",
+                "firstBatch": results,
+            },
+            "nErrors": n_errors,
+            "nInserted": n_inserted,
+            "nMatched": n_matched,
+            "nModified": n_modified,
+            "nUpserted": n_upserted,
+            "nDeleted": n_deleted,
+            "error": None,
+            "writeErrors": [],
+        }
+
     def _handle_delete(
         self,
         request_id: int,
@@ -1735,21 +2186,32 @@ class NeoSQLiteHandler:
             command_doc, db, db_name
         )
         deletes = command_doc.get("deletes", [])
+        ordered = command_doc.get("ordered", True)
 
         removed = 0
-        for delete in deletes:
+        write_errors: list[dict[str, Any]] = []
+        for idx, delete in enumerate(deletes):
             q = delete.get("q", {})
             q = self._convert_objectids(q)
             limit = delete.get("limit", 0)
 
-            result = (
-                coll.delete_many(q, session=session_to_use)
-                if limit == 0
-                else coll.delete_one(q, session=session_to_use)
-            )
+            try:
+                result = (
+                    coll.delete_many(q, session=session_to_use)
+                    if limit == 0
+                    else coll.delete_one(q, session=session_to_use)
+                )
+            except Exception as exc:
+                write_errors.append(_bulk_write_error(exc, idx))
+                if ordered:
+                    break
+                continue
             removed += result.deleted_count
 
-        return request_id, {"ok": 1, "n": removed}
+        response = {"ok": 1, "n": removed}
+        if write_errors:
+            response["writeErrors"] = write_errors
+        return request_id, response
 
     def _handle_change_stream(
         self,

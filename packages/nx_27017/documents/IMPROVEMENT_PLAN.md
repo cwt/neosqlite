@@ -106,3 +106,38 @@ Missed / broken (priority order):
   `run-api-nx-vs-mongo.sh --with-podman --replset` (host-networked
   podman container, verified electing primary), pending only the
   tx/changestream differential cases themselves.
+
+## 7. P1 implementation notes (done 2026-10-01)
+
+- Bulk: per-op `writeErrors` ({index, code 11000/8}) with ordered stop
+  vs unordered collect on insert/update/delete; `upserted: [{index,
+  _id}]`; wire `n` counts upserts as matched (else PyMongo derives
+  `nMatched: -1`); client-level `bulkWrite` verb implemented (ops may
+  arrive as document-sequence payload, namespaces split at first dot);
+  `MAX_WIRE_VERSION` 21 -> 25 (exactly what client bulkWrite gates on).
+  Differential `== bulk ==` green vs 8.2.12.
+- Search: `createSearchIndexes` / `updateSearchIndex` /
+  `dropSearchIndex` mapped onto NeoSQLite FTS (Atlas definition
+  `mappings.fields` -> per-field indexes; explicit ok:0 when no field
+  derivable); `$listSearchIndexes` aggregation stage served from FTS
+  metadata. NX beats community MongoDB here (which errors on all of
+  these); `$text` search verified over the wire.
+- TTL: `expireAfterSeconds` round-trips via createIndexes/listIndexes;
+  `_auto_purge_ttl()` now also runs on `count_documents` / `distinct` /
+  `aggregate` (was find-only), so expiry is observable on count paths.
+  Sweep timing itself remains best-effort on both sides.
+- Options: `arrayFilters` forwarded on update (+bulkWrite, was already
+  on findAndModify/bulk paths); `count` honors limit/skip; everything
+  else verified accept-and-ignore parity live (collation, comment,
+  valid hints, maxTimeMS). Known leniencies: invalid hints (NX lenient,
+  real errors), non-default-locale collation order, unenforced
+  maxTimeMS, nested-field arrayFilters (core gap, documented in core
+  tests). Raw-batch cursors have no wire verb on either side: N/A.
+- GridFS: dotted `fs.files`/`fs.chunks` routed for drop (idempotent,
+  files-only drop leaves chunks orphaned like real), distinct, count,
+  and direction-aware find sort (was ascending-only: broke
+  `get_last_version`); adapter schema-ensure tolerates partial bucket
+  state. Legacy put/get/list/delete/versions and bucket
+  upload/download/rename/delete verified identical live. Generic dotted
+  collection names remain unsupported (core `quote_table_name` rejects
+  dots; GridFS underscore tables are unaffected).

@@ -993,6 +993,7 @@ class Collection:
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.count_documents`.
         """
+        self._auto_purge_ttl()
         return self.query_engine.count_documents(filter, session=session)
 
     def estimated_document_count(
@@ -1118,6 +1119,7 @@ class Collection:
         Returns:
             An AggregationCursor instance
         """
+        self._auto_purge_ttl()
         return AggregationCursor(
             self,
             pipeline,
@@ -1151,6 +1153,7 @@ class Collection:
         This is a delegating method. For implementation details, see the
         core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.distinct`.
         """
+        self._auto_purge_ttl()
         return self.query_engine.distinct(key, filter, session=session)
 
     # --- Bulk Write methods delegated to QueryEngine ---
