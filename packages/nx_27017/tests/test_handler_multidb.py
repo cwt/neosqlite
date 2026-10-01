@@ -3,8 +3,9 @@
 import os
 
 import pytest
-from neosqlite import Connection
 from nx_27017.nx_27017 import NeoSQLiteHandler
+
+from neosqlite import Connection
 
 
 def _insert(handler, db_name, coll, docs, req=1):
@@ -96,7 +97,9 @@ class TestMultiFileIsolation:
         assert by_name["one"]["sizeOnDisk"] == os.path.getsize(
             tmp_path / "one.db"
         )
-        assert res["totalSize"] == sum(d["sizeOnDisk"] for d in by_name.values())
+        assert res["totalSize"] == sum(
+            d["sizeOnDisk"] for d in by_name.values()
+        )
 
     def test_invalid_db_name_rejected(self, mhandler):
         with pytest.raises(ValueError):
@@ -218,3 +221,191 @@ class TestLegacySingleFileCompat:
             assert coll.count_documents({}) == 1
         finally:
             h.close_all()
+
+
+class TestOpenDbLruCap:
+    """Files mode caps open connections (LRU-close), memory mode must not."""
+
+    def test_cap_and_eviction_roundtrip(self, mhandler, tmp_path):
+        _insert(mhandler, "keep0", "c", [{"x": 1}])
+        for i in range(150):
+            mhandler.get_database(f"bulk{i}")
+        assert len(mhandler._conns) <= 100
+        assert "admin" in mhandler._conns
+        # keep0 was evicted but its file survives and reopens with data.
+        assert "keep0" not in mhandler._conns
+        assert os.path.isfile(tmp_path / "keep0.db")
+        _, r = _find(mhandler, "keep0", "c")
+        assert len(r["cursor"]["firstBatch"]) == 1
+
+    def test_list_databases_includes_evicted(self, mhandler, tmp_path):
+        _insert(mhandler, "keep0", "c", [{"x": 1}])
+        for i in range(150):
+            mhandler.get_database(f"bulk{i}")
+        msg = {"request_id": 5, "sections": [("body", {"listDatabases": 1})]}
+        _, res = mhandler.handle_command(msg)
+        names = {d["name"] for d in res["databases"]}
+        assert "keep0" in names
+
+    def test_admin_never_evicted(self, mhandler):
+        admin_conn = mhandler._conns["admin"]
+        for i in range(150):
+            mhandler.get_database(f"bulk{i}")
+        assert mhandler._conns["admin"] is admin_conn
+
+    def test_db_with_open_tx_not_evicted(self, mhandler):
+        _insert(mhandler, "txa", "c", [{"x": 0}])
+        conn_a = mhandler._conns["txa"]
+        lsid = {"id": {"$oid": "a" * 24}}
+        _, ir = mhandler.handle_insert(
+            {
+                "request_id": 1,
+                "sections": [
+                    (
+                        "body",
+                        {
+                            "insert": "c",
+                            "$db": "txa",
+                            "lsid": lsid,
+                            "startTransaction": True,
+                        },
+                    ),
+                    ("payload_docs", [{"x": 1}]),
+                ],
+            }
+        )
+        assert ir["ok"] == 1
+        for i in range(150):
+            mhandler.get_database(f"bulk{i}")
+        assert len(mhandler._conns) <= 100
+        assert mhandler._conns.get("txa") is conn_a
+
+    def test_memory_mode_never_evicts(self):
+        h = NeoSQLiteHandler(":memory:")
+        try:
+            conns = [h.get_database(f"m{i}") for i in range(120)]
+            assert len(h._conns) >= 120
+            for conn in conns:
+                assert any(c is conn for c in h._conns.values())
+        finally:
+            h.close_all()
+
+
+class TestCrossDbTransactionGuard:
+    """Same lsid may not operate on another db while a tx is open."""
+
+    def test_cross_db_write_rejected(self, mhandler):
+        lsid = {"id": {"$oid": "b" * 24}}
+        _, ir = mhandler.handle_insert(
+            {
+                "request_id": 1,
+                "sections": [
+                    (
+                        "body",
+                        {
+                            "insert": "c",
+                            "$db": "dbA",
+                            "lsid": lsid,
+                            "startTransaction": True,
+                        },
+                    ),
+                    ("payload_docs", [{"x": 1}]),
+                ],
+            }
+        )
+        assert ir["ok"] == 1
+        with pytest.raises(Exception, match="[Cc]ross-database"):
+            mhandler.handle_insert(
+                {
+                    "request_id": 2,
+                    "sections": [
+                        ("body", {"insert": "c", "$db": "dbB", "lsid": lsid}),
+                        ("payload_docs", [{"x": 2}]),
+                    ],
+                }
+            )
+        # The second insert never happened.
+        _, rb = _find(mhandler, "dbB", "c")
+        assert rb["cursor"]["firstBatch"] == []
+        # And the first db's tx is still open/committable.
+        _, cr = mhandler.handle_command(
+            {
+                "request_id": 3,
+                "sections": [
+                    (
+                        "body",
+                        {"commitTransaction": 1, "$db": "admin", "lsid": lsid},
+                    )
+                ],
+            }
+        )
+        assert cr == {"ok": 1}
+        coll = mhandler.get_database("dbA")["c"]
+        assert coll.count_documents({}) == 1
+
+    def test_cross_db_find_rejected(self, mhandler):
+        lsid = {"id": {"$oid": "c" * 24}}
+        _, ir = mhandler.handle_insert(
+            {
+                "request_id": 1,
+                "sections": [
+                    (
+                        "body",
+                        {
+                            "insert": "c",
+                            "$db": "dbA",
+                            "lsid": lsid,
+                            "startTransaction": True,
+                        },
+                    ),
+                    ("payload_docs", [{"x": 1}]),
+                ],
+            }
+        )
+        assert ir["ok"] == 1
+        with pytest.raises(Exception, match="[Cc]ross-database"):
+            mhandler.handle_command(
+                {
+                    "request_id": 2,
+                    "sections": [
+                        ("body", {"find": "c", "$db": "dbB", "lsid": lsid})
+                    ],
+                }
+            )
+
+    def test_single_file_mode_keeps_shared_scope(self, tmp_path):
+        """Legacy single-file mode shares one connection; same lsid
+        transactions span logical dbs and must not error."""
+        h = NeoSQLiteHandler(str(tmp_path / "legacy.db"))
+        try:
+            lsid = {"id": {"$oid": "d" * 24}}
+            _, ir = h.handle_insert(
+                {
+                    "request_id": 1,
+                    "sections": [
+                        (
+                            "body",
+                            {
+                                "insert": "c1",
+                                "$db": "db1",
+                                "lsid": lsid,
+                                "startTransaction": True,
+                            },
+                        ),
+                        ("payload_docs", [{"x": 1}]),
+                    ],
+                }
+            )
+            assert ir["ok"] == 1
+            _, ir2 = h.handle_insert(
+                {
+                    "request_id": 2,
+                    "sections": [
+                        ("body", {"insert": "c2", "$db": "db2", "lsid": lsid}),
+                        ("payload_docs", [{"x": 2}]),
+                    ],
+                }
+            )
+            assert ir2["ok"] == 1
+        finally:
+            h.conn.close()

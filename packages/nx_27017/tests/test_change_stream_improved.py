@@ -124,8 +124,9 @@ def test_change_stream_lifecycle_and_getmore(handler):
 
 def test_change_stream_manager_pull_and_cleanup(tmp_path):
     """Trigger-backed tracking: writes via NeoSQLite appear in pull()."""
-    from neosqlite import Connection
     from nx_27017.changestream import ChangeStreamManager
+
+    from neosqlite import Connection
 
     conn = Connection(str(tmp_path / "cs.db"))
     try:
@@ -179,9 +180,7 @@ def _open_stream(handler, coll, db="test", pipeline=None, req=1):
 def _getmore(handler, cid, coll, db="test", req=2):
     msg = {
         "request_id": req,
-        "sections": [
-            ("body", {"getMore": cid, "collection": coll, "$db": db})
-        ],
+        "sections": [("body", {"getMore": cid, "collection": coll, "$db": db})],
     }
     _, res = handler.handle_command(msg)
     assert res["ok"] == 1
@@ -238,9 +237,7 @@ def test_match_filters_operation_types(handler):
                     "body",
                     {
                         "update": "users",
-                        "updates": [
-                            {"q": {"_id": 1}, "u": {"$set": {"v": 1}}}
-                        ],
+                        "updates": [{"q": {"_id": 1}, "u": {"$set": {"v": 1}}}],
                         "$db": "test",
                     },
                 )

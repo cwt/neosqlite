@@ -18,7 +18,6 @@ import json
 import logging
 import threading
 import time
-import uuid
 from datetime import datetime, timezone
 from itertools import count
 from typing import Any, Callable
@@ -273,15 +272,15 @@ class ChangeStreamManager:
             )
             if tracker is not None:
                 watermark = self._watermark_now(tracker)
-        token = (
-            resume_after if resume_after is not None else start_after
-        )
+        token = resume_after if resume_after is not None else start_after
         if token is not None:
             rowid = _wire_rowid(token)
             if rowid is not None:
                 watermark = rowid
             else:
-                logger.debug("Unrecognized resume token %r; starting now", token)
+                logger.debug(
+                    "Unrecognized resume token %r; starting now", token
+                )
         if start_at_operation_time is not None:
             logger.debug(
                 "start_at_operation_time has no operation-time concept in "
@@ -301,6 +300,18 @@ class ChangeStreamManager:
         with self._lock:
             self._streams[stream._id] = stream
         return stream
+
+    def has_activity(self, db_name: str) -> bool:
+        """True while any watch stream or tracker exists for a database.
+
+        Used by the connection-cache LRU: a live stream reads the
+        database on getMore, so its connection must not be evicted or
+        closed under it.
+        """
+        with self._lock:
+            return any(
+                stream.db_name == db_name for stream in self._streams.values()
+            ) or any(key[0] == db_name for key in self._trackers)
 
     def get_stream(self, stream_id: int) -> ChangeStreamCursor | None:
         """Get a change stream by ID."""
@@ -393,9 +404,7 @@ class ChangeStreamManager:
     def _translate_row(
         self, stream: ChangeStreamCursor, rowid: int, row: Any
     ) -> dict[str, Any] | None:
-        _rid, operation, document_id, document_data, document_id_value = row[
-            :5
-        ]
+        _rid, operation, document_id, document_data, document_id_value = row[:5]
         actual_id = _restore_id(document_id_value, document_id)
         full_doc = None
         if stream.full_document != "off" and document_data:

@@ -264,16 +264,20 @@ class TestWriteConcernMapping:
 
     def test_w0_maps_to_synchronous_off(self, handler):
         assert self._insert_wc(handler, {"w": 0})["ok"] == 1
-        level = handler.get_database("test").db.execute(
-            "PRAGMA synchronous"
-        ).fetchone()[0]
+        level = (
+            handler.get_database("test")
+            .db.execute("PRAGMA synchronous")
+            .fetchone()[0]
+        )
         assert level == 0
 
     def test_journaled_maps_to_full(self, handler):
         assert self._insert_wc(handler, {"j": True}, req=21)["ok"] == 1
-        level = handler.get_database("test").db.execute(
-            "PRAGMA synchronous"
-        ).fetchone()[0]
+        level = (
+            handler.get_database("test")
+            .db.execute("PRAGMA synchronous")
+            .fetchone()[0]
+        )
         assert level == 2
 
     def test_majority_accepted_without_effect(self, handler):

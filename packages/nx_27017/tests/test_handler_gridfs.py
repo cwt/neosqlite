@@ -263,18 +263,12 @@ class TestGridFSDottedRouting:
         return res
 
     def test_drop_dotted_collections(self, handler):
-        res = self._cmd(
-            handler, {"drop": "fs.files", "$db": "test"}, req=11
-        )
+        res = self._cmd(handler, {"drop": "fs.files", "$db": "test"}, req=11)
         assert res == {"ok": 1}
-        res = self._cmd(
-            handler, {"drop": "fs.chunks", "$db": "test"}, req=12
-        )
+        res = self._cmd(handler, {"drop": "fs.chunks", "$db": "test"}, req=12)
         assert res == {"ok": 1}
         # Idempotent like real MongoDB.
-        res = self._cmd(
-            handler, {"drop": "fs.files", "$db": "test"}, req=13
-        )
+        res = self._cmd(handler, {"drop": "fs.files", "$db": "test"}, req=13)
         assert res == {"ok": 1}
 
     def test_distinct_filename(self, handler):
@@ -305,3 +299,130 @@ class TestGridFSDottedRouting:
         docs = res["cursor"]["firstBatch"]
         dates = [doc["uploadDate"] for doc in docs]
         assert dates == sorted(dates, reverse=True)
+
+    def test_delete_by_filename_removes_files_and_chunks(self, handler):
+        """Legacy GridFS.delete_by_name: fs.files delete with a
+        filename filter removes every version plus its chunks."""
+        from neosqlite.gridfs import GridFSBucket
+
+        db = handler.get_database("test")
+        bucket = GridFSBucket(db.db, bucket_name="fs")
+        bucket.upload_from_stream("delme.txt", b"bye")
+        chunk_count_before = db.db.execute(
+            "SELECT COUNT(*) FROM fs_chunks"
+        ).fetchone()[0]
+        assert chunk_count_before > 0
+
+        res = self._cmd(
+            handler,
+            {
+                "delete": "fs.files",
+                "deletes": [{"q": {"filename": "delme.txt"}, "limit": 0}],
+                "$db": "test",
+            },
+            req=16,
+        )
+        assert res["ok"] == 1
+        assert res["n"] >= 1
+
+        remaining_files = self._cmd(
+            handler,
+            {
+                "find": "fs.files",
+                "filter": {"filename": "delme.txt"},
+                "$db": "test",
+            },
+            req=17,
+        )
+        assert remaining_files["cursor"]["firstBatch"] == []
+        assert bucket.list() == ["data.json", "test.txt"]
+
+    def test_chunks_delete_by_files_id(self, handler):
+        """PyMongo chunk cleanup deletes fs.chunks rows by files_id."""
+        db = handler.get_database("test")
+        find_res = self._cmd(
+            handler,
+            {
+                "find": "fs.files",
+                "filter": {"filename": "test.txt"},
+                "$db": "test",
+            },
+            req=18,
+        )
+        file_doc = find_res["cursor"]["firstBatch"][0]
+        file_id = file_doc["_id"]
+        before = db.db.execute(
+            "SELECT COUNT(*) FROM fs_chunks WHERE files_id = ?",
+            (
+                db.db.execute(
+                    "SELECT id FROM fs_files WHERE _id = ?", (str(file_id),)
+                ).fetchone()[0],
+            ),
+        ).fetchone()[0]
+        assert before > 0
+
+        res = self._cmd(
+            handler,
+            {
+                "delete": "fs.chunks",
+                "deletes": [{"q": {"files_id": file_id}, "limit": 0}],
+                "$db": "test",
+            },
+            req=19,
+        )
+        assert res["ok"] == 1
+        assert res["n"] == before
+
+    def test_upload_with_id_via_wire(self, handler):
+        """bucket.upload_with_id == insert files doc, then chunks."""
+        from neosqlite.gridfs import GridFSBucket
+        from neosqlite.objectid import ObjectId
+
+        oid_hex = "e" * 24
+        _, files_res = handler.handle_insert(
+            {
+                "request_id": 20,
+                "sections": [
+                    ("body", {"insert": "fs.files", "$db": "test"}),
+                    (
+                        "payload_docs",
+                        [
+                            {
+                                "_id": {"$oid": oid_hex},
+                                "filename": "withid.txt",
+                                "length": 5,
+                                "chunkSize": 261120,
+                                "uploadDate": "2026-10-01T00:00:00Z",
+                                "md5": None,
+                                "metadata": {"note": "wire"},
+                            }
+                        ],
+                    ),
+                ],
+            }
+        )
+        assert files_res["ok"] == 1
+        _, chunks_res = handler.handle_insert(
+            {
+                "request_id": 21,
+                "sections": [
+                    ("body", {"insert": "fs.chunks", "$db": "test"}),
+                    (
+                        "payload_docs",
+                        [
+                            {
+                                "files_id": {"$oid": oid_hex},
+                                "n": 0,
+                                "data": b"Hello",
+                            }
+                        ],
+                    ),
+                ],
+            }
+        )
+        assert chunks_res["ok"] == 1
+
+        db = handler.get_database("test")
+        bucket = GridFSBucket(db.db, bucket_name="fs")
+        stream = bucket.open_download_stream(ObjectId(oid_hex))
+        assert stream.read() == b"Hello"

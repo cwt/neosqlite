@@ -7,6 +7,7 @@ import re
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from datetime import datetime, timezone
 from itertools import count
 from typing import Any
@@ -49,6 +50,22 @@ _data_cursor_id_counter = count(10**12)
 # MongoDB server default of up to 101 documents in the first batch).
 _DEFAULT_BATCH_SIZE = 101
 
+# Cap on simultaneously open per-file database connections (files mode).
+# Least-recently-used databases are closed on demand; their files stay on
+# disk and are reopened transparently. Memory mode never evicts (closing
+# an in-memory database would destroy its data).
+_MAX_OPEN_DBS = 100
+
+
+class CrossDBTransactionError(ValueError):
+    """A transactional session touched a database other than its own.
+
+    SQLite files cannot share a transaction, so a session (lsid) with an
+    open transaction may only operate on the database where the
+    transaction began; anything else gets an explicit error instead of
+    silently executing outside the transaction.
+    """
+
 
 def _search_index_fields(spec: dict[str, Any]) -> list[str]:
     """Extract FTS field names from an Atlas-style search index spec.
@@ -83,9 +100,7 @@ def _bulk_write_error(exc: Exception, index: int) -> dict[str, Any]:
     from neosqlite._sqlite import sqlite3
 
     message = str(exc)
-    if "UNIQUE" in message.upper() or isinstance(
-        exc, sqlite3.IntegrityError
-    ):
+    if "UNIQUE" in message.upper() or isinstance(exc, sqlite3.IntegrityError):
         code = 11000
     else:
         code = 8
@@ -264,7 +279,9 @@ class NeoSQLiteHandler:
             self._data_dir = None
             self.db_path = db_path
 
-        self._conns: dict[str, Connection] = {}
+        # Open per-file connections. In files mode this doubles as an
+        # LRU ring (access order); see _evict_lru_locked for the cap.
+        self._conns: OrderedDict[str, Connection] = OrderedDict()
         if self._mode == "single":
             if db_path in (":memory:", "memory"):
                 self.conn = Connection(
@@ -336,7 +353,65 @@ class NeoSQLiteHandler:
                 conn = self._open_db_conn(db_name)
                 self._conns[db_name] = conn
                 self.databases[db_name] = conn
+                self._evict_lru_locked()
+            else:
+                self._conns.move_to_end(db_name)
             return conn
+
+    def _conn_is_busy(self, db_name: str) -> bool:
+        """True when a database must not be evicted (open tx or watch)."""
+        with self._sessions_lock:
+            if any(
+                key[1] == db_name and session.in_transaction
+                for key, session in self._sessions.items()
+            ):
+                return True
+        return self._change_stream_manager.has_activity(db_name)
+
+    def _evict_db_locked(self, db_name: str) -> None:
+        """Close and forget one evicted connection (holds _dict_lock)."""
+        conn = self._conns.pop(db_name, None)
+        self.databases.pop(db_name, None)
+        with self._sessions_lock:
+            for sess_key in [
+                existing
+                for existing in self._sessions
+                if existing[1] == db_name
+            ]:
+                idle_session = self._sessions.pop(sess_key, None)
+                if idle_session is not None:
+                    try:
+                        idle_session.end_session()
+                    except Exception:
+                        pass
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def _evict_lru_locked(self) -> None:
+        """Cap open file connections, evicting least-recently-used dbs.
+
+        Memory mode never evicts: closing a ``:memory:`` database would
+        destroy its data, and listDatabases scans the cache. Called with
+        ``_dict_lock`` held.
+        """
+        if self._mode != "files":
+            return
+        while len(self._conns) > _MAX_OPEN_DBS:
+            victim = None
+            for db_name in self._conns:
+                if db_name == "admin" or self._conn_is_busy(db_name):
+                    continue
+                victim = db_name
+                break
+            if victim is None:
+                # Every logged database is in use (open transaction or
+                # active change stream): stay over the cap until it
+                # drains rather than dropping live state.
+                return
+            self._evict_db_locked(victim)
 
     def close_all(self) -> None:
         """Close every open database connection (multi-DB shutdown)."""
@@ -531,9 +606,7 @@ class NeoSQLiteHandler:
         except Exception as exc:
             logger.debug("writeConcern apply skipped: %s", exc)
 
-    def _find_session(
-        self, session_id: str, db_name: str
-    ) -> Any | None:
+    def _find_session(self, session_id: str, db_name: str) -> Any | None:
         """Find a session for (lsid, db), falling back to any db (compat)."""
         scope = self._session_scope(db_name)
         with self._sessions_lock:
@@ -548,6 +621,29 @@ class NeoSQLiteHandler:
                     if sid == session_id:
                         return sess
             return None
+
+    def _reject_cross_db_tx(self, session_id: str, scope: str) -> None:
+        """Fail explicitly when an lsid with an open tx touches another db.
+
+        SQLite files cannot share a transaction, so a transactional
+        session may only operate on the database where its transaction
+        began. An explicit error replaces silently executing outside the
+        transaction. (holds ``_sessions_lock``.)
+        """
+        if self._mode == "single" or not scope:
+            return
+        for (other_sid, other_scope), session in self._sessions.items():
+            if (
+                other_sid == session_id
+                and other_scope
+                and other_scope != scope
+                and session.in_transaction
+            ):
+                raise CrossDBTransactionError(
+                    "Cross-database transactions are not supported: "
+                    f"transaction open on {other_scope!r}, "
+                    f"operation targets {scope!r}"
+                )
 
     def _get_or_create_session(
         self,
@@ -567,7 +663,9 @@ class NeoSQLiteHandler:
         if not session_id:
             return None
         with self._sessions_lock:
-            key = (session_id, self._session_scope(db_name))
+            scope = self._session_scope(db_name)
+            self._reject_cross_db_tx(session_id, scope)
+            key = (session_id, scope)
             if key not in self._sessions:
                 owner = db if db is not None else self.conn
                 session = owner.start_session()
@@ -676,6 +774,10 @@ class NeoSQLiteHandler:
 
         db = self.get_database(db_name)
 
+        # Session/tx resolution happens first so a cross-DB violation
+        # errors before any table gets created as a side effect.
+        session_to_use = self._get_or_create_session(command_doc, db, db_name)
+
         coll_name = command_doc.get("insert")
         if not coll_name:
             for key in command_doc:
@@ -745,9 +847,6 @@ class NeoSQLiteHandler:
             self._convert_objectids(doc) for doc in docs_to_insert
         ]
 
-        session_to_use = self._get_or_create_session(
-            command_doc, db, db_name
-        )
         self._apply_write_concern(db, db_name, command_doc.get("writeConcern"))
 
         if docs_to_insert:
@@ -830,9 +929,9 @@ class NeoSQLiteHandler:
             session_id = f"session_{uuid.uuid4().hex}"
             session = db.start_session()
             with self._sessions_lock:
-                self._sessions[
-                    (session_id, self._session_scope(db_name))
-                ] = session
+                self._sessions[(session_id, self._session_scope(db_name))] = (
+                    session
+                )
             return request_id, {
                 "ok": 1,
                 "session": {"id": {"$oid": session_id}},
@@ -890,6 +989,17 @@ class NeoSQLiteHandler:
                                 except Exception:
                                     pass
             return request_id, {"ok": 1}
+
+        # Explicit cross-DB transaction rejection: a session (lsid) with
+        # an open transaction may only operate on its own database.
+        lsid_doc = command_doc.get("lsid")
+        if lsid_doc and self._mode != "single":
+            guard_session_id = _extract_session_id(lsid_doc)
+            if guard_session_id:
+                with self._sessions_lock:
+                    self._reject_cross_db_tx(
+                        guard_session_id, self._session_scope(db_name)
+                    )
 
         cmd_copy = dict(command_doc)
 
@@ -961,7 +1071,7 @@ class NeoSQLiteHandler:
                 self.conn.drop_database()
                 with self._dict_lock:
                     self.databases = {"admin": self.conn}
-                    self._conns = {"admin": self.conn}
+                    self._conns = OrderedDict([("admin", self.conn)])
             else:
                 try:
                     _sanitize_db_name(dropped_name)
@@ -1234,9 +1344,7 @@ class NeoSQLiteHandler:
             session_to_use = self._get_or_create_session(
                 command_doc, db, db_name
             )
-            self._apply_write_concern(
-                db, db_name, cmd_copy.get("writeConcern")
-            )
+            self._apply_write_concern(db, db_name, cmd_copy.get("writeConcern"))
 
             if remove:
                 try:
@@ -1316,9 +1424,7 @@ class NeoSQLiteHandler:
             session_to_use = self._get_or_create_session(
                 command_doc, db, db_name
             )
-            self._apply_write_concern(
-                db, db_name, cmd_copy.get("writeConcern")
-            )
+            self._apply_write_concern(db, db_name, cmd_copy.get("writeConcern"))
             ordered = cmd_copy.get("ordered", True)
             matched = 0
             modified = 0
@@ -1373,7 +1479,7 @@ class NeoSQLiteHandler:
                     upserted.append(
                         {"index": idx, "_id": upd_result.upserted_id}
                     )
-            response = {
+            response: dict[str, Any] = {
                 "ok": 1,
                 "n": matched,
                 "nModified": modified,
@@ -1468,9 +1574,7 @@ class NeoSQLiteHandler:
                 limit = cmd_copy.pop("limit", None)
                 skip = cmd_copy.pop("skip", None)
                 if self._is_gridfs_collection(coll_name):
-                    adapter, _bucket = create_gridfs_adapter(
-                        db.db, coll_name
-                    )
+                    adapter, _bucket = create_gridfs_adapter(db.db, coll_name)
                     if adapter is None:
                         return request_id, {
                             "ok": 0,
@@ -1657,9 +1761,7 @@ class NeoSQLiteHandler:
             coll_name = cmd_copy.get("listIndexes") or cmd_copy.get(
                 "listindexes"
             )
-            return self._handle_list_indexes(
-                request_id, db, coll_name, db_name
-            )
+            return self._handle_list_indexes(request_id, db, coll_name, db_name)
 
         if "listSearchIndexes" in cmd_copy or "listsearchindexes" in cmd_copy:
             coll_name = cmd_copy.get("listSearchIndexes") or cmd_copy.get(
@@ -1808,6 +1910,45 @@ class NeoSQLiteHandler:
                 "cursorsAlive": [],
             }
 
+        if "vacuum" in cmd_copy:
+            return request_id, db.command("vacuum")
+
+        if "compact" in cmd_copy or "compactcollection" in cmd_copy:
+            coll_name = cmd_copy.pop("compact", None) or cmd_copy.pop(
+                "compactcollection", None
+            )
+            kwargs: dict[str, Any] = {}
+            if "dryRun" in cmd_copy:
+                kwargs["dryRun"] = bool(cmd_copy.pop("dryRun"))
+            if "freeSpaceTargetMB" in cmd_copy:
+                kwargs["freeSpaceTargetMB"] = cmd_copy.pop("freeSpaceTargetMB")
+            try:
+                result = db.command("compact", coll_name, **kwargs)
+            except Exception as exc:
+                return request_id, {"ok": 0, "errmsg": str(exc)}
+            return request_id, result
+
+        if "validate" in cmd_copy:
+            coll_name = cmd_copy.pop("validate")
+            if not isinstance(coll_name, str) or not coll_name:
+                return request_id, {
+                    "ok": 0,
+                    "errmsg": "validate requires a collection name",
+                }
+            return request_id, db.command("validate", coll_name)
+
+        if "reindex" in cmd_copy or "reIndex" in cmd_copy:
+            coll_name = cmd_copy.pop("reindex", None) or cmd_copy.pop(
+                "reIndex", None
+            )
+            if isinstance(coll_name, int) and coll_name == 1:
+                # {"reIndex": 1} shape: rebuild every index in the file.
+                coll_name = None
+            try:
+                return request_id, db.command("reindex", coll_name)
+            except Exception as exc:
+                return request_id, {"ok": 0, "errmsg": str(exc)}
+
         logger.info(f"Calling db.command with: {cmd_copy}")
         cmd_result = db.command(cmd_copy)
         logger.info(
@@ -1862,19 +2003,22 @@ class NeoSQLiteHandler:
                     present = [
                         doc for doc in docs if doc.get(sort_key) is not None
                     ]
-                    missing = [
-                        doc for doc in docs if doc.get(sort_key) is None
-                    ]
+                    missing = [doc for doc in docs if doc.get(sort_key) is None]
+
+                    def sort_value(
+                        doc: dict[str, Any], key: str = sort_key
+                    ) -> Any:
+                        return doc.get(key)
+
+                    def sort_value_str(
+                        doc: dict[str, Any], key: str = sort_key
+                    ) -> str:
+                        return str(doc.get(key))
+
                     try:
-                        present.sort(
-                            key=lambda doc: doc.get(sort_key),
-                            reverse=reverse,
-                        )
+                        present.sort(key=sort_value, reverse=reverse)
                     except TypeError:
-                        present.sort(
-                            key=lambda doc: str(doc.get(sort_key)),
-                            reverse=reverse,
-                        )
+                        present.sort(key=sort_value_str, reverse=reverse)
                     docs = (
                         missing + present if not reverse else present + missing
                     )
@@ -1973,11 +2117,14 @@ class NeoSQLiteHandler:
     def _handle_gridfs_delete(
         self, request_id: int, cmd_copy: dict, db: Connection, coll_name: str
     ) -> tuple[int, dict[str, Any]]:
-        """Handle delete command on GridFS collections."""
+        """Handle delete command on GridFS collections.
+
+        ``fs.files`` deletes match ``_id`` or ``filename`` (filename
+        deletes remove every version, like legacy ``delete_by_name``);
+        ``fs.chunks`` deletes match ``files_id``.
+        """
         logger.debug(f"_handle_gridfs_delete: coll_name={coll_name}")
-        if coll_name.endswith(".chunks"):
-            return request_id, {"ok": 1, "n": 0}
-        if not coll_name.endswith(".files"):
+        if not coll_name.endswith((".files", ".chunks")):
             return request_id, {
                 "ok": 0,
                 "errmsg": "GridFS delete only supported on .files collections",
@@ -1992,15 +2139,29 @@ class NeoSQLiteHandler:
                 }
 
             deletes = cmd_copy.get("deletes", [])
+            if coll_name.endswith(".chunks"):
+                chunk_file_ids = []
+                for delete in deletes:
+                    files_id = (delete.get("q") or {}).get("files_id")
+                    if isinstance(files_id, dict) and "$eq" in files_id:
+                        files_id = files_id["$eq"]
+                    if files_id:
+                        chunk_file_ids.append(files_id)
+                return request_id, adapter.handle_chunks_delete(chunk_file_ids)
+
             file_ids = []
+            filenames = []
             for delete in deletes:
-                file_id = delete.get("q", {}).get("_id")
+                query = delete.get("q", {}) or {}
+                file_id = query.get("_id")
                 if isinstance(file_id, dict) and "$eq" in file_id:
                     file_id = file_id["$eq"]
                 if file_id:
                     file_ids.append(file_id)
+                elif query.get("filename"):
+                    filenames.append(query["filename"])
 
-            result = adapter.handle_delete(file_ids)
+            result = adapter.handle_delete(file_ids, filenames)
             return request_id, result
         except Exception as e:
             logger.error(f"GridFS delete error: {e}")
@@ -2128,9 +2289,7 @@ class NeoSQLiteHandler:
                         target, ns_db or "test", cmd.get("writeConcern")
                     )
                     coll = target[ns_coll]
-                    is_replace = not any(
-                        k.startswith("$") for k in mods.keys()
-                    )
+                    is_replace = not any(k.startswith("$") for k in mods.keys())
                     if is_replace:
                         res = coll.replace_one(
                             filt, mods, upsert=upsert, session=sess
@@ -2180,13 +2339,13 @@ class NeoSQLiteHandler:
                     )
                     coll = target[ns_coll]
                     if multi:
-                        res = coll.delete_many(filt, session=sess)
+                        del_res = coll.delete_many(filt, session=sess)
                     else:
-                        res = coll.delete_one(filt, session=sess)
-                    n_deleted += res.deleted_count
+                        del_res = coll.delete_one(filt, session=sess)
+                    n_deleted += del_res.deleted_count
                     if not errors_only:
                         results.append(
-                            {"ok": 1, "idx": idx, "n": res.deleted_count}
+                            {"ok": 1, "idx": idx, "n": del_res.deleted_count}
                         )
                 else:
                     raise ValueError(f"Unsupported bulkWrite op: {sorted(op)}")
@@ -2246,12 +2405,8 @@ class NeoSQLiteHandler:
             return request_id, {"ok": 0, "errmsg": "No collection specified"}
 
         coll = db[coll_name]
-        session_to_use = self._get_or_create_session(
-            command_doc, db, db_name
-        )
-        self._apply_write_concern(
-            db, db_name, command_doc.get("writeConcern")
-        )
+        session_to_use = self._get_or_create_session(command_doc, db, db_name)
+        self._apply_write_concern(db, db_name, command_doc.get("writeConcern"))
         deletes = command_doc.get("deletes", [])
         ordered = command_doc.get("ordered", True)
 
@@ -2275,7 +2430,7 @@ class NeoSQLiteHandler:
                 continue
             removed += result.deleted_count
 
-        response = {"ok": 1, "n": removed}
+        response: dict[str, Any] = {"ok": 1, "n": removed}
         if write_errors:
             response["writeErrors"] = write_errors
         return request_id, response

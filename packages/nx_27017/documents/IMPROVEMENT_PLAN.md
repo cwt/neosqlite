@@ -59,8 +59,14 @@ Missed / broken (priority order):
 
 ## 5. Acceptance
 
-- `test_handler_commands.py` + new `test_multidb_files.py`, `test_cursor_pagination.py`, `test_changestream_parity.py` green in both modes.
-- `test_wire_compat_mongo_8_2_12.py` green against real `8.2.12` under lenient normalization above; any diff is functional (`ok/n/cursor` shape), never kernel/version/host field noise.
+- `test_handler_commands.py` + `test_handler_multidb.py`,
+  `test_handler_cursors.py`, `test_change_stream_improved.py` green in
+  both modes (the §5 names below were the drafts; the shipped suites are
+  these).
+- `test_wire_compat_mongo.py` green against real `8.2.12` (via
+  `NX_REAL_MONGO_URI`) under lenient normalization; any diff is
+  functional (`ok/n/cursor` shape), never kernel/version/host field
+  noise.
 - `client.db1.coll` and `client.db2.coll` isolated on disk (`<db>.db` files), switchable back and forth, `dropDatabase` deletes file, direct `Connection(path)` sees identical collections.
 - Docs: mapping table + unsupported-ops list in `documents/` (this folder replaces scattered root notes).
 
@@ -74,8 +80,11 @@ Missed / broken (priority order):
   `_sessions_lock` is now an `RLock` (`_find_session` re-enters it).
 - Cursors: `find`/`aggregate` honor `batchSize` / `cursor.batchSize`
   (default 101), remainder stored server-side, `getMore`/`killCursors`
-  serve data cursors too; per-connection cleanup on disconnect. 16MB
-  first-batch splitting still open.
+  serve data cursors too; per-connection cleanup on disconnect. The
+  16MB first-batch split (§3 item 2) is done via
+  `_fit_bson_budget`/`_split_first_batch`/`_getmore_data`
+  (`handler.py:400-465`), always keeping at least one document in the
+  head.
 - Changestreams: pull-based over the shared `_neosqlite_changestream`
   trigger log (persistent `Collection.watch()` per db/coll, no threads).
   Covers bulk/TTL/direct-SQL writes the old push fan-out missed.
@@ -155,3 +164,45 @@ Missed / broken (priority order):
   double-bind alongside the new one (SO_REUSEADDR) and look like
   slowness; both comparison scripts now abort on occupied ports and
   fail fast on dead children instead of burning the 30s wait.
+
+## 9. Follow-up pass (2026-10-01, closes remaining §5 leftovers)
+
+- Open-db cap (§2 "Cap open DBs (~100, LRU-close)"): `_conns` is now an
+  `OrderedDict` LRU ring; `get_database` moves accesses to the end and
+  evicts beyond `_MAX_OPEN_DBS = 100` (files mode only — memory mode
+  never evicts since closing `:memory:` destroys data). Eviction skips
+  `admin`, databases with an open transaction, and databases with an
+  active change stream (`ChangeStreamManager.has_activity`); idle
+  sessions bound to an evicted db are ended. Files stay on disk and
+  reopen transparently. Tests: `TestOpenDbLruCap` in
+  `test_handler_multidb.py`.
+- Cross-DB transactions (§2 "No cross-DB transactions (return
+  error)"): `CrossDBTransactionError` — a session (lsid) with an open
+  transaction that touches a different database now errors explicitly
+  (top of `handle_command` and first thing in `handle_insert`, before
+  any table-creation side effect) instead of silently executing
+  outside the tx. Single-file compat mode keeps shared scope. Tests:
+  `TestCrossDbTransactionGuard` in `test_handler_multidb.py`.
+- Maintenance verbs (§1 P2 list "vacuum/compact/validate only via
+  `db.command` fallback"): explicit routes for `vacuum`, `compact`
+  (`dryRun`, `freeSpaceTargetMB` now honored — the fallback dropped
+  them), `validate`, and `reIndex`/`reindex` (camelCase wire form
+  included). Tests: `tests/test_handler_maintenance.py`.
+- `estimated_document_count` (§1 P1 list): rides the `count` verb with
+  no filter (SQLite has no cardinality estimator; exact count).
+  Covered in `test_handler_maintenance.py` and added to the live
+  differential (`test_wire_compat_mongo.py`).
+- GridFS delete semantics: `fs.files` deletes now honor `filename`
+  filters (all versions + chunks, legacy `delete_by_name` semantics)
+  and `fs.chunks` deletes actually remove chunks by `files_id`
+  (`GridFSAdapter.handle_chunks_delete` — the old path returned
+  `n: 0`, orphaning chunks). Tests in `TestGridFSDottedRouting`.
+- `readConcern`: accepted on all verbs (single-node SQLite always
+  reads latest committed data); documented rather than PRAGMA-mapped.
+- Docs: `documents/COMPAT_NOTES.md` (mapping table + unsupported-ops
+  list, the §5 deliverable), README rows updated (maintenance verbs,
+  cross-db error, LRU cap), acceptance §5 aligned to the shipped test
+  file names.
+- Still pending from §6: the tx/changestream differential cases against
+  real MongoDB (infra `--with-podman --replset` verified electing; the
+  case list itself remains to be written).

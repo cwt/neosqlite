@@ -105,14 +105,18 @@ db.users.find()
 | **Aggregation** | `aggregate`, `count` (with limit/skip), `distinct` with all common stages including `$collStats` |
 | **Cursors** | Real `getMore`/`killCursors` pagination (`batchSize`, 16MB batch cap) |
 | **Collections** | `create`, `drop`, `renameCollection`, `dropDatabase`, `listCollections`, `listCollectionNames`, `listDatabases` |
-| **Indexes** | `createIndexes`, `listIndexes`, `dropIndexes`, `createSearchIndexes`, `updateSearchIndex`, `dropSearchIndex`, `listSearchIndexes` (FTS-backed) |
-| **GridFS** | Full legacy + bucket API over `fs.files`/`fs.chunks` (upload/download/rename/delete/versions) |
+| **Indexes** | `createIndexes`, `listIndexes`, `dropIndexes`, `createSearchIndexes`, `updateSearchIndex`, `dropSearchIndex`, `listSearchIndexes` (FTS-backed), `reIndex` |
+| **Maintenance** | `vacuum`, `compact` (`dryRun`, `freeSpaceTargetMB`), `validate`, `reIndex` |
+| **GridFS** | Full legacy + bucket API over `fs.files`/`fs.chunks` (upload/download/rename/delete/versions/delete_by_name/upload_with_id) |
 | **Sessions** | `startSession`, `endSessions`, `commitTransaction`, `abortTransaction` |
-| **Transactions** | Single-database ACID via `with_transaction` / explicit commit/abort (no cross-DB atomicity) |
+| **Transactions** | Single-database ACID via `with_transaction` / explicit commit/abort (no cross-DB atomicity; cross-DB access from a transactional session gets an explicit error) |
 | **Change Streams** | `$changeStream` with resume tokens, `$match` filtering, `fullDocument` modes, backed by SQLite triggers |
 | **Query Features** | `hint`, `min`, `max`, `sort`, `skip`, `limit`, `projection`, `comment`, `collation` (accepted) |
 | **Statistics** | `serverStatus`, `dbStats`, `collStats`, `$collStats` aggregation |
-| **Durability** | `writeConcern` mapped per database (`w:0`→OFF, `w:1`→NORMAL, `j:true`→FULL) |
+| **Durability** | `writeConcern` mapped per database (`w:0`→OFF, `w:1`→NORMAL, `j:true`→FULL); `readConcern` accepted |
+
+The full mapping table and unsupported/lenient list live in
+[documents/COMPAT_NOTES.md](documents/COMPAT_NOTES.md).
 
 ### GridFS Support
 
@@ -181,7 +185,10 @@ Caveats:
 - `find_raw_batches` / `aggregate_raw_batches` (client-side only, no wire verb exists)
 - Generic dotted collection names (core SQLite quoting rejects dots;
   only GridFS `fs.files`/`fs.chunks` are mapped)
-- Cross-database transactions
+- Cross-database transactions (explicit error from a transactional
+  session; run them per database)
+- Multi-file mode caps open databases at 100 with LRU-close (files
+  are reopened transparently; in-memory databases are never evicted)
 
 ## API Compatibility
 

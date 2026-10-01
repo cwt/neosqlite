@@ -21,13 +21,33 @@ pytestmark = pytest.mark.skipif(
 
 IGNORED_KEYS = frozenset(
     {
-        "host", "process", "pid", "localTime", "uptime", "uptimeMillis",
-        "uptimeEstimate", "mem", "connections", "asserts", "globalLock",
-        "storageEngine", "wiredTiger", "version", "gitVersion", "modules",
-        "setName", "topologyVersion", "connectionId",
-        "logicalSessionTimeoutMinutes", "maxBsonObjectSize",
-        "maxMessageSizeBytes", "maxWriteBatchSize", "operationTime",
-        "clusterTime", "electionId", "lastWrite",
+        "host",
+        "process",
+        "pid",
+        "localTime",
+        "uptime",
+        "uptimeMillis",
+        "uptimeEstimate",
+        "mem",
+        "connections",
+        "asserts",
+        "globalLock",
+        "storageEngine",
+        "wiredTiger",
+        "version",
+        "gitVersion",
+        "modules",
+        "setName",
+        "topologyVersion",
+        "connectionId",
+        "logicalSessionTimeoutMinutes",
+        "maxBsonObjectSize",
+        "maxMessageSizeBytes",
+        "maxWriteBatchSize",
+        "operationTime",
+        "clusterTime",
+        "electionId",
+        "lastWrite",
     }
 )
 
@@ -104,17 +124,21 @@ async def test_wire_compat_core(nx_uri):
 
         await nx_coll.insert_many([{"n": 1}, {"n": 2}])
         await real_coll.insert_many([{"n": 1}, {"n": 2}])
-        assert normalize(
-            await nx_coll.find({}).to_list(None)
-        ) == normalize(await real_coll.find({}).to_list(None))
+        assert normalize(await nx_coll.find({}).to_list(None)) == normalize(
+            await real_coll.find({}).to_list(None)
+        )
         assert await nx_coll.count_documents({}) == (
             await real_coll.count_documents({})
         )
         await nx_coll.update_one({"n": 1}, {"$set": {"n": 10}})
         await real_coll.update_one({"n": 1}, {"$set": {"n": 10}})
-        assert normalize(
-            await nx_coll.find_one({"n": 10})
-        ) == normalize(await real_coll.find_one({"n": 10}))
+        assert normalize(await nx_coll.find_one({"n": 10})) == normalize(
+            await real_coll.find_one({"n": 10})
+        )
+        # estimated_document_count rides the count verb with no filter.
+        assert await nx_coll.estimated_document_count() == (
+            await real_coll.estimated_document_count()
+        )
         assert (await nx_coll.delete_many({})).deleted_count == (
             await real_coll.delete_many({})
         ).deleted_count

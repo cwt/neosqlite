@@ -30,9 +30,7 @@ FAILED: list[str] = []
 PASSED: list[str] = []
 
 NX_URI = os.environ.get("NX_URI", "mongodb://127.0.0.1:27017/")
-REAL_MONGO_URI = os.environ.get(
-    "REAL_MONGO_URI", "mongodb://127.0.0.1:27018/"
-)
+REAL_MONGO_URI = os.environ.get("REAL_MONGO_URI", "mongodb://127.0.0.1:27018/")
 
 # Volatile / kernel-specific response keys: compared leniently (ignored).
 IGNORED_KEYS = frozenset(
@@ -120,8 +118,10 @@ async def compare_core(nx_db, real_db):
     ]
     res_nx = await coll_nx.insert_many(docs)
     res_real = await coll_real.insert_many(
-        [{"name": "alice", "age": 30, "tags": ["a", "b"]},
-         {"name": "bob", "age": 25, "tags": ["b"]}]
+        [
+            {"name": "alice", "age": 30, "tags": ["a", "b"]},
+            {"name": "bob", "age": 25, "tags": ["b"]},
+        ]
     )
     check("insert_many.n", len(res_nx.inserted_ids), len(res_real.inserted_ids))
 
@@ -133,9 +133,7 @@ async def compare_core(nx_db, real_db):
     one_real = await coll_real.find_one({"name": "bob"})
     check("find_one", one_nx, one_real)
 
-    upd_nx = await coll_nx.update_one(
-        {"name": "bob"}, {"$set": {"age": 26}}
-    )
+    upd_nx = await coll_nx.update_one({"name": "bob"}, {"$set": {"age": 26}})
     upd_real = await coll_real.update_one(
         {"name": "bob"}, {"$set": {"age": 26}}
     )
@@ -157,7 +155,9 @@ async def compare_core(nx_db, real_db):
     )
 
     # NOTE: AsyncCollection.aggregate is itself a coroutine in PyMongo Async.
-    cur_nx = await coll_nx.aggregate([{"$group": {"_id": None, "n": {"$sum": 1}}}])
+    cur_nx = await coll_nx.aggregate(
+        [{"$group": {"_id": None, "n": {"$sum": 1}}}]
+    )
     cur_real = await coll_real.aggregate(
         [{"$group": {"_id": None, "n": {"$sum": 1}}}]
     )
@@ -205,7 +205,7 @@ async def _bulk_details(coll, models, ordered):
 
 async def compare_bulk(nx_db, real_db):
     """Bulk write semantics: ordered/unordered errors, upserts."""
-    from pymongo import DeleteOne, InsertOne, UpdateOne
+    from pymongo import InsertOne, UpdateOne
 
     for coll in (nx_db["compat_bulk"], real_db["compat_bulk"]):
         try:
@@ -300,12 +300,12 @@ async def compare_admin(nx_client, real_client, nx_db, real_db):
     await nx_db["compat_admin"].create_index([("age", 1)])
     await real_db["compat_admin"].create_index([("age", 1)])
     # NOTE: AsyncCollection.list_indexes is a coroutine in PyMongo Async.
-    nx_indexes = await (
-        await nx_db["compat_admin"].list_indexes()
-    ).to_list(None)
-    real_indexes = await (
-        await real_db["compat_admin"].list_indexes()
-    ).to_list(None)
+    nx_indexes = await (await nx_db["compat_admin"].list_indexes()).to_list(
+        None
+    )
+    real_indexes = await (await real_db["compat_admin"].list_indexes()).to_list(
+        None
+    )
     check("list_indexes.nonempty", len(nx_indexes) >= 1, len(real_indexes) >= 1)
     await nx_db["compat_admin"].drop()
     await real_db["compat_admin"].drop()
@@ -366,9 +366,11 @@ async def compare_tx_cs(nx_db, real_db, real_is_rs):
     check(
         "tx.commit-abort",
         await _tx_outcome(nx_db["compat_tx"]),
-        await _tx_outcome(real_db["compat_tx"])
-        if real_is_rs
-        else {"committed": 1, "aborted": 1},
+        (
+            await _tx_outcome(real_db["compat_tx"])
+            if real_is_rs
+            else {"committed": 1, "aborted": 1}
+        ),
     )
     if not real_is_rs:
         print("  SKIP changestream-vs-real (standalone has no change streams)")

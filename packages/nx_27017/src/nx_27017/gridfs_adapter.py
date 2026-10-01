@@ -618,11 +618,15 @@ class GridFSAdapter:
             logger.error(f"GridFS chunks find error: {e}")
             raise
 
-    def handle_delete(self, file_ids: list[Any]) -> dict[str, Any]:
+    def handle_delete(
+        self, file_ids: list[Any], filenames: list[str] | None = None
+    ) -> dict[str, Any]:
         """Handle delete operation on GridFS files collection.
 
         Args:
             file_ids: List of file IDs to delete
+            filenames: Optional list of filenames (all versions deleted,
+                matching legacy ``GridFS.delete_by_name`` semantics)
 
         Returns:
             MongoDB-style delete response
@@ -636,10 +640,52 @@ class GridFSAdapter:
                 if file_id:
                     self._get_bucket().delete(file_id)
                     deleted += 1
+            for filename in filenames or []:
+                self._get_bucket().delete_by_name(filename)
+                deleted += 1
 
             return {"ok": 1, "n": deleted}
         except Exception as e:
             logger.error(f"GridFS delete error: {e}")
+            return {"ok": 0, "errmsg": str(e)}
+
+    def handle_chunks_delete(self, file_ids: list[Any]) -> dict[str, Any]:
+        """Handle delete operation on GridFS chunks collection.
+
+        PyMongo deletes chunks by ``files_id`` while cleaning up a file.
+
+        Args:
+            file_ids: List of file IDs whose chunks should be removed
+
+        Returns:
+            MongoDB-style delete response
+        """
+        self._ensure_bucket()
+
+        deleted = 0
+        try:
+            for file_id in file_ids:
+                file_id = self._convert_objectid(file_id)
+                if file_id is None:
+                    continue
+                file_int_id = self._get_bucket()._get_integer_id_for_file(
+                    file_id
+                )
+                if file_int_id is None:
+                    continue
+                cursor = self._db.execute(
+                    f"DELETE FROM {self._get_bucket()._chunks_collection} "
+                    "WHERE files_id = ?",
+                    (file_int_id,),
+                )
+                deleted += max(0, cursor.rowcount)
+            try:
+                self._db.commit()
+            except Exception:
+                pass
+            return {"ok": 1, "n": deleted}
+        except Exception as e:
+            logger.error(f"GridFS chunks delete error: {e}")
             return {"ok": 0, "errmsg": str(e)}
 
     def handle_update(self, file_id: Any, update: dict) -> dict[str, Any]:
