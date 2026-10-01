@@ -176,9 +176,12 @@ cleanup_database() {
 run_nx27017_server() {
     info "Starting NX-27017 server on port $NX27017_PORT..."
 
-    # Check if port is already in use
+    # A stale server on this port is worse than a failure: with
+    # SO_REUSEADDR on both sides the new server can bind alongside it,
+    # splitting traffic and producing slow, flaky runs. Abort instead.
     if ! check_port_available $NX27017_PORT; then
-        warn "Port $NX27017_PORT is already in use. Attempting to start anyway..."
+        error "Port $NX27017_PORT is still in use after cleanup - aborting (kill the stale server first)"
+        return 1
     fi
 
     # Start NX-27017 server with memory database
@@ -193,6 +196,14 @@ run_nx27017_server() {
     local attempt=0
 
     while [ $attempt -lt $max_attempts ]; do
+        # Fail fast if our server already died (e.g., port bind error)
+        # instead of burning the full 30s wait and possibly testing a
+        # stale server that still holds the port.
+        if ! kill -0 $NX27017_PID 2>/dev/null; then
+            wait $NX27017_PID
+            error "NX-27017 server process exited (port $NX27017_PORT likely busy)"
+            return 1
+        fi
         # Try to connect with a simple socket test
         if command -v nc &> /dev/null; then
             if nc -z $NX27017_HOST $NX27017_PORT 2>/dev/null; then

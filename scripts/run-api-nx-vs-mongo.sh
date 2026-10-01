@@ -139,10 +139,17 @@ wait_for_port() {
     local host=$1
     local port=$2
     local label=$3
+    local pid=${4:-}
     local max_attempts=30
     local attempt=0
     info "Waiting for $label ($host:$port) to be ready..."
     while [ $attempt -lt $max_attempts ]; do
+        # Fail fast if our own server already died (e.g., bind error).
+        if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+            wait "$pid"
+            error "$label process exited (port $port likely busy)"
+            return 1
+        fi
         if command -v nc &> /dev/null; then
             if nc -z "$host" "$port" 2>/dev/null; then
                 success "$label is ready"
@@ -171,12 +178,16 @@ cleanup_existing_server() {
 
 run_nx27017_server() {
     info "Starting NX-27017 server on port $NX27017_PORT..."
+    # See run-api-nx-27017.sh: never start alongside a stale server
+    # (SO_REUSEADDR double-bind splits traffic and looks like slowness).
     if ! check_port_available "$NX27017_PORT"; then
-        warn "Port $NX27017_PORT is already in use. Attempting to start anyway..."
+        error "Port $NX27017_PORT is still in use after cleanup - aborting (kill the stale server first)"
+        return 1
     fi
     $NX27017_CMD --db "$NX27017_DB" --host "$NX27017_HOST" -p "$NX27017_PORT" 2>&1 &
+    NX_PID=$!
     SERVER_STARTED=true
-    wait_for_port "$NX27017_HOST" "$NX27017_PORT" "NX-27017"
+    wait_for_port "$NX27017_HOST" "$NX27017_PORT" "NX-27017" "$NX_PID"
 }
 
 mongo_ping() {
