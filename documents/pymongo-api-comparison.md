@@ -7,16 +7,16 @@ tags:
   - api-comparison
   - compatibility
   - reference
-timestamp: 2026-09-30T00:00:00Z
-version: "1.17.0"
+timestamp: 2026-10-14T00:00:00Z
+version: "1.17.2"
 lifecycle: active
 ---
 
 # PyMongo API Comparison
 
-**Last Updated**: September 30, 2026
-**NeoSQLite Version**: v1.17.0
-**PyMongo Compatibility**: 100% (395 API tests: 375 passed, 20 skipped by design, 0 failed)
+**Last Updated**: October 14, 2026
+**NeoSQLite Version**: v1.17.2
+**PyMongo Compatibility**: 100% (404 API tests: 384 passed, 20 skipped by design, 0 failed)
 
 ---
 
@@ -37,6 +37,17 @@ with **100% compatibility** for all comparable features. This document provides:
 ### Newly Implemented APIs
 
 The following APIs have been implemented and tested:
+
+#### Full-Text Search (FTS5 BM25 Relevance Scoring & Multi-Field Index) (NEW in v1.17.2)
+- ✅ BM25 text relevance scoring in `find()` queries across single and multiple indexed fields (`title`, `subtitle`, `body`)
+- ✅ Score projection via `{"score": {"$meta": "textScore"}}`
+- ✅ Sorting by text score via `[("score", {"$meta": "textScore"})]`
+- ✅ Multi-field text index creation syntax `collection.create_index([("title", "text"), ("body", "text")])` (5 comparison tests)
+
+#### GridFS Enhancements (NEW in v1.17.2)
+- ✅ Direct connection support: `GridFSBucket(conn)` accepts `neosqlite.Connection` directly
+- ✅ Fluent `GridOutCursor` methods: `.sort()`, `.skip()`, `.limit()`, `.batch_size()`, `.to_list()`, `.clone()`, `.rewind()` (4 comparison tests)
+- ✅ Relational system collection count queries: `conn.fs.files.count_documents(...)` and `conn["fs.files"].count_documents(...)`
 
 #### Window Operators (NEW)
 - ✅ `$top` / `$bottom` - SQL-optimized and Python fallback support (4 tests)
@@ -150,8 +161,8 @@ The following APIs have been implemented and tested:
 
 These operators now provide clear error messages suggesting alternatives, matching PyMongo behavior for unsupported features.
 
-**Test Coverage**: 372 API comparison tests, all passing
-**API Compatibility**: 100% (360 passed, 12 skipped by design)
+**Test Coverage**: 404 API comparison tests, all passing
+**API Compatibility**: 100% (384 passed, 20 skipped by design)
 **Kill Switch Verified**: All APIs work identically with/without kill switch (Tier-3 Python implementation)
 **Deprecated APIs**: `initialize_ordered_bulk_op()` and `initialize_unordered_bulk_op()` are now deprecated to match PyMongo 4.x behavior.
 
@@ -347,7 +358,7 @@ These operators now provide clear error messages suggesting alternatives, matchi
 - [x] `delete_by_name()`
 - [x] `rename()`
 - [x] `rename_by_name()`
-- [x] `find()` - With content_type and aliases filtering
+- [x] `find()` - Returns GridOutCursor with fluent `.sort()`, `.skip()`, `.limit()`, `.batch_size()`, `.to_list()`, `.clone()`, `.rewind()`
 - [x] `find_one()` - Direct method
 - [x] `get_last_version()` - Direct method
 - [x] `get_version()` - Direct method
@@ -857,7 +868,7 @@ GridFS automatically migrates from older conventions:
 ### Testing Infrastructure
 
 NeoSQLite maintains comprehensive PyMongo compatibility tests:
-- **395 API comparison tests** (375 passed, 20 skipped by design)
+- **404 API comparison tests** (384 passed, 20 skipped by design)
 - **100% compatibility** for all comparable features
 - **Automated reporting** with detailed compatibility metrics
 - **Verified against MongoDB 8.x** — Container image pinned to `mongo:8.2.12` to ensure stability across Linux kernels >= 6.19 (avoiding SERVER-121912 allocator checks) while supporting MongoDB 8.0+ operators such as `$sigmoid`.
@@ -913,6 +924,6 @@ The `ClientSession` class is fully implemented and provides PyMongo-compatible t
 
 ---
 
-**Last Updated**: March 16, 2026
+**Last Updated**: October 14, 2026
 **Maintained By**: NeoSQLite Development Team
 **License**: MIT

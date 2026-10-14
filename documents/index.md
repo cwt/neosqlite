@@ -7,8 +7,8 @@ tags:
   - architecture
   - documentation
   - neosqlite
-timestamp: 2026-09-30T00:00:00Z
-version: "1.17.0"
+timestamp: 2026-10-14T00:00:00Z
+version: "1.17.2"
 lifecycle: active
 ---
 
@@ -71,7 +71,7 @@ Welcome to the NeoSQLite structured knowledge base, organized according to the *
 
 ## Subdirectories
 
-- **[Release Notes](./releases/index.md)**: Version-by-version release notes and changelogs for all releases (v1.0.0 through v1.17.0).
+- **[Release Notes](./releases/index.md)**: Version-by-version release notes and changelogs for all releases (v1.0.0 through v1.17.2).
 - **[Roadmap & Future Plans (TODO)](./todo/index.md)**: Proposals and implementation plans for geospatial query support and vector search integration.
 
 ---

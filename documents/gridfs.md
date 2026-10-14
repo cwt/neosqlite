@@ -8,8 +8,8 @@ tags:
   - chunks
   - storage
   - pymongo
-timestamp: 2026-09-13T00:00:00Z
-version: "1.16.2"
+timestamp: 2026-10-14T00:00:00Z
+version: "1.17.2"
 lifecycle: active
 ---
 
@@ -31,14 +31,16 @@ This comprehensive guide covers NeoSQLite's GridFS implementation, including API
 
 | Feature | PyMongo GridFS | NeoSQLite GridFS | Status |
 |---------|----------------|------------------|--------|
-| **GridFSBucket Creation** | `GridFSBucket(database)` | `GridFSBucket(db)` | ✅ Compatible |
+| **GridFSBucket Creation** | `GridFSBucket(database)` | `GridFSBucket(conn)` or `GridFSBucket(conn.db)` | ✅ Compatible |
 | **upload_from_stream()** | ✅ Returns ObjectId | ✅ Returns ObjectId | ✅ Compatible |
 | **open_download_stream()** | ✅ Accepts ObjectId/int | ✅ Accepts ObjectId/int/str | ✅ Compatible |
 | **delete()** | ✅ `delete(file_id)` | ✅ `delete(file_id)` | ✅ Compatible |
 | **find()** | ✅ Returns GridFSFile cursor | ✅ Returns GridOut cursor | ✅ Compatible |
+| **find() Cursor Methods** | `.sort()`, `.skip()`, `.limit()`, `.batch_size()`, `.to_list()` | `.sort()`, `.skip()`, `.limit()`, `.batch_size()`, `.to_list()` | ✅ Compatible |
 | **rename()** | ✅ `rename(file_id, new_name)` | ✅ `rename(file_id, new_name)` | ✅ Compatible |
 | **drop()** | ✅ `drop()` | ✅ `drop()` | ✅ Compatible |
 | **Collection Access** | `db.fs.files.*` | `conn.fs.files.*` (auto-delegates) | ✅ Compatible |
+| **Collection Counting** | `db.fs.files.count_documents()` | `conn.fs.files.count_documents()` | ✅ Compatible |
 
 ## Key Differences from PyMongo
 
@@ -64,10 +66,11 @@ from neosqlite import Connection
 from neosqlite.gridfs import GridFSBucket
 
 conn = Connection(":memory:")
-bucket = GridFSBucket(conn.db)
+bucket = GridFSBucket(conn)      # ✅ Directly pass Connection or conn.db
 
 # Direct collection access - ALL operations work with auto-delegation
 conn.fs.files.find({})           # ✅ Works! (delegates to bucket.find())
+conn.fs.files.count_documents({}) # ✅ Works! (counts documents matching filter)
 conn.fs.files.update_one(...)    # ✅ Works for metadata updates
 conn.fs.files.delete_one(...)    # ✅ Works! (delegates to bucket.delete())
 conn.fs.files.delete_many(...)   # ✅ Works! (delegates to bucket.delete())
@@ -174,8 +177,31 @@ NeoSQLite supports PyMongo-style collection access with automatic delegation:
 ```python
 # All these work and delegate to GridFSBucket methods
 files = conn.fs.files.find({"filename": "test.txt"})
+count = conn.fs.files.count_documents({"metadata.author": "john"})
 conn.fs.files.delete_one({"_id": file_id})
 conn.fs.files.delete_many({"filename": "old_files"})
+```
+
+### Fluent Cursor Chaining & Pagination (`GridOutCursor`)
+
+Starting with v1.17.2, `bucket.find()` returns a `GridOutCursor` that supports fluent PyMongo-style method chaining:
+
+```python
+# Fluent sort, skip, limit, and batch_size
+cursor = (
+    bucket.find({"metadata.published": True})
+    .sort("uploadDate", -1)
+    .skip(10)
+    .limit(5)
+    .batch_size(10)
+)
+
+# Convert matching files directly to a list of GridOut objects
+files_list = cursor.to_list(length=5)
+
+# Duplicate or restart cursor iteration
+cursor_copy = cursor.clone()
+cursor.rewind()
 ```
 
 ## Migration Guide

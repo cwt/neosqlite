@@ -6,14 +6,50 @@ tags:
   - log
   - bundle
   - changelog
-timestamp: 2026-09-30T00:00:00Z
-version: "1.17.0"
+timestamp: 2026-10-14T00:00:00Z
+version: "1.17.2"
 lifecycle: active
 ---
 
 # NeoSQLite Knowledge Base Bundle Log
 
 This document records the chronological history of structural changes, additions, deprecations, and refactoring operations performed on the NeoSQLite Open Knowledge Format (OKF) bundle.
+
+---
+
+## 2026-10-14 — Release v1.17.2
+
+### Summary
+Correctness and PyMongo API parity release: native FTS5 BM25 text relevance scoring in `find()`, multi-field text index creation syntax, fluent GridFS cursor pagination and sorting, direct `Connection` support in `GridFSBucket`, safe collection counting on GridFS system tables, and expanded unit test coverage reaching 81.18%.
+
+### Key Modifications
+1. **Added `releases/v1.17.2.md` Release Notes**:
+   - Comprehensive documentation of FTS5 BM25 text scoring (`find()` projection via `{"$meta": "textScore"}` and sorting), multi-field text index creation (`create_index([("title", "text"), ("body", "text")])`), fluent `GridOutCursor` chaining (`sort`, `skip`, `limit`, `batch_size`, `to_list`, `clone`, `rewind`), direct `Connection` binding for `GridFSBucket`, and relational counting on `fs.files`.
+2. **Updated Release Notes Index (`documents/releases/index.md`)**:
+   - Added `v1.17.2` entry and bumped frontmatter version to `1.17.2`.
+3. **Updated Root Knowledge Base Index (`documents/index.md`)**:
+   - Bumped frontmatter version to `1.17.2` and extended release notes subdirectories range to `(v1.0.0 through v1.17.2)`.
+4. **Updated PyMongo API Comparison (`documents/pymongo-api-comparison.md`)**:
+   - Bumped frontmatter version and header version to `v1.17.2` (100.0% compatibility, 404 tests: 384 passed, 20 skipped by design, 0 failed).
+5. **Updated GridFS Documentation (`documents/gridfs.md`)**:
+   - Documented direct `Connection` instantiation for `GridFSBucket`, fluent `GridOutCursor` methods, and `count_documents` handling on `fs.files`.
+6. **Updated Text Search Documentation (`documents/text-search.md`)**:
+   - Documented native FTS5 BM25 text relevance scoring, score projection via `{"score": {"$meta": "textScore"}}`, sorting by `textScore`, and multi-field text index definitions.
+7. **Bumped version to v1.17.2**:
+   - `pyproject.toml` and `README.md` (Latest Release).
+
+---
+
+## 2026-10-01 — Release v1.17.1
+
+### Summary
+Correctness and API parity release: Tier-2 aggregation serialization discrepancies resolved, 100% NX-27017 wire protocol compatibility, and test ResourceWarnings eliminated.
+
+### Key Modifications
+1. **Added `releases/v1.17.1.md` Release Notes**:
+   - Tier-2 aggregation serialization parity (`$sortArray` dictionary retention, `$unwind` scalar preservation, `$project` missing-field omission), 100% NX-27017 wire protocol compatibility, and clean test suite resources.
+2. **Updated Release Notes Index (`documents/releases/index.md`)**:
+   - Added `v1.17.1` entry.
 
 ---
 

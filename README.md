@@ -34,18 +34,19 @@
 
 See [Release Notes](documents/releases/) for the full history.
 
-## Latest Release: v1.17.0
+## Latest Release: v1.17.2
 
-NeoSQLite v1.17.0 is a **minor feature and parity release** delivering comprehensive transactional hardening, PyMongo API parity expansions, and 100% compatibility across the differential test suite. Fully backward compatible.
+NeoSQLite v1.17.2 is a **correctness and PyMongo API parity release** resolving gaps surfaced during real-world dogfooding (e.g. against blogging platforms like `neo-blogger`). It introduces native SQLite FTS5 BM25 text relevance scoring and sorting in `find()`, PyMongo-compatible multi-field text index creation syntax, fluent chaining methods on `GridOutCursor`, direct `Connection` instantiation for `GridFSBucket`, safe collection counting on GridFS system tables, and expanded unit test coverage reaching **81.18%**. Fully backward compatible.
 
 **Key Highlights:**
-- **Transaction Context Managers & Session Propagation** — `ClientSession.start_transaction()` supports the Python context manager protocol (`with session.start_transaction(): ...`), with strict session validation and pass-through across operations like `find_one(..., session=session)`.
-- **Full Bulk Write Architecture & Parity** — Added `BulkWriteError`, `upserted_ids`, duck-typed request matching, and full `ordered=True` vs `ordered=False` execution semantics with failure accumulation.
-- **Aggregation System Variables & Expressions** — Added support for `$$ROOT` and `$$CURRENT` system variables and dictionary template expressions in `$group` accumulators, `%L` millisecond formatting in `$dateToString`, and composable `$dateDiff` with nested date arithmetic expressions.
-- **Data Safety, Storage Integrity & Security Hardening** — Ensured WAL checkpointing and compliant backup file naming during auto-vacuum migration, prevented SQL injection in `$lookup` aliases and collection names, sanitized FTS5 queries against syntax injection, prevented silent GridFS data loss on non-autocommit connections, and eliminated thread race conditions in `ObjectId` counter generation.
-- **Type & Query Parity** — Converted `ObjectId.generation_time` to a timezone-aware UTC datetime property; `$currentDate` now sets proper BSON Date objects deserialized as Python `datetime.datetime`; exact `_id` types are preserved without string-to-ObjectId coercion; and `list_collection_names()` cleanly excludes internal SQLite, metadata, and FTS5 shadow tables.
+- **FTS5 BM25 Text Relevance Scoring & Sorting** — `find({"$text": {"$search": ...}})` computes true BM25 relevance scores across indexed fields, supports score projection via `{"score": {"$meta": "textScore"}}`, and enables sorting by `[("score", {"$meta": "textScore"})]`.
+- **MongoDB-Style Multi-Field Text Index Definitions** — `collection.create_index([("field1", "text"), ("field2", "text")])` creates FTS virtual tables across all specified text fields in a single call, matching PyMongo syntax.
+- **Fluent `GridOutCursor` Operations** — Added `.sort()`, `.skip()`, `.limit()`, `.batch_size()`, `.to_list()`, `.clone()`, and `.rewind()` to `GridOutCursor` for idiomatic cursor chaining on GridFS file searches.
+- **Direct Connection Support in `GridFSBucket`** — `GridFSBucket(conn)` accepts a `neosqlite.Connection` directly (automatically unwrapping the underlying SQLite database handle) alongside raw database connections (`GridFSBucket(conn.db)`).
+- **Safe Document Counting on GridFS System Collections** — Dotted collection access like `conn.fs.files.count_documents()` maps directly onto relational schema columns without raising `no such column: data`.
+- **Robust Quality Gates & Differential Testing** — Achieved 100.0% compatibility across 404 comparison cases against MongoDB 8.2.12, passed 3,034 pytest unit tests with **81.18% code coverage**, and verified zero mypy/lint warnings.
 
-For full details, see [documents/releases/v1.17.0.md](documents/releases/v1.17.0.md). Previous release highlights are in [documents/releases/v1.16.3.md](documents/releases/v1.16.3.md).
+For full details, see [documents/releases/v1.17.2.md](documents/releases/v1.17.2.md). Previous release highlights are in [documents/releases/v1.17.1.md](documents/releases/v1.17.1.md).
 
 ## Installation
 

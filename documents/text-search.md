@@ -7,8 +7,8 @@ tags:
   - text-search
   - full-text
   - indexing
-timestamp: 2026-04-05T16:33:00Z
-version: "1.15.1"
+timestamp: 2026-10-14T00:00:00Z
+version: "1.17.2"
 lifecycle: active
 ---
 
@@ -18,9 +18,13 @@ NeoSQLite supports efficient text search using the `$text` operator, which lever
 
 ## Creating FTS Indexes
 
-To enable text search, you must first create an FTS index on the desired fields using `fts=True`.
+To enable text search, you can create an FTS index on specific fields using PyMongo-standard index definitions or the `fts=True` keyword argument.
 
 ```python
+# MongoDB-style multi-field text index definition (Recommended)
+collection.create_index([("title", "text"), ("subtitle", "text"), ("body", "text")])
+
+# Or single-field definition with fts=True
 collection.create_index("content", fts=True)
 collection.create_index("metadata.description", fts=True)
 ```
@@ -74,6 +78,30 @@ results = list(collection.find({"$text": {"$search": "PYTHON"}}))
 
 If no FTS indexes exist, the search will fall back to a less efficient, case-insensitive substring search across all string fields in the documents.
 
+## BM25 Text Relevance Scoring & Sorting
+
+Starting with v1.17.2, NeoSQLite supports MongoDB-compatible BM25 text relevance scoring in `find()` queries:
+
+```python
+# Project the BM25 relevance score
+results = list(collection.find(
+    {"$text": {"$search": "python database"}},
+    {"score": {"$meta": "textScore"}}
+))
+
+# Sort documents by relevance score (highest score first)
+results = list(collection.find(
+    {"$text": {"$search": "python database"}},
+    {"score": {"$meta": "textScore"}}
+).sort([("score", {"$meta": "textScore"})]))
+```
+
+### How BM25 Scoring Works
+- **Native FTS5 Auxiliary Function**: NeoSQLite evaluates SQLite FTS5's native `bm25()` function across all indexed text virtual tables.
+- **Normalized Positive Scores**: SQLite FTS5's negative score convention is mapped to standard positive relevance scores (`-bm25(...) + 100.0`).
+- **Composite Scoring**: When searching across multiple indexed fields (e.g., `title`, `subtitle`, and `body`), individual field scores are aggregated into a composite relevance score.
+- **Clean Document Output**: Internal metadata columns used during sorting and projection are cleanly stripped from the final returned documents.
+
 ## Integration with Logical Operators
 
 The `$text` operator can be combined with logical operators like `$and`, `$or`, and `$not` for more complex queries. These queries are processed using a hybrid approach: `$text` conditions leverage FTS5, and the results are combined in Python using set operations.
@@ -114,19 +142,21 @@ For standard MongoDB behavior, place the `$text` stage at the very beginning of 
 
 ## PyMongo Compatibility
 
-NeoSQLite's `$text` operator is designed for compatibility with PyMongo, but there are some differences:
+NeoSQLite's `$text` operator is designed for compatibility with PyMongo:
 
 ### Supported Features
 - Basic syntax: `{"$text": {"$search": "..."}}`
 - Case-insensitive search
 - Searching across multiple indexed fields
-- Dedicated search index APIs
+- MongoDB-style multi-field text index creation: `collection.create_index([("title", "text"), ("body", "text")])`
+- BM25 text relevance score projection: `{"score": {"$meta": "textScore"}}`
+- Relevance-based sorting: `cursor.sort([("score", {"$meta": "textScore"})])`
+- Dedicated search index APIs (`create_search_index`, `list_search_indexes`, etc.)
 
 ### Incompatible or Missing Features
 - **Advanced Parameters**: `$language`, `$caseSensitive`, `$diacriticSensitive` are not supported.
-- **Text Scoring**: The `$meta: "textScore"` feature is not available.
 - **Advanced Search Syntax**: Phrase searches (`"exact phrase"`) and term exclusion (`-term`) are not supported.
 
 ## Limitations
-- Advanced FTS5 features like ranking and snippets are not exposed.
+- Advanced FTS5 snippet generation is not currently exposed via the MongoDB API.
 - Requires SQLite 3.9.0 or later for FTS5 support.
