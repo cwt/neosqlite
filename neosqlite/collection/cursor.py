@@ -787,22 +787,22 @@ class Cursor:
                     finally:
                         db_cursor.close()
 
-                docs = doc_generator()
-                self._active_generator = docs
+                fts_docs = doc_generator()
+                self._active_generator = fts_docs
                 if self._where_predicate:
-                    docs = filter(self._where_predicate, docs)  # type: ignore[arg-type]
+                    fts_docs = filter(self._where_predicate, fts_docs)  # type: ignore[arg-type]
                 if "$jsonSchema" in self._filter:
                     from .query_helper.schema_validator import (
                         matches_json_schema,
                     )
 
                     schema = self._filter["$jsonSchema"]
-                    docs = (
+                    fts_docs = (
                         doc
-                        for doc in docs
+                        for doc in fts_docs
                         if matches_json_schema(doc, schema)
                     )
-                return docs
+                return fts_docs
 
         where_result = self._query_helpers._build_simple_where_clause(
             self._filter
@@ -1299,12 +1299,9 @@ class Cursor:
 
         for key in sort_keys:
             direction = self._sort[key]
-            is_text_score = (
-                direction == {"$meta": "textScore"}
-                or (
-                    isinstance(direction, dict)
-                    and direction.get("$meta") == "textScore"
-                )
+            is_text_score = direction == {"$meta": "textScore"} or (
+                isinstance(direction, dict)
+                and direction.get("$meta") == "textScore"
             )
             if is_text_score:
                 reverse = True
@@ -1341,6 +1338,7 @@ class Cursor:
 
                 sorted_docs.sort(key=make_key(), reverse=reverse)
             else:
+
                 def make_default_key(gv=get_val):
                     def key_func(doc):
                         return bson_sort_key(gv(doc))

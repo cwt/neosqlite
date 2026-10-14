@@ -194,7 +194,10 @@ def compare_text_search():
                 # 4. $text search combined with regular filter
                 filtered_docs = list(
                     mongo_collection.find(
-                        {"$text": {"$search": "database"}, "status": "published"}
+                        {
+                            "$text": {"$search": "database"},
+                            "status": "published",
+                        }
                     )
                 )
                 mongo_results["text_search_filter"] = sorted(

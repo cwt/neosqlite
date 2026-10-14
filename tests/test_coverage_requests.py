@@ -18,7 +18,14 @@ from neosqlite.requests import (
 class CustomUpdateReq:
     """Mock custom object with filter and update attributes."""
 
-    def __init__(self, filter_spec, update_spec, upsert=False, array_filters=None, multi=False):
+    def __init__(
+        self,
+        filter_spec,
+        update_spec,
+        upsert=False,
+        array_filters=None,
+        multi=False,
+    ):
         self.filter = filter_spec
         self.update = update_spec
         self.upsert = upsert
@@ -44,6 +51,7 @@ class CustomPrivateFilterDeleteReq:
 
 class InvalidReq:
     """Mock object with no recognized bulk request attributes."""
+
     pass
 
 
@@ -57,7 +65,11 @@ def test_parse_bulk_request_standard_classes():
     rep = ReplaceOne({"_id": 1}, {"a": 2}, upsert=True)
     op, kwargs = _parse_bulk_request(rep)
     assert op == "replace_one"
-    assert kwargs == {"filter": {"_id": 1}, "replacement": {"a": 2}, "upsert": True}
+    assert kwargs == {
+        "filter": {"_id": 1},
+        "replacement": {"a": 2},
+        "upsert": True,
+    }
 
     u1 = UpdateOne({"_id": 1}, {"$set": {"a": 3}}, upsert=True)
     op, kwargs = _parse_bulk_request(u1)
@@ -65,7 +77,9 @@ def test_parse_bulk_request_standard_classes():
     assert kwargs["filter"] == {"_id": 1}
     assert kwargs["upsert"] is True
 
-    um = UpdateMany({"x": 1}, {"$inc": {"count": 1}}, upsert=False, array_filters=[{"i": 1}])
+    um = UpdateMany(
+        {"x": 1}, {"$inc": {"count": 1}}, upsert=False, array_filters=[{"i": 1}]
+    )
     op, kwargs = _parse_bulk_request(um)
     assert op == "update_many"
     assert kwargs["filter"] == {"x": 1}
@@ -85,7 +99,9 @@ def test_parse_bulk_request_standard_classes():
 def test_parse_bulk_request_duck_typing():
     """Verify duck-typing fallback in _parse_bulk_request."""
     # Custom update single
-    c_up_single = CustomUpdateReq({"a": 1}, {"$set": {"b": 2}}, upsert=True, multi=False)
+    c_up_single = CustomUpdateReq(
+        {"a": 1}, {"$set": {"b": 2}}, upsert=True, multi=False
+    )
     op, kwargs = _parse_bulk_request(c_up_single)
     assert op == "update_one"
     assert kwargs["filter"] == {"a": 1}

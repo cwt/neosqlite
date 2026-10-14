@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from copy import deepcopy
 import datetime
 import hashlib
 import json
 import logging
 import re
+from copy import deepcopy
 from typing import Any
 
 from .._sqlite import sqlite3
@@ -1122,9 +1122,7 @@ def build_gridfs_files_where(
         # Logical operators: never silently drop — build recursively.
         if key in ("$and", "$or", "$nor"):
             if not isinstance(value, (list, tuple)):
-                logger.debug(
-                    f"Invalid '{key}' GridFS filter: {value!r}"
-                )
+                logger.debug(f"Invalid '{key}' GridFS filter: {value!r}")
                 conds.append("1=0")
                 return
             sub_clauses: list[str] = []
@@ -1141,16 +1139,12 @@ def build_gridfs_files_where(
                 for sk, sv in subfilter.items():
                     _append_one(sk, sv, temp_conds, temp_params)
                 if temp_conds:
-                    sub_clauses.append(
-                        "(" + " AND ".join(temp_conds) + ")"
-                    )
+                    sub_clauses.append("(" + " AND ".join(temp_conds) + ")")
                     sub_params.extend(temp_params)
                 else:
                     sub_clauses.append("(1=1)")
             if not sub_clauses:
-                conds.append(
-                    "1=1" if key in ("$and", "$nor") else "1=0"
-                )
+                conds.append("1=1" if key in ("$and", "$nor") else "1=0")
                 return
             if key == "$and":
                 conds.append("(" + " AND ".join(sub_clauses) + ")")
@@ -1159,9 +1153,7 @@ def build_gridfs_files_where(
             else:  # $nor
                 conds.append(
                     "("
-                    + " AND ".join(
-                        f"({c} IS NOT TRUE)" for c in sub_clauses
-                    )
+                    + " AND ".join(f"({c} IS NOT TRUE)" for c in sub_clauses)
                     + ")"
                 )
             plist.extend(sub_params)
@@ -1175,13 +1167,9 @@ def build_gridfs_files_where(
         if isinstance(key, str) and "." in key:
             top, _, sub = key.partition(".")
             if top in ("metadata", "aliases"):
-                _append_dotted_json_condition(
-                    top, sub, value, conds, plist
-                )
+                _append_dotted_json_condition(top, sub, value, conds, plist)
             else:
-                logger.debug(
-                    f"Unsupported dotted GridFS filter '{key}'"
-                )
+                logger.debug(f"Unsupported dotted GridFS filter '{key}'")
                 conds.append("1=0")
             return
 
@@ -1216,9 +1204,7 @@ def build_gridfs_files_where(
                 else:
                     conds.append("_id = ?")
                     plist.append(
-                        str(value)
-                        if isinstance(value, ObjectId)
-                        else value
+                        str(value) if isinstance(value, ObjectId) else value
                     )
             case "id":
                 conds.append("id = ?")
@@ -1384,7 +1370,9 @@ def build_gridfs_files_where(
     for _k, _v in filter_dict.items():
         _append_one(_k, _v, where_conditions, params)
 
-    where_clause = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
+    where_clause = (
+        "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
+    )
     return where_clause, params
 
 
@@ -1394,8 +1382,20 @@ def _gridfs_sort_to_sql(sort_spec: list[tuple[str, Any]] | None) -> str:
         return ""
     order_parts: list[str] = []
     for key, direction in sort_spec:
-        dir_sql = "DESC" if direction in (-1, "desc", "DESCENDING", False) else "ASC"
-        if key in ("_id", "id", "filename", "length", "chunkSize", "uploadDate", "md5", "content_type", "aliases"):
+        dir_sql = (
+            "DESC" if direction in (-1, "desc", "DESCENDING", False) else "ASC"
+        )
+        if key in (
+            "_id",
+            "id",
+            "filename",
+            "length",
+            "chunkSize",
+            "uploadDate",
+            "md5",
+            "content_type",
+            "aliases",
+        ):
             order_parts.append(f"{key} {dir_sql}")
         elif key == "upload_date":
             order_parts.append(f"uploadDate {dir_sql}")
@@ -1408,7 +1408,9 @@ def _gridfs_sort_to_sql(sort_spec: list[tuple[str, Any]] | None) -> str:
             json_path = _mongo_dot_subpath_to_json_path(sub)
             if json_path is not None:
                 escaped = json_path.replace("'", "''")
-                order_parts.append(f"json_extract(metadata, '{escaped}') {dir_sql}")
+                order_parts.append(
+                    f"json_extract(metadata, '{escaped}') {dir_sql}"
+                )
             else:
                 order_parts.append(f"id {dir_sql}")
         else:
@@ -1497,7 +1499,9 @@ class GridOutCursor:
             count: Maximum number of documents to return
         """
         if self._file_ids is not None:
-            raise RuntimeError("cannot limit after cursor has started iterating")
+            raise RuntimeError(
+                "cannot limit after cursor has started iterating"
+            )
         if not isinstance(count, int) or count < 0:
             raise ValueError("limit must be a non-negative integer")
         self._limit = count
@@ -1571,7 +1575,9 @@ class GridOutCursor:
             selected_ids = self._file_ids[:length]
         else:
             selected_ids = self._file_ids
-        return [GridOut(self._db, self._bucket_name, fid) for fid in selected_ids]
+        return [
+            GridOut(self._db, self._bucket_name, fid) for fid in selected_ids
+        ]
 
     def __iter__(self) -> GridOutCursor:
         """Return the iterator object."""

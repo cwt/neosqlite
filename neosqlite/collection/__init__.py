@@ -945,14 +945,14 @@ class Collection:
         if self.name.endswith("_files"):
             from ..gridfs.grid_file import build_gridfs_files_where
 
-            where_clause, params = build_gridfs_files_where(filter or {})
+            where_clause, files_params = build_gridfs_files_where(filter or {})
             query = f"SELECT COUNT(*) FROM {table} {where_clause}".strip()
-            cursor = self.db.execute(query, params)
+            cursor = self.db.execute(query, files_params)
             row = cursor.fetchone()
             return int(row[0]) if row else 0
         elif self.name.endswith("_chunks"):
             where_parts: list[str] = []
-            params: list[Any] = []
+            chunks_params: list[Any] = []
             for key, value in (filter or {}).items():
                 if key in ("files_id", "n", "_id"):
                     column = key
@@ -961,43 +961,45 @@ class Collection:
                             match op:
                                 case "$eq":
                                     where_parts.append(f"{column} = ?")
-                                    params.append(op_val)
+                                    chunks_params.append(op_val)
                                 case "$ne":
                                     where_parts.append(f"{column} != ?")
-                                    params.append(op_val)
+                                    chunks_params.append(op_val)
                                 case "$gt":
                                     where_parts.append(f"{column} > ?")
-                                    params.append(op_val)
+                                    chunks_params.append(op_val)
                                 case "$gte":
                                     where_parts.append(f"{column} >= ?")
-                                    params.append(op_val)
+                                    chunks_params.append(op_val)
                                 case "$lt":
                                     where_parts.append(f"{column} < ?")
-                                    params.append(op_val)
+                                    chunks_params.append(op_val)
                                 case "$lte":
                                     where_parts.append(f"{column} <= ?")
-                                    params.append(op_val)
+                                    chunks_params.append(op_val)
                                 case "$in" if isinstance(op_val, (list, tuple)):
                                     if not op_val:
                                         where_parts.append("1=0")
                                     else:
-                                        placeholders = ", ".join("?" * len(op_val))
+                                        placeholders = ", ".join(
+                                            "?" * len(op_val)
+                                        )
                                         where_parts.append(
                                             f"{column} IN ({placeholders})"
                                         )
-                                        params.extend(op_val)
+                                        chunks_params.extend(op_val)
                                 case _:
                                     where_parts.append("1=0")
                     else:
                         where_parts.append(f"{column} = ?")
-                        params.append(value)
+                        chunks_params.append(value)
                 else:
                     where_parts.append("1=0")
             where_clause = (
                 "WHERE " + " AND ".join(where_parts) if where_parts else ""
             )
             query = f"SELECT COUNT(*) FROM {table} {where_clause}".strip()
-            cursor = self.db.execute(query, params)
+            cursor = self.db.execute(query, chunks_params)
             row = cursor.fetchone()
             return int(row[0]) if row else 0
         return 0

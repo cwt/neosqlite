@@ -101,7 +101,9 @@ class TestGridFSConnectionAndCursorParity:
         count_alice = conn.fs.files.count_documents({"metadata.owner": "alice"})
         assert count_alice == 2
 
-        count_avatars = conn.fs.files.count_documents({"metadata.type": "avatar"})
+        count_avatars = conn.fs.files.count_documents(
+            {"metadata.type": "avatar"}
+        )
         assert count_avatars == 2
 
         count_total = conn.fs.files.count_documents({})
@@ -216,7 +218,9 @@ class TestFullTextSearchScoreAndRankingParity:
         articles = conn.articles
         articles.create_search_index("title")
 
-        articles.insert_one({"_id": 1, "title": "Hello World", "tags": ["test"]})
+        articles.insert_one(
+            {"_id": 1, "title": "Hello World", "tags": ["test"]}
+        )
 
         docs = list(articles.find({"$text": {"$search": "Hello"}}))
         assert len(docs) == 1
@@ -259,9 +263,24 @@ class TestFullTextSearchScoreAndRankingParity:
 
         articles.insert_many(
             [
-                {"_id": 1, "title": "PyMongo Guide", "category": "db", "published": True},
-                {"_id": 2, "title": "PyMongo Tutorial", "category": "db", "published": False},
-                {"_id": 3, "title": "PyMongo Recipes", "category": "web", "published": True},
+                {
+                    "_id": 1,
+                    "title": "PyMongo Guide",
+                    "category": "db",
+                    "published": True,
+                },
+                {
+                    "_id": 2,
+                    "title": "PyMongo Tutorial",
+                    "category": "db",
+                    "published": False,
+                },
+                {
+                    "_id": 3,
+                    "title": "PyMongo Recipes",
+                    "category": "web",
+                    "published": True,
+                },
             ]
         )
 

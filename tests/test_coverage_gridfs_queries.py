@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import io
 import re
+
 import pytest
 
 import neosqlite
 from neosqlite.gridfs import GridFSBucket
 from neosqlite.gridfs.grid_file import (
-    GridOutCursor,
     _append_json_column_operators,
     _mongo_dot_subpath_to_json_path,
     build_gridfs_files_where,
@@ -67,7 +67,14 @@ def test_build_gridfs_files_where_filename_and_length():
 
     # filename $regex, $ne, $eq, unknown
     where, params = build_gridfs_files_where(
-        {"filename": {"$regex": "doc", "$ne": "doc_0.txt", "$eq": "doc_1.txt", "$custom": "test"}}
+        {
+            "filename": {
+                "$regex": "doc",
+                "$ne": "doc_0.txt",
+                "$eq": "doc_1.txt",
+                "$custom": "test",
+            }
+        }
     )
     assert "filename LIKE ?" in where
     assert "filename != ?" in where
@@ -78,7 +85,16 @@ def test_build_gridfs_files_where_filename_and_length():
 
     # length variations
     where, params = build_gridfs_files_where(
-        {"length": {"$gt": 10, "$gte": 20, "$lt": 100, "$lte": 50, "$ne": 15, "$eq": 30}}
+        {
+            "length": {
+                "$gt": 10,
+                "$gte": 20,
+                "$lt": 100,
+                "$lte": 50,
+                "$ne": 15,
+                "$eq": 30,
+            }
+        }
     )
     assert "length > ?" in where
     assert "length >= ?" in where
@@ -125,9 +141,7 @@ def test_build_gridfs_files_where_logical_operators():
     )
     assert "OR" in where
 
-    where, params = build_gridfs_files_where(
-        {"$nor": [{"filename": "a.txt"}]}
-    )
+    where, params = build_gridfs_files_where({"$nor": [{"filename": "a.txt"}]})
     assert "IS NOT TRUE" in where
 
     # Unsupported top-level operator
@@ -167,24 +181,32 @@ def test_append_json_column_operators_coverage():
 
     conds = []
     params = []
-    _append_json_column_operators(col, path, {"$ne": re.compile(r"pattern")}, conds, params)
+    _append_json_column_operators(
+        col, path, {"$ne": re.compile(r"pattern")}, conds, params
+    )
     assert "NOT LIKE ?" in conds[0]
 
     conds = []
     params = []
-    _append_json_column_operators(col, path, {"$ne": "simple_val"}, conds, params)
+    _append_json_column_operators(
+        col, path, {"$ne": "simple_val"}, conds, params
+    )
     assert "!= ?" in conds[0]
 
     # 2. $gt/$gte/$lt/$lte with dict/list
     conds = []
     params = []
-    _append_json_column_operators(col, path, {"$gt": {"invalid": 1}}, conds, params)
+    _append_json_column_operators(
+        col, path, {"$gt": {"invalid": 1}}, conds, params
+    )
     assert conds[0] == "1=0"
 
     # 3. $in variations
     conds = []
     params = []
-    _append_json_column_operators(col, path, {"$in": "not-a-list"}, conds, params)
+    _append_json_column_operators(
+        col, path, {"$in": "not-a-list"}, conds, params
+    )
     assert conds[0] == "1=0"
 
     conds = []
@@ -194,7 +216,9 @@ def test_append_json_column_operators_coverage():
 
     conds = []
     params = []
-    _append_json_column_operators(col, path, {"$in": ["a", {"b": 2}, None]}, conds, params)
+    _append_json_column_operators(
+        col, path, {"$in": ["a", {"b": 2}, None]}, conds, params
+    )
     assert "IN (" in conds[0]
     assert "= json(?)" in conds[0]
     assert "IS NULL" in conds[0]
@@ -202,7 +226,9 @@ def test_append_json_column_operators_coverage():
     # 4. $nin variations
     conds = []
     params = []
-    _append_json_column_operators(col, path, {"$nin": "not-a-list"}, conds, params)
+    _append_json_column_operators(
+        col, path, {"$nin": "not-a-list"}, conds, params
+    )
     assert conds[0] == "1=0"
 
     conds = []
@@ -217,26 +243,36 @@ def test_append_json_column_operators_coverage():
 
     conds = []
     params = []
-    _append_json_column_operators(col, path, {"$nin": [{"dict_only": 1}]}, conds, params)
+    _append_json_column_operators(
+        col, path, {"$nin": [{"dict_only": 1}]}, conds, params
+    )
     assert conds[0] == "1=0"
 
     conds = []
     params = []
-    _append_json_column_operators(col, path, {"$nin": ["a", "b", None]}, conds, params)
+    _append_json_column_operators(
+        col, path, {"$nin": ["a", "b", None]}, conds, params
+    )
     assert "NOT IN" in conds[0]
 
     # 5. $regex with options
     conds = []
     params = []
     _append_json_column_operators(
-        col, path, {"$regex": re.compile(r"abc"), "$options": "i"}, conds, params
+        col,
+        path,
+        {"$regex": re.compile(r"abc"), "$options": "i"},
+        conds,
+        params,
     )
     assert "NOCASE" in conds[0]
 
     # 6. $exists variations
     conds = []
     params = []
-    _append_json_column_operators(col, path, {"$exists": "not-bool"}, conds, params)
+    _append_json_column_operators(
+        col, path, {"$exists": "not-bool"}, conds, params
+    )
     assert conds[0] == "1=0"
 
     conds = []
@@ -247,7 +283,9 @@ def test_append_json_column_operators_coverage():
     # 7. $size variations
     conds = []
     params = []
-    _append_json_column_operators(col, path, {"$size": "invalid"}, conds, params)
+    _append_json_column_operators(
+        col, path, {"$size": "invalid"}, conds, params
+    )
     assert conds[0] == "1=0"
 
     conds = []
@@ -258,7 +296,9 @@ def test_append_json_column_operators_coverage():
     # 8. $all variations
     conds = []
     params = []
-    _append_json_column_operators(col, path, {"$all": "not-list"}, conds, params)
+    _append_json_column_operators(
+        col, path, {"$all": "not-list"}, conds, params
+    )
     assert conds[0] == "1=0"
 
     conds = []
@@ -268,12 +308,16 @@ def test_append_json_column_operators_coverage():
 
     conds = []
     params = []
-    _append_json_column_operators(col, path, {"$all": [{"dict": 1}]}, conds, params)
+    _append_json_column_operators(
+        col, path, {"$all": [{"dict": 1}]}, conds, params
+    )
     assert conds[0] == "1=0"
 
     conds = []
     params = []
-    _append_json_column_operators(col, path, {"$all": ["tag1", "tag2"]}, conds, params)
+    _append_json_column_operators(
+        col, path, {"$all": ["tag1", "tag2"]}, conds, params
+    )
     assert len(conds) == 2
     assert params == ["tag1", "tag2"]
 
@@ -336,13 +380,19 @@ def test_grid_out_cursor_methods_and_indexing():
     with pytest.raises(ValueError, match="skip must be a non-negative integer"):
         bucket.find().skip(-1)
 
-    with pytest.raises(ValueError, match="limit must be a non-negative integer"):
+    with pytest.raises(
+        ValueError, match="limit must be a non-negative integer"
+    ):
         bucket.find().limit(-1)
 
-    with pytest.raises(ValueError, match="batch_size must be a positive integer"):
+    with pytest.raises(
+        ValueError, match="batch_size must be a positive integer"
+    ):
         bucket.find().batch_size(0)
 
-    with pytest.raises(ValueError, match="length must be a non-negative integer"):
+    with pytest.raises(
+        ValueError, match="length must be a non-negative integer"
+    ):
         bucket.find().to_list(-1)
 
     # 6. Iterating and cursor state guards
@@ -350,13 +400,19 @@ def test_grid_out_cursor_methods_and_indexing():
     first_item = next(iter_cursor)
     assert first_item is not None
 
-    with pytest.raises(RuntimeError, match="cannot sort after cursor has started iterating"):
+    with pytest.raises(
+        RuntimeError, match="cannot sort after cursor has started iterating"
+    ):
         iter_cursor.sort("filename")
 
-    with pytest.raises(RuntimeError, match="cannot skip after cursor has started iterating"):
+    with pytest.raises(
+        RuntimeError, match="cannot skip after cursor has started iterating"
+    ):
         iter_cursor.skip(1)
 
-    with pytest.raises(RuntimeError, match="cannot limit after cursor has started iterating"):
+    with pytest.raises(
+        RuntimeError, match="cannot limit after cursor has started iterating"
+    ):
         iter_cursor.limit(1)
 
     # Rewind allows re-iterating

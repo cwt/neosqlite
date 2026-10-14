@@ -4,8 +4,6 @@ import io
 import logging
 from typing import Any
 
-from .._sqlite import sqlite3
-
 # Import JSONB support utilities to reuse existing implementation
 from ..collection.jsonb_support import supports_jsonb
 from ..collection.schema_utils import column_exists

@@ -171,8 +171,13 @@ class SqlQueryBuilderMixin:
         for field, direction in sort.items():
             is_text_score_sort = (
                 direction == {"$meta": "textScore"}
-                or (isinstance(direction, dict) and direction.get("$meta") == "textScore")
-                or (field == "score" and direction in (-1, "desc", "DESCENDING"))
+                or (
+                    isinstance(direction, dict)
+                    and direction.get("$meta") == "textScore"
+                )
+                or (
+                    field == "score" and direction in (-1, "desc", "DESCENDING")
+                )
             )
             if is_text_score_sort:
                 clauses.append("fts.text_score DESC")
@@ -194,8 +199,8 @@ class SqlQueryBuilderMixin:
         query: dict[str, Any],
         sort: dict[str, Any] | None,
         collation: dict[str, Any] | None,
-        limit: int,
-        skip: int,
+        limit: int | None = None,
+        skip: int | None = None,
     ) -> tuple[str, list[Any]] | None:
         """
         Build a complete FTS query with BM25 score, JOIN, sorting, and pagination.
@@ -243,7 +248,7 @@ class SqlQueryBuilderMixin:
                 rest_params = rp
 
         sort_clause = self._build_fts_sort_clause(sort, collation)
-        pagination_clause = self._build_pagination_clause(limit, skip)
+        pagination_clause = self._build_pagination_clause(limit, skip or 0)
 
         cmd = (
             f"WITH fts AS ({fts_subquery}) "

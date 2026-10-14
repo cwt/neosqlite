@@ -139,7 +139,9 @@ def compare_gridfs_operations():
             start_mongo_timing()
             try:
                 # 1. Upload & Download stream
-                file_id = bucket.upload_from_stream("test.txt", b"Hello GridFS!")
+                file_id = bucket.upload_from_stream(
+                    "test.txt", b"Hello GridFS!"
+                )
                 grid_out = bucket.open_download_stream(file_id)
                 mongo_results["upload_download"] = (
                     grid_out.read() if grid_out else None

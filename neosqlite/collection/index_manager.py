@@ -263,11 +263,13 @@ class IndexManager:
         ):
             # Handle MongoDB text index format: [("field", "text"), ...]
             created_fts = []
-            for field, _ in key:
-                self._create_fts_index(field, tokenizer)
-                created_fts.append(
-                    f"{self.collection.name}_{field.replace('.', '_')}_fts"
-                )
+            for item in key:
+                if isinstance(item, tuple):
+                    field = str(item[0])
+                    self._create_fts_index(field, tokenizer)
+                    created_fts.append(
+                        f"{self.collection.name}_{field.replace('.', '_')}_fts"
+                    )
             return (
                 created_fts[0]
                 if len(created_fts) == 1

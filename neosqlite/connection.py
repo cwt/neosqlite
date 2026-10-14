@@ -422,7 +422,9 @@ class Connection:
         """
         if name not in self._collections:
             # Map GridFS dot notation (e.g. 'fs.files' -> 'fs_files')
-            if "." in name and (name.endswith(".files") or name.endswith(".chunks")):
+            if "." in name and (
+                name.endswith(".files") or name.endswith(".chunks")
+            ):
                 bucket_name, _, suffix = name.rpartition(".")
                 mapped_name = f"{bucket_name}_{suffix}"
                 return self[mapped_name]
