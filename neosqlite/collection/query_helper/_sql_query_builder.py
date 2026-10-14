@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from ...sql_utils import quote_table_name
 from ..json_helpers import neosqlite_json_dumps_for_sql
 from ..json_path_utils import parse_json_path
+from ..jsonb_support import json_data_column
 from ..type_correction import normalize_id_query_for_db
 from .utils import sanitize_fts_query
 
@@ -59,6 +60,58 @@ class SqlQueryBuilderMixin:
         """
         return "$text" in query
 
+    def _build_fts_subquery(
+        self, query: dict[str, Any]
+    ) -> tuple[str, list[Any]] | None:
+        """
+        Build FTS subquery that calculates BM25 text relevance score across all
+        search indexes of this collection.
+        """
+        if "$text" not in query:
+            return None
+
+        text_query = query["$text"]
+        if not isinstance(text_query, dict) or "$search" not in text_query:
+            return None
+
+        search_term = text_query["$search"]
+        if not isinstance(search_term, str):
+            return None
+
+        sanitized_term = sanitize_fts_query(search_term)
+        if not sanitized_term:
+            return None
+
+        indexed_fields = self.collection.indexes.list_search_indexes()
+        if not indexed_fields:
+            return None
+
+        subqueries = []
+        params = []
+
+        for field in indexed_fields:
+            index_name = field.replace(".", "_")
+            fts_table_name = quote_table_name(
+                f"{self.collection.name}_{index_name}_fts"
+            )
+            subqueries.append(
+                f"SELECT rowid AS rid, -bm25({fts_table_name}) AS s FROM {fts_table_name} WHERE {fts_table_name} MATCH ?"
+            )
+            params.append(sanitized_term.lower())
+
+        if not subqueries:
+            return None
+
+        if len(subqueries) == 1:
+            field0 = indexed_fields[0].replace(".", "_")
+            table0 = quote_table_name(f"{self.collection.name}_{field0}_fts")
+            fts_subquery = f"SELECT rowid AS fts_rid, -bm25({table0}) AS text_score FROM {table0} WHERE {table0} MATCH ?"
+            return fts_subquery, params
+
+        union_all = " UNION ALL ".join(subqueries)
+        fts_subquery = f"SELECT f.rid AS fts_rid, SUM(f.s) AS text_score FROM ({union_all}) f GROUP BY f.rid"
+        return fts_subquery, params
+
     def _build_text_search_query(
         self, query: dict[str, Any]
     ) -> tuple[str, list[Any], list[str]] | None:
@@ -88,40 +141,120 @@ class SqlQueryBuilderMixin:
         if not sanitized_term:
             return "WHERE 0", [], []
 
-        # Find FTS tables for this collection
-        cursor = self.collection.db.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE ?",
-            (f"{quote_table_name(self.collection.name)}_%_fts",),
-        )
-        fts_tables = cursor.fetchall()
-
-        if not fts_tables:
+        fts_res = self._build_fts_subquery(query)
+        if fts_res is None:
             return None
 
-        # Build UNION query to search across ALL FTS tables
-        subqueries = []
-        params = []
-
-        for (fts_table_name,) in fts_tables:
-            # Extract field name from FTS table name (collection_field_fts -> field)
-            index_name = fts_table_name[
-                len(f"{quote_table_name(self.collection.name)}_") : -4
-            ]  # Remove collection_ prefix and _fts suffix
-
-            # Add subquery for this FTS table
-            subqueries.append(
-                f"SELECT rowid FROM {fts_table_name} WHERE {index_name} MATCH ?"
-            )
-            params.append(sanitized_term.lower())
-
-        # Combine all subqueries with UNION to get documents matching in ANY FTS index
-        union_query = " UNION ".join(subqueries)
-
-        # Build the FTS query
-        where_clause = f"""
-        WHERE id IN ({union_query})
-        """
+        fts_subquery, params = fts_res
+        where_clause = f"WHERE id IN (SELECT fts_rid FROM ({fts_subquery}))"
         return where_clause, params, []
+
+    def _build_fts_sort_clause(
+        self,
+        sort: dict[str, Any] | None,
+        collation: dict[str, Any] | None = None,
+    ) -> str:
+        """
+        Build ORDER BY clause for FTS queries, prioritizing textScore if requested.
+        """
+        if not sort:
+            return ""
+
+        clauses = []
+        collate_clause = ""
+        if collation:
+            strength = collation.get("strength", 3)
+            case_level = collation.get("caseLevel", False)
+            if strength <= 2 or not case_level:
+                collate_clause = " COLLATE NOCASE"
+
+        for field, direction in sort.items():
+            is_text_score_sort = (
+                direction == {"$meta": "textScore"}
+                or (isinstance(direction, dict) and direction.get("$meta") == "textScore")
+                or (field == "score" and direction in (-1, "desc", "DESCENDING"))
+            )
+            if is_text_score_sort:
+                clauses.append("fts.text_score DESC")
+            elif field == "_id":
+                order_dir = "ASC" if direction == 1 else "DESC"
+                clauses.append(f"c._id {order_dir}")
+            else:
+                json_path = f"'{parse_json_path(field)}'"
+                order_field = f"{self.jsonb.json_function_prefix}_extract(c.data, {json_path})"
+                order_dir = "ASC" if direction == 1 else "DESC"
+                clauses.append(f"{order_field}{collate_clause} {order_dir}")
+
+        if clauses:
+            return " ORDER BY " + ", ".join(clauses)
+        return ""
+
+    def _build_full_fts_query(
+        self,
+        query: dict[str, Any],
+        sort: dict[str, Any] | None,
+        collation: dict[str, Any] | None,
+        limit: int,
+        skip: int,
+    ) -> tuple[str, list[Any]] | None:
+        """
+        Build a complete FTS query with BM25 score, JOIN, sorting, and pagination.
+        """
+        if "$text" not in query:
+            return None
+
+        text_query = query["$text"]
+        if not isinstance(text_query, dict) or "$search" not in text_query:
+            return None
+
+        search_term = text_query["$search"]
+        if not isinstance(search_term, str):
+            return None
+
+        sanitized_term = sanitize_fts_query(search_term)
+        jsonb = self.collection.query_engine.jsonb.jsonb_supported
+        json_col = json_data_column(jsonb)
+        table_name = quote_table_name(self.collection.name)
+
+        if not sanitized_term:
+            return (
+                f"SELECT id, _id, {json_col} as data, 0.0 as text_score FROM {table_name} WHERE 0",
+                [],
+            )
+
+        fts_res = self._build_fts_subquery(query)
+        if fts_res is None:
+            return None
+
+        fts_subquery, fts_params = fts_res
+
+        # Compile rest of query (conditions other than $text)
+        rest_query = {k: v for k, v in query.items() if k != "$text"}
+        rest_where = ""
+        rest_params: list[Any] = []
+        if rest_query:
+            rest_result = self._build_simple_where_clause(rest_query)
+            if rest_result is None:
+                return None
+            rw, rp, _ = rest_result
+            if rw:
+                cond = rw[len("WHERE ") :].strip()
+                rest_where = f"WHERE ({cond}) "
+                rest_params = rp
+
+        sort_clause = self._build_fts_sort_clause(sort, collation)
+        pagination_clause = self._build_pagination_clause(limit, skip)
+
+        cmd = (
+            f"WITH fts AS ({fts_subquery}) "
+            f"SELECT c.id, c._id, {json_col} as data, fts.text_score "
+            f"FROM {table_name} c "
+            f"JOIN fts ON fts.fts_rid = c.id "
+            f"{rest_where}{sort_clause}{pagination_clause}"
+        ).strip()
+
+        all_params = fts_params + rest_params
+        return cmd, all_params
 
     def _id_column_ref(self) -> str:
         """Return the quoted SQL column reference that stores the logical _id.

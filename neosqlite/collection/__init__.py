@@ -935,6 +935,73 @@ class Collection:
             for row in cursor.fetchall()
         ]
 
+    def _count_documents_as_gridfs(
+        self,
+        filter: dict[str, Any] | None = None,
+        session: ClientSession | None = None,
+    ) -> int:
+        """Count documents in a GridFS system collection (fs_files or fs_chunks)."""
+        table = quote_table_name(self.name)
+        if self.name.endswith("_files"):
+            from ..gridfs.grid_file import build_gridfs_files_where
+
+            where_clause, params = build_gridfs_files_where(filter or {})
+            query = f"SELECT COUNT(*) FROM {table} {where_clause}".strip()
+            cursor = self.db.execute(query, params)
+            row = cursor.fetchone()
+            return int(row[0]) if row else 0
+        elif self.name.endswith("_chunks"):
+            where_parts: list[str] = []
+            params: list[Any] = []
+            for key, value in (filter or {}).items():
+                if key in ("files_id", "n", "_id"):
+                    column = key
+                    if isinstance(value, dict):
+                        for op, op_val in value.items():
+                            match op:
+                                case "$eq":
+                                    where_parts.append(f"{column} = ?")
+                                    params.append(op_val)
+                                case "$ne":
+                                    where_parts.append(f"{column} != ?")
+                                    params.append(op_val)
+                                case "$gt":
+                                    where_parts.append(f"{column} > ?")
+                                    params.append(op_val)
+                                case "$gte":
+                                    where_parts.append(f"{column} >= ?")
+                                    params.append(op_val)
+                                case "$lt":
+                                    where_parts.append(f"{column} < ?")
+                                    params.append(op_val)
+                                case "$lte":
+                                    where_parts.append(f"{column} <= ?")
+                                    params.append(op_val)
+                                case "$in" if isinstance(op_val, (list, tuple)):
+                                    if not op_val:
+                                        where_parts.append("1=0")
+                                    else:
+                                        placeholders = ", ".join("?" * len(op_val))
+                                        where_parts.append(
+                                            f"{column} IN ({placeholders})"
+                                        )
+                                        params.extend(op_val)
+                                case _:
+                                    where_parts.append("1=0")
+                    else:
+                        where_parts.append(f"{column} = ?")
+                        params.append(value)
+                else:
+                    where_parts.append("1=0")
+            where_clause = (
+                "WHERE " + " AND ".join(where_parts) if where_parts else ""
+            )
+            query = f"SELECT COUNT(*) FROM {table} {where_clause}".strip()
+            cursor = self.db.execute(query, params)
+            row = cursor.fetchone()
+            return int(row[0]) if row else 0
+        return 0
+
     def find_raw_batches(
         self,
         filter: dict[str, Any] | None = None,
@@ -990,10 +1057,11 @@ class Collection:
         self, filter: dict[str, Any], session: ClientSession | None = None
     ) -> int:
         """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.count_documents`.
+        Count documents matching the filter.
         """
         self._auto_purge_ttl()
+        if self._is_gridfs_collection():
+            return self._count_documents_as_gridfs(filter, session=session)
         return self.query_engine.count_documents(filter, session=session)
 
     def estimated_document_count(
@@ -1023,8 +1091,8 @@ class Collection:
             The options parameter is accepted for PyMongo API compatibility but
             most options are not applicable to SQLite.
         """
-        # Options are accepted for API compatibility but not used
-        # maxTimeMS, hint, etc. are MongoDB-specific
+        if self._is_gridfs_collection():
+            return self._count_documents_as_gridfs({}, session=session)
         return self.query_engine.estimated_document_count(session=session)
 
     def find_one_and_delete(

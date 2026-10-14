@@ -41,7 +41,7 @@ class GridFSBucket:
 
     def __init__(
         self,
-        db: sqlite3.Connection,
+        db: Any,
         bucket_name: str = "fs",
         chunk_size_bytes: int = 255 * 1024,  # 255KB default chunk size
         write_concern: dict[str, Any] | None = None,
@@ -52,14 +52,16 @@ class GridFSBucket:
         Initialize a new GridFSBucket instance.
 
         Args:
-            db: SQLite database connection
+            db: SQLite database connection or neosqlite.Connection instance
             bucket_name: The bucket name for the GridFS files (default: "fs")
             chunk_size_bytes: The chunk size in bytes (default: 255KB)
             write_concern: Write concern settings (simulated for compatibility)
             read_preference: Read preference settings (not applicable to SQLite)
             disable_md5: Disable MD5 checksum calculation for performance
         """
-        self._db = db
+        raw_db = getattr(db, "db", db)
+        self._db = raw_db
+        self._connection = db
         self._bucket_name = bucket_name
         self._chunk_size_bytes = chunk_size_bytes
         self._files_collection = f"{bucket_name}_files"

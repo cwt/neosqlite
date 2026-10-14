@@ -563,33 +563,70 @@ class Cursor:
             >>> print(plan['queryPlanner']['winningPlan'])
         """
         # Build the SQL query that would be executed
-        where_result = self._query_helpers._build_simple_where_clause(
-            self._filter
-        )
-
-        # Build sorting and pagination clauses for SQL
-        sort_clause = self._query_helpers._build_sort_clause(
-            self._sort, self._collation
-        )
-        pagination_clause = self._query_helpers._build_pagination_clause(
-            self._limit, self._skip
-        )
-
-        if where_result is not None:
-            where_clause, params, tables = where_result
-            jsonb = self._collection.query_engine.jsonb.jsonb_supported
-            sql = (
-                f"SELECT id, _id, {json_data_column(jsonb)} as data "
-                f"FROM {quote_table_name(self._collection.name)} {where_clause}{sort_clause}{pagination_clause}"
+        if self._query_helpers._is_text_search_query(self._filter):
+            fts_res = self._query_helpers._build_full_fts_query(
+                self._filter,
+                self._sort,
+                self._collation,
+                self._limit,
+                self._skip,
             )
+            if fts_res is not None:
+                sql, params = fts_res
+            else:
+                where_result = self._query_helpers._build_simple_where_clause(
+                    self._filter
+                )
+                sort_clause = self._query_helpers._build_sort_clause(
+                    self._sort, self._collation
+                )
+                pagination_clause = (
+                    self._query_helpers._build_pagination_clause(
+                        self._limit, self._skip
+                    )
+                )
+                if where_result is not None:
+                    where_clause, params, tables = where_result
+                    jsonb = self._collection.query_engine.jsonb.jsonb_supported
+                    sql = (
+                        f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                        f"FROM {quote_table_name(self._collection.name)} {where_clause}{sort_clause}{pagination_clause}"
+                    )
+                else:
+                    jsonb = self._collection.query_engine.jsonb.jsonb_supported
+                    sql = (
+                        f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                        f"FROM {quote_table_name(self._collection.name)}{sort_clause}{pagination_clause}"
+                    )
+                    params = []
         else:
-            # No filter - simple select
-            jsonb = self._collection.query_engine.jsonb.jsonb_supported
-            sql = (
-                f"SELECT id, _id, {json_data_column(jsonb)} as data "
-                f"FROM {quote_table_name(self._collection.name)}{sort_clause}{pagination_clause}"
+            where_result = self._query_helpers._build_simple_where_clause(
+                self._filter
             )
-            params = []
+
+            # Build sorting and pagination clauses for SQL
+            sort_clause = self._query_helpers._build_sort_clause(
+                self._sort, self._collation
+            )
+            pagination_clause = self._query_helpers._build_pagination_clause(
+                self._limit, self._skip
+            )
+
+            if where_result is not None:
+                where_clause, params, tables = where_result
+                jsonb = self._collection.query_engine.jsonb.jsonb_supported
+                sql = (
+                    f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                    f"FROM {quote_table_name(self._collection.name)} {where_clause}{sort_clause}{pagination_clause}"
+                )
+            else:
+                # No filter - simple select
+                jsonb = self._collection.query_engine.jsonb.jsonb_supported
+                sql = (
+                    f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                    f"FROM {quote_table_name(self._collection.name)}{sort_clause}{pagination_clause}"
+                )
+                params = []
 
         # Get the query plan from SQLite
 
@@ -676,6 +713,10 @@ class Cursor:
 
         # Yield results and track count
         for doc in docs:
+            if "_textScore" in doc and (
+                not self._projection or "_textScore" not in self._projection
+            ):
+                doc.pop("_textScore", None)
             self._retrieved += 1
             yield doc
 
@@ -708,6 +749,60 @@ class Cursor:
         # Special handling for $expr queries
         if "$expr" in self._filter:
             return self._handle_expr_query()
+
+        # Special handling for $text queries with native BM25 score calculation
+        if self._query_helpers._is_text_search_query(self._filter):
+            fts_query_result = self._query_helpers._build_full_fts_query(
+                self._filter,
+                self._sort,
+                self._collation,
+                self._limit if not self._where_predicate else 0,
+                self._skip if not self._where_predicate else 0,
+            )
+            if fts_query_result is not None:
+                cmd, params = fts_query_result
+                if self._sort:
+                    self._sql_handled_sort = True
+                if not self._where_predicate and (self._limit or self._skip):
+                    self._sql_handled_pagination = True
+
+                if self._comment:
+                    safe_comment = (
+                        self._comment.replace("/*", "")
+                        .replace("*/", "")
+                        .replace("--", "")
+                    )
+                    cmd = f"/* {safe_comment} */ {cmd}"
+
+                db_cursor = self._collection.db.execute(cmd, params)
+
+                def doc_generator():
+                    try:
+                        while True:
+                            rows = db_cursor.fetchmany(self._batch_size)
+                            if not rows:
+                                break
+                            for doc in self._load_documents(rows):
+                                yield doc
+                    finally:
+                        db_cursor.close()
+
+                docs = doc_generator()
+                self._active_generator = docs
+                if self._where_predicate:
+                    docs = filter(self._where_predicate, docs)  # type: ignore[arg-type]
+                if "$jsonSchema" in self._filter:
+                    from .query_helper.schema_validator import (
+                        matches_json_schema,
+                    )
+
+                    schema = self._filter["$jsonSchema"]
+                    docs = (
+                        doc
+                        for doc in docs
+                        if matches_json_schema(doc, schema)
+                    )
+                return docs
 
         where_result = self._query_helpers._build_simple_where_clause(
             self._filter
@@ -1162,11 +1257,15 @@ class Cursor:
             Iterable[dict[str, Any]]: An iterable of loaded documents
         """
         for row in rows:
-            id_val, stored_id_val, data_val = row
+            id_val = row[0]
+            stored_id_val = row[1]
+            data_val = row[2]
             # Use the collection's _load method which now handles both id and _id
             doc = self._collection._load_with_stored_id(
                 id_val, data_val, stored_id_val
             )
+            if len(row) >= 4 and row[3] is not None:
+                doc["_textScore"] = float(row[3])
             yield doc
 
     def _apply_sorting(
@@ -1199,12 +1298,32 @@ class Cursor:
                 case_insensitive = True
 
         for key in sort_keys:
+            direction = self._sort[key]
+            is_text_score = (
+                direction == {"$meta": "textScore"}
+                or (
+                    isinstance(direction, dict)
+                    and direction.get("$meta") == "textScore"
+                )
+            )
+            if is_text_score:
+                reverse = True
+
+                def make_score_key():
+                    def score_key_func(doc: dict[str, Any]) -> Any:
+                        return float(doc.get("_textScore", doc.get(key, 0.0)))
+
+                    return score_key_func
+
+                sorted_docs.sort(key=make_score_key(), reverse=reverse)
+                continue
+
             get_val = partial(self._collection._get_val, key=key)
-            reverse = self._sort[key] == DESCENDING
+            reverse = direction == DESCENDING
 
             if case_insensitive:
                 # Use case-insensitive sorting
-                def make_key(get_val=get_val):
+                def make_key(gv=get_val):
                     """
                     Create a case-insensitive key function.
                     """
@@ -1213,7 +1332,7 @@ class Cursor:
                         """
                         Extract value and convert to lowercase if it's a string.
                         """
-                        val = get_val(doc)
+                        val = gv(doc)
                         if isinstance(val, str):
                             val = val.lower()
                         return bson_sort_key(val)
@@ -1222,8 +1341,14 @@ class Cursor:
 
                 sorted_docs.sort(key=make_key(), reverse=reverse)
             else:
+                def make_default_key(gv=get_val):
+                    def key_func(doc):
+                        return bson_sort_key(gv(doc))
+
+                    return key_func
+
                 sorted_docs.sort(
-                    key=lambda doc: bson_sort_key(get_val(doc)),
+                    key=make_default_key(),
                     reverse=reverse,
                 )
         return sorted_docs

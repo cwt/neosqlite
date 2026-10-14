@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import datetime
 import hashlib
 import json
@@ -1099,6 +1100,324 @@ def _append_dotted_json_condition(
         )
 
 
+def build_gridfs_files_where(
+    filter_dict: dict[str, Any] | None,
+) -> tuple[str, list[Any]]:
+    """
+    Build WHERE clause and parameter list for GridFS files collection.
+    Shared by GridOutCursor and Collection._count_documents_as_gridfs.
+    """
+    if not filter_dict:
+        return "", []
+
+    where_conditions: list[str] = []
+    params: list[Any] = []
+
+    def _append_one(
+        key: str,
+        value: Any,
+        conds: list[str],
+        plist: list[Any],
+    ) -> None:
+        # Logical operators: never silently drop — build recursively.
+        if key in ("$and", "$or", "$nor"):
+            if not isinstance(value, (list, tuple)):
+                logger.debug(
+                    f"Invalid '{key}' GridFS filter: {value!r}"
+                )
+                conds.append("1=0")
+                return
+            sub_clauses: list[str] = []
+            sub_params: list[Any] = []
+            for subfilter in value:
+                if not isinstance(subfilter, dict):
+                    conds.append("1=0")
+                    return
+                if not subfilter:
+                    sub_clauses.append("(1=1)")
+                    continue
+                temp_conds: list[str] = []
+                temp_params: list[Any] = []
+                for sk, sv in subfilter.items():
+                    _append_one(sk, sv, temp_conds, temp_params)
+                if temp_conds:
+                    sub_clauses.append(
+                        "(" + " AND ".join(temp_conds) + ")"
+                    )
+                    sub_params.extend(temp_params)
+                else:
+                    sub_clauses.append("(1=1)")
+            if not sub_clauses:
+                conds.append(
+                    "1=1" if key in ("$and", "$nor") else "1=0"
+                )
+                return
+            if key == "$and":
+                conds.append("(" + " AND ".join(sub_clauses) + ")")
+            elif key == "$or":
+                conds.append("(" + " OR ".join(sub_clauses) + ")")
+            else:  # $nor
+                conds.append(
+                    "("
+                    + " AND ".join(
+                        f"({c} IS NOT TRUE)" for c in sub_clauses
+                    )
+                    + ")"
+                )
+            plist.extend(sub_params)
+            return
+
+        if isinstance(key, str) and key.startswith("$"):
+            logger.debug(f"Unsupported GridFS filter operator '{key}'")
+            conds.append("1=0")
+            return
+
+        if isinstance(key, str) and "." in key:
+            top, _, sub = key.partition(".")
+            if top in ("metadata", "aliases"):
+                _append_dotted_json_condition(
+                    top, sub, value, conds, plist
+                )
+            else:
+                logger.debug(
+                    f"Unsupported dotted GridFS filter '{key}'"
+                )
+                conds.append("1=0")
+            return
+
+        match key:
+            case "_id":
+                if isinstance(value, dict):
+                    if "$eq" in value:
+                        value = value["$eq"]
+                    elif "$in" in value:
+                        in_vals = value["$in"]
+                        placeholders = ", ".join("?" for _ in in_vals)
+                        conds.append(f"_id IN ({placeholders})")
+                        for v in in_vals:
+                            plist.append(
+                                str(v) if isinstance(v, ObjectId) else v
+                            )
+                        return
+                if isinstance(value, ObjectId):
+                    conds.append("_id = ?")
+                    plist.append(str(value))
+                elif isinstance(value, str) and len(value) == 24:
+                    try:
+                        ObjectId(value)
+                        conds.append("_id = ?")
+                        plist.append(value)
+                    except ValueError as e:
+                        logger.debug(
+                            f"ID '{value}' is not a valid ObjectId: {e}"
+                        )
+                        conds.append("_id = ?")
+                        plist.append(value)
+                else:
+                    conds.append("_id = ?")
+                    plist.append(
+                        str(value)
+                        if isinstance(value, ObjectId)
+                        else value
+                    )
+            case "id":
+                conds.append("id = ?")
+                plist.append(value)
+            case "filename":
+                if isinstance(value, dict):
+                    for op, val in value.items():
+                        match op:
+                            case "$regex":
+                                conds.append("filename LIKE ?")
+                                plist.append(f"%{val}%")
+                            case "$ne":
+                                conds.append("filename != ?")
+                                plist.append(val)
+                            case "$eq":
+                                conds.append("filename = ?")
+                                plist.append(val)
+                            case _:
+                                conds.append("filename = ?")
+                                plist.append(str(value))
+                else:
+                    conds.append("filename = ?")
+                    plist.append(value)
+            case "length":
+                if isinstance(value, dict):
+                    for op, val in value.items():
+                        match op:
+                            case "$gt":
+                                conds.append("length > ?")
+                                plist.append(val)
+                            case "$gte":
+                                conds.append("length >= ?")
+                                plist.append(val)
+                            case "$lt":
+                                conds.append("length < ?")
+                                plist.append(val)
+                            case "$lte":
+                                conds.append("length <= ?")
+                                plist.append(val)
+                            case "$eq":
+                                conds.append("length = ?")
+                                plist.append(val)
+                            case "$ne":
+                                conds.append("length != ?")
+                                plist.append(val)
+                else:
+                    conds.append("length = ?")
+                    plist.append(value)
+            case "chunkSize":
+                if isinstance(value, dict):
+                    for op, val in value.items():
+                        match op:
+                            case "$gt":
+                                conds.append("chunkSize > ?")
+                                plist.append(val)
+                            case "$gte":
+                                conds.append("chunkSize >= ?")
+                                plist.append(val)
+                            case "$lt":
+                                conds.append("chunkSize < ?")
+                                plist.append(val)
+                            case "$lte":
+                                conds.append("chunkSize <= ?")
+                                plist.append(val)
+                            case "$eq":
+                                conds.append("chunkSize = ?")
+                                plist.append(val)
+                            case "$ne":
+                                conds.append("chunkSize != ?")
+                                plist.append(val)
+                else:
+                    conds.append("chunkSize = ?")
+                    plist.append(value)
+            case "uploadDate":
+                if isinstance(value, dict):
+                    for op, val in value.items():
+                        date_str = (
+                            val.isoformat()
+                            if hasattr(val, "isoformat")
+                            else str(val)
+                        )
+                        match op:
+                            case "$gt":
+                                conds.append("uploadDate > ?")
+                                plist.append(date_str)
+                            case "$gte":
+                                conds.append("uploadDate >= ?")
+                                plist.append(date_str)
+                            case "$lt":
+                                conds.append("uploadDate < ?")
+                                plist.append(date_str)
+                            case "$lte":
+                                conds.append("uploadDate <= ?")
+                                plist.append(date_str)
+                            case "$eq":
+                                conds.append("uploadDate = ?")
+                                plist.append(date_str)
+                            case "$ne":
+                                conds.append("uploadDate != ?")
+                                plist.append(date_str)
+                else:
+                    date_str = (
+                        value.isoformat()
+                        if hasattr(value, "isoformat")
+                        else str(value)
+                    )
+                    conds.append("uploadDate = ?")
+                    plist.append(date_str)
+            case "md5":
+                if isinstance(value, dict):
+                    for op, val in value.items():
+                        match op:
+                            case "$eq":
+                                conds.append("md5 = ?")
+                                plist.append(val)
+                            case "$ne":
+                                conds.append("md5 != ?")
+                                plist.append(val)
+                else:
+                    conds.append("md5 = ?")
+                    plist.append(value)
+            case "metadata":
+                if isinstance(value, dict):
+                    for op, val in value.items():
+                        match op:
+                            case "$regex":
+                                conds.append("metadata LIKE ?")
+                                plist.append(f"%{val}%")
+                            case "$ne":
+                                conds.append("metadata != ?")
+                                plist.append(
+                                    str(val)
+                                    if not isinstance(val, str)
+                                    else val
+                                )
+                            case _:
+                                if not op.startswith("$"):
+                                    _append_dotted_json_condition(
+                                        "metadata", op, val, conds, plist
+                                    )
+                                else:
+                                    conds.append("metadata LIKE ?")
+                                    plist.append(f"%{op}%{val}%")
+                else:
+                    conds.append("metadata LIKE ?")
+                    plist.append(f"%{value}%")
+            case "aliases":
+                conds.append(
+                    "EXISTS (SELECT 1 FROM json_each(aliases) WHERE value = ?)"
+                )
+                plist.append(value)
+            case "content_type" | "contentType":
+                if isinstance(value, dict) and "$ne" in value:
+                    conds.append("content_type != ?")
+                    plist.append(value["$ne"])
+                else:
+                    conds.append("content_type = ?")
+                    plist.append(value)
+            case _:
+                logger.debug(f"Unsupported GridFS filter field '{key}'")
+                conds.append("1=0")
+
+    for _k, _v in filter_dict.items():
+        _append_one(_k, _v, where_conditions, params)
+
+    where_clause = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
+    return where_clause, params
+
+
+def _gridfs_sort_to_sql(sort_spec: list[tuple[str, Any]] | None) -> str:
+    """Translate sort specification for GridFS files to SQL ORDER BY clause."""
+    if not sort_spec:
+        return ""
+    order_parts: list[str] = []
+    for key, direction in sort_spec:
+        dir_sql = "DESC" if direction in (-1, "desc", "DESCENDING", False) else "ASC"
+        if key in ("_id", "id", "filename", "length", "chunkSize", "uploadDate", "md5", "content_type", "aliases"):
+            order_parts.append(f"{key} {dir_sql}")
+        elif key == "upload_date":
+            order_parts.append(f"uploadDate {dir_sql}")
+        elif key == "chunk_size":
+            order_parts.append(f"chunkSize {dir_sql}")
+        elif key == "contentType":
+            order_parts.append(f"content_type {dir_sql}")
+        elif key.startswith("metadata."):
+            sub = key[len("metadata.") :]
+            json_path = _mongo_dot_subpath_to_json_path(sub)
+            if json_path is not None:
+                escaped = json_path.replace("'", "''")
+                order_parts.append(f"json_extract(metadata, '{escaped}') {dir_sql}")
+            else:
+                order_parts.append(f"id {dir_sql}")
+        else:
+            order_parts.append(f"id {dir_sql}")
+    if order_parts:
+        return "ORDER BY " + ", ".join(order_parts)
+    return ""
+
+
 class GridOutCursor:
     """
     A cursor for iterating over GridFS files.
@@ -1110,7 +1429,8 @@ class GridOutCursor:
         self,
         db: sqlite3.Connection,
         bucket_name: str,
-        filter: dict[str, Any],
+        filter: dict[str, Any] | None = None,
+        session: Any | None = None,
     ):
         """
         Initialize a new GridOutCursor instance.
@@ -1119,317 +1439,149 @@ class GridOutCursor:
             db: SQLite database connection
             bucket_name: The bucket name for the GridFS files
             filter: The filter to apply when searching for files
+            session: Optional ClientSession
         """
-        self._db = db
+        self._db = getattr(db, "db", db)
         self._bucket_name = bucket_name
-        self._filter = filter
+        self._filter = dict(filter) if filter else {}
+        self._session = session
         self._files_collection = quote_table_name(f"{bucket_name}_files")
 
-        # Build query based on filter
-        where_clause = ""
-        params: list[Any] = []
+        self._sort: list[tuple[str, Any]] | None = None
+        self._skip: int = 0
+        self._limit: int = 0
+        self._batch_size: int = 101
 
-        if filter:
-            where_conditions: list[str] = []
+        self._file_ids: list[Any] | None = None
+        self._index: int = 0
 
-            def _append_one(
-                key: str,
-                value: Any,
-                conds: list[str],
-                plist: list[Any],
-            ) -> None:
-                # Logical operators: never silently drop — build recursively.
-                if key in ("$and", "$or", "$nor"):
-                    if not isinstance(value, (list, tuple)):
-                        logger.debug(
-                            f"Invalid '{key}' GridFS filter: {value!r}"
-                        )
-                        conds.append("1=0")
-                        return
-                    sub_clauses: list[str] = []
-                    sub_params: list[Any] = []
-                    for subfilter in value:
-                        if not isinstance(subfilter, dict):
-                            conds.append("1=0")
-                            return
-                        if not subfilter:
-                            sub_clauses.append("(1=1)")
-                            continue
-                        temp_conds: list[str] = []
-                        temp_params: list[Any] = []
-                        for sk, sv in subfilter.items():
-                            _append_one(sk, sv, temp_conds, temp_params)
-                        if temp_conds:
-                            sub_clauses.append(
-                                "(" + " AND ".join(temp_conds) + ")"
-                            )
-                            sub_params.extend(temp_params)
-                        else:
-                            sub_clauses.append("(1=1)")
-                    if not sub_clauses:
-                        conds.append(
-                            "1=1" if key in ("$and", "$nor") else "1=0"
-                        )
-                        return
-                    if key == "$and":
-                        conds.append("(" + " AND ".join(sub_clauses) + ")")
-                    elif key == "$or":
-                        conds.append("(" + " OR ".join(sub_clauses) + ")")
-                    else:  # $nor
-                        # NULL-safe negation: inner conditions yield NULL
-                        # for missing/null fields; plain NOT NULL is NULL
-                        # (excluded) instead of TRUE. IS NOT TRUE treats
-                        # NULL as non-match, matching MongoDB $nor.
-                        conds.append(
-                            "("
-                            + " AND ".join(
-                                f"({c} IS NOT TRUE)" for c in sub_clauses
-                            )
-                            + ")"
-                        )
-                    plist.extend(sub_params)
-                    return
+    def sort(
+        self, key_or_list: Any, direction: int | None = None
+    ) -> GridOutCursor:
+        """
+        Sort the documents returned by the cursor.
 
-                if isinstance(key, str) and key.startswith("$"):
-                    logger.debug(f"Unsupported GridFS filter operator '{key}'")
-                    conds.append("1=0")
-                    return
+        Args:
+            key_or_list: A string or list of (key, direction) pairs
+            direction: Sort direction (1 for ascending, -1 for descending)
+        """
+        if self._file_ids is not None:
+            raise RuntimeError("cannot sort after cursor has started iterating")
+        if isinstance(key_or_list, str):
+            self._sort = [(key_or_list, direction or 1)]
+        elif isinstance(key_or_list, dict):
+            self._sort = list(key_or_list.items())
+        elif isinstance(key_or_list, (list, tuple)):
+            self._sort = list(key_or_list)
+        return self
 
-                # Dotted paths (e.g. {"metadata.url": ...}) — previously
-                # fell through the match below and returned the whole
-                # bucket (#1.16.1 report).
-                if isinstance(key, str) and "." in key:
-                    top, _, sub = key.partition(".")
-                    if top in ("metadata", "aliases"):
-                        _append_dotted_json_condition(
-                            top, sub, value, conds, plist
-                        )
-                    else:
-                        # Dotted query on a scalar/unknown top-level field
-                        # can never match — but must not match everything.
-                        logger.debug(
-                            f"Unsupported dotted GridFS filter '{key}'"
-                        )
-                        conds.append("1=0")
-                    return
+    def skip(self, count: int) -> GridOutCursor:
+        """
+        Skip the first count documents returned by the cursor.
 
-                match key:
-                    case "_id":
-                        if isinstance(value, dict):
-                            if "$eq" in value:
-                                value = value["$eq"]
-                            elif "$in" in value:
-                                in_vals = value["$in"]
-                                placeholders = ", ".join("?" for _ in in_vals)
-                                conds.append(f"_id IN ({placeholders})")
-                                for v in in_vals:
-                                    plist.append(
-                                        str(v) if isinstance(v, ObjectId) else v
-                                    )
-                                return
-                        # Handle ObjectId hex strings and other ID formats
-                        if isinstance(value, ObjectId):
-                            conds.append("_id = ?")
-                            plist.append(str(value))
-                        elif isinstance(value, str) and len(value) == 24:
-                            # Check if it's a valid ObjectId hex string
-                            try:
-                                ObjectId(value)
-                                conds.append("_id = ?")
-                                plist.append(value)
-                            except ValueError as e:
-                                # Not a valid ObjectId, treat as regular string
-                                logger.debug(
-                                    f"ID '{value}' is not a valid ObjectId: {e}"
-                                )
-                                conds.append("_id = ?")
-                                plist.append(value)
-                        else:
-                            # Handle other types
-                            conds.append("_id = ?")
-                            plist.append(
-                                str(value)
-                                if isinstance(value, ObjectId)
-                                else value
-                            )
-                    case "id":
-                        # For 'id' queries, we look in the integer id column
-                        conds.append("id = ?")
-                        plist.append(value)
-                    case "filename":
-                        if isinstance(value, dict):
-                            # Handle operators like {"$regex": "pattern"}, {"$ne": "name"}, etc.
-                            for op, val in value.items():
-                                match op:
-                                    case "$regex":
-                                        conds.append("filename LIKE ?")
-                                        plist.append(f"%{val}%")
-                                    case "$ne":
-                                        conds.append("filename != ?")
-                                        plist.append(val)
-                                    case "$eq":
-                                        conds.append("filename = ?")
-                                        plist.append(val)
-                                    case _:
-                                        # For unsupported operators, fall back to exact match
-                                        conds.append("filename = ?")
-                                        plist.append(str(value))
-                        else:
-                            # Direct value comparison
-                            conds.append("filename = ?")
-                            plist.append(value)
-                    case "length":
-                        if isinstance(value, dict):
-                            # Handle operators like {"$gt": 1000}, {"$lt": 5000}, etc.
-                            for op, val in value.items():
-                                match op:
-                                    case "$gt":
-                                        conds.append("length > ?")
-                                        plist.append(val)
-                                    case "$gte":
-                                        conds.append("length >= ?")
-                                        plist.append(val)
-                                    case "$lt":
-                                        conds.append("length < ?")
-                                        plist.append(val)
-                                    case "$lte":
-                                        conds.append("length <= ?")
-                                        plist.append(val)
-                                    case "$eq":
-                                        conds.append("length = ?")
-                                        plist.append(val)
-                                    case "$ne":
-                                        conds.append("length != ?")
-                                        plist.append(val)
-                        else:
-                            # Direct value comparison
-                            conds.append("length = ?")
-                            plist.append(value)
-                    case "chunkSize":
-                        if isinstance(value, dict):
-                            # Handle operators like {"$gt": 1000}, {"$lt": 5000}, etc.
-                            for op, val in value.items():
-                                match op:
-                                    case "$gt":
-                                        conds.append("chunkSize > ?")
-                                        plist.append(val)
-                                    case "$gte":
-                                        conds.append("chunkSize >= ?")
-                                        plist.append(val)
-                                    case "$lt":
-                                        conds.append("chunkSize < ?")
-                                        plist.append(val)
-                                    case "$lte":
-                                        conds.append("chunkSize <= ?")
-                                        plist.append(val)
-                                    case "$eq":
-                                        conds.append("chunkSize = ?")
-                                        plist.append(val)
-                                    case "$ne":
-                                        conds.append("chunkSize != ?")
-                                        plist.append(val)
-                        else:
-                            # Direct value comparison
-                            conds.append("chunkSize = ?")
-                            plist.append(value)
-                    case "uploadDate":
-                        if isinstance(value, dict):
-                            # Handle operators like {"$gt": date}, {"$lt": date}, etc.
-                            for op, val in value.items():
-                                match op:
-                                    case "$gt":
-                                        conds.append("uploadDate > ?")
-                                        plist.append(val)
-                                    case "$gte":
-                                        conds.append("uploadDate >= ?")
-                                        plist.append(val)
-                                    case "$lt":
-                                        conds.append("uploadDate < ?")
-                                        plist.append(val)
-                                    case "$lte":
-                                        conds.append("uploadDate <= ?")
-                                        plist.append(val)
-                                    case "$eq":
-                                        conds.append("uploadDate = ?")
-                                        plist.append(val)
-                                    case "$ne":
-                                        conds.append("uploadDate != ?")
-                                        plist.append(val)
-                        else:
-                            # Direct value comparison
-                            conds.append("uploadDate = ?")
-                            plist.append(value)
-                    case "md5":
-                        if isinstance(value, dict) and "$ne" in value:
-                            conds.append("md5 != ?")
-                            plist.append(value["$ne"])
-                        else:
-                            # Direct value comparison
-                            conds.append("md5 = ?")
-                            plist.append(value)
-                    # For metadata, we do a simple string match (basic implementation)
-                    # In a full implementation, we'd parse the JSON, but for now we'll do substring matching
-                    case "metadata":
-                        if isinstance(value, dict):
-                            # Handle metadata queries with operators
-                            for op, val in value.items():
-                                match op:
-                                    case "$regex":
-                                        conds.append("metadata LIKE ?")
-                                        plist.append(f"%{val}%")
-                                    case "$ne":
-                                        conds.append("metadata != ?")
-                                        plist.append(
-                                            str(val)
-                                            if not isinstance(val, str)
-                                            else val
-                                        )
-                                    case _:
-                                        # For other operators, convert to string and match
-                                        conds.append("metadata LIKE ?")
-                                        plist.append(f"%{op}%{val}%")
-                        else:
-                            # Direct metadata string matching
-                            conds.append("metadata LIKE ?")
-                            plist.append(f"%{value}%")
-                    case "aliases":
-                        # Check if the value is in the aliases JSON array
-                        conds.append(
-                            "EXISTS (SELECT 1 FROM json_each(aliases) WHERE value = ?)"
-                        )
-                        plist.append(value)
-                    case "content_type" | "contentType":
-                        if isinstance(value, dict) and "$ne" in value:
-                            conds.append("content_type != ?")
-                            plist.append(value["$ne"])
-                        else:
-                            # Direct value comparison
-                            conds.append("content_type = ?")
-                            plist.append(value)
-                    case _:
-                        # Unknown top-level field: must not silently match
-                        # everything — match nothing instead.
-                        logger.debug(f"Unsupported GridFS filter field '{key}'")
-                        conds.append("1=0")
+        Args:
+            count: Number of documents to skip
+        """
+        if self._file_ids is not None:
+            raise RuntimeError("cannot skip after cursor has started iterating")
+        if not isinstance(count, int) or count < 0:
+            raise ValueError("skip must be a non-negative integer")
+        self._skip = count
+        return self
 
-            for _k, _v in filter.items():
-                _append_one(_k, _v, where_conditions, params)
+    def limit(self, count: int) -> GridOutCursor:
+        """
+        Limit the number of documents returned by the cursor.
 
-            if where_conditions:
-                where_clause = "WHERE " + " AND ".join(where_conditions)
+        Args:
+            count: Maximum number of documents to return
+        """
+        if self._file_ids is not None:
+            raise RuntimeError("cannot limit after cursor has started iterating")
+        if not isinstance(count, int) or count < 0:
+            raise ValueError("limit must be a non-negative integer")
+        self._limit = count
+        return self
 
-        # Execute query to get integer file IDs (changed from _id to id for internal use)
-        query = f"SELECT id FROM {self._files_collection} {where_clause}"
+    def batch_size(self, size: int) -> GridOutCursor:
+        """
+        Set the batch size for the cursor.
+
+        Args:
+            size: Number of documents per batch
+        """
+        if not isinstance(size, int) or size <= 0:
+            raise ValueError("batch_size must be a positive integer")
+        self._batch_size = size
+        return self
+
+    def clone(self) -> GridOutCursor:
+        """Create a clone of this cursor in unexecuted state."""
+        cloned = GridOutCursor(
+            self._db, self._bucket_name, deepcopy(self._filter), self._session
+        )
+        cloned._sort = list(self._sort) if self._sort else None
+        cloned._skip = self._skip
+        cloned._limit = self._limit
+        cloned._batch_size = self._batch_size
+        return cloned
+
+    def rewind(self) -> GridOutCursor:
+        """Reset the cursor to its initial unexecuted state."""
+        self._file_ids = None
+        self._index = 0
+        return self
+
+    def _ensure_executed(self) -> None:
+        """Execute the query lazily if not already executed."""
+        if self._file_ids is not None:
+            return
+
+        where_clause, params = build_gridfs_files_where(self._filter)
+        sort_clause = _gridfs_sort_to_sql(self._sort)
+
+        pagination_clause = ""
+        if self._limit > 0 and self._skip > 0:
+            pagination_clause = " LIMIT ? OFFSET ?"
+            params.extend([self._limit, self._skip])
+        elif self._limit > 0:
+            pagination_clause = " LIMIT ?"
+            params.append(self._limit)
+        elif self._skip > 0:
+            pagination_clause = " LIMIT -1 OFFSET ?"
+            params.append(self._skip)
+
+        query = f"SELECT id FROM {self._files_collection} {where_clause} {sort_clause} {pagination_clause}".strip()
         cursor = self._db.execute(query, params)
         self._file_ids = [row[0] for row in cursor.fetchall()]
         self._index = 0
 
+    def to_list(self, length: int | None = None) -> list[GridOut]:
+        """
+        Retrieve all documents as a list.
+
+        Args:
+            length: Optional maximum number of documents to return
+        """
+        self._ensure_executed()
+        assert self._file_ids is not None
+        if length is not None:
+            if not isinstance(length, int) or length < 0:
+                raise ValueError("length must be a non-negative integer")
+            selected_ids = self._file_ids[:length]
+        else:
+            selected_ids = self._file_ids
+        return [GridOut(self._db, self._bucket_name, fid) for fid in selected_ids]
+
     def __iter__(self) -> GridOutCursor:
         """Return the iterator object."""
+        self._ensure_executed()
         return self
 
     def __next__(self) -> GridOut:
         """Get the next GridOut object."""
+        self._ensure_executed()
+        assert self._file_ids is not None
         if self._index >= len(self._file_ids):
             raise StopIteration
 
