@@ -255,6 +255,26 @@ class IndexManager:
                 raise ValueError("Compound datetime indexes are not supported")
         elif (
             isinstance(key, list)
+            and key
+            and all(
+                isinstance(k, tuple) and len(k) == 2 and k[1] == "text"
+                for k in key
+            )
+        ):
+            # Handle MongoDB text index format: [("field", "text"), ...]
+            created_fts = []
+            for field, _ in key:
+                self._create_fts_index(field, tokenizer)
+                created_fts.append(
+                    f"{self.collection.name}_{field.replace('.', '_')}_fts"
+                )
+            return (
+                created_fts[0]
+                if len(created_fts) == 1
+                else "_".join(created_fts)
+            )
+        elif (
+            isinstance(key, list)
             and len(key) == 1
             and isinstance(key[0], tuple)
         ):
