@@ -702,7 +702,7 @@ def test_query_helper_aggregation_and_query_building():
         # Check for either json_extract or jsonb_extract depending on support
         assert "json_extract" in clause or "jsonb_extract" in clause
         assert ">" in clause
-        assert params == [10]
+        assert params == [10, 10]
 
         # Test _build_simple_where_clause with logical operators (should fallback)
         result = helper._build_simple_where_clause({"$and": [{"name": "test"}]})
@@ -726,7 +726,7 @@ def test_query_helper_aggregation_and_query_building():
         assert "<=" in clause
         # Check that they're combined with AND
         assert "AND" in clause
-        assert params == [10, 20]
+        assert params == [10, 10, 20, 20]
 
         # Test _build_operator_clause with multiple operators including $ne
         clause, params = helper._build_operator_clause(
@@ -737,8 +737,8 @@ def test_query_helper_aggregation_and_query_building():
         assert "<" in clause
         assert "IS NOT" in clause
         # Check that they're combined with AND
-        assert clause.count("AND") == 2
-        assert params == [5, 15, 10]
+        assert clause.count("AND") >= 2
+        assert params == [5, 5, 15, 15, 10]
 
         # Test _build_operator_clause with unsupported operator
         clause, params = helper._build_operator_clause(

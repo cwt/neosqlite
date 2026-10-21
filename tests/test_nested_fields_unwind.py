@@ -70,7 +70,7 @@ def test_nested_field_with_operators_now_use_sql(collection):
         "json_extract(data, '$.profile.age') > ?" in where_clause
         or "jsonb_extract(data, '$.profile.age') > ?" in where_clause
     )
-    assert params == [28]
+    assert params == [28, 28]
 
 
 def test_nested_field_performance_improvement(collection):

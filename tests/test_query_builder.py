@@ -80,7 +80,7 @@ class TestBuildOperatorClause:
             "'$.age'", {"$gt": 25}
         )
         assert "extract(data, '$.age') > ?" in clause
-        assert params == [25]
+        assert params == [25, 25]
 
     def test_lt_operator(self, query_helper):
         """Test $lt operator clause generation."""
@@ -88,7 +88,7 @@ class TestBuildOperatorClause:
             "'$.age'", {"$lt": 30}
         )
         assert "extract(data, '$.age') < ?" in clause
-        assert params == [30]
+        assert params == [30, 30]
 
     def test_gte_operator(self, query_helper):
         """Test $gte operator clause generation."""
@@ -96,7 +96,7 @@ class TestBuildOperatorClause:
             "'$.age'", {"$gte": 25}
         )
         assert "extract(data, '$.age') >= ?" in clause
-        assert params == [25]
+        assert params == [25, 25]
 
     def test_lte_operator(self, query_helper):
         """Test $lte operator clause generation."""
@@ -104,7 +104,7 @@ class TestBuildOperatorClause:
             "'$.age'", {"$lte": 30}
         )
         assert "extract(data, '$.age') <= ?" in clause
-        assert params == [30]
+        assert params == [30, 30]
 
     def test_ne_operator(self, query_helper):
         """Test $ne operator clause generation."""
@@ -247,8 +247,8 @@ class TestBuildOperatorClause:
         assert ">=" in clause
         assert "<=" in clause
         assert "IS NOT" in clause
-        assert clause.count("AND") == 2
-        assert params == [25, 35, 30]
+        assert clause.count("AND") >= 2
+        assert params == [25, 25, 35, 35, 30]
 
     def test_unsupported_operator(self, query_helper):
         """Test unsupported operator returns None."""
@@ -530,7 +530,7 @@ class TestBuildSimpleWhereClause:
         assert result is not None
         clause, params, tables = result
         assert ">" in clause
-        assert params == [25]
+        assert params == [25, 25]
 
     def test_with_in_operator(self, query_helper):
         """Test $in operator works with CTE in SQL."""
@@ -661,7 +661,7 @@ class TestBuildFieldClause:
         clause, params = query_helper._build_field_clause("age", {"$gt": 25})
         assert "extract(data," in clause
         assert ">" in clause
-        assert params == [25]
+        assert params == [25, 25]
 
     def test_regex_object_fallback(self, query_helper):
         """Test regex object returns None (Python fallback)."""

@@ -720,6 +720,7 @@ class SqlQueryBuilderMixin:
         operators: dict[str, Any],
         is_datetime_indexed: bool = False,
         regex_options: str = "",
+        allow_array_existential: bool = True,
     ) -> tuple[str | None, list[Any]]:
         """
         Builds a SQL clause for query operators.
@@ -784,10 +785,21 @@ class SqlQueryBuilderMixin:
                         )
                         params.append(op_val)
                     else:
-                        clauses.append(
-                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) > ?"
-                        )
-                        params.append(op_val)
+                        json_each_func = self.jsonb.json_each_function
+                        if allow_array_existential and json_path.startswith("'"):
+                            clauses.append(
+                                f"((json_type(data, {json_path}) != 'array' AND "
+                                f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) > ?) OR "
+                                f"(json_type(data, {json_path}) = 'array' AND EXISTS "
+                                f"(SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each "
+                                f"WHERE json_each.value > ?)))"
+                            )
+                            params.extend([op_val, op_val])
+                        else:
+                            clauses.append(
+                                f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) > ?"
+                            )
+                            params.append(op_val)
                 case "$lt":
                     # Array values need Python for correct semantics
                     if isinstance(op_val, (list, tuple)):
@@ -802,10 +814,21 @@ class SqlQueryBuilderMixin:
                         )
                         params.append(op_val)
                     else:
-                        clauses.append(
-                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) < ?"
-                        )
-                        params.append(op_val)
+                        json_each_func = self.jsonb.json_each_function
+                        if allow_array_existential and json_path.startswith("'"):
+                            clauses.append(
+                                f"((json_type(data, {json_path}) != 'array' AND "
+                                f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) < ?) OR "
+                                f"(json_type(data, {json_path}) = 'array' AND EXISTS "
+                                f"(SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each "
+                                f"WHERE json_each.value < ?)))"
+                            )
+                            params.extend([op_val, op_val])
+                        else:
+                            clauses.append(
+                                f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) < ?"
+                            )
+                            params.append(op_val)
                 case "$gte":
                     if isinstance(op_val, (list, tuple)):
                         return None, []
@@ -821,10 +844,21 @@ class SqlQueryBuilderMixin:
                         )
                         params.append(op_val)
                     else:
-                        clauses.append(
-                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) >= ?"
-                        )
-                        params.append(op_val)
+                        json_each_func = self.jsonb.json_each_function
+                        if allow_array_existential and json_path.startswith("'"):
+                            clauses.append(
+                                f"((json_type(data, {json_path}) != 'array' AND "
+                                f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) >= ?) OR "
+                                f"(json_type(data, {json_path}) = 'array' AND EXISTS "
+                                f"(SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each "
+                                f"WHERE json_each.value >= ?)))"
+                            )
+                            params.extend([op_val, op_val])
+                        else:
+                            clauses.append(
+                                f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) >= ?"
+                            )
+                            params.append(op_val)
                 case "$lte":
                     if isinstance(op_val, (list, tuple)):
                         return None, []
@@ -840,10 +874,21 @@ class SqlQueryBuilderMixin:
                         )
                         params.append(op_val)
                     else:
-                        clauses.append(
-                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) <= ?"
-                        )
-                        params.append(op_val)
+                        json_each_func = self.jsonb.json_each_function
+                        if allow_array_existential and json_path.startswith("'"):
+                            clauses.append(
+                                f"((json_type(data, {json_path}) != 'array' AND "
+                                f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) <= ?) OR "
+                                f"(json_type(data, {json_path}) = 'array' AND EXISTS "
+                                f"(SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each "
+                                f"WHERE json_each.value <= ?)))"
+                            )
+                            params.extend([op_val, op_val])
+                        else:
+                            clauses.append(
+                                f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) <= ?"
+                            )
+                            params.append(op_val)
                 case "$ne":
                     # Array values need Python for correct semantics
                     if isinstance(op_val, (list, tuple)):
@@ -1043,7 +1088,7 @@ class SqlQueryBuilderMixin:
                         if has_operators:
                             # Case: {"field": {"$elemMatch": {"$gt": 10}}}
                             # Use "value" as path which will be retargeted below
-                            c, p = self._build_operator_clause("value", op_val)
+                            c, p = self._build_operator_clause("value", op_val, allow_array_existential=False)
                             if c is None:
                                 return None, []
                             # Retarget: replace json_extract(data, value) with value
@@ -1068,6 +1113,7 @@ class SqlQueryBuilderMixin:
                                     c, p = self._build_operator_clause(
                                         f"'{parse_json_path(sub_field)}'",
                                         sub_val,
+                                        allow_array_existential=False,
                                     )
                                 else:
                                     # Equality on subfield
