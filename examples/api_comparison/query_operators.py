@@ -34,6 +34,10 @@ def compare_query_operators():
         ({"age": {"$nin": [25, 30]}}, "$nin"),
         ({"age": {"$exists": True}}, "$exists (true)"),
         ({"age": {"$exists": False}}, "$exists (false)"),
+        ({"age": {"$eq": None}}, "$eq (null)"),
+        ({"age": {"$ne": None}}, "$ne (null)"),
+        ({"age": {"$in": [None]}}, "$in (null)"),
+        ({"age": {"$nin": [None]}}, "$nin (null)"),
         ({"age": {"$type": 16}}, "$type (int)"),
         ({"scores": {"$all": [80, 90]}}, "$all"),
         ({"scores": {"$size": 3}}, "$size"),
@@ -87,6 +91,17 @@ def compare_query_operators():
                     "name": "Eve",
                     "age": 32,
                     "scores": [88, 92, 96],
+                    "dept": "HR",
+                },
+                {
+                    "name": "Frank",
+                    "age": None,
+                    "scores": [60],
+                    "dept": "Engineering",
+                },
+                {
+                    "name": "Grace",
+                    "scores": [50],
                     "dept": "HR",
                 },
             ]
@@ -174,6 +189,17 @@ def compare_query_operators():
                     "name": "Eve",
                     "age": 32,
                     "scores": [88, 92, 96],
+                    "dept": "HR",
+                },
+                {
+                    "name": "Frank",
+                    "age": None,
+                    "scores": [60],
+                    "dept": "Engineering",
+                },
+                {
+                    "name": "Grace",
+                    "scores": [50],
                     "dept": "HR",
                 },
             ]

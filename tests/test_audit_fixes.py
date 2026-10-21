@@ -137,7 +137,7 @@ class TestNullMatchSemantics:
 
     def test_ne_still_excludes_the_value_itself(self, docs):
         found = sorted(d["a"] for d in docs.find({"b": {"$ne": None}}))
-        assert found == [2, 3]
+        assert found == [3]
 
     def test_tier1_group_pipeline_match_null(self, connection):
         """Tier-1 CTE match builder honors the same semantics."""
@@ -164,7 +164,7 @@ class TestNullMatchSemantics:
     def test_ne_null_in_aggregate_and_python_fallback(self, docs):
         # In aggregation match stage
         rows = list(docs.aggregate([{"$match": {"b": {"$ne": None}}}]))
-        assert sorted(d["a"] for d in rows) == [2, 3]
+        assert sorted(d["a"] for d in rows) == [3]
 
         # In Python fallback
         from neosqlite.collection.query_helper import set_force_fallback
@@ -172,7 +172,7 @@ class TestNullMatchSemantics:
         set_force_fallback(True)
         try:
             py_rows = list(docs.find({"b": {"$ne": None}}))
-            assert sorted(d["a"] for d in py_rows) == [2, 3]
+            assert sorted(d["a"] for d in py_rows) == [3]
         finally:
             set_force_fallback(False)
 

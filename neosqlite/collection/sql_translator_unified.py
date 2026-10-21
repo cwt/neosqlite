@@ -315,7 +315,10 @@ class SQLOperatorTranslator:
                             type_field_access = field_access.replace(
                                 "jsonb_extract(", "json_type("
                             ).replace("json_extract(", "json_type(")
-                            sql = f"{type_field_access} IS NOT 'null'"
+                            sql = (
+                                f"({type_field_access} IS NOT NULL AND "
+                                f"{type_field_access} IS NOT 'null')"
+                            )
                         else:
                             sql = f"{field_access} IS NOT NULL"
                     else:
@@ -397,12 +400,25 @@ class SQLOperatorTranslator:
                 case "$exists":
                     # Handle boolean value for $exists
                     if isinstance(value, bool):
-                        if value:
-                            sql = f"{field_access} IS NOT NULL"
-                            params = []
+                        if field_access == "_id":
+                            if value:
+                                sql = f"{field_access} IS NOT NULL"
+                            else:
+                                sql = f"{field_access} IS NULL"
+                        elif "extract(" in field_access:
+                            type_field_access = field_access.replace(
+                                "jsonb_extract(", "json_type("
+                            ).replace("json_extract(", "json_type(")
+                            if value:
+                                sql = f"{type_field_access} IS NOT NULL"
+                            else:
+                                sql = f"{type_field_access} IS NULL"
                         else:
-                            sql = f"{field_access} IS NULL"
-                            params = []
+                            if value:
+                                sql = f"{field_access} IS NOT NULL"
+                            else:
+                                sql = f"{field_access} IS NULL"
+                        params = []
                     else:
                         # Invalid value for $exists, fallback to Python
                         return None, []

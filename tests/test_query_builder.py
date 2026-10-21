@@ -141,7 +141,7 @@ class TestBuildOperatorClause:
         clause, params = query_helper._build_operator_clause(
             "'$.name'", {"$exists": True}
         )
-        assert "extract(data, '$.name') IS NOT NULL" in clause
+        assert "json_type(data, '$.name') IS NOT NULL" in clause
         assert params == []
 
     def test_exists_false(self, query_helper):
@@ -149,7 +149,7 @@ class TestBuildOperatorClause:
         clause, params = query_helper._build_operator_clause(
             "'$.name'", {"$exists": False}
         )
-        assert "extract(data, '$.name') IS NULL" in clause
+        assert "json_type(data, '$.name') IS NULL" in clause
         assert params == []
 
     def test_exists_invalid_value(self, query_helper):

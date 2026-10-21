@@ -54,6 +54,15 @@ def _get_dotted(document: Any, path: str) -> Any:
     return current
 
 
+def _field_present(document: Any, path: str) -> bool:
+    current = document
+    for part in path.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return False
+        current = current[part]
+    return True
+
+
 def _match_operators(value: Any, operators: dict[str, Any]) -> bool:
     for op, expected in operators.items():
         if op == "$eq":
@@ -104,7 +113,15 @@ def _match_filter(document: dict[str, Any], spec: dict[str, Any]) -> bool:
         elif isinstance(condition, dict) and any(
             k.startswith("$") for k in condition
         ):
-            if not _match_operators(_get_dotted(document, key), condition):
+            # Handle $exists with field presence (distinguishing missing
+            # from present-but-null), delegating the rest to _match_operators.
+            ops = dict(condition)
+            exists_expected = ops.pop("$exists", None)
+            if exists_expected is not None:
+                present = _field_present(document, key)
+                if bool(exists_expected) != present:
+                    return False
+            if ops and not _match_operators(_get_dotted(document, key), ops):
                 return False
         else:
             if _get_dotted(document, key) != condition:

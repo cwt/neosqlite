@@ -912,7 +912,8 @@ class StageBuildersMixin:
                                     else:
                                         json_path = parse_json_path(field)
                                         where_clauses.append(
-                                            f"json_type(data, '{json_path}') IS NOT 'null'"
+                                            f"(json_type(data, '{json_path}') IS NOT NULL AND "
+                                            f"json_type(data, '{json_path}') IS NOT 'null')"
                                         )
                                 else:
                                     where_clauses.append(

@@ -234,7 +234,10 @@ class TestSQLOperatorTranslator:
         result = translator.translate_operator(
             "json_extract(data, '$.field')", "$ne", None
         )
-        assert result == ("json_type(data, '$.field') IS NOT 'null'", [])
+        assert result == (
+            "(json_type(data, '$.field') IS NOT NULL AND json_type(data, '$.field') IS NOT 'null')",
+            [],
+        )
         result_id = translator.translate_operator("_id", "$ne", None)
         assert result_id == ("_id IS NOT NULL", [])
 

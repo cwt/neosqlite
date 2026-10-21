@@ -317,7 +317,9 @@ def _ne(field: str, value: Any, document: dict[str, Any]) -> bool:
     Compare a field value with a given value using the not equal operator.
 
     MongoDB semantics: {field: {$ne: value}} matches if:
-    - The field does not exist in the document (missing fields match $ne, including {$ne: null})
+    - The field does not exist in the document (missing fields match $ne), except
+      when value is null: {$ne: null} matches only documents where the field
+      exists and is not null (missing and null fields do not match).
     - The field value does not equal the value (scalar-to-scalar or array-to-array)
     - The field is an array NOT containing the value (array does not contain element)
 
@@ -330,7 +332,9 @@ def _ne(field: str, value: Any, document: dict[str, Any]) -> bool:
         bool: True if the field value is not equal to the given value, False otherwise.
     """
     if not _field_exists(field, document):
-        return True
+        # Missing fields match $ne for any non-null value; {$ne: null} does not
+        # match missing fields (MongoDB treats missing as null).
+        return value is not None
     doc_value = _get_nested_field(field, document)
     # MongoDB array semantics: check if value is NOT in array
     if isinstance(doc_value, list):

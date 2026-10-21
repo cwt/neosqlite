@@ -334,8 +334,17 @@ class SqlQueryBuilderMixin:
             elif op == "$ne":
                 if isinstance(op_val, list):
                     return None
-                clauses.append(f"{id_col} != ?")
-                params.append(_normalize_id_value(op_val))
+                if op_val is None:
+                    clauses.append(f"{id_col} IS NOT NULL")
+                else:
+                    clauses.append(f"{id_col} != ?")
+                    params.append(_normalize_id_value(op_val))
+            elif op == "$eq":
+                if op_val is None:
+                    clauses.append(f"{id_col} IS NULL")
+                else:
+                    clauses.append(f"{id_col} = ?")
+                    params.append(_normalize_id_value(op_val))
             elif op in ("$gt", "$gte", "$lt", "$lte"):
                 # Fall back to Python for range comparisons on _id.
                 # The _id column may contain mixed types (int, str, ObjectId).
@@ -343,9 +352,6 @@ class SqlQueryBuilderMixin:
                 # BSON ordering, which only compares within the same type.
                 # Python evaluation handles these correctly.
                 return None
-            elif op == "$eq":
-                clauses.append(f"{id_col} = ?")
-                params.append(_normalize_id_value(op_val))
             else:
                 return None  # Fall back to Python for unsupported operators
 
@@ -823,10 +829,11 @@ class SqlQueryBuilderMixin:
                     if isinstance(op_val, (list, tuple)):
                         return None, []
                     if op_val is None:
-                        # MongoDB: {$ne: null} matches non-null values AND missing fields.
-                        # SQLite json_type returns 'null' for JSON null and NULL when missing.
+                        # MongoDB: {$ne: null} matches only documents where the field
+                        # exists and is not null (missing and null fields excluded).
                         clauses.append(
-                            f"json_type(data, {json_path}) IS NOT 'null'"
+                            f"(json_type(data, {json_path}) IS NOT NULL AND "
+                            f"json_type(data, {json_path}) IS NOT 'null')"
                         )
                     elif is_datetime_indexed:
                         clauses.append(
@@ -950,12 +957,14 @@ class SqlQueryBuilderMixin:
                     # Handle boolean value for $exists
                     if isinstance(op_val, bool):
                         if op_val:
+                            # Field present, including explicit null values.
                             clauses.append(
-                                f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) IS NOT NULL"
+                                f"json_type(data, {json_path}) IS NOT NULL"
                             )
                         else:
+                            # Field missing only (not present-but-null).
                             clauses.append(
-                                f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) IS NULL"
+                                f"json_type(data, {json_path}) IS NULL"
                             )
                     else:
                         # Invalid value for $exists, fallback to Python
