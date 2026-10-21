@@ -292,21 +292,59 @@ class CorePythonMixin(BasePythonMixin):
 
         match operator:
             case "$gt" | "$gte" | "$lt" | "$lte":
-                # For ordering comparisons, if any operand is None, return False
-                # (MongoDB behavior - null values don't participate in ordering)
-                if left is None or right is None:
+                left_missing = self._is_field_missing(operands[0], document)
+                right_missing = self._is_field_missing(operands[1], document)
+
+                def _type_rank(v, missing):
+                    if missing:
+                        return 0
+                    if v is None:
+                        return 1
+                    if isinstance(v, bool):
+                        return 9
+                    try:
+                        from decimal import Decimal
+                        if isinstance(v, Decimal):
+                            return 2
+                    except Exception:
+                        pass
+                    if isinstance(v, (int, float)):
+                        return 2
+                    if isinstance(v, str):
+                        return 3
+                    if isinstance(v, dict):
+                        return 4
+                    if isinstance(v, (list, tuple)):
+                        return 5
+                    return 6
+
+                lr = _type_rank(left, left_missing)
+                rr = _type_rank(right, right_missing)
+                if lr != rr:
+                    # Different type ranks: use rank ordering.
+                    if operator == "$gt":
+                        return lr > rr
+                    if operator == "$gte":
+                        return lr >= rr
+                    if operator == "$lt":
+                        return lr < rr
+                    return lr <= rr
+                # Same type rank: compare values.
+                if left is None and right is None:
+                    # null (including present null) vs null
+                    if operator in ("$gte", "$lte", "$eq"):
+                        return True
                     return False
-                return (
-                    left > right
-                    if operator == "$gt"
-                    else (
-                        left >= right
-                        if operator == "$gte"
-                        else (
-                            left < right if operator == "$lt" else left <= right
-                        )
-                    )
-                )
+                try:
+                    if operator == "$gt":
+                        return left > right
+                    if operator == "$gte":
+                        return left >= right
+                    if operator == "$lt":
+                        return left < right
+                    return left <= right
+                except (TypeError, ValueError):
+                    return False
             case _:
                 raise ValueError(f"Unknown comparison operator: {operator}")
 

@@ -21,6 +21,13 @@ class ComparisonMixin(BaseSqlMixin):
         if len(operands) != 2:
             raise ValueError(f"{operator} requires exactly 2 operands")
 
+        # Force Python fallback for ordering comparisons involving null so that
+        # MongoDB's missing-vs-null ordering (missing < null) is respected.
+        if operator in ("$gt", "$gte", "$lt", "$lte") and (
+            operands[0] is None or operands[1] is None
+        ):
+            return None, []
+
         left_sql, left_params = self._convert_operand_to_sql(operands[0])
         right_sql, right_params = self._convert_operand_to_sql(operands[1])
 
