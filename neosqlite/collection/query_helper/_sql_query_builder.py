@@ -774,6 +774,10 @@ class SqlQueryBuilderMixin:
                     # Array values need Python for correct semantics
                     if isinstance(op_val, (list, tuple)):
                         return None, []
+                    if op_val is None:
+                        # MongoDB: nothing is greater than null.
+                        clauses.append("0")
+                        continue
                     if is_datetime_indexed:
                         clauses.append(
                             f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) > datetime(?)"
@@ -788,6 +792,10 @@ class SqlQueryBuilderMixin:
                     # Array values need Python for correct semantics
                     if isinstance(op_val, (list, tuple)):
                         return None, []
+                    if op_val is None:
+                        # MongoDB: nothing is less than null.
+                        clauses.append("0")
+                        continue
                     if is_datetime_indexed:
                         clauses.append(
                             f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) < datetime(?)"
@@ -801,6 +809,12 @@ class SqlQueryBuilderMixin:
                 case "$gte":
                     if isinstance(op_val, (list, tuple)):
                         return None, []
+                    if op_val is None:
+                        # MongoDB: only null/missing values are >= null.
+                        clauses.append(
+                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) IS NULL"
+                        )
+                        continue
                     if is_datetime_indexed:
                         clauses.append(
                             f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) >= datetime(?)"
@@ -814,6 +828,12 @@ class SqlQueryBuilderMixin:
                 case "$lte":
                     if isinstance(op_val, (list, tuple)):
                         return None, []
+                    if op_val is None:
+                        # MongoDB: only null/missing values are <= null.
+                        clauses.append(
+                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) IS NULL"
+                        )
+                        continue
                     if is_datetime_indexed:
                         clauses.append(
                             f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) <= datetime(?)"
@@ -987,8 +1007,9 @@ class SqlQueryBuilderMixin:
                         return None, []
                 case "$size":
                     # Handle array size comparison
-                    if isinstance(op_val, int):
+                    if isinstance(op_val, int) and not isinstance(op_val, bool):
                         clauses.append(
+                            f"json_type(data, {json_path}) = 'array' AND "
                             f"json_array_length({self.jsonb.json_function_prefix}_extract(data, {json_path})) = ?"
                         )
                         params.append(op_val)

@@ -40,7 +40,9 @@ def _iter_leaf_values(document: dict[str, Any], parts: list[str]) -> Any | None:
                 v = node[part]
                 if isinstance(v, list):
                     nxt.extend(v)
-                elif v is not None:
+                else:
+                    # Preserve explicit nulls so equality/null matching works in
+                    # the Python fallback (MongoDB treats present null as a value).
                     nxt.append(v)
             elif isinstance(node, list):
                 for el in node:
@@ -49,7 +51,7 @@ def _iter_leaf_values(document: dict[str, Any], parts: list[str]) -> Any | None:
                         ev = el[part]
                         if isinstance(ev, list):
                             nxt.extend(ev)
-                        elif ev is not None:
+                        else:
                             nxt.append(ev)
         if not found:
             return None

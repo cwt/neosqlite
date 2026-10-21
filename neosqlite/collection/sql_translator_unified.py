@@ -296,14 +296,22 @@ class SQLOperatorTranslator:
                     # Array values need Python for correct semantics
                     if isinstance(value, (list, tuple)):
                         return None, []
-                    sql = f"{field_access} >= ?"
-                    params = [value]
+                    if value is None:
+                        sql = f"{field_access} IS NULL"
+                        params = []
+                    else:
+                        sql = f"{field_access} >= ?"
+                        params = [value]
                 case "$lte":
                     # Array values need Python for correct semantics
                     if isinstance(value, (list, tuple)):
                         return None, []
-                    sql = f"{field_access} <= ?"
-                    params = [value]
+                    if value is None:
+                        sql = f"{field_access} IS NULL"
+                        params = []
+                    else:
+                        sql = f"{field_access} <= ?"
+                        params = [value]
                 case "$ne":
                     # Array values need Python for correct semantics
                     if isinstance(value, (list, tuple)):
@@ -432,8 +440,17 @@ class SQLOperatorTranslator:
                         params = [divisor, remainder]
                 case "$size":
                     # Handle array size comparison
-                    if isinstance(value, int):
-                        sql = f"json_array_length({field_access}) = ?"
+                    if isinstance(value, int) and not isinstance(value, bool):
+                        if "extract(" in field_access:
+                            type_field_access = field_access.replace(
+                                "jsonb_extract(", "json_type("
+                            ).replace("json_extract(", "json_type(")
+                            sql = (
+                                f"{type_field_access} = 'array' AND "
+                                f"json_array_length({field_access}) = ?"
+                            )
+                        else:
+                            sql = f"json_array_length({field_access}) = ?"
                         params = [value]
                 case "$contains":
                     # Handle case-insensitive substring search

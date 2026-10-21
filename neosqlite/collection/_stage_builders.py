@@ -885,17 +885,29 @@ class StageBuildersMixin:
                     for op, arg in value.items():
                         match op:
                             case "$gt":
-                                where_clauses.append(f"{field_sql} > ?")
-                                all_params.append(arg)
+                                if arg is None:
+                                    where_clauses.append("0")
+                                else:
+                                    where_clauses.append(f"{field_sql} > ?")
+                                    all_params.append(arg)
                             case "$lt":
-                                where_clauses.append(f"{field_sql} < ?")
-                                all_params.append(arg)
+                                if arg is None:
+                                    where_clauses.append("0")
+                                else:
+                                    where_clauses.append(f"{field_sql} < ?")
+                                    all_params.append(arg)
                             case "$gte":
-                                where_clauses.append(f"{field_sql} >= ?")
-                                all_params.append(arg)
+                                if arg is None:
+                                    where_clauses.append(f"{field_sql} IS NULL")
+                                else:
+                                    where_clauses.append(f"{field_sql} >= ?")
+                                    all_params.append(arg)
                             case "$lte":
-                                where_clauses.append(f"{field_sql} <= ?")
-                                all_params.append(arg)
+                                if arg is None:
+                                    where_clauses.append(f"{field_sql} IS NULL")
+                                else:
+                                    where_clauses.append(f"{field_sql} <= ?")
+                                    all_params.append(arg)
                             case "$eq":
                                 if arg is None:
                                     # MongoDB: null matches null-or-missing (#90)

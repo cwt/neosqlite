@@ -165,12 +165,18 @@ def _gt(field: str, value: Any, document: dict[str, Any]) -> bool:
         bool: True if the field value is greater than the given value, False otherwise.
     """
     try:
+        if value is None:
+            return False
         doc_value = _get_nested_field(field, document)
         # MongoDB array semantics: match if ANY element satisfies
         if isinstance(doc_value, list):
             return any(
-                isinstance(x, (int, float)) and x > value for x in doc_value
+                isinstance(x, (int, float)) and not isinstance(x, bool)
+                and x > value
+                for x in doc_value
             )
+        if isinstance(doc_value, bool) != isinstance(value, bool):
+            return False
         return doc_value > value
     except TypeError as e:
         logger.debug(f"Operator evaluation failed due to TypeError: {e}")
@@ -192,12 +198,18 @@ def _lt(field: str, value: Any, document: dict[str, Any]) -> bool:
         bool: True if the field value is less than the given value, False otherwise.
     """
     try:
+        if value is None:
+            return False
         doc_value = _get_nested_field(field, document)
         # MongoDB array semantics: match if ANY element satisfies
         if isinstance(doc_value, list):
             return any(
-                isinstance(x, (int, float)) and x < value for x in doc_value
+                isinstance(x, (int, float)) and not isinstance(x, bool)
+                and x < value
+                for x in doc_value
             )
+        if isinstance(doc_value, bool) != isinstance(value, bool):
+            return False
         return doc_value < value
     except TypeError as e:
         logger.debug(f"Operator evaluation failed due to TypeError: {e}")
@@ -219,12 +231,19 @@ def _gte(field: str, value: Any, document: dict[str, Any]) -> bool:
         bool: True if the field value is greater than or equal to the given value, False otherwise.
     """
     try:
+        if value is None:
+            doc_value = _get_nested_field(field, document)
+            return doc_value is None
         doc_value = _get_nested_field(field, document)
         # MongoDB array semantics: match if ANY element satisfies
         if isinstance(doc_value, list):
             return any(
-                isinstance(x, (int, float)) and x >= value for x in doc_value
+                isinstance(x, (int, float)) and not isinstance(x, bool)
+                and x >= value
+                for x in doc_value
             )
+        if isinstance(doc_value, bool) != isinstance(value, bool):
+            return False
         return doc_value >= value
     except TypeError as e:
         logger.debug(f"Operator evaluation failed due to TypeError: {e}")
@@ -246,12 +265,19 @@ def _lte(field: str, value: Any, document: dict[str, Any]) -> bool:
         bool: True if the field value is less than or equal to the given value, False otherwise.
     """
     try:
+        if value is None:
+            doc_value = _get_nested_field(field, document)
+            return doc_value is None
         doc_value = _get_nested_field(field, document)
         # MongoDB array semantics: match if ANY element satisfies
         if isinstance(doc_value, list):
             return any(
-                isinstance(x, (int, float)) and x <= value for x in doc_value
+                isinstance(x, (int, float)) and not isinstance(x, bool)
+                and x <= value
+                for x in doc_value
             )
+        if isinstance(doc_value, bool) != isinstance(value, bool):
+            return False
         return doc_value <= value
     except TypeError as e:
         logger.debug(f"Operator evaluation failed due to TypeError: {e}")
