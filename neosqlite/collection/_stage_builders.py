@@ -887,27 +887,63 @@ class StageBuildersMixin:
                             case "$gt":
                                 if arg is None:
                                     where_clauses.append("0")
-                                else:
+                                elif field == "_id":
                                     where_clauses.append(f"{field_sql} > ?")
                                     all_params.append(arg)
+                                else:
+                                    json_path = parse_json_path(field)
+                                    where_clauses.append(
+                                        f"({field_sql} > ? OR "
+                                        f"(json_type(data, '{json_path}') = 'array' AND "
+                                        f"EXISTS (SELECT 1 FROM json_each(data, '{json_path}') AS json_each "
+                                        f"WHERE json_each.value > ?)))"
+                                    )
+                                    all_params.extend([arg, arg])
                             case "$lt":
                                 if arg is None:
                                     where_clauses.append("0")
-                                else:
+                                elif field == "_id":
                                     where_clauses.append(f"{field_sql} < ?")
                                     all_params.append(arg)
+                                else:
+                                    json_path = parse_json_path(field)
+                                    where_clauses.append(
+                                        f"({field_sql} < ? OR "
+                                        f"(json_type(data, '{json_path}') = 'array' AND "
+                                        f"EXISTS (SELECT 1 FROM json_each(data, '{json_path}') AS json_each "
+                                        f"WHERE json_each.value < ?)))"
+                                    )
+                                    all_params.extend([arg, arg])
                             case "$gte":
                                 if arg is None:
                                     where_clauses.append(f"{field_sql} IS NULL")
-                                else:
+                                elif field == "_id":
                                     where_clauses.append(f"{field_sql} >= ?")
                                     all_params.append(arg)
+                                else:
+                                    json_path = parse_json_path(field)
+                                    where_clauses.append(
+                                        f"({field_sql} >= ? OR "
+                                        f"(json_type(data, '{json_path}') = 'array' AND "
+                                        f"EXISTS (SELECT 1 FROM json_each(data, '{json_path}') AS json_each "
+                                        f"WHERE json_each.value >= ?)))"
+                                    )
+                                    all_params.extend([arg, arg])
                             case "$lte":
                                 if arg is None:
                                     where_clauses.append(f"{field_sql} IS NULL")
-                                else:
+                                elif field == "_id":
                                     where_clauses.append(f"{field_sql} <= ?")
                                     all_params.append(arg)
+                                else:
+                                    json_path = parse_json_path(field)
+                                    where_clauses.append(
+                                        f"({field_sql} <= ? OR "
+                                        f"(json_type(data, '{json_path}') = 'array' AND "
+                                        f"EXISTS (SELECT 1 FROM json_each(data, '{json_path}') AS json_each "
+                                        f"WHERE json_each.value <= ?)))"
+                                    )
+                                    all_params.extend([arg, arg])
                             case "$eq":
                                 if arg is None:
                                     # MongoDB: null matches null-or-missing (#90)
