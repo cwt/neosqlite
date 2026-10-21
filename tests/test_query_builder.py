@@ -72,7 +72,7 @@ class TestBuildOperatorClause:
             "'$.name'", {"$eq": "test"}
         )
         assert "extract(data, '$.name') = ?" in clause
-        assert params == ["test"]
+        assert params == ["test", "test"]
 
     def test_gt_operator(self, query_helper):
         """Test $gt operator clause generation."""
@@ -112,7 +112,7 @@ class TestBuildOperatorClause:
             "'$.name'", {"$ne": "Alice"}
         )
         assert "extract(data, '$.name') IS NOT ?" in clause
-        assert params == ["Alice"]
+        assert params == ["Alice", "Alice"]
 
     def test_in_operator(self, query_helper):
         """Test $in operator uses CTE for array-aware semantics."""
@@ -248,7 +248,7 @@ class TestBuildOperatorClause:
         assert "<=" in clause
         assert "IS NOT" in clause
         assert clause.count("AND") >= 2
-        assert params == [25, 25, 35, 35, 30]
+        assert params == [25, 25, 35, 35, 30, 30]
 
     def test_unsupported_operator(self, query_helper):
         """Test unsupported operator returns None."""

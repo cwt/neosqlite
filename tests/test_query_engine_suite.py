@@ -715,7 +715,7 @@ def test_query_helper_aggregation_and_query_building():
             "json_extract(data, '$.value') = ?" in clause
             or "jsonb_extract(data, '$.value') = ?" in clause
         )
-        assert params == [5]
+        assert params == [5, 5]
 
         # Test _build_operator_clause with multiple operators
         clause, params = helper._build_operator_clause(
@@ -738,7 +738,7 @@ def test_query_helper_aggregation_and_query_building():
         assert "IS NOT" in clause
         # Check that they're combined with AND
         assert clause.count("AND") >= 2
-        assert params == [5, 5, 15, 15, 10]
+        assert params == [5, 5, 15, 15, 10, 10]
 
         # Test _build_operator_clause with unsupported operator
         clause, params = helper._build_operator_clause(

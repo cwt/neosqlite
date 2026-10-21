@@ -330,8 +330,33 @@ class SQLOperatorTranslator:
                         else:
                             sql = f"{field_access} IS NOT NULL"
                     else:
-                        sql = f"{field_access} != ?"
-                        params = [value]
+                        if "extract(" in field_access:
+                            type_field_access = field_access.replace(
+                                "jsonb_extract(", "json_type("
+                            ).replace("json_extract(", "json_type(")
+                            # Type-restricted: exclude only same-type equal values.
+                            if isinstance(value, bool):
+                                types = "('true', 'false')"
+                            elif isinstance(value, (int, float)):
+                                types = "('integer', 'real')"
+                            elif isinstance(value, str):
+                                types = "('text',)"
+                            elif isinstance(value, list):
+                                types = "('array',)"
+                            elif isinstance(value, dict):
+                                types = "('object',)"
+                            else:
+                                types = "('null',)"
+                            sql = (
+                                f"({type_field_access} IS NULL OR "
+                                f"{type_field_access} NOT IN {types} OR "
+                                f"({type_field_access} IN {types} AND "
+                                f"{field_access} IS NOT ?))"
+                            )
+                            params = [value]
+                        else:
+                            sql = f"{field_access} IS NOT ?"
+                            params = [value]
                 case "$in":
                     if isinstance(value, (list, tuple)):
                         if not value:

@@ -226,7 +226,7 @@ class TestSQLOperatorTranslator:
         """Test translation of $ne operator."""
         translator = SQLOperatorTranslator()
         result = translator.translate_operator("field", "$ne", "value")
-        assert result == ("field != ?", ["value"])
+        assert result == ("field IS NOT ?", ["value"])
 
     def test_translate_operator_ne_null(self):
         """Test translation of $ne with null value."""

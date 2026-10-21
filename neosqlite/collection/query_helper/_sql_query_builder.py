@@ -714,6 +714,38 @@ class SqlQueryBuilderMixin:
 
         return clause
 
+    def _json_type_guard_sql(self, json_path: str, value: Any) -> str:
+        """Return a SQL fragment restricting json_type to the value's BSON type."""
+        if isinstance(value, bool):
+            return "json_type(data, %s) IN ('true', 'false')" % json_path
+        if isinstance(value, (int, float)):
+            return "json_type(data, %s) IN ('integer', 'real')" % json_path
+        if isinstance(value, str):
+            return "json_type(data, %s) = 'text'" % json_path
+        if isinstance(value, list):
+            return "json_type(data, %s) = 'array'" % json_path
+        if isinstance(value, dict):
+            return "json_type(data, %s) = 'object'" % json_path
+        if value is None:
+            return "json_type(data, %s) IS NULL" % json_path
+        return "1"
+
+    def _json_type_list_sql(self, value: Any) -> str:
+        """Return a SQL list of json_type/json_each.type values for the value's BSON type."""
+        if isinstance(value, bool):
+            return "('true', 'false')"
+        if isinstance(value, (int, float)):
+            return "('integer', 'real')"
+        if isinstance(value, str):
+            return "('text')"
+        if isinstance(value, list):
+            return "('array')"
+        if isinstance(value, dict):
+            return "('object')"
+        if value is None:
+            return "('null')"
+        return "('null',)"
+
     def _build_operator_clause(
         self,
         json_path: str,
@@ -767,10 +799,22 @@ class SqlQueryBuilderMixin:
                         )
                         params.append(op_val)
                     else:
-                        clauses.append(
-                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) = ?"
-                        )
-                        params.append(op_val)
+                        json_each_func = self.jsonb.json_each_function
+                        if allow_array_existential and json_path.startswith("'"):
+                            guard = self._json_type_guard_sql(json_path, op_val)
+                            clauses.append(
+                                f"({guard} AND "
+                                f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) = ?) OR "
+                                f"(json_type(data, {json_path}) = 'array' AND EXISTS "
+                                f"(SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each "
+                                f"WHERE json_each.value = ?))"
+                            )
+                            params.extend([op_val, op_val])
+                        else:
+                            clauses.append(
+                                f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) = ?"
+                            )
+                            params.append(op_val)
                 case "$gt":
                     # Array values need Python for correct semantics
                     if isinstance(op_val, (list, tuple)):
@@ -789,6 +833,7 @@ class SqlQueryBuilderMixin:
                         if allow_array_existential and json_path.startswith("'"):
                             clauses.append(
                                 f"((json_type(data, {json_path}) != 'array' AND "
+                                f"{self._json_type_guard_sql(json_path, op_val)} AND "
                                 f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) > ?) OR "
                                 f"(json_type(data, {json_path}) = 'array' AND EXISTS "
                                 f"(SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each "
@@ -818,6 +863,7 @@ class SqlQueryBuilderMixin:
                         if allow_array_existential and json_path.startswith("'"):
                             clauses.append(
                                 f"((json_type(data, {json_path}) != 'array' AND "
+                                f"{self._json_type_guard_sql(json_path, op_val)} AND "
                                 f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) < ?) OR "
                                 f"(json_type(data, {json_path}) = 'array' AND EXISTS "
                                 f"(SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each "
@@ -848,6 +894,7 @@ class SqlQueryBuilderMixin:
                         if allow_array_existential and json_path.startswith("'"):
                             clauses.append(
                                 f"((json_type(data, {json_path}) != 'array' AND "
+                                f"{self._json_type_guard_sql(json_path, op_val)} AND "
                                 f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) >= ?) OR "
                                 f"(json_type(data, {json_path}) = 'array' AND EXISTS "
                                 f"(SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each "
@@ -878,6 +925,7 @@ class SqlQueryBuilderMixin:
                         if allow_array_existential and json_path.startswith("'"):
                             clauses.append(
                                 f"((json_type(data, {json_path}) != 'array' AND "
+                                f"{self._json_type_guard_sql(json_path, op_val)} AND "
                                 f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) <= ?) OR "
                                 f"(json_type(data, {json_path}) = 'array' AND EXISTS "
                                 f"(SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each "
@@ -906,12 +954,24 @@ class SqlQueryBuilderMixin:
                         )
                         params.append(op_val)
                     else:
-                        # IS NOT (unlike !=) matches rows where the field is
-                        # missing/NULL, as MongoDB's $ne does (#90)
-                        clauses.append(
-                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) IS NOT ?"
-                        )
-                        params.append(op_val)
+                        types = self._json_type_list_sql(op_val)
+                        json_each_func = self.jsonb.json_each_function
+                        if json_path.startswith("'"):
+                            clauses.append(
+                                f"({self.jsonb.json_function_prefix}_extract(data, {json_path}) IS NULL OR "
+                                f"json_type(data, {json_path}) NOT IN {types} OR "
+                                f"(json_type(data, {json_path}) IN {types} AND "
+                                f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) IS NOT ?) OR "
+                                f"(json_type(data, {json_path}) = 'array' AND NOT EXISTS ("
+                                f"SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each "
+                                f"WHERE json_each.type IN {types} AND json_each.value = ?)))"
+                            )
+                            params.extend([op_val, op_val])
+                        else:
+                            clauses.append(
+                                f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) IS NOT ?"
+                            )
+                            params.append(op_val)
                 case "$in":
                     json_each_func = self.jsonb.json_each_function
                     if isinstance(op_val, (list, tuple)):
@@ -920,6 +980,24 @@ class SqlQueryBuilderMixin:
                             continue
                         has_null = any(v is None for v in op_val)
                         non_null = [v for v in op_val if v is not None]
+
+                        # Type-restricted: only match elements of the same BSON type.
+                        _types = set()
+                        for v in non_null:
+                            if isinstance(v, bool):
+                                _types.update(["true", "false"])
+                            elif isinstance(v, (int, float)):
+                                _types.update(["integer", "real"])
+                            elif isinstance(v, str):
+                                _types.add("text")
+                            elif isinstance(v, list):
+                                _types.add("array")
+                            elif isinstance(v, dict):
+                                _types.add("object")
+                            elif v is None:
+                                _types.add("null")
+                        in_types_sql = "(" + ", ".join(repr(t) for t in sorted(_types)) + ")" if _types else "('null',)"
+
                         if json_path == "value":
                             if has_null:
                                 if non_null:
@@ -943,7 +1021,7 @@ class SqlQueryBuilderMixin:
                                         "?" for _ in non_null
                                     )
                                     clauses.append(
-                                        f"(EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each WHERE json_each.value IN ({placeholders}) OR json_each.value IS NULL) OR json_type(data, {json_path}) IS NULL)"
+                                        f"(EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each WHERE (json_each.value IN ({placeholders}) AND json_each.type IN {in_types_sql}) OR json_each.value IS NULL) OR json_type(data, {json_path}) IS NULL)"
                                     )
                                     params.extend(non_null)
                                 else:
@@ -953,7 +1031,7 @@ class SqlQueryBuilderMixin:
                             else:
                                 placeholders = ", ".join("?" for _ in non_null)
                                 clauses.append(
-                                    f"EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each WHERE json_each.value IN ({placeholders}))"
+                                    f"EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each WHERE json_each.value IN ({placeholders}) AND json_each.type IN {in_types_sql})"
                                 )
                                 params.extend(non_null)
                     else:
@@ -966,6 +1044,24 @@ class SqlQueryBuilderMixin:
                             continue
                         has_null = any(v is None for v in op_val)
                         non_null = [v for v in op_val if v is not None]
+
+                        # Type-restricted: only match elements of the same BSON type.
+                        _types = set()
+                        for v in non_null:
+                            if isinstance(v, bool):
+                                _types.update(["true", "false"])
+                            elif isinstance(v, (int, float)):
+                                _types.update(["integer", "real"])
+                            elif isinstance(v, str):
+                                _types.add("text")
+                            elif isinstance(v, list):
+                                _types.add("array")
+                            elif isinstance(v, dict):
+                                _types.add("object")
+                            elif v is None:
+                                _types.add("null")
+                        in_types_sql = "(" + ", ".join(repr(t) for t in sorted(_types)) + ")" if _types else "('null',)"
+
                         if json_path == "value":
                             if has_null:
                                 if non_null:
@@ -989,7 +1085,7 @@ class SqlQueryBuilderMixin:
                                         "?" for _ in non_null
                                     )
                                     clauses.append(
-                                        f"(NOT EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each WHERE json_each.value IN ({placeholders}) OR json_each.value IS NULL) AND json_type(data, {json_path}) IS NOT NULL AND json_type(data, {json_path}) != 'null')"
+                                        f"(NOT EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each WHERE (json_each.value IN ({placeholders}) AND json_each.type IN {in_types_sql}) OR json_each.value IS NULL) AND json_type(data, {json_path}) IS NOT NULL AND json_type(data, {json_path}) != 'null')"
                                     )
                                     params.extend(non_null)
                                 else:
@@ -999,7 +1095,7 @@ class SqlQueryBuilderMixin:
                             else:
                                 placeholders = ", ".join("?" for _ in op_val)
                                 clauses.append(
-                                    f"NOT EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each WHERE json_each.value IN ({placeholders}))"
+                                    f"NOT EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each WHERE json_each.value IN ({placeholders}) AND json_each.type IN {in_types_sql})"
                                 )
                                 params.extend(op_val)
                     else:
