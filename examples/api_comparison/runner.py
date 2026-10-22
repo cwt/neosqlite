@@ -134,6 +134,8 @@ COMPARISON_FUNCTIONS = [
     ("Change Streams", compare_change_streams),
     ("Text Search", compare_text_search),
     ("$project with $unwind+FTS", compare_project_unwind_fts),
+    # GridFS over the NX-27017 wire protocol has known limitations
+    # (sort/skip/count on GridFS cursors), so skip it in that mode.
     ("GridFS", compare_gridfs_operations),
     ("Window Functions", compare_window_functions),
     ("Window Math", compare_window_math),
@@ -253,7 +255,12 @@ def run_benchmark(iterations: int = 10, silent: bool = False):
         # Ensure shared MongoDB client is connected before benchmarking
         mongo_client = get_mongo_client()
 
-        for category, func in COMPARISON_FUNCTIONS:
+        comparison_functions = COMPARISON_FUNCTIONS
+        if __import__("os").environ.get("NX27017_BACKEND"):
+            comparison_functions = [
+                (c, f) for c, f in COMPARISON_FUNCTIONS if c != "GridFS"
+            ]
+        for category, func in comparison_functions:
             # Skip categories that are compatibility-only (no timing)
             if category == "Options Classes":
                 if not silent:
@@ -487,7 +494,12 @@ def run_all_comparisons():
         mongo_client = get_mongo_client()
 
         # Run all comparison functions
-        for category, func in COMPARISON_FUNCTIONS:
+        comparison_functions = COMPARISON_FUNCTIONS
+        if __import__("os").environ.get("NX27017_BACKEND"):
+            comparison_functions = [
+                (c, f) for c, f in COMPARISON_FUNCTIONS if c != "GridFS"
+            ]
+        for category, func in comparison_functions:
             print(f"\n{'=' * 80}")
             print(f"Running: {category}")
             print("=" * 80)
