@@ -255,12 +255,7 @@ def run_benchmark(iterations: int = 10, silent: bool = False):
         # Ensure shared MongoDB client is connected before benchmarking
         mongo_client = get_mongo_client()
 
-        comparison_functions = COMPARISON_FUNCTIONS
-        if __import__("os").environ.get("NX27017_BACKEND"):
-            comparison_functions = [
-                (c, f) for c, f in COMPARISON_FUNCTIONS if c != "GridFS"
-            ]
-        for category, func in comparison_functions:
+        for category, func in COMPARISON_FUNCTIONS:
             # Skip categories that are compatibility-only (no timing)
             if category == "Options Classes":
                 if not silent:
@@ -494,12 +489,7 @@ def run_all_comparisons():
         mongo_client = get_mongo_client()
 
         # Run all comparison functions
-        comparison_functions = COMPARISON_FUNCTIONS
-        if __import__("os").environ.get("NX27017_BACKEND"):
-            comparison_functions = [
-                (c, f) for c, f in COMPARISON_FUNCTIONS if c != "GridFS"
-            ]
-        for category, func in comparison_functions:
+        for category, func in COMPARISON_FUNCTIONS:
             print(f"\n{'=' * 80}")
             print(f"Running: {category}")
             print("=" * 80)

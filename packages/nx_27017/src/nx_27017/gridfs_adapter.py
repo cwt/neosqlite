@@ -568,6 +568,21 @@ class GridFSAdapter:
             files_id = filter_query.get("files_id")
             if isinstance(files_id, dict) and "$eq" in files_id:
                 files_id = files_id["$eq"]
+            if files_id is None:
+                # No files_id filter: return all chunks.
+                cursor = self._db.execute(
+                    f"SELECT _id, files_id, n, data FROM {self._get_bucket()._chunks_collection} ORDER BY files_id, n"
+                )
+                for row in cursor.fetchall():
+                    chunks.append(
+                        {
+                            "_id": row[0],
+                            "files_id": row[1],
+                            "n": row[2],
+                            "data": row[3],
+                        }
+                    )
+                return chunks
             if isinstance(files_id, (ObjectId, str, int)):
                 file_int_id = self._get_bucket()._get_integer_id_for_file(
                     files_id

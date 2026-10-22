@@ -1626,6 +1626,10 @@ class NeoSQLiteHandler:
         if "aggregate" in cmd_copy:
             try:
                 coll_name = cmd_copy.pop("aggregate")
+                if self._is_gridfs_collection(coll_name):
+                    return self._handle_gridfs_aggregate(
+                        request_id, cmd_copy, db, coll_name, db_name
+                    )
                 pipeline = cmd_copy.pop("pipeline", [])
 
                 # Atlas-style search index listing arrives as an
@@ -1986,11 +1990,8 @@ class NeoSQLiteHandler:
             skip = command_doc.get("skip", 0)
             sort = command_doc.get("sort", None)
             limit = command_doc.get("limit", 0)
-
             docs = adapter.handle_find(filter_query)
 
-            if skip > 0:
-                docs = docs[skip:]
             if sort:
                 sort_list = (
                     list(sort.items()) if isinstance(sort, dict) else sort
@@ -2000,20 +2001,39 @@ class NeoSQLiteHandler:
                 # ascending, last in descending.
                 for sort_key, direction in reversed(list(sort_list)):
                     reverse = int(direction) < 0
+                    def _nested_get(doc, key):
+                        cur = doc
+                        for part in key.split("."):
+                            if isinstance(cur, dict) and part in cur:
+                                cur = cur[part]
+                            else:
+                                return None
+                        return cur
+
                     present = [
-                        doc for doc in docs if doc.get(sort_key) is not None
+                        doc for doc in docs if _nested_get(doc, sort_key) is not None
                     ]
-                    missing = [doc for doc in docs if doc.get(sort_key) is None]
+                    missing = [
+                        doc for doc in docs if _nested_get(doc, sort_key) is None
+                    ]
 
                     def sort_value(
                         doc: dict[str, Any], key: str = sort_key
                     ) -> Any:
-                        return doc.get(key)
+                        # Support dotted sort keys (e.g. "metadata.order")
+                        cur: Any = doc
+                        for part in key.split("."):
+                            if isinstance(cur, dict) and part in cur:
+                                cur = cur[part]
+                            else:
+                                return None
+                        return cur
 
                     def sort_value_str(
                         doc: dict[str, Any], key: str = sort_key
                     ) -> str:
-                        return str(doc.get(key))
+                        v = sort_value(doc, key)
+                        return str(v) if v is not None else ""
 
                     try:
                         present.sort(key=sort_value, reverse=reverse)
@@ -2023,6 +2043,8 @@ class NeoSQLiteHandler:
                         missing + present if not reverse else present + missing
                     )
 
+            if skip > 0:
+                docs = docs[int(skip) :]
             if limit != 0:
                 docs = docs[: abs(limit)]
 
@@ -2036,6 +2058,145 @@ class NeoSQLiteHandler:
             }
         except Exception as e:
             logger.error(f"GridFS find error: {e}")
+            import traceback
+
+            traceback.print_exc()
+            return request_id, {"ok": 0, "errmsg": str(e)}
+
+    def _handle_gridfs_aggregate(
+        self,
+        request_id: int,
+        command_doc: dict,
+        db: Any,
+        coll_name: str,
+        db_name: str = "test",
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle aggregate command on GridFS collections.
+
+        GridFS collections (fs.files / fs.chunks) are backed by NeoSQLite
+        tables without a ``data`` column, so the generic temporary-table
+        aggregation path fails. This handler supports the subset of
+        pipelines used by PyMongo (count_documents, simple find-like
+        aggregations) by delegating to the GridFS adapter.
+        """
+        try:
+            adapter, bucket_name = create_gridfs_adapter(db.db, coll_name)
+            if adapter is None:
+                return request_id, {
+                    "ok": 0,
+                    "errmsg": "Invalid GridFS collection",
+                }
+
+            pipeline = command_doc.get("pipeline", [])
+            is_chunks = coll_name.endswith(".chunks")
+
+            # Extract filter from a leading $match (if present).
+            match_filter: dict[str, Any] = {}
+            for stage in pipeline:
+                if isinstance(stage, dict) and "$match" in stage:
+                    match_filter = stage.get("$match") or {}
+                    break
+
+            match_filter = self._convert_objectids(match_filter or {}) or {}
+
+            if is_chunks:
+                docs = adapter.handle_chunks_find(match_filter)
+            else:
+                docs = adapter.handle_find(match_filter)
+
+            # Apply $sort / $skip / $limit stages.
+            for stage in pipeline:
+                if not isinstance(stage, dict):
+                    continue
+                if "$sort" in stage:
+                    sort_spec = stage["$sort"]
+                    sort_list = (
+                        list(sort_spec.items())
+                        if isinstance(sort_spec, dict)
+                        else sort_spec
+                    )
+                    for sort_key, direction in reversed(list(sort_list)):
+                        reverse = int(direction) < 0
+                        present = [
+                            d for d in docs if d.get(sort_key) is not None
+                        ]
+                        missing = [
+                            d for d in docs if d.get(sort_key) is None
+                        ]
+
+                        def _sv(doc, key=sort_key):
+                            return doc.get(key)
+
+                        try:
+                            present.sort(key=_sv, reverse=reverse)
+                        except TypeError:
+                            present.sort(key=lambda d: str(d.get(sort_key)), reverse=reverse)
+                        docs = (
+                            missing + present
+                            if not reverse
+                            else present + missing
+                        )
+                if "$skip" in stage:
+                    docs = docs[int(stage["$skip"]) :]
+                if "$limit" in stage:
+                    docs = docs[: int(stage["$limit"])]
+
+            # If the pipeline is a count ($group with $sum), return count.
+            is_count = any(
+                isinstance(stage, dict)
+                and "$group" in stage
+                and isinstance(stage["$group"], dict)
+                and any(
+                    isinstance(v, dict) and "$sum" in v
+                    for v in stage["$group"].values()
+                )
+                for stage in pipeline
+            )
+            if is_count:
+                group_stage = next(
+                    (
+                        stage["$group"]
+                        for stage in pipeline
+                        if isinstance(stage, dict) and "$group" in stage
+                    ),
+                    {},
+                )
+                # Determine group _id field name (usually None).
+                group_id = group_stage.get("_id", None)
+                result_doc = {"_id": group_id, "n": len(docs)}
+                first, cursor_id = self._split_first_batch(
+                    [result_doc],
+                    self._first_batch_size(command_doc),
+                    f"{db_name}.{coll_name}",
+                    db_name,
+                    owner=command_doc.get("_conn_id"),
+                )
+                return request_id, {
+                    "ok": 1,
+                    "cursor": {
+                        "id": cursor_id,
+                        "ns": f"{db_name}.{coll_name}",
+                        "firstBatch": first,
+                    },
+                }
+
+            first, cursor_id = self._split_first_batch(
+                docs,
+                self._first_batch_size(command_doc),
+                f"{db_name}.{coll_name}",
+                db_name,
+                owner=command_doc.get("_conn_id"),
+            )
+            return request_id, {
+                "ok": 1,
+                "cursor": {
+                    "id": cursor_id,
+                    "ns": f"{db_name}.{coll_name}",
+                    "firstBatch": first,
+                },
+            }
+        except Exception as e:
+            logger.error(f"GridFS aggregate error: {e}")
             import traceback
 
             traceback.print_exc()
@@ -2068,6 +2229,8 @@ class NeoSQLiteHandler:
 
             if skip > 0:
                 docs = docs[skip:]
+            if skip > 0:
+                docs = docs[int(skip) :]
             if limit != 0:
                 docs = docs[: abs(limit)]
 
