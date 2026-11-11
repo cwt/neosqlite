@@ -38,19 +38,20 @@
 
 See [Release Notes](documents/releases/) for the full history.
 
-## Latest Release: v1.17.3
+## Latest Release: v1.17.4
 
-NeoSQLite v1.17.3 is a **major correctness, MongoDB API parity, and runtime compatibility release**. It delivers complete MongoDB parity for `$ne: null` (excluding missing and null fields), `$exists: true` (matching present-but-null fields), existential array comparisons (`$gt`, `$gte`, `$lt`, `$lte`), cross-type `$in`/`$nin` query operations, strict `$size` array validation, and canonical BSON type ranking in `$expr` evaluations (`missing < null < numbers < strings < objects < arrays < bools`). It also introduces NX-27017 GridFS aggregation support (enabling PyMongo `count_documents()`), dotted sort keys, and official support for **Python 3.15** (`^3.10, <3.16`). Fully backward compatible.
+NeoSQLite v1.17.4 is a **critical correctness and SQLite engine compatibility release**. It resolves a major silent data type regression introduced by SQLite's internal subtype handling changes in SQLite **≥ 3.54.0** (including SQLite 3.54.1 on macOS / Homebrew), where scalar subqueries dropped the internal `'J'` JSON subtype across subquery boundaries. This previously caused `json_set()`, `jsonb_set()`, and `json_object()` to serialize subquery array and object results into escaped JSON string literals (e.g. `'"[1, 2, 3]"'`) instead of native JSON arrays or objects.
+
+By wrapping all JSON-producing scalar subqueries with an outer `json((SELECT ...))` expression, NeoSQLite restores the `'J'` subtype uniformly across modern SQLite (≥ 3.54) while maintaining full backward compatibility with older SQLite versions (≤ 3.53, e.g. Fedora 45). Additionally, this release eliminates unclosed connection `ResourceWarning` leaks and aligns NX-27017 wire protocol dependencies. Fully backward compatible.
 
 **Key Highlights:**
-- **MongoDB Semantic Parity for `$ne: null` & `$exists`** — `{"$ne": null}` now strictly excludes both missing fields and fields explicitly set to `null` across Python, SQL CTE, aggregation `$match`, unified SQL translator, and ChangeStreams. `{"$exists": true}` correctly matches present-but-null fields via SQLite `json_type()`.
-- **Existential Array Comparisons** — Relational comparisons (`$gt`, `$gte`, `$lt`, `$lte`) on array fields now match if *any* element satisfies the condition, with scalar type guards and nested `$elemMatch` scoping.
-- **Cross-Type Query Operators & Strict `$size`** — SQL CTE paths for `$ne`, `$in`, and `$nin` are guarded by BSON/JSON data type checks, `$eq` natively handles array containment in SQL, and `$size` strictly validates `json_type = 'array'`.
-- **`$expr` BSON Type Ordering & Decimal Support** — Implemented canonical BSON type rank ordering (`missing < null < numbers/Decimal < strings < objects < arrays < bools`) in `$expr` evaluations, routing null ordering comparisons to authoritative fallback.
-- **NX-27017 GridFS Aggregation & Cursor Sorting** — Routed `aggregate` commands on GridFS collections to the adapter (enabling PyMongo `count_documents()`), added dotted sort key support (e.g. `metadata.order`), fixed missing-vs-present partitioning, and corrected skip-after-sort sequencing.
-- **Official Python 3.15 Support** — Expanded runtime dependency specifications to `^3.10, <3.16`, upgraded optional dependencies (`uvloop` `^0.23.0` with `cp315` wheels, `sphinx` `<9.3.0`), bumped NX-27017 to v0.8.3, and verified across 3,034 tests with **80.78% code coverage**.
+- **SQLite ≥ 3.54 Scalar Subquery Subtype Fix** — Enclosed all scalar subqueries producing JSON in `json((SELECT ...))`, ensuring enclosing functions (`json_set`, `jsonb_set`, `json_object`) recognize outputs as structured JSON rather than plain text strings on SQLite ≥ 3.54.
+- **Hardened Array Updates** — Fixed `$push` (with `$position` and `$slice`), `$pull`, and `$pullAll` update SQL clauses so updated documents retain proper JSON array structures in both TEXT and JSONB modes.
+- **Hardened Aggregation & `$expr` Array Converters** — Updated SQL converters for `$slice`, `$firstN`, `$lastN`, `$sortArray`, `$filter`, `$map`, `$maxN`, `$minN`, `$setIntersection`, `$setUnion`, `$setDifference`, and `$objectToArray` to prevent stringification of nested arrays and objects.
+- **Clean Resource Management** — Resolved unclosed SQLite connection leaks and silenced associated `ResourceWarning` diagnostic notices.
+- **Cross-Engine Verification** — Verified 100% test pass on modern SQLite (macOS, SQLite 3.54.1 / Python 3.14) and older SQLite (Fedora 45 container, SQLite 3.53.4 / Python 3.15). All 3,034 tests in `neosqlite` pass with **80.70%** line coverage; all 180 tests in `nx_27017` pass.
 
-For full details, see [documents/releases/v1.17.3.md](documents/releases/v1.17.3.md). Previous release highlights are in [documents/releases/v1.17.2.md](documents/releases/v1.17.2.md).
+For full details, see [documents/releases/v1.17.4.md](documents/releases/v1.17.4.md). Previous release highlights are in [documents/releases/v1.17.3.md](documents/releases/v1.17.3.md).
 
 ## Installation
 

@@ -6,14 +6,33 @@ tags:
   - log
   - bundle
   - changelog
-timestamp: 2026-11-11T00:00:00Z
-version: "1.17.3"
+timestamp: 2026-11-12T00:00:00Z
+version: "1.17.4"
 lifecycle: active
 ---
 
 # NeoSQLite Knowledge Base Bundle Log
 
 This document records the chronological history of structural changes, additions, deprecations, and refactoring operations performed on the NeoSQLite Open Knowledge Format (OKF) bundle.
+
+---
+
+## 2026-11-12 — Release v1.17.4
+
+### Summary
+Critical correctness and SQLite engine compatibility release: resolved scalar subquery JSON subtype loss in SQLite ≥ 3.54 (where subqueries dropped the internal `'J'` subtype and caused `json_set`, `jsonb_set`, and `json_object` to serialize arrays/objects as string literals) by wrapping scalar subqueries in `json((SELECT ...))`, eliminated connection `ResourceWarning` leaks, and updated `nx-27017` dependencies.
+
+### Key Modifications
+1. **Added `releases/v1.17.4.md` Release Notes**:
+   - Detailed documentation on SQLite ≥ 3.54 subquery subtype propagation, array updates ($push, $pull, $pullAll), aggregation SQL converters, resource management, and multi-engine test verification.
+2. **Updated Release Notes Index (`documents/releases/index.md`)**:
+   - Added `v1.17.4` entry and bumped frontmatter version to `1.17.4`.
+3. **Updated Root Knowledge Base Index (`documents/index.md`)**:
+   - Bumped frontmatter version to `1.17.4` and extended release notes range to `(v1.0.0 through v1.17.4)`.
+4. **Updated `README.md`**:
+   - Updated Latest Release section to v1.17.4 detailing SQLite ≥ 3.54 compatibility, array update hardening, and clean resource management.
+5. **Bumped version to v1.17.4**:
+   - `pyproject.toml` bumped to `1.17.4`, `packages/nx_27017/pyproject.toml` updated to `neosqlite = "^1.17.4"`.
 
 ---
 
