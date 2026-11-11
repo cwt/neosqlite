@@ -85,9 +85,9 @@ class SetMixin(BaseSqlMixin):
 
                 # SELECT elements from array1 that exist in array2
                 sql = f"""
-                (SELECT json({json_group_array}(DISTINCT CASE WHEN a1.type IN ('object', 'array') THEN json(a1.value) ELSE a1.value END))
+                json((SELECT {json_group_array}(DISTINCT CASE WHEN a1.type IN ('object', 'array') THEN json(a1.value) ELSE a1.value END)
                  FROM {json_each}({array1_sql}) AS a1
-                 WHERE EXISTS (SELECT 1 FROM {json_each}({array2_sql}) AS a2 WHERE a2.value = a1.value))
+                 WHERE EXISTS (SELECT 1 FROM {json_each}({array2_sql}) AS a2 WHERE a2.value = a1.value)))
                 """
                 return sql, array1_params + array2_params
 
@@ -104,12 +104,12 @@ class SetMixin(BaseSqlMixin):
 
                 # SELECT DISTINCT elements from both arrays
                 sql = f"""
-                (SELECT json({json_group_array}(DISTINCT CASE WHEN type IN ('object', 'array') THEN json(value) ELSE value END))
+                json((SELECT {json_group_array}(DISTINCT CASE WHEN type IN ('object', 'array') THEN json(value) ELSE value END)
                  FROM (
                    SELECT value, type FROM {json_each}({array1_sql})
                    UNION
                    SELECT value, type FROM {json_each}({array2_sql})
-                 ))
+                 )))
                 """
                 return sql, array1_params + array2_params
 
@@ -128,9 +128,9 @@ class SetMixin(BaseSqlMixin):
 
                 # SELECT elements from array1 that don't exist in array2
                 sql = f"""
-                (SELECT json({json_group_array}(CASE WHEN a1.type IN ('object', 'array') THEN json(a1.value) ELSE a1.value END))
+                json((SELECT {json_group_array}(CASE WHEN a1.type IN ('object', 'array') THEN json(a1.value) ELSE a1.value END)
                  FROM {json_each}({array1_sql}) AS a1
-                 WHERE NOT EXISTS (SELECT 1 FROM {json_each}({array2_sql}) AS a2 WHERE a2.value = a1.value))
+                 WHERE NOT EXISTS (SELECT 1 FROM {json_each}({array2_sql}) AS a2 WHERE a2.value = a1.value)))
                 """
                 return sql, array1_params + array2_params
 

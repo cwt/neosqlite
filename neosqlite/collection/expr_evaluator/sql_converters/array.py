@@ -103,15 +103,10 @@ class ArrayMixin(BaseSqlMixin):
                     raise NotImplementedError(
                         "$slice skip must be an integer literal in SQL tier"
                     )
-                    if self.jsonb.jsonb_supported:
-                        sql = f"(SELECT json({json_group_array}(value)) FROM (SELECT value FROM {json_each}({array_sql}) LIMIT {count} OFFSET {skip}))"
-                    else:
-                        sql = f"(SELECT {json_group_array}(value) FROM (SELECT value FROM {json_each}({array_sql}) LIMIT {count} OFFSET {skip}))"
+                if len(operands) > 2:
+                    sql = f"json((SELECT {json_group_array}(value) FROM (SELECT value FROM {json_each}({array_sql}) LIMIT {count} OFFSET {skip})))"
                 else:
-                    if self.jsonb.jsonb_supported:
-                        sql = f"(SELECT json({json_group_array}(value)) FROM (SELECT value FROM {json_each}({array_sql}) LIMIT {count}))"
-                    else:
-                        sql = f"(SELECT {json_group_array}(value) FROM (SELECT value FROM {json_each}({array_sql}) LIMIT {count}))"
+                    sql = f"json((SELECT {json_group_array}(value) FROM (SELECT value FROM {json_each}({array_sql}) LIMIT {count})))"
                 return sql, array_params
             case "$indexOfArray":
                 if len(operands) != 2:
@@ -192,20 +187,16 @@ class ArrayMixin(BaseSqlMixin):
                     n_sql, n_params = self._convert_operand_to_sql(n_operand)
                     n_clause = n_sql
                 json_ga = self.json_group_array_function
-                # Wrap json_group_array result with json() when using jsonb.
+                # Wrap json_group_array subquery with json() so that the outer
+                # caller (e.g. json_object) treats it as a JSON array rather than
+                # raw text (required on SQLite >= 3.54 where subqueries drop subtype).
                 # Include 'key' in the inner SELECT so the ordered aggregate
                 # can reference it. Re-parse object/array elements with json().
                 elem_expr = "CASE WHEN type IN ('object', 'array') THEN json(value) ELSE value END"
-                if self.jsonb.jsonb_supported:
-                    sql = (
-                        f"(SELECT json({json_ga}({elem_expr} ORDER BY CAST(key AS INTEGER) ASC)) FROM"
-                        f" (SELECT value, key, type FROM {json_each}({array_sql}) LIMIT {n_clause}))"
-                    )
-                else:
-                    sql = (
-                        f"(SELECT {json_ga}({elem_expr} ORDER BY CAST(key AS INTEGER) ASC) FROM"
-                        f" (SELECT value, key, type FROM {json_each}({array_sql}) LIMIT {n_clause}))"
-                    )
+                sql = (
+                    f"json((SELECT {json_ga}({elem_expr} ORDER BY CAST(key AS INTEGER) ASC) FROM"
+                    f" (SELECT value, key, type FROM {json_each}({array_sql}) LIMIT {n_clause})))"
+                )
                 return sql, array_params + n_params
             case "$lastN":
                 # MongoDB: { $lastN: { input: <array>, n: <number> } }
@@ -232,20 +223,12 @@ class ArrayMixin(BaseSqlMixin):
                 # Inner: select last N elements (DESC by key).
                 # Outer: use ordered aggregate to re-sort by original key ASC.
                 elem_expr = "CASE WHEN type IN ('object', 'array') THEN json(value) ELSE value END"
-                if self.jsonb.jsonb_supported:
-                    sql = (
-                        f"(SELECT json({json_ga}({elem_expr} ORDER BY CAST(key AS INTEGER) ASC))"
-                        f" FROM (SELECT value, key, type"
-                        f" FROM {json_each}({array_sql})"
-                        f" ORDER BY CAST(key AS INTEGER) DESC LIMIT {n_clause}))"
-                    )
-                else:
-                    sql = (
-                        f"(SELECT {json_ga}({elem_expr} ORDER BY CAST(key AS INTEGER) ASC)"
-                        f" FROM (SELECT value, key, type"
-                        f" FROM {json_each}({array_sql})"
-                        f" ORDER BY CAST(key AS INTEGER) DESC LIMIT {n_clause}))"
-                    )
+                sql = (
+                    f"json((SELECT {json_ga}({elem_expr} ORDER BY CAST(key AS INTEGER) ASC)"
+                    f" FROM (SELECT value, key, type"
+                    f" FROM {json_each}({array_sql})"
+                    f" ORDER BY CAST(key AS INTEGER) DESC LIMIT {n_clause})))"
+                )
                 return sql, array_params + n_params
             case "$sortArray":
                 # MongoDB: { $sortArray: { input: <array>, sortBy: <spec> } }
@@ -285,16 +268,10 @@ class ArrayMixin(BaseSqlMixin):
                         "$sortArray sortBy must be a dict, 1, -1, or null"
                     )
                 elem_expr = "CASE WHEN type IN ('object', 'array') THEN json(value) ELSE value END"
-                if self.jsonb.jsonb_supported:
-                    sql = (
-                        f"(SELECT json({json_ga}({elem_expr} ORDER BY {order_expr} {order})) FROM"
-                        f" {json_each}({array_sql}))"
-                    )
-                else:
-                    sql = (
-                        f"(SELECT {json_ga}({elem_expr} ORDER BY {order_expr} {order}) FROM"
-                        f" {json_each}({array_sql}))"
-                    )
+                sql = (
+                    f"json((SELECT {json_ga}({elem_expr} ORDER BY {order_expr} {order}) FROM"
+                    f" {json_each}({array_sql})))"
+                )
                 return sql, array_params
             case "$maxN":
                 # MongoDB: { $maxN: { input: <array>, n: <number> } }
@@ -356,20 +333,12 @@ class ArrayMixin(BaseSqlMixin):
                 cond_sql, cond_params = self._convert_expr_to_sql(cond)
 
                 elem_expr = "CASE WHEN type IN ('object', 'array') THEN json(value) ELSE value END"
-                if self.jsonb.jsonb_supported:
-                    sql = (
-                        f"(SELECT json({json_ga}({elem_expr} ORDER BY"
-                        f" CAST(key AS INTEGER))) FROM"
-                        f" {self.json_each_function}({input_sql})"
-                        f" WHERE {cond_sql})"
-                    )
-                else:
-                    sql = (
-                        f"(SELECT {json_ga}({elem_expr} ORDER BY"
-                        f" CAST(key AS INTEGER)) FROM"
-                        f" {self.json_each_function}({input_sql})"
-                        f" WHERE {cond_sql})"
-                    )
+                sql = (
+                    f"json((SELECT {json_ga}({elem_expr} ORDER BY"
+                    f" CAST(key AS INTEGER)) FROM"
+                    f" {self.json_each_function}({input_sql})"
+                    f" WHERE {cond_sql}))"
+                )
                 return sql, input_params + cond_params
 
             elif operator == "$map":
@@ -378,18 +347,11 @@ class ArrayMixin(BaseSqlMixin):
                     raise ValueError("$map requires 'in' expression")
                 in_sql, in_params = self._convert_operand_to_sql(in_expr)
 
-                if self.jsonb.jsonb_supported:
-                    sql = (
-                        f"(SELECT json({json_ga}({in_sql} ORDER BY"
-                        f" CAST(key AS INTEGER))) FROM"
-                        f" {self.json_each_function}({input_sql}))"
-                    )
-                else:
-                    sql = (
-                        f"(SELECT {json_ga}({in_sql} ORDER BY"
-                        f" CAST(key AS INTEGER)) FROM"
-                        f" {self.json_each_function}({input_sql}))"
-                    )
+                sql = (
+                    f"json((SELECT {json_ga}({in_sql} ORDER BY"
+                    f" CAST(key AS INTEGER)) FROM"
+                    f" {self.json_each_function}({input_sql})))"
+                )
                 return sql, input_params + in_params
 
             elif operator == "$reduce":
@@ -428,16 +390,9 @@ class ArrayMixin(BaseSqlMixin):
             n_clause = n_sql
         json_ga = self.json_group_array_function
         elem_expr = "CASE WHEN type IN ('object', 'array') THEN json(value) ELSE value END"
-        if self.jsonb.jsonb_supported:
-            sql = (
-                f"(SELECT json({json_ga}({elem_expr} ORDER BY value {direction}))"
-                f" FROM (SELECT value, type FROM {self.json_each_function}({array_sql})"
-                f" ORDER BY value {direction} LIMIT {n_clause}))"
-            )
-        else:
-            sql = (
-                f"(SELECT {json_ga}({elem_expr} ORDER BY value {direction})"
-                f" FROM (SELECT value, type FROM {self.json_each_function}({array_sql})"
-                f" ORDER BY value {direction} LIMIT {n_clause}))"
-            )
+        sql = (
+            f"json((SELECT {json_ga}({elem_expr} ORDER BY value {direction})"
+            f" FROM (SELECT value, type FROM {self.json_each_function}({array_sql})"
+            f" ORDER BY value {direction} LIMIT {n_clause})))"
+        )
         return sql, array_params + n_params

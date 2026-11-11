@@ -316,8 +316,8 @@ class SqlUpdatesMixin:
             )
 
         fragment = (
-            f"{json_path}, (SELECT json_group_array(value) "
-            f"FROM ({final_select}))"
+            f"{json_path}, json((SELECT json_group_array(value) "
+            f"FROM ({final_select})))"
         )
         return fragment, extra_params
 
@@ -960,11 +960,11 @@ class SqlUpdatesMixin:
                                 converted_val
                             )
                             set_clauses.append(
-                                f"{json_path}, (SELECT json_group_array(json(value)) FROM json_each(json_extract(data, {json_path})) WHERE json(value) != {pull_value_json} OR json(value) IS NULL)"
+                                f"{json_path}, json((SELECT json_group_array(json(value)) FROM json_each(json_extract(data, {json_path})) WHERE json(value) != {pull_value_json} OR json(value) IS NULL))"
                             )
                         else:
                             set_clauses.append(
-                                f"{json_path}, (SELECT json_group_array(value) FROM json_each(json_extract(data, {json_path})) WHERE value != ?)"
+                                f"{json_path}, json((SELECT json_group_array(value) FROM json_each(json_extract(data, {json_path})) WHERE value != ?))"
                             )
                             params.append(converted_val)
                 case "$pullAll":
@@ -996,7 +996,7 @@ class SqlUpdatesMixin:
                                 ]
                             )
                             set_clauses.append(
-                                f"{json_path}, (SELECT json_group_array(json(value)) FROM json_each(json_extract(data, {json_path})) WHERE {conditions} OR json(value) IS NULL)"
+                                f"{json_path}, json((SELECT json_group_array(json(value)) FROM json_each(json_extract(data, {json_path})) WHERE {conditions} OR json(value) IS NULL))"
                             )
                         else:
                             placeholders = ", ".join(["?" for _ in pull_values])
@@ -1004,7 +1004,7 @@ class SqlUpdatesMixin:
                                 _convert_bytes_to_binary(v) for v in pull_values
                             ]
                             set_clauses.append(
-                                f"{json_path}, (SELECT json_group_array(value) FROM json_each(json_extract(data, {json_path})) WHERE value NOT IN ({placeholders}))"
+                                f"{json_path}, json((SELECT json_group_array(value) FROM json_each(json_extract(data, {json_path})) WHERE value NOT IN ({placeholders})))"
                             )
                             params.extend(converted_values)
                 case _:
@@ -1264,12 +1264,12 @@ class SqlUpdatesMixin:
                         # For complex values, serialize to JSON for comparison
                         pull_value_json = neosqlite_json_dumps(converted_val)
                         clauses.append(
-                            f"{json_path}, (SELECT json_group_array(json(value)) FROM json_each(json_extract(data, {json_path})) WHERE json(value) != {pull_value_json} OR json(value) IS NULL)"
+                            f"{json_path}, json((SELECT json_group_array(json(value)) FROM json_each(json_extract(data, {json_path})) WHERE json(value) != {pull_value_json} OR json(value) IS NULL))"
                         )
                     else:
                         # For simple values, compare directly
                         clauses.append(
-                            f"{json_path}, (SELECT json_group_array(value) FROM json_each(json_extract(data, {json_path})) WHERE value != ?)"
+                            f"{json_path}, json((SELECT json_group_array(value) FROM json_each(json_extract(data, {json_path})) WHERE value != ?))"
                         )
                         params.append(converted_val)
             case "$pullAll":
@@ -1297,7 +1297,7 @@ class SqlUpdatesMixin:
                             [f"json(value) != {v}" for v in pull_values_json]
                         )
                         clauses.append(
-                            f"{json_path}, (SELECT json_group_array(json(value)) FROM json_each(json_extract(data, {json_path})) WHERE {conditions} OR json(value) IS NULL)"
+                            f"{json_path}, json((SELECT json_group_array(json(value)) FROM json_each(json_extract(data, {json_path})) WHERE {conditions} OR json(value) IS NULL))"
                         )
                     else:
                         # For simple values, use IN clause
@@ -1306,7 +1306,7 @@ class SqlUpdatesMixin:
                             _convert_bytes_to_binary(v) for v in pull_values
                         ]
                         clauses.append(
-                            f"{json_path}, (SELECT json_group_array(value) FROM json_each(json_extract(data, {json_path})) WHERE value NOT IN ({placeholders}))"
+                            f"{json_path}, json((SELECT json_group_array(value) FROM json_each(json_extract(data, {json_path})) WHERE value NOT IN ({placeholders})))"
                         )
                         params.extend(converted_values)
             case "$currentDate":

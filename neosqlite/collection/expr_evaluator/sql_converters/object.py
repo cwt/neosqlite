@@ -98,7 +98,7 @@ class ObjectMixin(BaseSqlMixin):
                 json_each = self.json_each_function
 
                 # Use a subquery with json_each to build the array
-                sql = f"(SELECT json({json_group_array}(json_object('k', key, 'v', value))) FROM {json_each}({sql_input}))"
+                sql = f"json((SELECT {json_group_array}(json_object('k', key, 'v', value)) FROM {json_each}({sql_input})))"
                 return sql, params
             case "$literal":
                 # Return operand as-is without interpretation.
