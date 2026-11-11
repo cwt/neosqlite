@@ -145,7 +145,7 @@ class TestLegacySingleFileCompat:
             # Legacy limitation, documented: shared file sees all tables.
             assert len(r["cursor"]["firstBatch"]) == 1
         finally:
-            h.conn.close()
+            h.close_all()
 
     def test_sessions_scoped_per_db_in_multifile(self, tmp_path):
         h = NeoSQLiteHandler(str(tmp_path), data_dir=str(tmp_path))
@@ -408,4 +408,4 @@ class TestCrossDbTransactionGuard:
             )
             assert ir2["ok"] == 1
         finally:
-            h.conn.close()
+            h.close_all()

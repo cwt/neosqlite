@@ -304,6 +304,7 @@ class CorePythonMixin(BasePythonMixin):
                         return 9
                     try:
                         from decimal import Decimal
+
                         if isinstance(v, Decimal):
                             return 2
                     except Exception:

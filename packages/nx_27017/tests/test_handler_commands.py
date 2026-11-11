@@ -24,7 +24,7 @@ def handler(tmp_path):
     db_path = str(tmp_path / "test.db")
     h = NeoSQLiteHandler(db_path)
     yield h
-    h.conn.close()
+    h.close_all()
 
 
 class TestPing:
@@ -370,10 +370,16 @@ class TestWireProtocol:
 
 
 class TestInMemoryDatabase:
-    def test_in_memory_shared_connections(self):
+    def setup_method(self):
         from nx_27017.nx_27017 import NeoSQLiteHandler
 
-        handler = NeoSQLiteHandler(":memory:")
+        self.handler = NeoSQLiteHandler(":memory:")
+
+    def teardown_method(self):
+        self.handler.close_all()
+
+    def test_in_memory_shared_connections(self):
+        handler = self.handler
         db1 = handler.get_database("test")
         coll = db1.users
         coll.insert_one({"name": "Alice"})
@@ -381,9 +387,7 @@ class TestInMemoryDatabase:
         assert len(docs) == 1
 
     def test_handler_with_memory_path(self):
-        from nx_27017.nx_27017 import NeoSQLiteHandler
-
-        handler = NeoSQLiteHandler(":memory:")
+        handler = self.handler
         assert handler.db_path == ":memory:"
 
 

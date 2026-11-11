@@ -12,7 +12,7 @@ def handler(tmp_path):
     db_path = str(tmp_path / "test.db")
     h = NeoSQLiteHandler(db_path)
     yield h
-    h.conn.close()
+    h.close_all()
 
 
 class TestListDatabasesSize:

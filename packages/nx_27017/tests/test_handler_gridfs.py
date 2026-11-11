@@ -18,7 +18,7 @@ def handler(tmp_path):
     bucket.upload_from_stream("data.json", b'{"key": "value"}')
 
     yield h
-    h.conn.close()
+    h.close_all()
 
 
 class TestGridFSOperations:

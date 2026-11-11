@@ -20,9 +20,15 @@ from neosqlite.gridfs import GridFSBucket
 class TestGridFSConnectionAndCursorParity:
     """Dogfooding Gap 1 & 2: GridFSBucket and GridOutCursor parity."""
 
+    def setup_method(self):
+        self.conn = neosqlite.Connection(":memory:")
+
+    def teardown_method(self):
+        self.conn.close()
+
     def test_gridfs_bucket_accepts_neosqlite_connection_directly(self):
         """GridFSBucket should accept neosqlite.Connection directly without conn.db."""
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         bucket = GridFSBucket(conn)
         file_id = bucket.upload_from_stream(
             "sample.txt", io.BytesIO(b"Hello from dogfooding test!")
@@ -34,7 +40,7 @@ class TestGridFSConnectionAndCursorParity:
 
     def test_grid_out_cursor_sort_skip_limit_to_list(self):
         """GridOutCursor should support fluent .sort(), .skip(), .limit(), and .to_list()."""
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         bucket = GridFSBucket(conn)
 
         for i in range(10):
@@ -60,7 +66,7 @@ class TestGridFSConnectionAndCursorParity:
 
     def test_grid_out_cursor_batch_size_and_iteration(self):
         """GridOutCursor should support .batch_size() and standard iteration."""
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         bucket = GridFSBucket(conn)
 
         for i in range(5):
@@ -78,7 +84,7 @@ class TestGridFSConnectionAndCursorParity:
 
     def test_gridfs_files_count_documents_with_filter(self):
         """conn.fs.files.count_documents() should work with metadata filter."""
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         bucket = GridFSBucket(conn)
 
         bucket.upload_from_stream(
@@ -111,7 +117,7 @@ class TestGridFSConnectionAndCursorParity:
 
     def test_gridfs_dot_notation_and_bracket_access(self):
         """conn['fs.files'] and conn['fs.chunks'] access should delegate correctly."""
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         bucket = GridFSBucket(conn)
 
         bucket.upload_from_stream("test.txt", io.BytesIO(b"data"))
@@ -128,9 +134,15 @@ class TestGridFSConnectionAndCursorParity:
 class TestFullTextSearchScoreAndRankingParity:
     """Dogfooding Gap 3: BM25 textScore calculation, projection, and multi-field ranking."""
 
+    def setup_method(self):
+        self.conn = neosqlite.Connection(":memory:")
+
+    def teardown_method(self):
+        self.conn.close()
+
     def test_find_text_score_projection_and_sort(self):
         """find() should calculate BM25 score and sort by textScore."""
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         articles = conn.articles
 
         articles.create_search_index("title")
@@ -174,7 +186,7 @@ class TestFullTextSearchScoreAndRankingParity:
 
     def test_multi_field_fts_score_accumulation(self):
         """Documents matching multiple FTS fields should accumulate higher BM25 scores."""
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         articles = conn.articles
 
         articles.create_search_index("title")
@@ -214,7 +226,7 @@ class TestFullTextSearchScoreAndRankingParity:
 
     def test_find_text_search_without_score_projection_clean(self):
         """find() without score projection should not expose internal _textScore."""
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         articles = conn.articles
         articles.create_search_index("title")
 
@@ -229,7 +241,7 @@ class TestFullTextSearchScoreAndRankingParity:
 
     def test_find_text_search_pagination(self):
         """FTS query cursor should support skip() and limit() correctly."""
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         articles = conn.articles
         articles.create_search_index("content")
 
@@ -257,7 +269,7 @@ class TestFullTextSearchScoreAndRankingParity:
 
     def test_find_text_search_combined_with_regular_filters(self):
         """$text query combined with regular field conditions."""
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         articles = conn.articles
         articles.create_search_index("title")
 

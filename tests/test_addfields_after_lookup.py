@@ -8,9 +8,17 @@ import neosqlite
 class TestAddFieldsAfterLookup:
     """Test that $addFields works correctly after $lookup stage."""
 
+    def setup_method(self):
+        """Set up in-memory database."""
+        self.db = neosqlite.Connection(":memory:")
+
+    def teardown_method(self):
+        """Clean up in-memory database."""
+        self.db.close()
+
     def test_addfields_after_lookup_basic(self):
         """Test that basic $addFields works after $lookup without SQL errors."""
-        db = neosqlite.Connection(":memory:")
+        db = self.db
         db.posts.insert_one({"_id": 1, "title": "Post 1"})
         db.comments.insert_one({"_id": 1, "text": "Great post!", "post_id": 1})
         db.comments.insert_one({"_id": 2, "text": "Thanks", "post_id": 1})
@@ -40,7 +48,7 @@ class TestAddFieldsAfterLookup:
 
     def test_addfields_after_lookup_with_filter(self):
         """Test that $addFields with $filter works after $lookup."""
-        db = neosqlite.Connection(":memory:")
+        db = self.db
         db.blog_posts.insert_one(
             {"_id": 1, "title": "Test", "datetime": "2024-01-01"}
         )
@@ -109,7 +117,7 @@ class TestAddFieldsAfterLookup:
 
     def test_addfields_after_lookup_with_filter_single_value(self):
         """Test $filter with $in using a single value in the list."""
-        db = neosqlite.Connection(":memory:")
+        db = self.db
         db.posts.insert_one({"_id": 1, "title": "Test"})
         db.comments.insert_many(
             [
@@ -149,7 +157,7 @@ class TestAddFieldsAfterLookup:
 
     def test_addfields_after_lookup_no_sql_error(self):
         """Test that no SQL error is raised during $addFields after $lookup."""
-        db = neosqlite.Connection(":memory:")
+        db = self.db
         db.collection1.insert_one({"_id": 1, "field1": "value1"})
         db.collection2.insert_one({"_id": 1, "ref_id": 1, "field2": "value2"})
 
@@ -179,7 +187,7 @@ class TestAddFieldsAfterLookup:
         This verifies the hybrid Python approach works correctly without
         falling back to Tier 3 (full Python fallback).
         """
-        db = neosqlite.Connection(":memory:")
+        db = self.db
         db.posts.insert_one({"_id": 1, "title": "Test"})
         db.comments.insert_one({"_id": 1, "author": "alice", "post_id": 1})
         db.comments.insert_one({"_id": 2, "author": "bob", "post_id": 1})
@@ -238,9 +246,17 @@ if __name__ == "__main__":
 class TestLookupEmptyArrayType:
     """Tests for $lookup returning string '[]' instead of empty list."""
 
+    def setup_method(self):
+        """Set up in-memory database."""
+        self.db = neosqlite.Connection(":memory:")
+
+    def teardown_method(self):
+        """Clean up in-memory database."""
+        self.db.close()
+
     def test_lookup_empty_result_is_list_not_string(self):
         """Verify $lookup returns empty list [] not string '[]'."""
-        db = neosqlite.Connection(":memory:")
+        db = self.db
         db.posts.insert_one({"_id": 1, "title": "Test"})
         # No matching comments
         db.comments.insert_one({"_id": 100, "text": "orphan", "post_id": 999})
@@ -269,7 +285,7 @@ class TestLookupEmptyArrayType:
 
     def test_lookup_non_empty_result_is_list(self):
         """Verify $lookup returns list when there are matching results."""
-        db = neosqlite.Connection(":memory:")
+        db = self.db
         db.posts.insert_one({"_id": 1, "title": "Test"})
         db.comments.insert_one({"_id": 1, "text": "Great!", "post_id": 1})
         db.comments.insert_one({"_id": 2, "text": "Thanks", "post_id": 1})
@@ -299,11 +315,19 @@ class TestLookupEmptyArrayType:
 class TestLookupObjectIdTypeMatching:
     """Tests for $lookup with ObjectId type matching in join fields."""
 
+    def setup_method(self):
+        """Set up in-memory database."""
+        self.db = neosqlite.Connection(":memory:")
+
+    def teardown_method(self):
+        """Clean up in-memory database."""
+        self.db.close()
+
     def test_lookup_with_objectid_join(self):
         """Verify $lookup works when join fields are ObjectId type."""
         from neosqlite.objectid import ObjectId
 
-        db = neosqlite.Connection(":memory:")
+        db = self.db
         post_oid = ObjectId("669abc123def456789012345")
         db.posts.insert_one({"_id": post_oid, "title": "Test"})
 
@@ -341,7 +365,7 @@ class TestLookupObjectIdTypeMatching:
         """Verify ObjectId can be used in $match stage parameters."""
         from neosqlite.objectid import ObjectId
 
-        db = neosqlite.Connection(":memory:")
+        db = self.db
         oid = ObjectId("669abc123def456789012345")
         db.posts.insert_one({"_id": oid, "title": "Test"})
         db.posts.insert_one({"_id": 2, "title": "Other"})
@@ -361,7 +385,7 @@ class TestLookupObjectIdTypeMatching:
         """Verify $lookup returns empty when types truly don't match."""
         from neosqlite.objectid import ObjectId
 
-        db = neosqlite.Connection(":memory:")
+        db = self.db
         post_oid = ObjectId("669abc123def456789012345")
         db.posts.insert_one({"_id": post_oid, "title": "Test"})
 

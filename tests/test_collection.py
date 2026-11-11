@@ -40,23 +40,22 @@ from neosqlite.query_operators import _eq, _gt, _in, _lt, _lte
 
 def test_rename_collection_already_exists():
     """Test renaming a collection to a name that already exists."""
-    db = neosqlite.Connection(":memory:")
+    with neosqlite.Connection(":memory:") as db:
+        # Create two collections
+        collection1 = db["test1"]
+        collection2 = db["test2"]
+        collection1.insert_one({"foo": "bar"})
+        collection2.insert_one({"baz": "qux"})
 
-    # Create two collections
-    collection1 = db["test1"]
-    collection2 = db["test2"]
-    collection1.insert_one({"foo": "bar"})
-    collection2.insert_one({"baz": "qux"})
-
-    # Try to rename collection1 to collection2's name
-    # Use the appropriate error type based on what's available
-    if len(Error) > 1:
-        # If we have both sqlite3 and pysqlite3, expect the pysqlite3 one
-        with pytest.raises(Error[1]):
-            collection1.rename("test2")
-    else:
-        with pytest.raises(Error[0]):
-            collection1.rename("test2")
+        # Try to rename collection1 to collection2's name
+        # Use the appropriate error type based on what's available
+        if len(Error) > 1:
+            # If we have both sqlite3 and pysqlite3, expect the pysqlite3 one
+            with pytest.raises(Error[1]):
+                collection1.rename("test2")
+        else:
+            with pytest.raises(Error[0]):
+                collection1.rename("test2")
 
 
 # Tests for collection operations
@@ -1867,59 +1866,59 @@ def test_collection_drop_with_indexes(connection):
 
 def test_insert_valid_document_with_array_indexing():
     """Test inserting a valid document and accessing fields with array indexing."""
-    db = neosqlite.Connection(":memory:")
-    collection = db["test_array_indexing"]
+    with neosqlite.Connection(":memory:") as db:
+        collection = db["test_array_indexing"]
 
-    # Insert a document with arrays
-    doc = {
-        "name": "test",
-        "tags": ["red", "green", "blue"],
-        "orders": [
-            {"id": 1, "items": ["apple", "banana"]},
-            {"id": 2, "items": ["orange", "grape"]},
-        ],
-    }
-    result = collection.insert_one(doc)
-    assert result.inserted_id is not None
-    from neosqlite.objectid import ObjectId
+        # Insert a document with arrays
+        doc = {
+            "name": "test",
+            "tags": ["red", "green", "blue"],
+            "orders": [
+                {"id": 1, "items": ["apple", "banana"]},
+                {"id": 2, "items": ["orange", "grape"]},
+            ],
+        }
+        result = collection.insert_one(doc)
+        assert result.inserted_id is not None
+        from neosqlite.objectid import ObjectId
 
-    assert isinstance(result.inserted_id, ObjectId)
+        assert isinstance(result.inserted_id, ObjectId)
 
-    # Find the document back using the ObjectId
-    found_doc = collection.find_one({"_id": result.inserted_id})
-    assert found_doc is not None
-    assert found_doc["name"] == "test"
-    assert found_doc["tags"] == ["red", "green", "blue"]
-    assert len(found_doc["orders"]) == 2
+        # Find the document back using the ObjectId
+        found_doc = collection.find_one({"_id": result.inserted_id})
+        assert found_doc is not None
+        assert found_doc["name"] == "test"
+        assert found_doc["tags"] == ["red", "green", "blue"]
+        assert len(found_doc["orders"]) == 2
 
 
 def test_insert_invalid_json_document():
     """Test that inserting an invalid JSON document raises an error."""
-    db = neosqlite.Connection(":memory:")
-    collection = db["test_invalid_json"]
+    with neosqlite.Connection(":memory:") as db:
+        collection = db["test_invalid_json"]
 
-    # Try to insert a document that would create invalid JSON
-    # This is a bit tricky to test since the Python dict structure prevents
-    # truly invalid JSON, but we can test the validation mechanism
+        # Try to insert a document that would create invalid JSON
+        # This is a bit tricky to test since the Python dict structure prevents
+        # truly invalid JSON, but we can test the validation mechanism
 
-    # Mock the JSON serialization to return invalid JSON
-    import neosqlite.collection.json_helpers as json_helpers
+        # Mock the JSON serialization to return invalid JSON
+        import neosqlite.collection.json_helpers as json_helpers
 
-    original_dumps = json_helpers.neosqlite_json_dumps
+        original_dumps = json_helpers.neosqlite_json_dumps
 
-    def mock_dumps(obj, **kwargs):
-        # Return deliberately invalid JSON
-        return '{"name": "test", "value":}'  # Missing value after colon
+        def mock_dumps(obj, **kwargs):
+            # Return deliberately invalid JSON
+            return '{"name": "test", "value":}'  # Missing value after colon
 
-    # Temporarily replace the dumps function
-    json_helpers.neosqlite_json_dumps = mock_dumps
+        # Temporarily replace the dumps function
+        json_helpers.neosqlite_json_dumps = mock_dumps
 
-    try:
-        with pytest.raises(ValueError, match="Invalid JSON document"):
-            collection.insert_one({"name": "test", "value": "invalid"})
-    finally:
-        # Restore the original function
-        json_helpers.neosqlite_json_dumps = original_dumps
+        try:
+            with pytest.raises(ValueError, match="Invalid JSON document"):
+                collection.insert_one({"name": "test", "value": "invalid"})
+        finally:
+            # Restore the original function
+            json_helpers.neosqlite_json_dumps = original_dumps
 
 
 def test_collection_properties():

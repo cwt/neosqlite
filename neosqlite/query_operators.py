@@ -171,7 +171,8 @@ def _gt(field: str, value: Any, document: dict[str, Any]) -> bool:
         # MongoDB array semantics: match if ANY element satisfies
         if isinstance(doc_value, list):
             return any(
-                isinstance(x, (int, float)) and not isinstance(x, bool)
+                isinstance(x, (int, float))
+                and not isinstance(x, bool)
                 and x > value
                 for x in doc_value
             )
@@ -204,7 +205,8 @@ def _lt(field: str, value: Any, document: dict[str, Any]) -> bool:
         # MongoDB array semantics: match if ANY element satisfies
         if isinstance(doc_value, list):
             return any(
-                isinstance(x, (int, float)) and not isinstance(x, bool)
+                isinstance(x, (int, float))
+                and not isinstance(x, bool)
                 and x < value
                 for x in doc_value
             )
@@ -238,7 +240,8 @@ def _gte(field: str, value: Any, document: dict[str, Any]) -> bool:
         # MongoDB array semantics: match if ANY element satisfies
         if isinstance(doc_value, list):
             return any(
-                isinstance(x, (int, float)) and not isinstance(x, bool)
+                isinstance(x, (int, float))
+                and not isinstance(x, bool)
                 and x >= value
                 for x in doc_value
             )
@@ -272,7 +275,8 @@ def _lte(field: str, value: Any, document: dict[str, Any]) -> bool:
         # MongoDB array semantics: match if ANY element satisfies
         if isinstance(doc_value, list):
             return any(
-                isinstance(x, (int, float)) and not isinstance(x, bool)
+                isinstance(x, (int, float))
+                and not isinstance(x, bool)
                 and x <= value
                 for x in doc_value
             )

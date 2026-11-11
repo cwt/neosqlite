@@ -26,7 +26,9 @@ class ComparisonMixin(BaseSqlMixin):
         if operator in ("$gt", "$gte", "$lt", "$lte") and (
             operands[0] is None or operands[1] is None
         ):
-            return None, []
+            raise NotImplementedError(
+                f"{operator} with null operand requires Python evaluation"
+            )
 
         left_sql, left_params = self._convert_operand_to_sql(operands[0])
         right_sql, right_params = self._convert_operand_to_sql(operands[1])

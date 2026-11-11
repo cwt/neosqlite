@@ -93,13 +93,13 @@ def migrate_autovacuum(
     Returns:
         True if migration succeeded, False if skipped (already correct)
     """
-    conn = sqlite3.connect(db_path)
+    initial_conn = sqlite3.connect(db_path)
     try:
-        if not needs_migration(conn, target_autovacuum):
+        if not needs_migration(initial_conn, target_autovacuum):
             return False
-        checkpoint_and_prepare_for_migration(conn)
+        checkpoint_and_prepare_for_migration(initial_conn)
     finally:
-        conn.close()
+        initial_conn.close()
 
     import time
 
@@ -128,6 +128,9 @@ def migrate_autovacuum(
     # quotes are legal on Unix and previously aborted the migration.
     escaped_dest = temp_new_path.replace("'", "''")
 
+    conn: sqlite3.Connection | None = None
+    snap_conn: sqlite3.Connection | None = None
+    out_conn: sqlite3.Connection | None = None
     try:
         conn = sqlite3.connect(original_backup_path)
         conn.isolation_level = None
@@ -159,7 +162,9 @@ def migrate_autovacuum(
             snap_conn.execute(f"VACUUM INTO '{escaped_dest}'")
         finally:
             snap_conn.close()
+            snap_conn = None
         conn.close()
+        conn = None
 
         # Honor the requested journal mode on the OUTPUT database —
         # previously this parameter was dead (#167). Applied after the
@@ -169,6 +174,7 @@ def migrate_autovacuum(
             out_conn.execute(f"PRAGMA journal_mode={target_journal_mode}")
         finally:
             out_conn.close()
+            out_conn = None
 
         shutil.move(temp_new_path, db_path)
 
@@ -187,6 +193,21 @@ def migrate_autovacuum(
         return True
 
     except Exception as e:
+        if snap_conn is not None:
+            try:
+                snap_conn.close()
+            except Exception:
+                pass
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        if out_conn is not None:
+            try:
+                out_conn.close()
+            except Exception:
+                pass
         logger.error(f"Migration failed, restoring backup: {e}")
         for original_path, backup_path in backup_files.items():
             if os.path.exists(backup_path):

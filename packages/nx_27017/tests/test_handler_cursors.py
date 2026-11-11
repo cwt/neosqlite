@@ -8,7 +8,7 @@ from nx_27017.nx_27017 import NeoSQLiteHandler
 def handler(tmp_path):
     h = NeoSQLiteHandler(str(tmp_path / "cur.db"))
     yield h
-    h.conn.close()
+    h.close_all()
 
 
 def _insert_many(handler, n, coll="big", db="test"):

@@ -309,6 +309,13 @@ class Connection:
 
         if self.db is not None:
             try:
+                from .collection.jsonb_support import clear_jsonb_cache
+
+                clear_jsonb_cache(self.db)
+            except Exception:
+                pass
+
+            try:
                 if self.db.in_transaction:
                     logger.warning(
                         "Closing connection with pending transaction; committing automatically"
@@ -337,6 +344,13 @@ class Connection:
             return
 
         if self.db is not None:
+            try:
+                from .collection.jsonb_support import clear_jsonb_cache
+
+                clear_jsonb_cache(self.db)
+            except Exception:
+                pass
+
             try:
                 if self.db.in_transaction:
                     try:

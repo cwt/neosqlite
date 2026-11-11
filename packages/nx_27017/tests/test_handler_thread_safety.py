@@ -32,13 +32,14 @@ def file_handler(tmp_path):
     db_path = str(tmp_path / "concurrent.db")
     h = NeoSQLiteHandler(db_path)
     yield h
-    h.conn.close()
+    h.close_all()
 
 
 @pytest.fixture
 def memory_handler():
     h = NeoSQLiteHandler(":memory:")
     yield h
+    h.close_all()
 
 
 def _insert(handler, i):

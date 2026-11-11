@@ -425,6 +425,23 @@ class NeoSQLiteHandler:
                 conn.close()
             except Exception:
                 pass
+        if hasattr(self, "conn") and self.conn is not None:
+            try:
+                self.conn.close()
+            except Exception:
+                pass
+
+    def __enter__(self) -> "NeoSQLiteHandler":
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.close_all()
+
+    def __del__(self) -> None:
+        try:
+            self.close_all()
+        except Exception:
+            pass
 
     def _drop_file_db(self, db_name: str) -> None:
         """Close, unlink and forget a file/memory database."""
@@ -2001,6 +2018,7 @@ class NeoSQLiteHandler:
                 # ascending, last in descending.
                 for sort_key, direction in reversed(list(sort_list)):
                     reverse = int(direction) < 0
+
                     def _nested_get(doc, key):
                         cur = doc
                         for part in key.split("."):
@@ -2011,10 +2029,14 @@ class NeoSQLiteHandler:
                         return cur
 
                     present = [
-                        doc for doc in docs if _nested_get(doc, sort_key) is not None
+                        doc
+                        for doc in docs
+                        if _nested_get(doc, sort_key) is not None
                     ]
                     missing = [
-                        doc for doc in docs if _nested_get(doc, sort_key) is None
+                        doc
+                        for doc in docs
+                        if _nested_get(doc, sort_key) is None
                     ]
 
                     def sort_value(
@@ -2120,17 +2142,18 @@ class NeoSQLiteHandler:
                         present = [
                             d for d in docs if d.get(sort_key) is not None
                         ]
-                        missing = [
-                            d for d in docs if d.get(sort_key) is None
-                        ]
+                        missing = [d for d in docs if d.get(sort_key) is None]
 
                         def _sv(doc, key=sort_key):
                             return doc.get(key)
 
+                        def _sv_str(doc: Any, key: Any = sort_key) -> str:
+                            return str(doc.get(key))
+
                         try:
                             present.sort(key=_sv, reverse=reverse)
                         except TypeError:
-                            present.sort(key=lambda d: str(d.get(sort_key)), reverse=reverse)
+                            present.sort(key=_sv_str, reverse=reverse)
                         docs = (
                             missing + present
                             if not reverse
@@ -2153,7 +2176,7 @@ class NeoSQLiteHandler:
                 for stage in pipeline
             )
             if is_count:
-                group_stage = next(
+                group_stage: dict[str, Any] = next(
                     (
                         stage["$group"]
                         for stage in pipeline

@@ -18,7 +18,8 @@ def conn():
     collection = db["stars"]
     collection.insert_one({"abbreviation": "Ori", "name": "Orion"})
     collection.insert_one({"abbreviation": "UMa", "name": "Ursa Major"})
-    return db
+    yield db
+    db.close()
 
 
 # ── Basic access: both styles return a Collection ────────────────────────────
@@ -99,9 +100,9 @@ def test_db_is_sqlite_connection_not_collection(conn):
 
 def test_real_attribute_present():
     """Known real attributes on Connection are accessible."""
-    conn = neosqlite.Connection(":memory:")
-    assert isinstance(conn.name, str)
-    assert isinstance(conn.debug, bool)
+    with neosqlite.Connection(":memory:") as conn:
+        assert isinstance(conn.name, str)
+        assert isinstance(conn.debug, bool)
 
 
 def test_collection_named_like_real_attribute(conn):
@@ -142,11 +143,11 @@ def test_get_collection_works(conn):
 
 def test_nonexistent_collection_returns_collection():
     """Accessing a nonexistent collection returns a Collection object."""
-    conn = neosqlite.Connection(":memory:")
-    via_dict = conn["nonexistent"]
-    via_attr = conn.nonexistent
-    assert isinstance(via_dict, Collection)
-    assert isinstance(via_attr, Collection)
+    with neosqlite.Connection(":memory:") as conn:
+        via_dict = conn["nonexistent"]
+        via_attr = conn.nonexistent
+        assert isinstance(via_dict, Collection)
+        assert isinstance(via_attr, Collection)
 
 
 def test_collection_with_underscores(conn):
@@ -159,8 +160,8 @@ def test_collection_with_underscores(conn):
 
 def test_collection_with_digits_fails_gracefully():
     """Collection names with leading digits are rejected (SQL identifier rule)."""
-    conn = neosqlite.Connection(":memory:")
-    # Python attribute-access doesn't support leading digits anyway,
-    # and the SQL backend enforces valid identifier naming.
-    with pytest.raises(ValueError, match="must not start with a digit"):
-        conn["2026_logs"]
+    with neosqlite.Connection(":memory:") as conn:
+        # Python attribute-access doesn't support leading digits anyway,
+        # and the SQL backend enforces valid identifier naming.
+        with pytest.raises(ValueError, match="must not start with a digit"):
+            conn["2026_logs"]

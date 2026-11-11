@@ -2246,9 +2246,9 @@ def test_insert_document_with_negative_infinity_values():
         collection.insert_one(doc)
 
 
-def test_json_validation_with_database_level_checks():
+def test_json_validation_with_database_level_checks(connection):
     """Test that database-level JSON validation works correctly."""
-    db = neosqlite.Connection(":memory:")
+    db = connection
     collection = db["test_collection"]
 
     # First insert a valid document to ensure the collection is working
@@ -2265,9 +2265,9 @@ def test_json_validation_with_database_level_checks():
     assert found["age"] == 30
 
 
-def test_json_validation_edge_cases():
+def test_json_validation_edge_cases(connection):
     """Test edge cases for JSON validation."""
-    db = neosqlite.Connection(":memory:")
+    db = connection
     collection = db["test_collection"]
 
     # Test with empty document
@@ -2287,9 +2287,9 @@ def test_json_validation_edge_cases():
     assert isinstance(result2.inserted_id, ObjectId)
 
 
-def test_json_validation_with_complex_nested_structures():
+def test_json_validation_with_complex_nested_structures(connection):
     """Test JSON validation with complex nested structures."""
-    db = neosqlite.Connection(":memory:")
+    db = connection
     collection = db["test_collection"]
 
     # Test with deeply nested structure
@@ -2323,9 +2323,9 @@ def test_json_validation_with_complex_nested_structures():
 # ================================
 
 
-def test_json_validation_integration_valid_documents():
+def test_json_validation_integration_valid_documents(connection):
     """Test JSON validation integration with valid documents."""
-    db = neosqlite.Connection(":memory:")
+    db = connection
     collection = db["test_collection"]
 
     # Test various valid JSON documents
@@ -2352,9 +2352,9 @@ def test_json_validation_integration_valid_documents():
         assert found is not None
 
 
-def test_json_validation_integration_invalid_documents():
+def test_json_validation_integration_invalid_documents(connection):
     """Test JSON validation integration with documents that would create invalid JSON."""
-    db = neosqlite.Connection(":memory:")
+    db = connection
     collection = db["test_collection"]
 
     # Test with non-serializable objects
@@ -2378,9 +2378,9 @@ def test_json_validation_integration_invalid_documents():
         collection.insert_one({"name": "John", "invalid": NonSerializable()})
 
 
-def test_json_validation_with_complex_structures():
+def test_json_validation_with_complex_structures(connection):
     """Test JSON validation with complex nested structures."""
-    db = neosqlite.Connection(":memory:")
+    db = connection
     collection = db["test_collection"]
 
     # Test with deeply nested structure
@@ -2418,9 +2418,9 @@ def test_json_validation_with_complex_structures():
     assert found["mixed_array"][2]["three"] == [4, 5]
 
 
-def test_json_validation_with_special_values():
+def test_json_validation_with_special_values(connection):
     """Test JSON validation with special JSON values."""
-    db = neosqlite.Connection(":memory:")
+    db = connection
     collection = db["test_collection"]
 
     # Test with null values
@@ -2447,9 +2447,9 @@ def test_json_validation_with_special_values():
     assert found["is_deleted"] is False
 
 
-def test_json_validation_with_unicode_and_emoji():
+def test_json_validation_with_unicode_and_emoji(connection):
     """Test JSON validation with Unicode and emoji characters."""
-    db = neosqlite.Connection(":memory:")
+    db = connection
     collection = db["test_collection"]
 
     # Test with Unicode characters
@@ -2474,9 +2474,9 @@ def test_json_validation_with_unicode_and_emoji():
     assert found["emoji"] == "😀😃😄😁"
 
 
-def test_multiple_document_insertion_with_validation():
+def test_multiple_document_insertion_with_validation(connection):
     """Test inserting multiple documents with validation."""
-    db = neosqlite.Connection(":memory:")
+    db = connection
     collection = db["test_collection"]
 
     # Test inserting multiple valid documents
@@ -2512,9 +2512,9 @@ def test_multiple_document_insertion_with_validation():
 # ================================
 
 
-def test_json_validation_performance_benchmark():
+def test_json_validation_performance_benchmark(connection):
     """Benchmark JSON validation performance."""
-    db = neosqlite.Connection(":memory:")
+    db = connection
     collection = db["test_collection"]
 
     # Create a large document for testing
@@ -2555,9 +2555,9 @@ def test_json_validation_performance_benchmark():
     print(f"JSON validation and insertion time: {insertion_time:.6f} seconds")
 
 
-def test_multiple_document_insertion_performance():
+def test_multiple_document_insertion_performance(connection):
     """Benchmark multiple document insertion performance."""
-    db = neosqlite.Connection(":memory:")
+    db = connection
     collection = db["test_collection"]
 
     # Create multiple medium-sized documents
@@ -2587,7 +2587,7 @@ def test_multiple_document_insertion_performance():
     )
 
 
-def test_json_validation_vs_python_validation():
+def test_json_validation_vs_python_validation(connection):
     """Compare JSON validation performance between database and Python approaches."""
     # Test with a simple document
     simple_doc = {"name": "Test", "value": 123, "active": True}
@@ -2604,7 +2604,7 @@ def test_json_validation_vs_python_validation():
     python_time = time.time() - start_time
 
     # Test database validation
-    db = neosqlite.Connection(":memory:")
+    db = connection
     start_time = time.time()
     for _ in range(1000):
         cursor = db.db.execute("SELECT json_valid(?)", (json_string,))
@@ -2760,11 +2760,11 @@ def test_force_fallback_mechanism():
     assert get_force_fallback() is False
 
 
-def test_jsonb_support_detection_integration():
+def test_jsonb_support_detection_integration(connection):
     """Test JSONB support detection integration."""
 
     # Test with an actual database connection
-    db = neosqlite.Connection(":memory:")
+    db = connection
 
     # Check if JSONB is supported (this will depend on the SQLite version)
     jsonb_supported = supports_jsonb(db.db)
@@ -2783,9 +2783,9 @@ def test_jsonb_support_detection_integration():
     assert helper.jsonb.jsonb_supported == jsonb_supported
 
 
-def test_complete_document_insertion_workflow():
+def test_complete_document_insertion_workflow(connection):
     """Test the complete document insertion workflow with validation."""
-    db = neosqlite.Connection(":memory:")
+    db = connection
     collection = db["test_collection"]
 
     # Test inserting a document through the complete workflow
@@ -2813,9 +2813,9 @@ def test_complete_document_insertion_workflow():
     assert found["city"] == "New York"
 
 
-def test_insert_valid_json_document():
+def test_insert_valid_json_document(connection):
     """Test inserting a valid JSON document."""
-    db = neosqlite.Connection(":memory:")
+    db = connection
     collection = db["test_collection"]
 
     # Test with a valid document
@@ -2835,9 +2835,9 @@ def test_insert_valid_json_document():
     assert found["city"] == "New York"
 
 
-def test_insert_valid_nested_json_document():
+def test_insert_valid_nested_json_document(connection):
     """Test inserting a valid nested JSON document."""
-    db = neosqlite.Connection(":memory:")
+    db = connection
     collection = db["test_collection"]
 
     # Test with a valid nested document
@@ -2866,9 +2866,9 @@ def test_insert_valid_nested_json_document():
     assert found["hobbies"][0] == "reading"
 
 
-def test_insert_valid_array_document():
+def test_insert_valid_array_document(connection):
     """Test inserting a valid array document."""
-    db = neosqlite.Connection(":memory:")
+    db = connection
     collection = db["test_collection"]
 
     # Test with a document containing arrays
@@ -2892,9 +2892,9 @@ def test_insert_valid_array_document():
     assert found["empty"] == []
 
 
-def test_insert_multiple_valid_documents():
+def test_insert_multiple_valid_documents(connection):
     """Test inserting multiple valid JSON documents."""
-    db = neosqlite.Connection(":memory:")
+    db = connection
     collection = db["test_collection"]
 
     # Test with multiple valid documents
@@ -2926,9 +2926,9 @@ def test_insert_multiple_valid_documents():
     assert found["age"] == 30
 
 
-def test_insert_document_with_boolean_values():
+def test_insert_document_with_boolean_values(connection):
     """Test inserting a document with boolean values."""
-    db = neosqlite.Connection(":memory:")
+    db = connection
     collection = db["test_collection"]
 
     # Test with boolean values

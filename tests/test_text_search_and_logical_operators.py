@@ -2435,11 +2435,17 @@ def test_text_with_logical_operators_fallback(collection):
 class TestMetaTextScore:
     """Tests for $meta: textScore support in aggregation pipelines."""
 
-    def test_meta_textscore_basic(self):
-        """Test $meta: textScore returns relevance scores."""
+    def setup_method(self):
         import neosqlite
 
-        db = neosqlite.Connection(":memory:")
+        self.db = neosqlite.Connection(":memory:")
+
+    def teardown_method(self):
+        self.db.close()
+
+    def test_meta_textscore_basic(self):
+        """Test $meta: textScore returns relevance scores."""
+        db = self.db
         db.posts.insert_many(
             [
                 {
@@ -2482,9 +2488,7 @@ class TestMetaTextScore:
 
     def test_meta_textscore_with_addfields(self):
         """Test $meta: textScore in $addFields stage."""
-        import neosqlite
-
-        db = neosqlite.Connection(":memory:")
+        db = self.db
         db.articles.insert_many(
             [
                 {"_id": 1, "title": "Machine Learning", "author": "Alice"},
@@ -2507,9 +2511,7 @@ class TestMetaTextScore:
 
     def test_meta_textscore_no_fts_index(self):
         """Test $meta: textScore without FTS index returns 0.0."""
-        import neosqlite
-
-        db = neosqlite.Connection(":memory:")
+        db = self.db
         db.docs.insert_many(
             [
                 {"_id": 1, "title": "Python programming"},
@@ -2530,9 +2532,7 @@ class TestMetaTextScore:
 
     def test_meta_textscore_multiple_fields(self):
         """Test $meta: textScore with multiple FTS indexes."""
-        import neosqlite
-
-        db = neosqlite.Connection(":memory:")
+        db = self.db
         db.posts.insert_many(
             [
                 {

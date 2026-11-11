@@ -800,7 +800,9 @@ class SqlQueryBuilderMixin:
                         params.append(op_val)
                     else:
                         json_each_func = self.jsonb.json_each_function
-                        if allow_array_existential and json_path.startswith("'"):
+                        if allow_array_existential and json_path.startswith(
+                            "'"
+                        ):
                             guard = self._json_type_guard_sql(json_path, op_val)
                             clauses.append(
                                 f"({guard} AND "
@@ -830,7 +832,9 @@ class SqlQueryBuilderMixin:
                         params.append(op_val)
                     else:
                         json_each_func = self.jsonb.json_each_function
-                        if allow_array_existential and json_path.startswith("'"):
+                        if allow_array_existential and json_path.startswith(
+                            "'"
+                        ):
                             clauses.append(
                                 f"((json_type(data, {json_path}) != 'array' AND "
                                 f"{self._json_type_guard_sql(json_path, op_val)} AND "
@@ -860,7 +864,9 @@ class SqlQueryBuilderMixin:
                         params.append(op_val)
                     else:
                         json_each_func = self.jsonb.json_each_function
-                        if allow_array_existential and json_path.startswith("'"):
+                        if allow_array_existential and json_path.startswith(
+                            "'"
+                        ):
                             clauses.append(
                                 f"((json_type(data, {json_path}) != 'array' AND "
                                 f"{self._json_type_guard_sql(json_path, op_val)} AND "
@@ -891,7 +897,9 @@ class SqlQueryBuilderMixin:
                         params.append(op_val)
                     else:
                         json_each_func = self.jsonb.json_each_function
-                        if allow_array_existential and json_path.startswith("'"):
+                        if allow_array_existential and json_path.startswith(
+                            "'"
+                        ):
                             clauses.append(
                                 f"((json_type(data, {json_path}) != 'array' AND "
                                 f"{self._json_type_guard_sql(json_path, op_val)} AND "
@@ -922,7 +930,9 @@ class SqlQueryBuilderMixin:
                         params.append(op_val)
                     else:
                         json_each_func = self.jsonb.json_each_function
-                        if allow_array_existential and json_path.startswith("'"):
+                        if allow_array_existential and json_path.startswith(
+                            "'"
+                        ):
                             clauses.append(
                                 f"((json_type(data, {json_path}) != 'array' AND "
                                 f"{self._json_type_guard_sql(json_path, op_val)} AND "
@@ -996,7 +1006,13 @@ class SqlQueryBuilderMixin:
                                 _types.add("object")
                             elif v is None:
                                 _types.add("null")
-                        in_types_sql = "(" + ", ".join(repr(t) for t in sorted(_types)) + ")" if _types else "('null',)"
+                        in_types_sql = (
+                            "("
+                            + ", ".join(repr(t) for t in sorted(_types))
+                            + ")"
+                            if _types
+                            else "('null',)"
+                        )
 
                         if json_path == "value":
                             if has_null:
@@ -1060,7 +1076,13 @@ class SqlQueryBuilderMixin:
                                 _types.add("object")
                             elif v is None:
                                 _types.add("null")
-                        in_types_sql = "(" + ", ".join(repr(t) for t in sorted(_types)) + ")" if _types else "('null',)"
+                        in_types_sql = (
+                            "("
+                            + ", ".join(repr(t) for t in sorted(_types))
+                            + ")"
+                            if _types
+                            else "('null',)"
+                        )
 
                         if json_path == "value":
                             if has_null:
@@ -1184,7 +1206,9 @@ class SqlQueryBuilderMixin:
                         if has_operators:
                             # Case: {"field": {"$elemMatch": {"$gt": 10}}}
                             # Use "value" as path which will be retargeted below
-                            c, p = self._build_operator_clause("value", op_val, allow_array_existential=False)
+                            c, p = self._build_operator_clause(
+                                "value", op_val, allow_array_existential=False
+                            )
                             if c is None:
                                 return None, []
                             # Retarget: replace json_extract(data, value) with value

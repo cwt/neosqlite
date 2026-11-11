@@ -15,8 +15,8 @@ from neosqlite.collection.query_helper import (
 
 def test_connect():
     """Test basic connection functionality."""
-    conn = neosqlite.Connection(":memory:")
-    assert conn.db.isolation_level is None
+    with neosqlite.Connection(":memory:") as conn:
+        assert conn.db.isolation_level is None
 
 
 def test_context_manager_closes_connection():

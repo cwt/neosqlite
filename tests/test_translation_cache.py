@@ -1372,11 +1372,17 @@ class TestTranslationCacheEdgeCases:
 class TestTier2TranslationCache:
     """Tests for Tier-2 ($expr with temporary tables) translation caching."""
 
+    def setup_method(self):
+        self.conn = neosqlite.Connection(":memory:")
+
+    def teardown_method(self):
+        self.conn.close()
+
     def test_tier2_cache_default_enabled(self):
         """Test that Tier-2 cache is enabled by default."""
         from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
 
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         evaluator = TempTableExprEvaluator(conn.db)
         assert evaluator.is_cache_enabled() is True
 
@@ -1384,7 +1390,7 @@ class TestTier2TranslationCache:
         """Test that Tier-2 cache can be disabled."""
         from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
 
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         evaluator = TempTableExprEvaluator(conn.db, translation_cache_size=0)
         assert evaluator.is_cache_enabled() is False
 
@@ -1392,7 +1398,7 @@ class TestTier2TranslationCache:
         """Test that custom cache size works for Tier-2."""
         from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
 
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         evaluator = TempTableExprEvaluator(conn.db, translation_cache_size=50)
         assert evaluator.get_cache_stats()["max_size"] == 50
 
@@ -1400,7 +1406,7 @@ class TestTier2TranslationCache:
         """Test Tier-2 cache miss then hit pattern."""
         from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
 
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         users = conn.users
         users.insert_many(
             [
@@ -1433,7 +1439,7 @@ class TestTier2TranslationCache:
         """Test Tier-2 cache with different expression structures."""
         from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
 
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         users = conn.users
         users.insert_many(
             [
@@ -1476,7 +1482,7 @@ class TestTier2TranslationCache:
         """Test clearing Tier-2 cache."""
         from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
 
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         users = conn.users
         users.insert_one({"a": 1})
 
@@ -1494,7 +1500,7 @@ class TestTier2TranslationCache:
         """Test checking if expression is in Tier-2 cache."""
         from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
 
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         users = conn.users
         users.insert_one({"a": 1})
 
@@ -1513,7 +1519,7 @@ class TestTier2TranslationCache:
         """Test evicting specific expression from Tier-2 cache."""
         from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
 
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         users = conn.users
         users.insert_one({"a": 1})
 
@@ -1533,7 +1539,7 @@ class TestTier2TranslationCache:
         """Test resizing Tier-2 cache at runtime."""
         from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
 
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         evaluator = TempTableExprEvaluator(conn.db)
         assert evaluator.get_cache_stats()["max_size"] == 100
 
@@ -1544,7 +1550,7 @@ class TestTier2TranslationCache:
         """Test Tier-2 cache statistics."""
         from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
 
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         users = conn.users
         users.insert_many(
             [
@@ -1577,7 +1583,7 @@ class TestTier2TranslationCache:
         """Test dumping Tier-2 cache contents."""
         from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
 
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         users = conn.users
         users.insert_many(
             [
@@ -1607,7 +1613,7 @@ class TestTier2TranslationCache:
         """Test __len__ method for Tier-2 cache."""
         from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
 
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         users = conn.users
         users.insert_one({"a": 1})
 
@@ -1625,7 +1631,7 @@ class TestTier2TranslationCache:
         """Regression test: different fields with same operator must not collide."""
         from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
 
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         evaluator = TempTableExprEvaluator(conn.db)
 
         expr1 = {"$gt": ["$age", 25]}
@@ -1648,7 +1654,7 @@ class TestTier2TranslationCache:
         """Test that field references ($field) are preserved in cache key."""
         from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
 
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         evaluator = TempTableExprEvaluator(conn.db)
 
         expr1 = {"$add": ["$salary", 100]}
@@ -1665,7 +1671,7 @@ class TestTier2TranslationCache:
         """Test that identical expressions share keys, differing literals don't."""
         from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
 
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         evaluator = TempTableExprEvaluator(conn.db)
 
         expr1 = {"$gt": ["$age", 25]}
@@ -1683,7 +1689,7 @@ class TestTier2TranslationCache:
         """Test Tier-2 cache with complex expressions."""
         from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
 
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         users = conn.users
         users.insert_many(
             [
@@ -1716,11 +1722,17 @@ class TestTier2TranslationCache:
 class TestTier2TranslationCacheIntegration:
     """Integration tests for Tier-2 translation caching."""
 
+    def setup_method(self):
+        self.conn = neosqlite.Connection(":memory:")
+
+    def teardown_method(self):
+        self.conn.close()
+
     def test_tier2_cached_expr_returns_correct_results(self):
         """Test that cached Tier-2 expressions return correct data."""
         from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
 
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         users = conn.users
         users.insert_many(
             [
@@ -1761,7 +1773,7 @@ class TestTier2TranslationCacheIntegration:
         """Verify cached Tier-2 queries produce identical results to non-cached."""
         from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
 
-        conn = neosqlite.Connection(":memory:")
+        conn = self.conn
         users = conn.users
         users.insert_many([{"value": i} for i in range(20)])
 
@@ -1877,9 +1889,15 @@ class TestBugFixComparisonOperators:
 class TestTierChangeCallback:
     """Tests for tier change callback functionality."""
 
+    def setup_method(self):
+        self.conn = neosqlite.Connection(":memory:", translation_cache=100)
+
+    def teardown_method(self):
+        self.conn.close()
+
     def test_add_tier_change_callback(self):
         """Test adding a tier change callback."""
-        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        conn = self.conn
         users = conn.users
         users.insert_one({"a": 1})
 
@@ -1898,7 +1916,7 @@ class TestTierChangeCallback:
 
     def test_remove_tier_change_callback(self):
         """Test removing a tier change callback."""
-        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        conn = self.conn
         users = conn.users
         users.insert_one({"a": 1})
 
@@ -1917,7 +1935,7 @@ class TestTierChangeCallback:
 
     def test_get_last_tier(self):
         """Test getting the last used tier."""
-        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        conn = self.conn
         users = conn.users
         users.insert_one({"a": 1})
 
@@ -1930,7 +1948,7 @@ class TestTierChangeCallback:
 
     def test_clear_tier_callbacks(self):
         """Test clearing all tier change callbacks."""
-        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        conn = self.conn
         users = conn.users
         users.insert_one({"a": 1})
 
@@ -1952,7 +1970,7 @@ class TestTierChangeCallback:
 
     def test_tier_change_notified_on_fallback(self):
         """Test that tier change is notified when falling back to Python."""
-        conn = neosqlite.Connection(":memory:", translation_cache=100)
+        conn = self.conn
         users = conn.users
         users.insert_many(
             [

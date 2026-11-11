@@ -13,7 +13,7 @@ from nx_27017.nx_27017 import NeoSQLiteHandler
 def handler(tmp_path):
     h = NeoSQLiteHandler(str(tmp_path / "maint.db"))
     yield h
-    h.conn.close()
+    h.close_all()
 
 
 def _cmd(handler, body, req=2):

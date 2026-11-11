@@ -347,7 +347,7 @@ files = [
     {file = "colorama-0.4.6-py2.py3-none-any.whl", hash = "sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6"},
     {file = "colorama-0.4.6.tar.gz", hash = "sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44"},
 ]
-markers = {main = "extra == \"docs\" and sys_platform == \"win32\"", dev = "sys_platform == \"win32\""}
+markers = {main = "sys_platform == \"win32\" and extra == \"docs\"", dev = "sys_platform == \"win32\""}
 
 [[package]]
 name = "coverage"
@@ -623,12 +623,12 @@ version = "2.8.0"
 description = "DNS toolkit"
 optional = true
 python-versions = ">=3.10"
-groups = ["main"]
-markers = "python_version == \"3.10\" and (extra == \"nx27017\" or extra == \"nx27017-speed\")"
+groups = ["main", "dev"]
 files = [
     {file = "dnspython-2.8.0-py3-none-any.whl", hash = "sha256:01d9bbc4a2d76bf0db7c1f729812ded6d912bd318d3b1cf81d30c0f845dbf3af"},
     {file = "dnspython-2.8.0.tar.gz", hash = "sha256:181d3c6996452cb1189c4046c61599b84a5a86e099562ffde77d26984ff26d0f"},
 ]
+markers = {main = "python_version == \"3.10\" and (extra == \"nx27017\" or extra == \"nx27017-speed\")", dev = "python_version == \"3.10\""}
 
 [package.extras]
 dev = ["black (>=25.1.0)", "coverage (>=7.0)", "flake8 (>=7)", "hypercorn (>=0.17.0)", "mypy (>=1.17)", "pylint (>=3)", "pytest (>=8.4)", "pytest-cov (>=6.2.0)", "quart-trio (>=0.12.0)", "sphinx (>=8.2.0)", "sphinx-rtd-theme (>=3.0.0)", "twine (>=6.1.0)", "wheel (>=0.45.0)"]
@@ -645,12 +645,12 @@ version = "2.9.2"
 description = "DNS toolkit"
 optional = true
 python-versions = ">=3.11"
-groups = ["main"]
-markers = "(extra == \"nx27017\" or extra == \"nx27017-speed\") and python_version >= \"3.11\""
+groups = ["main", "dev"]
 files = [
     {file = "dnspython-2.9.2-py3-none-any.whl", hash = "sha256:af15f7d385a6ae2fb35a796fde2138004c8c42c7389090e2addc83e3b3340fd8"},
     {file = "dnspython-2.9.2.tar.gz", hash = "sha256:8d4d39a513e649d634004ce4d39ade2352efcea472a0247535a5c2d18a9d7ba9"},
 ]
+markers = {main = "(extra == \"nx27017\" or extra == \"nx27017-speed\") and python_version >= \"3.11\"", dev = "python_version >= \"3.11\""}
 
 [package.extras]
 dev = ["black (>=26.5)", "coverage (>=7.15)", "hypercorn (>=0.18.0)", "pyright (>=1.1.411)", "pytest (>=9.1)", "pytest-cov (>=7.1)", "quart-trio (>=0.12.0)", "ruff (>=0.16.0)", "sphinx (>=9.1.0) ; python_full_version >= \"3.12.0\"", "sphinx-rtd-theme (>=3.1.0) ; python_full_version >= \"3.12.0\"", "trustme (>=1.2.1)", "ty (>=0.0.85)"]
@@ -1297,8 +1297,7 @@ version = "4.18.3"
 description = "PyMongo - the Official MongoDB Python driver"
 optional = true
 python-versions = ">=3.9"
-groups = ["main"]
-markers = "python_version == \"3.10\" and (extra == \"nx27017\" or extra == \"nx27017-speed\")"
+groups = ["main", "dev"]
 files = [
     {file = "pymongo-4.18.3-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:555152e3be33d1ebaa6c47298ef2862f03c50af97bebeea1ff8c86c210098fb0"},
     {file = "pymongo-4.18.3-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:f5eedd95a3470861f9dd02c6557665af8ac64d766fea58a51a9bcd4504c78308"},
@@ -1372,6 +1371,7 @@ files = [
     {file = "pymongo-4.18.3-cp39-cp39-win_arm64.whl", hash = "sha256:3428d21ef4040ab2bcebe1caf4cc059e792aae6950e1106cc236ea7521447748"},
     {file = "pymongo-4.18.3.tar.gz", hash = "sha256:5dd6e659b6014288a1c53458929402a58f44a032e6f29bcef44e7477c5268e48"},
 ]
+markers = {main = "python_version == \"3.10\" and (extra == \"nx27017\" or extra == \"nx27017-speed\")", dev = "python_version == \"3.10\""}
 
 [package.dependencies]
 dnspython = ">=2.7.0,<3.0.0"
@@ -1392,8 +1392,7 @@ version = "4.19.0"
 description = "PyMongo - the Official MongoDB Python driver"
 optional = true
 python-versions = ">=3.11"
-groups = ["main"]
-markers = "(extra == \"nx27017\" or extra == \"nx27017-speed\") and python_version >= \"3.11\""
+groups = ["main", "dev"]
 files = [
     {file = "pymongo-4.19.0-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:59b91b6856e099c7d8273901358b9a6ec0549dcc8930260748c25cde41c43780"},
     {file = "pymongo-4.19.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:d947eaff7cc132ae4d50dfd91d0ef7cefc71387fa66662295a81e6399a7f67ec"},
@@ -1467,6 +1466,7 @@ files = [
     {file = "pymongo-4.19.0-cp315-cp315t-win_arm64.whl", hash = "sha256:bfcb5f8912edd9714a52564ad41c0dcd72e5408d1d3d67b41f6145df4a516318"},
     {file = "pymongo-4.19.0.tar.gz", hash = "sha256:3c510dd3c5d9b392d3b33bb5d2a594758acfe8f026fca654253f947ce0af9d40"},
 ]
+markers = {main = "(extra == \"nx27017\" or extra == \"nx27017-speed\") and python_version >= \"3.11\"", dev = "python_version >= \"3.11\""}
 
 [package.dependencies]
 dnspython = ">=2.7.0,<3.0.0"
@@ -1633,6 +1633,34 @@ files = [
 
 [package.dependencies]
 roman-numerals = "4.1.0"
+
+[[package]]
+name = "ruff"
+version = "0.17.4"
+description = "An extremely fast Python linter and code formatter, written in Rust."
+optional = false
+python-versions = ">=3.7"
+groups = ["dev"]
+files = [
+    {file = "ruff-0.17.4-py3-none-linux_armv6l.whl", hash = "sha256:2b08c4ff98dc234f4a3871a3105353b922fa875ea1073ca31001eb8c06bb4d89"},
+    {file = "ruff-0.17.4-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:13e781c3c5f663e7fba737eaaeb70dd943dd55171daf316afb25cd5268cfe0c7"},
+    {file = "ruff-0.17.4-py3-none-macosx_11_0_arm64.whl", hash = "sha256:7ed2f416349944f908f9574215994602242b0836844eba48eec61473033afca0"},
+    {file = "ruff-0.17.4-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:8ea6e0017c785f7282092b11e46338e4ebed1b9e575ebf2e55a8a1eda968241a"},
+    {file = "ruff-0.17.4-py3-none-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:7e061dcc0933c7031a616ac8d66ac540309b2aa21ab558101a8f53e9ac7a1185"},
+    {file = "ruff-0.17.4-py3-none-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:f99e95a1515161138be3cbd1b06c06e739d8feb38ade35564556999fffc3686e"},
+    {file = "ruff-0.17.4-py3-none-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:5f28cf0dd37cb172fa5a8d2e92e6ada3a9dbd0609f094ed24039929eef0b7524"},
+    {file = "ruff-0.17.4-py3-none-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:6b21c771b296888e8a35c6f48555f4b44e4483f61675d6ed51810a5203469ce6"},
+    {file = "ruff-0.17.4-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:2cd025509b2e15721b426fc70fd946d71f43b3db3b08e946dfec2d696d911690"},
+    {file = "ruff-0.17.4-py3-none-manylinux_2_31_riscv64.whl", hash = "sha256:49b77f7b3921669466882a4881168801bdb06ec2cd83fb936049016cf5fdece1"},
+    {file = "ruff-0.17.4-py3-none-musllinux_1_2_aarch64.whl", hash = "sha256:e3b84eb74f260d1c2dbd236fd9d4c011d4fdd0a52bdf8aea57a10e3a1b71fca5"},
+    {file = "ruff-0.17.4-py3-none-musllinux_1_2_armv7l.whl", hash = "sha256:20e43d7a08e712e33067ba887e6574546c79bd4831596ce8f16803ac7ff9ad90"},
+    {file = "ruff-0.17.4-py3-none-musllinux_1_2_i686.whl", hash = "sha256:0d1f4848fd2ec0499be4046db9b7dfcc952666885f00233cc7033515282556a8"},
+    {file = "ruff-0.17.4-py3-none-musllinux_1_2_x86_64.whl", hash = "sha256:6007e7f3a0e55b0fbdb947af69cf24c21b4928df6be8ef3e767c69b5ccccf496"},
+    {file = "ruff-0.17.4-py3-none-win32.whl", hash = "sha256:3971a78cba76298b284c8321e6d40d93045ed348bec5c369d85099efc97fb7cf"},
+    {file = "ruff-0.17.4-py3-none-win_amd64.whl", hash = "sha256:67c5a894fc054cf41f75f7afa24815de5a74329d97634126c2a1015740ff4e8c"},
+    {file = "ruff-0.17.4-py3-none-win_arm64.whl", hash = "sha256:181ae38a9a8fb94925bf7d0794327b48d7fd7f4b50cfd84c0e999cc09ef8d131"},
+    {file = "ruff-0.17.4.tar.gz", hash = "sha256:f32d178b50e826e00f6c6c1be3f56333068acb9b67fe167143527fa9b81e890d"},
+]
 
 [[package]]
 name = "snowballstemmer"
@@ -2165,10 +2193,10 @@ test = ["aiohttp (>=3.10.5)", "flake8 (>=6.1,<7.0)", "mypy (>=0.800)", "psutil",
 docs = ["furo", "sphinx", "sphinx"]
 jsonb = ["pysqlite3-binary"]
 memory-constrained = ["quez"]
-nx27017 = ["nx-27017", "pymongo", "pymongo"]
-nx27017-speed = ["nx-27017", "pymongo", "pymongo", "uvloop"]
+nx27017 = ["nx-27017"]
+nx27017-speed = ["nx-27017", "uvloop"]
 
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.10, <3.16"
-content-hash = "1707d1744889786b3c8d61e507e1237ee2dd300bb76d495e4116fdf3b1eee764"
+content-hash = "9521c85ca6ca01c9132f0318243696311428aad2293ea97f0697dc504e67477b"

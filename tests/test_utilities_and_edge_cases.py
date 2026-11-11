@@ -134,187 +134,193 @@ def test_collection_attribute_access():
 
 def test_malformed_document_error():
     """Test that inserting a non-dict document raises MalformedDocument."""
-    db = neosqlite.Connection(":memory:")
-    collection = db["test"]
+    with neosqlite.Connection(":memory:") as db:
+        collection = db["test"]
 
-    # Test with a non-dict document
-    with pytest.raises(MalformedDocument):
-        collection.query_engine.helpers._internal_insert("not a dict")
+        # Test with a non-dict document
+        with pytest.raises(MalformedDocument):
+            collection.query_engine.helpers._internal_insert("not a dict")
 
 
 def test_build_update_clause_unsupported_operator():
     """Test _build_update_clause with an unsupported operator."""
-    db = neosqlite.Connection(":memory:")
-    collection = db["test"]
+    with neosqlite.Connection(":memory:") as db:
+        collection = db["test"]
 
-    # Test with an unsupported operator
-    result = collection.query_engine.helpers._build_update_clause(
-        {"$unsupported": {"field": "value"}}
-    )
-    # Should fall back to None
-    assert result is None
+        # Test with an unsupported operator
+        result = collection.query_engine.helpers._build_update_clause(
+            {"$unsupported": {"field": "value"}}
+        )
+        # Should fall back to None
+        assert result is None
 
 
 def test_get_val_none_value():
     """Test _get_val with None value in path."""
-    db = neosqlite.Connection(":memory:")
-    collection = db["test"]
+    with neosqlite.Connection(":memory:") as db:
+        collection = db["test"]
 
-    # Test with None value in path
-    result = collection._get_val({"a": None}, "a.b")
-    assert result is None
+        # Test with None value in path
+        result = collection._get_val({"a": None}, "a.b")
+        assert result is None
 
 
 def test_get_val_dollar_prefix():
     """Test _get_val with dollar prefix in key."""
-    db = neosqlite.Connection(":memory:")
-    collection = db["test"]
+    with neosqlite.Connection(":memory:") as db:
+        collection = db["test"]
 
-    # Test with dollar prefix in key (should strip the $)
-    result = collection._get_val({"a": "value"}, "$a")
-    assert result == "value"
+        # Test with dollar prefix in key (should strip the $)
+        result = collection._get_val({"a": "value"}, "$a")
+        assert result == "value"
 
 
 def test_get_val_non_string_key():
     """Test _get_val with non-string key (literal value like $group _id)."""
-    db = neosqlite.Connection(":memory:")
-    collection = db["test"]
+    with neosqlite.Connection(":memory:") as db:
+        collection = db["test"]
 
-    # Test with integer key - should return the key itself (literal value)
-    result = collection._get_val({"a": "value"}, 1)
-    assert result == 1
+        # Test with integer key - should return the key itself (literal value)
+        result = collection._get_val({"a": "value"}, 1)
+        assert result == 1
 
-    # Test with float key
-    result = collection._get_val({"a": "value"}, 3.14)
-    assert result == 3.14
+        # Test with float key
+        result = collection._get_val({"a": "value"}, 3.14)
+        assert result == 3.14
 
-    # Test with null key
-    result = collection._get_val({"a": "value"}, None)
-    assert result is None
+        # Test with null key
+        result = collection._get_val({"a": "value"}, None)
+        assert result is None
 
 
 def test_group_with_literal_id():
     """Test $group with literal _id value (integer, not field reference)."""
-    db = neosqlite.Connection(":memory:")
-    collection = db["test"]
+    with neosqlite.Connection(":memory:") as db:
+        collection = db["test"]
 
-    collection.insert_many(
-        [
-            {"item": "apple", "qty": 5},
-            {"item": "banana", "qty": 3},
-            {"item": "cherry", "qty": 5},
-        ]
-    )
-
-    # Group all docs into one bucket using literal _id: 1
-    result = list(
-        collection.aggregate(
-            [{"$group": {"_id": 1, "total_qty": {"$sum": "$qty"}}}]
+        collection.insert_many(
+            [
+                {"item": "apple", "qty": 5},
+                {"item": "banana", "qty": 3},
+                {"item": "cherry", "qty": 5},
+            ]
         )
-    )
-    assert len(result) == 1
-    assert result[0]["_id"] == 1
-    assert result[0]["total_qty"] == 13
+
+        # Group all docs into one bucket using literal _id: 1
+        result = list(
+            collection.aggregate(
+                [{"$group": {"_id": 1, "total_qty": {"$sum": "$qty"}}}]
+            )
+        )
+        assert len(result) == 1
+        assert result[0]["_id"] == 1
+        assert result[0]["total_qty"] == 13
 
 
 def test_load_bytes_data():
     """Test _load with bytes data."""
-    db = neosqlite.Connection(":memory:")
-    collection = db["test"]
+    with neosqlite.Connection(":memory:") as db:
+        collection = db["test"]
 
-    # Test with bytes data
-    result = collection._load(1, b'{"test": "value"}')
-    assert result == {"_id": 1, "test": "value"}
+        # Test with bytes data
+        result = collection._load(1, b'{"test": "value"}')
+        assert result == {"_id": 1, "test": "value"}
 
 
 def test_unsupported_update_operator():
     """Test _internal_update with an unsupported operator."""
-    db = neosqlite.Connection(":memory:")
-    collection = db["test"]
+    with neosqlite.Connection(":memory:") as db:
+        collection = db["test"]
 
-    # Test with an unsupported operator
-    with pytest.raises(
-        MalformedQueryException,
-        match="Update operator '\\$unsupported' not supported",
-    ):
-        collection.query_engine.helpers._internal_update(
-            1, {"$unsupported": {"field": "value"}}, {"_id": 1}
-        )
+        # Test with an unsupported operator
+        with pytest.raises(
+            MalformedQueryException,
+            match="Update operator '\\$unsupported' not supported",
+        ):
+            collection.query_engine.helpers._internal_update(
+                1, {"$unsupported": {"field": "value"}}, {"_id": 1}
+            )
 
 
 def test_internal_update_sql_path():
     """Test _internal_update with SQL-based path."""
-    db = neosqlite.Connection(":memory:")
-    collection = db["test"]
+    with neosqlite.Connection(":memory:") as db:
+        collection = db["test"]
 
-    # Insert a document
-    doc_id = collection.insert_one(
-        {"name": "Alice", "age": 30, "score": 100}
-    ).inserted_id
+        # Insert a document
+        doc_id = collection.insert_one(
+            {"name": "Alice", "age": 30, "score": 100}
+        ).inserted_id
 
-    # Update using SQL-based path (simple operations)
-    original_doc = collection.find_one({"_id": doc_id})
-    result, modified = collection.query_engine.helpers._internal_update(
-        doc_id,
-        {"$set": {"name": "Bob"}, "$inc": {"age": 5}, "$mul": {"score": 1.1}},
-        original_doc,
-    )
+        # Update using SQL-based path (simple operations)
+        original_doc = collection.find_one({"_id": doc_id})
+        result, modified = collection.query_engine.helpers._internal_update(
+            doc_id,
+            {
+                "$set": {"name": "Bob"},
+                "$inc": {"age": 5},
+                "$mul": {"score": 1.1},
+            },
+            original_doc,
+        )
 
-    # Verify the update worked
-    assert modified
-    assert result["name"] == "Bob"
-    assert result["age"] == 35
-    assert result["score"] == pytest.approx(110.0)  # 100 * 1.1
+        # Verify the update worked
+        assert modified
+        assert result["name"] == "Bob"
+        assert result["age"] == 35
+        assert result["score"] == pytest.approx(110.0)  # 100 * 1.1
 
 
 def test_internal_update_python_path():
     """Test _internal_update with Python-based path for complex operations."""
-    db = neosqlite.Connection(":memory:")
-    collection = db["test"]
+    with neosqlite.Connection(":memory:") as db:
+        collection = db["test"]
 
-    # Insert a document
-    doc_id = collection.insert_one(
-        {"name": "Alice", "items": [1, 2, 3]}
-    ).inserted_id
+        # Insert a document
+        doc_id = collection.insert_one(
+            {"name": "Alice", "items": [1, 2, 3]}
+        ).inserted_id
 
-    # Update using Python-based path (complex operations)
-    original_doc = collection.find_one({"_id": doc_id})
-    result, modified = collection.query_engine.helpers._internal_update(
-        doc_id, {"$push": {"items": 4}, "$set": {"name": "Bob"}}, original_doc
-    )
+        # Update using Python-based path (complex operations)
+        original_doc = collection.find_one({"_id": doc_id})
+        result, modified = collection.query_engine.helpers._internal_update(
+            doc_id,
+            {"$push": {"items": 4}, "$set": {"name": "Bob"}},
+            original_doc,
+        )
 
-    # Verify the update worked
-    assert modified
-    assert result["name"] == "Bob"
-    assert result["items"] == [1, 2, 3, 4]
+        # Verify the update worked
+        assert modified
+        assert result["name"] == "Bob"
+        assert result["items"] == [1, 2, 3, 4]
 
 
 def test_internal_update_mixed_operations():
     """Test _internal_update with mixed operations (falls back to Python)."""
-    db = neosqlite.Connection(":memory:")
-    collection = db["test"]
+    with neosqlite.Connection(":memory:") as db:
+        collection = db["test"]
 
-    # Insert a document
-    doc_id = collection.insert_one(
-        {"name": "Alice", "age": 30, "items": [1, 2, 3]}
-    ).inserted_id
+        # Insert a document
+        doc_id = collection.insert_one(
+            {"name": "Alice", "age": 30, "items": [1, 2, 3]}
+        ).inserted_id
 
-    # Update with mixed operations (should fall back to Python)
-    original_doc = collection.find_one({"_id": doc_id})
-    result, modified = collection.query_engine.helpers._internal_update(
-        doc_id,
-        {
-            "$set": {"name": "Bob"},
-            "$inc": {"age": 5},
-            "$push": {"items": 4},  # This requires Python fallback
-        },
-        original_doc,
-    )
+        # Update with mixed operations (should fall back to Python)
+        original_doc = collection.find_one({"_id": doc_id})
+        result, modified = collection.query_engine.helpers._internal_update(
+            doc_id,
+            {
+                "$set": {"name": "Bob"},
+                "$inc": {"age": 5},
+                "$push": {"items": 4},  # This requires Python fallback
+            },
+            original_doc,
+        )
 
-    # Verify the update worked
-    assert result["name"] == "Bob"
-    assert result["age"] == 35
-    assert result["items"] == [1, 2, 3, 4]
+        # Verify the update worked
+        assert result["name"] == "Bob"
+        assert result["age"] == 35
+        assert result["items"] == [1, 2, 3, 4]
 
 
 def test_convert_bytes_to_binary_edge_cases():

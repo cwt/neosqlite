@@ -10,18 +10,24 @@ def handler(tmp_path):
     db_path = str(tmp_path / "test.db")
     h = NeoSQLiteHandler(db_path)
     yield h
-    h.conn.close()
+    h.close_all()
 
 
 class TestJournalMode:
     """Test journal mode configuration for NeoSQLiteHandler."""
+
+    def teardown_method(self):
+        if hasattr(self, "handler") and self.handler is not None:
+            self.handler.close_all()
+            self.handler = None
 
     def test_handler_default_journal_mode_is_wal(self, tmp_path):
         """Test that default journal mode is WAL."""
         from nx_27017.nx_27017 import NeoSQLiteHandler
 
         db_path = str(tmp_path / "test.db")
-        handler = NeoSQLiteHandler(db_path)
+        self.handler = NeoSQLiteHandler(db_path)
+        handler = self.handler
         assert handler.journal_mode == "WAL"
         assert handler.conn.journal_mode == "WAL"
 
@@ -30,7 +36,8 @@ class TestJournalMode:
         from nx_27017.nx_27017 import NeoSQLiteHandler
 
         db_path = str(tmp_path / "test.db")
-        handler = NeoSQLiteHandler(db_path, journal_mode="WAL")
+        self.handler = NeoSQLiteHandler(db_path, journal_mode="WAL")
+        handler = self.handler
         assert handler.journal_mode == "WAL"
         assert handler.conn.journal_mode == "WAL"
 
@@ -39,7 +46,8 @@ class TestJournalMode:
         from nx_27017.nx_27017 import NeoSQLiteHandler
 
         db_path = str(tmp_path / "test.db")
-        handler = NeoSQLiteHandler(db_path, journal_mode="DELETE")
+        self.handler = NeoSQLiteHandler(db_path, journal_mode="DELETE")
+        handler = self.handler
         assert handler.journal_mode == "DELETE"
         assert handler.conn.journal_mode == "DELETE"
 
@@ -48,7 +56,8 @@ class TestJournalMode:
         from nx_27017.nx_27017 import NeoSQLiteHandler
 
         db_path = str(tmp_path / "test.db")
-        handler = NeoSQLiteHandler(db_path, journal_mode="MEMORY")
+        self.handler = NeoSQLiteHandler(db_path, journal_mode="MEMORY")
+        handler = self.handler
         assert handler.journal_mode == "MEMORY"
         assert handler.conn.journal_mode == "MEMORY"
 
@@ -57,7 +66,8 @@ class TestJournalMode:
         from nx_27017.nx_27017 import NeoSQLiteHandler
 
         db_path = str(tmp_path / "test.db")
-        handler = NeoSQLiteHandler(db_path, journal_mode="TRUNCATE")
+        self.handler = NeoSQLiteHandler(db_path, journal_mode="TRUNCATE")
+        handler = self.handler
         assert handler.journal_mode == "TRUNCATE"
         assert handler.conn.journal_mode == "TRUNCATE"
 
@@ -66,7 +76,8 @@ class TestJournalMode:
         from nx_27017.nx_27017 import NeoSQLiteHandler
 
         db_path = str(tmp_path / "test.db")
-        handler = NeoSQLiteHandler(db_path, journal_mode="PERSIST")
+        self.handler = NeoSQLiteHandler(db_path, journal_mode="PERSIST")
+        handler = self.handler
         assert handler.journal_mode == "PERSIST"
         assert handler.conn.journal_mode == "PERSIST"
 
@@ -75,7 +86,8 @@ class TestJournalMode:
         from nx_27017.nx_27017 import NeoSQLiteHandler
 
         db_path = str(tmp_path / "test.db")
-        handler = NeoSQLiteHandler(db_path, journal_mode="OFF")
+        self.handler = NeoSQLiteHandler(db_path, journal_mode="OFF")
+        handler = self.handler
         assert handler.journal_mode == "OFF"
         assert handler.conn.journal_mode == "OFF"
 
@@ -83,7 +95,8 @@ class TestJournalMode:
         """Test handler with :memory: path and journal mode."""
         from nx_27017.nx_27017 import NeoSQLiteHandler
 
-        handler = NeoSQLiteHandler(":memory:", journal_mode="DELETE")
+        self.handler = NeoSQLiteHandler(":memory:", journal_mode="DELETE")
+        handler = self.handler
         assert handler.journal_mode == "DELETE"
         assert handler.conn.journal_mode == "DELETE"
 
@@ -92,7 +105,8 @@ class TestJournalMode:
         from nx_27017.nx_27017 import NeoSQLiteHandler
 
         db_path = str(tmp_path / "test.db")
-        handler = NeoSQLiteHandler(db_path, journal_mode="DELETE")
+        self.handler = NeoSQLiteHandler(db_path, journal_mode="DELETE")
+        handler = self.handler
 
         db2 = handler.get_database("other_db")
         assert db2.journal_mode == "DELETE"
@@ -130,7 +144,8 @@ class TestJournalMode:
         from nx_27017.nx_27017 import NeoSQLiteHandler
 
         db_path = str(tmp_path / "test.db")
-        handler = NeoSQLiteHandler(db_path, journal_mode="DELETE")
+        self.handler = NeoSQLiteHandler(db_path, journal_mode="DELETE")
+        handler = self.handler
         assert handler.conn.journal_mode == "DELETE"
 
         insert_msg = {
@@ -166,7 +181,8 @@ class TestJournalMode:
         """Test that CRUD operations work correctly with MEMORY mode."""
         from nx_27017.nx_27017 import NeoSQLiteHandler
 
-        handler = NeoSQLiteHandler(":memory:", journal_mode="MEMORY")
+        self.handler = NeoSQLiteHandler(":memory:", journal_mode="MEMORY")
+        handler = self.handler
         assert handler.conn.journal_mode == "MEMORY"
 
         insert_msg = {

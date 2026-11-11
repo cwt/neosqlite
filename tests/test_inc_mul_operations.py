@@ -16,6 +16,10 @@ class TestIncMulOperations:
         self.db = Connection(":memory:")
         self.collection = self.db["test_collection"]
 
+    def teardown_method(self):
+        """Clean up test database."""
+        self.db.close()
+
     def test_inc_with_string_value_raises_error(self):
         """Test that $inc with string value raises MalformedQueryException."""
         # Insert document with string field
