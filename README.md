@@ -1,6 +1,11 @@
 # NeoSQLite - NoSQL for SQLite with PyMongo-like API
 
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python Compatibility](https://img.shields.io/badge/python-3.10%20%7C%203.15-blue.svg)](#installation)
 [![PyPI Version](https://img.shields.io/pypi/v/neosqlite.svg)](https://pypi.org/project/neosqlite/)
+[![Ask DeepWiki](https://img.shields.io/badge/Ask-DeepWiki-blue)](https://deepwiki.com/cwt/neosqlite)
+<!-- [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/cwt/neosqlite) -->
+[![View Code Wiki](https://assets.codewiki.google/readme-badge/static.svg)](https://codewiki.google/github.com/cwt/neosqlite?utm_source=badge&utm_medium=github&utm_campaign=github.com/cwt/neosqlite)
 
 `NeoSQLite` (new + nosqlite) is a pure Python library that provides a schemaless, `PyMongo`-like wrapper for interacting with SQLite databases. The API is designed to be familiar to those who have worked with `PyMongo`, providing a simple and intuitive way to work with document-based data in a relational database.
 
@@ -34,21 +39,23 @@
 
 See [Release Notes](documents/releases/) for the full history.
 
-## Latest Release: v1.17.2
+## Latest Release: v1.17.3
 
-NeoSQLite v1.17.2 is a **correctness and PyMongo API parity release** resolving gaps surfaced during real-world dogfooding (e.g. against blogging platforms like `neo-blogger`). It introduces native SQLite FTS5 BM25 text relevance scoring and sorting in `find()`, PyMongo-compatible multi-field text index creation syntax, fluent chaining methods on `GridOutCursor`, direct `Connection` instantiation for `GridFSBucket`, safe collection counting on GridFS system tables, and expanded unit test coverage reaching **81.18%**. Fully backward compatible.
+NeoSQLite v1.17.3 is a **major correctness, MongoDB API parity, and runtime compatibility release**. It delivers complete MongoDB parity for `$ne: null` (excluding missing and null fields), `$exists: true` (matching present-but-null fields), existential array comparisons (`$gt`, `$gte`, `$lt`, `$lte`), cross-type `$in`/`$nin` query operations, strict `$size` array validation, and canonical BSON type ranking in `$expr` evaluations (`missing < null < numbers < strings < objects < arrays < bools`). It also introduces NX-27017 GridFS aggregation support (enabling PyMongo `count_documents()`), dotted sort keys, and official support for **Python 3.15** (`^3.10, <3.16`). Fully backward compatible.
 
 **Key Highlights:**
-- **FTS5 BM25 Text Relevance Scoring & Sorting** — `find({"$text": {"$search": ...}})` computes true BM25 relevance scores across indexed fields, supports score projection via `{"score": {"$meta": "textScore"}}`, and enables sorting by `[("score", {"$meta": "textScore"})]`.
-- **MongoDB-Style Multi-Field Text Index Definitions** — `collection.create_index([("field1", "text"), ("field2", "text")])` creates FTS virtual tables across all specified text fields in a single call, matching PyMongo syntax.
-- **Fluent `GridOutCursor` Operations** — Added `.sort()`, `.skip()`, `.limit()`, `.batch_size()`, `.to_list()`, `.clone()`, and `.rewind()` to `GridOutCursor` for idiomatic cursor chaining on GridFS file searches.
-- **Direct Connection Support in `GridFSBucket`** — `GridFSBucket(conn)` accepts a `neosqlite.Connection` directly (automatically unwrapping the underlying SQLite database handle) alongside raw database connections (`GridFSBucket(conn.db)`).
-- **Safe Document Counting on GridFS System Collections** — Dotted collection access like `conn.fs.files.count_documents()` maps directly onto relational schema columns without raising `no such column: data`.
-- **Robust Quality Gates & Differential Testing** — Achieved 100.0% compatibility across 404 comparison cases against MongoDB 8.2.12, passed 3,034 pytest unit tests with **81.18% code coverage**, and verified zero mypy/lint warnings.
+- **MongoDB Semantic Parity for `$ne: null` & `$exists`** — `{"$ne": null}` now strictly excludes both missing fields and fields explicitly set to `null` across Python, SQL CTE, aggregation `$match`, unified SQL translator, and ChangeStreams. `{"$exists": true}` correctly matches present-but-null fields via SQLite `json_type()`.
+- **Existential Array Comparisons** — Relational comparisons (`$gt`, `$gte`, `$lt`, `$lte`) on array fields now match if *any* element satisfies the condition, with scalar type guards and nested `$elemMatch` scoping.
+- **Cross-Type Query Operators & Strict `$size`** — SQL CTE paths for `$ne`, `$in`, and `$nin` are guarded by BSON/JSON data type checks, `$eq` natively handles array containment in SQL, and `$size` strictly validates `json_type = 'array'`.
+- **`$expr` BSON Type Ordering & Decimal Support** — Implemented canonical BSON type rank ordering (`missing < null < numbers/Decimal < strings < objects < arrays < bools`) in `$expr` evaluations, routing null ordering comparisons to authoritative fallback.
+- **NX-27017 GridFS Aggregation & Cursor Sorting** — Routed `aggregate` commands on GridFS collections to the adapter (enabling PyMongo `count_documents()`), added dotted sort key support (e.g. `metadata.order`), fixed missing-vs-present partitioning, and corrected skip-after-sort sequencing.
+- **Official Python 3.15 Support** — Expanded runtime dependency specifications to `^3.10, <3.16`, upgraded optional dependencies (`uvloop` `^0.23.0` with `cp315` wheels, `sphinx` `<9.3.0`), bumped NX-27017 to v0.8.3, and verified across 3,034 tests with **80.78% code coverage**.
 
-For full details, see [documents/releases/v1.17.2.md](documents/releases/v1.17.2.md). Previous release highlights are in [documents/releases/v1.17.1.md](documents/releases/v1.17.1.md).
+For full details, see [documents/releases/v1.17.3.md](documents/releases/v1.17.3.md). Previous release highlights are in [documents/releases/v1.17.2.md](documents/releases/v1.17.2.md).
 
 ## Installation
+
+NeoSQLite supports Python 3.10, 3.11, 3.12, 3.13, 3.14, and 3.15.
 
 ```bash
 pip install neosqlite

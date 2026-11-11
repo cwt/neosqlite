@@ -6,14 +6,33 @@ tags:
   - log
   - bundle
   - changelog
-timestamp: 2026-10-14T00:00:00Z
-version: "1.17.2"
+timestamp: 2026-11-11T00:00:00Z
+version: "1.17.3"
 lifecycle: active
 ---
 
 # NeoSQLite Knowledge Base Bundle Log
 
 This document records the chronological history of structural changes, additions, deprecations, and refactoring operations performed on the NeoSQLite Open Knowledge Format (OKF) bundle.
+
+---
+
+## 2026-11-11 — Release v1.17.3
+
+### Summary
+Major correctness, MongoDB API parity, and runtime compatibility release: complete MongoDB semantics for `{"$ne": null}` (excluding missing and null fields), `{"$exists": true}` (matching present-but-null fields), existential array comparison semantics (`$gt`, `$gte`, `$lt`, `$lte`), cross-type query operators (`$ne`, `$in`, `$nin`), strict `$size` validation, and canonical BSON type ranking in `$expr` evaluations (`missing < null < numbers < strings < objects < arrays < bools`), alongside NX-27017 GridFS aggregation support (for PyMongo `count_documents`) and official Python 3.15 support (`^3.10, <3.16`).
+
+### Key Modifications
+1. **Added `releases/v1.17.3.md` Release Notes**:
+   - Comprehensive documentation covering MongoDB operator semantic parity, existential array comparisons, `$expr` BSON ordering, NX-27017 GridFS aggregation, and Python 3.15 compatibility.
+2. **Updated Release Notes Index (`documents/releases/index.md`)**:
+   - Added `v1.17.3` entry and bumped frontmatter version to `1.17.3`.
+3. **Updated Root Knowledge Base Index (`documents/index.md`)**:
+   - Bumped frontmatter version to `1.17.3` and extended release notes subdirectories range to `(v1.0.0 through v1.17.3)`.
+4. **Updated `README.md`**:
+   - Updated Latest Release section to v1.17.3 detailing MongoDB parity enhancements, existential array comparisons, NX-27017 wire protocol updates, and Python 3.15 compatibility.
+5. **Bumped version to v1.17.3**:
+   - `pyproject.toml`, `packages/nx_27017/pyproject.toml`, and lockfile refreshed for Python 3.15.
 
 ---
 
