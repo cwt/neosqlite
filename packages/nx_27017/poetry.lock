@@ -678,22 +678,22 @@ files = [
 
 [[package]]
 name = "neosqlite"
-version = "1.17.3"
+version = "1.17.4"
 description = "NoSQL for SQLite with PyMongo-like API"
 optional = false
 python-versions = "<3.16,>=3.10"
 groups = ["main"]
 files = [
-    {file = "neosqlite-1.17.3-py3-none-any.whl", hash = "sha256:95b012d197e8b0d93c9fb4c5e47fff6fd68a9f6abef70014243d588cf54ddc50"},
-    {file = "neosqlite-1.17.3.tar.gz", hash = "sha256:9e3e8167cf6ac6b29450ab7620a40e486efd25f82ee3830d109b25432c8d5093"},
+    {file = "neosqlite-1.17.4-py3-none-any.whl", hash = "sha256:20dd2fe1e6dc148fa3ccc20565b959b96310324f49aea51e7e22bbf0919cdde0"},
+    {file = "neosqlite-1.17.4.tar.gz", hash = "sha256:e2d3d25300d920d954d1a7ded2b2990df13e484e792ffa511a65bc2a374e09d8"},
 ]
 
 [package.extras]
 docs = ["furo (>=2025.12.19,<2026.0.0)", "sphinx (>=8.1.3,<9.0.0) ; python_version < \"3.12\"", "sphinx (>=9.1.0,<9.3.0) ; python_version >= \"3.12\""]
 jsonb = ["pysqlite3-binary (>=0.5.4,<0.6.0)"]
 memory-constrained = ["quez (>=1.1.3,<2.0.0)"]
-nx27017 = ["nx-27017 (>=0.8.2,<0.9.0)", "pymongo (>=4.18.0,<5.0.0)"]
-nx27017-speed = ["nx-27017 (>=0.8.2,<0.9.0)", "pymongo (>=4.18.0,<5.0.0)", "uvloop (>=0.23.0,<0.24.0)"]
+nx27017 = ["nx-27017 (>=0.8.2,<0.9.0)"]
+nx27017-speed = ["nx-27017 (>=0.8.2,<0.9.0)", "uvloop (>=0.23.0,<0.24.0)"]
 
 [[package]]
 name = "packaging"
@@ -1100,4 +1100,4 @@ speed = []
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.10, <3.16"
-content-hash = "a71c466171089e7d5907f97eb89d3eb780daf7da49ea9c33da780fb94a4fde00"
+content-hash = "a71ba525c37a49dae57fed6dd78aa523f6af81958920f8ca1e4283c5f53e87b5"
