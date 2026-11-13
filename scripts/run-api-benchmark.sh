@@ -3,7 +3,7 @@
 # NeoSQLite vs MongoDB API Benchmark Script
 #
 # This script:
-# 1. Checks for podman or docker availability (podman preferred)
+# 1. Checks for native MongoDB, Apple container (macOS), podman, or docker availability
 # 2. On macOS ARM: prefers native mongodb-community via Homebrew if available
 # 3. Pulls the MongoDB image (pinned to mongo:8.2.12 if using containers)
 # 4. Runs MongoDB container with exposed port (single node, NOT replica set)
@@ -44,7 +44,7 @@ COMPARISON_SCRIPT="$(dirname "$0")/../examples/api_comparison_main.py"
 BENCHMARK_ITERATIONS=10
 BENCHMARK_SILENT=false
 
-# Container runtime (podman preferred over docker)
+# Container runtime (on macOS: Apple container > podman > docker; otherwise podman > docker)
 CONTAINER_RUNTIME=""
 
 # Track how MongoDB is being run
@@ -233,12 +233,12 @@ parse_args() {
 #######################################
 # Check for available container runtime or native MongoDB
 # Sets CONTAINER_RUNTIME and MONGODB_MODE
-# Priority on macOS ARM: native MongoDB > podman > docker
+# Priority on macOS: native MongoDB > Apple container > podman > docker
 #######################################
 check_mongodb_availability() {
     info "Checking for MongoDB availability..."
 
-    # On macOS: prefer native mongodb-community via Homebrew
+    # On macOS: prefer native mongodb-community via Homebrew, then Apple's container tool
     if [[ "$(uname -s)" == "Darwin" ]]; then
         if command -v brew &> /dev/null; then
             if brew list mongodb/brew/mongodb-community &> /dev/null; then
@@ -246,6 +246,20 @@ check_mongodb_availability() {
                 success "Found native mongodb-community via Homebrew"
                 return 0
             fi
+        fi
+
+        if command -v container &> /dev/null; then
+            if ! container system status >/dev/null 2>&1; then
+                info "Starting Apple container system services..."
+                container system start --disable-kernel-install >/dev/null 2>&1 || true
+            fi
+            if container system status >/dev/null 2>&1; then
+                CONTAINER_RUNTIME="container"
+                MONGODB_MODE="container"
+                success "Found Apple container"
+                return 0
+            fi
+            warn "Apple container service unavailable, checking other runtimes..."
         fi
     fi
 
@@ -272,7 +286,7 @@ check_mongodb_availability() {
         echo "  brew tap mongodb/brew"
         echo "  brew install mongodb-community"
         echo ""
-        error "Alternatively, install podman or docker for container-based testing."
+        error "Alternatively, use Apple container, podman, or docker for container-based testing."
     else
         error "Neither podman nor docker found. Please install one of them."
     fi
@@ -285,12 +299,36 @@ check_mongodb_availability() {
 pull_mongodb_image() {
     info "Pulling MongoDB image: $MONGODB_IMAGE..."
 
-    if $CONTAINER_RUNTIME pull "$MONGODB_IMAGE"; then
+    if [ "$CONTAINER_RUNTIME" = "container" ]; then
+        if container image pull "$MONGODB_IMAGE"; then
+            success "MongoDB image pulled successfully"
+            return 0
+        fi
+    elif $CONTAINER_RUNTIME pull "$MONGODB_IMAGE"; then
         success "MongoDB image pulled successfully"
         return 0
+    fi
+
+    error "Failed to pull MongoDB image"
+    return 1
+}
+
+#######################################
+# Check container existence and running state
+#######################################
+container_exists() {
+    if [ "$CONTAINER_RUNTIME" = "container" ]; then
+        container list -a -q 2>/dev/null | grep -Fqx "$CONTAINER_NAME"
     else
-        error "Failed to pull MongoDB image"
-        return 1
+        $CONTAINER_RUNTIME ps -a --format '{{.Names}}' | grep -Fqx "$CONTAINER_NAME"
+    fi
+}
+
+container_is_running() {
+    if [ "$CONTAINER_RUNTIME" = "container" ]; then
+        container list -q 2>/dev/null | grep -Fqx "$CONTAINER_NAME"
+    else
+        $CONTAINER_RUNTIME ps --format '{{.Names}}' | grep -Fqx "$CONTAINER_NAME"
     fi
 }
 
@@ -320,11 +358,11 @@ check_port_available() {
 cleanup_existing_container() {
     info "Checking for existing container '$CONTAINER_NAME'..."
 
-    if $CONTAINER_RUNTIME ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+    if container_exists; then
         warn "Found existing container '$CONTAINER_NAME', removing..."
 
         # Stop if running
-        if $CONTAINER_RUNTIME ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+        if container_is_running; then
             $CONTAINER_RUNTIME stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
         fi
 
@@ -486,7 +524,7 @@ run_benchmark() {
 
     # Build the command
     SCRIPT_DIR="$(dirname "$COMPARISON_SCRIPT")"
-    CMD="python3 api_comparison_main.py --benchmark $BENCHMARK_ITERATIONS"
+    CMD="poetry run python3 api_comparison_main.py --benchmark $BENCHMARK_ITERATIONS"
 
     if [ "$BENCHMARK_SILENT" = true ]; then
         CMD="$CMD --silent"

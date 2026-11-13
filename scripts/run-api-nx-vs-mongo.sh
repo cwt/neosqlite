@@ -42,10 +42,11 @@ if [ -z "$CONTAINER_RUNTIME" ]; then
         CONTAINER_RUNTIME="docker"
     fi
 fi
-NX27017_CMD="$(which nx-27017)"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+NX27017_CMD="$(cd "$PROJECT_ROOT" && poetry run python3 -c "import shutil; print(shutil.which('nx-27017') or '')" 2>/dev/null || true)"
 NX27017_DB_DIR=$(mktemp -d)
 NX27017_DB="$NX27017_DB_DIR/neosqlite"  # File-based database for persistence
-COMPARISON_SCRIPT="$(dirname "$0")/../examples/api_nx_vs_mongo_main.py"
+COMPARISON_SCRIPT="$PROJECT_ROOT/examples/api_nx_vs_mongo_main.py"
 WITH_CONTAINER=false
 
 # Track what we started (for cleanup)
@@ -88,7 +89,7 @@ cleanup() {
 
     if [ "$SERVER_STARTED" = true ]; then
         info "Stopping NX-27017 server..."
-        $NX27017_CMD --stop >/dev/null 2>&1 || true
+        (cd "$PROJECT_ROOT" && poetry run nx-27017 --stop >/dev/null 2>&1) || true
         success "NX-27017 server stopped"
     fi
 
@@ -113,11 +114,11 @@ trap cleanup EXIT INT TERM
 
 check_nx27017() {
     info "Checking for NX-27017..."
-    if [ -f "$NX27017_CMD" ]; then
+    if [ -n "$NX27017_CMD" ] && [ -f "$NX27017_CMD" ]; then
         success "Found nx_27017 at $NX27017_CMD"
         return 0
     fi
-    error "NX-27017 not found at $NX27017_CMD"
+    error "NX-27017 not found in Poetry environment"
     return 1
 }
 
@@ -168,7 +169,7 @@ wait_for_port() {
 
 cleanup_existing_server() {
     info "Stopping any existing NX-27017 server..."
-    $NX27017_CMD --stop 2>/dev/null || true
+    (cd "$PROJECT_ROOT" && poetry run nx-27017 --stop 2>/dev/null) || true
     if command -v lsof &> /dev/null; then
         lsof -ti:$NX27017_PORT | xargs -r kill 2>/dev/null || true
     fi
@@ -184,19 +185,19 @@ run_nx27017_server() {
         error "Port $NX27017_PORT is still in use after cleanup - aborting (kill the stale server first)"
         return 1
     fi
-    $NX27017_CMD --db "$NX27017_DB" --host "$NX27017_HOST" -p "$NX27017_PORT" 2>&1 &
+    (cd "$PROJECT_ROOT" && exec poetry run nx-27017 --db "$NX27017_DB" --host "$NX27017_HOST" -p "$NX27017_PORT") 2>&1 &
     NX_PID=$!
     SERVER_STARTED=true
     wait_for_port "$NX27017_HOST" "$NX27017_PORT" "NX-27017" "$NX_PID"
 }
 
 mongo_ping() {
-    timeout 5 python3 -c "
+    (cd "$PROJECT_ROOT" && timeout 5 poetry run python3 -c "
 from pymongo import MongoClient
 c = MongoClient('$REAL_MONGO_URI', serverSelectionTimeoutMS=4000)
 c.admin.command('ping')
 c.close()
-" 2>/dev/null
+") 2>/dev/null
 }
 
 ensure_real_mongo() {
@@ -261,7 +262,7 @@ run_comparison() {
     export NX_URI REAL_MONGO_URI
     # Lenient mode: kernel/host/version field noise never fails the build.
     export NX_COMPAT_LENIENT=true
-    (cd "$SCRIPT_DIR" && PYTHONPATH="$PROJECT_ROOT" python3 "$(basename "$COMPARISON_SCRIPT")")
+    (cd "$SCRIPT_DIR" && PYTHONPATH="$PROJECT_ROOT" poetry run python3 "$(basename "$COMPARISON_SCRIPT")")
     local code=$?
     if [ $code -eq 0 ]; then
         success "Wire-vs-wire comparison completed - fully compatible!"

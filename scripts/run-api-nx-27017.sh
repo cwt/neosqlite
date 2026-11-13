@@ -25,10 +25,11 @@ NC='\033[0m' # No Color
 # Configuration
 NX27017_PORT=27017
 NX27017_HOST="127.0.0.1"
-NX27017_CMD="$(which nx-27017)"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+NX27017_CMD="$(cd "$PROJECT_ROOT" && poetry run python3 -c "import shutil; print(shutil.which('nx-27017') or '')" 2>/dev/null || true)"
 NX27017_DB_DIR=$(mktemp -d)
 NX27017_DB="$NX27017_DB_DIR/neosqlite"  # Use file-based database for persistence
-COMPARISON_SCRIPT="$(dirname "$0")/../examples/api_comparison_main.py"
+COMPARISON_SCRIPT="$PROJECT_ROOT/examples/api_comparison_main.py"
 
 # Track if we started the server (for cleanup)
 SERVER_STARTED=false
@@ -92,7 +93,7 @@ cleanup() {
 
         # Stop NX-27017 server
         info "Stopping NX-27017 server..."
-        $NX27017_CMD --stop >/dev/null 2>&1 || true
+        (cd "$PROJECT_ROOT" && poetry run nx-27017 --stop >/dev/null 2>&1) || true
         success "NX-27017 server stopped"
     fi
 
@@ -116,12 +117,12 @@ check_nx27017() {
     info "Checking for NX-27017..."
 
     # Check if nx_27017 command exists
-    if [ -f "$NX27017_CMD" ]; then
+    if [ -n "$NX27017_CMD" ] && [ -f "$NX27017_CMD" ]; then
         success "Found nx_27017 at $NX27017_CMD"
         return 0
     fi
 
-    error "NX-27017 not found at $NX27017_CMD"
+    error "NX-27017 not found in Poetry environment"
     return 1
 }
 
@@ -152,7 +153,7 @@ cleanup_existing_server() {
     info "Stopping any existing NX-27017 server..."
 
     # Try to stop using nx_27017 command
-    $NX27017_CMD --stop 2>/dev/null || true
+    (cd "$PROJECT_ROOT" && poetry run nx-27017 --stop 2>/dev/null) || true
 
     # Also try to kill any process on the port
     if command -v lsof &> /dev/null; then
@@ -185,7 +186,7 @@ run_nx27017_server() {
     fi
 
     # Start NX-27017 server with memory database
-    $NX27017_CMD --db "$NX27017_DB" --host $NX27017_HOST -p $NX27017_PORT 2>&1 &
+    (cd "$PROJECT_ROOT" && exec poetry run nx-27017 --db "$NX27017_DB" --host $NX27017_HOST -p $NX27017_PORT) 2>&1 &
     NX27017_PID=$!
 
     SERVER_STARTED=true
@@ -253,7 +254,7 @@ run_comparison() {
     export NX27017_BACKEND=true
     
     PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-    if (cd "$SCRIPT_DIR" && PYTHONPATH="$PROJECT_ROOT" python3 api_comparison_main.py); then
+    if (cd "$SCRIPT_DIR" && PYTHONPATH="$PROJECT_ROOT" poetry run python3 api_comparison_main.py); then
         success "API comparison completed - 100% compatible!"
         return 0
     else
