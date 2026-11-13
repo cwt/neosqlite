@@ -739,8 +739,20 @@ class Cursor:
             try:
                 from .datetime_query_processor import DateTimeQueryProcessor
 
-                datetime_processor = DateTimeQueryProcessor(self._collection)
-                return datetime_processor.process_datetime_query(self._filter)
+                datetime_processor = DateTimeQueryProcessor(
+                    self._collection, use_global_kill_switch=True
+                )
+                dt_docs = datetime_processor.process_datetime_query(
+                    self._filter
+                )
+                if self._min or self._max:
+                    from .query_helper.utils import get_force_fallback
+
+                    if get_force_fallback():
+                        dt_docs = [
+                            d for d in dt_docs if self._matches_minmax(d)
+                        ]
+                return dt_docs
             except Exception as e:
                 # If datetime processor fails, fall back to normal processing
                 logger.debug(f"DateTime processor failed, falling back: {e}")
@@ -750,8 +762,13 @@ class Cursor:
         if "$expr" in self._filter:
             return self._handle_expr_query()
 
+        from .query_helper.utils import get_force_fallback
+
         # Special handling for $text queries with native BM25 score calculation
-        if self._query_helpers._is_text_search_query(self._filter):
+        if (
+            not get_force_fallback()
+            and self._query_helpers._is_text_search_query(self._filter)
+        ):
             fts_query_result = self._query_helpers._build_full_fts_query(
                 self._filter,
                 self._sort,
@@ -898,10 +915,17 @@ class Cursor:
 
     def _handle_python_fallback(self) -> Iterable[dict[str, Any]]:
         """Handle complex queries by filtering all documents in Python."""
+        from .query_helper.utils import get_force_fallback
+
+        force_fallback = get_force_fallback()
         # Build sorting and pagination clauses for SQL
         # Even in fallback mode, we can still use SQL to sort if possible
-        sort_clause = self._query_helpers._build_sort_clause(
-            self._sort, self._collation
+        sort_clause = (
+            ""
+            if force_fallback
+            else self._query_helpers._build_sort_clause(
+                self._sort, self._collation
+            )
         )
         # If we have a where predicate or we are in Python fallback mode for filter,
         # we CANNOT do SQL pagination because the Python filter might exclude documents
@@ -916,7 +940,7 @@ class Cursor:
         )
 
         # Add min/max bounds if specified (no filter case)
-        if self._min or self._max:
+        if not force_fallback and (self._min or self._max):
             minmax_clause, minmax_params = self._build_minmax_clause(
                 "", (), self._min, self._max
             )
@@ -947,13 +971,16 @@ class Cursor:
 
         db_cursor = self._collection.db.execute(cmd, params)
         apply = partial(self._query_helpers._apply_query, self._filter)
+        check_minmax = force_fallback and bool(self._min or self._max)
 
         while True:
             rows = db_cursor.fetchmany(self._batch_size)
             if not rows:
                 break
             for doc in self._load_documents(rows):
-                if apply(doc):
+                if (not check_minmax or self._matches_minmax(doc)) and apply(
+                    doc
+                ):
                     yield doc
 
     def _handle_expr_query(self) -> Iterable[dict[str, Any]]:
@@ -963,8 +990,6 @@ class Cursor:
         This method uses the query helper's _build_expr_where_clause to attempt SQL
         evaluation (Tiers 1 and 2), and falls back to Python evaluation (Tier 3) if needed.
         """
-        from .expr_evaluator import ExprEvaluator
-
         # Try to build SQL query/WHERE clause with query helper
         # This handles Tier 1 (WHERE) and Tier 2 (Full SELECT with temp tables)
         expr_result = self._query_helpers._build_expr_where_clause(self._filter)
@@ -989,6 +1014,12 @@ class Cursor:
             else:
                 # Tier 1: WHERE clause only
                 where_clause = sql_or_where
+                if self._min or self._max:
+                    minmax_clause, minmax_params = self._build_minmax_clause(
+                        where_clause, tuple(params), self._min, self._max
+                    )
+                    where_clause = minmax_clause
+                    params = minmax_params  # type: ignore[assignment]
 
                 # Build sorting and pagination clauses for SQL
                 sort_clause = self._query_helpers._build_sort_clause(
@@ -1032,16 +1063,23 @@ class Cursor:
                 if not rows:
                     break
                 docs.extend(self._load_documents(rows))
+            if (
+                self._min or self._max
+            ) and sql_or_where.strip().upper().startswith("SELECT"):
+                docs = [d for d in docs if self._matches_minmax(d)]
             return docs
         else:
             # Fallback to Python evaluation
-            expr = self._filter["$expr"]
-            # Create evaluator with database connection for JSONB support detection
-            evaluator = ExprEvaluator(db_connection=self._collection.db)
+            from .query_helper.utils import get_force_fallback
 
+            force_fallback = get_force_fallback()
             # Build sorting clause for SQL even in fallback
-            sort_clause = self._query_helpers._build_sort_clause(
-                self._sort, self._collation
+            sort_clause = (
+                ""
+                if force_fallback
+                else self._query_helpers._build_sort_clause(
+                    self._sort, self._collation
+                )
             )
             # Cannot do SQL pagination for expression fallback
             pagination_clause = ""
@@ -1078,23 +1116,42 @@ class Cursor:
                 all_docs.extend(self._load_documents(rows))
 
             # Filter documents using $expr Python evaluation
+            has_minmax = bool(self._min or self._max)
+
             def expr_filter(doc: dict[str, Any]) -> bool:
                 """
-                Evaluate the expression for a given document.
+                Evaluate the full filter (including $expr, sibling fields, and
+                min/max bounds) for a given document.
 
                 Args:
                     doc: The document to evaluate.
 
                 Returns:
-                    True if the expression evaluates to True, False otherwise.
+                    True if the document satisfies all conditions, False otherwise.
                 """
                 try:
-                    return evaluator.evaluate_python(expr, doc)
+                    if not self._query_helpers._apply_query(self._filter, doc):
+                        return False
+                    return not has_minmax or self._matches_minmax(doc)
                 except Exception as e:
                     logger.warning(f"$expr evaluation failed for document: {e}")
                     return False
 
             return filter(expr_filter, all_docs)  # type: ignore[arg-type]
+
+    def _matches_minmax(self, doc: dict[str, Any]) -> bool:
+        """Check cursor min (>=) and max (<) bounds against a document in Python."""
+        if self._min:
+            for field, bound in self._min.items():
+                val = self._collection._get_val(doc, field)
+                if val is None or bson_sort_key(val) < bson_sort_key(bound):
+                    return False
+        if self._max:
+            for field, bound in self._max.items():
+                val = self._collection._get_val(doc, field)
+                if val is None or bson_sort_key(val) >= bson_sort_key(bound):
+                    return False
+        return True
 
     def _build_minmax_clause(
         self,

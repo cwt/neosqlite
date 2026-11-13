@@ -122,6 +122,24 @@ class FindOperationsMixin(QueryEngineProtocol):
         except StopIteration:
             return None
 
+    def _prepare_find_and_modify(
+        self, filter: dict[str, Any], sort: Any
+    ) -> tuple[bool, bool, str, str | None, list[Any]]:
+        """Prepare kill-switch flag, RETURNING toggle, SQL sort, and WHERE clause."""
+        force_fallback = get_force_fallback()
+        use_returning = _supports_returning_clause() and not force_fallback
+        order_by = (
+            self.helpers._build_sort_clause(dict(sort))
+            if sort and not force_fallback
+            else ""
+        )
+        where_clause, params = (
+            (None, [])
+            if force_fallback
+            else self.sql_translator.translate_match(filter)
+        )
+        return force_fallback, use_returning, order_by, where_clause, params
+
     def find_one_and_delete(
         self,
         filter: dict[str, Any],
@@ -148,19 +166,15 @@ class FindOperationsMixin(QueryEngineProtocol):
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         filter = self.helpers._normalize_id_query(filter)
 
-        # Check if RETURNING clause is supported (Tier-1 optimization)
-        use_returning = (
-            _supports_returning_clause() and not get_force_fallback()
-        )
-
-        # Build sorting clause
-        order_by = ""
-        if sort:
-            order_by = self.helpers._build_sort_clause(dict(sort))
-
-        # Use direct query to get integer ID for the delete operation
-        where_clause, params = self.sql_translator.translate_match(filter)
-        if not where_clause:
+        # Prepare Tier-1 execution flags and SQL clauses
+        (
+            force_fallback,
+            use_returning,
+            order_by,
+            where_clause,
+            params,
+        ) = self._prepare_find_and_modify(filter, sort)
+        if force_fallback or where_clause is None:
             # Fallback: use Python-based approach for complex queries
             cursor = self.find(filter, session=session)
             if sort:
@@ -252,19 +266,15 @@ class FindOperationsMixin(QueryEngineProtocol):
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         filter = self.helpers._normalize_id_query(filter)
 
-        # Check if RETURNING clause is supported (Tier-1 optimization)
-        use_returning = (
-            _supports_returning_clause() and not get_force_fallback()
-        )
-
-        # Build sorting clause
-        order_by = ""
-        if sort:
-            order_by = self.helpers._build_sort_clause(dict(sort))
-
-        # Find document and get its integer ID for the replace operation
-        where_clause, params = self.sql_translator.translate_match(filter)
-        if not where_clause:
+        # Prepare Tier-1 execution flags and SQL clauses
+        (
+            force_fallback,
+            use_returning,
+            order_by,
+            where_clause,
+            params,
+        ) = self._prepare_find_and_modify(filter, sort)
+        if force_fallback or where_clause is None:
             # Fallback: use Python-based approach for complex queries
             cursor = self.find(filter, session=session)
             if sort:
@@ -419,19 +429,15 @@ class FindOperationsMixin(QueryEngineProtocol):
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         filter = self.helpers._normalize_id_query(filter)
 
-        # Check if RETURNING clause is supported (Tier-1 optimization)
-        use_returning = (
-            _supports_returning_clause() and not get_force_fallback()
-        )
-
-        # Build sorting clause
-        order_by = ""
-        if sort:
-            order_by = self.helpers._build_sort_clause(dict(sort))
-
-        # Find document and get its integer ID for the update operation
-        where_clause, params = self.sql_translator.translate_match(filter)
-        if not where_clause:
+        # Prepare Tier-1 execution flags and SQL clauses
+        (
+            force_fallback,
+            use_returning,
+            order_by,
+            where_clause,
+            params,
+        ) = self._prepare_find_and_modify(filter, sort)
+        if force_fallback or where_clause is None:
             # Fallback: use Python-based approach for complex queries
             cursor = self.find(filter, session=session)
             if sort:

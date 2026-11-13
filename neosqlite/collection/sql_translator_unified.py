@@ -932,6 +932,11 @@ class SQLTranslator:
         Returns:
             Tuple of (WHERE clause, parameters) or (None, []) for text search
         """
+        from .query_helper.utils import get_force_fallback
+
+        if get_force_fallback():
+            return _text_search_fallback()
+
         # Handle text search queries separately
         if not isinstance(match_spec, dict):
             return _text_search_fallback()  # Fallback for non-dict queries

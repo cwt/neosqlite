@@ -22,9 +22,13 @@ from ...results import (
 from ...sql_utils import quote_table_name
 from ..json_path_utils import parse_json_path
 from ..jsonb_support import json_data_column
-from ..query_helper import _convert_bytes_to_binary, _get_json_function
+from ..query_helper import (
+    _convert_bytes_to_binary,
+    _get_json_function,
+    get_force_fallback,
+)
 from ..query_helper.utils import build_upsert_base_document
-from ..type_correction import get_integer_id_for_oid
+from ..type_correction import get_integer_id_for_doc_id
 from ..type_utils import validate_session
 from .base import QueryEngineProtocol
 
@@ -100,7 +104,10 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         """
         validate_session(session, self.collection._database)
         # Special handling for GridFS files collections
-        if self.collection.name.endswith("_files"):
+        if (
+            self.collection._is_gridfs_collection()
+            and self.collection.name.endswith("_files")
+        ):
             return self._update_gridfs_file(filter, update, upsert)
 
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
@@ -111,7 +118,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         # For internal operations, we need to retrieve the document differently to get the integer id
         # We'll use a direct SQL query to get both the integer id and the stored _id
         where_clause, params = self.sql_translator.translate_match(filter)
-        if where_clause:
+        if where_clause is not None and not get_force_fallback():
             # Get the integer id as well for internal operations
             # Use the same approach as the original code considering JSONB support
             jsonb = self.jsonb.jsonb_supported
@@ -137,7 +144,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
                 )
         else:
             # Fallback to find_one if translation doesn't work
-            if doc := self.find_one(filter):
+            if doc := self.find_one(filter, session=session):
                 # Get integer id by looking up the stored ObjectId
                 int_doc_id = self._get_integer_id_for_oid(doc["_id"])
                 _, was_modified = self.helpers._internal_update(
@@ -157,7 +164,9 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             updated_doc, _ = self.helpers._internal_update(
                 0, update, new_doc, array_filters, filter
             )  # Apply updates
-            inserted_id = self.insert_one(updated_doc).inserted_id
+            inserted_id = self.insert_one(
+                updated_doc, session=session
+            ).inserted_id
             return UpdateResult(
                 matched_count=0, modified_count=0, upserted_id=inserted_id
             )
@@ -171,11 +180,11 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         upsert: bool = False,
     ) -> UpdateResult:
         """Handle updates for GridFS files collections."""
+        from ...gridfs.grid_file import build_gridfs_files_where
+
         # Get the integer ID for the file
         filter = self.helpers._normalize_id_query(filter)
-        where_clause, params = self.sql_translator.translate_match(filter)
-        if not where_clause:
-            where_clause = ""
+        where_clause, params = build_gridfs_files_where(filter)
 
         cmd = f"SELECT id FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
         cursor = self.collection.db.execute(cmd, params)
@@ -207,20 +216,12 @@ class CRUDOperationsMixin(QueryEngineProtocol):
 
                     # Need to serialize dict/list to JSON for SQLite storage
                     if isinstance(value, (dict, list)):
-                        if self.jsonb.jsonb_supported:
-                            # Use jsonb_set to store as JSONB for better performance
-                            set_clauses.append(
-                                f"metadata = {func_name}(metadata, '$', json(?))"
-                            )
-                            set_params.append(
-                                neosqlite_json_dumps_for_sql(value)
-                            )
-                        else:
-                            # Fallback to json() for non-JSONB databases
-                            set_clauses.append("metadata = json(?)")
-                            set_params.append(
-                                neosqlite_json_dumps_for_sql(value)
-                            )
+                        set_clauses.append(
+                            "metadata = jsonb(?)"
+                            if self.jsonb.jsonb_supported
+                            else "metadata = json(?)"
+                        )
+                        set_params.append(neosqlite_json_dumps_for_sql(value))
                     else:
                         set_clauses.append("metadata = ?")
                         set_params.append(value)
@@ -238,25 +239,19 @@ class CRUDOperationsMixin(QueryEngineProtocol):
                     func_name = _get_json_function(
                         "set", self.jsonb.jsonb_supported
                     )
+                    meta_expr = "COALESCE(metadata, json('{}'))"
 
-                    if isinstance(converted_val, (dict, list)):
-                        # For complex objects, serialize to JSON
+                    if isinstance(converted_val, (dict, list, Binary)):
+                        # For complex/binary objects, serialize to JSON
                         set_clauses.append(
-                            f"metadata = {func_name}(metadata, {json_path}, json(?))"
-                        )
-                        set_params.append(
-                            neosqlite_json_dumps_for_sql(converted_val)
-                        )
-                    elif isinstance(converted_val, Binary):
-                        set_clauses.append(
-                            f"metadata = {func_name}(metadata, {json_path}, json(?))"
+                            f"metadata = {func_name}({meta_expr}, {json_path}, json(?))"
                         )
                         set_params.append(
                             neosqlite_json_dumps_for_sql(converted_val)
                         )
                     else:
                         set_clauses.append(
-                            f"metadata = {func_name}(metadata, {json_path}, ?)"
+                            f"metadata = {func_name}({meta_expr}, {json_path}, ?)"
                         )
                         set_params.append(converted_val)
 
@@ -288,7 +283,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         Raises:
             ValueError: If the integer ID for the ObjectId cannot be found.
         """
-        return get_integer_id_for_oid(
+        return get_integer_id_for_doc_id(
             self.collection.db, self.collection.name, oid
         )
 
@@ -323,13 +318,13 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         where_clause, where_params = self.sql_translator.translate_match(filter)
 
         # Fallback for complex queries, positional operators, array_filters, or Python tier
-        if where_clause is not None:
+        if where_clause is not None and not get_force_fallback():
             cmd = f"SELECT id FROM {quote_table_name(self.collection.name)} {where_clause}"
             cursor = self.collection.db.execute(cmd, where_params)
             ids = [row[0] for row in cursor.fetchall()]
         else:
             # If we can't translate the filter, we'll need to get all docs and filter in memory
-            docs = list(self.find(filter))
+            docs = list(self.find(filter, session=session))
             ids = []
             for doc in docs:
                 int_doc_id = self._get_integer_id_for_oid(doc["_id"])
@@ -340,7 +335,9 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             updated_doc, _ = self.helpers._internal_update(
                 0, update, new_doc, array_filters, filter
             )
-            inserted_id = self.insert_one(updated_doc).inserted_id
+            inserted_id = self.insert_one(
+                updated_doc, session=session
+            ).inserted_id
             return UpdateResult(
                 matched_count=0,
                 modified_count=0,
@@ -402,7 +399,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         filter = self.helpers._normalize_id_query(filter)
         # Use direct query to get integer ID for the delete operation
         where_clause, params = self.sql_translator.translate_match(filter)
-        if where_clause:
+        if where_clause is not None and not get_force_fallback():
             cmd = f"SELECT id FROM {table_name} {where_clause} LIMIT 1"
             cursor = self.collection.db.execute(cmd, params)
             if row := cursor.fetchone():
@@ -411,7 +408,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
                 return DeleteResult(deleted_count=1)
         else:
             # Fallback approach
-            if doc := self.find_one(filter):
+            if doc := self.find_one(filter, session=session):
                 int_doc_id = self._get_integer_id_for_oid(doc["_id"])
                 self.helpers._internal_delete(int_doc_id)
                 return DeleteResult(deleted_count=1)
@@ -446,14 +443,14 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         filter = self.helpers._normalize_id_query(filter)
         # Try to use SQLTranslator for the WHERE clause
         where_clause, params = self.sql_translator.translate_match(filter)
-        if where_clause is not None:
+        if where_clause is not None and not get_force_fallback():
             cmd = f"DELETE FROM {table_name} {where_clause}"
             cursor = self.collection.db.execute(cmd, params)
             return DeleteResult(deleted_count=cursor.rowcount)
 
         # Fallback for complex queries
         # Fallback to finding documents and getting their integer IDs
-        docs = list(self.find(filter))
+        docs = list(self.find(filter, session=session))
         if not docs:
             return DeleteResult(deleted_count=0)
         ids = []
@@ -498,7 +495,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         filter = self.helpers._normalize_id_query(filter)
         # Find the document using the filter, but get the integer ID for internal operations
         where_clause, params = self.sql_translator.translate_match(filter)
-        if where_clause:
+        if where_clause is not None and not get_force_fallback():
             if self.jsonb.jsonb_supported:
                 cmd = f"SELECT id, _id, json(data) as data FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
             else:
@@ -512,7 +509,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
                 )
         else:
             # Fallback approach
-            if doc := self.find_one(filter):
+            if doc := self.find_one(filter, session=session):
                 int_doc_id = self._get_integer_id_for_oid(doc["_id"])
                 self.helpers._internal_replace(int_doc_id, replacement)
                 return UpdateResult(

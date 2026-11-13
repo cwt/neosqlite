@@ -74,6 +74,30 @@ class QueryBuilderMixin(SqlQueryBuilderMixin):
     jsonb: "JSONBContext"
     _build_expr_where_clause: Any
 
+    def _score_text_field(
+        self, value: Any, search_term: str, search_lower: str
+    ) -> float:
+        """Compute relevance score contribution for an FTS-indexed field value."""
+        if isinstance(value, str):
+            val_lower = value.lower()
+            if search_lower in val_lower:
+                return 1.0 + 0.1 * val_lower.count(search_lower)
+            if unified_text_search({"_": value}, search_term):
+                return 1.0
+            return 0.0
+        if isinstance(value, list):
+            return sum(
+                self._score_text_field(elem, search_term, search_lower)
+                for elem in value
+            )
+        if isinstance(value, dict):
+            if self._search_in_value(value, search_term):
+                return 1.0
+            if unified_text_search(value, search_term):
+                return 1.0
+            return 0.0
+        return 0.0
+
     def _search_in_value(self, value: Any, search_term: str) -> bool:
         """
         Recursively search for a term in a value (string, dict, or list).
@@ -175,8 +199,10 @@ class QueryBuilderMixin(SqlQueryBuilderMixin):
                             )
                             fts_tables = cursor.fetchall()
 
-                            # Check each FTS-indexed field for matches
+                            # Check each FTS-indexed field for matches and accumulate score
                             if fts_tables:
+                                search_lower = search_term.lower()
+                                matched_score = 0.0
                                 for fts_table in fts_tables:
                                     fts_table_name = fts_table[0]
                                     index_name = fts_table_name[
@@ -202,33 +228,21 @@ class QueryBuilderMixin(SqlQueryBuilderMixin):
                                         )
                                         continue
 
-                                    if field_value and isinstance(
-                                        field_value, str
-                                    ):
-                                        if (
-                                            search_term.lower()
-                                            in field_value.lower()
-                                        ):
+                                    if field_value is not None:
+                                        field_score = self._score_text_field(
+                                            field_value,
+                                            search_term,
+                                            search_lower,
+                                        )
+                                        if field_score > 0.0:
                                             text_match = True
-                                            break
-                                    elif isinstance(field_value, list):
-                                        for elem in field_value:
-                                            if (
-                                                isinstance(elem, str)
-                                                and search_term.lower()
-                                                in elem.lower()
-                                            ):
-                                                text_match = True
-                                                break
-                                            elif isinstance(
-                                                elem, dict
-                                            ) and self._search_in_value(
-                                                elem, search_term
-                                            ):
-                                                text_match = True
-                                                break
-                                        if text_match:
-                                            break
+                                            matched_score += field_score
+
+                                if text_match:
+                                    document["_textScore"] = (
+                                        document.get("_textScore", 0.0)
+                                        + matched_score
+                                    )
                             else:
                                 # No FTS indexes, search all fields
                                 text_match = unified_text_search(

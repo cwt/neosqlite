@@ -13,7 +13,7 @@ from ...bulk_operations import BulkOperationExecutor
 from ...requests import _parse_bulk_request
 from ...results import BulkWriteResult
 from ..expr_evaluator import ExprEvaluator
-from ..query_helper import QueryHelper
+from ..query_helper import QueryHelper, get_force_fallback
 from ..raw_batch_cursor import RawBatchCursor
 from ..sql_tier_aggregator import SQLTierAggregator
 from ..sql_translator_unified import SQLTranslator
@@ -338,7 +338,8 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
 
         # Optimize $count in SQLite when possible
         if (
-            pipeline
+            not get_force_fallback()
+            and pipeline
             and isinstance(pipeline[-1], dict)
             and "$count" in pipeline[-1]
         ):
@@ -416,7 +417,9 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
             can_process_with_temporary_tables,
         )
 
-        if can_process_with_temporary_tables(pipeline):
+        if not get_force_fallback() and can_process_with_temporary_tables(
+            pipeline
+        ):
             return {
                 "tier": 2,
                 "type": "Temporary Table Aggregation",

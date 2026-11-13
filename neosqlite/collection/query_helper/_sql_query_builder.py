@@ -70,6 +70,11 @@ class SqlQueryBuilderMixin:
         if "$text" not in query:
             return None
 
+        from .utils import get_force_fallback
+
+        if get_force_fallback():
+            return None
+
         text_query = query["$text"]
         if not isinstance(text_query, dict) or "$search" not in text_query:
             return None
@@ -127,6 +132,11 @@ class SqlQueryBuilderMixin:
                                                       tables to clean up, or None.
         """
         if "$text" not in query:
+            return None
+
+        from .utils import get_force_fallback
+
+        if get_force_fallback():
             return None
 
         text_query = query["$text"]
@@ -206,6 +216,11 @@ class SqlQueryBuilderMixin:
         Build a complete FTS query with BM25 score, JOIN, sorting, and pagination.
         """
         if "$text" not in query:
+            return None
+
+        from .utils import get_force_fallback
+
+        if get_force_fallback():
             return None
 
         text_query = query["$text"]

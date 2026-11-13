@@ -33,6 +33,7 @@ def execute_python_aggregation(
     query_engine: "QueryEngine",
     pipeline: list[dict[str, Any]],
     session: Any = None,
+    initial_docs: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Execute *pipeline* entirely in Python (Tier-3 fallback).
 
@@ -40,11 +41,17 @@ def execute_python_aggregation(
     query_engine: The ``QueryEngine`` instance that owns this pipeline.
     pipeline: List of aggregation stage dicts.
     session: Optional client session (currently unused by Tier 3).
+    initial_docs: Optional pre-loaded documents (e.g., for nested $facet
+                  sub-pipelines running purely in Python).
 
     Returns:
     List of result documents after applying all pipeline stages.
     """
-    docs: list[dict[str, Any]] = list(query_engine.find(session=session))
+    docs: list[dict[str, Any]] = (
+        initial_docs
+        if initial_docs is not None
+        else list(query_engine.find(session=session))
+    )
 
     # Store original documents for $$ROOT variable support
     # Each document is wrapped with metadata for variable scoping
@@ -67,6 +74,26 @@ def execute_python_aggregation(
             case "$sort":
                 sort_spec = stage["$sort"]
                 for key, direction in reversed(list(sort_spec.items())):
+                    is_text_score = direction == {"$meta": "textScore"} or (
+                        isinstance(direction, dict)
+                        and direction.get("$meta") == "textScore"
+                    )
+                    if is_text_score:
+
+                        def make_text_score_key(k=key):
+                            def score_sort_key(dc: dict[str, Any]) -> Any:
+                                doc = dc["__doc__"]
+                                return float(
+                                    doc.get("_textScore", doc.get(k, 0.0))
+                                )
+
+                            return score_sort_key
+
+                        docs_with_context.sort(
+                            key=make_text_score_key(),
+                            reverse=True,
+                        )
+                        continue
 
                     def make_sort_key(key, dir):
                         """
@@ -480,43 +507,59 @@ def execute_python_aggregation(
                     min(sample_size, len(docs_with_context)),
                 )
             case "$facet":
+                from ..query_helper.utils import get_force_fallback
+
                 facet_spec = stage["$facet"]
-                facet_tables: dict[str, str] = {}
 
                 # Get input documents
                 sub_docs = [dc["__doc__"] for dc in docs_with_context]
 
-                # Run each sub-pipeline, streaming results to temp tables
-                for facet_name, sub_pipeline in facet_spec.items():
-                    result_table = query_engine.helpers._run_subpipeline(
-                        sub_pipeline, sub_docs
-                    )
-                    facet_tables[facet_name] = result_table
-
-                # Load all results from temp tables and combine
                 facet_results: dict[str, Any] = {}
-                for facet_name, table_name in facet_tables.items():
-                    cursor = query_engine.collection.db.execute(
-                        f"SELECT data FROM {table_name}"
-                    )
-                    from neosqlite.collection.json_helpers import (
-                        neosqlite_json_loads,
-                    )
+                if get_force_fallback():
+                    for facet_name, sub_pipeline in facet_spec.items():
+                        facet_results[facet_name] = (
+                            execute_python_aggregation(
+                                query_engine,
+                                sub_pipeline,
+                                session=session,
+                                initial_docs=deepcopy(sub_docs),
+                            )
+                            if sub_docs
+                            else []
+                        )
+                else:
+                    facet_tables: dict[str, str] = {}
 
-                    facet_results[facet_name] = [
-                        neosqlite_json_loads(row[0])
-                        for row in cursor.fetchall()
-                    ]
-                    # Clean up temp table after loading
-                    try:
-                        query_engine.collection.db.execute(
-                            f"DROP TABLE IF EXISTS {table_name}"
+                    # Run each sub-pipeline, streaming results to temp tables
+                    for facet_name, sub_pipeline in facet_spec.items():
+                        result_table = query_engine.helpers._run_subpipeline(
+                            sub_pipeline, sub_docs
                         )
-                    except Exception as e:
-                        logger.debug(
-                            f"Failed to drop facet temporary table '{table_name}': {e}"
+                        facet_tables[facet_name] = result_table
+
+                    # Load all results from temp tables and combine
+                    for facet_name, table_name in facet_tables.items():
+                        cursor = query_engine.collection.db.execute(
+                            f"SELECT data FROM {table_name}"
                         )
-                        pass
+                        from neosqlite.collection.json_helpers import (
+                            neosqlite_json_loads,
+                        )
+
+                        facet_results[facet_name] = [
+                            neosqlite_json_loads(row[0])
+                            for row in cursor.fetchall()
+                        ]
+                        # Clean up temp table after loading
+                        try:
+                            query_engine.collection.db.execute(
+                                f"DROP TABLE IF EXISTS {table_name}"
+                            )
+                        except Exception as e:
+                            logger.debug(
+                                f"Failed to drop facet temporary table '{table_name}': {e}"
+                            )
+                            pass
 
                 docs_with_context = [
                     {"__doc__": facet_results, "__root__": facet_results}
@@ -1147,63 +1190,77 @@ def execute_python_aggregation(
                     docs_with_context = new_docs_with_context
             case "$collStats":
                 from ...sql_utils import quote_table_name
+                from ..query_helper.utils import get_force_fallback
 
                 coll_stats_spec = (
                     stage.get("$collStats") or stage.get(" $collStats") or {}
                 )
                 table_name = query_engine.collection.name
-                quoted_table = quote_table_name(table_name)
-                db = query_engine.collection.db
-
-                count_cursor = db.execute(
-                    f"SELECT COUNT(*) FROM {quoted_table}"
-                )
-                count = count_cursor.fetchone()[0] or 0
-
-                size = 0
-                try:
-                    size_cursor = db.execute(
-                        f"SELECT SUM(LENGTH(data)) FROM {quoted_table}"
-                    )
-                    size = size_cursor.fetchone()[0] or 0
-                except Exception as e:
-                    logger.debug(
-                        f"Failed to calculate collection size for stats: {e}"
-                    )
-                    pass
-
-                avg_obj_size = size / count if count > 0 else 0
 
                 storage_size = 0
                 total_index_size = 0
                 index_sizes: dict[str, int] = {}
 
-                try:
-                    db.execute(
-                        "CREATE VIRTUAL TABLE IF NOT EXISTS temp.dbstat USING dbstat(main)"
+                if get_force_fallback():
+                    from neosqlite.collection.json_helpers import (
+                        neosqlite_json_dumps,
                     )
 
-                    storage_cursor = db.execute(
-                        "SELECT SUM(pgsize) FROM dbstat WHERE name = ?",
-                        (table_name,),
+                    count = len(docs_with_context)
+                    size = sum(
+                        len(neosqlite_json_dumps(dc["__doc__"]))
+                        for dc in docs_with_context
                     )
-                    storage_size = storage_cursor.fetchone()[0] or 0
+                    avg_obj_size = size / count if count > 0 else 0
+                else:
+                    quoted_table = quote_table_name(table_name)
+                    db = query_engine.collection.db
 
-                    index_cursor = db.execute(
-                        "SELECT name, SUM(pgsize) as size FROM dbstat "
-                        "WHERE tbl_name = ? AND type = 'index' GROUP BY name",
-                        (table_name,),
+                    count_cursor = db.execute(
+                        f"SELECT COUNT(*) FROM {quoted_table}"
                     )
-                    for row in index_cursor.fetchall():
-                        idx_name, idx_size = row
-                        if idx_name and idx_size:
-                            index_sizes[idx_name] = idx_size
-                            total_index_size += idx_size
-                except Exception as e:
-                    logger.debug(
-                        f"Failed to calculate storage/index sizes for stats: {e}"
-                    )
-                    pass
+                    count = count_cursor.fetchone()[0] or 0
+
+                    size = 0
+                    try:
+                        size_cursor = db.execute(
+                            f"SELECT SUM(LENGTH(data)) FROM {quoted_table}"
+                        )
+                        size = size_cursor.fetchone()[0] or 0
+                    except Exception as e:
+                        logger.debug(
+                            f"Failed to calculate collection size for stats: {e}"
+                        )
+                        pass
+
+                    avg_obj_size = size / count if count > 0 else 0
+
+                    try:
+                        db.execute(
+                            "CREATE VIRTUAL TABLE IF NOT EXISTS temp.dbstat USING dbstat(main)"
+                        )
+
+                        storage_cursor = db.execute(
+                            "SELECT SUM(pgsize) FROM dbstat WHERE name = ?",
+                            (table_name,),
+                        )
+                        storage_size = storage_cursor.fetchone()[0] or 0
+
+                        index_cursor = db.execute(
+                            "SELECT name, SUM(pgsize) as size FROM dbstat "
+                            "WHERE tbl_name = ? AND type = 'index' GROUP BY name",
+                            (table_name,),
+                        )
+                        for row in index_cursor.fetchall():
+                            idx_name, idx_size = row
+                            if idx_name and idx_size:
+                                index_sizes[idx_name] = idx_size
+                                total_index_size += idx_size
+                    except Exception as e:
+                        logger.debug(
+                            f"Failed to calculate storage/index sizes for stats: {e}"
+                        )
+                        pass
 
                 db_name = (
                     query_engine.collection._database.name
@@ -1242,5 +1299,19 @@ def execute_python_aggregation(
                 raise MalformedQueryException(
                     f"Aggregation stage '{stage_name}' not supported"
                 )
-    query_engine._notify_tier_change("tier3", pipeline)
-    return [dc["__doc__"] for dc in docs_with_context]
+    if initial_docs is None:
+        query_engine._notify_tier_change("tier3", pipeline)
+    results = []
+    for dc in docs_with_context:
+        doc = dc["__doc__"]
+        if (
+            isinstance(doc, dict)
+            and "_textScore" in doc
+            and (
+                not isinstance(dc.get("__root__"), dict)
+                or "_textScore" not in dc["__root__"]
+            )
+        ):
+            doc.pop("_textScore", None)
+        results.append(doc)
+    return results

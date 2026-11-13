@@ -16,17 +16,30 @@ lifecycle: active
 
 ## Overview
 
-The force fallback kill switch is a debugging and benchmarking feature that allows you to force all aggregation queries to use the Python fallback implementation instead of the SQL optimization path. This is useful for:
+The force fallback kill switch is a debugging, differential testing, and benchmarking feature that forces all logical collection operations (queries, filters, sorts, `min`/`max` bounds, counts, `distinct`, `$expr`, `$text`, datetime queries, CRUD matching, `find_one_and_*`, and aggregation pipelines) to bypass SQL/CTE/temporary-table optimizations (Tiers 1 and 2) and execute in Python Tier 3 as the authoritative reference of correctness.
 
-1. **Benchmarking**: Comparing performance between the optimized SQL path and the Python fallback.
-2. **Debugging**: Isolating issues that may only appear in one of the execution paths.
-3. **Regression Testing**: Ensuring both paths produce identical results.
+> **Note:** GridFS operations are I/O-centric and remain SQL-only; the kill switch does not force GridFS chunk or file operations through Python fallbacks.
+
+This is useful for:
+
+1. **Correctness Reference**: Verifying edge-case semantics against MongoDB-compatible Python Tier 3 execution.
+2. **Benchmarking**: Comparing performance between the optimized SQL/Tier 1–2 paths and the Python Tier 3 fallback.
+3. **Debugging**: Isolating issues that may only appear in one of the execution paths.
+4. **Regression Testing**: Ensuring SQL, temporary table, and Python Tier 3 paths produce identical results.
 
 ## Usage
 
-The kill switch is controlled by a global flag.
+The kill switch is controlled by the `NEOSQLITE_FORCE_FALLBACK` environment variable or a global runtime flag.
 
-### Enabling/Disabling the Kill Switch
+### Enabling via Environment Variable
+
+Set `NEOSQLITE_FORCE_FALLBACK` to `1`, `true`, `yes`, or `on` (case-insensitive) before importing `neosqlite`:
+
+```bash
+NEOSQLITE_FORCE_FALLBACK=1 pytest
+```
+
+### Enabling/Disabling Programmatically
 
 ```python
 import neosqlite.collection.query_helper
@@ -75,7 +88,7 @@ print(f"Speedup: {fallback_time/optimized_time:.2f}x")
 
 ## How It Works
 
-The kill switch works by adding a check at the beginning of the `_build_aggregation_query` method. When the flag is `True`, the method immediately returns `None`, which signals the aggregation engine to use the Python implementation.
+When the kill switch is active (`get_force_fallback() == True`), NeoSQLite disables Tier 1 (SQL translation, `RETURNING`, FTS SQL queries, `$expr` SQL, datetime SQL, `$count` shortcuts, SQL `COUNT`/`DISTINCT`, SQL sorting/pagination/bounds) and Tier 2 (temporary-table aggregation). Logical evaluation routes directly to Python Tier 3, using SQLite only for base document storage reads/writes (`SELECT id, _id, data FROM ...`, `_internal_insert`, `_internal_replace`, `_internal_delete`) and GridFS SQL I/O.
 
 ## Best Practices
 

@@ -1,6 +1,7 @@
 """Utility functions for query helper operations."""
 
 import logging
+import os
 import re
 from typing import Any
 
@@ -117,7 +118,9 @@ def _get_json_function(name: str, jsonb_supported: bool) -> str:
 
 
 # Global flag to force fallback - for benchmarking and debugging
-_FORCE_FALLBACK = False
+_FORCE_FALLBACK = os.environ.get(
+    "NEOSQLITE_FORCE_FALLBACK", ""
+).strip().lower() in ("1", "true", "yes", "on")
 
 
 def _convert_bytes_to_binary(obj: Any) -> Any:

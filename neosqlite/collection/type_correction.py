@@ -119,6 +119,33 @@ def normalize_id_query_for_db(query: dict[str, Any]) -> dict[str, Any]:
     return corrected_query
 
 
+def get_integer_id_for_doc_id(
+    db_connection: Any,
+    collection_name: str,
+    doc_id: Any,
+) -> int:
+    """
+    Resolve a document's _id value (ObjectId, int, str, etc.) to SQLite row id.
+
+    Unlike get_integer_id_for_oid, integer inputs are looked up in the _id
+    column rather than assumed to already be SQLite primary keys.
+    """
+    quoted = quote_table_name(collection_name)
+    lookup_vals = (
+        (str(doc_id), doc_id)
+        if isinstance(doc_id, int) and not isinstance(doc_id, bool)
+        else (str(doc_id) if hasattr(doc_id, "__str__") else doc_id,)
+    )
+    for val in lookup_vals:
+        cursor = db_connection.execute(
+            f"SELECT id FROM {quoted} WHERE _id = ?",
+            (val,),
+        )
+        if row := cursor.fetchone():
+            return row[0]
+    raise ValueError(f"Could not find integer ID for document _id: {doc_id}")
+
+
 def get_integer_id_for_oid(
     db_connection: Any,
     collection_name: str,
