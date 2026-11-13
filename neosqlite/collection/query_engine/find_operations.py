@@ -9,10 +9,17 @@ if TYPE_CHECKING:
 
 from ...sql_utils import quote_table_name
 from ..cursor import Cursor
+from ..json_helpers import neosqlite_json_dumps
 from ..jsonb_support import json_data_column
 
 # Import feature detection
-from ..query_helper import _supports_returning_clause, get_force_fallback
+from ..query_helper import (
+    _convert_bytes_to_binary,
+    _get_json_function,
+    _supports_returning_clause,
+    get_force_fallback,
+)
+from ..query_helper._sql_updates import _extract_preserved_json_expr
 from ..query_helper.utils import build_upsert_base_document
 from ..raw_batch_cursor import RawBatchCursor
 from ..type_utils import validate_session
@@ -175,6 +182,7 @@ class FindOperationsMixin(QueryEngineProtocol):
             params,
         ) = self._prepare_find_and_modify(filter, sort)
         if force_fallback or where_clause is None:
+            self._notify_tier_change("tier3", [filter])
             # Fallback: use Python-based approach for complex queries
             cursor = self.find(filter, session=session)
             if sort:
@@ -275,6 +283,7 @@ class FindOperationsMixin(QueryEngineProtocol):
             params,
         ) = self._prepare_find_and_modify(filter, sort)
         if force_fallback or where_clause is None:
+            self._notify_tier_change("tier3", [filter, replacement])
             # Fallback: use Python-based approach for complex queries
             cursor = self.find(filter, session=session)
             if sort:
@@ -306,48 +315,59 @@ class FindOperationsMixin(QueryEngineProtocol):
         if use_returning:
             # Tier-1: Use RETURNING clause for atomic find-and-replace
             jsonb = self.jsonb.jsonb_supported
-            cmd = (
-                f"SELECT id, _id, {json_data_column(jsonb)} as data "
-                f"FROM {quote_table_name(self.collection.name)} "
-                f"{where_clause} {order_by} LIMIT 1"
-            )
-            cursor = self.collection.db.execute(cmd, params)
-            if row := cursor.fetchone():
-                int_id, stored_id, data = row
-                original_doc = self.collection._load_with_stored_id(
-                    int_id, data, stored_id
+            tbl = quote_table_name(self.collection.name)
+            data_col = json_data_column(jsonb)
+            if return_document:
+                replacement_copy = _convert_bytes_to_binary(dict(replacement))
+                repl_json = neosqlite_json_dumps(replacement_copy)
+                json_val_expr = "jsonb(?)" if jsonb else "json(?)"
+                if "_id" in replacement_copy:
+                    set_data_sql = json_val_expr
+                else:
+                    set_func = _get_json_function("set", jsonb)
+                    extract_func = _get_json_function("extract", jsonb)
+                    preserved_id = _extract_preserved_json_expr(
+                        extract_func, "data", "'$._id'"
+                    )
+                    set_data_sql = (
+                        f"{set_func}({json_val_expr}, '$._id', "
+                        f"CASE WHEN json_type(data, '$._id') IS NOT NULL "
+                        f"THEN {preserved_id} ELSE _id END)"
+                    )
+                update_cmd = (
+                    f"UPDATE {tbl} SET data = {set_data_sql} "
+                    f"WHERE id = (SELECT id FROM {tbl} {where_clause} {order_by} LIMIT 1) "
+                    f"RETURNING id, _id, {data_col} as data"
                 )
-                # Perform the replace
-                self.helpers._internal_replace(int_id, replacement)
-                if return_document:
-                    # Use RETURNING to get the updated document
-                    jsonb = self.jsonb.jsonb_supported
-                    data_col = json_data_column(jsonb)
-                    update_cmd = (
-                        f"UPDATE {quote_table_name(self.collection.name)} "
-                        f"SET data = ? WHERE id = ? "
-                        f"RETURNING id, _id, {data_col} as data"
+                update_row = self.collection.db.execute(
+                    update_cmd, [repl_json] + list(params)
+                ).fetchone()
+                if update_row:
+                    self._notify_tier_change("tier1", [filter, replacement])
+                    doc = self.collection._load_with_stored_id(
+                        update_row[0], update_row[2], update_row[1]
                     )
-                    from ..json_helpers import neosqlite_json_dumps
-
-                    update_cursor = self.collection.db.execute(
-                        update_cmd, (neosqlite_json_dumps(replacement), int_id)
+                    if projection is not None:
+                        doc = self.helpers._apply_projection(projection, doc)
+                    return doc
+            else:
+                cmd = (
+                    f"SELECT id, _id, {data_col} as data "
+                    f"FROM {tbl} {where_clause} {order_by} LIMIT 1"
+                )
+                if row := self.collection.db.execute(cmd, params).fetchone():
+                    int_id, stored_id, data = row
+                    original_doc = self.collection._load_with_stored_id(
+                        int_id, data, stored_id
                     )
-                    update_row = update_cursor.fetchone()
-                    if update_row:
-                        doc = self.collection._load_with_stored_id(
-                            update_row[0], update_row[2], update_row[1]
+                    self.helpers._internal_replace(int_id, replacement)
+                    self._notify_tier_change("tier1", [filter, replacement])
+                    if projection is not None:
+                        original_doc = self.helpers._apply_projection(
+                            projection, original_doc
                         )
-                        if projection is not None:
-                            doc = self.helpers._apply_projection(
-                                projection, doc
-                            )
-                        return doc
-                if projection is not None:
-                    original_doc = self.helpers._apply_projection(
-                        projection, original_doc
-                    )
-                return original_doc
+                    return original_doc
+            self._notify_tier_change("tier1", [filter, replacement])
             # No document found, handle upsert
             if upsert:
                 res = self.insert_one(replacement, session=session)
@@ -438,6 +458,7 @@ class FindOperationsMixin(QueryEngineProtocol):
             params,
         ) = self._prepare_find_and_modify(filter, sort)
         if force_fallback or where_clause is None:
+            self._notify_tier_change("tier3", [filter, update])
             # Fallback: use Python-based approach for complex queries
             cursor = self.find(filter, session=session)
             if sort:
@@ -469,42 +490,88 @@ class FindOperationsMixin(QueryEngineProtocol):
                 pass
 
             if upsert:
-                # Basic upsert logic
-                new_doc = build_upsert_base_document(filter)
-                res = self.insert_one(new_doc, session=session)
-                self.update_one(
-                    {"_id": res.inserted_id},
+                return self._upsert_and_return(
+                    filter,
                     update,
-                    array_filters=array_filters,
-                    session=session,
+                    projection,
+                    return_document,
+                    array_filters,
+                    session,
                 )
-                if return_document:
-                    return self.find_one(
-                        {"_id": res.inserted_id}, projection, session=session
-                    )
-                return None
             return None
 
         if use_returning:
-            # Tier-1: Use RETURNING clause for atomic find-and-update
+            # Atomic single-statement RETURNING when returning AFTER doc and SQL-capable
             jsonb = self.jsonb.jsonb_supported
+            tbl = quote_table_name(self.collection.name)
+            data_col = json_data_column(jsonb)
+            sql_expr_res = self.helpers._build_set_data_expression(
+                update, array_filters
+            )
+            inc_mul_ok = (
+                sql_expr_res is not None
+                and self.helpers._validate_inc_mul_sql(
+                    where_clause,
+                    params,
+                    update,
+                    order_by=order_by,
+                    limit_one=True,
+                )
+            )
+            if return_document and sql_expr_res is not None and inc_mul_ok:
+                data_expr, expr_params, op_tier = sql_expr_res
+                if data_expr == "data":
+                    row = self.collection.db.execute(
+                        f"SELECT id, _id, {data_col} as data "
+                        f"FROM {tbl} {where_clause} {order_by} LIMIT 1",
+                        params,
+                    ).fetchone()
+                else:
+                    row = self.collection.db.execute(
+                        f"UPDATE {tbl} SET data = {data_expr} "
+                        f"WHERE id = (SELECT id FROM {tbl} {where_clause} {order_by} LIMIT 1) "
+                        f"RETURNING id, _id, {data_col} as data",
+                        expr_params + list(params),
+                    ).fetchone()
+                self._notify_tier_change(op_tier, [filter, update])
+                if row:
+                    doc = self.collection._load_with_stored_id(
+                        row[0], row[2], row[1]
+                    )
+                    if projection is not None:
+                        doc = self.helpers._apply_projection(projection, doc)
+                    return doc
+                if upsert:
+                    return self._upsert_and_return(
+                        filter,
+                        update,
+                        projection,
+                        return_document,
+                        array_filters,
+                        session,
+                    )
+                return None
+
             cmd = (
-                f"SELECT id, _id, {json_data_column(jsonb)} as data "
-                f"FROM {quote_table_name(self.collection.name)} "
-                f"{where_clause} {order_by} LIMIT 1"
+                f"SELECT id, _id, {data_col} as data "
+                f"FROM {tbl} {where_clause} {order_by} LIMIT 1"
             )
             cursor = self.collection.db.execute(cmd, params)
+            op_tier = (
+                sql_expr_res[2]
+                if (sql_expr_res is not None and inc_mul_ok)
+                else "tier3"
+            )
+            self._notify_tier_change(op_tier, [filter, update])
             if row := cursor.fetchone():
                 int_id, stored_id, data = row
                 original_doc = self.collection._load_with_stored_id(
                     int_id, data, stored_id
                 )
-                # Perform the update
                 self.helpers._internal_update(
                     int_id, update, original_doc, array_filters, filter
                 )
                 if return_document:
-                    # Fetch the updated document
                     return self.find_one(
                         {"_id": original_doc["_id"]},
                         projection,
@@ -515,25 +582,18 @@ class FindOperationsMixin(QueryEngineProtocol):
                         projection, original_doc
                     )
                 return original_doc
-            # No document found, handle upsert
             if upsert:
-                new_doc = build_upsert_base_document(filter)
-                res = self.insert_one(new_doc, session=session)
-                self.update_one(
-                    {"_id": res.inserted_id},
+                return self._upsert_and_return(
+                    filter,
                     update,
-                    array_filters=array_filters,
-                    session=session,
+                    projection,
+                    return_document,
+                    array_filters,
+                    session,
                 )
-                if return_document:
-                    return self.find_one(
-                        {"_id": res.inserted_id}, projection, session=session
-                    )
-                return None
             return None
         else:
-            # Tier-1 (Fallback): Two-step process
-            # Used when RETURNING clause is not supported (SQLite < 3.35.0)
+            # Fallback: Two-step process when RETURNING is not supported
             jsonb = self.jsonb.jsonb_supported
             cmd = (
                 f"SELECT id, _id, {json_data_column(jsonb)} as data "
@@ -562,19 +622,34 @@ class FindOperationsMixin(QueryEngineProtocol):
                 return original_doc
 
             if upsert:
-                # Basic upsert logic
-                new_doc = build_upsert_base_document(filter)
-                res = self.insert_one(new_doc, session=session)
-                self.update_one(
-                    {"_id": res.inserted_id},
+                return self._upsert_and_return(
+                    filter,
                     update,
-                    array_filters=array_filters,
-                    session=session,
+                    projection,
+                    return_document,
+                    array_filters,
+                    session,
                 )
-                if return_document:
-                    return self.find_one(
-                        {"_id": res.inserted_id}, projection, session=session
-                    )
-                return None
 
             return None
+
+    def _upsert_and_return(
+        self,
+        filter: dict[str, Any],
+        update: dict[str, Any],
+        projection: dict[str, Any] | None,
+        return_document: bool,
+        array_filters: list[dict[str, Any]] | None,
+        session: ClientSession | None,
+    ) -> dict[str, Any] | None:
+        """Apply update (including $setOnInsert) to upsert doc and optionally return it."""
+        new_doc = build_upsert_base_document(filter)
+        updated_doc, _ = self.helpers._internal_update(
+            0, update, new_doc, array_filters, filter
+        )
+        res = self.insert_one(updated_doc, session=session)
+        if return_document:
+            return self.find_one(
+                {"_id": res.inserted_id}, projection, session=session
+            )
+        return None

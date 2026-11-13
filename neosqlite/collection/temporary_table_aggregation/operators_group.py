@@ -814,10 +814,10 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                 # 2 columns: id, data OR _id, data (depending on has_id_column)
                 # 1 column: data only
                 if has_id_column and has_underscore_id_column and len(row) == 3:
-                    # _id is provided as a separate column, use it directly
+                    # _id is provided as a separate column, use it when non-null
                     doc = neosqlite_json_loads(row[2])
                     # Only set _id from column if it's not already in the JSON
-                    if "_id" not in doc:
+                    if "_id" not in doc and row[1] is not None:
                         doc["_id"] = self.collection._parse_stored_id(row[1])
                 elif has_id_column and len(row) == 2:
                     # Only id column, no separate _id column
@@ -825,7 +825,7 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                 elif len(row) == 2 and not has_id_column:
                     # _id and data columns (no id)
                     doc = neosqlite_json_loads(row[1])
-                    if "_id" not in doc:
+                    if "_id" not in doc and row[0] is not None:
                         doc["_id"] = self.collection._parse_stored_id(row[0])
                 else:
                     # Only data column

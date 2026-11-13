@@ -121,6 +121,23 @@ class StringMixin(BaseSqlMixin):
                 len_sql, len_params = self._convert_operand_to_sql(operands[2])
                 sql = f"substr({str_sql}, {start_sql} + 1, {len_sql})"
                 return sql, str_params + start_params + len_params
+            case "$substrCP":
+                if not isinstance(operands, list):
+                    operands = [operands]
+                if len(operands) != 3:
+                    raise ValueError("$substrCP requires exactly 3 operands")
+                str_sql, str_params = self._convert_operand_to_sql(operands[0])
+                start_sql, start_params = self._convert_operand_to_sql(
+                    operands[1]
+                )
+                len_sql, len_params = self._convert_operand_to_sql(operands[2])
+                sql = (
+                    f"(WITH _sc(s, st, ln) AS (SELECT {str_sql}, CAST({start_sql} AS INTEGER), CAST({len_sql} AS INTEGER)) "
+                    f"SELECT CASE WHEN s IS NULL OR st IS NULL OR ln IS NULL THEN NULL "
+                    f"WHEN st < 0 OR ln < 0 THEN '' "
+                    f"ELSE substr(CAST(s AS TEXT), st + 1, ln) END FROM _sc)"
+                )
+                return sql, str_params + start_params + len_params
             case "$trim":
                 if not isinstance(operands, dict) or "input" not in operands:
                     raise ValueError("$trim requires 'input' field")

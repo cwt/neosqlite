@@ -416,7 +416,7 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
                     "$$REMOVE is handled at the application level (use REMOVE_SENTINEL)"
                 )
             case _:
-                # Check for custom variables defined via $let
+                # Check for custom variables defined via $let / $map / $filter / $reduce
                 if (
                     var_name in context.variables
                     and context.variables[var_name] is not None
@@ -429,6 +429,32 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
                         and isinstance(var_val[0], str)
                     ):
                         return var_val
+
+                # Check dotted subpaths on variable bindings (e.g., $$this.price)
+                if "." in var_name:
+                    base_var, sub_path = var_name.split(".", 1)
+                    if (
+                        base_var in context.variables
+                        and context.variables[base_var] is not None
+                    ):
+                        var_val = context.variables[base_var]
+                        if (
+                            isinstance(var_val, tuple)
+                            and len(var_val) == 2
+                            and isinstance(var_val[0], str)
+                        ):
+                            from ..json_path_utils import (
+                                build_json_extract_expression,
+                            )
+
+                            expr_sql = build_json_extract_expression(
+                                var_val[0], sub_path
+                            )
+                            if self.jsonb.jsonb_supported:
+                                expr_sql = expr_sql.replace(
+                                    "json_extract", "jsonb_extract"
+                                )
+                            return expr_sql, list(var_val[1])
 
                 # Unknown variable
                 raise NotImplementedError(

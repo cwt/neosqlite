@@ -56,7 +56,7 @@ def _validate_node(data: Any, schema: Any) -> bool:
                     return False
 
     # Check minimum/maximum
-    if isinstance(data, (int, float)):
+    if isinstance(data, (int, float)) and not isinstance(data, bool):
         if "minimum" in schema and data < schema["minimum"]:
             return False
         if "maximum" in schema and data > schema["maximum"]:
@@ -124,12 +124,16 @@ def _check_single_type(data: Any, t: str) -> bool:
         case "string":
             return isinstance(data, str)
         case "number":
-            return isinstance(data, (int, float))
+            return isinstance(data, (int, float)) and not isinstance(
+                data, bool
+            )
         case "integer" | "int" | "long":
             # In Python, we treat large ints as long
             return isinstance(data, int) and not isinstance(data, bool)
         case "double" | "decimal":
-            return isinstance(data, (float, int))
+            return isinstance(data, (float, int)) and not isinstance(
+                data, bool
+            )
         case "object":
             return isinstance(data, dict)
         case "array":

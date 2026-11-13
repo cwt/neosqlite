@@ -11,14 +11,277 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..sql_utils import quote_table_name
 from .expr_evaluator import (
     AggregationContext,
+    ExprEvaluator,
     _is_aggregation_variable,
     _is_expression,
 )
+from .json_helpers import neosqlite_json_dumps
 from .json_path_utils import parse_json_path
 from .pipeline_context import PipelineContext
 from .query_helper.utils import _get_json_function
+
+
+def _graph_lookup_scalar_or_oid(expr_sql: str) -> str:
+    """Normalize encoded ObjectId JSON dicts to their 24-hex id string."""
+    return (
+        f"CASE WHEN typeof({expr_sql}) = 'text' AND json_valid({expr_sql}) "
+        f"AND json_extract({expr_sql}, '$.__neosqlite_objectid__') = 1 "
+        f"THEN json_extract({expr_sql}, '$.id') ELSE {expr_sql} END"
+    )
+
+
+def build_redact_where_sql(
+    evaluator: Any, spec: Any
+) -> tuple[str | None, list[Any]]:
+    """Translate $redact specs using only $$KEEP / $$PRUNE to a SQL WHERE clause.
+
+    Returns (where_clause, params) where where_clause is '' for keep-all or
+    'WHERE ...', or (None, []) when Python fallback (e.g. $$DESCEND) is needed.
+    """
+    if spec == "$$KEEP":
+        return "", []
+    if spec == "$$PRUNE":
+        return "WHERE 0", []
+    if not isinstance(spec, dict) or "$cond" not in spec:
+        return None, []
+
+    cond = spec["$cond"]
+    if isinstance(cond, dict):
+        if "if" not in cond or "then" not in cond or "else" not in cond:
+            return None, []
+        if_expr, then_val, else_val = cond["if"], cond["then"], cond["else"]
+    elif isinstance(cond, list) and len(cond) == 3:
+        if_expr, then_val, else_val = cond
+    else:
+        return None, []
+
+    valid_vals = ("$$KEEP", "$$PRUNE")
+    if then_val not in valid_vals or else_val not in valid_vals:
+        return None, []
+
+    if then_val == else_val:
+        return ("" if then_val == "$$KEEP" else "WHERE 0"), []
+
+    expr_sql, expr_params = evaluator.evaluate_for_aggregation(if_expr)
+    if not expr_sql:
+        return None, []
+
+    if then_val == "$$KEEP":
+        return f"WHERE COALESCE(({expr_sql}), 0) != 0", list(expr_params)
+    return f"WHERE NOT COALESCE(({expr_sql}), 0)", list(expr_params)
+
+
+def build_graph_lookup_parts(
+    collection: Any,
+    jsonb_supported: bool,
+    source_table: str,
+    recurse_cte: str,
+    spec: dict[str, Any],
+    has_root: bool = False,
+) -> tuple[str, str, list[Any]] | None:
+    """Build SQL pieces (recursive CTE query, final SELECT, params) for $graphLookup."""
+    if not isinstance(spec, dict):
+        return None
+
+    from_collection = spec.get("from")
+    start_with = spec.get("startWith")
+    connect_from_field = spec.get("connectFromField")
+    connect_to_field = spec.get("connectToField")
+    as_field = spec.get("as")
+    max_depth = spec.get("maxDepth")
+    depth_field = spec.get("depthField")
+    restrict_search = spec.get("restrictSearchWithMatch")
+
+    if not (
+        isinstance(from_collection, str)
+        and from_collection
+        and start_with is not None
+        and isinstance(connect_from_field, str)
+        and connect_from_field
+        and isinstance(connect_to_field, str)
+        and connect_to_field
+        and isinstance(as_field, str)
+        and as_field
+    ):
+        return None
+
+    if max_depth is not None and (
+        not isinstance(max_depth, int)
+        or isinstance(max_depth, bool)
+        or max_depth < 0
+    ):
+        return None
+
+    if restrict_search is not None and not isinstance(restrict_search, dict):
+        return None
+
+    quoted_target = quote_table_name(str(from_collection))
+
+    # Build startWith expression using json_extract (reads both JSON and JSONB as SQL types)
+    start_params: list[Any] = []
+    if start_with == "$_id":
+        start_sql = "p._id"
+        is_arr_expr = "0"
+    elif (
+        isinstance(start_with, str)
+        and start_with.startswith("$")
+        and not start_with.startswith("$$")
+    ):
+        sw_path = parse_json_path(start_with[1:])
+        start_sql = f"json_extract(p.data, '{sw_path}')"
+        is_arr_expr = f"(CASE WHEN json_type(p.data, '{sw_path}') = 'array' THEN 1 ELSE 0 END)"
+    elif isinstance(start_with, list):
+        start_sql = "?"
+        start_params = [neosqlite_json_dumps(start_with)]
+        is_arr_expr = "1"
+    else:
+        p_eval = ExprEvaluator(data_column="p.data", db_connection=None)
+        compiled_sw, sw_params = p_eval.build_select_expression(start_with)
+        if compiled_sw is None:
+            return None
+        start_sql = compiled_sw
+        start_params = list(sw_params)
+        is_arr_expr = (
+            "(CASE WHEN typeof(_sw_val) = 'text' AND json_valid(_sw_val) "
+            "AND json_type(_sw_val) = 'array' THEN 1 ELSE 0 END)"
+        )
+
+    restrict_where = ""
+    restrict_params: list[Any] = []
+    if restrict_search:
+        from .query_helper import QueryHelper
+
+        target_coll = collection.database.get_collection(from_collection)
+        helper = QueryHelper(target_coll)
+        query_result = helper._build_simple_where_clause(restrict_search)
+        if not query_result:
+            return None
+        r_sql, r_params, _ = query_result
+        r_sql = r_sql.strip()
+        if r_sql.upper().startswith("WHERE "):
+            r_sql = r_sql[6:]
+        for func in (
+            "json_extract",
+            "jsonb_extract",
+            "json_type",
+            "json_each",
+            "jsonb_each",
+        ):
+            r_sql = r_sql.replace(f"{func}(data", f"{func}(t.data")
+        r_sql = r_sql.replace(f"{quoted_target}._id", "t._id")
+        r_sql = r_sql.replace(f"{quoted_target}.id", "t.id")
+        restrict_where = f"AND ({r_sql})"
+        restrict_params = list(r_params)
+
+    def target_match(val_sql: str) -> str:
+        norm_val = _graph_lookup_scalar_or_oid(val_sql)
+        if connect_to_field == "_id":
+            return f"t._id = {norm_val}"
+        to_path = parse_json_path(connect_to_field)
+        scalar_to = _graph_lookup_scalar_or_oid(
+            f"json_extract(t.data, '{to_path}')"
+        )
+        return (
+            f"(CASE WHEN json_type(t.data, '{to_path}') = 'array' "
+            f"THEN EXISTS (SELECT 1 FROM json_each(t.data, '{to_path}') _te "
+            f"WHERE {_graph_lookup_scalar_or_oid('_te.value')} = {norm_val}) "
+            f"ELSE {scalar_to} = {norm_val} END)"
+        )
+
+    if start_with == "$_id" or (
+        isinstance(start_with, str) and start_with.startswith("$")
+    ) or isinstance(start_with, list):
+        p_subquery = (
+            f"SELECT p.id AS _pid, ({start_sql}) AS _sw, "
+            f"{is_arr_expr} AS _sw_arr FROM {source_table} p"
+        )
+    else:
+        p_subquery = (
+            f"SELECT _pid, _sw_val AS _sw, {is_arr_expr} AS _sw_arr "
+            f"FROM (SELECT p.id AS _pid, ({start_sql}) AS _sw_val FROM {source_table} p)"
+        )
+
+    start_points_sql = f"""
+        SELECT
+            _p._pid AS original_id,
+            t._id AS found_id,
+            t.data AS found_data,
+            0 AS depth,
+            ',' || CAST(t.id AS TEXT) || ',' AS visited
+        FROM ({p_subquery}) _p
+        JOIN {quoted_target} t ON (
+            CASE WHEN _p._sw_arr = 1
+            THEN EXISTS (
+                SELECT 1 FROM json_each(_p._sw) _se
+                WHERE _se.value IS NOT NULL AND {target_match('_se.value')}
+            )
+            ELSE _p._sw IS NOT NULL AND {target_match('_p._sw')}
+            END
+        )
+        WHERE 1=1 {restrict_where}
+    """
+
+    if connect_from_field == "_id":
+        rec_join_cond = f"r.found_id IS NOT NULL AND {target_match('r.found_id')}"
+    else:
+        from_path = parse_json_path(connect_from_field)
+        scalar_from = f"json_extract(r.found_data, '{from_path}')"
+        rec_join_cond = (
+            f"CASE WHEN json_type(r.found_data, '{from_path}') = 'array' "
+            f"THEN EXISTS (SELECT 1 FROM json_each(r.found_data, '{from_path}') _re "
+            f"WHERE _re.value IS NOT NULL AND {target_match('_re.value')}) "
+            f"ELSE {scalar_from} IS NOT NULL AND {target_match(scalar_from)} END"
+        )
+
+    max_depth_cond = "AND r.depth < ?" if max_depth is not None else ""
+    recursive_step_sql = f"""
+        SELECT
+            r.original_id,
+            t._id AS found_id,
+            t.data AS found_data,
+            r.depth + 1 AS depth,
+            r.visited || CAST(t.id AS TEXT) || ',' AS visited
+        FROM {recurse_cte} r
+        JOIN {quoted_target} t ON ({rec_join_cond})
+        WHERE INSTR(r.visited, ',' || CAST(t.id AS TEXT) || ',') = 0
+        {max_depth_cond} {restrict_where}
+    """
+
+    recurse_sql = f"{start_points_sql} UNION ALL {recursive_step_sql}"
+    rec_params = (
+        start_params
+        + restrict_params
+        + ([max_depth] if max_depth is not None else [])
+        + restrict_params
+    )
+
+    json_set_func = "jsonb_set" if jsonb_supported else "json_set"
+    inner_doc = (
+        f"{json_set_func}(sub.found_data, '{parse_json_path(str(depth_field))}', sub.depth)"
+        if depth_field
+        else "sub.found_data"
+    )
+    elem_expr = (
+        f"json(CASE WHEN json_type(sub.found_data, '$._id') IS NOT NULL "
+        f"THEN {inner_doc} ELSE {json_set_func}({inner_doc}, '$._id', sub.found_id) END)"
+    )
+    group_expr = (
+        f"json(COALESCE((SELECT json_group_array({elem_expr}) "
+        f"FROM (SELECT found_id, found_data, MIN(depth) AS depth "
+        f"FROM {recurse_cte} WHERE original_id = p.id GROUP BY found_id) sub), '[]'))"
+    )
+    data_expr = (
+        f"json({json_set_func}(p.data, '{parse_json_path(str(as_field))}', {group_expr}))"
+    )
+    select_parts = ["p.id AS id", "p._id AS _id", f"{data_expr} AS data"]
+    if has_root:
+        select_parts.append("p.root_data")
+    select_sql = f"SELECT {', '.join(select_parts)} FROM {source_table} p"
+
+    return recurse_sql, select_sql, rec_params
 
 
 class StageBuildersMixin:
@@ -31,6 +294,42 @@ class StageBuildersMixin:
 
     def _get_json_extract(self, path: str | None = None) -> str: ...  # type: ignore[empty-body]
     def _get_json_set(self) -> str: ...  # type: ignore[empty-body]
+    def can_optimize_pipeline(self, pipeline: list[dict[str, Any]]) -> bool: ...  # type: ignore[empty-body]
+    def _pipeline_needs_root(self, pipeline: list[dict[str, Any]]) -> bool: ...  # type: ignore[empty-body]
+
+    def _build_stage_sequence(
+        self,
+        pipeline: list[dict[str, Any]],
+        prev_stage: str,
+        cte_prefix: str,
+        context: PipelineContext,
+        needs_root: bool = False,
+    ) -> tuple[str | None, list[tuple[str, str, list[Any]]]]:
+        """Compile a sequence of stages into ordered (cte_name, cte_sql, cte_params) triples."""
+        ctes: list[tuple[str, str, list[Any]]] = []
+        for i, stage in enumerate(pipeline):
+            stage_name = next(iter(stage.keys()))
+            stage_spec = stage[stage_name]
+            context.stage_index = i
+            cte_name = f"{cte_prefix}{i}"
+
+            stage_sql, stage_params = self._build_stage_sql(
+                stage_name,
+                stage_spec,
+                prev_stage,
+                context,
+                preserve_root=(i == 0 and needs_root),
+            )
+            if stage_sql is None:
+                return None, []
+
+            for aux_name, aux_sql, aux_p in context.drain_pre_ctes():
+                ctes.append((aux_name, aux_sql, aux_p))
+
+            ctes.append((cte_name, stage_sql, stage_params))
+            prev_stage = cte_name
+
+        return prev_stage, ctes
 
     def _build_stage_sql(
         self,
@@ -98,8 +397,12 @@ class StageBuildersMixin:
                 return self._build_merge_sql(stage_spec, prev_stage, context)
             case "$densify":
                 return self._build_densify_sql(stage_spec, prev_stage, context)
+            case "$graphLookup":
+                return self._build_graph_lookup_sql(
+                    stage_spec, prev_stage, context
+                )
             case "$facet":
-                return None, []  # $facet not supported in SQL tier
+                return self._build_facet_sql(stage_spec, prev_stage, context)
             case _:
                 return None, []
 
@@ -148,8 +451,7 @@ class StageBuildersMixin:
 
         # MongoDB includes _id by default in $project unless explicitly excluded (_id: 0) (#144)
         include_id = spec.get("_id", 1) != 0
-        if include_id:
-            select_parts.append("_id")
+        select_parts.append("_id" if include_id else "NULL AS _id")
 
         if preserve_root:
             select_parts.append("data AS root_data")
@@ -171,7 +473,7 @@ class StageBuildersMixin:
             fields_to_remove = [
                 field
                 for field, value in spec.items()
-                if value == 0 and field != "_id"
+                if value == 0 and (field != "_id" or not include_id)
             ]
             if fields_to_remove:
                 json_remove_func = f"{self.jsonb.json_function_prefix}_remove"
@@ -515,42 +817,20 @@ class StageBuildersMixin:
         Optimizes KEEP/PRUNE patterns into a WHERE clause.
         Falls back to Python for DESCEND pattern as it requires recursive JSON modification.
         """
-        if not isinstance(spec, dict):
+        where_clause, expr_params = build_redact_where_sql(
+            self.evaluator, spec
+        )
+        if where_clause is None:
             return None, []
 
-        # Handle common pattern: {$cond: {if: <expr>, then: "$$KEEP", else: "$$PRUNE"}}
-        # or {$cond: {if: <expr>, then: "$$PRUNE", else: "$$KEEP"}}
-        cond = spec.get("$cond")
-        if cond and isinstance(cond, dict):
-            if_expr = cond.get("if")
-            then_val = cond.get("then")
-            else_val = cond.get("else")
+        select_parts = ["id", "_id", "data"]
+        if context.has_root:
+            select_parts.append("root_data")
 
-            # We can only optimize if it's strictly KEEP/PRUNE at the top level
-            valid_vals = ("$$KEEP", "$$PRUNE")
-            if then_val in valid_vals and else_val in valid_vals:
-                expr_sql, expr_params = self.evaluator.evaluate_for_aggregation(
-                    if_expr
-                )
-                if not expr_sql:
-                    return None, []
-
-                # If then is KEEP, it's like WHERE condition.
-                # If then is PRUNE, it's like WHERE NOT condition.
-                if then_val == "$$KEEP":
-                    where_clause = f"WHERE ({expr_sql})"
-                else:
-                    where_clause = f"WHERE NOT ({expr_sql})"
-
-                select_parts = ["id", "_id", "data"]
-                if context.has_root:
-                    select_parts.append("root_data")
-
-                sql = f"SELECT {', '.join(select_parts)} FROM {prev_stage} {where_clause}"
-                return sql, expr_params
-
-        # Fall back to Python for anything else (especially $$DESCEND)
-        return None, []
+        sql = f"SELECT {', '.join(select_parts)} FROM {prev_stage}"
+        if where_clause:
+            sql = f"{sql} {where_clause}"
+        return sql, expr_params
 
     def _build_lookup_sql(self, spec, prev_stage, context):
         from ..sql_utils import quote_table_name
@@ -564,7 +844,6 @@ class StageBuildersMixin:
         if not from_coll or not as_field:
             return None, []
 
-        json_extract_func = f"{self.jsonb.json_function_prefix}_extract"
         json_set_func = self._get_json_set()
 
         if pipeline:
@@ -585,12 +864,31 @@ class StageBuildersMixin:
             if not pipeline_sql:
                 return None, []
 
-            local_expr = f"{json_extract_func}(t1.data, '{parse_json_path(local_field)}')"
+            local_expr = (
+                "t1._id"
+                if local_field == "_id"
+                else _graph_lookup_scalar_or_oid(
+                    f"json_extract(t1.data, '{parse_json_path(local_field)}')"
+                )
+            )
+            foreign_expr = (
+                "pipeline_result._id"
+                if foreign_field == "_id"
+                else _graph_lookup_scalar_or_oid(
+                    f"json_extract(pipeline_result.data, '{parse_json_path(foreign_field)}')"
+                )
+            )
 
             joined_data_expr = f"""
-                (SELECT json_group_array(json_set(data, '$._id', _id))
+                (SELECT json_group_array(
+                    json(CASE
+                        WHEN json_type(pipeline_result.data, '$._id') IS NOT NULL
+                        THEN pipeline_result.data
+                        ELSE json_set(pipeline_result.data, '$._id', pipeline_result._id)
+                    END)
+                 )
                  FROM ({pipeline_sql}) AS pipeline_result
-                 WHERE json_extract(data, '{parse_json_path(foreign_field)}') = {local_expr})
+                 WHERE {foreign_expr} = {local_expr})
             """
 
             data_expr = f"json({json_set_func}(t1.data, '{parse_json_path(as_field)}', json({joined_data_expr})))"
@@ -609,13 +907,27 @@ class StageBuildersMixin:
             return None, []
 
         local_expr = (
-            f"{json_extract_func}(t1.data, '{parse_json_path(local_field)}')"
+            "t1._id"
+            if local_field == "_id"
+            else _graph_lookup_scalar_or_oid(
+                f"json_extract(t1.data, '{parse_json_path(local_field)}')"
+            )
         )
         foreign_expr = (
-            f"{json_extract_func}(t2.data, '{parse_json_path(foreign_field)}')"
+            "t2._id"
+            if foreign_field == "_id"
+            else _graph_lookup_scalar_or_oid(
+                f"json_extract(t2.data, '{parse_json_path(foreign_field)}')"
+            )
         )
 
-        joined_data_expr = f"json_group_array({json_set_func}(t2.data, '$._id', t2._id)) FILTER (WHERE t2.id IS NOT NULL)"
+        joined_data_expr = (
+            f"json_group_array("
+            f"json(CASE "
+            f"WHEN json_type(t2.data, '$._id') IS NOT NULL THEN t2.data "
+            f"ELSE {json_set_func}(t2.data, '$._id', t2._id) END)"
+            f") FILTER (WHERE t2.id IS NOT NULL)"
+        )
         data_expr = f"json({json_set_func}(t1.data, '{parse_json_path(as_field)}', json({joined_data_expr})))"
 
         select_parts = ["t1.id", "t1._id", f"{data_expr} AS data"]
@@ -673,70 +985,77 @@ class StageBuildersMixin:
 
         step = range_spec.get("step")
         bounds = range_spec.get("bounds")
+        unit = range_spec.get("unit")
 
-        if step is not None and isinstance(step, (int, float)) and step <= 0:
+        if (
+            step is not None
+            and isinstance(step, (int, float))
+            and not isinstance(step, bool)
+            and step <= 0
+        ):
             raise ValueError(
                 f"$densify step must be greater than 0, got {step}"
             )
 
-        if not step or not bounds:
+        if unit is not None or "." in field:
             return None, []
 
-        if len(bounds) != 2:
+        if (
+            not step
+            or not isinstance(step, (int, float))
+            or isinstance(step, bool)
+        ):
             return None, []
 
-        all_params = []
+        if not isinstance(bounds, list) or len(bounds) != 2:
+            return None, []
+
+        lower_bound, upper_bound = bounds[0], bounds[1]
+        if (
+            isinstance(lower_bound, bool)
+            or isinstance(upper_bound, bool)
+            or not isinstance(lower_bound, (int, float))
+            or not isinstance(upper_bound, (int, float))
+        ):
+            return None, []
+
+        all_params: list[Any] = []
         key_sql, key_params = self.evaluator.build_select_expression(
             f"${field}"
         )
         all_params.extend(key_params)
-
-        lower_bound = bounds[0]
-        bounds[1]
-
-        is_date_field = isinstance(lower_bound, str) and (
-            lower_bound.startswith("00") or "T" in lower_bound
+        all_params.extend(
+            [
+                lower_bound,
+                lower_bound,
+                upper_bound,
+                lower_bound,
+                step,
+                lower_bound,
+                step,
+                upper_bound,
+                field,
+            ]
         )
 
-        if is_date_field:
-            return None, []
-
-        step_value: float
-        if isinstance(step, (int, float)):
-            step_value = step
-        else:
-            return None, []
-
         sql = f"""
-            WITH existing AS (
+            WITH RECURSIVE existing AS (
                 SELECT DISTINCT {key_sql} as val
                 FROM {prev_stage}
                 WHERE {key_sql} IS NOT NULL
             ),
-            bounds_calc AS (
-                SELECT
-                    MIN(val) as min_val,
-                    MAX(val) as max_val
-                FROM existing
-            ),
-            series AS (
-                SELECT min_val + (i * {step_value}) as val
-                FROM bounds_calc
-                CROSS JOIN (
-                    WITH RECURSIVE nums(i) AS (
-                        SELECT 0
-                        UNION ALL
-                        SELECT i + 1 FROM nums WHERE i < 1000
-                    )
-                    SELECT i FROM nums
-                ) nums
-                WHERE min_val + (i * {step_value}) <= (SELECT max_val FROM bounds_calc)
-                AND min_val + (i * {step_value}) >= (SELECT min_val FROM bounds_calc)
+            series(val, idx) AS (
+                SELECT ?, 0
+                WHERE ? <= ?
+                UNION ALL
+                SELECT ? + (idx + 1) * ?, idx + 1
+                FROM series
+                WHERE idx < 1000 AND ? + (idx + 1) * ? <= ?
             )
             SELECT t.id, t._id, t.data
             FROM {prev_stage} t
             UNION ALL
-            SELECT NULL as id, NULL as _id, json_object('{field}', s.val) as data
+            SELECT NULL as id, NULL as _id, json_object(?, s.val) as data
             FROM series s
             WHERE NOT EXISTS (SELECT 1 FROM existing e WHERE e.val = s.val)
         """
@@ -896,7 +1215,22 @@ class StageBuildersMixin:
             return expr_sql
 
         for field, value in spec.items():
-            if field == "$expr":
+            if field == "$jsonSchema":
+                from .query_helper.schema_compiler import (
+                    compile_query_schema_to_sql,
+                )
+
+                schema_res = compile_query_schema_to_sql(
+                    value,
+                    data_column="data",
+                    jsonb=self.jsonb.jsonb_supported,
+                )
+                if schema_res is None:
+                    return None, []
+                schema_clause, schema_params = schema_res
+                where_clauses.append(schema_clause)
+                all_params.extend(schema_params)
+            elif field == "$expr":
                 expr_sql, expr_params = self.evaluator.evaluate(value)
                 if not expr_sql:
                     return None, []
@@ -1258,3 +1592,97 @@ class StageBuildersMixin:
             "$last": "LAST_VALUE",
         }
         return mapping.get(op)
+
+    def _build_graph_lookup_sql(self, spec, prev_stage, context):
+        """Build Tier-1 CTE SQL for $graphLookup using top-level recursive CTE."""
+        uid = context.next_aux_id()
+        src_cte = f"{context.cte_prefix}_glsrc_{uid}"
+        rec_cte = f"{context.cte_prefix}_glrec_{uid}"
+
+        src_cols = "id, _id, data, root_data" if context.has_root else "id, _id, data"
+        context.add_pre_cte(src_cte, f"SELECT {src_cols} FROM {prev_stage}", [])
+
+        parts = build_graph_lookup_parts(
+            self.collection,
+            self.jsonb.jsonb_supported,
+            src_cte,
+            rec_cte,
+            spec,
+            has_root=context.has_root,
+        )
+        if parts is None:
+            return None, []
+
+        recurse_sql, select_sql, rec_params = parts
+        context.add_pre_cte(rec_cte, recurse_sql, rec_params)
+        context.mark_recursive()
+        return select_sql, []
+
+    def _build_facet_sql(self, spec, prev_stage, context):
+        """Build Tier-1 CTE SQL for $facet by compiling sub-pipelines over shared source CTE."""
+        if not isinstance(spec, dict):
+            return None, []
+
+        uid = context.next_aux_id()
+        src_cte = f"{context.cte_prefix}_fsrc_{uid}"
+        context.add_pre_cte(src_cte, f"SELECT id, _id, data FROM {prev_stage}", [])
+
+        if not spec:
+            select_parts = ["NULL AS id", "NULL AS _id", "json('{}') AS data"]
+            if context.has_root:
+                select_parts.append("NULL AS root_data")
+            return f"SELECT {', '.join(select_parts)}", []
+
+        json_set_func = self._get_json_set()
+        doc_expr = (
+            f"json(CASE "
+            f"WHEN json_type(data, '$._id') IS NOT NULL THEN data "
+            f"WHEN _id IS NULL THEN data "
+            f"ELSE {json_set_func}(data, '$._id', _id) END)"
+        )
+
+        json_obj_args: list[str] = []
+        all_params: list[Any] = []
+        for f_idx, (facet_name, sub_pipeline) in enumerate(spec.items()):
+            if not isinstance(facet_name, str) or not isinstance(
+                sub_pipeline, list
+            ):
+                return None, []
+
+            if sub_pipeline:
+                if not self.can_optimize_pipeline(sub_pipeline):
+                    return None, []
+                sub_ctx = PipelineContext()
+                sub_ctx.cte_prefix = f"{context.cte_prefix}_f{uid}_{f_idx}"
+                sub_needs_root = self._pipeline_needs_root(sub_pipeline)
+                if sub_needs_root:
+                    sub_ctx.preserve_root()
+                sub_final, sub_ctes = self._build_stage_sequence(
+                    sub_pipeline,
+                    src_cte,
+                    f"{sub_ctx.cte_prefix}_s",
+                    sub_ctx,
+                    needs_root=sub_needs_root,
+                )
+                if sub_final is None:
+                    return None, []
+                for cname, csql, cparams in sub_ctes:
+                    context.add_pre_cte(cname, csql, cparams)
+                if sub_ctx.needs_recursive:
+                    context.mark_recursive()
+            else:
+                sub_final = src_cte
+
+            arr_expr = (
+                f"json(COALESCE((SELECT json_group_array({doc_expr}) "
+                f"FROM {sub_final} WHERE EXISTS (SELECT 1 FROM {src_cte})), '[]'))"
+            )
+            json_obj_args.append("?")
+            json_obj_args.append(arr_expr)
+            all_params.append(facet_name)
+
+        data_expr = f"json(json_object({', '.join(json_obj_args)}))"
+        select_parts = ["NULL AS id", "NULL AS _id", f"{data_expr} AS data"]
+        if context.has_root:
+            select_parts.append("NULL AS root_data")
+        return f"SELECT {', '.join(select_parts)}", all_params

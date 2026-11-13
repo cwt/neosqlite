@@ -751,3 +751,125 @@ def _hashable_group_key(value: Any) -> tuple:
             return ("y", value)
         case _:
             return ("o", type(value).__name__, str(value))
+
+
+_BSON_TYPE_ALIASES: dict[str, int] = {
+    "double": 1,
+    "string": 2,
+    "object": 3,
+    "array": 4,
+    "bindata": 5,
+    "objectid": 7,
+    "bool": 8,
+    "boolean": 8,
+    "null": 10,
+    "int": 16,
+    "integer": 16,
+    "long": 18,
+    "decimal": 19,
+    "number": 99,
+}
+
+
+def build_bson_type_sql(
+    data_expr: str,
+    json_path: str,
+    type_spec: Any,
+    type_expr: str | None = None,
+    val_expr: str | None = None,
+) -> str | None:
+    """Build a SQLite predicate matching MongoDB ``$type`` semantics.
+
+    Returns ``None`` when any requested type requires Python evaluation
+    (for example BSON date, regex, or unknown type names/codes).
+    """
+    from ..binary import Binary
+    from ..objectid import ObjectId
+
+    if isinstance(type_spec, (list, tuple)):
+        if not type_spec:
+            return "0"
+        parts: list[str] = []
+        for item in type_spec:
+            part = build_bson_type_sql(
+                data_expr, json_path, item, type_expr=type_expr, val_expr=val_expr
+            )
+            if part is None:
+                return None
+            parts.append(f"({part})")
+        return "(" + " OR ".join(parts) + ")" if len(parts) > 1 else parts[0][1:-1]
+
+    code: int | None = None
+    if isinstance(type_spec, int) and not isinstance(type_spec, bool):
+        code = type_spec
+    elif isinstance(type_spec, str):
+        code = _BSON_TYPE_ALIASES.get(type_spec.lower())
+    elif isinstance(type_spec, type):
+        if type_spec is float:
+            code = 1
+        elif type_spec is str:
+            code = 2
+        elif type_spec is dict:
+            code = 3
+        elif type_spec is list:
+            code = 4
+        elif type_spec is Binary or type_spec is bytes:
+            code = 5
+        elif type_spec is ObjectId:
+            code = 7
+        elif type_spec is bool:
+            code = 8
+        elif type_spec is type(None):
+            code = 10
+        elif type_spec is int:
+            code = 16
+
+    if code is None:
+        return None
+
+    if val_expr is not None:
+        eff_type_expr = type_expr or f"json_type({val_expr})"
+        oid_check = f"json_extract({val_expr}, '$.__neosqlite_objectid__') = 1"
+        bin_check = f"json_extract({val_expr}, '$.__neosqlite_binary__') = 1"
+        date_type = f"json_type({val_expr}, '$.$date')"
+    else:
+        if not (json_path.startswith("'") and json_path.endswith("'")):
+            return None
+        inner_path = json_path[1:-1]
+        eff_type_expr = type_expr or f"json_type({data_expr}, {json_path})"
+        oid_check = (
+            f"json_extract({data_expr}, '{inner_path}.__neosqlite_objectid__') = 1"
+        )
+        bin_check = (
+            f"json_extract({data_expr}, '{inner_path}.__neosqlite_binary__') = 1"
+        )
+        date_type = f"json_type({data_expr}, '{inner_path}.$date')"
+
+    match code:
+        case 1:
+            return f"{eff_type_expr} = 'real'"
+        case 2:
+            return f"{eff_type_expr} = 'text'"
+        case 3:
+            return (
+                f"({eff_type_expr} = 'object' AND "
+                f"COALESCE({oid_check}, 0) != 1 AND "
+                f"COALESCE({bin_check}, 0) != 1 AND "
+                f"{date_type} IS NULL)"
+            )
+        case 4:
+            return f"{eff_type_expr} = 'array'"
+        case 5:
+            return f"({eff_type_expr} = 'object' AND {bin_check})"
+        case 7:
+            return f"({eff_type_expr} = 'object' AND {oid_check})"
+        case 8:
+            return f"{eff_type_expr} IN ('true', 'false')"
+        case 10:
+            return f"{eff_type_expr} = 'null'"
+        case 16 | 18:
+            return f"{eff_type_expr} = 'integer'"
+        case 19 | 99:
+            return f"{eff_type_expr} IN ('integer', 'real')"
+        case _:
+            return None

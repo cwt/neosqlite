@@ -52,13 +52,14 @@ class SQLTierAggregator(StageBuildersMixin):
         "$lookup",
         "$merge",
         "$densify",
+        "$graphLookup",
+        "$facet",
     }
 
     # Stages that require Python fallback
     UNSUPPORTED_STAGES = {
         "$indexStats",
         "$out",
-        "$jsonSchema",
     }
 
     # Expressions that require Python fallback
@@ -66,7 +67,6 @@ class SQLTierAggregator(StageBuildersMixin):
         "$function",  # Custom JavaScript
         "$accumulator",  # Custom accumulator
         "$script",  # JavaScript execution
-        "$jsonSchema",  # Complex validation logic in Python
     }
 
     def __init__(
@@ -98,11 +98,13 @@ class SQLTierAggregator(StageBuildersMixin):
         """Get JSON set function with correct prefix."""
         return f"{self.jsonb.json_function_prefix}_set"
 
-    def can_optimize_pipeline(self, pipeline: list[dict[str, Any]]) -> bool:
+    def can_optimize_pipeline(
+        self, pipeline: list[dict[str, Any]], _depth: int = 0
+    ) -> bool:
         """Check if pipeline can be optimized in SQL tier."""
         from .query_helper import get_force_fallback
 
-        if get_force_fallback():
+        if get_force_fallback() or _depth > 8:
             return False
 
         if not pipeline:
@@ -114,6 +116,13 @@ class SQLTierAggregator(StageBuildersMixin):
                 return False
             if stage_name not in self.SUPPORTED_STAGES:
                 return False
+            if stage_name == "$match":
+                from .query_helper.schema_compiler import (
+                    match_has_uncompilable_schema,
+                )
+
+                if match_has_uncompilable_schema(stage.get("$match")):
+                    return False
             if (
                 stage_name == "$setWindowFields"
                 and sqlite3.sqlite_version_info
@@ -124,6 +133,15 @@ class SQLTierAggregator(StageBuildersMixin):
                 )
             ):
                 return False
+            if stage_name == "$facet":
+                facet_spec = stage.get("$facet")
+                if not isinstance(facet_spec, dict) or not all(
+                    isinstance(k, str)
+                    and isinstance(sub_p, list)
+                    and self.can_optimize_pipeline(sub_p, _depth + 1)
+                    for k, sub_p in facet_spec.items()
+                ):
+                    return False
 
         for stage in pipeline:
             if not self._can_optimize_stage_expressions(stage):
@@ -137,6 +155,8 @@ class SQLTierAggregator(StageBuildersMixin):
     def _can_optimize_stage_expressions(self, stage: dict[str, Any]) -> bool:
         """Check if all expressions in a stage can be optimized in SQL."""
         stage_name = next(iter(stage.keys()))
+        if stage_name == "$facet":
+            return True  # Sub-pipelines validated separately in can_optimize_pipeline
         spec = stage[stage_name]
         return self._check_expression_support(spec)
 
@@ -190,8 +210,6 @@ class SQLTierAggregator(StageBuildersMixin):
         self, pipeline: list[dict[str, Any]]
     ) -> tuple[str | None, list[Any]]:
         """Build SQL template and return (template, params)."""
-        cte_parts: list[str] = []
-        all_params: list[Any] = []
         prev_stage = f"(SELECT id, _id, data FROM {quote_table_name(self.collection.name)})"
         context = PipelineContext()
 
@@ -199,34 +217,23 @@ class SQLTierAggregator(StageBuildersMixin):
         if needs_root:
             context.preserve_root()
 
-        for i, stage in enumerate(pipeline):
-            stage_name = next(iter(stage.keys()))
-            stage_spec = stage[stage_name]
-            context.stage_index = i
-            cte_name = f"stage{i}"
+        final_stage, ctes = self._build_stage_sequence(
+            pipeline, prev_stage, "stage", context, needs_root=needs_root
+        )
+        if final_stage is None:
+            return None, []
 
-            stage_sql, stage_params = self._build_stage_sql(
-                stage_name,
-                stage_spec,
-                prev_stage,
-                context,
-                preserve_root=(i == 0 and needs_root),
-            )
+        cte_parts = [f"{name} AS ({sql})" for name, sql, _ in ctes]
+        all_params: list[Any] = []
+        for _, _, params in ctes:
+            all_params.extend(params)
 
-            if stage_sql is None:
-                return None, []
-
-            cte_parts.append(f"{cte_name} AS ({stage_sql})")
-            all_params.extend(stage_params)
-            prev_stage = cte_name
-
-        # No $graphLookup support in this tier: plain WITH is sufficient.
-        with_keyword = "WITH"
+        with_keyword = "WITH RECURSIVE" if context.needs_recursive else "WITH"
         select_cols = "id, _id, data"
         if needs_root:
             select_cols = "id, _id, root_data, data"
 
-        final_sql = f"{with_keyword} {', '.join(cte_parts)} SELECT {select_cols} FROM {prev_stage}"
+        final_sql = f"{with_keyword} {', '.join(cte_parts)} SELECT {select_cols} FROM {final_stage}"
         return final_sql, all_params
 
     def get_cache_stats(self) -> dict[str, Any]:
@@ -275,6 +282,8 @@ class SQLTierAggregator(StageBuildersMixin):
     def _stage_uses_root(self, stage: dict[str, Any]) -> bool:
         """Check if a stage uses $$ROOT variable."""
         stage_name = next(iter(stage.keys()))
+        if stage_name == "$facet":
+            return False  # $facet sub-pipelines preserve their own inner $$ROOT
         spec = stage[stage_name]
         return self._expression_uses_root(spec)
 

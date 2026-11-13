@@ -20,6 +20,9 @@ class BaseSqlMixin:
     data_column: str
     jsonb: "JSONBContext"
     _current_context: Any  # AggregationContext | None
+    _slice_counter: int
+    _reduce_counter: int
+    _je_counter: int
 
     # Properties supplied by ExprEvaluator (accessed as self.json_each_function, etc.)
     @property

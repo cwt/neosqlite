@@ -28,8 +28,7 @@ def can_process_with_temporary_tables(pipeline: list[dict[str, Any]]) -> bool:
         bool: True if all stages in the pipeline are supported and can be processed
               with temporary tables, False otherwise
     """
-    # Check if all stages are supported
-    # Note: $merge and $redact require Python fallback for full functionality
+    # Check if all stages are supported in Tier-2 SQL temp-table execution
     supported_stages = {
         "$addFields",
         "$count",
@@ -43,7 +42,10 @@ def can_process_with_temporary_tables(pipeline: list[dict[str, Any]]) -> bool:
         "$limit",
         "$lookup",
         "$match",
+        "$merge",
+        "$out",
         "$project",
+        "$redact",
         "$replaceRoot",
         "$replaceWith",
         "$sample",
@@ -64,8 +66,12 @@ def can_process_with_temporary_tables(pipeline: list[dict[str, Any]]) -> bool:
             return False
 
         if stage_name == "$match":
+            from ..query_helper.schema_compiler import (
+                match_has_uncompilable_schema,
+            )
+
             match_spec = stage["$match"]
-            if "$jsonSchema" in match_spec:
+            if match_has_uncompilable_schema(match_spec):
                 return False
 
         if stage_name in ("$setWindowFields", "$fill"):

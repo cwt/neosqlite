@@ -7,6 +7,7 @@ from copy import deepcopy
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
+from .._sqlite import sqlite3
 from ..sql_utils import quote_table_name
 from .json_path_utils import parse_json_path
 from .jsonb_support import json_data_column
@@ -536,6 +537,186 @@ class Cursor:
         else:
             return (f"sqlite://{db_name}", 0)
 
+    def _parse_mongo_index_name(self, name: str) -> list[str] | None:
+        """Parse a MongoDB-style index name (e.g. ``age_1`` or ``a_1_b_-1``) into field keys."""
+        if not name or name == "_id_":
+            return ["_id"] if name == "_id_" else None
+        tokens = name.split("_")
+        keys: list[str] = []
+        buf: list[str] = []
+        i = 0
+        while i < len(tokens):
+            tok = tokens[i]
+            if tok in ("1", "-1") and buf:
+                keys.append("_".join(buf))
+                buf = []
+                i += 1
+            else:
+                buf.append(tok)
+                i += 1
+        if buf or not keys:
+            return None
+        return keys
+
+    def _resolve_hint_index(self) -> str | None:
+        """Resolve cursor._hint to an existing SQLite index name if possible."""
+        from .query_helper.utils import get_force_fallback
+
+        if self._hint is None or get_force_fallback():
+            return None
+
+        try:
+            rows = self._collection.db.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=?",
+                (self._collection.name,),
+            ).fetchall()
+        except Exception:
+            return None
+
+        idx_names = [
+            r[0]
+            for r in rows
+            if isinstance(r[0], str)
+            and not r[0].startswith("sqlite_autoindex_")
+        ]
+        if not idx_names:
+            return None
+
+        quoted_tbl = quote_table_name(self._collection.name)
+        id_idx = f"idx_{quoted_tbl}_id"
+
+        if isinstance(self._hint, str):
+            if self._hint in idx_names:
+                return self._hint
+            if self._hint == "_id_":
+                return id_idx if id_idx in idx_names else None
+            target_keys = self._parse_mongo_index_name(self._hint) or [
+                self._hint
+            ]
+        elif isinstance(self._hint, (list, tuple)) and self._hint:
+            if not all(
+                isinstance(item, (list, tuple))
+                and len(item) == 2
+                and isinstance(item[0], str)
+                for item in self._hint
+            ):
+                return None
+            target_keys = [item[0] for item in self._hint]
+            if target_keys == ["_id"]:
+                return id_idx if id_idx in idx_names else None
+        else:
+            return None
+
+        from .index_manager import _load_index_keys
+
+        expected_suffix = (
+            "_" + "_".join(k.replace(".", "_") for k in target_keys)
+        )
+        for idx_name in idx_names:
+            if idx_name == id_idx:
+                continue
+            stored = _load_index_keys(self._collection.db, idx_name)
+            if stored is not None and stored == target_keys:
+                return idx_name
+            if idx_name == f"idx_{quoted_tbl}{expected_suffix}":
+                return idx_name
+        return None
+
+    def _build_sql_projection_expr(
+        self, sql_sorted: bool, data_col: str = "data"
+    ) -> str | None:
+        """Build a SQL SELECT expression for simple projections, or None."""
+        from .query_helper.utils import get_force_fallback
+
+        if (
+            get_force_fallback()
+            or not self._projection
+            or self._where_predicate is not None
+        ):
+            return None
+        if self._sort and not sql_sorted:
+            return None
+
+        for k, v in self._projection.items():
+            if not isinstance(k, str) or not k:
+                return None
+            if "." in k or k.startswith("$"):
+                return None
+            if any(ch in k for ch in ("\x00", "\\", "'", '"')):
+                return None
+            if not isinstance(v, (int, bool)) or v not in (0, 1):
+                return None
+
+        other_items = [
+            (k, int(v)) for k, v in self._projection.items() if k != "_id"
+        ]
+        if len(other_items) > 40:
+            return None
+
+        jsonb = self._collection.query_engine.jsonb.jsonb_supported
+        ext_fn = "jsonb_extract" if jsonb else "json_extract"
+        rm_fn = "jsonb_remove" if jsonb else "json_remove"
+        include_id = int(self._projection.get("_id", 1)) == 1
+
+        if not other_items:
+            if include_id:
+                return "'{}'"
+            if jsonb:
+                return f"json({rm_fn}({data_col}, '$._id'))"
+            return f"{rm_fn}({data_col}, '$._id')"
+
+        has_inc = any(v == 1 for _, v in other_items)
+        has_exc = any(v == 0 for _, v in other_items)
+        if has_inc and has_exc:
+            return None
+
+        if has_inc:
+            kv_pairs: list[str] = []
+            missing_removals: list[str] = []
+            for key, _ in other_items:
+                path_str = parse_json_path(key)
+                p_lit = f"'{path_str}'"
+                k_lit = f"'{key}'"
+                val_expr = (
+                    f"CASE json_type({data_col}, {p_lit}) "
+                    f"WHEN 'true' THEN json('true') "
+                    f"WHEN 'false' THEN json('false') "
+                    f"ELSE {ext_fn}({data_col}, {p_lit}) END"
+                )
+                kv_pairs.append(f"{k_lit}, {val_expr}")
+                missing_removals.append(
+                    f"CASE WHEN json_type({data_col}, {p_lit}) IS NULL "
+                    f"THEN {p_lit} ELSE '$.__neosqlite_noop__' END"
+                )
+            obj_sql = f"json_object({', '.join(kv_pairs)})"
+            return (
+                f"json_remove({obj_sql}, {', '.join(missing_removals)})"
+            )
+
+        remove_paths = [f"'{parse_json_path(k)}'" for k, _ in other_items]
+        if not include_id:
+            remove_paths.append("'$._id'")
+        if jsonb:
+            return f"json({rm_fn}({data_col}, {', '.join(remove_paths)}))"
+        return f"{rm_fn}({data_col}, {', '.join(remove_paths)})"
+
+    def _execute_sql_with_hint(
+        self,
+        cmd_with_hint: str,
+        cmd_without_hint: str,
+        params: list[Any] | tuple[Any, ...],
+    ) -> Any:
+        """Execute SQL with optional INDEXED BY, falling back if unusable."""
+        try:
+            return self._collection.db.execute(cmd_with_hint, params)
+        except sqlite3.OperationalError as e:
+            msg = str(e).lower()
+            if cmd_with_hint != cmd_without_hint and (
+                "cannot use index" in msg or "no such index" in msg
+            ):
+                return self._collection.db.execute(cmd_without_hint, params)
+            raise
+
     def explain(self, verbosity: str = "queryPlanner") -> dict[str, Any]:
         """
         Return the query execution plan.
@@ -615,26 +796,57 @@ class Cursor:
             if where_result is not None:
                 where_clause, params, tables = where_result
                 jsonb = self._collection.query_engine.jsonb.jsonb_supported
+                table_name = quote_table_name(self._collection.name)
+                hint_idx = self._resolve_hint_index()
+                indexed_by = (
+                    f" INDEXED BY {quote_table_name(hint_idx)}"
+                    if hint_idx
+                    else ""
+                )
+                sql_plain = (
+                    f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                    f"FROM {table_name} {where_clause}{sort_clause}{pagination_clause}"
+                )
                 sql = (
                     f"SELECT id, _id, {json_data_column(jsonb)} as data "
-                    f"FROM {quote_table_name(self._collection.name)} {where_clause}{sort_clause}{pagination_clause}"
+                    f"FROM {table_name}{indexed_by} {where_clause}{sort_clause}{pagination_clause}"
                 )
             else:
                 # No filter - simple select
                 jsonb = self._collection.query_engine.jsonb.jsonb_supported
+                table_name = quote_table_name(self._collection.name)
+                hint_idx = self._resolve_hint_index()
+                indexed_by = (
+                    f" INDEXED BY {quote_table_name(hint_idx)}"
+                    if hint_idx
+                    else ""
+                )
+                sql_plain = (
+                    f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                    f"FROM {table_name}{sort_clause}{pagination_clause}"
+                )
                 sql = (
                     f"SELECT id, _id, {json_data_column(jsonb)} as data "
-                    f"FROM {quote_table_name(self._collection.name)}{sort_clause}{pagination_clause}"
+                    f"FROM {table_name}{indexed_by}{sort_clause}{pagination_clause}"
                 )
                 params = []
 
         # Get the query plan from SQLite
-
-        # Get the query plan from SQLite
         try:
-            plan_rows = self._collection.db.execute(
-                f"EXPLAIN QUERY PLAN {sql}", params
-            ).fetchall()
+            try:
+                plan_rows = self._collection.db.execute(
+                    f"EXPLAIN QUERY PLAN {sql}", params
+                ).fetchall()
+            except sqlite3.OperationalError as e:
+                msg = str(e).lower()
+                if "sql_plain" in locals() and (
+                    "cannot use index" in msg or "no such index" in msg
+                ):
+                    plan_rows = self._collection.db.execute(
+                        f"EXPLAIN QUERY PLAN {sql_plain}", params
+                    ).fetchall()
+                else:
+                    raise
 
             # Parse the plan rows
             # Row format: (id, parent, notused, detail)
@@ -690,9 +902,10 @@ class Cursor:
         """
         validate_session(self._session, self._collection._database)
 
-        # track if SQL handled sorting and pagination
+        # track if SQL handled sorting, pagination, and projection
         self._sql_handled_sort = False
         self._sql_handled_pagination = False
+        self._sql_handled_projection = False
 
         # Get the documents based on filter
         docs = self._get_filtered_documents()
@@ -705,8 +918,9 @@ class Cursor:
         if not self._sql_handled_pagination:
             docs = self._apply_pagination(docs)
 
-        # Apply projection
-        docs = self._apply_projection(docs)
+        # Apply projection if not handled by SQL
+        if not self._sql_handled_projection:
+            docs = self._apply_projection(docs)
 
         # Mark cursor as having been iterated (for address property)
         self._iterated = True
@@ -808,24 +1022,9 @@ class Cursor:
                 self._active_generator = fts_docs
                 if self._where_predicate:
                     fts_docs = filter(self._where_predicate, fts_docs)  # type: ignore[arg-type]
-                if "$jsonSchema" in self._filter:
-                    from .query_helper.schema_validator import (
-                        matches_json_schema,
-                    )
-
-                    schema = self._filter["$jsonSchema"]
-                    fts_docs = (
-                        doc
-                        for doc in fts_docs
-                        if matches_json_schema(doc, schema)
-                    )
                 qe = getattr(self._collection, "query_engine", None)
                 if qe is not None and hasattr(qe, "_notify_tier_change"):
-                    tier = (
-                        "tier3"
-                        if (self._where_predicate or "$jsonSchema" in self._filter)
-                        else "tier1"
-                    )
+                    tier = "tier3" if self._where_predicate else "tier1"
                     qe._notify_tier_change(tier, [self._filter])
                 return fts_docs
 
@@ -865,18 +1064,36 @@ class Cursor:
                     )
                 )
 
-            # Use the collection's JSONB support flag to determine how to select data
-            jsonb = self._collection.query_engine.jsonb.jsonb_supported
-            cmd = (
-                f"SELECT id, _id, {json_data_column(jsonb)} as data "
-                f"FROM {quote_table_name(self._collection.name)} {where_clause}{sort_clause}{pagination_clause}"
-            )
-
             # Track which parts were handled by SQL
             if sort_clause:
                 self._sql_handled_sort = True
             if pagination_clause:
                 self._sql_handled_pagination = True
+
+            # Use the collection's JSONB support flag to determine how to select data
+            jsonb = self._collection.query_engine.jsonb.jsonb_supported
+            table_name = quote_table_name(self._collection.name)
+            hint_idx = self._resolve_hint_index()
+            indexed_by = (
+                f" INDEXED BY {quote_table_name(hint_idx)}" if hint_idx else ""
+            )
+            proj_expr = self._build_sql_projection_expr(
+                self._sql_handled_sort, data_col="data"
+            )
+            if proj_expr is not None:
+                select_data = f"{proj_expr} as data"
+                self._sql_handled_projection = True
+            else:
+                select_data = f"{json_data_column(jsonb)} as data"
+
+            suffix = f" {where_clause}{sort_clause}{pagination_clause}"
+            cmd_without_hint = (
+                f"SELECT id, _id, {select_data} FROM {table_name}{suffix}"
+            )
+            cmd_with_hint = (
+                f"SELECT id, _id, {select_data} "
+                f"FROM {table_name}{indexed_by}{suffix}"
+            )
 
             # Add comment if specified
             if self._comment:
@@ -885,9 +1102,12 @@ class Cursor:
                     .replace("*/", "")
                     .replace("--", "")
                 )
-                cmd = f"/* {safe_comment} */ {cmd}"
+                cmd_without_hint = f"/* {safe_comment} */ {cmd_without_hint}"
+                cmd_with_hint = f"/* {safe_comment} */ {cmd_with_hint}"
 
-            db_cursor = self._collection.db.execute(cmd, params)
+            db_cursor = self._execute_sql_with_hint(
+                cmd_with_hint, cmd_without_hint, params
+            )
 
             def doc_generator():
                 try:
@@ -913,14 +1133,6 @@ class Cursor:
         # Apply where predicate if specified (Tier-3 Python filtering)
         if self._where_predicate:
             docs = filter(self._where_predicate, docs)  # type: ignore[arg-type]
-            tier = "tier3"
-
-        # Apply $jsonSchema filter if present
-        if "$jsonSchema" in self._filter:
-            from .query_helper.schema_validator import matches_json_schema
-
-            schema = self._filter["$jsonSchema"]
-            docs = (doc for doc in docs if matches_json_schema(doc, schema))
             tier = "tier3"
 
         qe = getattr(self._collection, "query_engine", None)
@@ -1023,13 +1235,25 @@ class Cursor:
                 if qe is not None and hasattr(qe, "_notify_tier_change"):
                     qe._notify_tier_change("tier2", [self._filter])
                 # Tier 2: full SELECT query with temp tables
-                cmd = sql_or_where
-                pagination_clause = ""
-                # SQL sorting and pagination handled in the Tier 2 query itself
-                # (currently Tier 2 doesn't handle them yet, but we mark them
-                # as NOT handled to let the Python Cursor handle them)
-                self._sql_handled_sort = False
-                self._sql_handled_pagination = False
+                sort_clause = self._query_helpers._build_sort_clause(
+                    self._sort,
+                    self._collation,
+                    table_name=self._collection.name,
+                )
+                has_minmax = bool(self._min or self._max)
+                if self._where_predicate or has_minmax:
+                    pagination_clause = ""
+                else:
+                    pagination_clause = (
+                        self._query_helpers._build_pagination_clause(
+                            self._limit, self._skip
+                        )
+                    )
+                cmd_with_hint = cmd_without_hint = (
+                    f"{sql_or_where}{sort_clause}{pagination_clause}"
+                )
+                self._sql_handled_sort = bool(sort_clause)
+                self._sql_handled_pagination = bool(pagination_clause)
             else:
                 if qe is not None and hasattr(qe, "_notify_tier_change"):
                     qe._notify_tier_change("tier1", [self._filter])
@@ -1056,17 +1280,36 @@ class Cursor:
                         )
                     )
 
-                jsonb = self._collection.query_engine.jsonb.jsonb_supported
-                cmd = (
-                    f"SELECT id, _id, {json_data_column(jsonb)} as data "
-                    f"FROM {quote_table_name(self._collection.name)} {where_clause}{sort_clause}{pagination_clause}"
-                )
-
-                # Track which parts were handled by SQL
                 if sort_clause:
                     self._sql_handled_sort = True
                 if pagination_clause:
                     self._sql_handled_pagination = True
+
+                jsonb = self._collection.query_engine.jsonb.jsonb_supported
+                table_name = quote_table_name(self._collection.name)
+                hint_idx = self._resolve_hint_index()
+                indexed_by = (
+                    f" INDEXED BY {quote_table_name(hint_idx)}"
+                    if hint_idx
+                    else ""
+                )
+                proj_expr = self._build_sql_projection_expr(
+                    self._sql_handled_sort, data_col="data"
+                )
+                if proj_expr is not None:
+                    select_data = f"{proj_expr} as data"
+                    self._sql_handled_projection = True
+                else:
+                    select_data = f"{json_data_column(jsonb)} as data"
+
+                suffix = f" {where_clause}{sort_clause}{pagination_clause}"
+                cmd_without_hint = (
+                    f"SELECT id, _id, {select_data} FROM {table_name}{suffix}"
+                )
+                cmd_with_hint = (
+                    f"SELECT id, _id, {select_data} "
+                    f"FROM {table_name}{indexed_by}{suffix}"
+                )
 
             # Add comment if specified
             if self._comment:
@@ -1075,15 +1318,21 @@ class Cursor:
                     .replace("*/", "")
                     .replace("--", "")
                 )
-                cmd = f"/* {safe_comment} */ {cmd}"
-            db_cursor = self._collection.db.execute(cmd, params)
+                cmd_without_hint = f"/* {safe_comment} */ {cmd_without_hint}"
+                cmd_with_hint = f"/* {safe_comment} */ {cmd_with_hint}"
+            db_cursor = self._execute_sql_with_hint(
+                cmd_with_hint, cmd_without_hint, params
+            )
             # Use fetchmany for memory-efficient batch fetching
             docs: list[dict[str, Any]] = []
-            while True:
-                rows = db_cursor.fetchmany(self._batch_size)
-                if not rows:
-                    break
-                docs.extend(self._load_documents(rows))
+            try:
+                while True:
+                    rows = db_cursor.fetchmany(self._batch_size)
+                    if not rows:
+                        break
+                    docs.extend(self._load_documents(rows))
+            finally:
+                db_cursor.close()
             if (
                 self._min or self._max
             ) and sql_or_where.strip().upper().startswith("SELECT"):
@@ -1345,6 +1594,12 @@ class Cursor:
             doc = self._collection._load_with_stored_id(
                 id_val, data_val, stored_id_val
             )
+            if (
+                getattr(self, "_sql_handled_projection", False)
+                and self._projection
+                and int(self._projection.get("_id", 1)) != 1
+            ):
+                doc.pop("_id", None)
             if len(row) >= 4 and row[3] is not None:
                 doc["_textScore"] = float(row[3])
             yield doc

@@ -935,6 +935,43 @@ def execute_python_aggregation(
                 # MongoDB returns the merged documents for further pipeline processing
                 pass
 
+            case "$out":
+                out_spec = stage["$out"]
+                if isinstance(out_spec, str):
+                    target_coll_name = out_spec
+                    target_coll = query_engine.collection._database[
+                        target_coll_name
+                    ]
+                elif isinstance(out_spec, dict):
+                    out_coll_name = out_spec.get("coll")
+                    out_db_name = out_spec.get("db")
+                    if not isinstance(out_coll_name, str) or not out_coll_name:
+                        raise MalformedQueryException(
+                            "$out requires non-empty collection name"
+                        )
+                    if out_db_name:
+                        target_coll = (
+                            query_engine.collection._database.client[
+                                out_db_name
+                            ][out_coll_name]
+                        )
+                    else:
+                        target_coll = query_engine.collection._database[
+                            out_coll_name
+                        ]
+                else:
+                    raise MalformedQueryException(
+                        "$out requires string or dict specification"
+                    )
+
+                if hasattr(target_coll, "_initialize_table"):
+                    target_coll._initialize_table()
+                out_docs = [dc["__doc__"] for dc in docs_with_context]
+                target_coll.delete_many({})
+                if out_docs:
+                    target_coll.insert_many(out_docs)
+                docs_with_context = []
+
             case "$redact":
                 # $redact filters document content based on conditions
                 redact_spec = stage["$redact"]
@@ -1042,7 +1079,19 @@ def execute_python_aggregation(
 
                 field = densify_spec.get("field")
                 range_spec = densify_spec.get("range", {})
-                partition_by = densify_spec.get("partitionByFields", [])
+                raw_partition = (
+                    densify_spec.get("partitionByFields")
+                    or densify_spec.get("partitionBy")
+                    or []
+                )
+                if isinstance(raw_partition, str):
+                    partition_by = [raw_partition.lstrip("$")]
+                elif isinstance(raw_partition, list):
+                    partition_by = [
+                        str(pf).lstrip("$") for pf in raw_partition
+                    ]
+                else:
+                    partition_by = []
                 output_spec = densify_spec.get("output", {})
 
                 if not field:
@@ -1164,37 +1213,42 @@ def execute_python_aggregation(
                                 all_values.append(current)
                                 current = current + step
 
-                        # Create documents for all values
+                        # Preserve all existing documents in this partition,
+                        # and synthesize minimal documents only for missing values
+                        # (matching SQL Tier 1/Tier 2 and MongoDB $densify semantics).
+                        for item in items:
+                            new_docs_with_context.append(item["dc"])
+
                         for val in all_values:
-                            if val in existing_values:
-                                # Use existing document
-                                for item in items:
-                                    if item["field_val"] == val:
-                                        new_docs_with_context.append(item["dc"])
-                                        break
-                            else:
-                                # Create new document with filled value
-                                for item in items:
-                                    base_doc = deepcopy(item["doc"])
-                                    base_doc[field] = val
+                            if val not in existing_values:
+                                base_doc: dict[str, Any] = {}
+                                for pf, pk_val in zip(partition_by, partition_key):
+                                    target = base_doc
+                                    parts = pf.split(".")
+                                    for part in parts[:-1]:
+                                        target = target.setdefault(part, {})
+                                    target[parts[-1]] = pk_val
 
-                                    # Apply output spec for additional fields
-                                    for (
-                                        out_field,
-                                        out_expr,
-                                    ) in output_spec.items():
-                                        if out_field != field:
-                                            base_doc[out_field] = (
-                                                out_expr  # Could evaluate expression
-                                            )
+                                target = base_doc
+                                fparts = field.split(".")
+                                for part in fparts[:-1]:
+                                    target = target.setdefault(part, {})
+                                target[fparts[-1]] = val
 
-                                    new_docs_with_context.append(
-                                        {
-                                            "__doc__": base_doc,
-                                            "__root__": base_doc,
-                                        }
-                                    )
-                                    break  # Use first item as template
+                                # Apply output spec for additional fields
+                                for (
+                                    out_field,
+                                    out_expr,
+                                ) in output_spec.items():
+                                    if out_field != field:
+                                        base_doc[out_field] = out_expr
+
+                                new_docs_with_context.append(
+                                    {
+                                        "__doc__": base_doc,
+                                        "__root__": base_doc,
+                                    }
+                                )
 
                     docs_with_context = new_docs_with_context
             case "$collStats":

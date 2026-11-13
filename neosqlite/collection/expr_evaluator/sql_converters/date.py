@@ -283,6 +283,7 @@ class DateMixin(BaseSqlMixin):
             "hour",
             "minute",
             "second",
+            "millisecond",
             "week",
             "month",
             "year",
@@ -314,6 +315,12 @@ class DateMixin(BaseSqlMixin):
 
         # Base calculation: difference in days
         sql = f"(julianday({date2_sql}) - julianday({date1_sql}))"
+
+        if unit == "millisecond":
+            return (
+                f"cast(round({sql} * 86400000.0) as integer)",
+                date2_params + date1_params,
+            )
 
         # Convert to requested unit
         unit_multipliers = {
@@ -418,6 +425,27 @@ class DateMixin(BaseSqlMixin):
             "minute": "%Y-%m-%dT%H:%M:00Z",
             "second": "%Y-%m-%dT%H:%M:%SZ",
         }
+
+        if unit == "quarter":
+            sql = (
+                f"json((WITH _dt(d) AS (SELECT {date_sql}) "
+                f"SELECT CASE WHEN d IS NULL THEN NULL ELSE "
+                f"json_object('$date', printf('%s-%02d-01T00:00:00Z', "
+                f"strftime('%Y', d), ((CAST(strftime('%m', d) AS INTEGER) - 1) / 3) * 3 + 1)) "
+                f"END FROM _dt))"
+            )
+            return sql, date_params
+
+        if unit == "week":
+            # Truncate to start of week (Monday), matching Python Tier-3 default
+            sql = (
+                f"json((WITH _dt(d) AS (SELECT {date_sql}) "
+                f"SELECT CASE WHEN d IS NULL THEN NULL ELSE "
+                f"json_object('$date', strftime('%Y-%m-%dT00:00:00Z', "
+                f"date(d, '-' || ((CAST(strftime('%w', d) AS INTEGER) + 6) % 7) || ' days'))) "
+                f"END FROM _dt))"
+            )
+            return sql, date_params
 
         if unit not in unit_formats:
             raise NotImplementedError(

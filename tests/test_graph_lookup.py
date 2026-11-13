@@ -153,11 +153,9 @@ def test_graph_lookup_restrict_search(collection):
     assert ids == {3, 2}
 
 
-def test_graph_lookup_tier2(collection):
-    """Test $graphLookup explain plan for Tier 2."""
+def test_graph_lookup_tier1(collection):
+    """Test $graphLookup explain plan for Tier 1 (including with $lookup)."""
     collection, conn = collection
-    # Force Tier 2 by using $lookup before $graphLookup
-    # Ensure 'other' collection exists and has data in the SAME database
     db = collection.database
     other = db.other
     other.insert_one({"_id": 4, "note": "Target"})
@@ -186,10 +184,42 @@ def test_graph_lookup_tier2(collection):
     explanation = conn.command(
         "aggregate", "collection", pipeline=pipeline, explain=True
     )
-    assert explanation["tier"] == 2
+    assert explanation["tier"] == 1
 
     results = list(collection.aggregate(pipeline))
-    print("\nDEBUG results:", results)
     assert len(results) == 1
     assert len(results[0]["hierarchy"]) == 3
     assert results[0]["ext"][0]["note"] == "Target"
+
+
+def test_graph_lookup_tier2(collection):
+    """Test $graphLookup explain plan for Tier 2 when preceded by a Tier-2-only stage."""
+    collection, conn = collection
+
+    pipeline = [
+        {"$match": {"_id": 4}},
+        {
+            "$fill": {
+                "output": {"title": {"value": "Staff"}},
+            }
+        },
+        {
+            "$graphLookup": {
+                "from": "collection",
+                "startWith": "$reportsTo",
+                "connectFromField": "reportsTo",
+                "connectToField": "_id",
+                "as": "hierarchy",
+            }
+        },
+    ]
+
+    explanation = conn.command(
+        "aggregate", "collection", pipeline=pipeline, explain=True
+    )
+    assert explanation["tier"] == 2
+
+    results = list(collection.aggregate(pipeline))
+    assert len(results) == 1
+    assert results[0]["title"] == "Staff"
+    assert len(results[0]["hierarchy"]) == 3

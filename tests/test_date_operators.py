@@ -403,8 +403,10 @@ class TestDateTruncOperator:
 
             assert len(result) == 1
             # Should truncate to Monday 2024-01-15
-            # Note: 'week' unit falls back to Python (not in SQL tier), so naive datetime
-            assert result[0]["truncated"] == datetime(2024, 1, 15, 0, 0, 0)
+            actual = result[0]["truncated"]
+            if actual.tzinfo is not None:
+                actual = actual.replace(tzinfo=None)
+            assert actual == datetime(2024, 1, 15, 0, 0, 0)
 
     def test_date_trunc_to_hour(self):
         """Test $dateTrunc to hour."""

@@ -693,7 +693,7 @@ class SqlQueryBuilderMixin:
         if not isinstance(query, dict):
             return None
 
-        if "$jsonSchema" in query or "$text" in query:
+        if "$text" in query:
             return None
 
         if "$where" in query:
@@ -752,7 +752,20 @@ class SqlQueryBuilderMixin:
         params: list[Any] = []
 
         for field, value in query.items():
-            if field in ("$and", "$or", "$nor", "$not"):
+            if field == "$jsonSchema":
+                from .schema_compiler import compile_query_schema_to_sql
+
+                schema_res = compile_query_schema_to_sql(
+                    value,
+                    data_column="data",
+                    jsonb=self.jsonb.jsonb_supported,
+                )
+                if schema_res is None:
+                    return None
+                schema_clause, schema_params = schema_res
+                clauses.append(schema_clause)
+                params.extend(schema_params)
+            elif field in ("$and", "$or", "$nor", "$not"):
                 logical_result = self._build_logical_field_clause(field, value)
                 if logical_result is None:
                     return None
@@ -779,6 +792,7 @@ class SqlQueryBuilderMixin:
         self,
         sort: dict[str, int] | None,
         collation: dict[str, Any] | None = None,
+        table_name: str | None = None,
     ) -> str:
         """
         Builds a SQL ORDER BY clause from a sort dictionary.
@@ -786,6 +800,7 @@ class SqlQueryBuilderMixin:
         Args:
             sort: A dictionary mapping fields to sort directions (1 for ASC, -1 for DESC).
             collation: Optional collation settings for case-insensitive sorting.
+            table_name: Optional table qualifier when sorting a JOIN query.
 
         Returns:
             A SQL ORDER BY clause string (including 'ORDER BY' prefix), or empty string.
@@ -803,12 +818,17 @@ class SqlQueryBuilderMixin:
             if strength <= 2 or not case_level:
                 collate_clause = " COLLATE NOCASE"
 
+        data_col = (
+            f"{quote_table_name(table_name)}.data" if table_name else "data"
+        )
         for field, direction in sort.items():
             if field == "_id":
                 order_field = f"{quote_table_name(self.collection.name)}._id"
             else:
                 json_path = f"'{parse_json_path(field)}'"
-                order_field = f"{self.jsonb.json_function_prefix}_extract(data, {json_path})"
+                order_field = (
+                    f"{self.jsonb.json_function_prefix}_extract({data_col}, {json_path})"
+                )
 
             order_dir = "ASC" if direction == 1 else "DESC"
             clauses.append(f"{order_field}{collate_clause} {order_dir}")
@@ -1409,6 +1429,24 @@ class SqlQueryBuilderMixin:
                         f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) REGEXP ?"
                     )
                     params.append(pattern)
+                case "$type":
+                    from ..type_utils import build_bson_type_sql
+
+                    if json_path == "value":
+                        type_sql = build_bson_type_sql(
+                            "value",
+                            "'$'",
+                            op_val,
+                            type_expr="json_each.type",
+                            val_expr="value",
+                        )
+                    else:
+                        type_sql = build_bson_type_sql(
+                            "data", json_path, op_val
+                        )
+                    if type_sql is None:
+                        return None, []
+                    clauses.append(type_sql)
                 case _:
                     # Unsupported operator, fallback to Python
                     return None, []

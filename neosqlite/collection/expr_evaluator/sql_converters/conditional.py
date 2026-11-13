@@ -15,24 +15,37 @@ class ConditionalMixin(BaseSqlMixin):
     """$cond / $ifNull → SQL CASE / COALESCE."""
 
     def _convert_cond_operator(
-        self, operands: dict[str, Any]
+        self, operands: dict[str, Any] | list[Any]
     ) -> tuple[str, list[Any]]:
-        """Convert $cond operator to SQL CASE statement."""
-        if not isinstance(operands, dict):
-            raise ValueError("$cond requires a dictionary")
+        """Convert $cond operator (dict or 3-element array form) to SQL CASE."""
+        if isinstance(operands, list):
+            if len(operands) != 3:
+                raise ValueError(
+                    "$cond requires a dictionary or 3-element array"
+                )
+            if_expr, then_expr, else_expr = operands
+            has_else = True
+        elif isinstance(operands, dict):
+            if "if" not in operands or "then" not in operands:
+                raise ValueError("$cond requires 'if' and 'then' fields")
+            if_expr = operands["if"]
+            then_expr = operands["then"]
+            has_else = "else" in operands
+            else_expr = operands.get("else")
+        else:
+            raise ValueError("$cond requires a dictionary or 3-element array")
 
-        if "if" not in operands or "then" not in operands:
-            raise ValueError("$cond requires 'if' and 'then' fields")
-
-        condition_sql, condition_params = self._convert_expr_to_sql(
-            operands["if"]
-        )
-        then_sql, then_params = self._convert_operand_to_sql(operands["then"])
-
-        if "else" in operands:
-            else_sql, else_params = self._convert_operand_to_sql(
-                operands["else"]
+        if isinstance(if_expr, dict):
+            condition_sql, condition_params = self._convert_expr_to_sql(if_expr)
+        else:
+            condition_sql, condition_params = self._convert_operand_to_sql(
+                if_expr
             )
+            condition_sql = f"(CASE WHEN {condition_sql} THEN 1 ELSE 0 END)"
+        then_sql, then_params = self._convert_operand_to_sql(then_expr)
+
+        if has_else:
+            else_sql, else_params = self._convert_operand_to_sql(else_expr)
         else:
             else_sql, else_params = "NULL", []
 

@@ -33,6 +33,13 @@ from ..type_utils import validate_session
 from .base import QueryEngineProtocol
 
 
+def _append_where_condition(where_clause: str, cond: str) -> str:
+    """Append an extra AND predicate to an optional SQL WHERE clause."""
+    if where_clause.strip():
+        return f"{where_clause} AND ({cond})"
+    return f"WHERE ({cond})"
+
+
 class CRUDOperationsMixin(QueryEngineProtocol):
     """Mixin class providing CRUD operations for QueryEngine."""
 
@@ -113,14 +120,57 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         filter = self.helpers._normalize_id_query(filter)
 
-        # Fall back to the original implementation that fetches the document first
-        # Find the document using the filter, but we need to work with integer IDs internally
-        # For internal operations, we need to retrieve the document differently to get the integer id
-        # We'll use a direct SQL query to get both the integer id and the stored _id
         where_clause, params = self.sql_translator.translate_match(filter)
         if where_clause is not None and not get_force_fallback():
-            # Get the integer id as well for internal operations
-            # Use the same approach as the original code considering JSONB support
+            sql_expr_res = self.helpers._build_set_data_expression(
+                update, array_filters
+            )
+            if (
+                sql_expr_res is not None
+                and self.helpers._validate_inc_mul_sql(
+                    where_clause, params, update, limit_one=True
+                )
+            ):
+                data_expr, expr_params, op_tier = sql_expr_res
+                tbl = quote_table_name(self.collection.name)
+                if data_expr == "data":
+                    row = self.collection.db.execute(
+                        f"SELECT id FROM {tbl} {where_clause} LIMIT 1", params
+                    ).fetchone()
+                    if row is not None:
+                        self._notify_tier_change(op_tier, [filter, update])
+                        return UpdateResult(
+                            matched_count=1, modified_count=0, upserted_id=None
+                        )
+                else:
+                    row = self.collection.db.execute(
+                        f"SELECT id, (json(data) IS NOT json({data_expr})) "
+                        f"FROM {tbl} {where_clause} LIMIT 1",
+                        expr_params + params,
+                    ).fetchone()
+                    if row is not None:
+                        int_id, is_modified = row
+                        if is_modified:
+                            self.collection.db.execute(
+                                f"UPDATE {tbl} SET data = {data_expr} WHERE id = ?",
+                                expr_params + [int_id],
+                            )
+                        self._notify_tier_change(op_tier, [filter, update])
+                        return UpdateResult(
+                            matched_count=1,
+                            modified_count=1 if is_modified else 0,
+                            upserted_id=None,
+                        )
+                self._notify_tier_change(op_tier, [filter, update])
+                if upsert:
+                    return self._execute_upsert(
+                        filter, update, array_filters, session
+                    )
+                return UpdateResult(
+                    matched_count=0, modified_count=0, upserted_id=None
+                )
+
+            # Fallback for non-SQL update expressions or $inc/$mul type errors
             jsonb = self.jsonb.jsonb_supported
             cmd = (
                 f"SELECT id, _id, {json_data_column(jsonb)} as data "
@@ -129,27 +179,29 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             cursor = self.collection.db.execute(cmd, params)
             if row := cursor.fetchone():
                 int_id, stored_id, data = row
-                # Load the document the normal way for the update processing
                 doc = self.collection._load_with_stored_id(
                     int_id, data, stored_id
                 )
-                # Use the integer id for internal operations
                 _, was_modified = self.helpers._internal_update(
                     int_id, update, doc, array_filters, filter
                 )
+                self._notify_tier_change("tier3", [filter, update])
                 return UpdateResult(
                     matched_count=1,
                     modified_count=1 if was_modified else 0,
                     upserted_id=None,
                 )
+            self._notify_tier_change("tier3", [filter, update])
         else:
-            # Fallback to find_one if translation doesn't work
+            # Python fallback when kill switch enabled or filter un-translatable
+            self._notify_tier_change("tier3", [filter, update])
             if doc := self.find_one(filter, session=session):
                 # Get integer id by looking up the stored ObjectId
                 int_doc_id = self._get_integer_id_for_oid(doc["_id"])
                 _, was_modified = self.helpers._internal_update(
                     int_doc_id, update, doc, array_filters, filter
                 )
+                self._notify_tier_change("tier3", [filter, update])
                 return UpdateResult(
                     matched_count=1,
                     modified_count=1 if was_modified else 0,
@@ -157,21 +209,26 @@ class CRUDOperationsMixin(QueryEngineProtocol):
                 )
 
         if upsert:
-            # For upsert, we need to create a document that includes:
-            # 1. The filter fields (as base document)
-            # 2. Apply the update operations to that document
-            new_doc = build_upsert_base_document(filter)
-            updated_doc, _ = self.helpers._internal_update(
-                0, update, new_doc, array_filters, filter
-            )  # Apply updates
-            inserted_id = self.insert_one(
-                updated_doc, session=session
-            ).inserted_id
-            return UpdateResult(
-                matched_count=0, modified_count=0, upserted_id=inserted_id
-            )
+            return self._execute_upsert(filter, update, array_filters, session)
 
         return UpdateResult(matched_count=0, modified_count=0, upserted_id=None)
+
+    def _execute_upsert(
+        self,
+        filter: dict[str, Any],
+        update: dict[str, Any],
+        array_filters: list[dict[str, Any]] | None,
+        session: ClientSession | None,
+    ) -> UpdateResult:
+        """Build, apply update operators (including $setOnInsert), and insert an upsert doc."""
+        new_doc = build_upsert_base_document(filter)
+        updated_doc, _ = self.helpers._internal_update(
+            0, update, new_doc, array_filters, filter
+        )
+        inserted_id = self.insert_one(updated_doc, session=session).inserted_id
+        return UpdateResult(
+            matched_count=0, modified_count=0, upserted_id=inserted_id
+        )
 
     def _update_gridfs_file(
         self,
@@ -317,11 +374,53 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         # Try to use SQLTranslator for the WHERE clause
         where_clause, where_params = self.sql_translator.translate_match(filter)
 
-        # Fallback for complex queries, positional operators, array_filters, or Python tier
+        # Fallback / SQL path for update_many
         if where_clause is not None and not get_force_fallback():
+            sql_expr_res = self.helpers._build_set_data_expression(
+                update, array_filters
+            )
+            if (
+                sql_expr_res is not None
+                and self.helpers._validate_inc_mul_sql(
+                    where_clause, where_params, update, limit_one=False
+                )
+            ):
+                data_expr, expr_params, op_tier = sql_expr_res
+                tbl = quote_table_name(self.collection.name)
+                matched_count = self.collection.db.execute(
+                    f"SELECT COUNT(*) FROM {tbl} {where_clause}", where_params
+                ).fetchone()[0]
+                if matched_count == 0:
+                    self._notify_tier_change(op_tier, [filter, update])
+                    if upsert:
+                        return self._execute_upsert(
+                            filter, update, array_filters, session
+                        )
+                    return UpdateResult(
+                        matched_count=0, modified_count=0, upserted_id=None
+                    )
+                if data_expr == "data":
+                    modified_count = 0
+                else:
+                    update_where = _append_where_condition(
+                        where_clause, f"json(data) IS NOT json({data_expr})"
+                    )
+                    cursor = self.collection.db.execute(
+                        f"UPDATE {tbl} SET data = {data_expr} {update_where}",
+                        expr_params + where_params + expr_params,
+                    )
+                    modified_count = max(cursor.rowcount, 0)
+                self._notify_tier_change(op_tier, [filter, update])
+                return UpdateResult(
+                    matched_count=matched_count,
+                    modified_count=modified_count,
+                    upserted_id=None,
+                )
+
             cmd = f"SELECT id FROM {quote_table_name(self.collection.name)} {where_clause}"
             cursor = self.collection.db.execute(cmd, where_params)
             ids = [row[0] for row in cursor.fetchall()]
+            fallback_tier = "tier3"
         else:
             # If we can't translate the filter, we'll need to get all docs and filter in memory
             docs = list(self.find(filter, session=session))
@@ -329,20 +428,11 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             for doc in docs:
                 int_doc_id = self._get_integer_id_for_oid(doc["_id"])
                 ids.append(int_doc_id)
+            fallback_tier = "tier3"
 
+        self._notify_tier_change(fallback_tier, [filter, update])
         if not ids and upsert:
-            new_doc = build_upsert_base_document(filter)
-            updated_doc, _ = self.helpers._internal_update(
-                0, update, new_doc, array_filters, filter
-            )
-            inserted_id = self.insert_one(
-                updated_doc, session=session
-            ).inserted_id
-            return UpdateResult(
-                matched_count=0,
-                modified_count=0,
-                upserted_id=inserted_id,
-            )
+            return self._execute_upsert(filter, update, array_filters, session)
 
         modified_count = 0
         for int_doc_id in ids:

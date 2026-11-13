@@ -363,6 +363,12 @@ class TemporaryTableAggregationProcessor(OperatorsMixin):
                         )
                         i += 1
 
+                    case "$out":
+                        current_table = self._process_out_stage(
+                            create_temp, current_table, stage["$out"]
+                        )
+                        i += 1
+
                     case "$redact":
                         current_table = self._process_redact_stage(
                             create_temp, current_table, stage["$redact"]

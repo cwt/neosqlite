@@ -625,6 +625,22 @@ class SQLOperatorTranslator:
                         )
                     else:
                         return None, []
+                case "$type":
+                    from .type_utils import build_bson_type_sql
+
+                    if extracted is not None:
+                        _, data_expr, json_path, _ = extracted
+                        sql = build_bson_type_sql(data_expr, json_path, value)
+                    elif field_access == "json_each.value":
+                        sql = build_bson_type_sql(
+                            "json_each.value",
+                            "'$'",
+                            value,
+                            type_expr="json_each.type",
+                            val_expr="json_each.value",
+                        )
+                    else:
+                        return None, []
                 case _:
                     # Unsupported operator
                     pass
@@ -763,6 +779,19 @@ class SQLOperatorTranslator:
                             f"(json_each.type IN {val_types} AND json_each.value {cmp_map[sub_op]} {ph})"
                         )
                         sub_params.append(p_val)
+                elif sub_op == "$type":
+                    from .type_utils import build_bson_type_sql
+
+                    t_sql = build_bson_type_sql(
+                        "json_each.value",
+                        "'$'",
+                        sub_val,
+                        type_expr="json_each.type",
+                        val_expr="json_each.value",
+                    )
+                    if t_sql is None:
+                        return None, []
+                    sub_clauses.append(t_sql)
                 else:
                     return None, []
 
@@ -978,6 +1007,23 @@ class SQLClauseBuilder:
                     "Please use built-in accumulators ($sum, $avg, $min, $max, $count, $push, $addToSet, $first, $last), "
                     "or post-process results in Python."
                 )
+
+            if field == "$jsonSchema":
+                from .query_helper.schema_compiler import (
+                    compile_query_schema_to_sql,
+                )
+
+                schema_res = compile_query_schema_to_sql(
+                    value,
+                    data_column=self.data_column,
+                    jsonb=self.field_accessor.jsonb_supported,
+                )
+                if schema_res is None:
+                    return None, []
+                schema_clause, schema_params = schema_res
+                clauses.append(schema_clause)
+                params.extend(schema_params)
+                continue
 
             if field == "$expr":
                 if not isinstance(value, dict):

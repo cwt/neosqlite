@@ -6,7 +6,8 @@ Extracted from update_operations.py.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any, Callable
 
 from ...binary import Binary
 from ...sql_utils import quote_table_name
@@ -16,6 +17,11 @@ from ..json_helpers import (
 )
 from ..json_path_utils import parse_json_path
 from ..jsonb_support import json_data_column
+from ..type_utils import (
+    _is_numeric_value,
+    build_bson_type_sql,
+    regex_to_sql_pattern,
+)
 from .utils import (
     _convert_bytes_to_binary,
     _get_json_function,
@@ -28,6 +34,261 @@ if TYPE_CHECKING:
     from ..jsonb_support import JSONBContext
 
 logger = logging.getLogger(__name__)
+
+
+def _contains_binary_value(obj: Any) -> bool:
+    """Return True if obj contains a Binary instance."""
+    if isinstance(obj, bytes) and hasattr(obj, "encode_for_storage"):
+        return True
+    if isinstance(obj, dict):
+        return any(_contains_binary_value(v) for v in obj.values())
+    if isinstance(obj, list):
+        return any(_contains_binary_value(v) for v in obj)
+    return False
+
+
+def _format_sql_value_expr(value: Any) -> tuple[str, list[Any]]:
+    """Bind a Python value as a SQLite JSON/scalar parameter preserving bool/objects."""
+    converted = _convert_bytes_to_binary(value)
+    if isinstance(converted, bool):
+        return "json(?)", ["true" if converted else "false"]
+    if converted is None or isinstance(converted, (int, float, str)):
+        return "?", [converted]
+    return "json(?)", [neosqlite_json_dumps(converted)]
+
+
+def _je_preserved_value_expr(alias: str) -> str:
+    """Preserve JSON types (including booleans and sub-objects) from json_each."""
+    return (
+        f"CASE {alias}.type "
+        f"WHEN 'object' THEN json({alias}.value) "
+        f"WHEN 'array' THEN json({alias}.value) "
+        f"WHEN 'true' THEN json('true') "
+        f"WHEN 'false' THEN json('false') "
+        f"ELSE {alias}.value END"
+    )
+
+
+def _extract_preserved_json_expr(
+    extract_func: str, data_expr: str, json_path: str
+) -> str:
+    """Extract a JSON value preserving booleans, objects, and arrays for json_set."""
+    extracted = f"{extract_func}({data_expr}, {json_path})"
+    return (
+        f"CASE json_type({data_expr}, {json_path}) "
+        f"WHEN 'object' THEN json({extracted}) "
+        f"WHEN 'array' THEN json({extracted}) "
+        f"WHEN 'true' THEN json('true') "
+        f"WHEN 'false' THEN json('false') "
+        f"ELSE {extracted} END"
+    )
+
+
+def _wrap_single_eval(
+    cur_expr: str,
+    cur_params: list[Any],
+    build_fn: Callable[[str], tuple[str, list[Any]]],
+    counter: list[int],
+) -> tuple[str, list[Any]]:
+    """Evaluate cur_expr once via a subquery alias when transforming conditionally."""
+    if cur_expr == "data":
+        return build_fn("data")
+    alias = f"_d{counter[0]}"
+    counter[0] += 1
+    body_sql, body_params = build_fn(alias)
+    return f"(SELECT {body_sql} FROM (SELECT {cur_expr} AS {alias}))", (
+        body_params + cur_params
+    )
+
+
+def _compile_json_scalar_eq(
+    type_expr: str, val_expr: str, expected: Any
+) -> tuple[str, list[Any]] | None:
+    """Compile scalar equality predicate on (json_type, json_extract/value)."""
+    if expected is None:
+        return f"{type_expr} = 'null'", []
+    if isinstance(expected, bool):
+        expected_type = "true" if expected else "false"
+        return f"{type_expr} = '{expected_type}'", []
+    if isinstance(expected, (int, float)):
+        return f"{type_expr} IN ('integer', 'real') AND {val_expr} = ?", [
+            expected
+        ]
+    if isinstance(expected, str):
+        return f"{type_expr} = 'text' AND {val_expr} = ?", [expected]
+    return None
+
+
+def _compile_json_value_operators(
+    type_expr: str,
+    val_expr: str,
+    operators: dict[str, Any],
+    *,
+    exists_always_true: bool = False,
+    safe_obj_expr: str | None = None,
+) -> tuple[str, list[Any]] | None:
+    """Compile MongoDB query operator dict against a SQLite JSON value."""
+    if not operators:
+        return "1", []
+    clauses: list[str] = []
+    params: list[Any] = []
+    cmp_ops = {"$gt": ">", "$gte": ">=", "$lt": "<", "$lte": "<="}
+
+    for op, expected in operators.items():
+        if op == "$options":
+            if "$regex" not in operators:
+                return None
+            continue
+        if op == "$eq":
+            eq_res = _compile_json_scalar_eq(type_expr, val_expr, expected)
+            if eq_res is None:
+                return None
+            clauses.append(f"({eq_res[0]})")
+            params.extend(eq_res[1])
+        elif op == "$ne":
+            eq_res = _compile_json_scalar_eq(type_expr, val_expr, expected)
+            if eq_res is None:
+                return None
+            clauses.append(f"NOT COALESCE(({eq_res[0]}), 0)")
+            params.extend(eq_res[1])
+        elif op in cmp_ops:
+            sql_op = cmp_ops[op]
+            if isinstance(expected, (int, float)) and not isinstance(
+                expected, bool
+            ):
+                clauses.append(
+                    f"({type_expr} IN ('integer', 'real') AND {val_expr} {sql_op} ?)"
+                )
+                params.append(expected)
+            elif isinstance(expected, str):
+                clauses.append(
+                    f"({type_expr} = 'text' AND {val_expr} {sql_op} ?)"
+                )
+                params.append(expected)
+            else:
+                return None
+        elif op in ("$in", "$nin"):
+            if not isinstance(expected, (list, tuple)):
+                return None
+            if not expected:
+                clauses.append("0" if op == "$in" else "1")
+                continue
+            item_sqls: list[str] = []
+            item_params: list[Any] = []
+            for item in expected:
+                eq_res = _compile_json_scalar_eq(type_expr, val_expr, item)
+                if eq_res is None:
+                    return None
+                item_sqls.append(f"({eq_res[0]})")
+                item_params.extend(eq_res[1])
+            joined = " OR ".join(item_sqls)
+            if op == "$in":
+                clauses.append(f"({joined})")
+            else:
+                clauses.append(f"NOT COALESCE(({joined}), 0)")
+            params.extend(item_params)
+        elif op == "$exists":
+            if exists_always_true:
+                clauses.append("1" if expected else "0")
+            else:
+                clauses.append(
+                    f"{type_expr} IS NOT NULL"
+                    if expected
+                    else f"{type_expr} IS NULL"
+                )
+        elif op == "$size":
+            if isinstance(expected, int) and not isinstance(expected, bool):
+                clauses.append(
+                    f"(CASE WHEN {type_expr} = 'array' "
+                    f"THEN json_array_length({val_expr}) = ? ELSE 0 END)"
+                )
+                params.append(expected)
+            else:
+                clauses.append("0")
+        elif op == "$regex":
+            opts = operators.get("$options", "")
+            if not isinstance(opts, str):
+                return None
+            pat = regex_to_sql_pattern(expected, opts)
+            if pat is None:
+                return None
+            clauses.append(f"({type_expr} = 'text' AND ({val_expr} REGEXP ?))")
+            params.append(pat)
+        elif op == "$type":
+            val_arg = safe_obj_expr if safe_obj_expr is not None else val_expr
+            type_sql = build_bson_type_sql(
+                "", "", expected, type_expr=type_expr, val_expr=val_arg
+            )
+            if type_sql is None:
+                return None
+            clauses.append(f"({type_sql})")
+        else:
+            return None
+
+    return (" AND ".join(clauses) if clauses else "1"), params
+
+
+def _compile_elem_predicate(
+    je_alias: str, filter_spec: Any
+) -> tuple[str, list[Any]] | None:
+    """Compile an array-element filter (used by $pull and $[id] arrayFilters)."""
+    type_col = f"{je_alias}.type"
+    val_col = f"{je_alias}.value"
+    safe_obj = (
+        f"(CASE WHEN {type_col} = 'object' THEN json({val_col}) ELSE NULL END)"
+    )
+
+    if not isinstance(filter_spec, dict):
+        return _compile_json_scalar_eq(type_col, val_col, filter_spec)
+    if not filter_spec:
+        return "1", []
+    if all(k.startswith("$") for k in filter_spec):
+        return _compile_json_value_operators(
+            type_col,
+            val_col,
+            filter_spec,
+            exists_always_true=True,
+            safe_obj_expr=safe_obj,
+        )
+    if any(k.startswith("$") for k in filter_spec):
+        return None
+
+    clauses: list[str] = [f"{type_col} = 'object'"]
+    params: list[Any] = []
+    for sub_field, expected in filter_spec.items():
+        if not sub_field or "$" in sub_field:
+            return None
+        sub_path = f"'{parse_json_path(sub_field)}'"
+        sub_type = f"json_type({safe_obj}, {sub_path})"
+        sub_val = f"json_extract({safe_obj}, {sub_path})"
+        sub_safe_obj = (
+            f"(CASE WHEN {sub_type} = 'object' THEN json({sub_val}) ELSE NULL END)"
+        )
+        if isinstance(expected, dict):
+            if not all(k.startswith("$") for k in expected):
+                return None
+            if expected.get("$exists") is False:
+                clauses.append(f"{sub_type} IS NULL")
+            else:
+                ops_res = _compile_json_value_operators(
+                    sub_type,
+                    sub_val,
+                    expected,
+                    exists_always_true=True,
+                    safe_obj_expr=sub_safe_obj,
+                )
+                if ops_res is None:
+                    return None
+                clauses.append(f"({sub_type} IS NOT NULL AND ({ops_res[0]}))")
+                params.extend(ops_res[1])
+        else:
+            eq_res = _compile_json_scalar_eq(sub_type, sub_val, expected)
+            if eq_res is None:
+                return None
+            clauses.append(f"({sub_type} IS NOT NULL AND ({eq_res[0]}))")
+            params.extend(eq_res[1])
+
+    return " AND ".join(clauses), params
 
 
 class SqlUpdatesMixin:
@@ -256,6 +517,7 @@ class SqlUpdatesMixin:
         values_json: str | None,
         position_value: int | None,
         slice_value: int | None,
+        data_expr: str = "data",
     ) -> tuple[str, list[Any]] | None:
         """Build the SET-clause fragment for $push with $position/$slice.
 
@@ -279,7 +541,7 @@ class SqlUpdatesMixin:
             fall back to the Python tier.
         """
         json_path = f"'{parse_json_path(field)}'"
-        cur = f"json_extract(data, {json_path})"
+        cur = f"json_extract({data_expr}, {json_path})"
 
         extra_params: list[Any] = []
 
@@ -1377,8 +1639,6 @@ class SqlUpdatesMixin:
         Returns:
             True if all fields are numeric or don't exist, False if any field is non-numeric
         """
-        from .utils import _get_json_function
-
         fields_to_check = []
         for op in ("$inc", "$mul"):
             if op in update:
@@ -1387,13 +1647,13 @@ class SqlUpdatesMixin:
         if not fields_to_check:
             return True
 
-        json_func = _get_json_function("type", jsonb_supported)
+        # json_type accepts both JSON text and JSONB blobs (SQLite has no jsonb_type)
+        json_func = "json_type"
 
         # Build a single query to check all fields
         select_expressions = []
         for field in fields_to_check:
-            # json_type(data, '$.field') or jsonb_type(data, '$.field')
-            json_path = f"$.{field}"
+            json_path = parse_json_path(field)
             select_expressions.append(f"{json_func}(data, '{json_path}')")
 
         if not where_clause:
@@ -1405,23 +1665,669 @@ class SqlUpdatesMixin:
             row = cursor.fetchone()
             if row:
                 for field_type in row:
-                    if field_type is not None:
-                        if jsonb_supported:
-                            # JSONB type returns 'number' for both int and float
-                            if field_type not in (
-                                "number",
-                                "null",
-                                "integer",
-                                "real",
-                            ):
-                                return False
-                        else:
-                            # Standard JSON type returns 'integer' or 'real'
-                            if field_type not in ("null", "integer", "real"):
-                                return False
+                    if field_type is not None and field_type not in (
+                        "number",
+                        "null",
+                        "integer",
+                        "real",
+                    ):
+                        return False
             # If no row matches, the update will be a no-op anyway, so it's safe to use fast path
             return True
         except Exception as e:
             # Fallback to slow path on any SQL error
             logger.debug(f"Fast path check failed due to SQL error: {e}")
             return False
+
+    def _validate_inc_mul_sql(
+        self,
+        where_clause: str,
+        where_params: list[Any],
+        update: dict[str, Any],
+        *,
+        order_by: str = "",
+        limit_one: bool = True,
+    ) -> bool:
+        """Validate $inc/$mul operand & existing DB field types for one or many rows."""
+        fields_to_check: list[str] = []
+        for op in ("$inc", "$mul"):
+            op_val = update.get(op)
+            if isinstance(op_val, dict):
+                for field, operand in op_val.items():
+                    if "$" in field or not field:
+                        return False
+                    if not _is_numeric_value(operand):
+                        return False
+                    fields_to_check.append(field)
+
+        if not fields_to_check:
+            return True
+
+        bad_preds = [
+            f"(json_type(data, '{parse_json_path(f)}') IS NOT NULL "
+            f"AND json_type(data, '{parse_json_path(f)}') NOT IN ('integer', 'real', 'null'))"
+            for f in fields_to_check
+        ]
+        tbl = quote_table_name(self.collection.name)
+        if limit_one:
+            select_exprs = ", ".join(
+                f"json_type(data, '{parse_json_path(f)}')"
+                for f in fields_to_check
+            )
+            sql = (
+                f"SELECT {select_exprs} FROM {tbl} "
+                f"{where_clause} {order_by} LIMIT 1"
+            )
+            try:
+                row = self.collection.db.execute(sql, where_params).fetchone()
+            except Exception as e:
+                logger.debug(f"SQL $inc/$mul validation failed: {e}")
+                return False
+            if row is None:
+                return True
+            return all(
+                ft is None or ft in ("integer", "real", "null", "number")
+                for ft in row
+            )
+
+        bad_cond = " OR ".join(bad_preds)
+        if where_clause.strip():
+            check_where = f"{where_clause} AND ({bad_cond})"
+        else:
+            check_where = f"WHERE ({bad_cond})"
+        try:
+            row = self.collection.db.execute(
+                f"SELECT 1 FROM {tbl} {check_where} LIMIT 1",
+                where_params,
+            ).fetchone()
+            return row is None
+        except Exception as e:
+            logger.debug(f"SQL $inc/$mul multi-row validation failed: {e}")
+            return False
+
+    def _build_positional_set_expr(
+        self,
+        cur_expr: str,
+        cur_params: list[Any],
+        parts: list[str],
+        value: Any,
+        array_filters: list[dict[str, Any]] | None,
+        jsonb_supported: bool,
+        counter: list[int],
+    ) -> tuple[str, list[Any]] | None:
+        """Compile a $set field path containing $[] or $[identifier] to SQL."""
+        pos_idx = next(
+            (i for i, p in enumerate(parts) if p == "$[]" or p.startswith("$[")),
+            -1,
+        )
+        if pos_idx <= 0:
+            return None
+        for p in parts:
+            if p == "$":
+                return None
+
+        prefix = ".".join(parts[:pos_idx])
+        if "$" in prefix or not prefix:
+            return None
+        pos_seg = parts[pos_idx]
+        tail_parts = parts[pos_idx + 1 :]
+
+        je = f"_je{counter[0]}"
+        counter[0] += 1
+        match_params: list[Any] = []
+        if pos_seg == "$[]":
+            match_sql = "1"
+        elif pos_seg.startswith("$[") and pos_seg.endswith("]") and len(pos_seg) > 3:
+            identifier = pos_seg[2:-1]
+            filter_spec = None
+            if array_filters:
+                for af in array_filters:
+                    if isinstance(af, dict) and identifier in af:
+                        filter_spec = af[identifier]
+                        break
+            if filter_spec is None:
+                # Missing arrayFilter binding is a no-op (matches Python Tier 3)
+                return cur_expr, cur_params
+            pred = _compile_elem_predicate(je, filter_spec)
+            if pred is None:
+                return None
+            match_sql, match_params = pred
+        else:
+            return None
+
+        set_func = _get_json_function("set", jsonb_supported)
+        ga_func = _get_json_function("group_array", jsonb_supported)
+        empty_arr = "jsonb('[]')" if jsonb_supported else "json('[]')"
+        unmatched_elem = _je_preserved_value_expr(je)
+
+        if not tail_parts:
+            matched_elem_sql, matched_elem_params = _format_sql_value_expr(value)
+        elif any(p == "$[]" or p.startswith("$[") for p in tail_parts):
+            inner_res = self._build_positional_set_expr(
+                f"json({je}.value)",
+                [],
+                tail_parts,
+                value,
+                array_filters,
+                jsonb_supported,
+                counter,
+            )
+            if inner_res is None:
+                return None
+            inner_sql, inner_params = inner_res
+            matched_elem_sql = (
+                f"CASE WHEN {je}.type = 'object' THEN {inner_sql} "
+                f"ELSE {unmatched_elem} END"
+            )
+            matched_elem_params = inner_params
+        else:
+            tail_path = f"'{parse_json_path('.'.join(tail_parts))}'"
+            val_sql, val_params = _format_sql_value_expr(value)
+            inter_checks = [f"{je}.type = 'object'"]
+            for depth in range(1, len(tail_parts)):
+                inter_path = f"'{parse_json_path('.'.join(tail_parts[:depth]))}'"
+                inter_checks.append(
+                    f"json_type((CASE WHEN {je}.type = 'object' "
+                    f"THEN json({je}.value) ELSE NULL END), {inter_path}) = 'object'"
+                )
+            matched_elem_sql = (
+                f"CASE WHEN {' AND '.join(inter_checks)} "
+                f"THEN {set_func}(json({je}.value), {tail_path}, {val_sql}) "
+                f"ELSE {unmatched_elem} END"
+            )
+            matched_elem_params = val_params
+
+        arr_path = f"'{parse_json_path(prefix)}'"
+
+        def _build_body(src: str) -> tuple[str, list[Any]]:
+            # WHEN matches SQL CASE order: match_params before matched_elem_params
+            rebuilt = (
+                f"COALESCE((SELECT {ga_func}(CASE WHEN ({match_sql}) "
+                f"THEN {matched_elem_sql} ELSE {unmatched_elem} END) "
+                f"FROM json_each({src}, {arr_path}) AS {je}), {empty_arr})"
+            )
+            sql = (
+                f"CASE WHEN json_type({src}, {arr_path}) = 'array' "
+                f"THEN {set_func}({src}, {arr_path}, {rebuilt}) "
+                f"ELSE {src} END"
+            )
+            return sql, match_params + matched_elem_params
+
+        return _wrap_single_eval(cur_expr, cur_params, _build_body, counter)
+
+    def _build_pull_expr(
+        self,
+        cur_expr: str,
+        cur_params: list[Any],
+        field: str,
+        pull_value: Any,
+        jsonb_supported: bool,
+        counter: list[int],
+    ) -> tuple[str, list[Any]] | None:
+        """Compile scalar or condition $pull (top-level or dotted) into SQL."""
+        if _contains_binary_value(pull_value) or not field or "$" in field:
+            return None
+        je = f"_je{counter[0]}"
+        counter[0] += 1
+        pred = _compile_elem_predicate(je, pull_value)
+        if pred is None:
+            return None
+        pred_sql, pred_params = pred
+        json_path = f"'{parse_json_path(field)}'"
+        set_func = _get_json_function("set", jsonb_supported)
+        ga_func = _get_json_function("group_array", jsonb_supported)
+        empty_arr = "jsonb('[]')" if jsonb_supported else "json('[]')"
+
+        def _build_body(src: str) -> tuple[str, list[Any]]:
+            filtered = (
+                f"COALESCE((SELECT {ga_func}({_je_preserved_value_expr(je)}) "
+                f"FROM json_each({src}, {json_path}) AS {je} "
+                f"WHERE NOT COALESCE(({pred_sql}), 0)), {empty_arr})"
+            )
+            sql = (
+                f"CASE WHEN json_type({src}, {json_path}) = 'array' "
+                f"THEN {set_func}({src}, {json_path}, {filtered}) "
+                f"ELSE {src} END"
+            )
+            return sql, list(pred_params)
+
+        return _wrap_single_eval(cur_expr, cur_params, _build_body, counter)
+
+    def _build_pull_all_expr(
+        self,
+        cur_expr: str,
+        cur_params: list[Any],
+        field: str,
+        pull_values: Any,
+        jsonb_supported: bool,
+        counter: list[int],
+    ) -> tuple[str, list[Any]] | None:
+        """Compile $pullAll into a type-safe SQL array filter expression."""
+        if _contains_binary_value(pull_values) or not field or "$" in field:
+            return None
+        if not isinstance(pull_values, (list, tuple)):
+            return None
+        if not pull_values:
+            return cur_expr, cur_params
+        je = f"_je{counter[0]}"
+        counter[0] += 1
+        cond_sqls: list[str] = []
+        cond_params: list[Any] = []
+        for pv in pull_values:
+            eq_res = _compile_json_scalar_eq(f"{je}.type", f"{je}.value", pv)
+            if eq_res is None:
+                return None
+            cond_sqls.append(f"({eq_res[0]})")
+            cond_params.extend(eq_res[1])
+        combined = " OR ".join(cond_sqls)
+        json_path = f"'{parse_json_path(field)}'"
+        set_func = _get_json_function("set", jsonb_supported)
+        ga_func = _get_json_function("group_array", jsonb_supported)
+        empty_arr = "jsonb('[]')" if jsonb_supported else "json('[]')"
+
+        def _build_body(src: str) -> tuple[str, list[Any]]:
+            filtered = (
+                f"COALESCE((SELECT {ga_func}({_je_preserved_value_expr(je)}) "
+                f"FROM json_each({src}, {json_path}) AS {je} "
+                f"WHERE NOT COALESCE(({combined}), 0)), {empty_arr})"
+            )
+            sql = (
+                f"CASE WHEN json_type({src}, {json_path}) = 'array' "
+                f"THEN {set_func}({src}, {json_path}, {filtered}) "
+                f"ELSE {src} END"
+            )
+            return sql, list(cond_params)
+
+        return _wrap_single_eval(cur_expr, cur_params, _build_body, counter)
+
+    def _build_add_to_set_expr(
+        self,
+        cur_expr: str,
+        cur_params: list[Any],
+        field: str,
+        val: Any,
+        jsonb_supported: bool,
+        counter: list[int],
+    ) -> tuple[str, list[Any]] | None:
+        """Compile $addToSet (scalar or Binary, with optional $each) into SQL."""
+        if not field or "$" in field:
+            return None
+        if isinstance(val, dict) and "$each" in val:
+            each_vals = val["$each"]
+            values_to_add = (
+                each_vals if isinstance(each_vals, list) else [each_vals]
+            )
+        else:
+            values_to_add = [val]
+        if len(values_to_add) > 20:
+            return None
+
+        json_path = f"'{parse_json_path(field)}'"
+        append_path = f"'{parse_json_path(field)}[#]'"
+        set_func = _get_json_function("set", jsonb_supported)
+        insert_func = _get_json_function("insert", jsonb_supported)
+        array_func = _get_json_function("array", jsonb_supported)
+
+        for item in values_to_add:
+            converted = _convert_bytes_to_binary(item)
+            je = f"_je{counter[0]}"
+            counter[0] += 1
+            val_sql, val_params = _format_sql_value_expr(converted)
+            if isinstance(converted, Binary):
+                exists_cond = (
+                    f"(CASE WHEN {je}.type = 'object' "
+                    f"THEN json({je}.value) = json(?) ELSE 0 END)"
+                )
+                exists_params: list[Any] = [neosqlite_json_dumps(converted)]
+            else:
+                eq_res = _compile_json_scalar_eq(
+                    f"{je}.type", f"{je}.value", converted
+                )
+                if eq_res is None:
+                    return None
+                exists_cond, exists_params = eq_res
+
+            def _build_body(
+                src: str,
+                vs: str = val_sql,
+                vp: list[Any] = val_params,
+                ec: str = exists_cond,
+                ep: list[Any] = exists_params,
+                je_name: str = je,
+            ) -> tuple[str, list[Any]]:
+                sql = (
+                    f"CASE "
+                    f"WHEN json_type({src}, {json_path}) IS NULL "
+                    f"THEN {set_func}({src}, {json_path}, {array_func}({vs})) "
+                    f"WHEN json_type({src}, {json_path}) = 'array' AND NOT EXISTS ("
+                    f"  SELECT 1 FROM json_each({src}, {json_path}) AS {je_name} WHERE {ec}"
+                    f") THEN {insert_func}({src}, {append_path}, {vs}) "
+                    f"ELSE {src} END"
+                )
+                return sql, vp + ep + vp
+
+            cur_expr, cur_params = _wrap_single_eval(
+                cur_expr, cur_params, _build_body, counter
+            )
+        return cur_expr, cur_params
+
+    def _build_set_data_expression(
+        self,
+        update_spec: dict[str, Any],
+        array_filters: list[dict[str, Any]] | None = None,
+    ) -> tuple[str, list[Any], str] | None:
+        """Build a composable SQL expression for `SET data = <expr>` + tier label.
+
+        Returns ``(data_expr, params, tier)`` where ``tier`` is ``"tier1"`` or
+        ``"tier2"``, or ``None`` if Python fallback is required.
+        """
+        if not isinstance(update_spec, dict) or not update_spec:
+            return None
+
+        supported_ops = {
+            "$set",
+            "$unset",
+            "$inc",
+            "$mul",
+            "$min",
+            "$max",
+            "$push",
+            "$pop",
+            "$addToSet",
+            "$bit",
+            "$currentDate",
+            "$rename",
+            "$pull",
+            "$pullAll",
+            "$setOnInsert",
+        }
+        if any(op not in supported_ops for op in update_spec):
+            return None
+        if "$pop" in update_spec and not _supports_relative_json_indexing():
+            return None
+
+        jsonb = self.jsonb.jsonb_supported
+        set_func = _get_json_function("set", jsonb)
+        remove_func = _get_json_function("remove", jsonb)
+        extract_func = _get_json_function("extract", jsonb)
+
+        cur_expr = "data"
+        cur_params: list[Any] = []
+        tier = "tier1"
+        counter = [0]
+        now_dt: datetime | None = None
+
+        for op, value in update_spec.items():
+            if not isinstance(value, dict):
+                return None
+
+            if op == "$setOnInsert":
+                continue
+
+            if op != "$set":
+                for field in value:
+                    if not field or "$" in field:
+                        return None
+
+            match op:
+                case "$set":
+                    plain_pairs: list[str] = []
+                    plain_params: list[Any] = []
+                    pos_fields: list[tuple[str, Any]] = []
+                    for field, field_val in value.items():
+                        if not field:
+                            return None
+                        if "$" in field:
+                            pos_fields.append((field, field_val))
+                        else:
+                            jp = f"'{parse_json_path(field)}'"
+                            v_sql, v_params = _format_sql_value_expr(field_val)
+                            plain_pairs.append(f"{jp}, {v_sql}")
+                            plain_params.extend(v_params)
+                    if plain_pairs:
+                        cur_expr = (
+                            f"{set_func}({cur_expr}, {', '.join(plain_pairs)})"
+                        )
+                        cur_params.extend(plain_params)
+                    for field, field_val in pos_fields:
+                        tier = "tier2"
+                        pos_res = self._build_positional_set_expr(
+                            cur_expr,
+                            cur_params,
+                            field.split("."),
+                            field_val,
+                            array_filters,
+                            jsonb,
+                            counter,
+                        )
+                        if pos_res is None:
+                            return None
+                        cur_expr, cur_params = pos_res
+
+                case "$unset":
+                    paths = [f"'{parse_json_path(f)}'" for f in value]
+                    if paths:
+                        cur_expr = f"{remove_func}({cur_expr}, {', '.join(paths)})"
+
+                case "$inc" | "$mul":
+                    arith = "+" if op == "$inc" else "*"
+                    for field, operand in value.items():
+                        if not _is_numeric_value(operand):
+                            return None
+                        jp = f"'{parse_json_path(field)}'"
+                        def _arith_body(
+                            src: str,
+                            p: str = jp,
+                            a: str = arith,
+                            val: Any = operand,
+                        ) -> tuple[str, list[Any]]:
+                            expr = f"COALESCE({extract_func}({src}, {p}), 0) {a} ?"
+                            return f"{set_func}({src}, {p}, {expr})", [val]
+
+                        cur_expr, cur_params = _wrap_single_eval(
+                            cur_expr, cur_params, _arith_body, counter
+                        )
+
+                case "$min" | "$max":
+                    fn = "min" if op == "$min" else "max"
+                    for field, field_val in value.items():
+                        if _contains_binary_value(field_val) or not (
+                            isinstance(field_val, str)
+                            or _is_numeric_value(field_val)
+                        ):
+                            return None
+                        jp = f"'{parse_json_path(field)}'"
+                        def _cmp_body(
+                            src: str,
+                            p: str = jp,
+                            f_name: str = fn,
+                            val: Any = field_val,
+                        ) -> tuple[str, list[Any]]:
+                            ext = f"{extract_func}({src}, {p})"
+                            val_expr = (
+                                f"CASE WHEN json_type({src}, {p}) IS NULL "
+                                f"OR json_type({src}, {p}) = 'null' THEN ? "
+                                f"ELSE {f_name}({ext}, ?) END"
+                            )
+                            return f"{set_func}({src}, {p}, {val_expr})", [val, val]
+
+                        cur_expr, cur_params = _wrap_single_eval(
+                            cur_expr, cur_params, _cmp_body, counter
+                        )
+
+                case "$bit":
+                    for field, bit_spec in value.items():
+                        if not isinstance(bit_spec, dict):
+                            return None
+                        jp = f"'{parse_json_path(field)}'"
+                        def _bit_body(
+                            src: str, p: str = jp, bs: dict[str, Any] = bit_spec
+                        ) -> tuple[str, list[Any]]:
+                            bit_expr = f"COALESCE({extract_func}({src}, {p}), 0)"
+                            if "and" in bs:
+                                bit_expr = f"({bit_expr} & {int(bs['and'])})"
+                            if "or" in bs:
+                                bit_expr = f"({bit_expr} | {int(bs['or'])})"
+                            if "xor" in bs:
+                                xv = int(bs["xor"])
+                                bit_expr = (
+                                    f"(({bit_expr} | {xv}) & ~(({bit_expr}) & {xv}))"
+                                )
+                            return f"{set_func}({src}, {p}, {bit_expr})", []
+
+                        cur_expr, cur_params = _wrap_single_eval(
+                            cur_expr, cur_params, _bit_body, counter
+                        )
+
+                case "$currentDate":
+                    if now_dt is None:
+                        now_dt = datetime.now(timezone.utc)
+                    pairs: list[str] = []
+                    dt_params: list[Any] = []
+                    v_sql, v_params = _format_sql_value_expr(now_dt)
+                    for field in value:
+                        jp = f"'{parse_json_path(field)}'"
+                        pairs.append(f"{jp}, {v_sql}")
+                        dt_params.extend(v_params)
+                    if pairs:
+                        cur_expr = f"{set_func}({cur_expr}, {', '.join(pairs)})"
+                        cur_params.extend(dt_params)
+
+                case "$rename":
+                    for old_field, new_field in value.items():
+                        if not new_field or "$" in new_field:
+                            return None
+                        if old_field == new_field:
+                            continue
+                        old_p = f"'{parse_json_path(old_field)}'"
+                        new_p = f"'{parse_json_path(new_field)}'"
+                        def _ren_body(
+                            src: str, op_p: str = old_p, np_p: str = new_p
+                        ) -> tuple[str, list[Any]]:
+                            preserved = _extract_preserved_json_expr(
+                                extract_func, src, op_p
+                            )
+                            renamed = (
+                                f"{remove_func}({set_func}({src}, {np_p}, "
+                                f"{preserved}), {op_p})"
+                            )
+                            return (
+                                f"CASE WHEN json_type({src}, {op_p}) IS NOT NULL "
+                                f"THEN {renamed} ELSE {src} END"
+                            ), []
+
+                        cur_expr, cur_params = _wrap_single_eval(
+                            cur_expr, cur_params, _ren_body, counter
+                        )
+
+                case "$pop":
+                    pop_paths: list[str] = []
+                    for field, pop_dir in value.items():
+                        if not _is_numeric_value(pop_dir) or int(pop_dir) not in (-1, 1):
+                            return None
+                        idx = "[0]" if int(pop_dir) < 0 else "[#-1]"
+                        pop_paths.append(f"'{parse_json_path(field)}{idx}'")
+                    if pop_paths:
+                        cur_expr = (
+                            f"{remove_func}({cur_expr}, {', '.join(pop_paths)})"
+                        )
+
+                case "$push":
+                    for field, push_val in value.items():
+                        slice_val = None
+                        pos_val = None
+                        if isinstance(push_val, dict) and "$each" in push_val:
+                            slice_val = push_val.get("$slice")
+                            pos_val = push_val.get("$position")
+                            raw_each = push_val["$each"]
+                            values_to_push = (
+                                raw_each
+                                if isinstance(raw_each, list)
+                                else [raw_each]
+                            )
+                        else:
+                            if isinstance(push_val, dict) and (
+                                "$slice" in push_val or "$position" in push_val
+                            ):
+                                return None
+                            values_to_push = [push_val]
+
+                        if pos_val is not None or slice_val is not None:
+                            tier = "tier2"
+                            converted = [
+                                _convert_bytes_to_binary(v)
+                                for v in values_to_push
+                            ]
+                            new_json = neosqlite_json_dumps(converted)
+                            def _push_ps_body(
+                                src: str,
+                                f_name: str = field,
+                                nj: str = new_json,
+                                pv: Any = pos_val,
+                                sv: Any = slice_val,
+                            ) -> tuple[str, list[Any]]:
+                                built = self._build_push_position_slice_clause(
+                                    f_name, nj, pv, sv, data_expr=src
+                                )
+                                if built is None:
+                                    return "", []
+                                return f"{set_func}({src}, {built[0]})", built[1]
+
+                            # Probe once with src to confirm supported
+                            if (
+                                self._build_push_position_slice_clause(
+                                    field, new_json, pos_val, slice_val
+                                )
+                                is None
+                            ):
+                                return None
+                            cur_expr, cur_params = _wrap_single_eval(
+                                cur_expr, cur_params, _push_ps_body, counter
+                            )
+                        else:
+                            append_path = f"'{parse_json_path(field)}[#]'"
+                            pairs = []
+                            push_params: list[Any] = []
+                            for pv_item in values_to_push:
+                                v_sql, v_params = _format_sql_value_expr(
+                                    pv_item
+                                )
+                                pairs.append(f"{append_path}, {v_sql}")
+                                push_params.extend(v_params)
+                            if pairs:
+                                cur_expr = (
+                                    f"{set_func}({cur_expr}, {', '.join(pairs)})"
+                                )
+                                cur_params.extend(push_params)
+
+                case "$addToSet":
+                    tier = "tier2"
+                    for field, val in value.items():
+                        res = self._build_add_to_set_expr(
+                            cur_expr, cur_params, field, val, jsonb, counter
+                        )
+                        if res is None:
+                            return None
+                        cur_expr, cur_params = res
+
+                case "$pull":
+                    tier = "tier2"
+                    for field, pull_val in value.items():
+                        res = self._build_pull_expr(
+                            cur_expr, cur_params, field, pull_val, jsonb, counter
+                        )
+                        if res is None:
+                            return None
+                        cur_expr, cur_params = res
+
+                case "$pullAll":
+                    tier = "tier2"
+                    for field, pull_vals in value.items():
+                        res = self._build_pull_all_expr(
+                            cur_expr, cur_params, field, pull_vals, jsonb, counter
+                        )
+                        if res is None:
+                            return None
+                        cur_expr, cur_params = res
+
+        return cur_expr, cur_params, tier

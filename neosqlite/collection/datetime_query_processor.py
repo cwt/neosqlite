@@ -406,12 +406,18 @@ class DateTimeQueryProcessor:
         Returns:
             List of matching documents
         """
-        # Fetch all documents and apply the query using Python
-        all_docs = list(self.collection.find({}))
-        results = []
-
-        for doc in all_docs:
-            if self.helpers._apply_query(query, doc):
-                results.append(doc)
-
-        return results
+        # Read rows directly from SQLite for real Collections so executing
+        # Tier-3 fallback does not emit a spurious Tier-1 cursor event.
+        if hasattr(self.collection, "_load_with_stored_id"):
+            cmd = (
+                f"SELECT id, _id, {json_data_column(self.jsonb.jsonb_supported)} as data "
+                f"FROM {quote_table_name(self.collection.name)}"
+            )
+            cursor = self.db.execute(cmd)
+            all_docs = [
+                self.collection._load_with_stored_id(row[0], row[2], row[1])
+                for row in cursor.fetchall()
+            ]
+        else:
+            all_docs = list(self.collection.find({}))
+        return [doc for doc in all_docs if self.helpers._apply_query(query, doc)]

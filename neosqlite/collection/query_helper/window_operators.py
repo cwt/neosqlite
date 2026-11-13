@@ -4,6 +4,7 @@ Python implementation of MongoDB $setWindowFields operators.
 
 from __future__ import annotations
 
+import math
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
@@ -89,7 +90,13 @@ def process_set_window_fields(
                         )
                     result = dense_ranks[i]
                 else:
-                    frame = _get_window_frame(i, partition_docs, window_spec)
+                    frame = _get_window_frame(
+                        i,
+                        partition_docs,
+                        window_spec,
+                        sort_by=sort_by,
+                        collection=collection,
+                    )
                     result = _apply_window_operator(
                         op_name,
                         op_val,
@@ -114,6 +121,8 @@ def _get_window_frame(
     current_idx: int,
     partition_docs: list[dict[str, Any]],
     window_spec: dict[str, Any] | None,
+    sort_by: dict[str, int] | None = None,
+    collection: Any | None = None,
 ) -> list[int]:
     if not window_spec:
         return list(range(len(partition_docs)))
@@ -136,6 +145,45 @@ def _get_window_frame(
             end = min(len(partition_docs), current_idx + upper + 1)
 
         return list(range(start, end))
+
+    if "range" in window_spec and sort_by and collection is not None:
+        lower, upper = window_spec["range"]
+        sort_field, direction = next(iter(sort_by.items()))
+        cur_val = collection._get_val(
+            partition_docs[current_idx]["__doc__"], sort_field
+        )
+        if not isinstance(cur_val, (int, float)) or isinstance(cur_val, bool):
+            return []
+
+        unit = window_spec.get("unit")
+        if unit is not None:
+            return [current_idx]
+
+        def resolve_offset(bound: Any) -> float | None:
+            if bound == "unbounded":
+                return None
+            if bound == "current":
+                return 0.0
+            if isinstance(bound, (int, float)) and not isinstance(bound, bool):
+                return float(bound)
+            return 0.0
+
+        lo_off = resolve_offset(lower)
+        hi_off = resolve_offset(upper)
+        indices = []
+        for idx, dc in enumerate(partition_docs):
+            val = collection._get_val(dc["__doc__"], sort_field)
+            if not isinstance(val, (int, float)) or isinstance(val, bool):
+                continue
+            if direction == -1:
+                ok_lo = True if lo_off is None else val <= cur_val - lo_off
+                ok_hi = True if hi_off is None else val >= cur_val - hi_off
+            else:
+                ok_lo = True if lo_off is None else val >= cur_val + lo_off
+                ok_hi = True if hi_off is None else val <= cur_val + hi_off
+            if ok_lo and ok_hi:
+                indices.append(idx)
+        return indices
 
     return list(range(len(partition_docs)))
 
@@ -335,6 +383,9 @@ def _apply_window_operator(
                 return values[-n:] if n > 0 else []
 
     # 3. Standard accumulators
+    if op_name == "$count":
+        return len(frame_docs)
+
     if op_name in [
         "$sum",
         "$avg",
@@ -348,6 +399,8 @@ def _apply_window_operator(
         "$lastN",
         "$minN",
         "$maxN",
+        "$stdDevPop",
+        "$stdDevSamp",
     ]:
         if op_name in ["$firstN", "$lastN", "$minN", "$maxN"]:
             input_expr = op_val.get("input")
@@ -411,6 +464,17 @@ def _apply_window_operator(
             return sorted(values)[:n]
         if op_name == "$maxN":
             return sorted(values, reverse=True)[:n]
+        if op_name in ("$stdDevPop", "$stdDevSamp"):
+            nums = [
+                v
+                for v in values
+                if isinstance(v, (int, float)) and not isinstance(v, bool)
+            ]
+            if not nums or (op_name == "$stdDevSamp" and len(nums) < 2):
+                return None
+            mean = sum(nums) / len(nums)
+            denom = len(nums) if op_name == "$stdDevPop" else len(nums) - 1
+            return math.sqrt(sum((v - mean) ** 2 for v in nums) / denom)
 
     return None
 

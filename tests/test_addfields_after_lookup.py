@@ -181,11 +181,11 @@ class TestAddFieldsAfterLookup:
         assert "new_field" in results[0]
         assert results[0]["new_field"] == "value1"
 
-    def test_addfields_after_lookup_stays_in_tier2(self):
-        """Test that $addFields with complex expressions stays in Tier 2 (temp tables).
+    def test_addfields_after_lookup_stays_in_sql_tiers(self):
+        """Test that $addFields with complex expressions stays in SQL (Tier 1/2).
 
-        This verifies the hybrid Python approach works correctly without
-        falling back to Tier 3 (full Python fallback).
+        Since $lookup + $addFields ($filter/$in) is now compiled to Tier 1 SQL,
+        this verifies it executes in Tier 1 without falling back to Tier 3.
         """
         db = self.db
         db.posts.insert_one({"_id": 1, "title": "Test"})
@@ -232,11 +232,11 @@ class TestAddFieldsAfterLookup:
         assert len(results[0]["comments"]) == 1
         assert results[0]["comments"][0]["author"] == "alice"
 
-        # Verify we stayed in Tier 2 (hybrid approach)
-        # If we fell back to Tier 3, we would see 'tier3' in the list
+        # Verify we executed in SQL (Tier 1) without falling back to Tier 3
         assert (
-            "tier2" in tier_used
-        ), f"Expected Tier 2 but got tiers: {tier_used}"
+            "tier1" in tier_used
+        ), f"Expected Tier 1 SQL execution, got tiers: {tier_used}"
+        assert "tier3" not in tier_used
 
 
 if __name__ == "__main__":

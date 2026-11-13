@@ -55,7 +55,12 @@ class ArrayMixin(BaseSqlMixin):
                 array_sql, array_params = self._convert_operand_to_sql(
                     operands[1]
                 )
-                sql = f"EXISTS (SELECT 1 FROM {json_each}({array_sql}) WHERE value = {value_sql})"
+                self._je_counter = getattr(self, "_je_counter", 0) + 1
+                in_alias = f"_inj_{self._je_counter}"
+                sql = (
+                    f"EXISTS (SELECT 1 FROM {json_each}({array_sql}) AS {in_alias} "
+                    f"WHERE {in_alias}.value = {value_sql})"
+                )
                 # Bind in SQL order: array placeholders come first.
                 return sql, array_params + value_params
             case "$isArray":
@@ -88,26 +93,101 @@ class ArrayMixin(BaseSqlMixin):
             case "$slice":
                 if not isinstance(operands, list) or len(operands) < 2:
                     raise ValueError("$slice requires array and count/position")
+                array_operand = operands[0]
                 array_sql, array_params = self._convert_operand_to_sql(
-                    operands[0]
+                    array_operand
                 )
-                count = operands[1]
-                skip = operands[2] if len(operands) > 2 else 0
-                # LIMIT/OFFSET are interpolated, not bound: only literal
-                # integers may reach them (#119). Anything else falls back.
-                if isinstance(count, bool) or not isinstance(count, int):
-                    raise NotImplementedError(
-                        "$slice count must be an integer literal in SQL tier"
+                count_operand = operands[1]
+                skip_operand = operands[2] if len(operands) > 2 else 0
+                has_skip_arg = len(operands) > 2
+                elem_expr = "CASE WHEN type IN ('object', 'array') THEN json(value) ELSE value END"
+                is_arr_sql = self._array_type_check_sql(
+                    array_operand, "raw_arr"
+                )
+                self._slice_counter = getattr(self, "_slice_counter", 0) + 1
+                s_id = self._slice_counter
+
+                # Fast path for non-negative literal integers on 2 or 3 args
+                if (
+                    not isinstance(count_operand, bool)
+                    and isinstance(count_operand, int)
+                    and not isinstance(skip_operand, bool)
+                    and isinstance(skip_operand, int)
+                ):
+                    if not has_skip_arg and count_operand >= 0:
+                        safe_arr = f"(CASE WHEN {self._array_type_check_sql(array_operand, 'raw_arr')} THEN raw_arr ELSE json('[]') END)"
+                        sql = (
+                            f"json((WITH _sr_{s_id}(raw_arr) AS (SELECT {array_sql}) "
+                            f"SELECT {json_group_array}({elem_expr} ORDER BY CAST(key AS INTEGER) ASC) "
+                            f"FROM (SELECT value, key, type FROM {json_each}((SELECT {safe_arr} FROM _sr_{s_id})) LIMIT {count_operand})))"
+                        )
+                        return sql, array_params
+                    if not has_skip_arg and count_operand < 0:
+                        safe_arr = f"(CASE WHEN {is_arr_sql} THEN raw_arr ELSE json('[]') END)"
+                        sql = (
+                            f"json((WITH _sr_{s_id}(raw_arr) AS (SELECT {array_sql}) "
+                            f"SELECT {json_group_array}({elem_expr} ORDER BY CAST(key AS INTEGER) ASC) "
+                            f"FROM (SELECT value, key, type FROM {json_each}((SELECT {safe_arr} FROM _sr_{s_id})) "
+                            f"ORDER BY CAST(key AS INTEGER) DESC LIMIT {abs(count_operand)})))"
+                        )
+                        return sql, array_params
+                    if has_skip_arg and count_operand >= 0 and skip_operand >= 0:
+                        safe_arr = f"(CASE WHEN {is_arr_sql} THEN raw_arr ELSE json('[]') END)"
+                        sql = (
+                            f"json((WITH _sr_{s_id}(raw_arr) AS (SELECT {array_sql}) "
+                            f"SELECT {json_group_array}({elem_expr} ORDER BY CAST(key AS INTEGER) ASC) "
+                            f"FROM (SELECT value, key, type FROM {json_each}((SELECT {safe_arr} FROM _sr_{s_id})) "
+                            f"LIMIT {count_operand} OFFSET {skip_operand})))"
+                        )
+                        return sql, array_params
+
+                # General / dynamic / negative slice via single-pass CTEs matching
+                # Python semantics: 2-arg [:c] / [c:], 3-arg [s : s + c]
+                count_sql, count_params = self._convert_operand_to_sql(
+                    count_operand
+                )
+                if has_skip_arg:
+                    skip_sql, skip_params = self._convert_operand_to_sql(
+                        skip_operand
                     )
-                if isinstance(skip, bool) or not isinstance(skip, int):
-                    raise NotImplementedError(
-                        "$slice skip must be an integer literal in SQL tier"
+                    # Avoid duplicating skip_params by computing c, s in CTE first
+                    bounds_cte = (
+                        f"_sp_{s_id}(c, s, n) AS ("
+                        f"SELECT CAST({count_sql} AS INTEGER), "
+                        f"CAST({skip_sql} AS INTEGER), "
+                        f"(SELECT COUNT(*) FROM _se_{s_id})"
+                        f")"
                     )
-                if len(operands) > 2:
-                    sql = f"json((SELECT {json_group_array}(value) FROM (SELECT value FROM {json_each}({array_sql}) LIMIT {count} OFFSET {skip})))"
+                    where_slice = (
+                        "k >= (CASE WHEN s < 0 THEN MAX(n + s, 0) ELSE MIN(s, n) END) "
+                        "AND k < (CASE WHEN (s + c) < 0 THEN MAX(n + s + c, 0) ELSE MIN(s + c, n) END)"
+                    )
+                    slice_params = array_params + count_params + skip_params
                 else:
-                    sql = f"json((SELECT {json_group_array}(value) FROM (SELECT value FROM {json_each}({array_sql}) LIMIT {count})))"
-                return sql, array_params
+                    bounds_cte = (
+                        f"_sp_{s_id}(c, n) AS ("
+                        f"SELECT CAST({count_sql} AS INTEGER), "
+                        f"(SELECT COUNT(*) FROM _se_{s_id})"
+                        f")"
+                    )
+                    where_slice = (
+                        "(c >= 0 AND k < c) OR (c < 0 AND k >= MAX(n + c, 0))"
+                    )
+                    slice_params = array_params + count_params
+
+                safe_arr = f"(CASE WHEN {is_arr_sql} THEN raw_arr ELSE json('[]') END)"
+                sql = (
+                    f"json((WITH "
+                    f"_sr_{s_id}(raw_arr) AS (SELECT {array_sql}), "
+                    f"_se_{s_id}(value, k, type) AS ("
+                    f"SELECT value, CAST(key AS INTEGER), type "
+                    f"FROM {json_each}((SELECT {safe_arr} FROM _sr_{s_id}))), "
+                    f"{bounds_cte} "
+                    f"SELECT {json_group_array}({elem_expr} ORDER BY k ASC) "
+                    f"FROM _se_{s_id}, _sp_{s_id} "
+                    f"WHERE {where_slice}))"
+                )
+                return sql, slice_params
             case "$indexOfArray":
                 if len(operands) != 2:
                     raise ValueError(
@@ -316,13 +396,16 @@ class ArrayMixin(BaseSqlMixin):
 
         json_ga = self.json_group_array_function
 
-        # Build a temporary context where $$var -> value (json_each column)
+        # Build a temporary context where $$var -> aliased json_each column
         # and document fields still reference the outer data column.
         from ..context import AggregationContext
 
-        ctx = AggregationContext()
-        ctx.set_variable(f"$${as_var}", ("value", []))
+        self._je_counter = getattr(self, "_je_counter", 0) + 1
+        je_alias = f"_je_{self._je_counter}"
+
         old_ctx = self._current_context
+        ctx = old_ctx.clone() if old_ctx is not None else AggregationContext()
+        ctx.set_variable(f"$${as_var}", (f"{je_alias}.value", []))
         self._current_context = ctx
 
         try:
@@ -332,11 +415,14 @@ class ArrayMixin(BaseSqlMixin):
                     raise ValueError("$filter requires 'cond' expression")
                 cond_sql, cond_params = self._convert_expr_to_sql(cond)
 
-                elem_expr = "CASE WHEN type IN ('object', 'array') THEN json(value) ELSE value END"
+                elem_expr = (
+                    f"CASE WHEN {je_alias}.type IN ('object', 'array') "
+                    f"THEN json({je_alias}.value) ELSE {je_alias}.value END"
+                )
                 sql = (
                     f"json((SELECT {json_ga}({elem_expr} ORDER BY"
-                    f" CAST(key AS INTEGER)) FROM"
-                    f" {self.json_each_function}({input_sql})"
+                    f" CAST({je_alias}.key AS INTEGER)) FROM"
+                    f" {self.json_each_function}({input_sql}) AS {je_alias}"
                     f" WHERE {cond_sql}))"
                 )
                 return sql, input_params + cond_params
@@ -349,17 +435,74 @@ class ArrayMixin(BaseSqlMixin):
 
                 sql = (
                     f"json((SELECT {json_ga}({in_sql} ORDER BY"
-                    f" CAST(key AS INTEGER)) FROM"
-                    f" {self.json_each_function}({input_sql})))"
+                    f" CAST({je_alias}.key AS INTEGER)) FROM"
+                    f" {self.json_each_function}({input_sql}) AS {je_alias}))"
                 )
                 return sql, input_params + in_params
 
             elif operator == "$reduce":
-                # $reduce requires state accumulation across iterations
-                # (recursive CTE / window function), not yet implemented.
-                raise NotImplementedError(
-                    "$reduce not supported in SQL tier (use force_python)"
+                initial_value = operands.get("initialValue")
+                in_expr = operands.get("in")
+                if in_expr is None:
+                    raise ValueError("$reduce requires 'in' expression")
+
+                # Evaluate initialValue in outer context (no $$value/$$this yet)
+                self._current_context = old_ctx
+                try:
+                    init_sql, init_params = self._convert_operand_to_sql(
+                        initial_value
+                    )
+                finally:
+                    self._current_context = ctx
+
+                self._reduce_counter = getattr(self, "_reduce_counter", 0) + 1
+                r_id = self._reduce_counter
+                raw_cte = f"_red_raw_{r_id}"
+                in_cte = f"_red_in_{r_id}"
+                rec_cte = f"_red_{r_id}"
+
+                is_json_acc = self._is_json_container_expr(
+                    initial_value
+                ) or self._is_json_container_expr(in_expr)
+                ctx.set_variable(
+                    "$$value", ("json(r.acc)" if is_json_acc else "r.acc", [])
                 )
+                ctx.set_variable("$$index", ("r.idx", []))
+                rje = f"_rje_{r_id}"
+                elem_sql = (
+                    f"(SELECT CASE WHEN {rje}.type IN ('object', 'array') "
+                    f"THEN json({rje}.value) ELSE {rje}.value END "
+                    f"FROM {self.json_each_function}({in_cte}.arr) AS {rje} "
+                    f"WHERE CAST({rje}.key AS INTEGER) = r.idx LIMIT 1)"
+                )
+                ctx.set_variable("$$this", (elem_sql, []))
+
+                in_sql, in_params = self._convert_operand_to_sql(in_expr)
+                is_arr_sql = self._array_type_check_sql(
+                    input_operand, "raw_val"
+                )
+                acc_out = "json(acc)" if is_json_acc else "acc"
+                subq = (
+                    f"(WITH RECURSIVE "
+                    f"{raw_cte}(raw_val) AS (SELECT {input_sql}), "
+                    f"{in_cte}(arr, init_val, is_arr) AS ("
+                    f"SELECT CASE WHEN ({is_arr_sql}) THEN raw_val ELSE json('[]') END, "
+                    f"{init_sql}, "
+                    f"CASE WHEN ({is_arr_sql}) THEN 1 ELSE 0 END "
+                    f"FROM {raw_cte}), "
+                    f"{rec_cte}(idx, acc, len, is_arr) AS ("
+                    f"SELECT 0, init_val, "
+                    f"CASE WHEN is_arr = 1 THEN json_array_length(arr) ELSE 0 END, "
+                    f"is_arr FROM {in_cte} "
+                    f"UNION ALL "
+                    f"SELECT r.idx + 1, ({in_sql}), r.len, r.is_arr "
+                    f"FROM {rec_cte} r, {in_cte} "
+                    f"WHERE r.is_arr = 1 AND r.idx < r.len) "
+                    f"SELECT CASE WHEN is_arr = 1 THEN {acc_out} ELSE NULL END "
+                    f"FROM {rec_cte} WHERE idx = len)"
+                )
+                sql = f"json({subq})" if is_json_acc else subq
+                return sql, input_params + init_params + in_params
 
             else:
                 raise NotImplementedError(
@@ -368,6 +511,50 @@ class ArrayMixin(BaseSqlMixin):
                 )
         finally:
             self._current_context = old_ctx
+
+    def _array_type_check_sql(self, operand: Any, col_ref: str) -> str:
+        """Return a safe SQL predicate checking whether operand evaluates to a JSON array."""
+        if (
+            isinstance(operand, str)
+            and operand.startswith("$")
+            and not operand.startswith("$$")
+        ):
+            return (
+                f"json_type({self.data_column}, "
+                f"'{parse_json_path(operand[1:])}') = 'array'"
+            )
+        if isinstance(operand, list):
+            return "1"
+        if isinstance(operand, dict) or (
+            isinstance(operand, str) and operand.startswith("$$")
+        ):
+            if self.jsonb.jsonb_supported:
+                return (
+                    f"((typeof({col_ref}) = 'blob' AND json_valid({col_ref}, 4) "
+                    f"AND json_type({col_ref}) = 'array') OR "
+                    f"(typeof({col_ref}) = 'text' AND json_valid({col_ref}) "
+                    f"AND json_type({col_ref}) = 'array'))"
+                )
+            return (
+                f"(typeof({col_ref}) = 'text' AND json_valid({col_ref}) "
+                f"AND json_type({col_ref}) = 'array')"
+            )
+        return "0"
+
+    def _is_json_container_expr(self, expr: Any) -> bool:
+        """Return True if expr is statically known to evaluate to an array or object."""
+        if isinstance(expr, list):
+            return True
+        if isinstance(expr, dict):
+            if len(expr) == 1:
+                op = next(iter(expr.keys()))
+                if op.startswith("$"):
+                    return self._get_operator_return_type(op) in (
+                        "array",
+                        "object",
+                    )
+            return True
+        return False
 
     def _convert_extreme_n(
         self, operands: Any, direction: str

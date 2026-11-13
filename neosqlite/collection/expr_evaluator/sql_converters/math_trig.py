@@ -57,7 +57,7 @@ class MathTrigMixin(BaseSqlMixin):
                 )
                 # SQLite: log(base, number)
                 sql = f"log({base_sql}, {number_sql})"
-                return sql, number_params + base_params
+                return sql, base_params + number_params
             case "$round":
                 # MongoDB \$round uses ties-to-even; SQLite ROUND is
                 # half-away-from-zero. Python's round() matches MongoDB, so
@@ -79,7 +79,7 @@ class MathTrigMixin(BaseSqlMixin):
                             self._convert_operand_to_sql(on_null_value)
                         )
                         sql = f"(CASE WHEN {input_sql} IS NULL THEN {on_null_sql} ELSE (1.0 / (1.0 + exp(-({input_sql})))) END)"
-                        return sql, input_params + on_null_params
+                        return sql, input_params + on_null_params + input_params
                     else:
                         sql = f"(1.0 / (1.0 + exp(-({input_sql}))))"
                         return sql, input_params

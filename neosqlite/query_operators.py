@@ -663,67 +663,114 @@ def _contains(field: str, value: str, document: dict[str, Any]) -> bool:
         return False
 
 
+def _matches_single_bson_type(doc_value: Any, spec: Any) -> bool:
+    """Return True if a single Python value satisfies a BSON $type spec."""
+    from datetime import datetime
+
+    from .binary import Binary
+    from .objectid import ObjectId
+
+    numeric_codes = {
+        1: "double",
+        2: "string",
+        3: "object",
+        4: "array",
+        5: "binData",
+        7: "objectId",
+        8: "bool",
+        9: "date",
+        10: "null",
+        16: "int",
+        18: "long",
+        19: "decimal",
+    }
+
+    target: str | type | None = None
+    if isinstance(spec, int) and not isinstance(spec, bool):
+        target = numeric_codes.get(spec)
+        if target is None:
+            return False
+    elif isinstance(spec, str):
+        target = spec.lower()
+    elif isinstance(spec, type):
+        target = spec
+    else:
+        return False
+
+    if isinstance(target, str):
+        match target:
+            case "double":
+                return isinstance(doc_value, float)
+            case "string":
+                return isinstance(doc_value, str)
+            case "object":
+                return isinstance(doc_value, dict) and not (
+                    doc_value.get("__neosqlite_objectid__")
+                    or doc_value.get("__neosqlite_binary__")
+                    or "$date" in doc_value
+                )
+            case "array":
+                return isinstance(doc_value, list)
+            case "bindata":
+                return isinstance(doc_value, (Binary, bytes))
+            case "objectid":
+                return isinstance(doc_value, ObjectId) or (
+                    isinstance(doc_value, dict)
+                    and doc_value.get("__neosqlite_objectid__") == 1
+                )
+            case "bool" | "boolean":
+                return isinstance(doc_value, bool)
+            case "date":
+                return isinstance(doc_value, datetime) or (
+                    isinstance(doc_value, dict) and "$date" in doc_value
+                )
+            case "null":
+                return doc_value is None
+            case "int" | "integer" | "long":
+                return isinstance(doc_value, int) and not isinstance(
+                    doc_value, bool
+                )
+            case "decimal" | "number":
+                return isinstance(doc_value, (int, float)) and not isinstance(
+                    doc_value, bool
+                )
+            case _:
+                return False
+
+    # Python type object passed directly (e.g. {"$type": str})
+    if target is int:
+        return isinstance(doc_value, int) and not isinstance(doc_value, bool)
+    if target is float:
+        return isinstance(doc_value, float)
+    if target is dict:
+        return isinstance(doc_value, dict) and not (
+            doc_value.get("__neosqlite_objectid__")
+            or doc_value.get("__neosqlite_binary__")
+            or "$date" in doc_value
+        )
+    return isinstance(doc_value, target)
+
+
 def _type(field: str, value: Any, document: dict[str, Any]) -> bool:
     """
     Check if field is of specified type.
 
     Args:
         field (str): The document field to check.
-        value (Any): The type to check against (as a number, type object, or string name).
+        value (Any): The type to check against (as a number, type object, or string name,
+                     or list/tuple thereof).
         document (dict[str, Any]): The document to check the field value from.
 
     Returns:
         bool: True if the field is of the specified type, False otherwise.
     """
+    if not _field_exists(field, document):
+        return False
     doc_value = _get_nested_field(field, document)
 
-    # MongoDB type mapping (numeric codes)
-    type_mapping = {
-        1: float,
-        2: str,
-        3: dict,
-        4: list,
-        8: bool,
-        10: type(None),
-        16: int,
-        18: int,
-        19: int,
-    }
-
-    # MongoDB string type aliases
-    string_type_mapping: dict[str, type | tuple[type, ...]] = {
-        "double": float,
-        "string": str,
-        "object": dict,
-        "array": list,
-        "bool": bool,
-        "null": type(None),
-        "int": int,
-        "long": int,
-        "decimal": int,
-        "number": (int, float),
-    }
-
-    expected_type: type | tuple[type, ...] | None
-    if isinstance(value, int):
-        expected_type = type_mapping.get(value)
-        if expected_type is None:
-            return False
-    elif isinstance(value, str):
-        expected_type = string_type_mapping.get(value.lower())
-        if expected_type is None:
-            return False
-    else:
-        expected_type = value
-
-    # MongoDB: booleans are their own type — a bool never satisfies a
-    # numeric $type (bool subclasses int in Python, so guard it) (#164)
-    numeric_aliases = ("int", "long", "double", "decimal", "number")
-    if isinstance(value, str) and value in numeric_aliases:
-        return isinstance(doc_value, (int, float)) and not isinstance(
-            doc_value, bool
-        )
-    return isinstance(doc_value, expected_type)
+    if isinstance(value, (list, tuple)):
+        return any(_matches_single_bson_type(doc_value, item) for item in value)
+    return _matches_single_bson_type(doc_value, value)
 
 
 def _bits_all_clear(field: str, value: Any, document: dict[str, Any]) -> bool:
