@@ -253,6 +253,9 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
 
         Supports basic operators and field comparisons.
         """
+        context_was_set = self._current_context is not None
+        if not context_was_set:
+            self._current_context = AggregationContext()
         try:
             sql_expr, params = self._convert_expr_to_sql(expr)
             if sql_expr is None:
@@ -260,6 +263,9 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
             return f"({sql_expr})", params
         except (NotImplementedError, ValueError):
             return None, []
+        finally:
+            if not context_was_set:
+                self._current_context = None
 
     def _evaluate_sql_tier2(
         self, expr: dict[str, Any]

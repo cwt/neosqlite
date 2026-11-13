@@ -32,6 +32,7 @@ def can_process_with_temporary_tables(pipeline: list[dict[str, Any]]) -> bool:
     # Note: $merge and $redact require Python fallback for full functionality
     supported_stages = {
         "$addFields",
+        "$count",
         "$bucket",
         "$bucketAuto",
         "$densify",
@@ -55,7 +56,6 @@ def can_process_with_temporary_tables(pipeline: list[dict[str, Any]]) -> bool:
     }
 
     # Count unwind stages and check for complex patterns
-    unwind_count = 0
     has_nested_unwind = False
 
     for stage in pipeline:
@@ -73,7 +73,6 @@ def can_process_with_temporary_tables(pipeline: list[dict[str, Any]]) -> bool:
                 return False
 
         if stage_name == "$unwind":
-            unwind_count += 1
             unwind_spec = stage["$unwind"]
             # Check for nested/dotted paths which are complex
             if isinstance(unwind_spec, str) and "." in unwind_spec:
@@ -83,8 +82,8 @@ def can_process_with_temporary_tables(pipeline: list[dict[str, Any]]) -> bool:
                 if "." in path:
                     has_nested_unwind = True
 
-    # Multiple unwinds or nested paths are complex - fall back to Python
-    if unwind_count > 1 or has_nested_unwind:
+    # Nested dotted unwind paths require Python fallback
+    if has_nested_unwind:
         return False
 
     return True

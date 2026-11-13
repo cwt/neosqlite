@@ -146,19 +146,8 @@ class StageBuildersMixin:
         all_params = []
         select_parts = ["id"]
 
-        has_expressions_or_refs = any(
-            _is_expression(value)
-            or (isinstance(value, str) and value.startswith("$"))
-            for value in spec.values()
-        )
-
-        # Single authoritative _id decision (the later recompute here was
-        # dead — the append below already happened) (#144)
-        include_id = (
-            ("_id" in spec and spec["_id"] != 0)
-            if has_expressions_or_refs
-            else spec.get("_id", 1) == 1
-        )
+        # MongoDB includes _id by default in $project unless explicitly excluded (_id: 0) (#144)
+        include_id = spec.get("_id", 1) != 0
         if include_id:
             select_parts.append("_id")
 
@@ -478,27 +467,46 @@ class StageBuildersMixin:
         return sql, all_params
 
     def _build_union_with_sql(self, spec, prev_stage, context):
-        coll_name = spec.get("coll")
-        pipeline = spec.get("pipeline", [])
-
-        if not coll_name:
+        coll_name: str | None
+        if isinstance(spec, str):
+            coll_name = spec
+            pipeline: list[dict[str, Any]] = []
+        elif isinstance(spec, dict):
+            coll_name = spec.get("coll")
+            pipeline = spec.get("pipeline", [])
+        else:
             return None, []
 
+        if (
+            not isinstance(coll_name, str)
+            or not coll_name
+            or not isinstance(pipeline, list)
+        ):
+            return None, []
+
+        from ..sql_utils import quote_table_name
         from .sql_tier_aggregator import SQLTierAggregator
 
         target_coll = self.collection.database.get_collection(coll_name)
-        other_agg = SQLTierAggregator(target_coll, self.evaluator)
-        union_sql, union_params = other_agg.build_pipeline_sql(pipeline)
-
-        if not union_sql:
-            return None, []
+        if pipeline:
+            other_agg = SQLTierAggregator(target_coll, self.evaluator)
+            union_sql, union_params = other_agg.build_pipeline_sql(pipeline)
+            if not union_sql:
+                return None, []
+            union_from = f"({union_sql})"
+        else:
+            union_from = quote_table_name(target_coll.name)
+            union_params = []
 
         select_parts = ["id", "_id", "data"]
+        union_parts = ["id", "_id", "data"]
         if context.has_root:
             select_parts.append("root_data")
+            union_parts.append("data AS root_data")
 
         cols = ", ".join(select_parts)
-        sql = f"SELECT {cols} FROM {prev_stage} UNION ALL SELECT {cols} FROM ({union_sql})"
+        union_cols = ", ".join(union_parts)
+        sql = f"SELECT {cols} FROM {prev_stage} UNION ALL SELECT {union_cols} FROM {union_from}"
         return sql, union_params
 
     def _build_redact_sql(self, spec, prev_stage, context):
@@ -842,11 +850,46 @@ class StageBuildersMixin:
         }
         return mapping.get(op)
 
-    def _build_match_sql(self, spec, prev_stage, context):
-        all_params = []
-        where_clauses = []
+    def _get_match_sql_translator(self):
+        """Return a cached SQLTranslator matching this aggregator's JSONB context."""
+        translator = getattr(self, "_match_sql_translator", None)
+        if translator is None:
+            from .sql_translator_unified import SQLTranslator
 
-        def _wrap_for_where(expr_sql):
+            translator = SQLTranslator(
+                self.collection.name,
+                "data",
+                "id",
+                self.jsonb.jsonb_supported,
+                self.jsonb.json_each_function,
+                db_connection=self.collection.db,
+            )
+            self._match_sql_translator = translator
+        return translator
+
+    def _translate_match_spec(
+        self, spec: dict[str, Any]
+    ) -> tuple[list[str] | None, list[Any]]:
+        """Translate a $match query dictionary into SQL WHERE predicates."""
+        import re
+
+        from ..objectid import ObjectId
+        from .type_utils import (
+            build_json_containment_clause,
+            is_encoded_json_value,
+            json_type_guard_sql,
+            regex_to_sql_pattern,
+        )
+
+        if not isinstance(spec, dict) or "$text" in spec:
+            return None, []
+
+        translator = self._get_match_sql_translator()
+        op_translator = translator.operator_translator
+        all_params: list[Any] = []
+        where_clauses: list[str] = []
+
+        def _wrap_for_where(expr_sql: str) -> str:
             """Wrap expression to work in WHERE clause if it returns JSON booleans."""
             if "json('true')" in expr_sql or 'json("true")' in expr_sql:
                 return f"({expr_sql} = json('true'))"
@@ -857,9 +900,51 @@ class StageBuildersMixin:
                 expr_sql, expr_params = self.evaluator.evaluate(value)
                 if not expr_sql:
                     return None, []
-                expr_sql = _wrap_for_where(expr_sql)
-                where_clauses.append(expr_sql)
+                where_clauses.append(_wrap_for_where(expr_sql))
                 all_params.extend(expr_params)
+            elif field in ("$and", "$or", "$nor"):
+                if not isinstance(value, list) or not value:
+                    return None, []
+                sub_clauses: list[str] = []
+                for sub_spec in value:
+                    if not isinstance(sub_spec, dict) or not sub_spec:
+                        return None, []
+                    parts, sub_params = self._translate_match_spec(sub_spec)
+                    if parts is None:
+                        return None, []
+                    sub_clauses.append(
+                        " AND ".join(f"({p})" for p in parts) if parts else "1"
+                    )
+                    all_params.extend(sub_params)
+                if field == "$and":
+                    where_clauses.append(
+                        "(" + " AND ".join(f"({c})" for c in sub_clauses) + ")"
+                    )
+                elif field == "$or":
+                    where_clauses.append(
+                        "("
+                        + " OR ".join(
+                            f"COALESCE(({c}), 0)" for c in sub_clauses
+                        )
+                        + ")"
+                    )
+                else:
+                    where_clauses.append(
+                        "NOT ("
+                        + " OR ".join(
+                            f"COALESCE(({c}), 0)" for c in sub_clauses
+                        )
+                        + ")"
+                    )
+            elif field == "$not":
+                if not isinstance(value, dict) or not value:
+                    return None, []
+                parts, not_params = self._translate_match_spec(value)
+                if parts is None or not parts:
+                    return None, []
+                inner = " AND ".join(f"({p})" for p in parts)
+                where_clauses.append(f"NOT COALESCE(({inner}), 0)")
+                all_params.extend(not_params)
             elif field.startswith("$") and _is_expression({field: value}):
                 # Handle direct expression (no $expr wrapper)
                 expr_sql, expr_params = self.evaluator.build_select_expression(
@@ -867,9 +952,10 @@ class StageBuildersMixin:
                 )
                 if not expr_sql:
                     return None, []
-                expr_sql = _wrap_for_where(expr_sql)
-                where_clauses.append(expr_sql)
+                where_clauses.append(_wrap_for_where(expr_sql))
                 all_params.extend(expr_params)
+            elif field.startswith("$"):
+                return None, []
             else:
                 if field == "_id":
                     field_sql = "_id"
@@ -882,174 +968,143 @@ class StageBuildersMixin:
                     )
 
                 if isinstance(value, dict):
+                    options = value.get("$options", "")
+                    if "$options" in value and (
+                        "$regex" not in value or not isinstance(options, str)
+                    ):
+                        return None, []
+
+                    range_ops = {
+                        "$gt": ">",
+                        "$lt": "<",
+                        "$gte": ">=",
+                        "$lte": "<=",
+                    }
+                    json_each_func = self.jsonb.json_each_function
                     for op, arg in value.items():
-                        match op:
-                            case "$gt":
-                                if arg is None:
-                                    where_clauses.append("0")
-                                elif field == "_id":
-                                    where_clauses.append(f"{field_sql} > ?")
-                                    all_params.append(arg)
-                                else:
-                                    json_path = parse_json_path(field)
-                                    where_clauses.append(
-                                        f"({field_sql} > ? OR "
-                                        f"(json_type(data, '{json_path}') = 'array' AND "
-                                        f"EXISTS (SELECT 1 FROM json_each(data, '{json_path}') AS json_each "
-                                        f"WHERE json_each.value > ?)))"
-                                    )
-                                    all_params.extend([arg, arg])
-                            case "$lt":
-                                if arg is None:
-                                    where_clauses.append("0")
-                                elif field == "_id":
-                                    where_clauses.append(f"{field_sql} < ?")
-                                    all_params.append(arg)
-                                else:
-                                    json_path = parse_json_path(field)
-                                    where_clauses.append(
-                                        f"({field_sql} < ? OR "
-                                        f"(json_type(data, '{json_path}') = 'array' AND "
-                                        f"EXISTS (SELECT 1 FROM json_each(data, '{json_path}') AS json_each "
-                                        f"WHERE json_each.value < ?)))"
-                                    )
-                                    all_params.extend([arg, arg])
-                            case "$gte":
-                                if arg is None:
-                                    where_clauses.append(f"{field_sql} IS NULL")
-                                elif field == "_id":
-                                    where_clauses.append(f"{field_sql} >= ?")
-                                    all_params.append(arg)
-                                else:
-                                    json_path = parse_json_path(field)
-                                    where_clauses.append(
-                                        f"({field_sql} >= ? OR "
-                                        f"(json_type(data, '{json_path}') = 'array' AND "
-                                        f"EXISTS (SELECT 1 FROM json_each(data, '{json_path}') AS json_each "
-                                        f"WHERE json_each.value >= ?)))"
-                                    )
-                                    all_params.extend([arg, arg])
-                            case "$lte":
-                                if arg is None:
-                                    where_clauses.append(f"{field_sql} IS NULL")
-                                elif field == "_id":
-                                    where_clauses.append(f"{field_sql} <= ?")
-                                    all_params.append(arg)
-                                else:
-                                    json_path = parse_json_path(field)
-                                    where_clauses.append(
-                                        f"({field_sql} <= ? OR "
-                                        f"(json_type(data, '{json_path}') = 'array' AND "
-                                        f"EXISTS (SELECT 1 FROM json_each(data, '{json_path}') AS json_each "
-                                        f"WHERE json_each.value <= ?)))"
-                                    )
-                                    all_params.extend([arg, arg])
-                            case "$eq":
-                                if arg is None:
-                                    # MongoDB: null matches null-or-missing (#90)
-                                    where_clauses.append(f"{field_sql} IS NULL")
-                                else:
-                                    where_clauses.append(f"{field_sql} = ?")
-                                    all_params.append(arg)
-                            case "$ne":
-                                if arg is None:
-                                    if field == "_id":
-                                        where_clauses.append(
-                                            f"{field_sql} IS NOT NULL"
-                                        )
-                                    else:
-                                        json_path = parse_json_path(field)
-                                        where_clauses.append(
-                                            f"(json_type(data, '{json_path}') IS NOT NULL AND "
-                                            f"json_type(data, '{json_path}') IS NOT 'null')"
-                                        )
-                                else:
-                                    where_clauses.append(
-                                        f"{field_sql} IS NOT ?"
-                                    )
-                                    all_params.append(arg)
-                            case "$in":
-                                if isinstance(arg, (list, tuple)):
-                                    if not arg:
-                                        where_clauses.append("0")
-                                        continue
-                                    has_null = any(v is None for v in arg)
-                                    non_null = [v for v in arg if v is not None]
-                                    json_path = parse_json_path(field)
-                                    if has_null:
-                                        if non_null:
-                                            placeholders = ", ".join(
-                                                "?" for _ in non_null
-                                            )
-                                            where_clauses.append(
-                                                f"(EXISTS (SELECT 1 FROM {self.jsonb.json_each_function}(data, '{json_path}') WHERE json_each.value IN ({placeholders}) OR json_each.value IS NULL) OR json_type(data, '{json_path}') IS NULL)"
-                                            )
-                                            all_params.extend(non_null)
-                                        else:
-                                            where_clauses.append(
-                                                f"(EXISTS (SELECT 1 FROM {self.jsonb.json_each_function}(data, '{json_path}') WHERE json_each.value IS NULL) OR json_type(data, '{json_path}') IS NULL)"
-                                            )
-                                    else:
-                                        placeholders = ", ".join(
-                                            "?" for _ in non_null
-                                        )
-                                        where_clauses.append(
-                                            f"EXISTS (SELECT 1 FROM {self.jsonb.json_each_function}(data, '{json_path}') WHERE json_each.value IN ({placeholders}))"
-                                        )
-                                        all_params.extend(non_null)
-                                else:
-                                    return None, []
-                            case "$nin":
-                                if isinstance(arg, (list, tuple)):
-                                    if not arg:
-                                        continue
-                                    has_null = any(v is None for v in arg)
-                                    non_null = [v for v in arg if v is not None]
-                                    json_path = parse_json_path(field)
-                                    if has_null:
-                                        if non_null:
-                                            placeholders = ", ".join(
-                                                "?" for _ in non_null
-                                            )
-                                            where_clauses.append(
-                                                f"(NOT EXISTS (SELECT 1 FROM {self.jsonb.json_each_function}(data, '{json_path}') WHERE json_each.value IN ({placeholders}) OR json_each.value IS NULL) AND json_type(data, '{json_path}') IS NOT NULL AND json_type(data, '{json_path}') != 'null')"
-                                            )
-                                            all_params.extend(non_null)
-                                        else:
-                                            where_clauses.append(
-                                                f"(NOT EXISTS (SELECT 1 FROM {self.jsonb.json_each_function}(data, '{json_path}') WHERE json_each.value IS NULL) AND json_type(data, '{json_path}') IS NOT NULL AND json_type(data, '{json_path}') != 'null')"
-                                            )
-                                    else:
-                                        placeholders = ", ".join(
-                                            "?" for _ in non_null
-                                        )
-                                        where_clauses.append(
-                                            f"NOT EXISTS (SELECT 1 FROM {self.jsonb.json_each_function}(data, '{json_path}') WHERE json_each.value IN ({placeholders}))"
-                                        )
-                                        all_params.extend(non_null)
-                                else:
-                                    return None, []
-                            case "$all":
-                                if isinstance(arg, (list, tuple)):
-                                    if not arg:
-                                        return None, []
-                                    json_path = parse_json_path(field)
-                                    for v in arg:
-                                        where_clauses.append(
-                                            f"EXISTS (SELECT 1 FROM {self.jsonb.json_each_function}(data, '{json_path}') WHERE json_each.value = ?)"
-                                        )
-                                        all_params.append(v)
-                                else:
-                                    return None, []
-                            case _:
+                        if op == "$options":
+                            continue
+                        if op == "$not":
+                            if not isinstance(arg, (dict, re.Pattern)) or (
+                                isinstance(arg, dict) and "$not" in arg
+                            ):
                                 return None, []
-                else:
-                    if value is None:
-                        # MongoDB: null matches null-or-missing (#90)
-                        where_clauses.append(f"{field_sql} IS NULL")
+                            sub_parts, sub_params = self._translate_match_spec(
+                                {field: arg}
+                            )
+                            if sub_parts is None or not sub_parts:
+                                return None, []
+                            inner = " AND ".join(f"({p})" for p in sub_parts)
+                            where_clauses.append(f"NOT COALESCE(({inner}), 0)")
+                            all_params.extend(sub_params)
+                            continue
+                        if op in range_ops:
+                            if isinstance(
+                                arg, (list, tuple)
+                            ) or is_encoded_json_value(arg):
+                                return None, []
+                            if field == "_id" or op_translator._is_datetime_value(
+                                arg
+                            ):
+                                sql, params = op_translator.translate_operator(
+                                    field_sql, op, arg
+                                )
+                                if sql is None:
+                                    return None, []
+                                where_clauses.append(sql)
+                                all_params.extend(params)
+                            elif arg is None:
+                                if op in ("$gt", "$lt"):
+                                    where_clauses.append("0")
+                                else:
+                                    where_clauses.append(f"{field_sql} IS NULL")
+                            else:
+                                sql_op = range_ops[op]
+                                json_path = parse_json_path(field)
+                                json_path_q = f"'{json_path}'"
+                                guard = json_type_guard_sql(json_path_q, arg)
+                                where_clauses.append(
+                                    f"((json_type(data, {json_path_q}) != 'array' AND {guard} AND {field_sql} {sql_op} ?) OR "
+                                    f"(json_type(data, {json_path_q}) = 'array' AND "
+                                    f"EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path_q}) AS json_each "
+                                    f"WHERE json_each.value {sql_op} ?)))"
+                                )
+                                all_params.extend([arg, arg])
+                        else:
+                            norm_arg = (
+                                list(arg)
+                                if op in ("$in", "$nin", "$all")
+                                and isinstance(arg, tuple)
+                                else arg
+                            )
+                            if op == "$regex" and options:
+                                sql, params = op_translator.translate_operator(
+                                    field_sql,
+                                    op,
+                                    norm_arg,
+                                    regex_options=options,
+                                )
+                            else:
+                                sql, params = op_translator.translate_operator(
+                                    field_sql, op, norm_arg
+                                )
+                            if sql is None:
+                                return None, []
+                            where_clauses.append(sql)
+                            all_params.extend(params)
+                elif isinstance(value, re.Pattern):
+                    pattern = regex_to_sql_pattern(value)
+                    if pattern is None:
+                        return None, []
+                    if field == "_id":
+                        where_clauses.append(
+                            f"({field_sql} IS NOT NULL AND {field_sql} REGEXP ?)"
+                        )
                     else:
-                        where_clauses.append(f"{field_sql} = ?")
-                        all_params.append(value)
+                        json_path_q = f"'{parse_json_path(field)}'"
+                        where_clauses.append(
+                            f"(json_type(data, {json_path_q}) IS NOT NULL AND "
+                            f"json_type(data, {json_path_q}) != 'null' AND "
+                            f"{field_sql} REGEXP ?)"
+                        )
+                    all_params.append(pattern)
+                elif op_translator._is_datetime_value(value):
+                    sql, params = op_translator.translate_operator(
+                        field_sql, "$eq", value
+                    )
+                    if sql is None:
+                        return None, []
+                    where_clauses.append(sql)
+                    all_params.extend(params)
+                elif value is None:
+                    # MongoDB: null matches null-or-missing (#90)
+                    where_clauses.append(f"{field_sql} IS NULL")
+                elif field == "_id":
+                    bound_val = (
+                        str(value) if isinstance(value, ObjectId) else value
+                    )
+                    where_clauses.append(f"{field_sql} = ?")
+                    all_params.append(bound_val)
+                elif isinstance(value, (dict, list)):
+                    where_clauses.append(f"{field_sql} = ?")
+                    all_params.append(value)
+                else:
+                    clause, params = build_json_containment_clause(
+                        "data",
+                        field,
+                        field_sql,
+                        value,
+                        self.jsonb.json_each_function,
+                    )
+                    where_clauses.append(clause)
+                    all_params.extend(params)
+
+        return where_clauses, all_params
+
+    def _build_match_sql(self, spec, prev_stage, context):
+        where_clauses, all_params = self._translate_match_spec(spec)
+        if where_clauses is None:
+            return None, []
 
         where_clause = (
             f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""

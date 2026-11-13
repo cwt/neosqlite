@@ -215,19 +215,34 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
                 data_expr = f"{json_set_func}({data_expr}, '{parse_json_path(new_field)}', json(?))"
                 params.append(source_field)
 
-            # Handle complex expressions (dict with operators like $filter, $map, etc.)
+            # Handle complex expressions (dict with operators like $add, $filter, etc.)
             elif isinstance(source_field, dict):
-                # Check if it's a supported operator
-                supported_operators = {"$replaceOne"}
-                has_supported_op = any(
-                    op in supported_operators for op in source_field.keys()
-                )
+                if _is_expression_module(source_field):
+                    try:
+                        agg_ctx = AggregationContext()
+                        expr_sql, expr_params = (
+                            self.expr_evaluator.build_select_expression(
+                                source_field, context=agg_ctx
+                            )
+                        )
+                    except (NotImplementedError, ValueError, TypeError):
+                        expr_sql, expr_params = None, []
 
-                if not has_supported_op:
-                    # Complex expression like $filter, $map, $reduce, etc.
-                    # Use Python hybrid approach to stay in Tier 2
-                    has_complex_expression = True
-                    break
+                    if expr_sql is not None:
+                        json_set_func = (
+                            f"{self.jsonb.json_function_prefix}_set"
+                        )
+                        data_expr = (
+                            f"{json_set_func}({data_expr}, "
+                            f"'{parse_json_path(new_field)}', {expr_sql})"
+                        )
+                        params.extend(expr_params)
+                        continue
+
+                # Unsupported expression or literal subdocument -
+                # use Python hybrid approach to stay in Tier 2
+                has_complex_expression = True
+                break
 
             # For other complex expressions, use Python hybrid approach
             else:
@@ -334,7 +349,7 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
         select_clause = "id"
         if has_underscore_id:
             select_clause += ", _id"
-        select_clause += ", data"
+        select_clause += f", {json_data_column(self.jsonb.jsonb_supported)} AS data"
 
         cursor = self.db.execute(f"SELECT {select_clause} FROM {current_table}")
         rows = cursor.fetchall()

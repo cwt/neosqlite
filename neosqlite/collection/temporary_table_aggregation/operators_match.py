@@ -210,13 +210,26 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
             # Use appropriate JSON functions based on support
             json_extract_func = f"{self.jsonb.json_function_prefix}_extract"
 
-            # Build the SELECT clause
-            select_parts = [
-                f"{quote_table_name(self.collection.name)}.id",
-                f"{quote_table_name(self.collection.name)}._id as _id",
-            ]
+            # Inspect columns of current_temp_table (post-$group tables omit _id)
+            cols = self.db.execute(
+                f"PRAGMA table_info({quote_table_name(current_temp_table)})"
+            ).fetchall()
+            has_underscore_id = "_id" in {col[1] for col in cols}
 
-            unwound_val = "CASE WHEN je.type IN ('object', 'array') THEN json(je.value) ELSE je.value END"
+            table_ref = quote_table_name(self.collection.name)
+            json_path = parse_json_path(field_name)
+
+            # Build the SELECT clause
+            select_parts = [f"{table_ref}.id"]
+            if has_underscore_id:
+                select_parts.append(f"{table_ref}._id as _id")
+
+            unwound_val = (
+                "CASE WHEN je.type IN ('object', 'array') THEN json(je.value) "
+                "WHEN je.type = 'true' THEN json('true') "
+                "WHEN je.type = 'false' THEN json('false') "
+                "ELSE je.value END"
+            )
 
             # Handle includeArrayIndex option
             if include_index:
@@ -226,8 +239,8 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
                 select_parts.append(
                     f"{self.jsonb.json_function_prefix}_set("
                     f"  {self.jsonb.json_function_prefix}_set("
-                    f"    {quote_table_name(self.collection.name)}.data,"
-                    f"    '{parse_json_path(field_name)}',"
+                    f"    {table_ref}.data,"
+                    f"    '{json_path}',"
                     f"    {unwound_val}"
                     f"  ),"
                     f"  '{index_field}',"
@@ -238,87 +251,73 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
                 # Standard unwind - just set the unwound value
                 select_parts.append(
                     f"{self.jsonb.json_function_prefix}_set("
-                    f"  {quote_table_name(self.collection.name)}.data,"
-                    f"  '{parse_json_path(field_name)}',"
+                    f"  {table_ref}.data,"
+                    f"  '{json_path}',"
                     f"  {unwound_val}"
                     f") as data"
                 )
 
             select_clause = ", ".join(select_parts)
 
-            # Build FROM clause with json_each. The extracted value is
-            # CASE-wrapped so that non-null scalars iterate as a single-
-            # element array (MongoDB semantics) instead of crashing
-            # json_each with malformed JSON; null/missing stays NULL and
-            # yields no rows (#96). Object scalars are parsed with json()
-            # so json_array preserves their object type.
-            table_ref = quote_table_name(self.collection.name)
-            extracted = (
-                f"{json_extract_func}({table_ref}.data, "
-                f"'{parse_json_path(field_name)}')"
-            )
+            # Build FROM clause with json_each. 2-arg json_type(data, path)
+            # inspects the JSON type without unpacking scalar strings (avoiding
+            # malformed JSON errors on plain strings like "hello").
+            extracted = f"{json_extract_func}({table_ref}.data, '{json_path}')"
+            field_type = f"json_type({table_ref}.data, '{json_path}')"
             from_clause = (
-                f"FROM {current_table} as {table_ref}, "
+                f"FROM {current_temp_table} as {table_ref}, "
                 f"{self.jsonb.json_each_function}("
                 f"CASE"
-                f" WHEN json_type({extracted}) = 'array' THEN {extracted}"
-                f" WHEN json_type({extracted}) IS NULL THEN NULL"
-                f" ELSE json_array(CASE WHEN json_type({extracted}) = 'object' THEN json({extracted}) ELSE {extracted} END)"
-                f"END"
+                f" WHEN {field_type} = 'array' THEN {extracted}"
+                f" WHEN {field_type} IS NULL OR {field_type} = 'null' THEN NULL"
+                f" WHEN {field_type} = 'true' THEN json('[true]')"
+                f" WHEN {field_type} = 'false' THEN json('[false]')"
+                f" WHEN {field_type} = 'object' THEN json_array(json({extracted}))"
+                f" ELSE json_array({extracted})"
+                f" END"
                 f") as je"
             )
 
             # Build WHERE clause based on preserveNullAndEmptyArrays
             if preserve_null:
-                # Include documents where array is missing/null/empty
-                # Use LEFT JOIN approach with UNION for null/empty cases
-
-                # Create temp table with two parts:
-                # 1. Documents with arrays (unwound)
-                # 2. Documents without arrays (preserved as-is)
-
                 # For JSONB, we need to use json() to convert binary JSON to text for comparisons
                 json_wrapper = "json(" if self.jsonb.jsonb_supported else ""
                 json_wrapper_close = ")" if self.jsonb.jsonb_supported else ""
 
-                # For preserved documents, MongoDB sets the unwound field to null (not empty array)
-                # We need to handle three cases:
-                # 1. Missing field (json_type IS NULL) - keep as-is
-                # 2. Null value (json_type IS NULL but field exists) - keep as-is
-                # 3. Empty array (json_type = 'array' AND value = '[]') - set field to null
-
-                # Build the data expression for preserved documents
+                # For preserved documents, MongoDB removes empty arrays and keeps missing/null as-is
                 if include_index:
                     index_field = parse_json_path(include_index.lstrip("$"))
-                    # For empty arrays, remove the array field but keep index as None (MongoDB behavior)
-                    # For null/missing fields, keep the field with None value and index as None
                     preserved_data_expr = f"""
                         CASE
-                            WHEN json_type({json_extract_func}({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}')) = 'array'
-                                 AND {json_wrapper}{json_extract_func}({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}'){json_wrapper_close} = '[]'
+                            WHEN {field_type} = 'array'
+                                 AND {json_wrapper}{extracted}{json_wrapper_close} = '[]'
                             THEN {self.jsonb.json_function_prefix}_set(
-                                    {self.jsonb.json_function_prefix}_remove({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}'),
+                                    {self.jsonb.json_function_prefix}_remove({table_ref}.data, '{json_path}'),
                                     '{index_field}',
                                     NULL
                                   )
                             ELSE {self.jsonb.json_function_prefix}_set(
-                                    {quote_table_name(self.collection.name)}.data,
+                                    {table_ref}.data,
                                     '{index_field}',
                                     NULL
                                   )
                         END
                     """
                 else:
-                    # For empty arrays, remove the field entirely (MongoDB behavior)
                     preserved_data_expr = f"""
                         CASE
-                            WHEN json_type({json_extract_func}({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}')) = 'array'
-                                 AND {json_wrapper}{json_extract_func}({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}'){json_wrapper_close} = '[]'
-                            THEN {self.jsonb.json_function_prefix}_remove({quote_table_name(self.collection.name)}.data, '{parse_json_path(field_name)}')
-                            ELSE {quote_table_name(self.collection.name)}.data
+                            WHEN {field_type} = 'array'
+                                 AND {json_wrapper}{extracted}{json_wrapper_close} = '[]'
+                            THEN {self.jsonb.json_function_prefix}_remove({table_ref}.data, '{json_path}')
+                            ELSE {table_ref}.data
                         END
                     """
 
+                id_col_select = (
+                    f"{table_ref}._id as _id,\n                           "
+                    if has_underscore_id
+                    else ""
+                )
                 unwind_query = f"""
                     SELECT {select_clause}
                     {from_clause}
@@ -326,11 +325,11 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
                     UNION ALL
 
                     SELECT {table_ref}.id,
-                           {table_ref}._id as _id,
-                           {preserved_data_expr} as data
-                    FROM {current_table} as {table_ref}
-                    WHERE json_type({extracted}) IS NULL
-                       OR {json_wrapper}{extracted}{json_wrapper_close} = '[]'
+                           {id_col_select}{preserved_data_expr} as data
+                    FROM {current_temp_table} as {table_ref}
+                    WHERE {field_type} IS NULL
+                       OR {field_type} = 'null'
+                       OR ({field_type} = 'array' AND {json_wrapper}{extracted}{json_wrapper_close} = '[]')
                 """
             else:
                 # The CASE-wrapped json_each already yields exactly the

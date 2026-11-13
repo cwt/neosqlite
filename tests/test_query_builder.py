@@ -553,33 +553,46 @@ class TestBuildSimpleWhereClause:
         clause, params, tables = result
         assert "IS NOT NULL" in clause
 
-    def test_with_logical_operator_fallback(self, query_helper):
-        """Test logical operators force Python fallback."""
+    def test_with_logical_operator_sql(self, query_helper):
+        """Test $and compiles to SQL Tier 1 WHERE clause."""
         result = query_helper._build_simple_where_clause(
             {"$and": [{"name": "test"}]}
         )
-        assert result is None
+        assert result is not None
+        clause, params, _ = result
+        assert clause.startswith("WHERE ")
+        assert params == ["test", "test"]
 
-    def test_with_or_operator_fallback(self, query_helper):
-        """Test $or forces Python fallback."""
+    def test_with_or_operator_sql(self, query_helper):
+        """Test $or compiles to SQL Tier 1 WHERE clause."""
         result = query_helper._build_simple_where_clause(
-            {"$or": [{"name": "test"}]}
+            {"$or": [{"name": "test"}, {"age": 10}]}
         )
-        assert result is None
+        assert result is not None
+        clause, params, _ = result
+        assert " OR " in clause
+        assert params == ["test", "test", 10, 10]
 
-    def test_with_nor_operator_fallback(self, query_helper):
-        """Test $nor forces Python fallback."""
+    def test_with_nor_operator_sql(self, query_helper):
+        """Test $nor compiles to NULL-safe NOT (... OR ...) SQL clause."""
         result = query_helper._build_simple_where_clause(
             {"$nor": [{"name": "test"}]}
         )
-        assert result is None
+        assert result is not None
+        clause, params, _ = result
+        assert "NOT (" in clause
+        assert "COALESCE(" in clause
+        assert params == ["test", "test"]
 
-    def test_with_not_operator_fallback(self, query_helper):
-        """Test $not forces Python fallback."""
+    def test_with_not_operator_sql(self, query_helper):
+        """Test $not compiles to NULL-safe NOT (COALESCE(...)) SQL clause."""
         result = query_helper._build_simple_where_clause(
             {"$not": {"name": "test"}}
         )
-        assert result is None
+        assert result is not None
+        clause, params, _ = result
+        assert "NOT (COALESCE(" in clause
+        assert params == ["test", "test"]
 
     def test_empty_query(self, query_helper):
         """Test empty query returns empty clause."""
@@ -663,10 +676,13 @@ class TestBuildFieldClause:
         assert ">" in clause
         assert params == [25, 25]
 
-    def test_regex_object_fallback(self, query_helper):
-        """Test regex object returns None (Python fallback)."""
+    def test_regex_object_sql(self, query_helper):
+        """Test regex object compiles to SQL REGEXP clause."""
         result = query_helper._build_field_clause("name", re.compile(r"^A"))
-        assert result is None
+        assert result is not None
+        clause, params = result
+        assert "REGEXP ?" in clause
+        assert params == ["^A"]
 
 
 class TestBuildIdOperatorClause:
@@ -732,7 +748,7 @@ class TestBuildIdOperatorClause:
 
     def test_id_unsupported_operator(self, query_helper):
         """Test unsupported operator on _id falls back."""
-        result = query_helper._build_id_operator_clause({"$regex": "test"})
+        result = query_helper._build_id_operator_clause({"$type": "string"})
         assert result is None
 
 

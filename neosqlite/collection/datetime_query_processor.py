@@ -59,7 +59,9 @@ class DateTimeQueryProcessor:
         self.helpers = (
             query_engine.helpers if query_engine else QueryHelper(collection)
         )
-        self.sql_translator = SQLTranslator(collection.name, "data", "id")
+        self.sql_translator = SQLTranslator(
+            collection.name, "data", "id", db_connection=collection.db
+        )
         # Initialize JSONB capabilities
         self.jsonb = JSONBContext.from_db(self.db)
         # Configuration for kill switch behavior - DEFAULT TO LOCAL for better isolation
@@ -128,11 +130,15 @@ class DateTimeQueryProcessor:
             # If not datetime query, return empty list
             return []
 
+        qe = self.query_engine or getattr(self.collection, "query_engine", None)
+
         # Try SQL tier first
         if not force_python:
             try:
                 result = self._process_with_sql_tier(query)
                 if result is not None:
+                    if qe is not None and hasattr(qe, "_notify_tier_change"):
+                        qe._notify_tier_change("tier1", [query])
                     return result
             except Exception as e:
                 # If SQL/temp table tier fails, fall through to next tier
@@ -144,6 +150,8 @@ class DateTimeQueryProcessor:
             try:
                 result = self._process_with_temp_table_tier(query)
                 if result is not None:
+                    if qe is not None and hasattr(qe, "_notify_tier_change"):
+                        qe._notify_tier_change("tier2", [query])
                     return result
             except Exception as e:
                 # If temp table tier fails, fall through to Python tier
@@ -153,6 +161,8 @@ class DateTimeQueryProcessor:
                 pass
 
         # Fallback to Python tier
+        if qe is not None and hasattr(qe, "_notify_tier_change"):
+            qe._notify_tier_change("tier3", [query])
         return self._process_with_python_tier(query)
 
     def _contains_datetime_operations(self, query: dict[str, Any]) -> bool:

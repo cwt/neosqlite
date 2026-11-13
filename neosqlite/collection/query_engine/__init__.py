@@ -60,6 +60,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
             "id",
             self.jsonb.jsonb_supported,
             self.jsonb.json_each_function,
+            db_connection=collection.db,
         )
         # Get translation cache size from connection (default: 100, 0 to disable)
         # collection._database is the NeoSQLite Connection, collection.db is sqlite3
@@ -346,6 +347,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
             count_field = pipeline[-1]["$count"]
             if not pipeline[:-1]:
                 # No previous stages, count all documents
+                self._notify_tier_change("tier1", pipeline)
                 count = self.estimated_document_count()
                 return [{count_field: count}]
             elif len(pipeline) == 2 and "$match" in pipeline[0]:

@@ -82,12 +82,25 @@ class SqlUpdatesMixin:
         }
 
         # Also check that doc_id is not 0 (which indicates an upsert)
-        # Disable SQL updates for documents containing Binary objects
-        has_binary_values = any(
-            isinstance(val, bytes) and hasattr(val, "encode_for_storage")
-            for op in update_spec.values()
-            if isinstance(op, dict)
-            for val in op.values()
+        # Only reject SQL updates when Binary appears in operators whose SQL
+        # path compares JSON/BLOB payloads as scalars ($min/$max) or uses
+        # unquoted JSON fragments ($pull/$pullAll). $set, $push, $addToSet, etc.
+        # serialize Binary cleanly into JSON/JSONB.
+        def _contains_binary(obj: Any) -> bool:
+            if isinstance(obj, bytes) and hasattr(obj, "encode_for_storage"):
+                return True
+            if isinstance(obj, dict):
+                return any(_contains_binary(v) for v in obj.values())
+            if isinstance(obj, list):
+                return any(_contains_binary(v) for v in obj)
+            return False
+
+        has_unsupported_binary = any(
+            _contains_binary(val)
+            for op_name, op_val in update_spec.items()
+            if op_name in {"$min", "$max", "$pull", "$pullAll"}
+            and isinstance(op_val, dict)
+            for val in op_val.values()
         )
 
         # Check for positional operators in field paths (not supported in SQL tier)
@@ -134,7 +147,7 @@ class SqlUpdatesMixin:
 
         return (
             doc_id != 0
-            and not has_binary_values
+            and not has_unsupported_binary
             and all(
                 op in supported_ops
                 or op in {"$push", "$bit", "$pop", "$addToSet"}
@@ -283,20 +296,24 @@ class SqlUpdatesMixin:
                 )
 
         arms: list[str] = [
-            f"SELECT value, 0 AS blk, key AS ord FROM json_each({cur})"
+            f"SELECT value, type, 0 AS blk, key AS ord FROM json_each({cur})"
             + (f" WHERE key < {boundary_sql}" if boundary_sql else "")
         ]
         if values_json is not None:
             # Inserted values arrive as one bound JSON-array parameter
-            arms.append("SELECT value, 1 AS blk, key AS ord FROM json_each(?)")
+            arms.append(
+                "SELECT value, type, 1 AS blk, key AS ord FROM json_each(?)"
+            )
             extra_params.append(values_json)
         if boundary_sql:
             arms.append(
-                f"SELECT value, 2 AS blk, key AS ord FROM json_each({cur}) "
+                f"SELECT value, type, 2 AS blk, key AS ord FROM json_each({cur}) "
                 f"WHERE key >= {boundary_sql}"
             )
         union_sql = " UNION ALL ".join(arms)
-        base_ordered = f"SELECT value FROM ({union_sql}) ORDER BY blk, ord"
+        base_ordered = (
+            f"SELECT value, type FROM ({union_sql}) ORDER BY blk, ord"
+        )
 
         if slice_value is None:
             final_select = base_ordered
@@ -308,15 +325,17 @@ class SqlUpdatesMixin:
             # Negative slice: keep the last n elements. Take them off a
             # reversed scan, then restore original order via blk, ord.
             reversed_scan = (
-                f"SELECT value, blk, ord FROM ({union_sql}) "
+                f"SELECT value, type, blk, ord FROM ({union_sql}) "
                 f"ORDER BY blk DESC, ord DESC LIMIT {-int(slice_value)}"
             )
-            final_select = (
-                f"SELECT value FROM ({reversed_scan}) ORDER BY blk ASC, ord ASC"
-            )
+            final_select = f"SELECT value, type FROM ({reversed_scan}) ORDER BY blk ASC, ord ASC"
 
         fragment = (
-            f"{json_path}, json((SELECT json_group_array(value) "
+            f"{json_path}, json((SELECT json_group_array("
+            f"CASE WHEN type IN ('object', 'array') THEN json(value) "
+            f"WHEN type = 'true' THEN json('true') "
+            f"WHEN type = 'false' THEN json('false') "
+            f"ELSE value END) "
             f"FROM ({final_select})))"
         )
         return fragment, extra_params

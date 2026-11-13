@@ -7,6 +7,7 @@ temporary table generation.
 """
 
 import logging
+import re
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,7 @@ class SQLFieldAccessor:
         data_column: str = "data",
         id_column: str = "id",
         jsonb_supported: bool = False,
+        allow_id_column: bool = True,
     ):
         """
         Initialize the SQLFieldAccessor with column names.
@@ -61,22 +63,21 @@ class SQLFieldAccessor:
             data_column: The name of the column containing JSON data (default: "data")
             id_column: The name of the column containing document IDs (default: "id")
             jsonb_supported: Whether JSONB functions are supported (default: False)
+            allow_id_column: Whether "_id" maps to the _id column instead of $. _id JSON
         """
         self.data_column = data_column
         self.id_column = id_column
         self.jsonb_supported = jsonb_supported
+        self.allow_id_column = allow_id_column
 
     def get_field_access(
-        self, field: str, context: str = "direct", query: dict | None = None
+        self,
+        field: str,
+        context: str = "direct",
+        query: dict | None = None,
     ) -> str:
         """
-        Generate field access SQL with enhanced JSON path support.
-
-        This method generates appropriate SQL expressions for accessing fields
-        based on the field name and context. For the special "_id" field, it returns
-        the _id column name for direct access. For other fields, it generates a
-        json_extract or jsonb_extract expression to access the field from the JSON
-        data column, with support for complex JSON paths including array indexing.
+        Generate field access SQL expression for the given field.
 
         Args:
             field: The field name to access
@@ -86,18 +87,32 @@ class SQLFieldAccessor:
         Returns:
             SQL expression for accessing the field
         """
-        if field == "_id":
+        if field == "_id" and self.allow_id_column:
             # Special handling for _id field - access the _id column directly
             return "_id"
         else:
-            # Use enhanced JSON path parsing
-            json_path = parse_json_path(field)
+            # Use enhanced JSON path parsing; force $._id when inside embedded JSON objects
+            json_path = "$._id" if field == "_id" else parse_json_path(field)
 
             # Determine whether to use json_* or jsonb_* functions
             use_json = should_use_json_functions(query, self.jsonb_supported)
             function_name = "json_extract" if use_json else "jsonb_extract"
 
             return f"{function_name}({self.data_column}, '{json_path}')"
+
+
+def _parse_extract_expr(
+    field_access: str,
+) -> tuple[str, str, str, bool] | None:
+    """Parse ``json[b]_extract(col, '$.path')`` into (prefix, col, path_sql, is_jsonb)."""
+    for prefix, is_jsonb in (("jsonb", True), ("json", False)):
+        fn_prefix = f"{prefix}_extract("
+        if field_access.startswith(fn_prefix) and field_access.endswith(")"):
+            inner = field_access[len(fn_prefix) : -1]
+            col, sep, path_sql = inner.partition(", ")
+            if sep and path_sql.startswith("'") and path_sql.endswith("'"):
+                return prefix, col, path_sql, is_jsonb
+    return None
 
 
 class SQLOperatorTranslator:
@@ -113,6 +128,7 @@ class SQLOperatorTranslator:
         self,
         field_accessor: SQLFieldAccessor | None = None,
         json_each_function: str | None = None,
+        db_connection: Any = None,
     ):
         """
         Initialize the SQLOperatorTranslator with an optional field accessor.
@@ -122,12 +138,18 @@ class SQLOperatorTranslator:
                             If None, a default SQLFieldAccessor will be created.
             json_each_function: The json_each function to use ('jsonb_each' or 'json_each').
                                If None, defaults to 'json_each'.
+            db_connection: Optional SQLite connection for nested $expr evaluation.
         """
         self.field_accessor = field_accessor or SQLFieldAccessor()
         self._json_each_function = json_each_function or "json_each"
+        self._db_connection = db_connection
 
     def translate_operator(
-        self, field_access: str, operator: str, value: Any
+        self,
+        field_access: str,
+        operator: str,
+        value: Any,
+        regex_options: str = "",
     ) -> tuple[str | None, list[Any]]:
         """
         Translate a MongoDB operator to SQL.
@@ -149,33 +171,36 @@ class SQLOperatorTranslator:
         Returns:
             Tuple of (SQL expression, parameters) or (None, []) if unsupported
         """
+        from ..objectid import ObjectId
+        from .type_utils import (
+            build_json_in_clause,
+            build_json_nin_clause,
+            is_encoded_json_value,
+            json_type_list_sql,
+            regex_to_sql_pattern,
+            serialize_sql_query_value,
+        )
+
         # default `sql` and `params`
         sql: str | None = None
         params: list[Any] = []
 
-        # Serialize Binary objects for SQL comparisons using compact format
-        if isinstance(value, bytes) and hasattr(value, "encode_for_storage"):
-            from .json_helpers import neosqlite_json_dumps_for_sql
-
-            value = neosqlite_json_dumps_for_sql(value)
-
-        # ObjectId values cannot be bound as SQL parameters, and _id range
-        # comparisons need BSON type-strict semantics (only ObjectIds ever
-        # match an ObjectId comparison). Fall back to Python, which orders
-        # ObjectIds by their 12-byte value.
-        from ..objectid import ObjectId
-
-        def _contains_object_id(node: Any) -> bool:
-            if isinstance(node, ObjectId):
-                return True
-            if isinstance(node, (list, tuple)):
-                for item in node:
-                    if isinstance(item, ObjectId):
-                        return True
-            return False
-
-        if _contains_object_id(value):
+        # Range comparisons on ObjectId or Binary fall back to Python for strict BSON semantics
+        if operator in ("$gt", "$gte", "$lt", "$lte") and is_encoded_json_value(
+            value
+        ):
             return None, []
+
+        extracted = _parse_extract_expr(field_access)
+        is_jsonb = extracted[3] if extracted else False
+        each_is_jsonb = self._json_each_function == "jsonb_each"
+
+        def _normalize_for_field(val: Any) -> tuple[Any, str]:
+            if field_access == "_id":
+                return (str(val) if isinstance(val, ObjectId) else val), "?"
+            if field_access == "json_each.value":
+                return serialize_sql_query_value(val, each_is_jsonb)
+            return serialize_sql_query_value(val, is_jsonb)
 
         # Check if this is a datetime comparison that should be wrapped with datetime() function
         from datetime import datetime
@@ -270,6 +295,8 @@ class SQLOperatorTranslator:
             # Regular processing for non-datetime values
             match operator:
                 case "$eq":
+                    if isinstance(value, re.Pattern):
+                        return None, []
                     # Array values need Python for correct semantics
                     if isinstance(value, (list, tuple)):
                         return None, []
@@ -278,8 +305,9 @@ class SQLOperatorTranslator:
                         sql = f"{field_access} IS NULL"
                         params = []
                     else:
-                        sql = f"{field_access} = ?"
-                        params = [value]
+                        param_val, ph = _normalize_for_field(value)
+                        sql = f"{field_access} = {ph}"
+                        params = [param_val]
                 case "$gt":
                     # Array values need Python for correct semantics
                     if isinstance(value, (list, tuple)):
@@ -313,8 +341,8 @@ class SQLOperatorTranslator:
                         sql = f"{field_access} <= ?"
                         params = [value]
                 case "$ne":
-                    # Array values need Python for correct semantics
-                    if isinstance(value, (list, tuple)):
+                    # Array values and regex Pattern values need Python fallback
+                    if isinstance(value, (list, tuple, re.Pattern)):
                         return None, []
                     if value is None:
                         if field_access == "_id":
@@ -330,40 +358,53 @@ class SQLOperatorTranslator:
                         else:
                             sql = f"{field_access} IS NOT NULL"
                     else:
-                        if "extract(" in field_access:
+                        param_val, ph = _normalize_for_field(value)
+                        if extracted is not None:
+                            _, data_expr, json_path, _ = extracted
+                            type_field_access = (
+                                f"json_type({data_expr}, {json_path})"
+                            )
+                            types = json_type_list_sql(value)
+                            each_val, each_ph = serialize_sql_query_value(
+                                value, self._json_each_function == "jsonb_each"
+                            )
+                            sql = (
+                                f"({type_field_access} IS NULL OR "
+                                f"({type_field_access} = 'array' AND NOT EXISTS ("
+                                f"SELECT 1 FROM {self._json_each_function}({data_expr}, {json_path}) AS json_each "
+                                f"WHERE json_each.value = {each_ph} AND json_each.type IN {types})) OR "
+                                f"({type_field_access} != 'array' AND ("
+                                f"{type_field_access} NOT IN {types} OR "
+                                f"({type_field_access} IN {types} AND "
+                                f"{field_access} IS NOT {ph}))))"
+                            )
+                            params = [each_val, param_val]
+                        elif "extract(" in field_access:
                             type_field_access = field_access.replace(
                                 "jsonb_extract(", "json_type("
                             ).replace("json_extract(", "json_type(")
-                            # Type-restricted: exclude only same-type equal values.
-                            if isinstance(value, bool):
-                                types = "('true', 'false')"
-                            elif isinstance(value, (int, float)):
-                                types = "('integer', 'real')"
-                            elif isinstance(value, str):
-                                types = "('text',)"
-                            elif isinstance(value, list):
-                                types = "('array',)"
-                            elif isinstance(value, dict):
-                                types = "('object',)"
-                            else:
-                                types = "('null',)"
+                            types = json_type_list_sql(value)
                             sql = (
                                 f"({type_field_access} IS NULL OR "
                                 f"{type_field_access} NOT IN {types} OR "
                                 f"({type_field_access} IN {types} AND "
-                                f"{field_access} IS NOT ?))"
+                                f"{field_access} IS NOT {ph}))"
                             )
-                            params = [value]
+                            params = [param_val]
                         else:
-                            sql = f"{field_access} IS NOT ?"
-                            params = [value]
+                            sql = f"{field_access} IS NOT {ph}"
+                            params = [param_val]
                 case "$in":
-                    if isinstance(value, (list, tuple)):
-                        if not value:
-                            return None, []
+                    if isinstance(value, list):
                         if field_access == "_id":
+                            if not value:
+                                return "0", []
                             has_null = any(v is None for v in value)
                             non_null = [v for v in value if v is not None]
+                            norm_non_null = [
+                                str(v) if isinstance(v, ObjectId) else v
+                                for v in non_null
+                            ]
                             if value and all(
                                 isinstance(v, (str, datetime))
                                 and self._is_datetime_value(v)
@@ -375,29 +416,46 @@ class SQLOperatorTranslator:
                                 sql = f"datetime({field_access}) IN ({placeholders})"
                                 params = [to_iso(v) for v in value]
                             elif has_null:
-                                if non_null:
+                                if norm_non_null:
                                     placeholders = ", ".join(
-                                        "?" for _ in non_null
+                                        "?" for _ in norm_non_null
                                     )
                                     sql = f"({field_access} IN ({placeholders}) OR {field_access} IS NULL)"
-                                    params = non_null
+                                    params = norm_non_null
                                 else:
                                     sql = f"{field_access} IS NULL"
                                     params = []
                             else:
-                                placeholders = ", ".join("?" for _ in value)
+                                placeholders = ", ".join(
+                                    "?" for _ in norm_non_null
+                                )
                                 sql = f"{field_access} IN ({placeholders})"
-                                params = list(value)
+                                params = norm_non_null
+                        elif extracted is not None:
+                            func_prefix, data_expr, json_path, _ = extracted
+                            sql, params = build_json_in_clause(
+                                data_expr,
+                                json_path,
+                                value,
+                                func_prefix,
+                                is_jsonb,
+                                self._json_each_function,
+                            )
                         else:
                             return None, []
+                    else:
+                        return None, []
                 case "$nin":
-                    if isinstance(value, (list, tuple)):
-                        if not value:
-                            return None, []
+                    if isinstance(value, list):
                         if field_access == "_id":
+                            if not value:
+                                return "1", []
                             has_null = any(v is None for v in value)
                             non_null = [v for v in value if v is not None]
-                            # For _id field, SQL NOT IN works correctly (scalar comparison)
+                            norm_non_null = [
+                                str(v) if isinstance(v, ObjectId) else v
+                                for v in non_null
+                            ]
                             if value and all(
                                 isinstance(v, (str, datetime))
                                 and self._is_datetime_value(v)
@@ -409,27 +467,58 @@ class SQLOperatorTranslator:
                                 sql = f"datetime({field_access}) NOT IN ({placeholders})"
                                 params = [to_iso(v) for v in value]
                             elif has_null:
-                                if non_null:
+                                if norm_non_null:
                                     placeholders = ", ".join(
-                                        "?" for _ in non_null
+                                        "?" for _ in norm_non_null
                                     )
                                     sql = f"({field_access} NOT IN ({placeholders}) AND {field_access} IS NOT NULL)"
-                                    params = non_null
+                                    params = norm_non_null
                                 else:
                                     sql = f"{field_access} IS NOT NULL"
                                     params = []
                             else:
-                                placeholders = ", ".join("?" for _ in value)
+                                placeholders = ", ".join(
+                                    "?" for _ in norm_non_null
+                                )
                                 sql = f"{field_access} NOT IN ({placeholders})"
-                                params = list(value)
+                                params = norm_non_null
+                        elif extracted is not None:
+                            func_prefix, data_expr, json_path, _ = extracted
+                            sql, params = build_json_nin_clause(
+                                data_expr,
+                                json_path,
+                                value,
+                                func_prefix,
+                                is_jsonb,
+                                self._json_each_function,
+                            )
                         else:
                             return None, []
+                    else:
+                        return None, []
                 case "$all":
-                    if isinstance(value, (list, tuple)):
-                        if not value:
-                            return None, []
-                        if field_access != "_id":
-                            return None, []
+                    if isinstance(value, list) and value and extracted is not None:
+                        _, data_expr, json_path, _ = extracted
+                        all_clauses = [f"json_type({data_expr}, {json_path}) = 'array'"]
+                        all_params: list[Any] = []
+                        for item in value:
+                            if item is None:
+                                all_clauses.append(
+                                    f"EXISTS (SELECT 1 FROM {self._json_each_function}({data_expr}, {json_path}) AS json_each WHERE json_each.value IS NULL)"
+                                )
+                            else:
+                                p_val, ph = serialize_sql_query_value(
+                                    item, each_is_jsonb
+                                )
+                                elem_types = json_type_list_sql(item)
+                                all_clauses.append(
+                                    f"EXISTS (SELECT 1 FROM {self._json_each_function}({data_expr}, {json_path}) AS json_each WHERE json_each.value = {ph} AND json_each.type IN {elem_types})"
+                                )
+                                all_params.append(p_val)
+                        sql = "(" + " AND ".join(all_clauses) + ")"
+                        params = all_params
+                    else:
+                        return None, []
                 case "$exists":
                     # Handle boolean value for $exists
                     if isinstance(value, bool):
@@ -511,11 +600,202 @@ class SQLOperatorTranslator:
                     if bitmask is not None:
                         sql = f"({field_access} & ?) != 0"
                         params = [bitmask]
+                case "$regex":
+                    pattern = regex_to_sql_pattern(value, regex_options)
+                    if pattern is None:
+                        return None, []
+                    if extracted is not None:
+                        _, data_expr, json_path, _ = extracted
+                        sql = (
+                            f"(json_type({data_expr}, {json_path}) IS NOT NULL AND "
+                            f"json_type({data_expr}, {json_path}) != 'null' AND "
+                            f"{field_access} REGEXP ?)"
+                        )
+                    else:
+                        sql = f"({field_access} IS NOT NULL AND {field_access} REGEXP ?)"
+                    params = [pattern]
+                case "$options":
+                    # Standalone $options without $regex must fall back so Python raises
+                    return None, []
+                case "$elemMatch":
+                    if extracted is not None:
+                        _, data_expr, json_path, _ = extracted
+                        sql, params = self._translate_elem_match(
+                            data_expr, json_path, value
+                        )
+                    else:
+                        return None, []
                 case _:
                     # Unsupported operator
                     pass
 
         return sql, params
+
+    def _translate_elem_match(
+        self, data_expr: str, json_path: str, elem_query: Any
+    ) -> tuple[str | None, list[Any]]:
+        """Translate $elemMatch on a JSON array field to SQLite EXISTS."""
+        from .type_utils import (
+            is_encoded_json_value,
+            json_type_list_sql,
+            json_types_for_values,
+            regex_to_sql_pattern,
+            serialize_in_values,
+            serialize_sql_query_value,
+        )
+
+        if not isinstance(elem_query, dict):
+            if isinstance(elem_query, (list, tuple, re.Pattern)):
+                return None, []
+            each_is_jsonb = self._json_each_function == "jsonb_each"
+            if elem_query is None:
+                cond = "json_each.type = 'null'"
+                params_out: list[Any] = []
+            else:
+                p_val, ph = serialize_sql_query_value(elem_query, each_is_jsonb)
+                elem_types = json_type_list_sql(elem_query)
+                cond = f"(json_each.type IN {elem_types} AND json_each.value = {ph})"
+                params_out = [p_val]
+            return (
+                f"(json_type({data_expr}, {json_path}) = 'array' AND EXISTS ("
+                f"SELECT 1 FROM {self._json_each_function}({data_expr}, {json_path}) AS json_each "
+                f"WHERE {cond}))",
+                params_out,
+            )
+
+        if not elem_query:
+            return (
+                f"(json_type({data_expr}, {json_path}) = 'array' AND EXISTS ("
+                f"SELECT 1 FROM {self._json_each_function}({data_expr}, {json_path})))",
+                [],
+            )
+
+        has_ops = any(k.startswith("$") for k in elem_query)
+        has_non_ops = any(not k.startswith("$") for k in elem_query)
+        if has_ops and has_non_ops:
+            return None, []
+
+        if has_ops:
+            options = elem_query.get("$options", "")
+            if "$options" in elem_query and (
+                "$regex" not in elem_query or not isinstance(options, str)
+            ):
+                return None, []
+
+            each_is_jsonb = self._json_each_function == "jsonb_each"
+            sub_clauses: list[str] = []
+            sub_params: list[Any] = []
+            cmp_map = {
+                "$eq": "=",
+                "$gt": ">",
+                "$lt": "<",
+                "$gte": ">=",
+                "$lte": "<=",
+            }
+            for sub_op, sub_val in elem_query.items():
+                if sub_op == "$options":
+                    continue
+                if sub_op == "$regex":
+                    pattern = regex_to_sql_pattern(sub_val, options)
+                    if pattern is None:
+                        return None, []
+                    sub_clauses.append(
+                        "(json_each.value IS NOT NULL AND json_each.type != 'null' AND json_each.value REGEXP ?)"
+                    )
+                    sub_params.append(pattern)
+                elif sub_op in ("$in", "$nin") and isinstance(sub_val, list):
+                    if not sub_val:
+                        sub_clauses.append("0" if sub_op == "$in" else "1")
+                        continue
+                    has_null = any(v is None for v in sub_val)
+                    non_null = [v for v in sub_val if v is not None]
+                    if not non_null:
+                        sub_clauses.append(
+                            "json_each.type = 'null'"
+                            if sub_op == "$in"
+                            else "json_each.type != 'null'"
+                        )
+                        continue
+                    types = json_types_for_values(non_null)
+                    types_sql = "(" + ", ".join(repr(t) for t in types) + ")"
+                    phs, p_list = serialize_in_values(non_null, each_is_jsonb)
+                    in_match = (
+                        f"(json_each.value IN ({phs}) AND json_each.type IN {types_sql})"
+                    )
+                    if has_null:
+                        in_match = f"({in_match} OR json_each.type = 'null')"
+                    sub_clauses.append(
+                        in_match if sub_op == "$in" else f"NOT ({in_match})"
+                    )
+                    sub_params.extend(p_list)
+                elif sub_op == "$ne":
+                    if isinstance(sub_val, (list, tuple, re.Pattern)):
+                        return None, []
+                    if sub_val is None:
+                        sub_clauses.append("json_each.type != 'null'")
+                    else:
+                        p_val, ph = serialize_sql_query_value(
+                            sub_val, each_is_jsonb
+                        )
+                        val_types = json_type_list_sql(sub_val)
+                        sub_clauses.append(
+                            f"(json_each.type NOT IN {val_types} OR json_each.value IS NOT {ph})"
+                        )
+                        sub_params.append(p_val)
+                elif sub_op in cmp_map:
+                    if isinstance(
+                        sub_val, (list, tuple, re.Pattern)
+                    ) or (
+                        sub_op != "$eq" and is_encoded_json_value(sub_val)
+                    ):
+                        return None, []
+                    if sub_val is None:
+                        if sub_op in ("$eq", "$gte", "$lte"):
+                            sub_clauses.append("json_each.type = 'null'")
+                        else:
+                            sub_clauses.append("0")
+                    else:
+                        p_val, ph = serialize_sql_query_value(
+                            sub_val, each_is_jsonb
+                        )
+                        val_types = json_type_list_sql(sub_val)
+                        sub_clauses.append(
+                            f"(json_each.type IN {val_types} AND json_each.value {cmp_map[sub_op]} {ph})"
+                        )
+                        sub_params.append(p_val)
+                else:
+                    return None, []
+
+            return (
+                f"(json_type({data_expr}, {json_path}) = 'array' AND EXISTS ("
+                f"SELECT 1 FROM {self._json_each_function}({data_expr}, {json_path}) AS json_each "
+                f"WHERE {' AND '.join(sub_clauses)}))",
+                sub_params,
+            )
+
+        # Subdocument criteria inside an array of objects
+        sub_accessor = SQLFieldAccessor(
+            "json_each.value",
+            self.field_accessor.id_column,
+            self.field_accessor.jsonb_supported,
+            allow_id_column=False,
+        )
+        sub_builder = SQLClauseBuilder(
+            sub_accessor,
+            json_each_function=self._json_each_function,
+            db_connection=self._db_connection,
+        )
+        sub_sql, sub_params = sub_builder.build_where_clause(
+            elem_query, context="direct", is_nested=True
+        )
+        if not sub_sql:
+            return None, []
+        return (
+            f"(json_type({data_expr}, {json_path}) = 'array' AND EXISTS ("
+            f"SELECT 1 FROM {self._json_each_function}({data_expr}, {json_path}) AS json_each "
+            f"WHERE json_each.type = 'object' AND ({sub_sql})))",
+            sub_params,
+        )
 
     def _is_datetime_value(self, value: Any) -> bool:
         """
@@ -547,6 +827,7 @@ class SQLClauseBuilder:
         field_accessor: SQLFieldAccessor | None = None,
         operator_translator: SQLOperatorTranslator | None = None,
         json_each_function: str | None = None,
+        db_connection: Any = None,
     ):
         """
         Initialize the SQLClauseBuilder with optional field accessor and operator translator.
@@ -559,16 +840,18 @@ class SQLClauseBuilder:
             json_each_function: The json_each function to use ('jsonb_each' or 'json_each').
                                If provided and operator_translator is None, a new SQLOperatorTranslator
                                will be created with this function.
+            db_connection: Optional SQLite connection for $expr Tier-1 translation.
         """
         self.field_accessor = field_accessor or SQLFieldAccessor()
         # Retained so clause builders can emit array-containment checks (#99)
         self._json_each_function = json_each_function or "json_each"
         self.data_column = self.field_accessor.data_column
+        self.db_connection = db_connection
         if operator_translator is not None:
             self.operator_translator = operator_translator
-        elif json_each_function is not None:
+        elif json_each_function is not None or db_connection is not None:
             self.operator_translator = SQLOperatorTranslator(
-                field_accessor, json_each_function
+                field_accessor, self._json_each_function, db_connection
             )
         else:
             self.operator_translator = SQLOperatorTranslator()
@@ -629,9 +912,17 @@ class SQLClauseBuilder:
             case "$and":
                 sql = " AND ".join(clauses)
             case "$or":
-                sql = " OR ".join(clauses)
+                sql = (
+                    "("
+                    + " OR ".join(f"COALESCE(({c}), 0)" for c in clauses)
+                    + ")"
+                )
             case "$nor":
-                sql = "NOT (" + " OR ".join(clauses) + ")"
+                sql = (
+                    "NOT ("
+                    + " OR ".join(f"COALESCE(({c}), 0)" for c in clauses)
+                    + ")"
+                )
             case _:
                 # Unsupported logical operator
                 pass
@@ -688,7 +979,24 @@ class SQLClauseBuilder:
                     "or post-process results in Python."
                 )
 
-            if field in ("$and", "$or", "$nor"):
+            if field == "$expr":
+                if not isinstance(value, dict):
+                    return None, []
+                from .expr_evaluator import ExprEvaluator
+                from .type_utils import expr_truthiness_sql
+
+                evaluator = ExprEvaluator(
+                    data_column=self.data_column,
+                    db_connection=self.db_connection,
+                )
+                expr_sql, expr_params = evaluator.evaluate(
+                    value, tier=1, force_python=False
+                )
+                if expr_sql is None:
+                    return None, []
+                clauses.append(expr_truthiness_sql(expr_sql))
+                params.extend(expr_params)
+            elif field in ("$and", "$or", "$nor"):
                 # Handle logical operators directly
                 sql, clause_params = self._build_logical_condition(
                     field, value, context
@@ -713,7 +1021,7 @@ class SQLClauseBuilder:
                         # Remove "WHERE " prefix if present
                         if not_clause.startswith("WHERE "):
                             not_clause = not_clause[6:]
-                        clauses.append(f"NOT ({not_clause})")
+                        clauses.append(f"NOT COALESCE(({not_clause}), 0)")
                         params.extend(not_params)
                     else:
                         return _empty_result()  # Empty condition
@@ -728,17 +1036,62 @@ class SQLClauseBuilder:
 
                 if isinstance(value, dict):
                     # Handle query operators like $eq, $gt, $lt, etc.
+                    options = value.get("$options", "")
+                    if "$options" in value and (
+                        "$regex" not in value or not isinstance(options, str)
+                    ):
+                        return None, []
                     for operator, op_val in value.items():
-                        sql, clause_params = (
-                            self.operator_translator.translate_operator(
-                                field_access, operator, op_val
+                        if operator == "$options":
+                            continue
+                        if operator == "$not":
+                            if not isinstance(op_val, (dict, re.Pattern)) or (
+                                isinstance(op_val, dict) and "$not" in op_val
+                            ):
+                                return None, []
+                            sub_clause, sub_params = self.build_where_clause(
+                                {field: op_val},
+                                context,
+                                is_nested=True,
+                                query_param=query_param,
                             )
-                        )
+                            if not sub_clause:
+                                return None, []
+                            if sub_clause.startswith("WHERE "):
+                                sub_clause = sub_clause[6:]
+                            clauses.append(f"NOT COALESCE(({sub_clause}), 0)")
+                            params.extend(sub_params)
+                            continue
+                        if operator == "$regex" and options:
+                            sql, clause_params = (
+                                self.operator_translator.translate_operator(
+                                    field_access,
+                                    operator,
+                                    op_val,
+                                    regex_options=options,
+                                )
+                            )
+                        else:
+                            sql, clause_params = (
+                                self.operator_translator.translate_operator(
+                                    field_access, operator, op_val
+                                )
+                            )
                         if sql is None:
                             # Unsupported operator, fallback to Python
                             return None, []
                         clauses.append(sql)
                         params.extend(clause_params)
+                elif isinstance(value, re.Pattern):
+                    from .type_utils import regex_to_sql_pattern
+
+                    pattern = regex_to_sql_pattern(value)
+                    if pattern is None:
+                        return None, []
+                    clauses.append(
+                        f"({field_access} IS NOT NULL AND {field_access} REGEXP ?)"
+                    )
+                    params.append(pattern)
                 elif self.operator_translator._is_datetime_value(value):
                     # For simple datetime equality, translate it as an $eq operator
                     sql, clause_params = (
@@ -752,48 +1105,33 @@ class SQLClauseBuilder:
                     params.extend(clause_params)
                 elif value is None:
                     clauses.append(f"{field_access} IS NULL")
-                elif isinstance(value, (dict, list)) or field == "_id":
-                    # _id is a real column — no containment applies (#99)
+                elif isinstance(value, (dict, list)) or (
+                    field == "_id" and self.field_accessor.allow_id_column
+                ):
+                    # _id column stores hex strings for ObjectId; no containment applies (#99)
+                    from ..objectid import ObjectId
+
+                    bound_val = (
+                        str(value)
+                        if field == "_id" and isinstance(value, ObjectId)
+                        else value
+                    )
                     clauses.append(f"{field_access} = ?")
-                    params.append(value)
+                    params.append(bound_val)
                 else:
                     # Simple equality with array containment at any depth (#99)
-                    segs = field.split(".")
-                    arms = [field_access + " = ?"]
-                    params_arm: list[Any] = [value]
-                    for k in range(1, len(segs) + 1):
-                        arr_path = "'$." + ".".join(segs[:k]) + "'"
-                        arr_expr = (
-                            "json_extract("
-                            + self.data_column
-                            + ", "
-                            + arr_path
-                            + ")"
+                    from .type_utils import build_json_containment_clause
+
+                    containment_clause, params_arm = (
+                        build_json_containment_clause(
+                            self.data_column,
+                            field,
+                            field_access,
+                            value,
+                            self._json_each_function,
                         )
-                        rest = segs[k:]
-                        if rest:
-                            leaf_path = "$." + ".".join(rest)
-                            elem_pred = (
-                                "json_extract(value, '" + leaf_path + "') = ?"
-                            )
-                        else:
-                            elem_pred = "value = ?"
-                        arms.append(
-                            "EXISTS (SELECT 1 FROM "
-                            + self._json_each_function
-                            + "(CASE WHEN "
-                            + "json_type("
-                            + self.data_column
-                            + ", "
-                            + arr_path
-                            + ") = 'array' THEN "
-                            + arr_expr
-                            + " END) WHERE "
-                            + elem_pred
-                            + ")"
-                        )
-                        params_arm.append(value)
-                    clauses.append("(" + " OR ".join(arms) + ")")
+                    )
+                    clauses.append(containment_clause)
                     params.extend(params_arm)
 
         if not clauses:
@@ -885,6 +1223,7 @@ class SQLTranslator:
         id_column: str = "id",
         jsonb_supported: bool = False,
         json_each_function: str | None = None,
+        db_connection: Any = None,
     ):
         """
         Initialize the SQLTranslator with table and column names.
@@ -896,22 +1235,27 @@ class SQLTranslator:
             jsonb_supported: Whether JSONB functions are supported (default: False)
             json_each_function: The json_each function to use ('jsonb_each' or 'json_each').
                               If None, defaults to 'json_each'.
+            db_connection: Optional SQLite connection for $expr Tier-1 translation.
         """
         self.table_name = table_name or "collection"
         self.data_column = data_column
         self.id_column = id_column
         self.jsonb_supported = jsonb_supported
         self._json_each_function = json_each_function or "json_each"
+        self.db_connection = db_connection
 
         # Initialize components
         self.field_accessor = SQLFieldAccessor(
             data_column, id_column, jsonb_supported
         )
         self.operator_translator = SQLOperatorTranslator(
-            self.field_accessor, self._json_each_function
+            self.field_accessor, self._json_each_function, db_connection
         )
         self.clause_builder = SQLClauseBuilder(
-            self.field_accessor, self.operator_translator
+            self.field_accessor,
+            self.operator_translator,
+            self._json_each_function,
+            db_connection,
         )
 
     def translate_match(

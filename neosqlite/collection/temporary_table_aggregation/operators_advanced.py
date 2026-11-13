@@ -286,8 +286,12 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
           }
         }
         """
-        coll_name = union_spec.get("coll")
-        pipeline = union_spec.get("pipeline", [])
+        if isinstance(union_spec, str):
+            coll_name = union_spec
+            pipeline = []
+        else:
+            coll_name = union_spec.get("coll")
+            pipeline = union_spec.get("pipeline", [])
 
         if not coll_name:
             return current_table

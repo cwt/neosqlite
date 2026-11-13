@@ -789,10 +789,19 @@ def execute_python_aggregation(
                 ]
             case "$unionWith":
                 union_spec = stage["$unionWith"]
-                coll_name = union_spec.get("coll")
-                pipeline = union_spec.get("pipeline", [])
+                coll_name: str | None
+                if isinstance(union_spec, str):
+                    coll_name = union_spec
+                    pipeline = []
+                elif isinstance(union_spec, dict):
+                    coll_name = union_spec.get("coll")
+                    pipeline = union_spec.get("pipeline", [])
+                else:
+                    raise MalformedQueryException(
+                        f"$unionWith requires string or dict, got {type(union_spec).__name__}"
+                    )
 
-                if not coll_name:
+                if not isinstance(coll_name, str) or not coll_name:
                     break
 
                 # Get documents from the other collection. When a pipeline

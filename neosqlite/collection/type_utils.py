@@ -340,6 +340,18 @@ __all__ = [
     "get_bson_type",
     "bson_sort_key",
     "_hashable_group_key",
+    # SQL query helpers
+    "is_encoded_json_value",
+    "serialize_sql_query_value",
+    "serialize_in_values",
+    "json_type_guard_sql",
+    "json_types_for_values",
+    "json_type_list_sql",
+    "regex_to_sql_pattern",
+    "build_json_in_clause",
+    "build_json_nin_clause",
+    "build_json_containment_clause",
+    "expr_truthiness_sql",
     # Type checking helpers
     "_is_expression",
     "_is_field_reference",
@@ -347,6 +359,363 @@ __all__ = [
     "_is_numeric_value",
     "validate_session",
 ]
+
+
+def is_encoded_json_value(value: Any) -> bool:
+    """Return True if value is serialized as a JSON object string (ObjectId or Binary)."""
+    from ..objectid import ObjectId
+
+    return isinstance(value, ObjectId) or (
+        isinstance(value, bytes) and hasattr(value, "encode_for_storage")
+    )
+
+
+def serialize_sql_query_value(
+    value: Any, jsonb_supported: bool = False
+) -> tuple[Any, str]:
+    """Serialize a Python query value and return (sql_param, sql_placeholder).
+
+    ObjectId and Binary values are stored as JSON objects in ``data``; under JSONB
+    mode, ``jsonb(?)`` lets SQLite compare JSONB-extracted/iterated values directly
+    against compact JSON text.
+    """
+    if is_encoded_json_value(value):
+        from .json_helpers import neosqlite_json_dumps_for_sql
+
+        placeholder = "jsonb(?)" if jsonb_supported else "?"
+        return neosqlite_json_dumps_for_sql(value), placeholder
+    return value, "?"
+
+
+def serialize_in_values(
+    values: list[Any] | tuple[Any, ...], jsonb_supported: bool = False
+) -> tuple[str, list[Any]]:
+    """Serialize values for a SQL IN (...) list, returning (placeholders_sql, params)."""
+    pairs = [serialize_sql_query_value(v, jsonb_supported) for v in values]
+    return ", ".join(ph for _, ph in pairs), [p for p, _ in pairs]
+
+
+def _bson_json_types(value: Any) -> list[str]:
+    """Return SQLite json_type/json_each.type strings matching value's BSON type."""
+    if isinstance(value, bool):
+        return ["true", "false"]
+    if isinstance(value, (int, float)):
+        return ["integer", "real"]
+    if isinstance(value, str):
+        return ["text"]
+    if isinstance(value, list):
+        return ["array"]
+    if isinstance(value, dict) or is_encoded_json_value(value):
+        return ["object"]
+    if value is None:
+        return ["null"]
+    return []
+
+
+def json_type_guard_sql(json_path: str, value: Any) -> str:
+    """Return a SQL fragment restricting json_type to the value's BSON type."""
+    if value is None:
+        return f"json_type(data, {json_path}) IS NULL"
+    types = _bson_json_types(value)
+    if not types:
+        return "1"
+    if len(types) == 1:
+        return f"json_type(data, {json_path}) = '{types[0]}'"
+    joined = ", ".join(repr(t) for t in types)
+    return f"json_type(data, {json_path}) IN ({joined})"
+
+
+def json_types_for_values(values: list[Any] | tuple[Any, ...]) -> list[str]:
+    """Collect sorted unique SQLite json_type names for a sequence of values."""
+    types: set[str] = set()
+    for val in values:
+        types.update(_bson_json_types(val))
+    return sorted(types)
+
+
+def json_type_list_sql(value: Any) -> str:
+    """Return a SQL IN-list of json_type/json_each.type values for a value."""
+    types = _bson_json_types(value)
+    if not types:
+        return "('null',)"
+    return "(" + ", ".join(repr(t) for t in types) + ")"
+
+
+def regex_to_sql_pattern(value: Any, options: str = "") -> str | None:
+    """Convert a regex string (+ $options) or compiled re.Pattern to a SQLite REGEXP pattern."""
+    if isinstance(value, re.Pattern):
+        raw_pattern = value.pattern
+        if not isinstance(raw_pattern, str):
+            return None
+        supported_mask = (
+            re.IGNORECASE
+            | re.MULTILINE
+            | re.DOTALL
+            | re.VERBOSE
+            | re.UNICODE
+            | re.ASCII
+        )
+        if value.flags & ~supported_mask:
+            return None
+        flag_str = ""
+        if value.flags & re.ASCII:
+            flag_str += "a"
+        if value.flags & re.IGNORECASE:
+            flag_str += "i"
+        if value.flags & re.MULTILINE:
+            flag_str += "m"
+        if value.flags & re.DOTALL:
+            flag_str += "s"
+        if value.flags & re.VERBOSE:
+            flag_str += "x"
+        pattern = f"(?{flag_str}:{raw_pattern})" if flag_str else raw_pattern
+    elif isinstance(value, str):
+        flag_str = ""
+        if options:
+            opts_lower = options.lower()
+            if "i" in opts_lower:
+                flag_str += "i"
+            if "m" in opts_lower:
+                flag_str += "m"
+            if "s" in opts_lower:
+                flag_str += "s"
+            if "x" in opts_lower:
+                flag_str += "x"
+        pattern = f"(?{flag_str}:{value})" if flag_str else value
+    else:
+        return None
+
+    try:
+        re.compile(pattern)
+    except re.error:
+        return None
+    return pattern
+
+
+def _format_types_in_sql(values: list[Any] | tuple[Any, ...]) -> str:
+    """Format SQLite json_type values into a SQL IN tuple."""
+    types = json_types_for_values(values)
+    if not types:
+        return "('null',)"
+    return "(" + ", ".join(repr(t) for t in types) + ")"
+
+
+def build_json_in_clause(
+    data_expr: str,
+    json_path: str,
+    op_val: list[Any] | tuple[Any, ...],
+    json_function_prefix: str,
+    jsonb_supported: bool,
+    json_each_function: str,
+) -> tuple[str, list[Any]]:
+    """Build SQL WHERE predicate and params for MongoDB $in on a JSON field."""
+    if not op_val:
+        return "0", []
+    has_null = any(v is None for v in op_val)
+    non_null = [v for v in op_val if v is not None]
+    types = json_types_for_values(non_null)
+    in_types_sql = _format_types_in_sql(non_null)
+    each_is_jsonb = json_each_function == "jsonb_each"
+
+    if json_path == "value":
+        each_phs, each_params = serialize_in_values(non_null, each_is_jsonb)
+        if has_null:
+            if non_null:
+                return f"(value IN ({each_phs}) OR value IS NULL)", each_params
+            return "value IS NULL", []
+        return f"value IN ({each_phs})", each_params
+
+    params: list[Any] = []
+    if not non_null:
+        clause = (
+            f"(EXISTS (SELECT 1 FROM {json_each_function}({data_expr}, {json_path}) AS json_each "
+            f"WHERE json_each.value IS NULL AND json_type({data_expr}, {json_path}) = 'array') "
+            f"OR json_type({data_expr}, {json_path}) IS NULL "
+            f"OR json_type({data_expr}, {json_path}) = 'null')"
+        )
+        return clause, params
+
+    each_phs, each_params = serialize_in_values(non_null, each_is_jsonb)
+    if "object" not in types:
+        if has_null:
+            clause = (
+                f"((json_type({data_expr}, {json_path}) != 'object' AND "
+                f"EXISTS (SELECT 1 FROM {json_each_function}({data_expr}, {json_path}) AS json_each "
+                f"WHERE (json_each.value IN ({each_phs}) AND json_each.type IN {in_types_sql}) "
+                f"OR (json_type({data_expr}, {json_path}) = 'array' AND json_each.value IS NULL))) "
+                f"OR json_type({data_expr}, {json_path}) IS NULL "
+                f"OR json_type({data_expr}, {json_path}) = 'null')"
+            )
+        else:
+            clause = (
+                f"(json_type({data_expr}, {json_path}) != 'object' AND "
+                f"EXISTS (SELECT 1 FROM {json_each_function}({data_expr}, {json_path}) AS json_each "
+                f"WHERE json_each.value IN ({each_phs}) AND json_each.type IN {in_types_sql}))"
+            )
+        params.extend(each_params)
+        return clause, params
+
+    # Object values (ObjectId, Binary, dicts) cannot use json_each directly on scalar objects
+    # because json_each iterates object keys/values rather than treating the object as one element.
+    scalar_phs, scalar_params = serialize_in_values(non_null, jsonb_supported)
+    extract_expr = f"{json_function_prefix}_extract({data_expr}, {json_path})"
+    array_null = " OR json_each.value IS NULL" if has_null else ""
+    null_pred = (
+        f" OR json_type({data_expr}, {json_path}) IS NULL "
+        f"OR json_type({data_expr}, {json_path}) = 'null'"
+        if has_null
+        else ""
+    )
+    non_obj_check = (
+        f"json_type({data_expr}, {json_path}) != 'object'"
+        if len(types) > 1
+        else f"json_type({data_expr}, {json_path}) = 'array'"
+    )
+    clause = (
+        f"((json_type({data_expr}, {json_path}) = 'object' AND "
+        f"{extract_expr} IN ({scalar_phs})) OR "
+        f"({non_obj_check} AND EXISTS ("
+        f"SELECT 1 FROM {json_each_function}({data_expr}, {json_path}) AS json_each "
+        f"WHERE (json_each.value IN ({each_phs}) AND json_each.type IN {in_types_sql}){array_null}))"
+        f"{null_pred})"
+    )
+    params.extend(scalar_params)
+    params.extend(each_params)
+    return clause, params
+
+
+def build_json_nin_clause(
+    data_expr: str,
+    json_path: str,
+    op_val: list[Any] | tuple[Any, ...],
+    json_function_prefix: str,
+    jsonb_supported: bool,
+    json_each_function: str,
+) -> tuple[str, list[Any]]:
+    """Build SQL WHERE predicate and params for MongoDB $nin on a JSON field."""
+    if not op_val:
+        return "1", []
+    has_null = any(v is None for v in op_val)
+    non_null = [v for v in op_val if v is not None]
+    types = json_types_for_values(non_null)
+    in_types_sql = _format_types_in_sql(non_null)
+    each_is_jsonb = json_each_function == "jsonb_each"
+
+    if json_path == "value":
+        each_phs, each_params = serialize_in_values(non_null, each_is_jsonb)
+        if has_null:
+            if non_null:
+                return f"(value NOT IN ({each_phs}) AND value IS NOT NULL)", each_params
+            return "value IS NOT NULL", []
+        return f"value NOT IN ({each_phs})", each_params
+
+    params: list[Any] = []
+    if not non_null:
+        clause = (
+            f"(NOT (json_type({data_expr}, {json_path}) = 'array' AND EXISTS ("
+            f"SELECT 1 FROM {json_each_function}({data_expr}, {json_path}) AS json_each "
+            f"WHERE json_each.value IS NULL)) AND "
+            f"json_type({data_expr}, {json_path}) IS NOT NULL AND "
+            f"json_type({data_expr}, {json_path}) != 'null')"
+        )
+        return clause, params
+
+    each_phs, each_params = serialize_in_values(non_null, each_is_jsonb)
+    if "object" not in types:
+        if has_null:
+            clause = (
+                f"((json_type({data_expr}, {json_path}) = 'object' OR NOT EXISTS ("
+                f"SELECT 1 FROM {json_each_function}({data_expr}, {json_path}) AS json_each "
+                f"WHERE (json_each.value IN ({each_phs}) AND json_each.type IN {in_types_sql}) "
+                f"OR json_each.value IS NULL)) AND "
+                f"json_type({data_expr}, {json_path}) IS NOT NULL AND "
+                f"json_type({data_expr}, {json_path}) != 'null')"
+            )
+        else:
+            clause = (
+                f"(json_type({data_expr}, {json_path}) = 'object' OR NOT EXISTS ("
+                f"SELECT 1 FROM {json_each_function}({data_expr}, {json_path}) AS json_each "
+                f"WHERE json_each.value IN ({each_phs}) AND json_each.type IN {in_types_sql}))"
+            )
+        params.extend(each_params)
+        return clause, params
+
+    scalar_phs, scalar_params = serialize_in_values(non_null, jsonb_supported)
+    extract_expr = f"{json_function_prefix}_extract({data_expr}, {json_path})"
+    array_null = " OR json_each.value IS NULL" if has_null else ""
+    obj_mismatch = (
+        f"NOT COALESCE((json_type({data_expr}, {json_path}) = 'object' AND "
+        f"{extract_expr} IN ({scalar_phs})), 0)"
+    )
+    non_obj_no_match = (
+        f"(json_type({data_expr}, {json_path}) = 'object' OR NOT EXISTS ("
+        f"SELECT 1 FROM {json_each_function}({data_expr}, {json_path}) AS json_each "
+        f"WHERE (json_each.value IN ({each_phs}) AND json_each.type IN {in_types_sql}){array_null}))"
+    )
+    params.extend(scalar_params)
+    params.extend(each_params)
+    if has_null:
+        clause = (
+            f"({obj_mismatch} AND {non_obj_no_match} AND "
+            f"json_type({data_expr}, {json_path}) IS NOT NULL AND "
+            f"json_type({data_expr}, {json_path}) != 'null')"
+        )
+    else:
+        clause = f"({obj_mismatch} AND {non_obj_no_match})"
+    return clause, params
+
+
+def expr_truthiness_sql(sql_expr: str) -> str:
+    """Wrap a Tier-1 $expr SQL expression in MongoDB truthiness semantics."""
+    if "json('true')" in sql_expr or 'json("true")' in sql_expr:
+        return f"({sql_expr} = json('true'))"
+    return f"(COALESCE(({sql_expr}), 0) != 0)"
+
+
+def build_json_containment_clause(
+    data_expr: str,
+    field: str,
+    field_access: str,
+    value: Any,
+    json_each_function: str,
+) -> tuple[str, list[Any]]:
+    """Build scalar equality + array containment clause (#99) for a regular JSON field."""
+    is_field_jsonb = field_access.startswith("jsonb_extract(")
+    each_is_jsonb = json_each_function == "jsonb_each"
+    scalar_val, scalar_ph = serialize_sql_query_value(value, is_field_jsonb)
+    each_val, each_ph = serialize_sql_query_value(value, each_is_jsonb)
+    text_val, _ = serialize_sql_query_value(value, False)
+
+    segs = field.split(".")
+    arms = [f"{field_access} = {scalar_ph}"]
+    params: list[Any] = [scalar_val]
+    for k in range(1, len(segs) + 1):
+        arr_path = "'$." + ".".join(segs[:k]) + "'"
+        arr_expr = "json_extract(" + data_expr + ", " + arr_path + ")"
+        rest = segs[k:]
+        if rest:
+            leaf_path = "$." + ".".join(rest)
+            elem_pred = "json_extract(value, '" + leaf_path + "') = ?"
+            arm_param = text_val
+        else:
+            elem_pred = f"value = {each_ph}"
+            arm_param = each_val
+        arms.append(
+            "EXISTS (SELECT 1 FROM "
+            + json_each_function
+            + "(CASE WHEN "
+            + "json_type("
+            + data_expr
+            + ", "
+            + arr_path
+            + ") = 'array' THEN "
+            + arr_expr
+            + " END) WHERE "
+            + elem_pred
+            + ")"
+        )
+        params.append(arm_param)
+    return "(" + " OR ".join(arms) + ")", params
 
 
 def _hashable_group_key(value: Any) -> tuple:

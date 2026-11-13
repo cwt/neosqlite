@@ -148,6 +148,102 @@ class ComparisonMixin(BaseSqlMixin):
                 left_params + right_params,
             )
 
+        # Date comparison normalization: when either operand is a datetime literal
+        # or a date-producing SQL expression ($dateAdd/$dateSubtract/$dateFromParts/
+        # $dateFromString/$dateTrunc), stored {"$date": "+00:00"} values and SQLite
+        # "...Z" strings must be canonicalized via strftime before comparison.
+        from datetime import datetime
+
+        _date_producing_ops = (
+            "$dateAdd",
+            "$dateSubtract",
+            "$dateFromParts",
+            "$dateFromString",
+            "$dateTrunc",
+        )
+
+        def _is_date_producing(op_val: Any, op_sql: str) -> bool:
+            if isinstance(op_val, datetime):
+                return True
+            if isinstance(op_val, dict) and len(op_val) == 1:
+                if next(iter(op_val)) in _date_producing_ops:
+                    return True
+            return any(
+                marker in op_sql
+                for marker in (
+                    "json_object('$date',",
+                    'json_object("$date",',
+                    "jsonb_object('$date',",
+                    'jsonb_object("$date",',
+                )
+            )
+
+        is_date_cmp = _is_date_producing(
+            operands[0], left_sql
+        ) or _is_date_producing(operands[1], right_sql)
+        if is_date_cmp and operator in (
+            "$eq",
+            "$ne",
+            "$gt",
+            "$gte",
+            "$lt",
+            "$lte",
+        ):
+            from ...json_path_utils import parse_json_path
+
+            prefix = (
+                "jsonb_extract"
+                if getattr(self, "jsonb", None) and self.jsonb.jsonb_supported
+                else "json_extract"
+            )
+
+            def _date_norm_sql(
+                op_val: Any, op_sql: str
+            ) -> tuple[str, list[Any] | None]:
+                if (
+                    isinstance(op_val, str)
+                    and op_val.startswith("$")
+                    and not op_val.startswith("$$")
+                ):
+                    path = f"'{parse_json_path(op_val[1:])}.\"$date\"'"
+                    iso = f"{prefix}({self.data_column}, {path})"
+                    return f"strftime('%Y-%m-%dT%H:%M:%fZ', {iso})", []
+                if any(
+                    marker in op_sql
+                    for marker in (
+                        "json_object('$date',",
+                        'json_object("$date",',
+                        "jsonb_object('$date',",
+                        'jsonb_object("$date",',
+                    )
+                ):
+                    iso = f"json_extract({op_sql}, '$.$date')"
+                    return f"strftime('%Y-%m-%dT%H:%M:%fZ', {iso})", None
+                raise NotImplementedError(
+                    "Mixed date/non-date comparison requires Python evaluation"
+                )
+
+            norm_left, override_left = _date_norm_sql(operands[0], left_sql)
+            norm_right, override_right = _date_norm_sql(
+                operands[1], right_sql
+            )
+            final_left_params = (
+                override_left if override_left is not None else left_params
+            )
+            final_right_params = (
+                override_right if override_right is not None else right_params
+            )
+            if operator == "$eq":
+                sql_op = "IS"
+            elif operator == "$ne":
+                sql_op = "IS NOT"
+            else:
+                sql_op = self._map_comparison_operator(operator)
+            return (
+                f"({norm_left} {sql_op} {norm_right})",
+                final_left_params + final_right_params,
+            )
+
         sql_operator = self._map_comparison_operator(operator)
 
         return (

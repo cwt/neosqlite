@@ -4,6 +4,7 @@ import logging
 from typing import Any, Callable
 
 from ...sql_utils import quote_table_name
+from ..expr_evaluator import AggregationContext, _is_expression
 from ..json_path_utils import parse_json_path
 from ..jsonb_support import (
     _get_json_group_array_function,
@@ -29,15 +30,10 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         Supports these accumulators in SQL tier:
         - $sum, $avg, $min, $max: Standard SQL aggregators
         - $count: COUNT(*)
-        - $first, $last: Using subqueries (LIMITATION: requires no preceding $sort)
+        - $first, $last: Using window functions over input stream rowid order
         - $addToSet: Using json_group_array(DISTINCT ...)
         - $push: Using json_group_array(...)
-        - Expression keys: Using SQLTranslator for expression evaluation
-
-        Limitation:
-        - $first/$last with preceding $sort stage falls back to Python for correctness.
-          The current implementation uses correlated subqueries that don't preserve
-          sort order across groups.
+        - Expression keys: Using ExprEvaluator for expression evaluation
 
         Args:
             create_temp (Callable): Function to create temporary tables
@@ -55,23 +51,26 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                 "Force fallback - use Tier 3 Python evaluation"
             )
 
-        # Check for $first/$last with preceding $sort - fall back to Python
-        if self._has_sort_stage:
-            for field, accumulator in group_spec.items():
-                if field == "_id":
-                    continue
-                if isinstance(accumulator, dict) and len(accumulator) == 1:
-                    op = next(
-                        iter(accumulator.keys())
-                    )  # Get the key (operator name), not value
-                    if op in ("$first", "$last"):
-                        raise NotImplementedError(
-                            "$first/$last with preceding $sort not supported in SQL tier for correctness"
-                        )
+        # Reset per-stage state
+        self._group_key_expr: str | None = None
+        self._group_key_params: list[Any] = []
+
+        # Inspect available columns on current_table (post-$group tables omit _id)
+        table_cols = self.db.execute(
+            f"PRAGMA table_info({quote_table_name(current_table)})"
+        ).fetchall()
+        has_underscore_id = "_id" in {col[1] for col in table_cols}
+        underscore_id_expr = (
+            "_id"
+            if has_underscore_id
+            else f"{self.jsonb.json_function_prefix}_extract(data, '$._id')"
+        )
 
         group_id_expr = group_spec.get("_id")
         select_parts = []
         group_by_parts = []
+        select_params: list[Any] = []
+        first_last_params: list[Any] = []
         array_fields = []  # Track fields that are arrays (from $push/$addToSet)
         object_fields = (
             []
@@ -84,9 +83,9 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         elif isinstance(group_id_expr, str) and group_id_expr.startswith("$"):
             field_name = group_id_expr[1:]
             if field_name == "_id":
-                # Special case: grouping by _id column
-                select_parts.append("_id AS _id")
-                group_by_parts.append("_id")
+                # Special case: grouping by _id column or embedded _id
+                select_parts.append(f"{underscore_id_expr} AS _id")
+                group_by_parts.append(underscore_id_expr)
             else:
                 # Group by extracted field
                 json_extract = f"{self.jsonb.json_function_prefix}_extract"
@@ -100,15 +99,17 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
             # Support expression keys using ExprEvaluator
             # This allows grouping by computed fields like {$concat: ["$firstName", " ", "$lastName"]}
             try:
-                # Use ExprEvaluator to build the SQL expression
                 key_expr, key_params = (
-                    self.expr_evaluator.build_select_expression(group_id_expr)
+                    self.expr_evaluator.build_select_expression(
+                        group_id_expr, context=AggregationContext()
+                    )
                 )
                 if key_expr:
-                    select_parts.append(f"{key_expr} AS _id")
-                    group_by_parts.append(key_expr)
-                    # Store params for later use (though currently not used in CREATE TABLE AS SELECT)
-                    self._group_key_params = key_params
+                    # Precompute expression key once in a CTE so ? params aren't duplicated
+                    self._group_key_expr = key_expr
+                    self._group_key_params = list(key_params or [])
+                    select_parts.append("__neosqlite_gk AS _id")
+                    group_by_parts.append("__neosqlite_gk")
                 else:
                     raise NotImplementedError(
                         f"$group with expression key {group_id_expr} not supported in SQL tier"
@@ -124,7 +125,7 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                 )
 
         # $first/$last accumulators are materialized via a ranked CTE
-        self._first_last_fields: list[tuple[str, bool, str]] = []
+        self._first_last_fields: list[tuple[str, bool, str, bool]] = []
 
         def _format_literal_sql(val: Any) -> str:
             if val is None:
@@ -168,6 +169,8 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
             # Extract field name from expression or identify literal values
             is_literal = False
             literal_value = None
+            expr_sql: str | None = None
+            expr_params: list[Any] = []
             if isinstance(expr, str) and expr in ("$$ROOT", "$$CURRENT"):
                 expr_field = expr
             elif isinstance(expr, str) and expr.startswith("$$ROOT."):
@@ -185,11 +188,19 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                 is_literal = True
                 literal_value = expr
             elif isinstance(expr, dict):
-                # Expression object (e.g., {'title': '$title', 'author': '$author'})
-                # This is valid for $push and $addToSet
-                expr_field = (
-                    None  # Will be handled specially in the accumulator logic
-                )
+                # Either an arithmetic/conditional/string expression dict ($multiply, $cond, ...)
+                # or a subdocument object template for $push / $addToSet
+                expr_field = None
+                if _is_expression(expr):
+                    try:
+                        expr_sql, expr_params = (
+                            self.expr_evaluator.build_select_expression(
+                                expr, context=AggregationContext()
+                            )
+                        )
+                        expr_params = list(expr_params or [])
+                    except NotImplementedError:
+                        expr_sql, expr_params = None, []
             else:
                 # Complex expression - fall back to Python
                 raise NotImplementedError(
@@ -201,68 +212,28 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
             json_group_array = self.jsonb.json_group_array_function
 
             match op:
-                case "$sum":
-                    if is_literal:
-                        if literal_value == 1:
-                            select_parts.append(f"COUNT(*) AS {field}")
-                        else:
-                            select_parts.append(
-                                f"SUM({_format_literal_sql(literal_value)}) AS {field}"
-                            )
-                    elif expr_field:
-                        if expr_field == "_id":
-                            select_parts.append(f"SUM(_id) AS {field}")
-                        else:
-                            select_parts.append(
-                                f"SUM({json_extract}(data, '{parse_json_path(expr_field)}')) AS {field}"
-                            )
-                    else:
-                        select_parts.append(f"SUM({expr}) AS {field}")
-
-                case "$avg":
-                    if is_literal:
+                case "$sum" | "$avg" | "$min" | "$max":
+                    sql_func = op[1:].upper()
+                    if op == "$sum" and is_literal and literal_value == 1:
+                        select_parts.append(f"COUNT(*) AS {field}")
+                    elif is_literal:
                         select_parts.append(
-                            f"AVG({_format_literal_sql(literal_value)}) AS {field}"
+                            f"{sql_func}({_format_literal_sql(literal_value)}) AS {field}"
                         )
                     elif expr_field:
-                        if expr_field == "_id":
-                            select_parts.append(f"AVG(_id) AS {field}")
-                        else:
-                            select_parts.append(
-                                f"AVG({json_extract}(data, '{parse_json_path(expr_field)}')) AS {field}"
-                            )
-                    else:
-                        select_parts.append(f"AVG({expr}) AS {field}")
-
-                case "$min":
-                    if is_literal:
-                        select_parts.append(
-                            f"MIN({_format_literal_sql(literal_value)}) AS {field}"
+                        val_expr = (
+                            underscore_id_expr
+                            if expr_field == "_id"
+                            else f"{json_extract}(data, '{parse_json_path(expr_field)}')"
                         )
-                    elif expr_field:
-                        if expr_field == "_id":
-                            select_parts.append(f"MIN(_id) AS {field}")
-                        else:
-                            select_parts.append(
-                                f"MIN({json_extract}(data, '{parse_json_path(expr_field)}')) AS {field}"
-                            )
+                        select_parts.append(f"{sql_func}({val_expr}) AS {field}")
+                    elif expr_sql is not None:
+                        select_parts.append(f"{sql_func}({expr_sql}) AS {field}")
+                        select_params.extend(expr_params)
                     else:
-                        select_parts.append(f"MIN({expr}) AS {field}")
-
-                case "$max":
-                    if is_literal:
-                        select_parts.append(
-                            f"MAX({_format_literal_sql(literal_value)}) AS {field}"
+                        raise NotImplementedError(
+                            f"$group accumulator {op} with expression {expr} not supported in SQL tier"
                         )
-                    elif expr_field:
-                        if expr_field == "_id":
-                            select_parts.append(f"MAX(_id) AS {field}")
-                        else:
-                            select_parts.append(
-                                f"MAX({json_extract}(data, '{parse_json_path(expr_field)}')) AS {field}"
-                            )
-                    else:
-                        select_parts.append(f"MAX({expr}) AS {field}")
 
                 case "$count":
                     select_parts.append(f"COUNT(*) AS {field}")
@@ -280,7 +251,22 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                                 field,
                                 op == "$last",
                                 expr_field,
+                                False,
                             )
+                        )
+                    elif expr_sql is not None:
+                        self._first_last_fields.append(
+                            (
+                                field,
+                                op == "$last",
+                                expr_sql,
+                                True,
+                            )
+                        )
+                        first_last_params.extend(expr_params)
+                    else:
+                        raise NotImplementedError(
+                            f"$group accumulator {op} with expression {expr} not supported in SQL tier"
                         )
 
                 case "$addToSet":
@@ -288,8 +274,13 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                     # Track this field for post-processing
                     array_fields.append(field)
 
-                    # Check if expr is a dict expression
-                    if isinstance(expr, dict):
+                    if expr_sql is not None:
+                        select_parts.append(
+                            f"{json_group_array}(DISTINCT {expr_sql}) AS {field}"
+                        )
+                        select_params.extend(expr_params)
+                    # Check if expr is a subdocument template
+                    elif isinstance(expr, dict):
                         # Build json_object for the expression (same as $push)
                         json_object_func = (
                             f"{self.jsonb.json_function_prefix}_object"
@@ -380,8 +371,13 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                     # Track this field for post-processing
                     array_fields.append(field)
 
+                    if expr_sql is not None:
+                        select_parts.append(
+                            f"{json_group_array}({expr_sql}) AS {field}"
+                        )
+                        select_params.extend(expr_params)
                     # Check if expr is a dict expression (e.g., {'title': '$title', 'author': '$author'})
-                    if isinstance(expr, dict):
+                    elif isinstance(expr, dict):
                         # Build json_object for the expression
                         json_object_func = (
                             f"{self.jsonb.json_function_prefix}_object"
@@ -497,34 +493,40 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         # (jsonb_object returns binary JSONB which Python can't read directly)
         json_output_func = f"json({json_object_func}"
 
-        # Check if we have params from expression keys
-        # Note: CREATE TABLE AS SELECT doesn't support params, so we inline them
-        group_params = getattr(self, "_group_key_params", [])
-        if group_params:
-            # For expression keys with params, we need to inline them
-            # This is a limitation - for now, fall back to Python if params are needed
-            # A future enhancement could use a different approach (e.g., CTEs)
-            raise NotImplementedError(
-                "$group with parameterized expression key not supported in SQL tier"
-            )
+        group_params = list(getattr(self, "_group_key_params", []) or [])
 
         if self._first_last_fields:
-            query, params = self._ranked_group_query(
+            query, _ = self._ranked_group_query(
                 current_table=current_table,
                 select_parts=select_parts,
                 group_by_parts=group_by_parts,
                 json_args=json_args,
                 json_output_func=json_output_func,
+                has_underscore_id=has_underscore_id,
             )
+            all_params = group_params + select_params + first_last_params
         else:
+            if self._group_key_expr is not None:
+                cte_prefix = (
+                    f"WITH __src AS (SELECT *, {self._group_key_expr} AS __neosqlite_gk "
+                    f"FROM {current_table}) "
+                )
+                source_table = "__src"
+            else:
+                cte_prefix = ""
+                source_table = current_table
             query = (
-                "SELECT ROW_NUMBER() OVER () as id, "
+                cte_prefix
+                + "SELECT ROW_NUMBER() OVER () as id, "
                 + f"{json_output_func}({json_args})) as data "
                 + self._grouped_source_sql(
-                    current_table, select_parts, group_by_clause
+                    source_table, select_parts, group_by_clause
                 )
             )
-        new_table = create_temp(group_stage, query)
+            all_params = group_params + select_params
+        new_table = create_temp(
+            group_stage, query, params=all_params if all_params else None
+        )
 
         # Store array fields metadata for efficient post-processing
         # This avoids scanning all fields in _get_results_from_table
@@ -562,39 +564,56 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         group_by_parts: list[str],
         json_args: str,
         json_output_func: str,
+        has_underscore_id: bool = True,
     ) -> tuple[str, list]:
         """Build the $group query when $first/$last are present (#105).
 
-        A ranked CTE assigns per-group row numbers by insertion order (id),
-        partitioned null-safely on the group key; $first/$last become
-        MAX(CASE WHEN rn/rd = 1 ...) aggregates over that ranking.
+        A ranked CTE assigns per-group row numbers by input stream rowid order
+        (preserving any preceding $sort or $unwind ordering), partitioned on
+        the group key; $first/$last become MAX(CASE WHEN rn/rd = 1 ...)
+        aggregates over that ranking.
         """
         json_extract = f"{self.jsonb.json_function_prefix}_extract"
-        gk_expr = group_by_parts[0] if group_by_parts else None
+        gk_expr = getattr(self, "_group_key_expr", None) or (
+            group_by_parts[0] if group_by_parts else None
+        )
 
-        src_cols = ["id AS src_id", "data AS data"]
+        src_cols = ["rowid AS __row_order"]
+        if has_underscore_id:
+            src_cols.append("_id")
+        src_cols.append("data AS data")
         if gk_expr is not None:
-            src_cols.append(f"{gk_expr} AS __gk")
-        partition = "PARTITION BY __gk" if gk_expr is not None else ""
+            src_cols.append(f"{gk_expr} AS __neosqlite_gk")
+        partition = "PARTITION BY __neosqlite_gk" if gk_expr is not None else ""
         cte = (
             f"WITH src AS (SELECT {', '.join(src_cols)} FROM {current_table}), "
             f"ranked AS (SELECT src.*, "
-            f"ROW_NUMBER() OVER ({partition} ORDER BY src_id ASC) AS rn, "
-            f"ROW_NUMBER() OVER ({partition} ORDER BY src_id DESC) AS rd "
+            f"ROW_NUMBER() OVER ({partition} ORDER BY __row_order ASC) AS rn, "
+            f"ROW_NUMBER() OVER ({partition} ORDER BY __row_order DESC) AS rd "
             f"FROM src)"
         )
 
         agg_parts: list[str] = []
-        for part in select_parts:
-            agg_parts.append(part)
-        for field, is_last, expr_field in self._first_last_fields:
-            if expr_field == "_id":
-                value_sql = "src_id"
-            elif expr_field in ("$$ROOT", "$$CURRENT"):
+        for idx, part in enumerate(select_parts):
+            if idx == 0 and gk_expr is not None:
+                # Reference precomputed __neosqlite_gk once to avoid duplicating params
+                agg_parts.append("__neosqlite_gk AS _id")
+            else:
+                agg_parts.append(part)
+        for field, is_last, expr_val, is_sql in self._first_last_fields:
+            if is_sql:
+                value_sql = expr_val
+            elif expr_val == "_id":
+                value_sql = (
+                    "_id"
+                    if has_underscore_id
+                    else f"{json_extract}(data, '$._id')"
+                )
+            elif expr_val in ("$$ROOT", "$$CURRENT"):
                 value_sql = "json(data)"
             else:
                 value_sql = (
-                    f"{json_extract}(data, '{parse_json_path(expr_field)}')"
+                    f"{json_extract}(data, '{parse_json_path(expr_val)}')"
                 )
             flag = "rd" if is_last else "rn"
             agg_parts.append(
@@ -603,7 +622,7 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
 
         inner = f"SELECT {', '.join(agg_parts)} FROM ranked"
         if gk_expr is not None:
-            inner += " GROUP BY __gk"
+            inner += " GROUP BY __neosqlite_gk"
 
         outer_from = f"FROM ({inner})"
         if not group_by_parts:
@@ -611,7 +630,7 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
             outer_from += " WHERE (SELECT COUNT(*) FROM ranked) > 0"
 
         aliases = self._select_aliases(select_parts) + [
-            f for f, _, _ in self._first_last_fields
+            f for f, _, _, _ in self._first_last_fields
         ]
         local_json_args = ", ".join(f"'{a}', {a}" for a in aliases)
 

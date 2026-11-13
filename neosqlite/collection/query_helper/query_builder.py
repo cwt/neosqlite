@@ -276,6 +276,16 @@ class QueryBuilderMixin(SqlQueryBuilderMixin):
                                 # $options is handled together with $regex
                                 continue
 
+                            if operator == "$not":
+                                if not isinstance(arg, (dict, re.Pattern)):
+                                    raise MalformedQueryException(
+                                        "$not requires a regex or operator expression"
+                                    )
+                                if self._apply_query({field: arg}, document):
+                                    matches.append(False)
+                                    break
+                                continue
+
                             fn = self._get_operator_fn(operator)
                             # Call operator function, passing options if it's $regex
                             if operator == "$regex":

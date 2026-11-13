@@ -390,7 +390,7 @@ class TestSQLClauseBuilder:
         builder = SQLClauseBuilder()
         conditions = [{"name": "Alice"}, {"age": {"$gte": 18}}]
         result = builder._build_logical_condition("$or", conditions)
-        expected_sql = "((json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?))) OR (json_extract(data, '$.age') >= ?)"
+        expected_sql = "(COALESCE((((json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?)))), 0) OR COALESCE(((json_extract(data, '$.age') >= ?)), 0))"
         assert result[0] == expected_sql
         assert result[1] == ["Alice", "Alice", 18]
 
@@ -399,7 +399,7 @@ class TestSQLClauseBuilder:
         builder = SQLClauseBuilder()
         conditions = [{"name": "Alice"}, {"age": {"$gte": 18}}]
         result = builder._build_logical_condition("$nor", conditions)
-        expected_sql = "NOT (((json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?))) OR (json_extract(data, '$.age') >= ?))"
+        expected_sql = "NOT (COALESCE((((json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?)))), 0) OR COALESCE(((json_extract(data, '$.age') >= ?)), 0))"
         assert result[0] == expected_sql
         assert result[1] == ["Alice", "Alice", 18]
 
@@ -463,7 +463,7 @@ class TestSQLClauseBuilder:
         builder = SQLClauseBuilder()
         query = {"$or": [{"name": "Alice"}, {"age": {"$gte": 18}}]}
         result = builder.build_where_clause(query)
-        expected_sql = "WHERE ((json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?))) OR (json_extract(data, '$.age') >= ?)"
+        expected_sql = "WHERE (COALESCE((((json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?)))), 0) OR COALESCE(((json_extract(data, '$.age') >= ?)), 0))"
         assert result[0] == expected_sql
         assert result[1] == ["Alice", "Alice", 18]
 
@@ -472,7 +472,7 @@ class TestSQLClauseBuilder:
         builder = SQLClauseBuilder()
         query = {"$nor": [{"name": "Alice"}, {"age": {"$gte": 18}}]}
         result = builder.build_where_clause(query)
-        expected_sql = "WHERE NOT (((json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?))) OR (json_extract(data, '$.age') >= ?))"
+        expected_sql = "WHERE NOT (COALESCE((((json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?)))), 0) OR COALESCE(((json_extract(data, '$.age') >= ?)), 0))"
         assert result[0] == expected_sql
         assert result[1] == ["Alice", "Alice", 18]
 
@@ -483,7 +483,7 @@ class TestSQLClauseBuilder:
         result = builder.build_where_clause(query)
         assert (
             result[0]
-            == "WHERE NOT ((json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?)))"
+            == "WHERE NOT COALESCE(((json_extract(data, '$.name') = ? OR EXISTS (SELECT 1 FROM json_each(CASE WHEN json_type(data, '$.name') = 'array' THEN json_extract(data, '$.name') END) WHERE value = ?))), 0)"
         )
         assert result[1] == ["Alice", "Alice"]
 

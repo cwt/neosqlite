@@ -24,6 +24,10 @@ class QueryEngineProtocol(Protocol):
         """Get integer ID for an ObjectId."""
         ...
 
+    def _notify_tier_change(self, new_tier: str, pipeline: list[Any]) -> None:
+        """Notify registered tier-change listeners of execution tier transitions."""
+        ...
+
     def find(
         self,
         filter: dict[str, Any] | None = None,

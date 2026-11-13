@@ -201,20 +201,16 @@ class QueryHelper(
             self.collection.db,
         )
 
-        # Determine complexity tier based on expression analysis
-        tier = self._analyze_expr_complexity(expr)
-
         # Check for force fallback (kill switch)
-        force_python = get_force_fallback()
-
-        # Tier selection with kill switch awareness
-        if force_python or tier >= 3:
-            # Tier 3: Python fallback (kill switch or too complex)
+        if get_force_fallback():
+            # Tier 3: Python fallback (kill switch)
             return None
 
-        elif tier == 2:
-            # Tier 2: Try temporary tables approach
-            # Get the main query from Tier 2 evaluator
+        # Determine complexity score based on expression analysis
+        complexity = self._analyze_expr_complexity(expr)
+
+        # Tier 2: Try temporary tables approach for medium complexity standalone $expr
+        if 3 <= complexity <= 8 and len(query) == 1:
             tier2_result = self.tier2_evaluator.evaluate(
                 expr,
                 self.collection.name,
@@ -230,33 +226,19 @@ class QueryHelper(
                     tier2_result[2],
                 )
 
-            # If Tier 2 fails, fall back to Tier 1
-            sql_expr, params = tier1_evaluator.evaluate(
-                expr, tier=1, force_python=False
-            )
-            if sql_expr is None:
-                return None
+        # Tier 1: Direct SQL evaluation (also fallback when Tier 2 declines or complexity >= 9)
+        sql_expr, params = tier1_evaluator.evaluate(
+            expr, tier=1, force_python=False
+        )
 
-            # Build WHERE clause with other fields
-            combined = self._combine_expr_with_other_fields(
-                sql_expr, params, query, expr
-            )
-            return combined
+        if sql_expr is None:
+            # Tier 3: Python fallback - return None to force Python filtering
+            return None
 
-        else:
-            # Tier 1: Direct SQL evaluation
-            sql_expr, params = tier1_evaluator.evaluate(
-                expr, tier=1, force_python=False
-            )
-
-            if sql_expr is None:
-                # Python fallback - return None to force Python filtering
-                return None
-
-            # Build WHERE clause with other fields
-            return self._combine_expr_with_other_fields(
-                sql_expr, params, query, expr
-            )
+        # Build WHERE clause with other fields
+        return self._combine_expr_with_other_fields(
+            sql_expr, params, query, expr
+        )
 
     def _analyze_expr_complexity(self, expr: dict[str, Any]) -> int:
         """
@@ -343,16 +325,12 @@ class QueryHelper(
         Returns:
             Tuple of (WHERE clause, parameters, tables) or None for Python fallback
         """
+        from ..type_utils import expr_truthiness_sql
+
         # Build WHERE clause starting with $expr
         # MongoDB $expr truthiness: NOT (null, 0, false, undefined).
         # Handle both integer booleans (0/1) and JSON booleans (json('true')/json('false')).
-        if "json('true')" in sql_expr or 'json("true")' in sql_expr:
-            # Expression returns JSON booleans - compare to json('true')
-            truthy_expr = f"({sql_expr} = json('true'))"
-        else:
-            # Expression returns integers - use != 0
-            truthy_expr = f"COALESCE(({sql_expr}), 0) != 0"
-        where_parts = [f"({truthy_expr})"]
+        where_parts = [expr_truthiness_sql(sql_expr)]
         all_params: list[Any] = list(params)
 
         # Process other query fields (excluding $expr)
@@ -360,9 +338,16 @@ class QueryHelper(
             if field == "$expr":
                 continue
 
-            # Handle logical operators - fall back to Python
+            # Handle logical operators in SQL using shared builder
             if field in ("$and", "$or", "$nor", "$not"):
-                return None
+                logical_result = self._build_logical_field_clause(field, value)
+                if logical_result is None:
+                    return None
+                logical_clause, logical_params = logical_result
+                if logical_clause:
+                    where_parts.append(f"({logical_clause})")
+                    all_params.extend(logical_params)
+                continue
 
             # Build clause for regular fields
             field_result = self._build_field_clause(field, value)
@@ -370,7 +355,8 @@ class QueryHelper(
                 # If any field can't be handled in SQL, fall back to Python
                 return None
             field_clause, field_params = field_result
-            where_parts.append(field_clause)
-            all_params.extend(field_params)
+            if field_clause:
+                where_parts.append(f"({field_clause})")
+                all_params.extend(field_params)
 
         return f"WHERE {' AND '.join(where_parts)}", all_params, []

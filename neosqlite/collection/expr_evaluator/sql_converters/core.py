@@ -255,6 +255,10 @@ class CoreMixin(BaseSqlMixin):
 
             case _:
                 # Literal value (scalar)
+                from datetime import datetime
+
+                if isinstance(operand, datetime):
+                    return "json_object('$date', ?)", [operand.isoformat()]
                 return "?", [operand]
 
     def _map_comparison_operator(self, op: str) -> str:

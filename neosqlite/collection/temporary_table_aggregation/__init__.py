@@ -7,7 +7,7 @@ from typing import Any
 from ...sql_utils import quote_table_name
 from ..expr_evaluator import ExprEvaluator
 from ..json_path_utils import parse_json_path
-from ..jsonb_support import JSONBContext
+from ..jsonb_support import JSONBContext, json_data_column
 from ..sql_translator_unified import SQLTranslator
 from .core import (
     can_process_with_temporary_tables,
@@ -64,6 +64,7 @@ class TemporaryTableAggregationProcessor(OperatorsMixin):
             "id",
             self.jsonb.jsonb_supported,
             self.jsonb.json_each_function,
+            db_connection=collection.db,
         )
         # Track if pipeline has $sort stage (for $first/$last limitation)
         self._has_sort_stage = False
@@ -377,6 +378,30 @@ class TemporaryTableAggregationProcessor(OperatorsMixin):
                     case "$facet":
                         current_table = self._process_facet_stage(
                             create_temp, current_table, stage["$facet"]
+                        )
+                        i += 1
+
+                    case "$count":
+                        c_field = stage["$count"]
+                        if (
+                            not isinstance(c_field, str)
+                            or not c_field
+                            or c_field.startswith("$")
+                            or "." in c_field
+                        ):
+                            raise NotImplementedError(
+                                f"Invalid $count field: {c_field!r}"
+                            )
+                        escaped_field = c_field.replace("'", "''")
+                        json_obj_func = (
+                            f"{self.jsonb.json_function_prefix}_object"
+                        )
+                        data_expr = f"{json_obj_func}('{escaped_field}', COUNT(*))"
+                        current_table = create_temp(
+                            stage,
+                            f"SELECT 1 AS id, "
+                            f"{json_data_column(self.jsonb.jsonb_supported, data_expr)} AS data "
+                            f"FROM {quote_table_name(current_table)}",
                         )
                         i += 1
 

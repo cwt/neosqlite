@@ -34,12 +34,10 @@ def _is_valid_objectid_hex(value: str) -> bool:
 
 
 def _convert_list_item(item: Any) -> Any:
-    """Convert a single list item - ObjectIds to strings, recurse on dicts."""
+    """Convert a single list item - recurse on dicts while preserving ObjectIds."""
     match item:
         case dict():
             return normalize_id_query_for_db(item)
-        case ObjectId():
-            return str(item)
         case _:
             return item
 
@@ -98,19 +96,14 @@ def normalize_id_query_for_db(query: dict[str, Any]) -> dict[str, Any]:
             case ("_id", _):
                 corrected_query["_id"] = value
 
-            # Case: nested dictionary -> recurse
-            case (_, dict()):
-                corrected_query[key] = normalize_id_query_for_db(value)
-
-            # Case: list -> process items
-            case (_, list()):
+            # Recurse into logical query operators; preserve ObjectIds in non-_id fields
+            case ("$and" | "$or" | "$nor", list()):
                 corrected_query[key] = [
                     _convert_list_item(item) for item in value
                 ]
 
-            # Case: ObjectId in other fields -> convert to string
-            case (_, ObjectId()):
-                corrected_query[key] = str(value)
+            case ("$not", dict()):
+                corrected_query[key] = normalize_id_query_for_db(value)
 
             # Case: default -> keep as-is
             case _:

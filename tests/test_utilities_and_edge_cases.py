@@ -434,11 +434,17 @@ def test_can_use_sql_updates_with_binary_values():
         # Since raw bytes don't have encode_for_storage, this check fails
         assert result
 
-        # Test with Binary objects in update spec
+        # Test with Binary objects in SQL-supported update spec ($set)
         update_spec = {"$set": {"data": Binary(b"binary_data")}}
         result = helper._can_use_sql_updates(update_spec, 1)
-        # Should return False because Binary objects have encode_for_storage attribute
-        assert not result
+        assert result
+
+        # Test with Binary objects in comparison/pull ops (must fall back to Python)
+        for unsupported_op in (
+            {"$min": {"data": Binary(b"binary_data")}},
+            {"$pull": {"arr": Binary(b"binary_data")}},
+        ):
+            assert not helper._can_use_sql_updates(unsupported_op, 1)
 
         # Test with regular values (should return True)
         update_spec = {"$set": {"data": "regular_data"}}

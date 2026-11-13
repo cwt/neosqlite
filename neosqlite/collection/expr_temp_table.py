@@ -128,16 +128,22 @@ class TempTableExprEvaluator:
             if complexity > 10:
                 return None, [], []
 
-            # Try cache first
-            cache_key = self._make_expr_key(expr)
-            cached = self._translation_cache.get(cache_key)
-            if cached is not None:
-                # Build query with cached translation
-                return self._build_from_cache(expr, collection_name, cached)
+            # Reject expressions with Tier-2 semantic mismatches or unsafe temp columns
+            # so Tier 1 ExprEvaluator / Tier 3 handles them with full MongoDB parity (#116, #121)
+            if self._has_tier2_semantics_hazard(expr):
+                return None, [], []
+
+            # Try cache first (only when no extra filter_expr is passed)
+            cache_key = self._make_expr_key(expr) if not filter_expr else None
+            if cache_key is not None:
+                cached = self._translation_cache.get(cache_key)
+                if cached is not None:
+                    # Build query with cached translation
+                    return self._build_from_cache(expr, collection_name, cached)
 
             # Build the evaluation query
             result = self._build_tier2_query(expr, collection_name, filter_expr)
-            if result[0] is not None:
+            if result[0] is not None and cache_key is not None:
                 # Cache the translation: WHERE clause template plus the exact
                 # field list and parameters. Keys canonicalize literal values,
                 # so a cache hit implies an identical expression.
@@ -170,6 +176,128 @@ class TempTableExprEvaluator:
         except Exception:
             self._drop_tracked_tables()
             raise
+
+    _SQLITE_RESERVED_COLS = frozenset(
+        {
+            "id",
+            "_id",
+            "select",
+            "from",
+            "where",
+            "group",
+            "order",
+            "by",
+            "having",
+            "table",
+            "index",
+            "values",
+            "and",
+            "or",
+            "not",
+            "null",
+            "case",
+            "when",
+            "then",
+            "else",
+            "end",
+            "as",
+            "on",
+            "in",
+            "is",
+            "join",
+            "like",
+            "limit",
+            "offset",
+            "set",
+            "update",
+            "delete",
+            "insert",
+            "create",
+            "drop",
+            "alter",
+            "union",
+            "distinct",
+            "all",
+            "exists",
+            "between",
+            "default",
+            "check",
+            "unique",
+            "primary",
+            "key",
+            "foreign",
+            "references",
+            "constraint",
+        }
+    )
+
+    def _has_tier2_semantics_hazard(self, expr: dict[str, Any]) -> bool:
+        """
+        Return True when Tier 2 temp-table evaluation has semantic mismatches
+        (#116, #121) or unsafe temp-table column names, so evaluation delegates
+        to Tier 1 ExprEvaluator / Tier 3 Python.
+        """
+        try:
+            fields = self._extract_field_references(expr)
+        except Exception:
+            return True
+
+        seen_cols: set[str] = set()
+        for field in fields:
+            if not field or field.startswith("$"):
+                return True
+            col_name = self._sanitize_field_name(field)
+            if (
+                not col_name
+                or not col_name.replace("_", "").isalnum()
+                or col_name.lower() in self._SQLITE_RESERVED_COLS
+                or col_name in seen_cols
+            ):
+                return True
+            seen_cols.add(col_name)
+
+        def _is_safe_nonnull_scalar(val: Any) -> bool:
+            if val is None or isinstance(val, (bool, dict, list)):
+                return False
+            if isinstance(val, str) and val.startswith("$"):
+                return False
+            return isinstance(val, (int, float, str))
+
+        def _walk(node: Any) -> bool:
+            if isinstance(node, list):
+                return any(_walk(item) for item in node)
+            if not isinstance(node, dict):
+                return False
+            for op, operands in node.items():
+                if op in ("$round", "$ne"):
+                    return True
+                if op == "$eq" and isinstance(operands, list):
+                    if len(operands) != 2:
+                        return True
+                    left, right = operands
+                    if left is None or right is None:
+                        return True
+                    if isinstance(left, (bool, dict, list)) or isinstance(
+                        right, (bool, dict, list)
+                    ):
+                        return True
+                    if not (
+                        _is_safe_nonnull_scalar(left)
+                        or _is_safe_nonnull_scalar(right)
+                    ):
+                        return True
+                if op in ("$gt", "$gte", "$lt", "$lte", "$cmp") and isinstance(
+                    operands, list
+                ):
+                    for arg in operands:
+                        if arg is None or isinstance(arg, (bool, dict, list)):
+                            if arg is None or isinstance(arg, bool):
+                                return True
+                if _walk(operands):
+                    return True
+            return False
+
+        return _walk(expr)
 
     def _drop_tracked_tables(self) -> None:
         """Drop and forget every temp table this evaluator created."""
@@ -432,7 +560,7 @@ class TempTableExprEvaluator:
                 extract = (
                     f"{self.jsonb.json_function_prefix}_extract("
                     f"{collection_name}.{self.data_column}, "
-                    f"'{fkey}')"
+                    f"'{parse_json_path(fkey)}')"
                 )
                 extra_conds.append(f"{extract} = ?")
                 extra_params.append(fval)
@@ -527,7 +655,7 @@ class TempTableExprEvaluator:
             inner_sql, inner_params = self._convert_expr_to_temp_sql(
                 operands[0], temp_table
             )
-            return f"NOT ({inner_sql})", inner_params
+            return f"NOT (COALESCE(({inner_sql}), 0))", inner_params
 
         if len(operands) < 2:
             raise ValueError(f"{operator} requires at least 2 operands")
@@ -548,7 +676,8 @@ class TempTableExprEvaluator:
             case "$or":
                 sql = " OR ".join(sql_parts)
             case "$nor":
-                sql = f"NOT ({' OR '.join(sql_parts)})"
+                coalesced = " OR ".join(f"COALESCE({p}, 0)" for p in sql_parts)
+                sql = f"NOT (COALESCE({coalesced}, 0))"
             case _:
                 raise ValueError(f"Unknown logical operator: {operator}")
 

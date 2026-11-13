@@ -288,15 +288,33 @@ class ChangeStream:
         first = counts.get(self._collection.name, 0) == 0
 
         # Create triggers for INSERT, UPDATE, DELETE operations
-        # Insert trigger
+        # Store normalized JSON text in changelog so JSONB writes remain readable
+        # by change stream JSON decoders (including fullDocument=updateLookup).
         if first:
+            from .collection.jsonb_support import json_data_column
+
+            jsonb_supported = bool(
+                getattr(
+                    getattr(
+                        getattr(self._collection, "query_engine", None),
+                        "jsonb",
+                        None,
+                    ),
+                    "jsonb_supported",
+                    False,
+                )
+            )
+            new_data_expr = json_data_column(jsonb_supported, "NEW.data")
+            old_data_expr = json_data_column(jsonb_supported, "OLD.data")
+
+            # Insert trigger
             self._collection.db.execute(f"""
             CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._sanitized_name}_insert_trigger
             AFTER INSERT ON {quote_table_name(self._sanitized_name)}
             BEGIN
                 INSERT INTO _neosqlite_changestream
                 (collection_name, operation, document_id, document_data, document_id_value)
-                VALUES ('{self._sanitized_name}', 'insert', NEW.id, NEW.data, NEW._id);
+                VALUES ('{self._sanitized_name}', 'insert', NEW.id, {new_data_expr}, NEW._id);
             END
             """)
 
@@ -307,7 +325,7 @@ class ChangeStream:
             BEGIN
                 INSERT INTO _neosqlite_changestream
                 (collection_name, operation, document_id, document_data, document_id_value)
-                VALUES ('{self._sanitized_name}', 'update', NEW.id, NEW.data, NEW._id);
+                VALUES ('{self._sanitized_name}', 'update', NEW.id, {new_data_expr}, NEW._id);
             END
             """)
 
@@ -318,7 +336,7 @@ class ChangeStream:
             BEGIN
                 INSERT INTO _neosqlite_changestream
                 (collection_name, operation, document_id, document_data, document_id_value)
-                VALUES ('{self._sanitized_name}', 'delete', OLD.id, OLD.data, OLD._id);
+                VALUES ('{self._sanitized_name}', 'delete', OLD.id, {old_data_expr}, OLD._id);
             END
             """)
         counts[self._collection.name] = counts.get(self._collection.name, 0) + 1

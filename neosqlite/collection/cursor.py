@@ -819,6 +819,14 @@ class Cursor:
                         for doc in fts_docs
                         if matches_json_schema(doc, schema)
                     )
+                qe = getattr(self._collection, "query_engine", None)
+                if qe is not None and hasattr(qe, "_notify_tier_change"):
+                    tier = (
+                        "tier3"
+                        if (self._where_predicate or "$jsonSchema" in self._filter)
+                        else "tier1"
+                    )
+                    qe._notify_tier_change(tier, [self._filter])
                 return fts_docs
 
         where_result = self._query_helpers._build_simple_where_clause(
@@ -896,13 +904,16 @@ class Cursor:
 
             docs = doc_generator()
             self._active_generator = docs
+            tier = "tier2" if tables else "tier1"
         else:
             # Fall back to Python-based filtering
             docs = self._handle_python_fallback()
+            tier = "tier3"
 
         # Apply where predicate if specified (Tier-3 Python filtering)
         if self._where_predicate:
             docs = filter(self._where_predicate, docs)  # type: ignore[arg-type]
+            tier = "tier3"
 
         # Apply $jsonSchema filter if present
         if "$jsonSchema" in self._filter:
@@ -910,6 +921,11 @@ class Cursor:
 
             schema = self._filter["$jsonSchema"]
             docs = (doc for doc in docs if matches_json_schema(doc, schema))
+            tier = "tier3"
+
+        qe = getattr(self._collection, "query_engine", None)
+        if qe is not None and hasattr(qe, "_notify_tier_change"):
+            qe._notify_tier_change(tier, [self._filter])
 
         return docs
 
@@ -1002,7 +1018,10 @@ class Cursor:
             if tables:
                 self._tables_to_cleanup.extend(tables)
 
+            qe = getattr(self._collection, "query_engine", None)
             if sql_or_where.strip().upper().startswith("SELECT"):
+                if qe is not None and hasattr(qe, "_notify_tier_change"):
+                    qe._notify_tier_change("tier2", [self._filter])
                 # Tier 2: full SELECT query with temp tables
                 cmd = sql_or_where
                 pagination_clause = ""
@@ -1012,6 +1031,8 @@ class Cursor:
                 self._sql_handled_sort = False
                 self._sql_handled_pagination = False
             else:
+                if qe is not None and hasattr(qe, "_notify_tier_change"):
+                    qe._notify_tier_change("tier1", [self._filter])
                 # Tier 1: WHERE clause only
                 where_clause = sql_or_where
                 if self._min or self._max:
@@ -1070,6 +1091,9 @@ class Cursor:
             return docs
         else:
             # Fallback to Python evaluation
+            qe = getattr(self._collection, "query_engine", None)
+            if qe is not None and hasattr(qe, "_notify_tier_change"):
+                qe._notify_tier_change("tier3", [self._filter])
             from .query_helper.utils import get_force_fallback
 
             force_fallback = get_force_fallback()

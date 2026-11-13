@@ -496,9 +496,15 @@ def test_query_helper_can_use_sql_updates_edge_cases():
         result = helper._can_use_sql_updates({"$rename": {"old": "new"}}, 1)
         assert result  # $rename is now supported in SQL
 
-        # Test case: Binary object in update spec
+        # Test case: Binary object in $set is now supported in SQL (#section1)
         result = helper._can_use_sql_updates(
             {"$set": {"field": neosqlite.Binary(b"data")}}, 1
+        )
+        assert result
+
+        # Test case: Binary object in comparison/pull ops still falls back to Python
+        result = helper._can_use_sql_updates(
+            {"$min": {"field": neosqlite.Binary(b"data")}}, 1
         )
         assert not result
 
@@ -704,9 +710,12 @@ def test_query_helper_aggregation_and_query_building():
         assert ">" in clause
         assert params == [10, 10]
 
-        # Test _build_simple_where_clause with logical operators (should fallback)
+        # Test _build_simple_where_clause with logical operators (Tier 1 SQL)
         result = helper._build_simple_where_clause({"$and": [{"name": "test"}]})
-        assert result is None
+        assert result is not None
+        and_clause, and_params, _ = result
+        assert and_clause.startswith("WHERE ")
+        assert and_params == ["test", "test"]
 
         # Test _build_operator_clause
         clause, params = helper._build_operator_clause("'$.value'", {"$eq": 5})

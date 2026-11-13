@@ -87,6 +87,7 @@ class QueryMethodsMixin(QueryEngineProtocol):
             # Try to use SQLTranslator for the WHERE clause
             where_clause, params = self.sql_translator.translate_match(filter)
             if where_clause is not None:
+                self._notify_tier_change("tier1", [filter])
                 cmd = f"SELECT COUNT(id) FROM {quote_table_name(self.collection.name)} {where_clause}"
                 row = self.collection.db.execute(cmd, params).fetchone()
                 return row[0] if row else 0
@@ -107,6 +108,7 @@ class QueryMethodsMixin(QueryEngineProtocol):
         validate_session(session, self.collection._database)
         if get_force_fallback():
             return sum(1 for _ in self.find(session=session))
+        self._notify_tier_change("tier1", [{}])
         row = self.collection.db.execute(
             f"SELECT COUNT(1) FROM {quote_table_name(self.collection.name)}"
         ).fetchone()
@@ -152,21 +154,36 @@ class QueryMethodsMixin(QueryEngineProtocol):
         # For distinct operations, always use json_* functions to avoid binary data issues
         # Even if JSONB is supported, we use json_* for distinct to ensure proper text output
         func_prefix = "json"
+        self._notify_tier_change("tier1", [filter or {}])
 
-        cmd = (
-            f"SELECT DISTINCT {func_prefix}_extract(data, '{parse_json_path(key)}') "
-            f"FROM {quote_table_name(self.collection.name)} {where_clause}"
-        )
+        table_name = quote_table_name(self.collection.name)
+        if key == "_id":
+            id_col = f"{table_name}.{self.collection._id_column}"
+            select_expr = (
+                f"CASE WHEN {func_prefix}_type(data, '$._id') IS NOT NULL "
+                f"THEN {func_prefix}_extract(data, '$._id') ELSE {id_col} END"
+            )
+        else:
+            select_expr = f"{func_prefix}_extract(data, '{parse_json_path(key)}')"
+
+        cmd = f"SELECT DISTINCT {select_expr} FROM {table_name} {where_clause}"
         cursor = self.collection.db.execute(cmd, params)
         results: set[Any] = set()
         for row in cursor.fetchall():
             if row[0] is None:
                 continue
-            try:
-                val = neosqlite_json_loads(row[0])
-                _collect_distinct_values(val, results)
-            except (json.JSONDecodeError, TypeError):
-                results.add(row[0])
+            raw_val = row[0]
+            if isinstance(raw_val, str) and (
+                (raw_val.startswith("{") and raw_val.endswith("}"))
+                or (raw_val.startswith("[") and raw_val.endswith("]"))
+            ):
+                try:
+                    val = neosqlite_json_loads(raw_val)
+                    _collect_distinct_values(val, results)
+                    continue
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            results.add(raw_val)
         return list(results)
 
     def _distinct_python(
@@ -180,4 +197,5 @@ class QueryMethodsMixin(QueryEngineProtocol):
         for doc in self.find(filter or {}, session=session):
             for val in _extract_distinct_field_values(doc, key):
                 _collect_distinct_values(val, results)
+        self._notify_tier_change("tier3", [filter or {}])
         return list(results)
