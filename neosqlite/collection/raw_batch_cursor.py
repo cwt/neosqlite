@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from itertools import batched
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any, Self
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,7 @@ class RawBatchCursor:
         self._session = session
         self._tables_to_cleanup: list[str] = []
 
-    def batch_size(self, batch_size: int) -> RawBatchCursor:
+    def batch_size(self, batch_size: int) -> Self:
         """
         Set the batch size for this cursor.
 

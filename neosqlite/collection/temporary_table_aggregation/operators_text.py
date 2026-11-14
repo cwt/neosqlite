@@ -3,7 +3,8 @@ from __future__ import annotations
 import hashlib
 import logging
 import warnings
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from ...sql_utils import quote_table_name
 from ..jsonb_support import (

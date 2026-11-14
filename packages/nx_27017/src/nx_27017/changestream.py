@@ -18,9 +18,10 @@ import json
 import logging
 import threading
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from itertools import count
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger("nx_27017")
 

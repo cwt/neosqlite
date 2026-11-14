@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
     from ..client_session import ClientSession
 
-TierChangeCallback = Callable[[str | None, str, list], None]
+type TierChangeCallback = Callable[[str | None, str, list[Any]], None]
 
 # Check if quez is available
 _HAS_QUEZ = importlib.util.find_spec("quez") is not None
@@ -77,7 +77,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         self._tier_callbacks: list = []  # type: ignore[annotation-unchecked]
         self._last_tier: str | None = None  # type: ignore[annotation-unchecked]
 
-    def add_tier_change_callback(self, callback: "TierChangeCallback") -> None:
+    def add_tier_change_callback(self, callback: TierChangeCallback) -> None:
         """Add a callback to be notified when query tier changes.
 
         Callback receives: (previous_tier: str | None, new_tier: str, pipeline: list)
@@ -90,9 +90,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         """
         self._tier_callbacks.append(callback)
 
-    def remove_tier_change_callback(
-        self, callback: "TierChangeCallback"
-    ) -> bool:
+    def remove_tier_change_callback(self, callback: TierChangeCallback) -> bool:
         """Remove a tier change callback. Returns True if found."""
         try:
             self._tier_callbacks.remove(callback)
@@ -157,7 +155,7 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         batch_size: int = 101,
         memory_constrained: bool = False,
         session: ClientSession | None = None,
-    ) -> list[dict[str, Any]] | "CompressedQueue":
+    ) -> list[dict[str, Any]] | CompressedQueue:
         """
         Applies a list of aggregation pipeline stages with memory constraints.
 

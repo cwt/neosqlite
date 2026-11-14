@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 from .sql_utils import quote_table_name
 
@@ -444,7 +444,7 @@ class ChangeStream:
         except Exception as e:
             logger.debug(f"ChangeStream prune skipped: {e}")
 
-    def __iter__(self) -> ChangeStream:
+    def __iter__(self) -> Self:
         """
         Return the iterator object for the change stream.
 
@@ -689,7 +689,7 @@ class ChangeStream:
             # No changes were found; sleep before retrying
             time.sleep(0.1)
 
-    def __enter__(self) -> ChangeStream:
+    def __enter__(self) -> Self:
         """
         Return the change stream itself.
 

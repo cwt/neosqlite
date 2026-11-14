@@ -11,7 +11,7 @@ They are re-exported here for backward compatibility.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Self
 
 # Import type checking helpers from shared module
 # These are re-exported for backward compatibility
@@ -99,14 +99,14 @@ class AggregationContext:
         """
         self.variables[name] = value
 
-    def clone(self) -> AggregationContext:
+    def clone(self) -> Self:
         """
         Create a shallow copy of the context for nested scoping.
 
         Returns:
             AggregationContext: A copy of the context.
         """
-        new_ctx = AggregationContext()
+        new_ctx = self.__class__()
         new_ctx.variables = self.variables.copy()
         new_ctx.stage_index = self.stage_index
         new_ctx.current_field = self.current_field

@@ -5,7 +5,7 @@ import logging
 import uuid
 from abc import ABC
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 if TYPE_CHECKING:
     import neosqlite
@@ -77,7 +77,7 @@ class BulkOperationContext:
         self._filter = filter
         self._upsert = False
 
-    def upsert(self):
+    def upsert(self) -> Self:
         """
         Set the upsert flag for the next operation.
 
@@ -90,7 +90,7 @@ class BulkOperationContext:
         self._upsert = True
         return self
 
-    def update_one(self, update: dict[str, Any]):
+    def update_one(self, update: dict[str, Any]) -> Self:
         """
         Add an update one operation to the bulk operations list.
 
@@ -115,7 +115,7 @@ class BulkOperationContext:
         self._upsert = False  # Reset upsert flag
         return self
 
-    def update_many(self, update: dict[str, Any]):
+    def update_many(self, update: dict[str, Any]) -> Self:
         """
         Add an update many operation to the bulk operations list.
 
@@ -140,7 +140,7 @@ class BulkOperationContext:
         self._upsert = False  # Reset upsert flag
         return self
 
-    def delete_one(self):
+    def delete_one(self) -> Self:
         """
         Add a delete one operation to the bulk operations list.
 
@@ -155,7 +155,7 @@ class BulkOperationContext:
         )
         return self
 
-    def delete_many(self):
+    def delete_many(self) -> Self:
         """
         Add a delete many operation to the bulk operations list.
 
@@ -170,7 +170,7 @@ class BulkOperationContext:
         )
         return self
 
-    def replace_one(self, replacement: dict[str, Any]):
+    def replace_one(self, replacement: dict[str, Any]) -> Self:
         """
         Add a replace one operation to the bulk operations list.
 

@@ -17,7 +17,7 @@ class OperatorsBaseMixin:
     query_engine: Any
     expr_evaluator: Any
     sql_translator: Any
-    jsonb: "JSONBContext"
+    jsonb: JSONBContext
     _has_sort_stage: bool
     _text_on_temp_table_warned: bool
     _has_unwind_in_pipeline: bool

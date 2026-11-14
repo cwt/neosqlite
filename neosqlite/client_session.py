@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 from .exceptions import InvalidOperation
 
@@ -178,7 +178,7 @@ class ClientSession:
                 self.abort_transaction()
             raise
 
-    def __enter__(self) -> ClientSession:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):

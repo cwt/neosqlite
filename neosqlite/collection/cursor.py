@@ -5,7 +5,7 @@ import time
 from collections.abc import Callable, Iterable, Iterator
 from copy import deepcopy
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 from .._sqlite import sqlite3
 from ..sql_utils import quote_table_name
@@ -73,7 +73,7 @@ class Cursor:
         # Validate session
         validate_session(session, collection._database)
 
-    def max_await_time_ms(self, max_await_time_ms: int | None) -> Cursor:
+    def max_await_time_ms(self, max_await_time_ms: int | None) -> Self:
         """
         Set the maximum time to wait for new documents (for tailable cursors).
 
@@ -86,7 +86,7 @@ class Cursor:
         self._max_await_time_ms = max_await_time_ms
         return self
 
-    def add_option(self, mask: int) -> Cursor:
+    def add_option(self, mask: int) -> Self:
         """
         Set query flags (bitmask) for this cursor.
 
@@ -101,7 +101,7 @@ class Cursor:
         self._options |= mask
         return self
 
-    def remove_option(self, mask: int) -> Cursor:
+    def remove_option(self, mask: int) -> Self:
         """
         Unset query flags (bitmask) for this cursor.
 
@@ -146,7 +146,7 @@ class Cursor:
         """
         return self._execute_query()
 
-    def limit(self, limit: int) -> Cursor:
+    def limit(self, limit: int) -> Self:
         """
         Limit the number of documents returned by the cursor.
 
@@ -159,7 +159,7 @@ class Cursor:
         self._limit = limit
         return self
 
-    def skip(self, skip: int) -> Cursor:
+    def skip(self, skip: int) -> Self:
         """
         Skip the specified number of documents when iterating over the cursor.
 
@@ -176,7 +176,7 @@ class Cursor:
         self,
         key_or_list: str | list[tuple],
         direction: int | None = None,
-    ) -> Cursor:
+    ) -> Self:
         """
         Sort the documents returned by the cursor.
 
@@ -194,7 +194,7 @@ class Cursor:
             self._sort = dict(key_or_list)
         return self
 
-    def batch_size(self, size: int) -> Cursor:
+    def batch_size(self, size: int) -> Self:
         """
         Set the batch size for the cursor.
 
@@ -215,7 +215,7 @@ class Cursor:
         self._batch_size = size
         return self
 
-    def hint(self, hint: str | list[tuple[str, int]]) -> Cursor:
+    def hint(self, hint: str | list[tuple[str, int]]) -> Self:
         """
         Set the index hint for the cursor.
 
@@ -228,7 +228,7 @@ class Cursor:
         self._hint = hint  # type: ignore[assignment]
         return self
 
-    def min(self, min_spec: list[tuple[str, Any]] | tuple[str, Any]) -> Cursor:
+    def min(self, min_spec: list[tuple[str, Any]] | tuple[str, Any]) -> Self:
         """
         Set the minimum bound for index queries.
 
@@ -256,7 +256,7 @@ class Cursor:
         self._min = dict(min_spec)  # type: ignore[arg-type]
         return self
 
-    def max(self, max_spec: list[tuple[str, Any]] | tuple[str, Any]) -> Cursor:
+    def max(self, max_spec: list[tuple[str, Any]] | tuple[str, Any]) -> Self:
         """
         Set the maximum bound for index queries.
 
@@ -284,7 +284,7 @@ class Cursor:
         self._max = dict(max_spec)  # type: ignore[arg-type]
         return self
 
-    def collation(self, collation: dict[str, Any]) -> Cursor:
+    def collation(self, collation: dict[str, Any]) -> Self:
         """
         Set the collation for the cursor.
 
@@ -318,7 +318,7 @@ class Cursor:
         self._collation = collation
         return self
 
-    def where(self, predicate: Callable[[dict[str, Any]], bool]) -> Cursor:
+    def where(self, predicate: Callable[[dict[str, Any]], bool]) -> Self:
         """
         Filter cursor results using a Python predicate function.
 
@@ -346,7 +346,7 @@ class Cursor:
         self._where_predicate = predicate
         return self
 
-    def comment(self, comment: str) -> Cursor:
+    def comment(self, comment: str) -> Self:
         """
         Add a comment to the query for debugging and profiling.
 
@@ -391,7 +391,7 @@ class Cursor:
 
         return list(islice(self, max(length, 0)))
 
-    def clone(self) -> Cursor:
+    def clone(self) -> Self:
         """
         Create a clone of this cursor with the same options.
 
@@ -408,7 +408,7 @@ class Cursor:
             >>> results1 = list(cursor)
             >>> results2 = list(clone)
         """
-        cloned = Cursor(
+        cloned = self.__class__(
             self._collection,
             filter=deepcopy(self._filter),
             projection=self._projection,
@@ -1756,7 +1756,7 @@ class Cursor:
                 logger.debug(f"{e=}")
             pass
 
-    def __enter__(self) -> Cursor:
+    def __enter__(self) -> Self:
         """
         Enter the context manager.
 

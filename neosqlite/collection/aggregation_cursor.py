@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Iterator
+from collections.abc import Iterator
+from typing import TYPE_CHECKING, Any, Self
 
 if TYPE_CHECKING:
     from ..client_session import ClientSession
@@ -67,9 +68,7 @@ class AggregationCursor:
         # Validate session
         validate_session(session, collection._database)
 
-    def max_await_time_ms(
-        self, max_await_time_ms: int | None
-    ) -> AggregationCursor:
+    def max_await_time_ms(self, max_await_time_ms: int | None) -> Self:
         """
         Set the maximum time to wait for new documents (for tailable cursors).
 
@@ -82,7 +81,7 @@ class AggregationCursor:
         self._max_await_time_ms = max_await_time_ms
         return self
 
-    def add_option(self, mask: int) -> AggregationCursor:
+    def add_option(self, mask: int) -> Self:
         """
         Set query flags (bitmask) for this cursor.
 
@@ -97,7 +96,7 @@ class AggregationCursor:
         self._options |= mask
         return self
 
-    def remove_option(self, mask: int) -> AggregationCursor:
+    def remove_option(self, mask: int) -> Self:
         """
         Unset query flags (bitmask) for this cursor.
 
@@ -240,7 +239,7 @@ class AggregationCursor:
 
         raise IndexError("Cursor has no results")
 
-    def sort(self, key=None, reverse=False):
+    def sort(self, key: Any = None, reverse: bool = False) -> Self:
         """
         Sort the results in-place.
 
@@ -362,7 +361,7 @@ class AggregationCursor:
 
         return []
 
-    def batch_size(self, size: int) -> AggregationCursor:
+    def batch_size(self, size: int) -> Self:
         """
         Set the batch size for memory-constrained processing.
 
@@ -375,7 +374,7 @@ class AggregationCursor:
         self._batch_size = size
         return self
 
-    def allow_disk_use(self, allow: bool = True) -> AggregationCursor:
+    def allow_disk_use(self, allow: bool = True) -> Self:
         """
         Enable or disable disk use for aggregation operations.
 
@@ -391,7 +390,7 @@ class AggregationCursor:
         self._allow_disk_use = allow
         return self
 
-    def use_quez(self, use_quez: bool = True) -> AggregationCursor:
+    def use_quez(self, use_quez: bool = True) -> Self:
         """
         Enable or disable quez memory-constrained processing.
 

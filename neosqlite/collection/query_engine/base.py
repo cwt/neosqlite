@@ -16,9 +16,9 @@ class QueryEngineProtocol(Protocol):
     """Protocol defining the interface expected by mixin classes."""
 
     collection: Any
-    helpers: "QueryHelper"
-    sql_translator: "SQLTranslator"
-    jsonb: "JSONBContext"
+    helpers: QueryHelper
+    sql_translator: SQLTranslator
+    jsonb: JSONBContext
 
     def _get_integer_id_for_oid(self, oid: Any) -> int:
         """Get integer ID for an ObjectId."""
@@ -34,7 +34,7 @@ class QueryEngineProtocol(Protocol):
         projection: dict[str, Any] | None = None,
         hint: str | None = None,
         session: ClientSession | None = None,
-    ) -> "Cursor":
+    ) -> Cursor:
         """Find documents."""
         ...
 

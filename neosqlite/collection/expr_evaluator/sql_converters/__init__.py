@@ -66,6 +66,6 @@ class SqlConvertersMixin(
 
     # Type annotations for simple attributes expected from parent class
     data_column: str
-    jsonb: "JSONBContext"
+    jsonb: JSONBContext
     _log2_warned: bool
-    _current_context: "AggregationContext | None"
+    _current_context: AggregationContext | None

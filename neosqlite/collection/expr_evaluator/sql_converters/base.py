@@ -18,7 +18,7 @@ class BaseSqlMixin:
 
     # Attributes supplied by ExprEvaluator
     data_column: str
-    jsonb: "JSONBContext"
+    jsonb: JSONBContext
     _current_context: Any  # AggregationContext | None
     _slice_counter: int
     _reduce_counter: int

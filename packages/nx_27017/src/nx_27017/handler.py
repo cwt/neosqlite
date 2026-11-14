@@ -10,7 +10,7 @@ import uuid
 from collections import OrderedDict
 from datetime import UTC, datetime
 from itertools import count
-from typing import Any
+from typing import Any, Self
 
 from neosqlite import Connection
 from nx_27017.changestream import (
@@ -431,7 +431,7 @@ class NeoSQLiteHandler:
             except Exception:
                 pass
 
-    def __enter__(self) -> "NeoSQLiteHandler":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:

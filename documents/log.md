@@ -6,7 +6,7 @@ tags:
   - log
   - bundle
   - changelog
-timestamp: 2026-11-14T10:05:00Z
+timestamp: 2026-11-14T10:38:00Z
 version: "1.17.4"
 lifecycle: active
 ---
@@ -14,6 +14,17 @@ lifecycle: active
 # NeoSQLite Knowledge Base Bundle Log
 
 This document records the chronological history of structural changes, additions, deprecations, and refactoring operations performed on the NeoSQLite Open Knowledge Format (OKF) bundle.
+
+---
+
+## 2026-11-14 — Completed Phase 2 of Python 3.11 / 3.12 Modernization Plan
+
+### Summary
+Implemented Phase 2 (Typing Modernization: `Self`, `@override`, PEP 695 `type`, `UP035`/`UP037`) of `documents/todo/python-312-modernization-plan.md` (`3100 passed` in `neosqlite`, `180 passed, 1 skipped` in `nx_27017`, `mypy` clean).
+
+### Key Modifications
+1. **Updated `documents/todo/python-312-modernization-plan.md`**:
+   - Marked Phase 2 as `(Completed)` and synced the fluent-method inventory across `Cursor`, `AggregationCursor`, and `BulkOperationContext`.
 
 ---
 

@@ -6,7 +6,7 @@ import json
 import logging
 import re
 from copy import deepcopy
-from typing import Any
+from typing import Any, Self
 
 from .._sqlite import sqlite3
 from ..collection.schema_utils import column_exists
@@ -403,7 +403,7 @@ class GridIn:
 
         self._closed = True
 
-    def __enter__(self) -> GridIn:
+    def __enter__(self) -> Self:
         """Context manager entry."""
         return self
 
@@ -770,7 +770,7 @@ class GridOut:
         """Close the GridOut stream."""
         self._closed = True
 
-    def __enter__(self) -> GridOut:
+    def __enter__(self) -> Self:
         """Context manager entry."""
         return self
 
@@ -1457,9 +1457,7 @@ class GridOutCursor:
         self._file_ids: list[Any] | None = None
         self._index: int = 0
 
-    def sort(
-        self, key_or_list: Any, direction: int | None = None
-    ) -> GridOutCursor:
+    def sort(self, key_or_list: Any, direction: int | None = None) -> Self:
         """
         Sort the documents returned by the cursor.
 
@@ -1477,7 +1475,7 @@ class GridOutCursor:
             self._sort = list(key_or_list)
         return self
 
-    def skip(self, count: int) -> GridOutCursor:
+    def skip(self, count: int) -> Self:
         """
         Skip the first count documents returned by the cursor.
 
@@ -1491,7 +1489,7 @@ class GridOutCursor:
         self._skip = count
         return self
 
-    def limit(self, count: int) -> GridOutCursor:
+    def limit(self, count: int) -> Self:
         """
         Limit the number of documents returned by the cursor.
 
@@ -1507,7 +1505,7 @@ class GridOutCursor:
         self._limit = count
         return self
 
-    def batch_size(self, size: int) -> GridOutCursor:
+    def batch_size(self, size: int) -> Self:
         """
         Set the batch size for the cursor.
 
@@ -1519,9 +1517,9 @@ class GridOutCursor:
         self._batch_size = size
         return self
 
-    def clone(self) -> GridOutCursor:
+    def clone(self) -> Self:
         """Create a clone of this cursor in unexecuted state."""
-        cloned = GridOutCursor(
+        cloned = self.__class__(
             self._db, self._bucket_name, deepcopy(self._filter), self._session
         )
         cloned._sort = list(self._sort) if self._sort else None
@@ -1530,7 +1528,7 @@ class GridOutCursor:
         cloned._batch_size = self._batch_size
         return cloned
 
-    def rewind(self) -> GridOutCursor:
+    def rewind(self) -> Self:
         """Reset the cursor to its initial unexecuted state."""
         self._file_ids = None
         self._index = 0
@@ -1579,7 +1577,7 @@ class GridOutCursor:
             GridOut(self._db, self._bucket_name, fid) for fid in selected_ids
         ]
 
-    def __iter__(self) -> GridOutCursor:
+    def __iter__(self) -> Self:
         """Return the iterator object."""
         self._ensure_executed()
         return self

@@ -5,7 +5,7 @@ Extracted from sql_tier_aggregator.py for reuse and testability.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Self
 
 
 class PipelineContext:
@@ -75,9 +75,9 @@ class PipelineContext:
         """Check if $$ROOT is needed."""
         return self.has_root
 
-    def clone(self) -> "PipelineContext":
+    def clone(self) -> Self:
         """Create a copy of this context."""
-        new_ctx = PipelineContext()
+        new_ctx = self.__class__()
         new_ctx.computed_fields = self.computed_fields.copy()
         new_ctx.removed_fields = self.removed_fields.copy()
         new_ctx.stage_index = self.stage_index

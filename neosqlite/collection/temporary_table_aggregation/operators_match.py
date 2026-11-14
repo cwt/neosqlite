@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from ...sql_utils import quote_table_name
 from ..json_path_utils import parse_json_path

@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_target_collection(
-    query_engine: "QueryEngine", coll_name: str, db_name: str | None = None
+    query_engine: QueryEngine, coll_name: str, db_name: str | None = None
 ) -> Any:
     """Resolve a target Collection for $merge/$out within NeoSQLite."""
     db = query_engine.collection._database
@@ -44,7 +44,7 @@ def _resolve_target_collection(
 
 
 def execute_python_aggregation(
-    query_engine: "QueryEngine",
+    query_engine: QueryEngine,
     pipeline: list[dict[str, Any]],
     session: Any = None,
     initial_docs: list[dict[str, Any]] | None = None,

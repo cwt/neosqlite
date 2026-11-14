@@ -10,7 +10,7 @@ tags:
   - refactoring
 generated:
   by: antigravity
-  at: 2026-11-14T10:05:00Z
+  at: 2026-11-14T10:38:00Z
 version: "1.17.4"
 status: proposed
 sources:
@@ -109,7 +109,7 @@ Python 3.12 inlines list and dict comprehensions into the enclosing frame, makin
 
 ---
 
-## Phase 2: Typing Modernization (`Self`, `@override`, PEP 695 `type`)
+## Phase 2: Typing Modernization (`Self`, `@override`, PEP 695 `type`) (Completed)
 
 Improves static type safety under `mypy` (`python_version = 3.12`) and eliminates redundant forward-reference strings.
 
@@ -119,8 +119,8 @@ Adopt `Self` for fluent builder methods, `clone()`, `@classmethod` constructors 
 
 | File | Methods |
 | :--- | :--- |
-| `neosqlite/collection/cursor.py` | `limit` (`L149`), `skip` (`L162`), `sort` (`L175`), `batch_size` (`L197`), `hint` (`L218`), `max` (`L280-L285`), `collation` (`L287`), `where` (`L321`), `comment` (`L349`), `clone` (`L394`), `__enter__` (`L1759`) |
-| `neosqlite/collection/aggregation_cursor.py` | `sort` (`L243`), `batch_size` (`L365`), `allow_disk_use` (`L378`) |
+| `neosqlite/collection/cursor.py` | `max_await_time_ms`, `add_option`, `remove_option`, `limit`, `skip`, `sort`, `batch_size`, `hint`, `min`, `max`, `collation`, `where`, `comment`, `clone`, `__enter__` |
+| `neosqlite/collection/aggregation_cursor.py` | `max_await_time_ms`, `add_option`, `remove_option`, `sort`, `batch_size`, `allow_disk_use`, `use_quez` |
 | `neosqlite/collection/raw_batch_cursor.py` | `batch_size` (`L56`) |
 | `neosqlite/gridfs/grid_file.py` | `GridIn.__enter__` (`L406`), `GridOut.__enter__` (`L773`), `GridOutCursor.sort`/`skip`/`limit`/`batch_size`/`clone`/`rewind`/`__iter__` (`L1460-L1582`) |
 | `neosqlite/collection/pipeline_context.py` | `PipelineContext.clone` (`L78`, replaces `"PipelineContext"`) |
@@ -129,7 +129,7 @@ Adopt `Self` for fluent builder methods, `clone()`, `@classmethod` constructors 
 | `neosqlite/client_session.py` | `ClientSession.__enter__` (`L181`; keep `_TransactionContext.__enter__` at `L22` as `-> ClientSession`) |
 | `neosqlite/connection.py` | `Connection.__enter__` (`L492`) |
 | `neosqlite/changestream.py` | `ChangeStream.__iter__` (`L447`), `ChangeStream.__enter__` (`L692`) |
-| `neosqlite/bulk_operations.py` | `BulkOperationContext.upsert` (`L80`) |
+| `neosqlite/bulk_operations.py` | `BulkOperationContext.upsert`, `update_one`, `update_many`, `delete_one`, `delete_many`, `replace_one` |
 | `packages/nx_27017/src/nx_27017/handler.py` | `NeoSQLiteHandler.__enter__` (`L434`, replaces `"NeoSQLiteHandler"`) |
 
 ### 2.2 `@typing.override` (PEP 698) & `type` Aliases (PEP 695, Python 3.12+)

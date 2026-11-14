@@ -43,8 +43,8 @@ class SqlQueryBuilderMixin:
     Designed to be composed into QueryBuilderMixin.
     """
 
-    collection: "Collection"
-    jsonb: "JSONBContext"
+    collection: Collection
+    jsonb: JSONBContext
     _build_expr_where_clause: Any
     _combine_expr_with_other_fields: Any
 

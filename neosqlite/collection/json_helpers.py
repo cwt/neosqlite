@@ -2,7 +2,7 @@ import json
 import logging
 import re
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Any, override
 
 from neosqlite.binary import Binary
 
@@ -19,6 +19,7 @@ class NeoSQLiteJSONEncoder(json.JSONEncoder):
     Custom JSON encoder for NeoSQLite that handles Binary, ObjectId, and datetime objects.
     """
 
+    @override
     def default(self, obj):
         """
         Encodes Binary, ObjectId, and datetime objects for JSON serialization.

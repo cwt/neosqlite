@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from ..._sqlite import sqlite3
 from ...sql_utils import quote_table_name

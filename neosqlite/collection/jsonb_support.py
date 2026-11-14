@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Self
 
 from .._sqlite import sqlite3
 
@@ -32,7 +32,7 @@ class JSONBContext:
     json_group_array_function: str
 
     @classmethod
-    def from_db(cls, db_connection) -> JSONBContext:
+    def from_db(cls, db_connection) -> Self:
         """Build a context by probing *db_connection* once."""
         b = supports_jsonb(db_connection)
         be = supports_jsonb_each(db_connection)

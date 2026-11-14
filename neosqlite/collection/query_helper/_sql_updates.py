@@ -6,8 +6,9 @@ Extracted from update_operations.py.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from ...binary import Binary
 from ...sql_utils import quote_table_name
@@ -295,8 +296,8 @@ class SqlUpdatesMixin:
     Designed to be composed into UpdateOperationsMixin.
     """
 
-    collection: "Collection"
-    jsonb: "JSONBContext"
+    collection: Collection
+    jsonb: JSONBContext
     _get_integer_id_for_oid: Any
 
     def _can_use_sql_updates(

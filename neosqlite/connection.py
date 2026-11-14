@@ -5,8 +5,9 @@ import logging
 import os
 import re
 import threading
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any, Iterator, Literal
+from typing import Any, Literal, Self
 
 from ._sqlite import sqlite3
 from .client_session import ClientSession
@@ -488,7 +489,7 @@ class Connection:
 
         return ClientSession(self, options=options)
 
-    def __enter__(self) -> Connection:
+    def __enter__(self) -> Self:
         """
         Allow the connection to be used in a context manager.
 

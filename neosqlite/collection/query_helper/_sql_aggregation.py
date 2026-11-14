@@ -27,8 +27,8 @@ class SqlAggregationMixin:
     Designed to be composed into AggregationMixin.
     """
 
-    collection: "Collection"
-    jsonb: "JSONBContext"
+    collection: Collection
+    jsonb: JSONBContext
     _build_simple_where_clause: Any
     _estimate_pipeline_cost: Any
     _optimize_match_pushdown: Any
