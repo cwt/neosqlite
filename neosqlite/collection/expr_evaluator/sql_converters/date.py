@@ -18,10 +18,7 @@ _DATE_FMT_SPECIFIERS = frozenset(
 def _replace_format_specifier(fmt: str, spec: str, replacement: str) -> str:
     """Replace a format specifier while preserving escaped %% sequences."""
     parts = fmt.split("%%")
-    out = []
-    for p in parts:
-        out.append(p.replace(spec, replacement))
-    return "%%".join(out)
+    return "%%".join(p.replace(spec, replacement) for p in parts)
 
 
 def _validate_strftime_format(fmt: str) -> str:

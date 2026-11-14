@@ -1,7 +1,7 @@
 import json
 import logging
 import re
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from neosqlite.binary import Binary
@@ -122,14 +122,8 @@ def neosqlite_json_loads(s: str, **kwargs) -> Any:
             if "$date" in dct and isinstance(dct["$date"], (str, int, float)):
                 try:
                     if isinstance(dct["$date"], str):
-                        return datetime.fromisoformat(
-                            dct["$date"].replace("Z", "+00:00")
-                        )
-                    from datetime import timezone
-
-                    return datetime.fromtimestamp(
-                        dct["$date"] / 1000.0, tz=timezone.utc
-                    )
+                        return datetime.fromisoformat(dct["$date"])
+                    return datetime.fromtimestamp(dct["$date"] / 1000.0, tz=UTC)
                 except (ValueError, OSError):
                     pass
 

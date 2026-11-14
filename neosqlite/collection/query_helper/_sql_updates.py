@@ -6,7 +6,7 @@ Extracted from update_operations.py.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Callable
 
 from ...binary import Binary
@@ -2201,7 +2201,7 @@ class SqlUpdatesMixin:
 
                 case "$currentDate":
                     if now_dt is None:
-                        now_dt = datetime.now(timezone.utc)
+                        now_dt = datetime.now(UTC)
                     pairs: list[str] = []
                     dt_params: list[Any] = []
                     v_sql, v_params = _format_sql_value_expr(now_dt)

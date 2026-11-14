@@ -18,7 +18,7 @@ import json
 import logging
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from itertools import count
 from typing import Any, Callable
 
@@ -418,7 +418,7 @@ class ChangeStreamManager:
             except (ValueError, TypeError, UnicodeDecodeError) as exc:
                 logger.debug("ChangeStream fullDocument skipped: %s", exc)
                 full_doc = None
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         return {
             "_id": _wire_token(rowid),
             "operationType": operation,

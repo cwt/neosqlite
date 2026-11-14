@@ -28,3 +28,34 @@ def test_threaded_server_accept_oserror_recovery():
                 )
                 assert mock_sleep.called
                 assert mock_thread.called
+
+
+def test_async_server_uses_loop_factory():
+    """Verify non-threaded server passes uvloop.new_event_loop or None via loop_factory."""
+    mock_handler = MagicMock()
+    mock_coro = MagicMock()
+
+    with patch("nx_27017.server.run_server", MagicMock(return_value=mock_coro)):
+        fake_uvloop = MagicMock()
+        with (
+            patch("nx_27017.server.uvloop", fake_uvloop),
+            patch("asyncio.run") as mock_asyncio_run,
+        ):
+            run_server_threaded(
+                "127.0.0.1", 27017, mock_handler, use_threading=False
+            )
+            mock_asyncio_run.assert_called_once_with(
+                mock_coro, loop_factory=fake_uvloop.new_event_loop
+            )
+            fake_uvloop.install.assert_not_called()
+
+        with (
+            patch("nx_27017.server.uvloop", None),
+            patch("asyncio.run") as mock_asyncio_run,
+        ):
+            run_server_threaded(
+                "127.0.0.1", 27017, mock_handler, use_threading=False
+            )
+            mock_asyncio_run.assert_called_once_with(
+                mock_coro, loop_factory=None
+            )

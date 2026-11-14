@@ -8,6 +8,7 @@ _sql_aggregation.py (SqlAggregationMixin).
 
 import logging
 from copy import deepcopy
+from itertools import batched
 from typing import TYPE_CHECKING, Any
 
 from ..expr_evaluator import (
@@ -468,16 +469,16 @@ class AggregationMixin(SqlAggregationMixin):
 
         try:
             # Process input docs in batches
-            for i in range(0, len(docs), batch_size):
-                batch = docs[i : i + batch_size]
-
+            for batch in batched(docs, batch_size):
                 # Strip __doc__ wrapper if present
-                docs_to_insert = []
-                for doc in batch:
-                    if isinstance(doc, dict) and "__doc__" in doc:
-                        docs_to_insert.append(doc["__doc__"])
-                    else:
-                        docs_to_insert.append(doc)
+                docs_to_insert = [
+                    (
+                        doc["__doc__"]
+                        if isinstance(doc, dict) and "__doc__" in doc
+                        else doc
+                    )
+                    for doc in batch
+                ]
 
                 if not docs_to_insert:
                     continue

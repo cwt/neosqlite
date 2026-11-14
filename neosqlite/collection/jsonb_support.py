@@ -16,7 +16,7 @@ from .._sqlite import sqlite3
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class JSONBContext:
     """Immutable snapshot of JSONB capabilities for a database connection.
 

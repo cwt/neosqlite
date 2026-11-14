@@ -7,7 +7,7 @@ The SQL implementation lives in _sql_updates.py (SqlUpdatesMixin).
 
 import logging
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from ..._sqlite import sqlite3
@@ -442,7 +442,7 @@ class UpdateOperationsMixin(SqlUpdatesMixin):
                             _set_field_for_update(doc_to_update, k, v)
                 case "$currentDate":
                     for k, type_spec in value.items():
-                        now_val = datetime.now(timezone.utc)
+                        now_val = datetime.now(UTC)
                         if "." in k:
                             _set_nested_field(doc_to_update, k, now_val)
                         else:

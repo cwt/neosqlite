@@ -46,7 +46,6 @@ class IndexModel:
             doc["key"] = key_spec
 
         # Add options
-        for option, value in self._kwargs.items():
-            doc[option] = value
+        doc.update(self._kwargs)
 
         return doc

@@ -54,11 +54,9 @@ class GridFS:
             The ObjectId of the stored file document
         """
         # Extract metadata from kwargs
-        metadata = {}
-        for key, value in kwargs.items():
-            # In legacy GridFS, all extra parameters become metadata except encoding
-            if key != "encoding":
-                metadata[key] = value
+        metadata = {
+            key: value for key, value in kwargs.items() if key != "encoding"
+        }
 
         # If filename is provided in kwargs, use it
         if filename is None and "filename" in kwargs:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from itertools import batched
 from typing import TYPE_CHECKING, Any, Iterator
 
 logger = logging.getLogger(__name__)
@@ -13,6 +14,15 @@ from .jsonb_support import json_data_column
 if TYPE_CHECKING:
     from ..client_session import ClientSession
     from . import Collection
+
+
+def _iter_json_batches(
+    docs: list[dict[str, Any]], batch_size: int
+) -> Iterator[bytes]:
+    """Serialize document batches into newline-delimited UTF-8 JSON bytes."""
+    for batch in batched(docs, batch_size):
+        batch_json = "\n".join(neosqlite_json_dumps(doc) for doc in batch)
+        yield batch_json.encode("utf-8")
 
 
 class RawBatchCursor:
@@ -79,13 +89,7 @@ class RawBatchCursor:
             results = list(self._collection.aggregate(self._pipeline))
 
             # Split results into batches
-            for i in range(0, len(results), self._batch_size):
-                batch = results[i : i + self._batch_size]
-                # Convert each document to JSON using the custom encoder and join with newlines
-                batch_json = "\n".join(
-                    neosqlite_json_dumps(doc) for doc in batch
-                )
-                yield batch_json.encode("utf-8")
+            yield from _iter_json_batches(results, self._batch_size)
             return
 
         # Build the query using the collection's SQL-building methods
@@ -209,13 +213,7 @@ class RawBatchCursor:
             docs = list(cursor)
 
             # Split into batches
-            for i in range(0, len(docs), self._batch_size):
-                batch = docs[i : i + self._batch_size]
-                # Convert each document to JSON using the custom encoder and join with newlines
-                batch_json = "\n".join(
-                    neosqlite_json_dumps(doc) for doc in batch
-                )
-                yield batch_json.encode("utf-8")
+            yield from _iter_json_batches(docs, self._batch_size)
 
     def __del__(self) -> None:
         """Clean up resources on garbage collection."""

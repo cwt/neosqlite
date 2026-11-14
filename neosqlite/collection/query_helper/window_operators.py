@@ -232,8 +232,9 @@ def _apply_window_operator(
 
         mean1 = sum(v1_list) / len(v1_list)
         mean2 = sum(v2_list) / len(v2_list)
-        cov_sum = sum(
-            (v1 - mean1) * (v2 - mean2) for v1, v2 in zip(v1_list, v2_list)
+        cov_sum = math.sumprod(
+            (v1 - mean1 for v1 in v1_list),
+            (v2 - mean2 for v2 in v2_list),
         )
         div = len(v1_list) if op_name == "$covariancePop" else len(v1_list) - 1
         return cov_sum / div if div > 0 else None

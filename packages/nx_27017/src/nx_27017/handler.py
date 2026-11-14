@@ -8,7 +8,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from itertools import count
 from typing import Any
 
@@ -935,7 +935,7 @@ class NeoSQLiteHandler:
                     "maxBsonObjectSize": MAX_BSON_DOCUMENT_SIZE,
                     "maxMessageSizeBytes": MAX_MESSAGE_SIZE_BYTES,
                     "maxWriteBatchSize": MAX_WRITE_BATCH_SIZE,
-                    "localTime": datetime.now(timezone.utc),
+                    "localTime": datetime.now(UTC),
                     "logicalSessionTimeoutMinutes": DEFAULT_SESSION_TIMEOUT_MINUTES,
                     "connectionId": 1,
                     "minWireVersion": MIN_WIRE_VERSION,
@@ -1709,7 +1709,6 @@ class NeoSQLiteHandler:
 
         if "listDatabases" in cmd_copy or "listdatabases" in cmd_copy:
             if self._mode == "single":
-                databases_info = []
                 if self.db_path == ":memory:":
                     size_on_disk = 0
                     is_empty = True
@@ -1721,14 +1720,14 @@ class NeoSQLiteHandler:
                         size_on_disk = 0
                         is_empty = True
                 total_size = size_on_disk
-                for name in self.databases:
-                    databases_info.append(
-                        {
-                            "name": name,
-                            "sizeOnDisk": size_on_disk,
-                            "empty": is_empty,
-                        }
-                    )
+                databases_info = [
+                    {
+                        "name": name,
+                        "sizeOnDisk": size_on_disk,
+                        "empty": is_empty,
+                    }
+                    for name in self.databases
+                ]
                 return request_id, {
                     "ok": 1,
                     "databases": databases_info,
@@ -2681,9 +2680,7 @@ class NeoSQLiteHandler:
         self, request_id: int, db: Connection
     ) -> tuple[int, dict[str, Any]]:
         """Handle serverStatus command."""
-        import os
         import platform
-        from datetime import datetime, timezone
 
         resident_mem = 0
         virtual_mem = 0
@@ -2729,7 +2726,7 @@ class NeoSQLiteHandler:
             "uptime": int(uptime_seconds),
             "uptimeMillis": uptime_millis,
             "uptimeEstimate": int(uptime_seconds),
-            "localTime": datetime.now(timezone.utc),
+            "localTime": datetime.now(UTC),
             "asserts": {
                 "regular": 0,
                 "warning": 0,
@@ -2832,11 +2829,10 @@ class NeoSQLiteHandler:
             }
 
         search_indexes = coll.list_search_indexes()
-        index_list = []
-        for idx_name in search_indexes:
-            index_list.append(
-                {"v": 2, "key": {idx_name: "text"}, "name": f"{idx_name}_text"}
-            )
+        index_list = [
+            {"v": 2, "key": {idx_name: "text"}, "name": f"{idx_name}_text"}
+            for idx_name in search_indexes
+        ]
 
         return request_id, {
             "ok": 1,
@@ -2852,19 +2848,18 @@ class NeoSQLiteHandler:
     ) -> tuple[int, dict[str, Any]]:
         """Handle listCollections command."""
         coll_names = db.list_collection_names()
-        collections = []
-        for name in coll_names:
-            collections.append(
-                {
-                    "name": name,
-                    "type": "collection",
-                    "options": {},
-                    "info": {
-                        "readOnly": False,
-                        "uuid": "00000000-0000-0000-0000-000000000000",
-                    },
-                }
-            )
+        collections = [
+            {
+                "name": name,
+                "type": "collection",
+                "options": {},
+                "info": {
+                    "readOnly": False,
+                    "uuid": "00000000-0000-0000-0000-000000000000",
+                },
+            }
+            for name in coll_names
+        ]
 
         return request_id, {
             "ok": 1,

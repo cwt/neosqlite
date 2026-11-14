@@ -219,7 +219,7 @@ class GridIn:
             return
         self._file_document_created = True
 
-        upload_date = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        upload_date = datetime.datetime.now(datetime.UTC).isoformat()
 
         if self._file_id is None:
             # Generate an ObjectId for the new file
@@ -1182,10 +1182,10 @@ def build_gridfs_files_where(
                         in_vals = value["$in"]
                         placeholders = ", ".join("?" for _ in in_vals)
                         conds.append(f"_id IN ({placeholders})")
-                        for v in in_vals:
-                            plist.append(
-                                str(v) if isinstance(v, ObjectId) else v
-                            )
+                        plist.extend(
+                            str(v) if isinstance(v, ObjectId) else v
+                            for v in in_vals
+                        )
                         return
                 if isinstance(value, ObjectId):
                     conds.append("_id = ?")

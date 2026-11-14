@@ -300,9 +300,10 @@ def run_server_threaded(
 ):
     """Run the MongoDB wire protocol server (threaded or async)."""
     if not use_threading:
-        if uvloop is not None:
-            uvloop.install()
-        asyncio.run(run_server(host, port, handler))
+        asyncio.run(
+            run_server(host, port, handler),
+            loop_factory=uvloop.new_event_loop if uvloop is not None else None,
+        )
         return
 
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

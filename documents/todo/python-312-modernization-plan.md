@@ -10,7 +10,7 @@ tags:
   - refactoring
 generated:
   by: antigravity
-  at: 2026-11-14T09:23:24Z
+  at: 2026-11-14T10:05:00Z
 version: "1.17.4"
 status: proposed
 sources:
@@ -41,7 +41,7 @@ This plan separates changes into three safe, independently committable phases so
 
 ---
 
-## Phase 1: Runtime Performance & Python 3.11/3.12 Stdlib Upgrades
+## Phase 1: Runtime Performance & Python 3.11/3.12 Stdlib Upgrades (Completed)
 
 Focuses on hot paths and C-implemented stdlib replacements with zero external API breakage.
 
@@ -103,9 +103,9 @@ Python 3.12 inlines list and dict comprehensions into the enclosing frame, makin
 | Optimization | Target Locations |
 | :--- | :--- |
 | `@dataclass(frozen=True, slots=True)` | `neosqlite/collection/jsonb_support.py#L19-L20` (`JSONBContext`) |
-| Hot-path list comprehensions (`PERF401`) | `neosqlite/connection.py#L200-L208` (`_regexp_find_all`), `neosqlite/collection/expr_evaluator/python_evaluators/date_ops.py#L370-L373`, `neosqlite/collection/expr_evaluator/sql_converters/date.py#L21-L24` |
+| Hot-path list comprehensions & `list.extend` (`PERF401`) | `neosqlite/connection.py#L200-L208` (`_regexp_find_all`), `neosqlite/collection/expr_evaluator/python_evaluators/date_ops.py#L370-L373`, `neosqlite/collection/expr_evaluator/sql_converters/date.py#L21-L24`, `neosqlite/collection/query_engine/query_methods.py#L58-L60`, `neosqlite/gridfs/grid_file.py#L1185-L1188` |
 | `nx_27017` response comprehensions (`PERF401`) | `packages/nx_27017/src/nx_27017/gridfs_adapter.py#L576-L584`, `packages/nx_27017/src/nx_27017/gridfs_adapter.py#L622-L630`, `packages/nx_27017/src/nx_27017/handler.py#L1725-L1731`, `packages/nx_27017/src/nx_27017/handler.py#L2835-L2839`, `packages/nx_27017/src/nx_27017/handler.py#L2855-L2867` |
-| Dict comprehensions (`PERF403`) | `neosqlite/gridfs/gridfs_legacy.py#L57-L61`, `neosqlite/index_model.py#L49-L50` |
+| Dict comprehensions & updates (`PERF403`) | `neosqlite/gridfs/gridfs_legacy.py#L57-L61`, `neosqlite/index_model.py#L49-L50` |
 
 ---
 

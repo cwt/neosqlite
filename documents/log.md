@@ -6,7 +6,7 @@ tags:
   - log
   - bundle
   - changelog
-timestamp: 2026-11-14T09:23:24Z
+timestamp: 2026-11-14T10:05:00Z
 version: "1.17.4"
 lifecycle: active
 ---
@@ -14,6 +14,17 @@ lifecycle: active
 # NeoSQLite Knowledge Base Bundle Log
 
 This document records the chronological history of structural changes, additions, deprecations, and refactoring operations performed on the NeoSQLite Open Knowledge Format (OKF) bundle.
+
+---
+
+## 2026-11-14 — Completed Phase 1 of Python 3.11 / 3.12 Modernization Plan
+
+### Summary
+Implemented Phase 1 (Runtime Performance & Python 3.11/3.12 Stdlib Upgrades) of `documents/todo/python-312-modernization-plan.md` across `neosqlite/` and `packages/nx_27017/` (`3100 passed` in `neosqlite`, `180 passed, 1 skipped` in `nx_27017`).
+
+### Key Modifications
+1. **Updated `documents/todo/python-312-modernization-plan.md`**:
+   - Marked Phase 1 as `(Completed)` and aligned the `PERF401`/`PERF403` target list with `query_methods.py`, `grid_file.py`, `gridfs_legacy.py`, and `index_model.py`.
 
 ---
 

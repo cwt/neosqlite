@@ -197,15 +197,14 @@ class Connection:
         def _regexp_find_all(pattern, text):
             if text is None or pattern is None:
                 return "[]"
-            matches = []
-            for match in re.finditer(str(pattern), str(text)):
-                matches.append(
-                    {
-                        "match": match.group(0),
-                        "idx": match.start(),
-                        "captures": list(match.groups()),
-                    }
-                )
+            matches = [
+                {
+                    "match": match.group(0),
+                    "idx": match.start(),
+                    "captures": list(match.groups()),
+                }
+                for match in re.finditer(str(pattern), str(text))
+            ]
             return json.dumps(matches)
 
         def _regexp_replace(text, pattern, replacement, count=0):

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import warnings
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 from neosqlite.collection.json_helpers import neosqlite_json_loads
@@ -1460,9 +1460,9 @@ class Collection:
         if not specs:
             return 0
         if now is None:
-            ref = datetime.now(timezone.utc)
+            ref = datetime.now(UTC)
         elif now.tzinfo is None:
-            ref = now.replace(tzinfo=timezone.utc)
+            ref = now.replace(tzinfo=UTC)
         else:
             ref = now
         total = 0

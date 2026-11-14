@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import calendar
 import logging
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -114,9 +114,7 @@ class DatePythonMixin(BasePythonMixin):
                 # Parse date value
                 if isinstance(value, str):
                     try:
-                        dt = datetime.fromisoformat(
-                            value.replace("Z", "+00:00")
-                        )
+                        dt = datetime.fromisoformat(value)
                     except ValueError:
                         return None
                 elif isinstance(value, datetime):
@@ -198,14 +196,12 @@ class DatePythonMixin(BasePythonMixin):
                 # Parse dates
                 if isinstance(start, str):
                     try:
-                        start = datetime.fromisoformat(
-                            start.replace("Z", "+00:00")
-                        )
+                        start = datetime.fromisoformat(start)
                     except ValueError:
                         return None
                 if isinstance(end, str):
                     try:
-                        end = datetime.fromisoformat(end.replace("Z", "+00:00"))
+                        end = datetime.fromisoformat(end)
                     except ValueError:
                         return None
 
@@ -288,15 +284,12 @@ class DatePythonMixin(BasePythonMixin):
                     # Parse ISO 8601 date string
                     if isinstance(date_string, str):
                         # Handle various ISO 8601 formats
-                        date_string = date_string.replace("Z", "+00:00")
                         dt = datetime.fromisoformat(date_string)
 
                         # Handle timezone if specified
                         if timezone and dt.tzinfo is None:
                             # Simple timezone handling (e.g., "+05:30")
                             try:
-                                from datetime import timezone as tz
-
                                 if str(timezone).startswith("+") or str(
                                     timezone
                                 ).startswith("-"):
@@ -313,7 +306,7 @@ class DatePythonMixin(BasePythonMixin):
                                     # Apply the parsed offset: the string
                                     # represents local time in that zone;
                                     # normalize to UTC (#120).
-                                    dt = dt.replace(tzinfo=tz.utc) - (
+                                    dt = dt.replace(tzinfo=UTC) - (
                                         timedelta(seconds=offset_seconds)
                                     )
                             except (ValueError, TypeError, AttributeError) as e:
@@ -354,9 +347,7 @@ class DatePythonMixin(BasePythonMixin):
                 # Parse date
                 if isinstance(date_val, str):
                     try:
-                        date_val = datetime.fromisoformat(
-                            date_val.replace("Z", "+00:00")
-                        )
+                        date_val = datetime.fromisoformat(date_val)
                     except ValueError:
                         return None
 
@@ -367,10 +358,7 @@ class DatePythonMixin(BasePythonMixin):
                 # %L is milliseconds (3 digits, 000-999)
                 ms_val = f"{date_val.microsecond // 1000:03d}"
                 parts = fmt.split("%%")
-                out_parts = []
-                for p in parts:
-                    out_parts.append(p.replace("%L", ms_val))
-                python_fmt = "%%".join(out_parts)
+                python_fmt = "%%".join(p.replace("%L", ms_val) for p in parts)
 
                 result = date_val.strftime(python_fmt)
                 return result
@@ -469,9 +457,7 @@ class DatePythonMixin(BasePythonMixin):
                 # Parse date
                 if isinstance(date_val, str):
                     try:
-                        date_val = datetime.fromisoformat(
-                            date_val.replace("Z", "+00:00")
-                        )
+                        date_val = datetime.fromisoformat(date_val)
                     except ValueError:
                         return None
 
@@ -552,9 +538,7 @@ class DatePythonMixin(BasePythonMixin):
                 # Parse date
                 if isinstance(date_val, str):
                     try:
-                        date_val = datetime.fromisoformat(
-                            date_val.replace("Z", "+00:00")
-                        )
+                        date_val = datetime.fromisoformat(date_val)
                     except ValueError:
                         return None
 

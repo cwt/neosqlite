@@ -55,9 +55,11 @@ def _extract_distinct_field_values(doc: Any, key: str) -> list[Any]:
                     if 0 <= idx < len(current):
                         next_values.append(current[idx])
                 else:
-                    for elem in current:
-                        if isinstance(elem, dict) and part in elem:
-                            next_values.append(elem[part])
+                    next_values.extend(
+                        elem[part]
+                        for elem in current
+                        if isinstance(elem, dict) and part in elem
+                    )
         if not next_values:
             return []
         current_values = next_values

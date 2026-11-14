@@ -333,7 +333,7 @@ class GridFSBucket:
         file_oid = ObjectId()
 
         # Insert file metadata first
-        upload_date = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        upload_date = datetime.datetime.now(datetime.UTC).isoformat()
 
         chunk_size = chunk_size_bytes or self._chunk_size_bytes
 
@@ -720,7 +720,7 @@ class GridFSBucket:
             md5_hash = hashlib.md5(data).hexdigest()
 
         # Insert file metadata
-        upload_date = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        upload_date = datetime.datetime.now(datetime.UTC).isoformat()
 
         # When providing a custom ID, we need to handle it properly
         if isinstance(file_id, ObjectId):

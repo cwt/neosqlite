@@ -17,7 +17,7 @@ import os
 import random
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -297,7 +297,7 @@ class ObjectId:
         # First 4 bytes contain the timestamp
         timestamp_bytes = self._id[:4]
         timestamp = int.from_bytes(timestamp_bytes, "big")
-        return datetime.fromtimestamp(timestamp, tz=timezone.utc)
+        return datetime.fromtimestamp(timestamp, tz=UTC)
 
     def encode_for_storage(self) -> dict:
         """

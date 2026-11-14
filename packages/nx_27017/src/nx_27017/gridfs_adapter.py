@@ -10,7 +10,9 @@ operations on GridFS collections (fs.files, fs.chunks, etc.) and route them
 to the appropriate NeoSQLite GridFSBucket methods.
 """
 
+import json
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 from neosqlite.gridfs import GridFSBucket
@@ -266,9 +268,7 @@ class GridFSAdapter:
         logger.debug(f"Auto-creating file metadata for _id={files_id_str}")
 
         # Get upload date
-        from datetime import datetime, timezone
-
-        upload_date = datetime.now(timezone.utc).isoformat()
+        upload_date = datetime.now(UTC).isoformat()
 
         # Insert minimal file metadata
         # We don't have filename, length, etc. from PyMongo, so we use defaults
@@ -384,9 +384,6 @@ class GridFSAdapter:
         Returns:
             The inserted file ID
         """
-        import json
-        from datetime import datetime, timezone
-
         file_id = self._convert_objectid(doc.get("_id")) or ObjectId()
         filename = doc.get("filename", "")
         length = doc.get("length", 0)
@@ -395,7 +392,7 @@ class GridFSAdapter:
         if isinstance(upload_date, datetime):
             upload_date = upload_date.isoformat()
         elif upload_date is None:
-            upload_date = datetime.now(timezone.utc).isoformat()
+            upload_date = datetime.now(UTC).isoformat()
         md5 = doc.get("md5")
         metadata = doc.get("metadata", {})
 
@@ -564,7 +561,6 @@ class GridFSAdapter:
         filter_query = _convert_objectids_in_dict(filter_query) or {}
 
         try:
-            chunks = []
             files_id = filter_query.get("files_id")
             if isinstance(files_id, dict) and "$eq" in files_id:
                 files_id = files_id["$eq"]
@@ -573,16 +569,15 @@ class GridFSAdapter:
                 cursor = self._db.execute(
                     f"SELECT _id, files_id, n, data FROM {self._get_bucket()._chunks_collection} ORDER BY files_id, n"
                 )
-                for row in cursor.fetchall():
-                    chunks.append(
-                        {
-                            "_id": row[0],
-                            "files_id": row[1],
-                            "n": row[2],
-                            "data": row[3],
-                        }
-                    )
-                return chunks
+                return [
+                    {
+                        "_id": row[0],
+                        "files_id": row[1],
+                        "n": row[2],
+                        "data": row[3],
+                    }
+                    for row in cursor.fetchall()
+                ]
             if isinstance(files_id, (ObjectId, str, int)):
                 file_int_id = self._get_bucket()._get_integer_id_for_file(
                     files_id
@@ -619,16 +614,16 @@ class GridFSAdapter:
                            WHERE {where_sql} ORDER BY n""",
                         params,
                     )
-                    for row in cursor.fetchall():
-                        chunks.append(
-                            {
-                                "_id": row[0],
-                                "files_id": files_id,
-                                "n": row[2],
-                                "data": row[3],
-                            }
-                        )
-            return chunks
+                    return [
+                        {
+                            "_id": row[0],
+                            "files_id": files_id,
+                            "n": row[2],
+                            "data": row[3],
+                        }
+                        for row in cursor.fetchall()
+                    ]
+            return []
         except Exception as e:
             logger.error(f"GridFS chunks find error: {e}")
             raise
@@ -729,8 +724,6 @@ class GridFSAdapter:
 
             if "metadata" in set_ops:
                 updates.append("metadata = ?")
-                import json
-
                 params.append(json.dumps(set_ops["metadata"]))
 
             if not updates:
