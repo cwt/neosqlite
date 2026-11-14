@@ -10,6 +10,7 @@ from ..json_path_utils import parse_json_path
 from .operators_base import OperatorsBaseMixin
 from .utils import (
     _json_extract_field_with_objectid_support,
+    _sanitize_params,
 )
 
 logger = logging.getLogger(__name__)
@@ -81,17 +82,23 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
                     row_number = 0
                     if foreign_field == "_id":
                         for doc in pipeline_result:
+                            raw_id = (
+                                _sanitize_params([doc.get("_id")]) or [None]
+                            )[0]
                             self.db.execute(
                                 f"INSERT INTO {hash_table_name} (id, _id, data, {join_key}) VALUES (?, ?, ?, ?)",
                                 (
                                     (row_number := row_number + 1),
-                                    doc.get("_id"),
+                                    raw_id,
                                     neosqlite_json_dumps(doc),
                                     _serialize_lookup_key(doc.get("_id")),
                                 ),
                             )
                     else:
                         for doc in pipeline_result:
+                            raw_id = (
+                                _sanitize_params([doc.get("_id")]) or [None]
+                            )[0]
                             key_val = self._extract_field_value(
                                 doc, foreign_field
                             )
@@ -99,7 +106,7 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
                                 f"INSERT INTO {hash_table_name} (id, _id, data, {join_key}) VALUES (?, ?, ?, ?)",
                                 (
                                     (row_number := row_number + 1),
-                                    doc.get("_id"),
+                                    raw_id,
                                     neosqlite_json_dumps(doc),
                                     _serialize_lookup_key(key_val),
                                 ),
@@ -439,47 +446,26 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
                     )
                     row_number = 0
                     for doc in pipeline_result:
+                        raw_id = (_sanitize_params([doc.get("_id")]) or [None])[
+                            0
+                        ]
                         self.collection.db.execute(
                             f"INSERT INTO {pipeline_result_table} (id, _id, data) VALUES (?, ?, ?)",
                             (
                                 (row_number := row_number + 1),
-                                doc.get("_id"),
+                                raw_id,
                                 neosqlite_json_dumps(doc),
                             ),
                         )
 
-                if foreign_field == "_id":
-                    foreign_extract = "related._id"
-                else:
-                    # Use ObjectId-aware extraction
-                    foreign_extract = _json_extract_field_with_objectid_support(
-                        self.jsonb.json_function_prefix,
-                        foreign_field,
-                        is_local_field=False,
-                    )
-
-                if local_field == "_id":
-                    local_extract = f"COALESCE({self.jsonb.json_function_prefix}_extract(main_table.data, '$._id'), main_table._id, main_table.id)"
-                else:
-                    # Use ObjectId-aware extraction
-                    local_extract = _json_extract_field_with_objectid_support(
-                        self.jsonb.json_function_prefix,
-                        local_field,
-                        is_local_field=True,
-                    )
-
-                select_clause = (
-                    f"SELECT main_table.id, main_table._id, "
-                    f"json({json_set_func}(main_table.data, '{parse_json_path(as_field)}', "
-                    f"coalesCE(( "
-                    f"  SELECT {self.jsonb.json_group_array_function}(json(related.data)) "
-                    f"  FROM {pipeline_result_table} as related "
-                    f"  WHERE {foreign_extract} = "
-                    f"        {local_extract} "
-                    f"), json('[]'))) as data"
+                select_clause, from_clause = self._build_correlated_lookup_sql(
+                    current_table,
+                    pipeline_result_table,
+                    local_field,
+                    foreign_field,
+                    as_field,
+                    "json(related.data)",
                 )
-
-                from_clause = f"FROM {current_table} as main_table"
 
                 lookup_stage = {"$lookup": lookup_spec}
                 new_table = create_temp(
@@ -502,45 +488,76 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
                 "$lookup requires from, localField, foreignField, and as"
             )
 
-        local_field_str: str = local_field  # type: ignore[assignment]
-        foreign_field_str: str = foreign_field  # type: ignore[assignment]
+        assert local_field is not None
+        assert foreign_field is not None
+        select_clause, from_clause = self._build_correlated_lookup_sql(
+            current_table,
+            quote_table_name(from_collection),
+            local_field,
+            foreign_field,
+            as_field,
+            f"json({json_set_func}(related.data, '$._id', related._id))",
+        )
 
-        if foreign_field_str == "_id":
-            foreign_extract = "related._id"
+        lookup_stage = {"$lookup": lookup_spec}
+        new_table = create_temp(lookup_stage, f"{select_clause} {from_clause}")
+        return new_table
+
+    def _local_id_extract_expr(self) -> str:
+        """Return SQL TEXT expression extracting main_table._id with ObjectId support."""
+        prefix = self.jsonb.json_function_prefix
+        return (
+            f"CAST(COALESCE(main_table._id, "
+            f"CASE WHEN {prefix}_extract(main_table.data, '$._id.__neosqlite_objectid__') = 1 "
+            f"THEN {prefix}_extract(main_table.data, '$._id.id') "
+            f"ELSE {prefix}_extract(main_table.data, '$._id') END, "
+            f"main_table.id) AS TEXT)"
+        )
+
+    def _build_correlated_lookup_sql(
+        self,
+        current_table: str,
+        related_table: str,
+        local_field: str,
+        foreign_field: str,
+        as_field: str,
+        related_doc_expr: str,
+    ) -> tuple[str, str]:
+        """Build SELECT/FROM SQL fragments for correlated subquery $lookup."""
+        prefix = self.jsonb.json_function_prefix
+        json_set_func = f"{prefix}_set"
+
+        if foreign_field == "_id":
+            foreign_extract = "CAST(related._id AS TEXT)"
         else:
-            # Use ObjectId-aware extraction
             foreign_extract = _json_extract_field_with_objectid_support(
-                self.jsonb.json_function_prefix,
-                foreign_field_str,
+                prefix,
+                foreign_field,
                 is_local_field=False,
+                data_column="related.data",
             )
 
-        if local_field_str == "_id":
-            local_extract = f"COALESCE({self.jsonb.json_function_prefix}_extract(main_table.data, '$._id'), main_table._id, main_table.id)"
+        if local_field == "_id":
+            local_extract = self._local_id_extract_expr()
         else:
-            # Use ObjectId-aware extraction
             local_extract = _json_extract_field_with_objectid_support(
-                self.jsonb.json_function_prefix,
-                local_field_str,
+                prefix,
+                local_field,
                 is_local_field=True,
+                data_column="main_table.data",
             )
 
         select_clause = (
             f"SELECT main_table.id, main_table._id, "
             f"json({json_set_func}(main_table.data, '{parse_json_path(as_field)}', "
-            f"coalesCE(( "
-            f"  SELECT {self.jsonb.json_group_array_function}(json({json_set_func}(related.data, '$._id', related._id))) "
-            f"  FROM {quote_table_name(from_collection)} as related "
-            f"  WHERE {foreign_extract} = "
-            f"        {local_extract} "
-            f"), json('[]'))) as data"
+            f"{prefix}(COALESCE(("
+            f"  SELECT {self.jsonb.json_group_array_function}({related_doc_expr}) "
+            f"  FROM {related_table} as related "
+            f"  WHERE {foreign_extract} = {local_extract}"
+            f"), {prefix}('[]'))))) as data"
         )
-
         from_clause = f"FROM {current_table} as main_table"
-
-        lookup_stage = {"$lookup": lookup_spec}
-        new_table = create_temp(lookup_stage, f"{select_clause} {from_clause}")
-        return new_table
+        return select_clause, from_clause
 
     def _process_lookup_hash_join(
         self,
@@ -591,7 +608,7 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
             assert local_field is not None, "local_field should not be None"
 
             if local_field == "_id":
-                local_extract = f"CAST(COALESCE({self.jsonb.json_function_prefix}_extract(main_table.data, '$._id'), main_table._id, main_table.id) AS TEXT)"
+                local_extract = self._local_id_extract_expr()
             else:
                 local_extract = _json_extract_field_with_objectid_support(
                     self.jsonb.json_function_prefix,

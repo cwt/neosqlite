@@ -2076,7 +2076,7 @@ class SqlUpdatesMixin:
 
             if op != "$set":
                 for field in value:
-                    if not field or "$" in field:
+                    if not field or "$" in field or field == "_id":
                         return None
 
             match op:
@@ -2085,7 +2085,7 @@ class SqlUpdatesMixin:
                     plain_params: list[Any] = []
                     pos_fields: list[tuple[str, Any]] = []
                     for field, field_val in value.items():
-                        if not field:
+                        if not field or field == "_id":
                             return None
                         if "$" in field:
                             pos_fields.append((field, field_val))

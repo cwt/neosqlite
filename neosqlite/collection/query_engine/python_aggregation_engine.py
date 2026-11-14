@@ -29,6 +29,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _resolve_target_collection(
+    query_engine: "QueryEngine", coll_name: str, db_name: str | None = None
+) -> Any:
+    """Resolve a target Collection for $merge/$out within NeoSQLite."""
+    db = query_engine.collection._database
+    if db_name:
+        client = getattr(db, "client", None)
+        if client is not None and client is not db:
+            db_obj = client[db_name]
+            if not isinstance(db_obj, type(query_engine.collection)):
+                return db_obj[coll_name]
+    return db[coll_name]
+
+
 def execute_python_aggregation(
     query_engine: "QueryEngine",
     pipeline: list[dict[str, Any]],
@@ -852,13 +866,13 @@ def execute_python_aggregation(
                 # Get or create target collection
                 if "." in target_coll_name:
                     db_name, coll_name = target_coll_name.split(".", 1)
-                    target_coll = query_engine.collection._database.client[
-                        db_name
-                    ][coll_name]
+                    target_coll = _resolve_target_collection(
+                        query_engine, coll_name, db_name
+                    )
                 else:
-                    target_coll = query_engine.collection._database[
-                        target_coll_name
-                    ]
+                    target_coll = _resolve_target_collection(
+                        query_engine, target_coll_name
+                    )
 
                 # Process each document
                 for dc in docs_with_context:
@@ -881,20 +895,19 @@ def execute_python_aggregation(
                     if existing:
                         match when_matched:
                             case "replace":
-                                existing_id = existing.get("_id")
-                                new_doc = {
+                                update_doc = {
                                     k: v for k, v in doc.items() if k != "_id"
                                 }
-                                if existing_id is not None:
-                                    new_doc["_id"] = existing_id
-                                target_coll.update_one(
-                                    {on_field: on_value},
-                                    {"$set": new_doc},
-                                )
+                                if update_doc:
+                                    target_coll.update_one(
+                                        {on_field: on_value},
+                                        {"$set": update_doc},
+                                    )
                                 fields_to_remove = [
                                     k
                                     for k in existing
-                                    if k not in new_doc and k != on_field
+                                    if k not in update_doc
+                                    and k not in (on_field, "_id")
                                 ]
                                 if fields_to_remove:
                                     target_coll.update_one(
@@ -938,10 +951,9 @@ def execute_python_aggregation(
             case "$out":
                 out_spec = stage["$out"]
                 if isinstance(out_spec, str):
-                    target_coll_name = out_spec
-                    target_coll = query_engine.collection._database[
-                        target_coll_name
-                    ]
+                    target_coll = _resolve_target_collection(
+                        query_engine, out_spec
+                    )
                 elif isinstance(out_spec, dict):
                     out_coll_name = out_spec.get("coll")
                     out_db_name = out_spec.get("db")
@@ -949,14 +961,9 @@ def execute_python_aggregation(
                         raise MalformedQueryException(
                             "$out requires non-empty collection name"
                         )
-                    if out_db_name:
-                        target_coll = query_engine.collection._database.client[
-                            out_db_name
-                        ][out_coll_name]
-                    else:
-                        target_coll = query_engine.collection._database[
-                            out_coll_name
-                        ]
+                    target_coll = _resolve_target_collection(
+                        query_engine, out_coll_name, out_db_name
+                    )
                 else:
                     raise MalformedQueryException(
                         "$out requires string or dict specification"
