@@ -14,7 +14,7 @@ That's NX-27017. It speaks MongoDB's wire protocol, stores everything in SQLite,
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.12+
 - **pymongo** - Yes, the real pymongo. It includes `bson` so no separate `bson` package needed. *cough* not to be confused with the other `bson` package on PyPi *cough*
 
 ```bash

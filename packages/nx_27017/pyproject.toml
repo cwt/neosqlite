@@ -17,12 +17,9 @@ classifiers = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.10, <3.16"
+python = "^3.12, <3.16"
 neosqlite = "^1.17.4"
-pymongo = [
-    { version = "^4.18.0", python = "<3.11" },
-    { version = "^4.19.0", python = ">=3.11" }
-]
+pymongo = "^4.19.0"
 
 [tool.poetry.extras]
 speed = ["uvloop"]
@@ -32,10 +29,7 @@ pytest = "^9.1.1"
 pytest-asyncio = "^1.4.1"
 pytest-cov = "^7.1"
 mypy = "^2.4"
-coverage = [
-    { version = "<7.17.0", python = "<3.11" },
-    { version = "^7.17.0", python = ">=3.11" }
-]
+coverage = "^7.17.0"
 
 [tool.poetry.scripts]
 nx-27017 = "nx_27017.nx_27017:main"
@@ -55,7 +49,7 @@ filterwarnings = [
 ]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 strict = true
 warn_return_any = true
 warn_unused_ignores = true

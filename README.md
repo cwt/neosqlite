@@ -55,7 +55,7 @@ For full details, see [documents/releases/v1.17.4.md](documents/releases/v1.17.4
 
 ## Installation
 
-NeoSQLite supports Python 3.10, 3.11, 3.12, 3.13, 3.14, and 3.15.
+NeoSQLite supports Python 3.12, 3.13, 3.14, and 3.15.
 
 ```bash
 pip install neosqlite
