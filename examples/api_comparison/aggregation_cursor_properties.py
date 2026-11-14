@@ -178,21 +178,21 @@ def compare_aggregation_cursor_methods():
     reporter.record_comparison(
         "Aggregation (Cursor Properties)",
         "batch_size",
-        neo_agg_batch_size if neo_agg_batch_size else "FAIL",
-        mongo_agg_batch_size if mongo_agg_batch_size else None,
+        neo_agg_batch_size or "FAIL",
+        mongo_agg_batch_size or None,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
         "Aggregation (Cursor Properties)",
         "allow_disk_use",
-        neo_allow_disk_use if neo_allow_disk_use else "FAIL",
-        mongo_allow_disk_use if mongo_allow_disk_use else None,
+        neo_allow_disk_use or "FAIL",
+        mongo_allow_disk_use or None,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
         "Aggregation (Cursor Properties)",
         "properties",
-        neo_props_ok if neo_props_ok else "FAIL",
-        mongo_props_ok if mongo_props_ok else None,
+        neo_props_ok or "FAIL",
+        mongo_props_ok or None,
         skip_reason="MongoDB not available" if not client else None,
     )

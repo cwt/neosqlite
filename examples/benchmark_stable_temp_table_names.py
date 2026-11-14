@@ -12,7 +12,7 @@ import sqlite3
 import statistics
 import time
 import uuid
-from typing import Any, Dict
+from typing import Any
 
 
 class DeterministicTempTableManager:
@@ -21,7 +21,7 @@ class DeterministicTempTableManager:
     def __init__(self, pipeline_id: str):
         self.pipeline_id = pipeline_id
 
-    def make_temp_table_name(self, stage: Dict[str, Any]) -> str:
+    def make_temp_table_name(self, stage: dict[str, Any]) -> str:
         """Generate a deterministic temp table name."""
         stage_key = str(sorted(stage.items()))
         suffix = hashlib.sha256(stage_key.encode()).hexdigest()[:6]
@@ -29,7 +29,7 @@ class DeterministicTempTableManager:
         return f"temp_{self.pipeline_id}_{stage_type}_{suffix}"
 
 
-def benchmark_query_plan_caching(num_runs: int = 5000) -> Dict[str, float]:
+def benchmark_query_plan_caching(num_runs: int = 5000) -> dict[str, float]:
     """Benchmark SQLite query plan caching with deterministic vs random names."""
     print(f"=== Benchmarking Query Plan Caching ({num_runs:,} runs) ===\n")
 

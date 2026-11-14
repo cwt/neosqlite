@@ -263,31 +263,23 @@ def compare_additional_aggregation():
     reporter.record_comparison(
         "Aggregation (Advanced Operators)",
         "$unwind (advanced)",
-        (
-            neo_unwind_advanced_result
-            if neo_unwind_advanced_result
-            else neo_unwind_advanced
-        ),
-        (
-            mongo_unwind_advanced_result
-            if mongo_unwind_advanced_result
-            else mongo_unwind_advanced
-        ),
+        (neo_unwind_advanced_result or neo_unwind_advanced),
+        (mongo_unwind_advanced_result or mongo_unwind_advanced),
         skip_reason="MongoDB not available" if not client else None,
     )
 
     reporter.record_comparison(
         "Aggregation (Advanced Operators)",
         "$group $push",
-        neo_push_result if neo_push_result else neo_push,
-        mongo_push_result if mongo_push_result else mongo_push,
+        neo_push_result or neo_push,
+        mongo_push_result or mongo_push,
         skip_reason="MongoDB not available" if not client else None,
     )
 
     reporter.record_comparison(
         "Aggregation (Advanced Operators)",
         "$switch",
-        neo_switch_result if neo_switch_result else neo_switch,
-        mongo_switch_result if mongo_switch_result else mongo_switch,
+        neo_switch_result or neo_switch,
+        mongo_switch_result or mongo_switch,
         skip_reason="MongoDB not available" if not client else None,
     )

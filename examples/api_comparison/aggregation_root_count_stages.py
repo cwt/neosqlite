@@ -217,28 +217,28 @@ def compare_additional_aggregation_stages_extended():
     reporter.record_comparison(
         "Aggregation (Root & Count Stages)",
         "$replaceRoot",
-        neo_replaceroot if neo_replaceroot else "FAIL",
-        mongo_replaceroot if mongo_replaceroot else None,
+        neo_replaceroot or "FAIL",
+        mongo_replaceroot or None,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
         "Aggregation (Root & Count Stages)",
         "$replaceWith",
-        neo_replacewith if neo_replacewith else "FAIL",
-        mongo_replacewith if mongo_replacewith else None,
+        neo_replacewith or "FAIL",
+        mongo_replacewith or None,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
         "Aggregation (Root & Count Stages)",
         "$unset",
-        neo_unset if neo_unset else "FAIL",
-        mongo_unset if mongo_unset else None,
+        neo_unset or "FAIL",
+        mongo_unset or None,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
         "Aggregation (Root & Count Stages)",
         "$count",
-        neo_count if neo_count else "FAIL",
-        mongo_count if mongo_count else None,
+        neo_count or "FAIL",
+        mongo_count or None,
         skip_reason="MongoDB not available" if not client else None,
     )

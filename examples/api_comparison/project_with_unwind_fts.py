@@ -375,80 +375,40 @@ def compare_project_unwind_fts():
     reporter.record_comparison(
         "$project with $unwind+FTS",
         "field inclusion",
-        (
-            neo_project_simple_result
-            if neo_project_simple_result
-            else neo_project_simple
-        ),
-        (
-            mongo_project_simple_result
-            if mongo_project_simple_result
-            else mongo_project_simple
-        ),
+        (neo_project_simple_result or neo_project_simple),
+        (mongo_project_simple_result or mongo_project_simple),
         skip_reason="MongoDB not available" if not client else None,
     )
 
     reporter.record_comparison(
         "$project with $unwind+FTS",
         "field reference with alias",
-        (
-            neo_project_field_ref_result
-            if neo_project_field_ref_result
-            else neo_project_field_ref
-        ),
-        (
-            mongo_project_field_ref_result
-            if mongo_project_field_ref_result
-            else mongo_project_field_ref
-        ),
+        (neo_project_field_ref_result or neo_project_field_ref),
+        (mongo_project_field_ref_result or mongo_project_field_ref),
         skip_reason="MongoDB not available" if not client else None,
     )
 
     reporter.record_comparison(
         "$project with $unwind+FTS",
         "field exclusion",
-        (
-            neo_project_exclusion_result
-            if neo_project_exclusion_result
-            else neo_project_exclusion
-        ),
-        (
-            mongo_project_exclusion_result
-            if mongo_project_exclusion_result
-            else mongo_project_exclusion
-        ),
+        (neo_project_exclusion_result or neo_project_exclusion),
+        (mongo_project_exclusion_result or mongo_project_exclusion),
         skip_reason="MongoDB not available" if not client else None,
     )
 
     reporter.record_comparison(
         "$project with $unwind+FTS",
         "project following unwind",
-        (
-            neo_project_after_unwind_result
-            if neo_project_after_unwind_result
-            else neo_project_after_unwind
-        ),
-        (
-            mongo_project_after_unwind_result
-            if mongo_project_after_unwind_result
-            else mongo_project_after_unwind
-        ),
+        (neo_project_after_unwind_result or neo_project_after_unwind),
+        (mongo_project_after_unwind_result or mongo_project_after_unwind),
         skip_reason="MongoDB not available" if not client else None,
     )
 
     reporter.record_comparison(
         "$project with $unwind+FTS",
         "project following unwind and text search",
-        (
-            neo_project_unwind_fts_result
-            if neo_project_unwind_fts_result
-            else neo_project_unwind_fts
-        ),
-        (
-            mongo_project_unwind_fts_result
-            if mongo_project_unwind_fts_result
-            else mongo_project_unwind_fts
-        ),
+        (neo_project_unwind_fts_result or neo_project_unwind_fts),
+        (mongo_project_unwind_fts_result or mongo_project_unwind_fts),
         skip_reason=(
             "MongoDB not available"
             if not client

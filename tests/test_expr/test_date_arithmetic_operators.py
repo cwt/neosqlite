@@ -4,7 +4,7 @@ Tests for $expr date arithmetic operators.
 Covers: $dateAdd, $dateSubtract, $dateDiff
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -51,9 +51,9 @@ class TestDateArithmeticPython:
         expr = {"$dateAdd": ["$date", 5, "day"]}
         result = evaluator._evaluate_expr_python(
             expr,
-            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)},
         )
-        assert result == datetime(2024, 1, 20, 10, 30, 0, tzinfo=timezone.utc)
+        assert result == datetime(2024, 1, 20, 10, 30, 0, tzinfo=UTC)
 
     def test_date_add_hours_python(self):
         """Test $dateAdd with hours."""
@@ -61,9 +61,9 @@ class TestDateArithmeticPython:
         expr = {"$dateAdd": ["$date", 3, "hour"]}
         result = evaluator._evaluate_expr_python(
             expr,
-            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)},
         )
-        assert result == datetime(2024, 1, 15, 13, 30, 0, tzinfo=timezone.utc)
+        assert result == datetime(2024, 1, 15, 13, 30, 0, tzinfo=UTC)
 
     def test_date_subtract_days_python(self):
         """Test $dateSubtract with days."""
@@ -71,9 +71,9 @@ class TestDateArithmeticPython:
         expr = {"$dateSubtract": ["$date", 5, "day"]}
         result = evaluator._evaluate_expr_python(
             expr,
-            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)},
         )
-        assert result == datetime(2024, 1, 10, 10, 30, 0, tzinfo=timezone.utc)
+        assert result == datetime(2024, 1, 10, 10, 30, 0, tzinfo=UTC)
 
     def test_date_add_months_python(self):
         """Test $dateAdd with months."""
@@ -81,9 +81,9 @@ class TestDateArithmeticPython:
         expr = {"$dateAdd": ["$date", 2, "month"]}
         result = evaluator._evaluate_expr_python(
             expr,
-            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)},
         )
-        assert result == datetime(2024, 3, 15, 10, 30, 0, tzinfo=timezone.utc)
+        assert result == datetime(2024, 3, 15, 10, 30, 0, tzinfo=UTC)
 
     def test_date_add_years_python(self):
         """Test $dateAdd with years."""
@@ -91,9 +91,9 @@ class TestDateArithmeticPython:
         expr = {"$dateAdd": ["$date", 1, "year"]}
         result = evaluator._evaluate_expr_python(
             expr,
-            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)},
         )
-        assert result == datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+        assert result == datetime(2025, 1, 15, 10, 30, 0, tzinfo=UTC)
 
     def test_date_diff_days_python(self):
         """Test $dateDiff with days."""
@@ -102,8 +102,8 @@ class TestDateArithmeticPython:
         result = evaluator._evaluate_expr_python(
             expr,
             {
-                "date1": datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
-                "date2": datetime(2024, 1, 15, 0, 0, 0, tzinfo=timezone.utc),
+                "date1": datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
+                "date2": datetime(2024, 1, 15, 0, 0, 0, tzinfo=UTC),
             },
         )
         assert result == 14
@@ -115,8 +115,8 @@ class TestDateArithmeticPython:
         result = evaluator._evaluate_expr_python(
             expr,
             {
-                "date1": datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
-                "date2": datetime(2024, 1, 1, 5, 0, 0, tzinfo=timezone.utc),
+                "date1": datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
+                "date2": datetime(2024, 1, 1, 5, 0, 0, tzinfo=UTC),
             },
         )
         assert result == 5
@@ -128,8 +128,8 @@ class TestDateArithmeticPython:
         result = evaluator._evaluate_expr_python(
             expr,
             {
-                "date1": datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
-                "date2": datetime(2024, 1, 22, 0, 0, 0, tzinfo=timezone.utc),
+                "date1": datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
+                "date2": datetime(2024, 1, 22, 0, 0, 0, tzinfo=UTC),
             },
         )
         assert result == 3
@@ -147,9 +147,9 @@ class TestDateArithmeticPython:
         expr = {"$dateAdd": ["$date", 2, "week"]}
         result = evaluator._evaluate_expr_python(
             expr,
-            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)},
         )
-        assert result == datetime(2024, 1, 29, 10, 30, 0, tzinfo=timezone.utc)
+        assert result == datetime(2024, 1, 29, 10, 30, 0, tzinfo=UTC)
 
 
 class TestDateArithmeticIntegration:
@@ -166,21 +166,15 @@ class TestDateArithmeticIntegration:
             [
                 {
                     "name": "doc1",
-                    "date": datetime(
-                        2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc
-                    ),
+                    "date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
                 },
                 {
                     "name": "doc2",
-                    "date": datetime(
-                        2024, 2, 20, 15, 45, 0, tzinfo=timezone.utc
-                    ),
+                    "date": datetime(2024, 2, 20, 15, 45, 0, tzinfo=UTC),
                 },
                 {
                     "name": "doc3",
-                    "date": datetime(
-                        2024, 3, 25, 20, 0, 0, tzinfo=timezone.utc
-                    ),
+                    "date": datetime(2024, 3, 25, 20, 0, 0, tzinfo=UTC),
                 },
             ]
         )
@@ -222,7 +216,7 @@ class TestDateArithmeticIntegration:
                                         0,
                                         0,
                                         0,
-                                        tzinfo=timezone.utc,
+                                        tzinfo=UTC,
                                     ),
                                     "day",
                                 ]
@@ -250,21 +244,15 @@ class TestDateArithmeticDictFormat:
             [
                 {
                     "name": "doc1",
-                    "date": datetime(
-                        2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc
-                    ),
+                    "date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC),
                 },
                 {
                     "name": "doc2",
-                    "date": datetime(
-                        2024, 2, 20, 15, 45, 0, tzinfo=timezone.utc
-                    ),
+                    "date": datetime(2024, 2, 20, 15, 45, 0, tzinfo=UTC),
                 },
                 {
                     "name": "doc3",
-                    "date": datetime(
-                        2024, 3, 25, 20, 0, 0, tzinfo=timezone.utc
-                    ),
+                    "date": datetime(2024, 3, 25, 20, 0, 0, tzinfo=UTC),
                 },
             ]
         )
@@ -328,9 +316,9 @@ class TestDateArithmeticDictFormat:
         }
         result = evaluator._evaluate_expr_python(
             expr,
-            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)},
         )
-        assert result == datetime(2024, 1, 20, 10, 30, 0, tzinfo=timezone.utc)
+        assert result == datetime(2024, 1, 20, 10, 30, 0, tzinfo=UTC)
 
     def test_date_subtract_dict_format_python(self):
         """Test $dateSubtract with dict format in Python."""
@@ -344,9 +332,9 @@ class TestDateArithmeticDictFormat:
         }
         result = evaluator._evaluate_expr_python(
             expr,
-            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)},
         )
-        assert result == datetime(2024, 1, 10, 10, 30, 0, tzinfo=timezone.utc)
+        assert result == datetime(2024, 1, 10, 10, 30, 0, tzinfo=UTC)
 
     def test_date_diff_dict_format_python(self):
         """Test $dateDiff with dict format in Python."""
@@ -361,8 +349,8 @@ class TestDateArithmeticDictFormat:
         result = evaluator._evaluate_expr_python(
             expr,
             {
-                "date1": datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
-                "date2": datetime(2024, 1, 15, 0, 0, 0, tzinfo=timezone.utc),
+                "date1": datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
+                "date2": datetime(2024, 1, 15, 0, 0, 0, tzinfo=UTC),
             },
         )
         assert result == 14
@@ -378,9 +366,9 @@ class TestDateArithmeticDictFormat:
         }
         result = evaluator._evaluate_expr_python(
             expr,
-            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)},
         )
-        assert result == datetime(2024, 1, 20, 10, 30, 0, tzinfo=timezone.utc)
+        assert result == datetime(2024, 1, 20, 10, 30, 0, tzinfo=UTC)
 
     def test_date_add_dict_format_in_query(self, collection):
         """Test $dateAdd with dict format in actual query."""
@@ -426,7 +414,7 @@ class TestDateArithmeticDictFormat:
                                         0,
                                         0,
                                         0,
-                                        tzinfo=timezone.utc,
+                                        tzinfo=UTC,
                                     ),
                                     "unit": "day",
                                 }

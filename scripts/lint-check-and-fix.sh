@@ -4,10 +4,16 @@
 #   I    - Import organization (isort compatibility)
 #   F    - Pyflakes (unused imports, undefined names, etc.)
 #   UP   - Python 3.12 syntax and stdlib modernizations
-#   PERF - Performance idioms
 #   FURB - Refurb readability and correctness rules
 poetry run ruff check \
-    --select=I,F,UP,PERF,FURB \
+    --select=I,F,UP,FURB \
     --target-version=py312 \
     --fix .
+
+# Performance rules are enforced on the shipped library, not on examples,
+# stress scripts, or tests where readability and setup code dominate.
+poetry run ruff check \
+    --select=PERF \
+    --target-version=py312 \
+    neosqlite packages/nx_27017/src
 

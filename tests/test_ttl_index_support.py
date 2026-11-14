@@ -1,7 +1,7 @@
 """Tests for TTL index declaration and document expiry."""
 
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -16,7 +16,7 @@ def connection():
 
 
 def _utc_now():
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def test_ttl_declaration_visible_in_index_information(connection):

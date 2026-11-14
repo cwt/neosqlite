@@ -1,6 +1,6 @@
 """Comprehensive tests for SQL type converter operators in ExprEvaluator."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -156,9 +156,7 @@ class TestTypeConvertersDirectAndSQL:
         assert evaluator._get_literal_bson_type("hello") == "string"
         assert evaluator._get_literal_bson_type([1, 2]) == "array"
         assert evaluator._get_literal_bson_type({"a": 1}) == "object"
-        assert (
-            evaluator._get_literal_bson_type(datetime.now(timezone.utc)) is None
-        )
+        assert evaluator._get_literal_bson_type(datetime.now(UTC)) is None
         assert evaluator._get_literal_bson_type(ObjectId()) is None
         assert evaluator._get_literal_bson_type(Binary(b"ab")) is None
 

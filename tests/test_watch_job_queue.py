@@ -1,6 +1,6 @@
 """Tests for change-stream hardening (resume tokens, pipeline filter)."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -203,7 +203,7 @@ def test_history_retained_after_close(jobs):
 
 
 def test_job_queue_recipe_drain_then_tail(jobs):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     jobs.insert_many(
         [
             {

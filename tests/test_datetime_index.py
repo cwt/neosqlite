@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import neosqlite
 
@@ -9,11 +9,7 @@ def test_datetime_index_creation():
 
         # Insert a document with a datetime field
         coll.insert_one(
-            {
-                "created_at": datetime(
-                    2026, 7, 13, 22, 56, 21, tzinfo=timezone.utc
-                )
-            }
+            {"created_at": datetime(2026, 7, 13, 22, 56, 21, tzinfo=UTC)}
         )
 
         # Create datetime index
@@ -26,11 +22,7 @@ def test_datetime_index_creation():
         # Verify queries work and can use the index
         res = list(
             coll.find(
-                {
-                    "created_at": datetime(
-                        2026, 7, 13, 22, 56, 21, tzinfo=timezone.utc
-                    )
-                }
+                {"created_at": datetime(2026, 7, 13, 22, 56, 21, tzinfo=UTC)}
             )
         )
         assert len(res) == 1

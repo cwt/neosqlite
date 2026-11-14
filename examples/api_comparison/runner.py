@@ -515,7 +515,7 @@ def run_all_comparisons():
                     f"\n  [TIER TRACKING] Tier changes detected: {len(tier_changes)}"
                 )
                 for prev, new, pipeline in tier_changes:
-                    prev_str = prev if prev else "None"
+                    prev_str = prev or "None"
                     # Show simplified pipeline
                     pipeline_summary = (
                         str(pipeline)[:60] + "..."

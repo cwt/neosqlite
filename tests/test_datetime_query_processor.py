@@ -842,7 +842,7 @@ def test_datetime_query_returns_documents_updated_with_jsonb(tmp_path):
     with Connection(str(tmp_path / "datetime_jsonb.db")) as db:
         collection = db["things"]
         inserted = collection.insert_one(
-            {"name": "x", "when": datetime.datetime.now(datetime.timezone.utc)}
+            {"name": "x", "when": datetime.datetime.now(datetime.UTC)}
         )
         collection.update_one(
             {"_id": inserted.inserted_id}, {"$set": {"status": "pending"}}
@@ -852,9 +852,7 @@ def test_datetime_query_returns_documents_updated_with_jsonb(tmp_path):
             collection.find(
                 {
                     "status": "pending",
-                    "when": {
-                        "$lte": datetime.datetime.now(datetime.timezone.utc)
-                    },
+                    "when": {"$lte": datetime.datetime.now(datetime.UTC)},
                 }
             )
         )
@@ -870,7 +868,7 @@ def test_temp_table_tier_returns_documents_updated_with_jsonb(tmp_path):
     with Connection(str(tmp_path / "datetime_jsonb_temp.db")) as db:
         collection = db["things"]
         inserted = collection.insert_one(
-            {"name": "x", "when": datetime.datetime.now(datetime.timezone.utc)}
+            {"name": "x", "when": datetime.datetime.now(datetime.UTC)}
         )
         collection.update_one(
             {"_id": inserted.inserted_id}, {"$set": {"status": "pending"}}
@@ -880,7 +878,7 @@ def test_temp_table_tier_returns_documents_updated_with_jsonb(tmp_path):
         results = processor._process_with_temp_table_tier(
             {
                 "status": "pending",
-                "when": {"$lte": datetime.datetime.now(datetime.timezone.utc)},
+                "when": {"$lte": datetime.datetime.now(datetime.UTC)},
             }
         )
 

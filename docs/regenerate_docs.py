@@ -22,8 +22,7 @@ def run_command(command, cwd=None, description=""):
             command,
             cwd=cwd,
             check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             shell=True,  # Use shell to handle complex commands
         )

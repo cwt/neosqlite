@@ -8,14 +8,14 @@ arrivals with watch(). Restart with the last resume token for zero repeats
 and zero misses within the retention window.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from neosqlite import Connection
 
 
 def enqueue(jobs, job_type, payload, delay_s=0):
     """Enqueue a job for immediate or delayed execution."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return jobs.insert_one(
         {
             "type": job_type,
@@ -49,8 +49,7 @@ def mark_retry(jobs, job_id, attempts, delay_s):
         {
             "$set": {
                 "status": "pending",
-                "next_run": datetime.now(timezone.utc)
-                + timedelta(seconds=delay_s),
+                "next_run": datetime.now(UTC) + timedelta(seconds=delay_s),
             },
             "$inc": {"attempts": attempts},
         },
@@ -94,7 +93,7 @@ def main():
         print("   - 1 due now, 1 delayed")
 
         print("2. Worker boot: draining due jobs...")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for job in claim_due(jobs, now):
             handle(job)
             mark_done(jobs, job["_id"])
@@ -116,7 +115,7 @@ def main():
         enqueue(jobs, "send", {"to": "dave"})
         # Boot drain catches jobs that arrived while no stream was open
         # (graceful close drops triggers; crash-restart replays via token).
-        for job in claim_due(jobs, datetime.now(timezone.utc)):
+        for job in claim_due(jobs, datetime.now(UTC)):
             if job["payload"] == {"to": "dave"}:
                 handle(job)
                 mark_done(jobs, job["_id"])

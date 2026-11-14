@@ -8,7 +8,7 @@ cleanup on drop_index.
 """
 
 import warnings
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import neosqlite
 
@@ -30,7 +30,7 @@ _EXPIRE_SECONDS = 43200
 
 
 def _fresh_dates():
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     # BSON datetimes carry millisecond precision; truncate to match.
     return now.replace(microsecond=now.microsecond // 1000 * 1000)
 

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from neosqlite.collection.json_helpers import neosqlite_json_loads
 
@@ -8,9 +8,7 @@ def test_neosqlite_json_loads_dates_in_lists():
     json_str = '{"dates": [{"$date": "2026-07-13T22:56:21Z"}, "not-a-date"]}'
     res = neosqlite_json_loads(json_str)
     assert isinstance(res["dates"][0], datetime)
-    assert res["dates"][0] == datetime(
-        2026, 7, 13, 22, 56, 21, tzinfo=timezone.utc
-    )
+    assert res["dates"][0] == datetime(2026, 7, 13, 22, 56, 21, tzinfo=UTC)
     assert res["dates"][1] == "not-a-date"
 
     # Test plain ISO strings are NOT converted to datetime (BUG-16: no data mutation)
@@ -24,16 +22,14 @@ def test_neosqlite_json_loads_dates_in_lists():
     res_nested = neosqlite_json_loads(json_str_nested)
     assert isinstance(res_nested["matrix"][0][0], datetime)
     assert res_nested["matrix"][0][0] == datetime(
-        2026, 7, 13, 22, 56, 21, tzinfo=timezone.utc
+        2026, 7, 13, 22, 56, 21, tzinfo=UTC
     )
 
     # Test date decoding at top-level list
     json_str_top_list = '[{"$date": "2026-07-13T22:56:21Z"}]'
     res_top_list = neosqlite_json_loads(json_str_top_list)
     assert isinstance(res_top_list[0], datetime)
-    assert res_top_list[0] == datetime(
-        2026, 7, 13, 22, 56, 21, tzinfo=timezone.utc
-    )
+    assert res_top_list[0] == datetime(2026, 7, 13, 22, 56, 21, tzinfo=UTC)
 
 
 def test_plain_iso_strings_not_mutated_in_collection():
@@ -42,7 +38,7 @@ def test_plain_iso_strings_not_mutated_in_collection():
     with neosqlite.Connection(":memory:") as conn:
         coll = conn.test_iso_dates
         iso_str = "2026-07-13T22:56:21Z"
-        dt = datetime(2026, 7, 13, 22, 56, 21, tzinfo=timezone.utc)
+        dt = datetime(2026, 7, 13, 22, 56, 21, tzinfo=UTC)
 
         coll.insert_one({"plain": iso_str, "date_obj": dt})
         doc = coll.find_one({})

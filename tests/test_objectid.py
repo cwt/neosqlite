@@ -3,7 +3,7 @@ Test suite for ObjectId functionality in NeoSQLite.
 """
 
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from neosqlite.objectid import ObjectId
 
@@ -60,7 +60,7 @@ def test_objectid_timestamp():
 
     gen_time = oid.generation_time
     assert isinstance(gen_time, datetime)
-    assert gen_time.tzinfo == timezone.utc
+    assert gen_time.tzinfo == UTC
     assert before <= int(gen_time.timestamp()) <= after
 
 
@@ -520,9 +520,7 @@ def test_objectid_init_from_int_timestamp():
     assert len(oid.binary) == 12
     # Check that the timestamp part matches
     assert int(oid.generation_time.timestamp()) == timestamp
-    assert oid.generation_time == datetime.fromtimestamp(
-        timestamp, tz=timezone.utc
-    )
+    assert oid.generation_time == datetime.fromtimestamp(timestamp, tz=UTC)
 
 
 def test_objectid_init_from_int_invalid_range():
@@ -664,9 +662,7 @@ def test_objectid_generation_time():
 
     # The generation time should match the timestamp we provided
     assert int(oid.generation_time.timestamp()) == timestamp
-    assert oid.generation_time == datetime.fromtimestamp(
-        timestamp, tz=timezone.utc
-    )
+    assert oid.generation_time == datetime.fromtimestamp(timestamp, tz=UTC)
 
 
 def test_objectid_encode_decode_for_storage():

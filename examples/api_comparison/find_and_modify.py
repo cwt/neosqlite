@@ -131,21 +131,21 @@ def compare_find_and_modify():
     reporter.record_comparison(
         "Find & Modify",
         "find_one_and_delete",
-        neo_foad if neo_foad else "FAIL",
-        mongo_foad if mongo_foad else None,
+        neo_foad or "FAIL",
+        mongo_foad or None,
         skip_reason="MongoDB not available" if not mongo_available else None,
     )
     reporter.record_comparison(
         "Find & Modify",
         "find_one_and_replace",
-        neo_foar if neo_foar else "FAIL",
-        mongo_foar if mongo_foar else None,
+        neo_foar or "FAIL",
+        mongo_foar or None,
         skip_reason="MongoDB not available" if not mongo_available else None,
     )
     reporter.record_comparison(
         "Find & Modify",
         "find_one_and_update",
-        neo_foau if neo_foau else "FAIL",
-        mongo_foau if mongo_foau else None,
+        neo_foau or "FAIL",
+        mongo_foau or None,
         skip_reason="MongoDB not available" if not mongo_available else None,
     )

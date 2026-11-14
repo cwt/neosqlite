@@ -2,7 +2,9 @@
 Utility functions for API comparison tests
 """
 
-from typing import Any, Callable
+from collections.abc import Callable
+from datetime import UTC
+from typing import Any
 
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
@@ -71,9 +73,8 @@ def _normalize_id(value: Any) -> Any:
     if hasattr(value, "__class__") and value.__class__.__name__ == "datetime":
         # If timezone-aware, convert to UTC and make naive
         if getattr(value, "tzinfo", None) is not None:
-            from datetime import timezone as dt_timezone
 
-            utc_dt = value.astimezone(dt_timezone.utc)
+            utc_dt = value.astimezone(UTC)
             return utc_dt.replace(tzinfo=None)
         return value
 
@@ -419,7 +420,7 @@ def get_tier_change_report() -> str:
 
     lines = ["Tier Changes Detected:"]
     for prev, new, pipeline in changes:
-        prev_str = prev if prev else "None"
+        prev_str = prev or "None"
         lines.append(f"  {prev_str} -> {new}")
         # Truncate pipeline for display
         pipeline_str = (

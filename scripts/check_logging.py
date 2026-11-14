@@ -2,24 +2,23 @@
 import ast
 import os
 import sys
-from typing import Dict, List, Tuple
 
 # Exceptions that are typically part of normal control flow and don't always need logging
 SAFE_EXCEPTIONS = {"StopIteration", "ImportError", "GeneratorExit"}
 
 
-def check_file_for_logging(filepath: str) -> Dict[str, List[Tuple[int, str]]]:
+def check_file_for_logging(filepath: str) -> dict[str, list[tuple[int, str]]]:
     """
     Parses a Python file and categorizes exception handlers.
     """
-    results: Dict[str, List[Tuple[int, str]]] = {
+    results: dict[str, list[tuple[int, str]]] = {
         "critical": [],  # Catch-all Exception without logging
         "warning": [],  # Specific exceptions (ValueError, etc) without logging
         "info": [],  # Safe/Control flow exceptions
     }
 
     try:
-        with open(filepath, "r", encoding="utf-8") as f:
+        with open(filepath, encoding="utf-8") as f:
             content = f.read()
             tree = ast.parse(content)
             lines = content.splitlines()

@@ -1,7 +1,7 @@
 """Module for comparing date expression operators between NeoSQLite and PyMongo"""
 
 import warnings
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import neosqlite
 
@@ -83,13 +83,11 @@ def compare_date_expr_operators():
             [
                 {
                     "event": "A",
-                    "date": datetime(
-                        2024, 6, 15, 14, 30, 0, tzinfo=timezone.utc
-                    ),
+                    "date": datetime(2024, 6, 15, 14, 30, 0, tzinfo=UTC),
                 },
                 {
                     "event": "B",
-                    "date": datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+                    "date": datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
                 },
             ]
         )
@@ -219,13 +217,11 @@ def compare_date_expr_operators():
             [
                 {
                     "event": "A",
-                    "date": datetime(
-                        2024, 6, 15, 14, 30, 0, tzinfo=timezone.utc
-                    ),
+                    "date": datetime(2024, 6, 15, 14, 30, 0, tzinfo=UTC),
                 },
                 {
                     "event": "B",
-                    "date": datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+                    "date": datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
                 },
             ]
         )

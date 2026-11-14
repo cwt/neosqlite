@@ -1128,11 +1128,7 @@ def compare_expr_comprehensive():
         reporter.record_comparison(
             "$expr (Comprehensive)",
             op_label,
-            neo_status if neo_status else "FAIL",
-            (
-                mongo_status
-                if mongo_status
-                else (None if not client or skip_reason else "FAIL")
-            ),
+            neo_status or "FAIL",
+            (mongo_status or (None if not client or skip_reason else "FAIL")),
             skip_reason=skip_reason,
         )

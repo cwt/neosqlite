@@ -4,6 +4,8 @@ Each test class documents the pre-fix failure and asserts MongoDB-consistent
 behavior after the fix.
 """
 
+from datetime import UTC
+
 import pytest
 
 import neosqlite
@@ -2041,7 +2043,6 @@ class TestDateAddMonthClamping:
 
     def test_sql_tier_date_add_month_clamping(self, connection):
         import datetime
-        from datetime import timezone
 
         c = connection.date_clamp_sql
         c.insert_many(
@@ -2050,42 +2051,42 @@ class TestDateAddMonthClamping:
                     "_id": 1,
                     "name": "jan31_leap",
                     "d": datetime.datetime(
-                        2024, 1, 31, 10, 0, 0, tzinfo=timezone.utc
+                        2024, 1, 31, 10, 0, 0, tzinfo=datetime.UTC
                     ),
                 },
                 {
                     "_id": 2,
                     "name": "jan31_nonleap",
                     "d": datetime.datetime(
-                        2023, 1, 31, 10, 0, 0, tzinfo=timezone.utc
+                        2023, 1, 31, 10, 0, 0, tzinfo=datetime.UTC
                     ),
                 },
                 {
                     "_id": 3,
                     "name": "feb29_leap",
                     "d": datetime.datetime(
-                        2024, 2, 29, 10, 0, 0, tzinfo=timezone.utc
+                        2024, 2, 29, 10, 0, 0, tzinfo=datetime.UTC
                     ),
                 },
                 {
                     "_id": 4,
                     "name": "mar31",
                     "d": datetime.datetime(
-                        2024, 3, 31, 10, 0, 0, tzinfo=timezone.utc
+                        2024, 3, 31, 10, 0, 0, tzinfo=datetime.UTC
                     ),
                 },
                 {
                     "_id": 5,
                     "name": "aug31",
                     "d": datetime.datetime(
-                        2024, 8, 31, 10, 0, 0, tzinfo=timezone.utc
+                        2024, 8, 31, 10, 0, 0, tzinfo=datetime.UTC
                     ),
                 },
                 {
                     "_id": 6,
                     "name": "jan15",
                     "d": datetime.datetime(
-                        2024, 1, 15, 10, 0, 0, tzinfo=timezone.utc
+                        2024, 1, 15, 10, 0, 0, tzinfo=datetime.UTC
                     ),
                 },
             ]
@@ -2099,7 +2100,7 @@ class TestDateAddMonthClamping:
                         "$eq": [
                             {"$dateAdd": ["$d", 1, "month"]},
                             datetime.datetime(
-                                2024, 2, 29, 10, 0, 0, tzinfo=timezone.utc
+                                2024, 2, 29, 10, 0, 0, tzinfo=datetime.UTC
                             ),
                         ]
                     }
@@ -2116,7 +2117,7 @@ class TestDateAddMonthClamping:
                         "$eq": [
                             {"$dateAdd": ["$d", 1, "month"]},
                             datetime.datetime(
-                                2023, 2, 28, 10, 0, 0, tzinfo=timezone.utc
+                                2023, 2, 28, 10, 0, 0, tzinfo=datetime.UTC
                             ),
                         ]
                     }
@@ -2134,7 +2135,7 @@ class TestDateAddMonthClamping:
                         "$eq": [
                             {"$dateSubtract": ["$d", 1, "month"]},
                             datetime.datetime(
-                                2024, 2, 29, 10, 0, 0, tzinfo=timezone.utc
+                                2024, 2, 29, 10, 0, 0, tzinfo=datetime.UTC
                             ),
                         ]
                     }
@@ -2152,7 +2153,7 @@ class TestDateAddMonthClamping:
                         "$eq": [
                             {"$dateAdd": ["$d", 1, "year"]},
                             datetime.datetime(
-                                2025, 2, 28, 10, 0, 0, tzinfo=timezone.utc
+                                2025, 2, 28, 10, 0, 0, tzinfo=datetime.UTC
                             ),
                         ]
                     }
@@ -2170,7 +2171,7 @@ class TestDateAddMonthClamping:
                         "$eq": [
                             {"$dateAdd": ["$d", 1, "month"]},
                             datetime.datetime(
-                                2024, 2, 15, 10, 0, 0, tzinfo=timezone.utc
+                                2024, 2, 15, 10, 0, 0, tzinfo=datetime.UTC
                             ),
                         ]
                     }
@@ -2191,12 +2192,11 @@ class TestDateAddMonthClamping:
         )
         assert len(docs) == 1
         assert docs[0]["clamped"] == datetime.datetime(
-            2024, 2, 29, 10, 0, 0, tzinfo=timezone.utc
+            2024, 2, 29, 10, 0, 0, tzinfo=datetime.UTC
         )
 
     def test_python_tier_date_add_month_clamping(self, connection):
         import datetime
-        from datetime import timezone
 
         from neosqlite.collection.query_helper.utils import (
             get_force_fallback,
@@ -2210,28 +2210,28 @@ class TestDateAddMonthClamping:
                     "_id": 1,
                     "name": "jan31_leap",
                     "d": datetime.datetime(
-                        2024, 1, 31, 10, 0, 0, tzinfo=timezone.utc
+                        2024, 1, 31, 10, 0, 0, tzinfo=datetime.UTC
                     ),
                 },
                 {
                     "_id": 2,
                     "name": "jan31_nonleap",
                     "d": datetime.datetime(
-                        2023, 1, 31, 10, 0, 0, tzinfo=timezone.utc
+                        2023, 1, 31, 10, 0, 0, tzinfo=datetime.UTC
                     ),
                 },
                 {
                     "_id": 3,
                     "name": "feb29_leap",
                     "d": datetime.datetime(
-                        2024, 2, 29, 10, 0, 0, tzinfo=timezone.utc
+                        2024, 2, 29, 10, 0, 0, tzinfo=datetime.UTC
                     ),
                 },
                 {
                     "_id": 4,
                     "name": "mar31",
                     "d": datetime.datetime(
-                        2024, 3, 31, 10, 0, 0, tzinfo=timezone.utc
+                        2024, 3, 31, 10, 0, 0, tzinfo=datetime.UTC
                     ),
                 },
             ]
@@ -2254,7 +2254,7 @@ class TestDateAddMonthClamping:
             )
             assert len(res) == 1
             assert res[0]["clamped"] == datetime.datetime(
-                2024, 2, 29, 10, 0, 0, tzinfo=timezone.utc
+                2024, 2, 29, 10, 0, 0, tzinfo=datetime.UTC
             )
 
             res = list(
@@ -2271,7 +2271,7 @@ class TestDateAddMonthClamping:
             )
             assert len(res) == 1
             assert res[0]["clamped"] == datetime.datetime(
-                2023, 2, 28, 10, 0, 0, tzinfo=timezone.utc
+                2023, 2, 28, 10, 0, 0, tzinfo=datetime.UTC
             )
         finally:
             set_force_fallback(old_state)
@@ -2282,7 +2282,6 @@ class TestDateToStringMillisecond:
 
     def test_sql_tier_date_to_string_millisecond(self, connection):
         import datetime
-        from datetime import timezone
 
         c = connection.dt_str_sql
         c.insert_many(
@@ -2290,13 +2289,13 @@ class TestDateToStringMillisecond:
                 {
                     "_id": 1,
                     "d": datetime.datetime(
-                        2024, 1, 15, 10, 30, 45, 123456, tzinfo=timezone.utc
+                        2024, 1, 15, 10, 30, 45, 123456, tzinfo=datetime.UTC
                     ),
                 },
                 {
                     "_id": 2,
                     "d": datetime.datetime(
-                        2024, 1, 15, 10, 30, 45, 5000, tzinfo=timezone.utc
+                        2024, 1, 15, 10, 30, 45, 5000, tzinfo=datetime.UTC
                     ),
                 },
             ]
@@ -2333,7 +2332,6 @@ class TestDateToStringMillisecond:
 
     def test_python_tier_date_to_string_millisecond(self, connection):
         import datetime
-        from datetime import timezone
 
         from neosqlite.collection.query_helper.utils import (
             get_force_fallback,
@@ -2346,13 +2344,13 @@ class TestDateToStringMillisecond:
                 {
                     "_id": 1,
                     "d": datetime.datetime(
-                        2024, 1, 15, 10, 30, 45, 123456, tzinfo=timezone.utc
+                        2024, 1, 15, 10, 30, 45, 123456, tzinfo=datetime.UTC
                     ),
                 },
                 {
                     "_id": 2,
                     "d": datetime.datetime(
-                        2024, 1, 15, 10, 30, 45, 5000, tzinfo=timezone.utc
+                        2024, 1, 15, 10, 30, 45, 5000, tzinfo=datetime.UTC
                     ),
                 },
             ]
@@ -2398,7 +2396,6 @@ class TestObjectIdGenerationTime:
 
     def test_generation_time_property(self):
         import datetime
-        from datetime import timezone
 
         from neosqlite.objectid import ObjectId
 
@@ -2406,14 +2403,14 @@ class TestObjectIdGenerationTime:
         oid = ObjectId(ts)
         gen_time = oid.generation_time
         assert isinstance(gen_time, datetime.datetime)
-        assert gen_time.tzinfo == timezone.utc
-        assert gen_time == datetime.datetime.fromtimestamp(ts, tz=timezone.utc)
+        assert gen_time.tzinfo == datetime.UTC
+        assert gen_time == datetime.datetime.fromtimestamp(ts, tz=datetime.UTC)
 
-        now_before = datetime.datetime.now(timezone.utc) - datetime.timedelta(
+        now_before = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
             seconds=1
         )
         fresh_oid = ObjectId()
-        now_after = datetime.datetime.now(timezone.utc) + datetime.timedelta(
+        now_after = datetime.datetime.now(datetime.UTC) + datetime.timedelta(
             seconds=1
         )
         assert now_before <= fresh_oid.generation_time <= now_after
@@ -2709,18 +2706,18 @@ def test_list_collection_names_filters_internal_and_fts_tables(connection):
 
 
 def test_date_diff_with_nested_date_expressions(connection):
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     c = connection.test_datediff_nested
     c.insert_many(
         [
             {
                 "event": "A",
-                "date": datetime(2024, 6, 15, 14, 30, 0, tzinfo=timezone.utc),
+                "date": datetime(2024, 6, 15, 14, 30, 0, tzinfo=UTC),
             },
             {
                 "event": "B",
-                "date": datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+                "date": datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC),
             },
         ]
     )

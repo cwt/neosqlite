@@ -10,7 +10,7 @@ Enhanced with temporary table aggregation pipeline tests to showcase benefits of
 
 import statistics
 import time
-from typing import Any, Dict, List
+from typing import Any
 
 import neosqlite
 from neosqlite.collection import query_helper
@@ -21,8 +21,8 @@ def _get_speedup(item):
 
 
 def benchmark_feature(
-    name: str, collection, pipeline: List[Dict[str, Any]], num_runs: int = 3
-) -> Dict[str, float]:
+    name: str, collection, pipeline: list[dict[str, Any]], num_runs: int = 3
+) -> dict[str, float]:
     """Benchmark a feature with both optimized and fallback paths."""
     print(f"\n--- {name} ---")
 
@@ -74,8 +74,8 @@ def benchmark_feature(
 
 
 def benchmark_temporary_table_feature(
-    name: str, collection, pipeline: List[Dict[str, Any]], num_runs: int = 3
-) -> Dict[str, float]:
+    name: str, collection, pipeline: list[dict[str, Any]], num_runs: int = 3
+) -> dict[str, float]:
     """Benchmark a feature that benefits from temporary table aggregation."""
     print(f"\n--- {name} ---")
 
@@ -138,9 +138,9 @@ def benchmark_complex_pipeline_with_temporary_tables(
     name: str,
     collection1,
     collection2,
-    pipeline: List[Dict[str, Any]],
+    pipeline: list[dict[str, Any]],
     num_runs: int = 3,
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """Benchmark a complex pipeline that benefits from temporary table aggregation."""
     print(f"\n--- {name} ---")
 

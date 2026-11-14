@@ -44,6 +44,7 @@ class CRUDOperationsMixin:
             sqlite3.Error: If database operations fail
         """
         from ...exceptions import MalformedDocument
+
         # Imported locally so tests and embedders can monkeypatch the
         # serialization hook on the json_helpers module.
         from ..json_helpers import neosqlite_json_dumps

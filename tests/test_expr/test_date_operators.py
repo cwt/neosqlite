@@ -6,7 +6,7 @@ Covers: $year, $month, $dayOfMonth, $hour, $minute, $second,
 """
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import neosqlite
 from neosqlite.collection.expr_evaluator import ExprEvaluator
@@ -222,7 +222,7 @@ class TestDateOperatorsPython:
         expr = {"$year": ["$date"]}
         result = evaluator._evaluate_expr_python(
             expr,
-            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)},
         )
         assert result == 2024
 
@@ -232,7 +232,7 @@ class TestDateOperatorsPython:
         expr = {"$month": ["$date"]}
         result = evaluator._evaluate_expr_python(
             expr,
-            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)},
         )
         assert result == 1
 
@@ -242,7 +242,7 @@ class TestDateOperatorsPython:
         expr = {"$dayOfMonth": ["$date"]}
         result = evaluator._evaluate_expr_python(
             expr,
-            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)},
         )
         assert result == 15
 
@@ -252,7 +252,7 @@ class TestDateOperatorsPython:
         expr = {"$hour": ["$date"]}
         result = evaluator._evaluate_expr_python(
             expr,
-            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)},
         )
         assert result == 10
 
@@ -262,7 +262,7 @@ class TestDateOperatorsPython:
         expr = {"$minute": ["$date"]}
         result = evaluator._evaluate_expr_python(
             expr,
-            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)},
         )
         assert result == 30
 
@@ -272,7 +272,7 @@ class TestDateOperatorsPython:
         expr = {"$second": ["$date"]}
         result = evaluator._evaluate_expr_python(
             expr,
-            {"date": datetime(2024, 1, 15, 10, 30, 45, tzinfo=timezone.utc)},
+            {"date": datetime(2024, 1, 15, 10, 30, 45, tzinfo=UTC)},
         )
         assert result == 45
 
@@ -282,11 +282,7 @@ class TestDateOperatorsPython:
         expr = {"$millisecond": ["$date"]}
         result = evaluator._evaluate_expr_python(
             expr,
-            {
-                "date": datetime(
-                    2024, 1, 15, 10, 30, 45, 123000, tzinfo=timezone.utc
-                )
-            },
+            {"date": datetime(2024, 1, 15, 10, 30, 45, 123000, tzinfo=UTC)},
         )
         assert result == 123
 
@@ -298,7 +294,7 @@ class TestDateOperatorsPython:
         # MongoDB: 1=Sunday, 2=Monday, ..., 7=Saturday
         result = evaluator._evaluate_expr_python(
             expr,
-            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)},
         )
         assert result == 2
 
@@ -308,7 +304,7 @@ class TestDateOperatorsPython:
         expr = {"$dayOfYear": ["$date"]}
         result = evaluator._evaluate_expr_python(
             expr,
-            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)},
         )
         assert result == 15
 
@@ -318,7 +314,7 @@ class TestDateOperatorsPython:
         expr = {"$week": ["$date"]}
         result = evaluator._evaluate_expr_python(
             expr,
-            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)},
         )
         assert result == 2  # Week 2 (strftime %U, Sunday as first day of week)
 
@@ -329,7 +325,7 @@ class TestDateOperatorsPython:
         # 2024-01-15 is Monday (isocalendar returns 1 for Monday)
         result = evaluator._evaluate_expr_python(
             expr,
-            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)},
         )
         assert result == 1
 
@@ -339,7 +335,7 @@ class TestDateOperatorsPython:
         expr = {"$isoWeek": ["$date"]}
         result = evaluator._evaluate_expr_python(
             expr,
-            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=timezone.utc)},
+            {"date": datetime(2024, 1, 15, 10, 30, 0, tzinfo=UTC)},
         )
         assert result == 3
 
@@ -406,7 +402,7 @@ class TestDateFromPartsSQL:
                     sq_dt = (
                         neosqlite_json_loads(sq)
                         if sq.startswith("{")
-                        else datetime.fromisoformat(sq.replace("Z", "+00:00"))
+                        else datetime.fromisoformat(sq)
                     )
                     assert sq_dt.year == py.year
                     assert sq_dt.month == py.month
@@ -482,7 +478,7 @@ class TestDateToPartsSQL:
 
     def test_python_sql_consistency(self):
         e = ExprEvaluator()
-        doc = {"dt": datetime(2024, 6, 15, 9, 30, 45, tzinfo=timezone.utc)}
+        doc = {"dt": datetime(2024, 6, 15, 9, 30, 45, tzinfo=UTC)}
         expr = {"$dateToParts": {"date": "$dt"}}
         py = e._evaluate_expr_python(expr, doc)
         sql, params = e._evaluate_sql_tier1(expr)
@@ -505,9 +501,7 @@ class TestDateToPartsSQL:
     def test_integration(self):
         with neosqlite.Connection(":memory:") as conn:
             c = conn["test"]
-            c.insert_one(
-                {"dt": datetime(2024, 6, 15, 9, 30, 45, tzinfo=timezone.utc)}
-            )
+            c.insert_one({"dt": datetime(2024, 6, 15, 9, 30, 45, tzinfo=UTC)})
             pipeline = [
                 {"$project": {"parts": {"$dateToParts": {"date": "$dt"}}}}
             ]
@@ -521,9 +515,7 @@ class TestDateToPartsSQL:
     def test_kill_switch_integration(self):
         with neosqlite.Connection(":memory:") as conn:
             c = conn["test"]
-            c.insert_one(
-                {"dt": datetime(2024, 6, 15, 9, 30, 45, tzinfo=timezone.utc)}
-            )
+            c.insert_one({"dt": datetime(2024, 6, 15, 9, 30, 45, tzinfo=UTC)})
             results = list(
                 c.aggregate(
                     [
@@ -571,7 +563,7 @@ class TestDateFromStringSQL:
             sq_dt = (
                 neosqlite_json_loads(sq)
                 if sq.startswith("{")
-                else datetime.fromisoformat(sq.replace("Z", "+00:00"))
+                else datetime.fromisoformat(sq)
             )
             assert sq_dt.year == py.year
             assert sq_dt.month == py.month

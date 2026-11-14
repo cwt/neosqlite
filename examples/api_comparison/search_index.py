@@ -156,8 +156,8 @@ def compare_search_index_operations():
     reporter.record_comparison(
         "Search Index",
         "create_search_index",
-        neo_create_search_index if neo_create_search_index else "FAIL",
-        mongo_create_search_index if mongo_create_search_index else None,
+        neo_create_search_index or "FAIL",
+        mongo_create_search_index or None,
         skip_reason="MongoDB not available" if not client else None,
     )
 
@@ -178,9 +178,7 @@ def compare_search_index_operations():
             if mongo_list_search_indexes is not None
             else True
         ),
-        neo_result=(
-            neo_list_search_indexes if neo_list_search_indexes else "FAIL"
-        ),
+        neo_result=(neo_list_search_indexes or "FAIL"),
         mongo_result=(
             mongo_list_search_indexes
             if mongo_list_search_indexes is not None
@@ -191,14 +189,14 @@ def compare_search_index_operations():
     reporter.record_comparison(
         "Search Index",
         "update_search_index",
-        neo_update_search_index if neo_update_search_index else "FAIL",
-        mongo_update_search_index if mongo_update_search_index else None,
+        neo_update_search_index or "FAIL",
+        mongo_update_search_index or None,
         skip_reason="MongoDB not available" if not client else None,
     )
     reporter.record_comparison(
         "Search Index",
         "drop_search_index",
-        neo_drop_search_index if neo_drop_search_index else "FAIL",
-        mongo_drop_search_index if mongo_drop_search_index else None,
+        neo_drop_search_index or "FAIL",
+        mongo_drop_search_index or None,
         skip_reason="MongoDB not available" if not client else None,
     )

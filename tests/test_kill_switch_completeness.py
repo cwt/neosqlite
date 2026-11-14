@@ -6,12 +6,10 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
-
-UTC = timezone.utc  # noqa: UP017
 
 import neosqlite
 from neosqlite.collection.query_helper import (

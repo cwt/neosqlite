@@ -2,8 +2,6 @@
 Tests for bulk write operations.
 """
 
-from typing import Tuple, Type
-
 from pytest import raises
 
 import neosqlite
@@ -19,7 +17,7 @@ from neosqlite.collection import sqlite3
 try:
     import pysqlite3.dbapi2 as sqlite3_with_jsonb  # type: ignore
 
-    IntegrityError: Tuple[Type[Exception], ...] = (
+    IntegrityError: tuple[type[Exception], ...] = (
         sqlite3.IntegrityError,
         sqlite3_with_jsonb.IntegrityError,
     )

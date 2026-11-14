@@ -4,7 +4,6 @@ Consolidated tests for indexing functionality.
 
 import time
 from operator import itemgetter
-from typing import Tuple, Type
 
 import pytest
 
@@ -15,7 +14,7 @@ from neosqlite.collection import sqlite3
 try:
     import pysqlite3.dbapi2 as sqlite3_with_jsonb  # type: ignore
 
-    IntegrityError: Tuple[Type[Exception], ...] = (
+    IntegrityError: tuple[type[Exception], ...] = (
         sqlite3.IntegrityError,
         sqlite3_with_jsonb.IntegrityError,
     )

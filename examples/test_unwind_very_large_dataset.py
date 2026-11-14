@@ -7,15 +7,15 @@ performance characteristics continue to improve with even larger datasets.
 """
 
 import time
-from typing import Any, Dict, List
+from typing import Any
 
 import neosqlite
 from neosqlite.collection import query_helper
 
 
 def test_unwind_execution(
-    collection, pipeline: List[Dict[str, Any]], description: str
-) -> Dict[str, Any]:
+    collection, pipeline: list[dict[str, Any]], description: str
+) -> dict[str, Any]:
     """Test a specific unwind operation and report execution path."""
     print(f"\n--- {description} ---")
 

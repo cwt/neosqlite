@@ -548,105 +548,105 @@ def compare_database_methods():
     reporter.record_comparison(
         "Database Methods",
         "client",
-        neo_client if neo_client else "FAIL",
-        mongo_client if mongo_client else None,
+        neo_client or "FAIL",
+        mongo_client or None,
         skip_reason="MongoDB not available" if not mongo_available else None,
     )
     reporter.record_comparison(
         "Database Methods",
         "db_path",
-        neo_db_path if neo_db_path else "FAIL",
+        neo_db_path or "FAIL",
         None,
         skip_reason="NeoSQLite specific (SQLite database path) - not timed in benchmark",
     )
     reporter.record_comparison(
         "Database Methods",
         "get_collection",
-        neo_get_collection if neo_get_collection else "FAIL",
-        mongo_get_collection if mongo_get_collection else None,
+        neo_get_collection or "FAIL",
+        mongo_get_collection or None,
         skip_reason="MongoDB not available" if not mongo_available else None,
     )
     reporter.record_comparison(
         "Database Methods",
         "create_collection",
-        neo_create_collection if neo_create_collection else "FAIL",
-        mongo_create_collection if mongo_create_collection else None,
+        neo_create_collection or "FAIL",
+        mongo_create_collection or None,
         skip_reason="MongoDB not available" if not mongo_available else None,
     )
     reporter.record_comparison(
         "Database Methods",
         "list_collection_names",
-        neo_list_collections if neo_list_collections else "FAIL",
-        mongo_list_collections if mongo_list_collections else None,
+        neo_list_collections or "FAIL",
+        mongo_list_collections or None,
         skip_reason="MongoDB not available" if not mongo_available else None,
     )
     reporter.record_comparison(
         "Database Methods",
         "drop_collection",
-        neo_drop_collection if neo_drop_collection else "FAIL",
-        mongo_drop_collection if mongo_drop_collection else None,
+        neo_drop_collection or "FAIL",
+        mongo_drop_collection or None,
         skip_reason="MongoDB not available" if not mongo_available else None,
     )
     reporter.record_comparison(
         "Database Methods",
         "rename_collection",
-        neo_rename_collection if neo_rename_collection else "FAIL",
-        mongo_rename_collection if mongo_rename_collection else None,
+        neo_rename_collection or "FAIL",
+        mongo_rename_collection or None,
         skip_reason="MongoDB not available" if not mongo_available else None,
     )
     reporter.record_comparison(
         "Database Methods",
         "command_ping",
-        neo_ping_ok if neo_ping_ok else "FAIL",
-        mongo_ping_ok if mongo_ping_ok else None,
+        neo_ping_ok or "FAIL",
+        mongo_ping_ok or None,
         skip_reason="MongoDB not available" if not mongo_available else None,
     )
     reporter.record_comparison(
         "Database Methods",
         "command_server_status",
-        neo_server_status_ok if neo_server_status_ok else "FAIL",
-        mongo_server_status_ok if mongo_server_status_ok else None,
+        neo_server_status_ok or "FAIL",
+        mongo_server_status_ok or None,
         skip_reason="MongoDB not available" if not mongo_available else None,
     )
     reporter.record_comparison(
         "Database Methods",
         "command_db_stats",
-        neo_db_stats_ok if neo_db_stats_ok else "FAIL",
-        mongo_db_stats_ok if mongo_db_stats_ok else None,
+        neo_db_stats_ok or "FAIL",
+        mongo_db_stats_ok or None,
         skip_reason="MongoDB not available" if not mongo_available else None,
     )
     reporter.record_comparison(
         "Database Methods",
         "cursor_command",
-        neo_cursor_command if neo_cursor_command else "FAIL",
-        mongo_cursor_command if mongo_cursor_command else None,
+        neo_cursor_command or "FAIL",
+        mongo_cursor_command or None,
         skip_reason="MongoDB not available" if not mongo_available else None,
     )
     reporter.record_comparison(
         "Database Methods",
         "dereference",
-        neo_deref if neo_deref else "FAIL",
-        mongo_deref if mongo_deref else None,
+        neo_deref or "FAIL",
+        mongo_deref or None,
         skip_reason="MongoDB not available" if not mongo_available else None,
     )
     reporter.record_comparison(
         "Database Methods",
         "with_options",
-        neo_with_options if neo_with_options else "FAIL",
-        mongo_with_options if mongo_with_options else None,
+        neo_with_options or "FAIL",
+        mongo_with_options or None,
         skip_reason="MongoDB not available" if not mongo_available else None,
     )
     reporter.record_comparison(
         "Database Methods",
         "get_database",
-        neo_get_database if neo_get_database else "FAIL",
-        mongo_get_database if mongo_get_database else None,
+        neo_get_database or "FAIL",
+        mongo_get_database or None,
         skip_reason="MongoDB not available" if not mongo_available else None,
     )
     reporter.record_comparison(
         "Database Methods",
         "drop_database",
-        neo_drop_database if neo_drop_database else "FAIL",
-        mongo_drop_database if mongo_drop_database else None,
+        neo_drop_database or "FAIL",
+        mongo_drop_database or None,
         skip_reason="MongoDB not available" if not mongo_available else None,
     )

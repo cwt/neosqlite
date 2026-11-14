@@ -134,7 +134,7 @@ def compare_collection_methods():
     reporter.record_comparison(
         "Collection Methods",
         "rename",
-        neo_rename if neo_rename else "FAIL",
-        mongo_rename if mongo_rename else None,
+        neo_rename or "FAIL",
+        mongo_rename or None,
         skip_reason="MongoDB not available" if not client else None,
     )

@@ -7,7 +7,8 @@ for the three cases with performance gain less than 1.5x.
 """
 
 import time
-from typing import Any, Callable, Dict, List
+from collections.abc import Callable
+from typing import Any
 
 import neosqlite
 from neosqlite.collection import query_helper
@@ -19,8 +20,8 @@ original_build_unwind_query: Callable | None = None
 def debug_build_unwind_query(
     self,
     pipeline_index: int,
-    pipeline: List[Dict[str, Any]],
-    unwind_stages: List[str],
+    pipeline: list[dict[str, Any]],
+    unwind_stages: list[str],
 ):
     """Debug version of _build_unwind_query that logs when SQL optimization is used."""
     print(
@@ -65,8 +66,8 @@ def teardown_debugging():
 
 
 def test_unwind_execution(
-    collection, pipeline: List[Dict[str, Any]], description: str
-) -> Dict[str, Any]:
+    collection, pipeline: list[dict[str, Any]], description: str
+) -> dict[str, Any]:
     """Test a specific unwind operation and report execution path."""
     print(f"\n--- {description} ---")
 

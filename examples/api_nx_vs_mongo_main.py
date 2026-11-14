@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from datetime import UTC
 
 sys.path.insert(0, "..")
 
@@ -74,9 +75,8 @@ def normalize(value):
     cls_name = value.__class__.__name__
     if cls_name == "datetime":
         if getattr(value, "tzinfo", None) is not None:
-            from datetime import timezone
 
-            return value.astimezone(timezone.utc).replace(tzinfo=None)
+            return value.astimezone(UTC).replace(tzinfo=None)
         return value
     if cls_name == "ObjectId":
         return str(value)

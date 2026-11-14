@@ -217,28 +217,28 @@ def compare_update_modifiers():
     reporter.record_comparison(
         "Update (Array Modifiers)",
         "$each",
-        neo_each if neo_each else "FAIL",
+        neo_each or "FAIL",
         mongo_each,
         skip_reason="MongoDB not available" if not mongo_available else None,
     )
     reporter.record_comparison(
         "Update (Array Modifiers)",
         "$position",
-        neo_position if neo_position else "FAIL",
+        neo_position or "FAIL",
         mongo_position,
         skip_reason="MongoDB not available" if not mongo_available else None,
     )
     reporter.record_comparison(
         "Update (Array Modifiers)",
         "$slice",
-        neo_slice if neo_slice else "FAIL",
+        neo_slice or "FAIL",
         mongo_slice,
         skip_reason="MongoDB not available" if not mongo_available else None,
     )
     reporter.record_comparison(
         "Update (Array Modifiers)",
         "$bit",
-        neo_bit_and if neo_bit_and else "FAIL",
+        neo_bit_and or "FAIL",
         mongo_bit_and,
         skip_reason="MongoDB not available" if not mongo_available else None,
     )

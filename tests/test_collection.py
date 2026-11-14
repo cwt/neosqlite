@@ -2,7 +2,6 @@
 Tests for collection operations.
 """
 
-from typing import Tuple, Type
 from unittest.mock import MagicMock
 
 import pytest
@@ -15,17 +14,17 @@ from neosqlite.collection import sqlite3
 try:
     import pysqlite3.dbapi2 as sqlite3_with_jsonb  # type: ignore
 
-    IntegrityError: Tuple[Type[Exception], ...] = (
+    IntegrityError: tuple[type[Exception], ...] = (
         sqlite3.IntegrityError,
         sqlite3_with_jsonb.IntegrityError,
     )
 
-    OperationalError: Tuple[Type[Exception], ...] = (
+    OperationalError: tuple[type[Exception], ...] = (
         sqlite3.OperationalError,
         sqlite3_with_jsonb.OperationalError,
     )
 
-    Error: Tuple[Type[Exception], ...] = (
+    Error: tuple[type[Exception], ...] = (
         sqlite3.Error,
         sqlite3_with_jsonb.Error,
     )

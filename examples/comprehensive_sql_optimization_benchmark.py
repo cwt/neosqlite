@@ -8,7 +8,7 @@ to demonstrate the performance benefits of SQL optimization without taking too l
 
 import statistics
 import time
-from typing import Any, Dict, List
+from typing import Any
 
 import neosqlite
 from neosqlite.collection import query_helper
@@ -19,8 +19,8 @@ def _get_speedup(item):
 
 
 def benchmark_feature(
-    name: str, collection, pipeline: List[Dict[str, Any]], num_runs: int = 3
-) -> Dict[str, float]:
+    name: str, collection, pipeline: list[dict[str, Any]], num_runs: int = 3
+) -> dict[str, float]:
     """Benchmark a feature with both optimized and fallback paths."""
     print(f"\n--- {name} ---")
 

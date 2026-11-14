@@ -1,4 +1,3 @@
-# coding: utf-8
 """
 Comparison tests for $project stage: SQL path vs Python path.
 

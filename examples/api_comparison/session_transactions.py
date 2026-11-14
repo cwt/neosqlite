@@ -237,7 +237,7 @@ def compare_session_methods():
     reporter.record_comparison(
         "Session & Transactions",
         "start_session",
-        neo_session if neo_session else "FAIL",
+        neo_session or "FAIL",
         mongo_session if mongo_session is not None else None,
         skip_reason="MongoDB not available" if not client else None,
     )
