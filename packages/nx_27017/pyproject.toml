@@ -20,6 +20,7 @@ classifiers = [
 python = "^3.12, <3.16"
 neosqlite = "^1.17.4"
 pymongo = "^4.19.0"
+uvloop = { version = "^0.23.0", optional = true }
 
 [tool.poetry.extras]
 speed = ["uvloop"]
