@@ -38,7 +38,7 @@ stale_after: 2027-05-14T00:00:00Z
 
 With minimum Python bumped to `^3.12, <3.16` in `pyproject.toml`, `mypy.ini` (`python_version = 3.12`), and `packages/nx_27017/pyproject.toml` (`python = "^3.12, <3.16"`), both `neosqlite/` and `packages/nx_27017/` can drop Python 3.10 workarounds and adopt Python 3.11/3.12 runtime and typing improvements.
 
-This plan separates changes into three safe, independently committable phases so each implementation commit can reference a specific phase (for example, `Ref: documents/todo/python-312-modernization-plan.md (Phase 1)`).
+This plan separates changes into three safe, independently committable phases so each implementation commit can reference a specific phase (for example, `Ref: documents/python-312-modernization-plan.md (Phase 1)`).
 
 ---
 
@@ -48,7 +48,7 @@ Focuses on hot paths and C-implemented stdlib replacements with zero external AP
 
 ### 1.1 Native ISO-8601 `Z` Parsing in `datetime.fromisoformat()` (Python 3.11+)
 
-Python 3.11+ handles trailing `"Z"` / `"z"` directly inside C `fromisoformat()`, eliminating intermediate string allocations from `.replace("Z", "+00:00")` and avoiding corruption of malformed inputs that contain `"Z"` mid-string.
+Python 3.11+ handles a trailing uppercase `"Z"` directly inside C `fromisoformat()`, eliminating intermediate string allocations from `.replace("Z", "+00:00")` and avoiding corruption of malformed inputs that contain `"Z"` mid-string. CPython still rejects lowercase `"z"`, so the old `.replace("Z", ...)` behavior is unchanged for that edge case.
 
 | Location | Current Pattern | Target Replacement |
 | :--- | :--- | :--- |
@@ -170,8 +170,18 @@ Simplify nested f-strings that currently switch outer/inner quotes solely due to
 
 - **`str.removeprefix()` (`FURB188`):** `neosqlite/collection/__init__.py#L281-L282`, `neosqlite/collection/__init__.py#L301-L302`, `neosqlite/collection/sql_translator_unified.py#L931`, `#L1070`, `#L1108`, `neosqlite/collection/temporary_table_aggregation/operators_match.py#L81`, `neosqlite/collection/query_helper/schema_compiler.py#L23`, `neosqlite/collection/index_manager.py#L867`.
 - **Unused tuple unpacking (`PERF102`):** Use `.keys()` / `.values()` in `_sql_updates.py` (`L876`, `L1102`, `L1596`), `update_operations.py` (`L444`), and `expr_temp_table.py` (`L888`).
-- **Stale UTF-8 headers (`UP009`):** Remove `# coding: utf-8` in `neosqlite/bulk_operations.py#L1` and `packages/nx_27017/tests/conftest.py#L1`.
-- **Careful Audit Item (`UP028`):** `yield from self._load_documents(rows)` in `neosqlite/collection/cursor.py#L1014` and `#L1116` changes `.close()` / `.send()` delegation semantics when early-exiting a cursor inside `try/finally: db_cursor.close()`; verify early-close tests explicitly before adopting.
+- **Stale UTF-8 headers (`UP009`):** Remove `# coding: utf-8` from `neosqlite/bulk_operations.py`, `packages/nx_27017/tests/conftest.py`, `tests/conftest.py`, `tests/test_changestream.py`, and `tests/test_project_sql_vs_python.py`.
+- **Careful Audit Item (`UP028`):** `yield from self._load_documents(rows)` in `neosqlite/collection/cursor.py#L1014` and `#L1116` changes `.close()` / `.send()` delegation semantics when early-exiting a cursor inside `try/finally: db_cursor.close()`. This was audited and adopted; the full suite includes partial-iteration and cursor-lifecycle coverage.
+
+### 3.4 Post-Completion Hardening (2026-11-14)
+
+A follow-up hardening pass closed gaps left by the three phases:
+
+- Added `[tool.ruff] target-version = "py312"` and expanded the lint helper to enforce `UP`/`FURB` repository-wide and `PERF` on shipped library code.
+- Fixed the remaining `PERF403`/`FURB122` findings and removed the deprecated `sqlite3.version` use from `serverStatus`.
+- Completed `typing.Self` adoption for `Binary`, `ObjectId`, `Connection`, `BulkOperationExecutor`, and `AggregationCursor`.
+- Hoisted remaining hot-path stdlib imports while preserving intentional local imports used for monkeypatching, optional platform modules, and the stdlib-vs-pysqlite3 version report.
+- Migrated tests, examples, and helper scripts to the Python 3.12 idioms (`UP006`, `UP017`, `UP035`, `UP009`, `FURB110`) and stopped globally suppressing project deprecation warnings.
 
 ---
 
@@ -181,7 +191,8 @@ After each phase (and before committing):
 
 1. Formatting and static checks:
    - `poetry run black --check -t py312 -l 80 .`
-   - `poetry run ruff check --select=I,F,UP,PERF,FURB --target-version=py312 neosqlite packages`
+   - `poetry run ruff check --select=I,F,UP,FURB --target-version=py312 .`
+   - `poetry run ruff check --select=PERF --target-version=py312 neosqlite packages/nx_27017/src`
    - `poetry run mypy .` (and `poetry run mypy packages/nx_27017`)
 2. Test suites:
    - `PYTHONPATH=. poetry run pytest tests/ -n $(sysctl -n hw.physicalcpu) --cov=neosqlite --cov-report=term-missing --cov-fail-under=80`

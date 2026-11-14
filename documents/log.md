@@ -17,6 +17,26 @@ This document records the chronological history of structural changes, additions
 
 ---
 
+## 2026-11-14 — Hardened Python 3.12 Migration and Repository-Wide Cleanup
+
+### Summary
+Closed the gaps left by the three modernization phases before the next release: enforced Python 3.12 lint rules, removed a deprecation that is gone in Python 3.14/3.15, finished typing/import cleanup, and migrated tests, examples, and helper scripts (`3100 passed` in `neosqlite`, `180 passed, 1 skipped` in `nx_27017`; `ruff`, `mypy`, and `black` clean for the shipped code).
+
+### Key Modifications
+1. **Tooling and correctness**:
+   - Added `[tool.ruff] target-version = "py312"`, `line-length = 80`, and `pythonVersion = "3.12"` for Pyright.
+   - Expanded `scripts/lint-check-and-fix.sh` to enforce `UP`/`FURB` repository-wide and `PERF` on `neosqlite` and `packages/nx_27017/src`.
+   - Fixed the remaining `PERF403`/`FURB122` findings and removed the deprecated `sqlite3.version` field from `serverStatus`.
+   - Replaced the blanket project `DeprecationWarning` suppression with `error` filters for `neosqlite` and `sqlite3` so future removals surface immediately.
+2. **Typing and imports**:
+   - Completed `typing.Self` adoption for `Binary`, `ObjectId`, `Connection`, `BulkOperationExecutor`, and `AggregationCursor`.
+   - Hoisted the remaining hot-path stdlib imports while keeping intentional local imports for monkeypatching, optional platform modules, and the stdlib-vs-pysqlite3 version report.
+3. **Repository-wide cleanup**:
+   - Migrated tests, examples, and helper scripts to Python 3.12 idioms (`UP006`, `UP017`, `UP035`, `UP009`, `FURB110`) and removed the remaining UTF-8 coding headers.
+   - Kept `from __future__ import annotations` where it still protects `TYPE_CHECKING`-only imports.
+4. **Documentation**:
+   - Corrected the lowercase `z` claim and stale paths in [./python-312-modernization-plan.md](./python-312-modernization-plan.md), and recorded the post-completion hardening pass.
+
 ## 2026-11-14 — Completed Phase 3 & Archived Python 3.11 / 3.12 Modernization Plan
 
 ### Summary
