@@ -6,7 +6,7 @@ tags:
   - log
   - bundle
   - changelog
-timestamp: 2026-11-12T00:00:00Z
+timestamp: 2026-11-14T09:23:24Z
 version: "1.17.4"
 lifecycle: active
 ---
@@ -14,6 +14,21 @@ lifecycle: active
 # NeoSQLite Knowledge Base Bundle Log
 
 This document records the chronological history of structural changes, additions, deprecations, and refactoring operations performed on the NeoSQLite Open Knowledge Format (OKF) bundle.
+
+---
+
+## 2026-11-14 — Added Python 3.11 / 3.12 Modernization Plan
+
+### Summary
+Added a phased Python 3.11 / 3.12 modernization roadmap after raising the minimum supported Python version to `^3.12, <3.16`.
+
+### Key Modifications
+1. **Added `documents/todo/python-312-modernization-plan.md`**:
+   - Phase 1: Runtime & stdlib optimizations (`datetime.fromisoformat` native `Z`, `datetime.UTC` + hoisting local imports, `itertools.batched`, `math.sumprod`, `asyncio.run(..., loop_factory=...)`, PEP 709 comprehensions, `slots=True`).
+   - Phase 2: Typing modernization (`typing.Self`, `@typing.override`, PEP 695 `type` aliases, `UP035`/`UP037`).
+   - Phase 3: Readability idioms (`itertools.pairwise`, PEP 701 quote nesting, `FURB`/`UP` cleanups, plus `UP028` verification gate).
+2. **Updated Roadmap Index (`documents/todo/index.md`)**:
+   - Registered `python-312-modernization-plan.md` with status `Proposed`.
 
 ---
 

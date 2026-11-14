@@ -7,8 +7,8 @@ tags:
   - roadmap
   - planning
   - todo
-timestamp: 2026-09-13T00:00:00Z
-version: "1.16.0"
+timestamp: 2026-11-14T09:23:24Z
+version: "1.17.4"
 lifecycle: active
 ---
 
@@ -20,6 +20,7 @@ This directory tracks research, architecture proposals, and implementation roadm
 
 | Capability | Document | Status | Summary |
 | :--- | :--- | :--- | :--- |
+| **Python 3.11 / 3.12 Modernization** | [python-312-modernization-plan.md](./python-312-modernization-plan.md) | Proposed | Three-phase migration plan adopting 3.11/3.12 performance optimizations, `datetime.UTC`, native ISO `Z` parsing, `batched`, `sumprod`, `Self`, `@override`, PEP 695 `type`, and safe Ruff `UP`/`PERF`/`FURB` cleanups. |
 | **Geospatial Queries** | [geospatial-implementation-plan.md](./geospatial-implementation-plan.md) | Proposed | Roadmap for 2D and 2Dsphere geospatial query support via SpatiaLite with pure-Python fallbacks. |
 | **Vector Search** | [vector-search-plan.md](./vector-search-plan.md) | Proposed | Architectural plan for vector similarity search using SQLite-vec and embedding integration. |
 | **PyMongo Modern Parity** | [pymongo-modern-parity.md](./pymongo-modern-parity.md) | Implemented | Modern-API gaps only (`find` limit kwargs, index options, `drop_database`); deprecated shims dropped after micronote.pub modernization. |
