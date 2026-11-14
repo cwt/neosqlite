@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import random
 from typing import Any
@@ -149,8 +150,6 @@ class ObjectPythonMixin(BasePythonMixin):
         elif operator == "$bsonSize":
             # MongoDB $bsonSize returns the size of the document in BSON bytes.
             # In NeoSQLite, we'll return the size of the JSON representation.
-            import json
-
             # Use simple JSON dump for size calculation (approximates BSON)
             try:
                 # Use a basic approach for now

@@ -1,5 +1,6 @@
 """Positional update operations for array elements."""
 
+import re
 from typing import Any
 
 
@@ -467,8 +468,6 @@ def _matches_query_operators(value: Any, operators: dict[str, Any]) -> bool:
                 ):
                     return False
             case "$regex":
-                import re
-
                 flags = 0
                 if "$options" in operators:
                     opts = operators["$options"]

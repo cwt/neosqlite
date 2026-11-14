@@ -1,8 +1,11 @@
 import logging
 import re
+from datetime import datetime
 from typing import Any
 
+from .binary import Binary
 from .exceptions import MalformedQueryException
+from .objectid import ObjectId
 
 logger = logging.getLogger(__name__)
 
@@ -665,11 +668,6 @@ def _contains(field: str, value: str, document: dict[str, Any]) -> bool:
 
 def _matches_single_bson_type(doc_value: Any, spec: Any) -> bool:
     """Return True if a single Python value satisfies a BSON $type spec."""
-    from datetime import datetime
-
-    from .binary import Binary
-    from .objectid import ObjectId
-
     numeric_codes = {
         1: "double",
         2: "string",

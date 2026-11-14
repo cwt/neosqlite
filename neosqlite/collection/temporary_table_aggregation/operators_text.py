@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import warnings
 from collections.abc import Callable
 from typing import Any
@@ -179,8 +180,6 @@ class OperatorsTextMixin(OperatorsBaseMixin):
             if sql:
                 # Parse tokenizer from CREATE VIRTUAL TABLE ... USING FTS5(..., tokenize=xxx)
                 # Example: "CREATE VIRTUAL TABLE test USING FTS5(content, tokenize=porter)"
-                import re
-
                 match = re.search(r"tokenize\s*=\s*(\w+)", sql, re.IGNORECASE)
                 if match:
                     tokenizer = match.group(1)

@@ -5,6 +5,7 @@ Provides MongoDB-compatible $jsonSchema evaluation.
 
 import logging
 import re
+from datetime import datetime
 from typing import Any
 
 from ...binary import Binary
@@ -157,8 +158,6 @@ def _check_single_type(data: Any, t: str) -> bool:
             return isinstance(data, (Binary, bytes))
         case "date":
             # We handle datetime objects in NeoSQLite
-            from datetime import datetime
-
             return isinstance(data, datetime)
         case _:
             return True  # Unknown type, default to True or handle more?

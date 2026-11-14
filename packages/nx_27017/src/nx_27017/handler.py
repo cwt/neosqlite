@@ -3,9 +3,11 @@
 import functools
 import logging
 import os
+import platform
 import re
 import threading
 import time
+import traceback
 import uuid
 from collections import OrderedDict
 from datetime import UTC, datetime
@@ -2079,8 +2081,6 @@ class NeoSQLiteHandler:
             }
         except Exception as e:
             logger.error(f"GridFS find error: {e}")
-            import traceback
-
             traceback.print_exc()
             return request_id, {"ok": 0, "errmsg": str(e)}
 
@@ -2219,8 +2219,6 @@ class NeoSQLiteHandler:
             }
         except Exception as e:
             logger.error(f"GridFS aggregate error: {e}")
-            import traceback
-
             traceback.print_exc()
             return request_id, {"ok": 0, "errmsg": str(e)}
 
@@ -2680,8 +2678,6 @@ class NeoSQLiteHandler:
         self, request_id: int, db: Connection
     ) -> tuple[int, dict[str, Any]]:
         """Handle serverStatus command."""
-        import platform
-
         resident_mem = 0
         virtual_mem = 0
         if platform.system() == "Linux":

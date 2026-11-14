@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -101,7 +102,6 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
         if not has_underscore_id and has_data:
             # Replace references to _id with json_extract(data, '$._id')
             json_extract = f"{self.jsonb.json_function_prefix}_extract"
-            import re
 
             # Replace _id when it's used as a column reference (not inside a string)
             where_clause = re.sub(

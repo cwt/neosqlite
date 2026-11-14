@@ -5,6 +5,7 @@ import time
 from collections.abc import Callable, Iterable, Iterator
 from copy import deepcopy
 from functools import partial
+from itertools import islice
 from typing import TYPE_CHECKING, Any, Self
 
 from .._sqlite import sqlite3
@@ -387,8 +388,6 @@ class Cursor:
         if length is None:
             return list(self)
         # islice bounds work/memory to exactly `length` docs (#153)
-        from itertools import islice
-
         return list(islice(self, max(length, 0)))
 
     def clone(self) -> Self:
@@ -1696,8 +1695,6 @@ class Cursor:
             list[dict[str, Any]]: A list of dictionaries representing the documents
                                   after applying skip and limit.
         """
-        from itertools import islice
-
         # Use islice for memory-efficient skip without loading all docs first
         skipped = islice(docs, self._skip, None)
 

@@ -6,7 +6,10 @@ aggregation pipeline processing.  SQL-based aggregation lives in
 _sql_aggregation.py (SqlAggregationMixin).
 """
 
+import json
 import logging
+import math
+import uuid
 from copy import deepcopy
 from itertools import batched
 from typing import TYPE_CHECKING, Any
@@ -31,10 +34,8 @@ from ..type_utils import _hashable_group_key
 
 def _addtoset_key(value: Any) -> Any:
     """Hashable canonical form for $addToSet membership (#155)."""
-    import json as _json
-
     if isinstance(value, dict):
-        return ("d", _json.dumps(value, sort_keys=True, default=str))
+        return ("d", json.dumps(value, sort_keys=True, default=str))
     if isinstance(value, list):
         return ("l", tuple(_addtoset_key(v) for v in value))
     if isinstance(value, bool):
@@ -364,8 +365,6 @@ class AggregationMixin(SqlAggregationMixin):
                         group[field] = None
 
         # Finalize standard deviation calculations
-        import math
-
         for group in grouped_docs.values():
             for field, value in group.items():
                 if field == "_id":
@@ -445,8 +444,6 @@ class AggregationMixin(SqlAggregationMixin):
         """
         # Create a temporary in-memory collection to run the sub-pipeline
         # This allows each sub-pipeline to use Tier-1/Tier-2 optimization
-        import uuid
-
         from .. import Collection
 
         # Create temp collection for processing this batch

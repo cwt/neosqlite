@@ -2,6 +2,7 @@
 Tests for neosqlite connection functionality and context manager error handling.
 """
 
+import sqlite3
 from unittest.mock import patch
 
 import pytest
@@ -396,7 +397,8 @@ class TestDatabaseCommand:
         result = connection.command("serverStatus")
 
         assert result["ok"] == 1.0
-        assert "version" in result
+        assert result["version"] == sqlite3.sqlite_version
+        assert "python_sqlite_version" not in result
         assert "process" in result
         assert result["process"] == "neosqlite"
         assert "pid" in result

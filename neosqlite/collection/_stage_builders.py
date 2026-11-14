@@ -9,6 +9,7 @@ Designed as a mixin to be composed into SQLTierAggregator.
 
 from __future__ import annotations
 
+import re
 from itertools import pairwise
 from typing import Any
 
@@ -1189,8 +1190,6 @@ class StageBuildersMixin:
         self, spec: dict[str, Any]
     ) -> tuple[list[str] | None, list[Any]]:
         """Translate a $match query dictionary into SQL WHERE predicates."""
-        import re
-
         from ..objectid import ObjectId
         from .type_utils import (
             build_json_containment_clause,

@@ -45,8 +45,13 @@ coverage = "^7.17.0"
 ruff = "^0.17.4"
 pymongo = { version = "^4.19.0", optional = true }
 
+[tool.ruff]
+target-version = "py312"
+line-length = 80
+
 [tool.pyright]
 stubPath = "typings"
+pythonVersion = "3.12"
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "packages"]
@@ -54,6 +59,8 @@ asyncio_default_fixture_loop_scope = "function"
 filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::UserWarning",
+    "error::DeprecationWarning:neosqlite.*",
+    "error::DeprecationWarning:sqlite3.*",
 ]
 
 [build-system]

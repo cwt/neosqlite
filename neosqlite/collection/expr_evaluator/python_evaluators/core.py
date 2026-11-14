@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 from ..constants import REMOVE_SENTINEL
@@ -302,13 +303,8 @@ class CorePythonMixin(BasePythonMixin):
                         return 1
                     if isinstance(v, bool):
                         return 9
-                    try:
-                        from decimal import Decimal
-
-                        if isinstance(v, Decimal):
-                            return 2
-                    except Exception:
-                        pass
+                    if isinstance(v, Decimal):
+                        return 2
                     if isinstance(v, (int, float)):
                         return 2
                     if isinstance(v, str):

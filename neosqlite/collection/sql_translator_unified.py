@@ -8,6 +8,7 @@ temporary table generation.
 
 import logging
 import re
+from datetime import datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -203,8 +204,6 @@ class SQLOperatorTranslator:
             return serialize_sql_query_value(val, is_jsonb)
 
         # Check if this is a datetime comparison that should be wrapped with datetime() function
-        from datetime import datetime
-
         def to_iso(v: Any) -> str:
             if isinstance(v, datetime):
                 return v.isoformat()

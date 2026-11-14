@@ -223,7 +223,7 @@ class BulkOperationExecutor:
         self._savepoint_name = f"bulk_ops_{uuid.uuid4().hex[:12]}"
         self._operations: list[BulkOperation] = []
 
-    def add(self, operation):
+    def add(self, operation: Any) -> Self:
         """
         Add an operation to the bulk operations list.
 
@@ -283,7 +283,7 @@ class BulkOperationExecutor:
             )
         return self
 
-    def insert(self, document: dict[str, Any]):
+    def insert(self, document: dict[str, Any]) -> Self:
         """
         Add an insert operation to the bulk operations list.
 
@@ -294,7 +294,7 @@ class BulkOperationExecutor:
             document (dict[str, Any]): The document to be inserted.
 
         Returns:
-            BulkOperationContext: The current context object for chaining further operations.
+            BulkOperationExecutor: The current executor for chaining further operations.
         """
         self._operations.append(InsertOperation(document=document))
         return self

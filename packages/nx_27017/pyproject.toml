@@ -46,6 +46,7 @@ filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::UserWarning",
     "ignore::ResourceWarning",
+    "error::DeprecationWarning:nx_27017.*",
 ]
 
 [tool.mypy]

@@ -1,4 +1,6 @@
+import json as _json
 import logging
+import re
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 from .._sqlite import sqlite3
@@ -133,8 +135,6 @@ def _store_index_keys(db, index_name: str, keys: list[str]) -> None:
     reconstructed keys with .replace("_", ".") — mangling compound
     indexes and underscored field names alike.
     """
-    import json as _json
-
     _ensure_index_keys_table(db)
     db.execute(
         f"INSERT OR REPLACE INTO {_INDEX_KEYS_TABLE} "
@@ -153,8 +153,6 @@ def _load_index_keys(db, index_name: str) -> list[str] | None:
         return None  # table not created yet / mocked db
     if row is None:
         return None
-    import json as _json
-
     try:
         keys = _json.loads(row[0])
         return keys if isinstance(keys, list) else None
@@ -847,8 +845,6 @@ class IndexManager:
                 # Try to extract key information from the SQL
                 if idx_sql:
                     # Extract key information from json_extract or jsonb_extract expressions
-                    import re
-
                     # Look for both json_extract and jsonb_extract
                     json_extract_matches = re.findall(
                         r"(?:json|jsonb)_extract\(data, '(\$..*?)'\)", idx_sql

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, Self
 
 if TYPE_CHECKING:
@@ -131,7 +130,7 @@ class AggregationCursor:
         """
         return 0
 
-    def __iter__(self) -> Iterator[dict[str, Any]]:
+    def __iter__(self) -> Self:
         """
         Return the iterator object.
 

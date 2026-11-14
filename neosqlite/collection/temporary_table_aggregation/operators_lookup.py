@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -23,8 +24,6 @@ def _serialize_lookup_key(key_val: Any) -> str | None:
     if key_val is None:
         return None
     if isinstance(key_val, (dict, list)):
-        import json
-
         return json.dumps(key_val, separators=(",", ":"))
     return str(key_val)
 

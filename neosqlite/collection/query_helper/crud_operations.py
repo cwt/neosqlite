@@ -1,6 +1,7 @@
 """CRUD operations for QueryHelper."""
 
 import logging
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 from ..._sqlite import sqlite3
@@ -42,12 +43,10 @@ class CRUDOperationsMixin:
             ValueError: If the document contains invalid JSON
             sqlite3.Error: If database operations fail
         """
-        from copy import deepcopy
-
         from ...exceptions import MalformedDocument
-        from ..json_helpers import (
-            neosqlite_json_dumps,
-        )
+        # Imported locally so tests and embedders can monkeypatch the
+        # serialization hook on the json_helpers module.
+        from ..json_helpers import neosqlite_json_dumps
         from .utils import _convert_bytes_to_binary
 
         if not isinstance(document, dict):

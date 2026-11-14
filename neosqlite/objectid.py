@@ -18,7 +18,7 @@ import random
 import threading
 import time
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 if TYPE_CHECKING:
     pass
@@ -312,7 +312,7 @@ class ObjectId:
         }
 
     @classmethod
-    def decode_from_storage(cls, encoded_data: dict) -> ObjectId:
+    def decode_from_storage(cls, encoded_data: dict) -> Self:
         """
         Decode an ObjectId from JSON storage format.
 

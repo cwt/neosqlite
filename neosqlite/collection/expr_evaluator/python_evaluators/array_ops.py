@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json as _json
 from datetime import datetime
 from typing import Any
 
@@ -57,8 +58,6 @@ def _bson_sort(array: list[Any]) -> list[Any]:
 
 def _set_key(v: Any) -> Any:
     """Hashable canonical form of an element for $set* operators (#122)."""
-    import json as _json
-
     if isinstance(v, dict):
         return ("d", _json.dumps(v, sort_keys=True, default=str))
     if isinstance(v, list):

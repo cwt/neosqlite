@@ -1,5 +1,6 @@
 """Helper functions for QueryHelper operations."""
 
+import json
 import logging
 from typing import Any
 
@@ -48,8 +49,6 @@ def _validate_json_document(db: Any, json_str: str) -> bool:
             return bool(result[0])
         else:
             # json_valid not supported, fall back to Python validation
-            import json
-
             json.loads(json_str)
             return True
     except Exception as e:

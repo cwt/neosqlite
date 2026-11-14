@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable
 from itertools import pairwise
@@ -140,8 +141,6 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                 escaped = val.replace("'", "''")
                 return f"'{escaped}'"
             if isinstance(val, (dict, list)):
-                import json
-
                 json_str = json.dumps(val, separators=(",", ":")).replace(
                     "'", "''"
                 )
@@ -330,8 +329,6 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                                         f"'{key}', json_quote('{escaped_val}')"
                                     )
                                 elif isinstance(val, (dict, list)):
-                                    import json
-
                                     json_str = json.dumps(
                                         val, separators=(",", ":")
                                     ).replace("'", "''")
@@ -429,8 +426,6 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                                         f"'{key}', json_quote('{escaped_val}')"
                                     )
                                 elif isinstance(val, (dict, list)):
-                                    import json
-
                                     json_str = json.dumps(
                                         val, separators=(",", ":")
                                     ).replace("'", "''")

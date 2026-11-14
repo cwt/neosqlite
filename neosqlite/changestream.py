@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
 from typing import TYPE_CHECKING, Any, Self
 
+from .objectid import ObjectId
 from .sql_utils import quote_table_name
 
 if TYPE_CHECKING:
@@ -539,8 +541,6 @@ class ChangeStream:
                     if document_id_value is not None:
                         # Use the stored _id value
                         # If it looks like a hex string (ObjectId), convert it back to ObjectId
-                        from neosqlite.objectid import ObjectId
-
                         try:
                             actual_id = ObjectId(document_id_value)
                         except (ValueError, TypeError) as e:
@@ -551,8 +551,6 @@ class ChangeStream:
                             actual_id = document_id_value
                     elif document_data:
                         try:
-                            import json
-
                             # Handle bytes data - decode to string first
                             if isinstance(document_data, bytes):
                                 try:
@@ -620,8 +618,6 @@ class ChangeStream:
                     if self._full_document == "updateLookup" and document_data:
                         full_doc_str: str | None = None
                         try:
-                            import json
-
                             # Handle bytes data - decode to string first
                             if isinstance(document_data, bytes):
                                 try:
@@ -640,8 +636,6 @@ class ChangeStream:
                                 # Ensure the _id in the full document is correct
                                 # Use the stored document_id_value if available (e.g., for deleted docs)
                                 if document_id_value is not None:
-                                    from neosqlite.objectid import ObjectId
-
                                     try:
                                         actual_doc_id = ObjectId(
                                             document_id_value

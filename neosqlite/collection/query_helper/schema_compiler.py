@@ -3,6 +3,7 @@ SQL Compiler for JSON Schema validation.
 Translates MongoDB $jsonSchema rules into native SQLite SQL expressions.
 """
 
+import re
 from typing import Any
 
 
@@ -326,8 +327,6 @@ def _compile_query_node(
     val_override: str | None,
 ) -> tuple[str, list[Any]] | None:
     """Recursively compile a ``$jsonSchema`` node into parameterized SQL."""
-    import re
-
     if not isinstance(schema, dict):
         return "1", []
 

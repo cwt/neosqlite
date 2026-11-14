@@ -444,8 +444,9 @@ class GridFSBucket:
             (file_int_id,),
         )
 
-        # Write chunks to destination
-        for chunk_row in cursor:
+        # Write chunks to destination. Keep write() instead of writelines():
+        # callers only need to provide a write-only binary stream, not IOBase.
+        for chunk_row in cursor:  # noqa: FURB122
             destination.write(chunk_row[0])
 
     def _get_integer_id_for_file(

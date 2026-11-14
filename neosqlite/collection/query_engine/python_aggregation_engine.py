@@ -12,7 +12,9 @@ to keep that class at a manageable size.
 from __future__ import annotations
 
 import logging
+import random
 from copy import deepcopy
+from datetime import timedelta
 from itertools import pairwise
 from typing import TYPE_CHECKING, Any
 
@@ -515,8 +517,6 @@ def execute_python_aggregation(
                     raise MalformedQueryException(
                         "$sample size must be non-negative"
                     )
-                import random
-
                 docs_with_context = random.sample(
                     docs_with_context,
                     min(sample_size, len(docs_with_context)),
@@ -1166,8 +1166,6 @@ def execute_python_aggregation(
 
                         if is_date:
                             # Handle date ranges
-                            from datetime import timedelta
-
                             current = min_val
                             while current <= max_val:
                                 all_values.append(current)
@@ -1238,12 +1236,13 @@ def execute_python_aggregation(
                                 target[fparts[-1]] = val
 
                                 # Apply output spec for additional fields
-                                for (
-                                    out_field,
-                                    out_expr,
-                                ) in output_spec.items():
-                                    if out_field != field:
-                                        base_doc[out_field] = out_expr
+                                base_doc.update(
+                                    {
+                                        out_field: out_expr
+                                        for out_field, out_expr in output_spec.items()
+                                        if out_field != field
+                                    }
+                                )
 
                                 new_docs_with_context.append(
                                     {

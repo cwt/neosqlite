@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from ...json_path_utils import build_json_extract_expression
@@ -256,8 +257,6 @@ class CoreMixin(BaseSqlMixin):
 
             case _:
                 # Literal value (scalar)
-                from datetime import datetime
-
                 if isinstance(operand, datetime):
                     return "json_object('$date', ?)", [operand.isoformat()]
                 return "?", [operand]

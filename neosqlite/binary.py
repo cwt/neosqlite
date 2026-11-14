@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import uuid
+from typing import Self
 
 
 class Binary(bytes):
@@ -87,7 +89,7 @@ class Binary(bytes):
         }
 
     @classmethod
-    def decode_from_storage(cls, encoded_data: dict) -> Binary:
+    def decode_from_storage(cls, encoded_data: dict) -> Self:
         """
         Decode binary data from JSON storage.
 
@@ -124,8 +126,6 @@ class Binary(bytes):
         Returns:
             A Binary instance with UUID_SUBTYPE
         """
-        import uuid
-
         if not isinstance(uuid_value, uuid.UUID):
             raise TypeError("uuid_value must be a UUID instance")
 
@@ -144,8 +144,6 @@ class Binary(bytes):
         """
         if self._subtype != self.UUID_SUBTYPE:
             raise ValueError("Binary subtype is not UUID_SUBTYPE")
-
-        import uuid
 
         return uuid.UUID(bytes=bytes(self))
 

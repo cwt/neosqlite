@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import time
 
 from ._sqlite import sqlite3
 
@@ -100,8 +101,6 @@ def migrate_autovacuum(
         checkpoint_and_prepare_for_migration(initial_conn)
     finally:
         initial_conn.close()
-
-    import time
 
     timestamp = int(time.time() * 1000)
 

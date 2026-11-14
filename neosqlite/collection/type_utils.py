@@ -8,6 +8,7 @@ and provide a single source of truth for type operations.
 
 from __future__ import annotations
 
+import math
 import re
 from datetime import datetime
 from typing import Any
@@ -293,8 +294,6 @@ def _is_numeric_value(value: Any) -> bool:
     if isinstance(value, (int, float)):
         # Special case: check for NaN and infinity
         if isinstance(value, float):
-            import math
-
             if math.isnan(value) or math.isinf(value):
                 return False
         return True

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from ..type_utils import (
@@ -92,10 +93,8 @@ class TypePythonMixin(BasePythonMixin):
                     raise ValueError("$toDecimal requires exactly 1 operand")
                 value = self._evaluate_operand_python(operands[0], document)
                 try:
-                    from decimal import Decimal, InvalidOperation
-
                     return Decimal(str(value)) if value is not None else None
-                except (ValueError, TypeError, ImportError, InvalidOperation):
+                except (ValueError, TypeError, InvalidOperation):
                     return None
             case "$toObjectId":
                 if len(operands) != 1:

@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -371,7 +372,7 @@ class Connection:
         self._closed = True
 
     @property
-    def client(self) -> Connection:
+    def client(self) -> Self:
         """
         Get the MongoClient instance (returns self for NeoSQLite).
 
@@ -599,9 +600,7 @@ class Connection:
             )
         return self._collections[name]
 
-    def get_database(
-        self, name: str | None = None, **kwargs: Any
-    ) -> Connection:
+    def get_database(self, name: str | None = None, **kwargs: Any) -> Self:
         """
         Get a database handle (PyMongo compat).
 
@@ -980,7 +979,7 @@ class Connection:
         read_preference: Any | None = None,
         write_concern: Any | None = None,
         read_concern: Any | None = None,
-    ) -> Connection:
+    ) -> Self:
         """
         Get a clone of this database with different options.
 
@@ -1021,7 +1020,7 @@ class Connection:
         # (codec_options, read_preference, write_concern, read_concern).
         # We use a shallow copy of _collections so that mutations to one Connection's
         # _collections dict do not affect the other.
-        clone = Connection(name=self.name, _is_clone=True)
+        clone = self.__class__(name=self.name, _is_clone=True)
         clone.db = self.db
         clone._tokenizers = self._tokenizers
         clone.debug = self.debug
@@ -1148,7 +1147,6 @@ def _command_serverstatus(
     return {
         "ok": 1,
         "version": sqlite3.sqlite_version,
-        "python_sqlite_version": getattr(sqlite3, "version", "unknown"),
         "process": "neosqlite",
         "pid": os.getpid(),
     }
@@ -1509,9 +1507,6 @@ def _command_dbstats(
     views_count = self.db.execute(
         "SELECT COUNT(*) FROM sqlite_master WHERE type='view'"
     ).fetchone()[0]
-
-    import os
-    import shutil
 
     fs_total = 0
     fs_used = 0

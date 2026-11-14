@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -152,8 +153,6 @@ class ComparisonMixin(BaseSqlMixin):
         # or a date-producing SQL expression ($dateAdd/$dateSubtract/$dateFromParts/
         # $dateFromString/$dateTrunc), stored {"$date": "+00:00"} values and SQLite
         # "...Z" strings must be canonicalized via strftime before comparison.
-        from datetime import datetime
-
         _date_producing_ops = (
             "$dateAdd",
             "$dateSubtract",
