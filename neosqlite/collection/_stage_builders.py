@@ -9,6 +9,7 @@ Designed as a mixin to be composed into SQLTierAggregator.
 
 from __future__ import annotations
 
+from itertools import pairwise
 from typing import Any
 
 from ..sql_utils import quote_table_name
@@ -617,9 +618,7 @@ class StageBuildersMixin:
 
         # Build CASE for boundaries
         case_parts = []
-        for i in range(len(boundaries) - 1):
-            lower = boundaries[i]
-            upper = boundaries[i + 1]
+        for lower, upper in pairwise(boundaries):
             case_parts.append(f"WHEN {key_sql} >= ? AND {key_sql} < ? THEN ?")
             all_params.extend([lower, upper, lower])
 

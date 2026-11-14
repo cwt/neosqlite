@@ -469,7 +469,7 @@ class GridOut:
             # Look up the integer ID for this ObjectId
             # Use quote_table_name to prevent SQL injection in bucket_name
             cursor = self._db.execute(
-                f"SELECT id FROM {quote_table_name(f'{bucket_name}_files')} WHERE _id = ?",
+                f"SELECT id FROM {quote_table_name(f"{bucket_name}_files")} WHERE _id = ?",
                 (str(file_id),),
             )
             if (row := cursor.fetchone()) is None:

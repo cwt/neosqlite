@@ -294,11 +294,9 @@ class IndexManager:
 
                 # Create the index using appropriate JSON/JSONB function
                 self.collection.db.execute(
-                    (
-                        f"CREATE {'UNIQUE ' if unique else ''}INDEX "
-                        f"IF NOT EXISTS {quote_identifier(f'idx_{self.collection.name}_{index_name}')} "
-                        f"ON {quote_table_name(self.collection.name)}({func_prefix}_extract(data, '{parse_json_path(field)}'))"
-                    )
+                    f"CREATE {"UNIQUE " if unique else ""}INDEX "
+                    f"IF NOT EXISTS {quote_identifier(f"idx_{self.collection.name}_{index_name}")} "
+                    f"ON {quote_table_name(self.collection.name)}({func_prefix}_extract(data, '{parse_json_path(field)}'))"
                 )
                 index_name_full = f"idx_{self.collection.name}_{index_name}"
                 _store_index_keys(self.collection.db, index_name_full, [field])
@@ -340,11 +338,9 @@ class IndexManager:
                         f"'{parse_json_path(key)}') IS NOT NULL"
                     )
                 self.collection.db.execute(
-                    (
-                        f"CREATE {'UNIQUE ' if unique else ''}INDEX "
-                        f"IF NOT EXISTS {quote_identifier(index_name_full)} "
-                        f"ON {quote_table_name(self.collection.name)}({index_expr}){partial}"
-                    )
+                    f"CREATE {"UNIQUE " if unique else ""}INDEX "
+                    f"IF NOT EXISTS {quote_identifier(index_name_full)} "
+                    f"ON {quote_table_name(self.collection.name)}({index_expr}){partial}"
                 )
                 # Real key spec for as_keys=True / optimizer (#158)
                 _store_index_keys(self.collection.db, index_name_full, [key])
@@ -393,11 +389,9 @@ class IndexManager:
             )
             compound_full_name = f"idx_{self.collection.name}_{index_name}"
             self.collection.db.execute(
-                (
-                    f"CREATE {'UNIQUE ' if unique else ''}INDEX "
-                    f"IF NOT EXISTS {quote_identifier(compound_full_name)} "
-                    f"ON {quote_table_name(self.collection.name)}({index_columns})"
-                )
+                f"CREATE {"UNIQUE " if unique else ""}INDEX "
+                f"IF NOT EXISTS {quote_identifier(compound_full_name)} "
+                f"ON {quote_table_name(self.collection.name)}({index_columns})"
             )
             _store_index_keys(self.collection.db, compound_full_name, fields)
             return compound_full_name
@@ -864,8 +858,7 @@ class IndexManager:
                         keys = []
                         for path in json_extract_matches:
                             # Remove $ and leading dot
-                            if path.startswith("$."):
-                                path = path[2:]
+                            path = path.removeprefix("$.")
                             keys.append(path)
 
                         if len(keys) == 1:

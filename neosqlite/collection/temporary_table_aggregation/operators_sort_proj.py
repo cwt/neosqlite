@@ -301,7 +301,7 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
         new_table = create_temp(
             add_fields_stage,
             query,
-            params if params else None,
+            params or None,
         )
         return new_table
 
@@ -676,9 +676,7 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
             sql = f"SELECT {', '.join(select_cols)} FROM {current_table}"
 
         project_stage = {"$project": project_spec}
-        return create_temp(
-            project_stage, sql, all_params if all_params else None
-        )
+        return create_temp(project_stage, sql, all_params or None)
 
     def _generate_text_score_sql(self) -> str:
         """

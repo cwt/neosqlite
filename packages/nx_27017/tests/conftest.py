@@ -1,4 +1,3 @@
-# coding: utf-8
 import pytest
 from nx_27017.handler import NeoSQLiteHandler
 

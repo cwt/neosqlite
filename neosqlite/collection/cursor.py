@@ -1011,8 +1011,7 @@ class Cursor:
                             rows = db_cursor.fetchmany(self._batch_size)
                             if not rows:
                                 break
-                            for doc in self._load_documents(rows):
-                                yield doc
+                            yield from self._load_documents(rows)
                     finally:
                         db_cursor.close()
 
@@ -1113,8 +1112,7 @@ class Cursor:
                         rows = db_cursor.fetchmany(self._batch_size)
                         if not rows:
                             break
-                        for doc in self._load_documents(rows):
-                            yield doc
+                        yield from self._load_documents(rows)
                 finally:
                     # Release the sqlite statement even when iteration is
                     # abandoned early (#135)

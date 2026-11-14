@@ -79,8 +79,7 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
                 )
 
         # Remove "WHERE " prefix if present for easier manipulation
-        if where_clause.startswith("WHERE "):
-            where_clause = where_clause[6:]
+        where_clause = where_clause.removeprefix("WHERE ")
 
         # Create filtered temporary table for regular match operations
         match_stage = {"$match": match_spec}

@@ -20,7 +20,7 @@ def _safe_json_path(path: str) -> str:
     """Escape a dotted path for embedding in a SQL string literal (#123)."""
     from ..json_path_utils import parse_json_path
 
-    rel = path[2:] if path.startswith("$.") else path
+    rel = path.removeprefix("$.")
     return parse_json_path(rel) if rel else "$"
 
 

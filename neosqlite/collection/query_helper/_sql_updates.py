@@ -874,7 +874,7 @@ class SqlUpdatesMixin:
                     json_obj_func = _get_json_function(
                         "object", self.jsonb.jsonb_supported
                     )
-                    for field, type_spec in value.items():
+                    for field in value.keys():
                         json_path = f"'{parse_json_path(field)}'"
                         set_clauses.append(
                             f"{json_path}, {json_obj_func}('$date', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
@@ -1100,7 +1100,7 @@ class SqlUpdatesMixin:
                     json_obj_func = _get_json_function(
                         "object", self.jsonb.jsonb_supported
                     )
-                    for field, type_spec in value.items():
+                    for field in value.keys():
                         json_path = f"'{parse_json_path(field)}'"
                         set_clauses.append(
                             f"{json_path}, {json_obj_func}('$date', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"
@@ -1594,7 +1594,7 @@ class SqlUpdatesMixin:
                 json_obj_func = _get_json_function(
                     "object", self.jsonb.jsonb_supported
                 )
-                for field, type_spec in value.items():
+                for field in value.keys():
                     json_path = f"'{parse_json_path(field)}'"
                     clauses.append(
                         f"{json_path}, {json_obj_func}('$date', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))"

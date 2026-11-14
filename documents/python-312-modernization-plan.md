@@ -1,5 +1,5 @@
 ---
-type: roadmap
+type: design_doc
 title: "Python 3.11 / 3.12 Modernization & Performance Plan"
 description: "Phased plan to adopt Python 3.11 and 3.12 runtime optimizations, stdlib APIs, typing features, and readability idioms across neosqlite and packages/nx_27017."
 tags:
@@ -10,9 +10,10 @@ tags:
   - refactoring
 generated:
   by: antigravity
-  at: 2026-11-14T10:38:00Z
+  at: 2026-11-14T10:48:46Z
 version: "1.17.4"
-status: proposed
+lifecycle: completed
+status: stable
 sources:
   - pyproject.toml
   - mypy.ini
@@ -144,7 +145,7 @@ Adopt `Self` for fluent builder methods, `clone()`, `@classmethod` constructors 
 
 ---
 
-## Phase 3: Readability Idioms & Safe Ruff Cleanups
+## Phase 3: Readability Idioms & Safe Ruff Cleanups (Completed)
 
 ### 3.1 `itertools.pairwise()` for Adjacent-Boundary Loops (Python 3.10+)
 
@@ -185,4 +186,4 @@ After each phase (and before committing):
 2. Test suites:
    - `PYTHONPATH=. poetry run pytest tests/ -n $(sysctl -n hw.physicalcpu) --cov=neosqlite --cov-report=term-missing --cov-fail-under=80`
    - `PYTHONPATH=packages/nx_27017/src:. poetry run pytest packages/nx_27017/tests`
-3. Mark implemented sections in this document and log changes in [../log.md](../log.md) when committing.
+3. Mark implemented sections in this document and log changes in [./log.md](./log.md) when committing.

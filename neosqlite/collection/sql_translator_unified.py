@@ -928,8 +928,7 @@ class SQLClauseBuilder:
                     return None, []
                 elif clause:  # Only add non-empty clauses
                     # Remove "WHERE " prefix if present
-                    if clause.startswith("WHERE "):
-                        clause = clause[6:]
+                    clause = clause.removeprefix("WHERE ")
                     clauses.append(f"({clause})")
                     params.extend(clause_params)
             else:
@@ -1067,8 +1066,7 @@ class SQLClauseBuilder:
                         )  # Unsupported condition, fallback to Python
                     if not_clause:
                         # Remove "WHERE " prefix if present
-                        if not_clause.startswith("WHERE "):
-                            not_clause = not_clause[6:]
+                        not_clause = not_clause.removeprefix("WHERE ")
                         clauses.append(f"NOT COALESCE(({not_clause}), 0)")
                         params.extend(not_params)
                     else:
@@ -1105,8 +1103,7 @@ class SQLClauseBuilder:
                             )
                             if not sub_clause:
                                 return None, []
-                            if sub_clause.startswith("WHERE "):
-                                sub_clause = sub_clause[6:]
+                            sub_clause = sub_clause.removeprefix("WHERE ")
                             clauses.append(f"NOT COALESCE(({sub_clause}), 0)")
                             params.extend(sub_params)
                             continue

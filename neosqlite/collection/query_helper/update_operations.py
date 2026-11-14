@@ -441,7 +441,7 @@ class UpdateOperationsMixin(SqlUpdatesMixin):
                         if not exists or cur_val is None or cur_val < v:
                             _set_field_for_update(doc_to_update, k, v)
                 case "$currentDate":
-                    for k, type_spec in value.items():
+                    for k in value.keys():
                         now_val = datetime.now(UTC)
                         if "." in k:
                             _set_nested_field(doc_to_update, k, now_val)

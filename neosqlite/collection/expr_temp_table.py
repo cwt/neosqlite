@@ -885,7 +885,7 @@ class TempTableExprEvaluator:
             for item in operand:
                 fields.extend(self._extract_field_references_from_operand(item))
         elif isinstance(operand, dict):
-            for op, val in operand.items():
+            for val in operand.values():
                 fields.extend(self._extract_field_references_from_operand(val))
 
         return fields

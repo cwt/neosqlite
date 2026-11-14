@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from itertools import pairwise
 from typing import Any
 
 from ...sql_utils import quote_table_name
@@ -529,9 +530,7 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                 )
             )
             all_params = group_params + select_params
-        new_table = create_temp(
-            group_stage, query, params=all_params if all_params else None
-        )
+        new_table = create_temp(group_stage, query, params=all_params or None)
 
         # Store array fields metadata for efficient post-processing
         # This avoids scanning all fields in _get_results_from_table
@@ -908,9 +907,7 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         # Build CASE expression for bucketing
         # MongoDB uses the lower boundary as the _id value
         case_parts = []
-        for i in range(len(sorted_boundaries) - 1):
-            lower = sorted_boundaries[i]
-            upper = sorted_boundaries[i + 1]
+        for lower, upper in pairwise(sorted_boundaries):
             case_parts.append(
                 f"WHEN {self._build_group_by_expr(group_by)} >= {lower} AND {self._build_group_by_expr(group_by)} < {upper} THEN {lower}"
             )

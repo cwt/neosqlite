@@ -229,7 +229,7 @@ class GridFSBucket:
         files_coll = quote_table_name(self._files_collection)
         try:
             self._db.execute(
-                f"CREATE UNIQUE INDEX IF NOT EXISTS {quote_table_name(f'idx_{self._files_collection}_id')} ON {files_coll}(_id)"
+                f"CREATE UNIQUE INDEX IF NOT EXISTS {quote_table_name(f"idx_{self._files_collection}_id")} ON {files_coll}(_id)"
             )
         except Exception as e:
             logger.debug(f"{e=}")

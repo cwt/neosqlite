@@ -278,8 +278,7 @@ class Collection:
         """
         if not isinstance(key, str):
             return key
-        if key.startswith("$"):
-            key = key[1:]
+        key = key.removeprefix("$")
         val: Any = item
         for k in key.split("."):
             if not isinstance(val, dict):
@@ -298,8 +297,7 @@ class Collection:
                        or may be prefixed with \'$.
             value (Any): The value to set.
         """
-        if key.startswith("$"):
-            key = key[1:]
+        key = key.removeprefix("$")
 
         keys = key.split(".")
         current = item

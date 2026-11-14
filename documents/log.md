@@ -6,7 +6,7 @@ tags:
   - log
   - bundle
   - changelog
-timestamp: 2026-11-14T10:38:00Z
+timestamp: 2026-11-14T10:48:46Z
 version: "1.17.4"
 lifecycle: active
 ---
@@ -16,6 +16,17 @@ lifecycle: active
 This document records the chronological history of structural changes, additions, deprecations, and refactoring operations performed on the NeoSQLite Open Knowledge Format (OKF) bundle.
 
 ---
+
+## 2026-11-14 — Completed Phase 3 & Archived Python 3.11 / 3.12 Modernization Plan
+
+### Summary
+Completed Phase 3 (`itertools.pairwise`, PEP 701 quote reuse, `FURB188`/`FURB110`/`PERF102`/`UP009`/`UP034`, audited `UP028` `yield from`) and promoted the finished roadmap out of `documents/todo/` to `documents/python-312-modernization-plan.md` (`3100 passed` in `neosqlite`, `180 passed, 1 skipped` in `nx_27017`, `mypy` & `black` clean).
+
+### Key Modifications
+1. **Promoted `documents/python-312-modernization-plan.md`** (moved from `documents/todo/python-312-modernization-plan.md`):
+   - Marked Phase 3 as `(Completed)` and transitioned frontmatter from `type: roadmap` / `status: proposed` to `type: design_doc`, `lifecycle: completed`, `status: stable`, updating the log link to `[./log.md](./log.md)`.
+2. **Updated Bundle Indexes (`documents/index.md`, `documents/todo/index.md`)**:
+   - Moved the plan entry from `documents/todo/index.md` into `documents/index.md` under Internal Implementation & Subsystems.
 
 ## 2026-11-14 — Completed Phase 2 of Python 3.11 / 3.12 Modernization Plan
 

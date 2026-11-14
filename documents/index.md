@@ -7,7 +7,7 @@ tags:
   - architecture
   - documentation
   - neosqlite
-timestamp: 2026-11-12T00:00:00Z
+timestamp: 2026-11-14T10:48:46Z
 version: "1.17.4"
 lifecycle: active
 ---
@@ -56,6 +56,7 @@ Welcome to the NeoSQLite structured knowledge base, organized according to the *
 | [SQL Translation Caching](./translation-cache.md) | `design_doc` | LRU caching mechanism for pre-translated queries and pipelines. |
 | [Temporary Table Aggregation Breakdown](./temp-table-breakdown.md) | `design_doc` | Modular refactor architecture for temporary table aggregation. |
 | [Hybrid Text Search Processing](./hybrid-text-search-complete.md) | `design_doc` | Specification for hybrid FTS5 text search combined with aggregation. |
+| [Python 3.11 / 3.12 Modernization & Performance Plan](./python-312-modernization-plan.md) | `design_doc` | Completed three-phase modernization adopting Python 3.11/3.12 runtime optimizations, typing idioms, and Ruff cleanups. |
 
 ### 4. Operations, Testing & Debugging
 

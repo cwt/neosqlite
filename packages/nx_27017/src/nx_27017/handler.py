@@ -1159,7 +1159,7 @@ class NeoSQLiteHandler:
                     idx_kwargs["expireAfterSeconds"] = expire_after
 
                 idx_name = coll.create_index(keys_list, **idx_kwargs)
-                created_names.append(name if name else idx_name)
+                created_names.append(name or idx_name)
             return request_id, {
                 "ok": 1,
                 "createdCollectionAutomatically": False,
@@ -2375,7 +2375,7 @@ class NeoSQLiteHandler:
             grid_in = bucket.open_upload_stream(
                 filename,
                 chunk_size_bytes=chunk_size,
-                metadata=metadata if metadata else None,
+                metadata=metadata or None,
             )
 
             data = cmd_copy.get("data")

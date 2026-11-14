@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 from copy import deepcopy
+from itertools import pairwise
 from typing import TYPE_CHECKING, Any
 
 from ...exceptions import MalformedQueryException
@@ -610,15 +611,11 @@ def execute_python_aggregation(
                     bucket_key: Any = default_label
                     if val is not None:
                         try:
-                            for i in range(len(sorted_boundaries) - 1):
-                                if (
-                                    sorted_boundaries[i]
-                                    <= val
-                                    < sorted_boundaries[i + 1]
-                                ):
-                                    bucket_key = sorted_boundaries[
-                                        i
-                                    ]  # Use lower boundary as _id
+                            for lower, upper in pairwise(sorted_boundaries):
+                                if lower <= val < upper:
+                                    bucket_key = (
+                                        lower  # Use lower boundary as _id
+                                    )
                                     break
                         except TypeError:
                             # Comparison failed (e.g., mixed types), use default

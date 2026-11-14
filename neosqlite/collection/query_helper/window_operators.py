@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 from copy import deepcopy
+from itertools import pairwise
 from typing import TYPE_CHECKING, Any
 
 from ..type_utils import bson_sort_key
@@ -299,8 +300,7 @@ def _apply_window_operator(
         if op_name == "$integral":
             # Trapezoidal rule: sum of (v_i + v_{i-1})/2 * (t_i - t_{i-1})
             total = 0.0
-            for i in range(1, len(frame_indices)):
-                idx_prev, idx_curr = frame_indices[i - 1], frame_indices[i]
+            for idx_prev, idx_curr in pairwise(frame_indices):
                 doc_prev, doc_curr = (
                     partition_docs[idx_prev]["__doc__"],
                     partition_docs[idx_curr]["__doc__"],
