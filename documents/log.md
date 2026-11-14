@@ -7,7 +7,7 @@ tags:
   - bundle
   - changelog
 timestamp: 2026-11-14T10:48:46Z
-version: "1.17.4"
+version: "1.18.0"
 lifecycle: active
 ---
 
@@ -16,6 +16,26 @@ lifecycle: active
 This document records the chronological history of structural changes, additions, deprecations, and refactoring operations performed on the NeoSQLite Open Knowledge Format (OKF) bundle.
 
 ---
+
+## 2026-11-14 — Release v1.18.0 / nx-27017 v0.9.0
+
+### Summary
+Released NeoSQLite v1.18.0 and NX-27017 v0.9.0 as a cumulative correctness, SQL-tier parity, and Python 3.12 modernization release. It rolls up every change since v1.17.4, including kill-switch completeness, Tier-1/Tier-2 parity hardening, expanded Tier-3 promotion, write parity, and coverage-driven bug fixes. This is a breaking runtime change: Python 3.10 and 3.11 are no longer supported.
+
+### Key Modifications
+1. **Version and dependency alignment**:
+   - Bumped `neosqlite` to `1.18.0` and `nx-27017` to `0.9.0`.
+   - Widened the root `nx-27017` extra range to `>=0.8.2,<0.10.0` so it accepts v0.9.0; nx remains compatible with `neosqlite ^1.17.4` and is tested with v1.18.0.
+2. **Release notes and README**:
+   - Added [releases/v1.18.0.md](releases/v1.18.0.md) and nx-27017 `documents/releases/v0.9.0.md`.
+   - Added the v1.18.0 release index entry, bumped OKF frontmatter versions, and replaced the README latest-release section with the cumulative-fixes and Python 3.12 breaking-change summary.
+   - Documented the cumulative v1.17.4 → v1.18.0 changes: kill-switch completeness, Section 1/2 SQL tier parity and promotion, coverage-driven fixes, dependency refreshes, and helper-script updates.
+3. **Documentation of compatibility changes**:
+   - Documented the Python 3.12 minimum, the removal of `serverStatus.python_sqlite_version`, the corrected extras, and the Python 3.15 `jsonb` behavior.
+4. **Verification**:
+   - `neosqlite`: 3,100 passed on Python 3.14.10; 3,090 passed with 10 optional-Quez skips on Python 3.12.14 and 3.15.2.
+   - `nx-27017`: 180 passed, 1 skipped.
+   - Ruff, mypy, Black, `poetry check --lock`, and wheel metadata checks are clean.
 
 ## 2026-11-14 — Hardened Python 3.12 Migration and Repository-Wide Cleanup
 
