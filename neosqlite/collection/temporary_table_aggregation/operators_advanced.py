@@ -21,10 +21,9 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
         """Process $densify stage — numeric series with bounds array/'full'/'partition' and partitionBy/partitionByFields."""
         field = densify_spec.get("field")
         range_spec = densify_spec.get("range")
-        raw_partition = (
-            densify_spec.get("partitionByFields")
-            or densify_spec.get("partitionBy")
-        )
+        raw_partition = densify_spec.get(
+            "partitionByFields"
+        ) or densify_spec.get("partitionBy")
 
         if not field or not isinstance(range_spec, dict):
             raise NotImplementedError(
@@ -136,7 +135,9 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                 "FROM _densify_series WHERE _idx < 1000 AND _base + (_idx + 1) * ? <= _limit"
             )
             params.extend([step, step])
-            gen_data_expr = f"json({json_set_func}('{{}}', '{json_path}', _s._val))"
+            gen_data_expr = (
+                f"json({json_set_func}('{{}}', '{json_path}', _s._val))"
+            )
             exists_cond = f"json_extract(c.data, '{json_path}') = _s._val"
         else:
             p_cols_str = ", ".join(part_cols)
@@ -173,7 +174,9 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                 )
             set_args.extend([f"'{json_path}'", "_s._val"])
             match_parts.append(f"json_extract(c.data, '{json_path}') = _s._val")
-            gen_data_expr = f"json({json_set_func}('{{}}', {', '.join(set_args)}))"
+            gen_data_expr = (
+                f"json({json_set_func}('{{}}', {', '.join(set_args)}))"
+            )
             exists_cond = " AND ".join(match_parts)
 
         gen_parts = []
@@ -515,7 +518,9 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             elif isinstance(into, str):
                 target_coll_name = into
             else:
-                raise NotImplementedError("$merge 'into' must be string or dict")
+                raise NotImplementedError(
+                    "$merge 'into' must be string or dict"
+                )
             if "." in str(target_coll_name):
                 raise NotImplementedError(
                     "$merge cross-database namespace requires Python fallback"
@@ -543,8 +548,10 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
 
         if isinstance(on_spec, str):
             on_fields = [on_spec]
-        elif isinstance(on_spec, list) and on_spec and all(
-            isinstance(f, str) and f for f in on_spec
+        elif (
+            isinstance(on_spec, list)
+            and on_spec
+            and all(isinstance(f, str) and f for f in on_spec)
         ):
             on_fields = on_spec
         else:
@@ -568,7 +575,9 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             if f == "_id":
                 s_key = (
                     "COALESCE(src._id, "
-                    + _graph_lookup_scalar_or_oid("json_extract(src.data, '$._id')")
+                    + _graph_lookup_scalar_or_oid(
+                        "json_extract(src.data, '$._id')"
+                    )
                     + ")"
                     if src_has_underscore_id
                     else _graph_lookup_scalar_or_oid(
@@ -584,7 +593,9 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                 t_key = _graph_lookup_scalar_or_oid(
                     f"json_extract(tgt.data, '{jp}')"
                 )
-            cond_parts.append(f"({s_key}) IS NOT NULL AND ({t_key}) = ({s_key})")
+            cond_parts.append(
+                f"({s_key}) IS NOT NULL AND ({t_key}) = ({s_key})"
+            )
 
         match_cond = " AND ".join(cond_parts)
 
@@ -633,6 +644,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             self.db.execute(update_sql)
         elif when_matched == "merge":
             src_lookup = f"(SELECT src.data FROM {current_table} src WHERE {match_cond} ORDER BY src.id DESC LIMIT 1)"
+
             def _kv_select(src_expr: str) -> str:
                 return (
                     f"SELECT key AS k, "
@@ -641,6 +653,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                     f"ELSE json_quote(value) END AS jv "
                     f"FROM json_each({src_expr}) _je"
                 )
+
             merge_kv = (
                 f"{_kv_select('tgt.data')} "
                 f"WHERE _je.key = '_id' OR NOT EXISTS ("
@@ -681,7 +694,9 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                 f"PRAGMA table_info({quote_table_name(current_table)})"
             ).fetchall()
         }
-        select_cols = [c for c in ("id", "_id", "data") if c in columns or c == "data"]
+        select_cols = [
+            c for c in ("id", "_id", "data") if c in columns or c == "data"
+        ]
         sql = f"SELECT {', '.join(select_cols)} FROM {current_table}"
         if where_clause:
             sql = f"{sql} {where_clause}"
@@ -758,7 +773,9 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                     inner_selects.append(f"({sql}) AS _ws_{idx}")
                     sort_aliases.append(f"_ws_{idx} {order}")
                     all_params.extend(params)
-        sort_clause = f"ORDER BY {', '.join(sort_aliases)}" if sort_aliases else ""
+        sort_clause = (
+            f"ORDER BY {', '.join(sort_aliases)}" if sort_aliases else ""
+        )
 
         # 3. Compile output operators (operands evaluated once inside inner subquery)
         json_set_args: list[str] = []
@@ -792,7 +809,9 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                 win_parts.append(
                     "RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING"
                 )
-            over_clause = f"OVER ({' '.join(win_parts)})" if win_parts else "OVER ()"
+            over_clause = (
+                f"OVER ({' '.join(win_parts)})" if win_parts else "OVER ()"
+            )
 
             op_col = f"_wop_{op_index}"
             op_index += 1
@@ -807,15 +826,15 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                 case "$count":
                     win_expr = f"COUNT(*) {over_clause}"
                 case "$first":
-                    op_sql, op_params = self.expr_evaluator.build_select_expression(
-                        op_val
+                    op_sql, op_params = (
+                        self.expr_evaluator.build_select_expression(op_val)
                     )
                     inner_selects.append(f"({op_sql}) AS {op_col}")
                     all_params.extend(op_params)
                     win_expr = f"FIRST_VALUE({op_col}) {over_clause}"
                 case "$last":
-                    op_sql, op_params = self.expr_evaluator.build_select_expression(
-                        op_val
+                    op_sql, op_params = (
+                        self.expr_evaluator.build_select_expression(op_val)
                     )
                     inner_selects.append(f"({op_sql}) AS {op_col}")
                     all_params.extend(op_params)
@@ -826,27 +845,29 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                     default = op_val.get("default")
                     func = "LEAD" if by >= 0 else "LAG"
                     offset = by if by >= 0 else -by
-                    op_sql, op_params = self.expr_evaluator.build_select_expression(
-                        output_expr
+                    op_sql, op_params = (
+                        self.expr_evaluator.build_select_expression(output_expr)
                     )
                     inner_selects.append(f"({op_sql}) AS {op_col}")
                     all_params.extend(op_params)
                     if default is not None:
-                        win_expr = f"{func}({op_col}, {offset}, ?) {over_clause}"
+                        win_expr = (
+                            f"{func}({op_col}, {offset}, ?) {over_clause}"
+                        )
                         all_params.append(default)
                     else:
                         win_expr = f"{func}({op_col}, {offset}) {over_clause}"
                 case "$sum" | "$avg" | "$min" | "$max":
                     func = op_name[1:].upper()
-                    op_sql, op_params = self.expr_evaluator.build_select_expression(
-                        op_val
+                    op_sql, op_params = (
+                        self.expr_evaluator.build_select_expression(op_val)
                     )
                     inner_selects.append(f"({op_sql}) AS {op_col}")
                     all_params.extend(op_params)
                     win_expr = f"{func}({op_col}) {over_clause}"
                 case "$push":
-                    op_sql, op_params = self.expr_evaluator.build_select_expression(
-                        op_val
+                    op_sql, op_params = (
+                        self.expr_evaluator.build_select_expression(op_val)
                     )
                     inner_selects.append(f"({op_sql}) AS {op_col}")
                     all_params.extend(op_params)
@@ -855,8 +876,8 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                         f"FILTER (WHERE {op_col} IS NOT NULL) {over_clause})"
                     )
                 case "$stdDevPop" | "$stdDevSamp":
-                    op_sql, op_params = self.expr_evaluator.build_select_expression(
-                        op_val
+                    op_sql, op_params = (
+                        self.expr_evaluator.build_select_expression(op_val)
                     )
                     inner_selects.append(
                         f"CASE WHEN typeof(({op_sql})) IN ('integer', 'real') "
@@ -967,9 +988,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             return current_table
 
         recurse_sql, select_sql, rec_params = parts
-        stage_sql = (
-            f"WITH RECURSIVE {rec_cte} AS ({recurse_sql}) {select_sql}"
-        )
+        stage_sql = f"WITH RECURSIVE {rec_cte} AS ({recurse_sql}) {select_sql}"
         return create_temp({"$graphLookup": spec}, stage_sql, rec_params)
 
     def _process_fill_stage(
@@ -1104,8 +1123,12 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                     f"SUM(CASE WHEN _fv_{idx} IS NOT NULL THEN 1 ELSE 0 END) "
                     f"OVER ({win_base} ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) AS _bblk_{idx}"
                 )
-                f_part = f"PARTITION BY {', '.join(part_aliases + [f'_fblk_{idx}'])}"
-                b_part = f"PARTITION BY {', '.join(part_aliases + [f'_bblk_{idx}'])}"
+                f_part = (
+                    f"PARTITION BY {', '.join(part_aliases + [f'_fblk_{idx}'])}"
+                )
+                b_part = (
+                    f"PARTITION BY {', '.join(part_aliases + [f'_bblk_{idx}'])}"
+                )
                 f2_selects.append(
                     f"MAX(_fv_{idx}) OVER ({f_part}) AS _vs_{idx}"
                 )

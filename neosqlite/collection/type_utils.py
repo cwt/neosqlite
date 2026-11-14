@@ -605,7 +605,10 @@ def build_json_nin_clause(
         each_phs, each_params = serialize_in_values(non_null, each_is_jsonb)
         if has_null:
             if non_null:
-                return f"(value NOT IN ({each_phs}) AND value IS NOT NULL)", each_params
+                return (
+                    f"(value NOT IN ({each_phs}) AND value IS NOT NULL)",
+                    each_params,
+                )
             return "value IS NOT NULL", []
         return f"value NOT IN ({each_phs})", each_params
 
@@ -792,12 +795,18 @@ def build_bson_type_sql(
         parts: list[str] = []
         for item in type_spec:
             part = build_bson_type_sql(
-                data_expr, json_path, item, type_expr=type_expr, val_expr=val_expr
+                data_expr,
+                json_path,
+                item,
+                type_expr=type_expr,
+                val_expr=val_expr,
             )
             if part is None:
                 return None
             parts.append(f"({part})")
-        return "(" + " OR ".join(parts) + ")" if len(parts) > 1 else parts[0][1:-1]
+        return (
+            "(" + " OR ".join(parts) + ")" if len(parts) > 1 else parts[0][1:-1]
+        )
 
     code: int | None = None
     if isinstance(type_spec, int) and not isinstance(type_spec, bool):
@@ -837,12 +846,8 @@ def build_bson_type_sql(
             return None
         inner_path = json_path[1:-1]
         eff_type_expr = type_expr or f"json_type({data_expr}, {json_path})"
-        oid_check = (
-            f"json_extract({data_expr}, '{inner_path}.__neosqlite_objectid__') = 1"
-        )
-        bin_check = (
-            f"json_extract({data_expr}, '{inner_path}.__neosqlite_binary__') = 1"
-        )
+        oid_check = f"json_extract({data_expr}, '{inner_path}.__neosqlite_objectid__') = 1"
+        bin_check = f"json_extract({data_expr}, '{inner_path}.__neosqlite_binary__') = 1"
         date_type = f"json_type({data_expr}, '{inner_path}.$date')"
 
     match code:

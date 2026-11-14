@@ -69,6 +69,7 @@ def _set_field_for_update(
     else:
         _set_nested_field(doc, field_path, value)
 
+
 if TYPE_CHECKING:
     from .. import Collection
     from ..jsonb_support import JSONBContext
@@ -145,7 +146,9 @@ class UpdateOperationsMixin(SqlUpdatesMixin):
                         expr_params + [int_doc_id],
                     )
                     if cursor.rowcount == 0:
-                        raise RuntimeError(f"No rows updated for doc_id {doc_id}")
+                        raise RuntimeError(
+                            f"No rows updated for doc_id {doc_id}"
+                        )
                     data_col = json_data_column(self.jsonb.jsonb_supported)
                     row = self.collection.db.execute(
                         f"SELECT id, {data_col} as data FROM {tbl} WHERE id = ?",
@@ -155,7 +158,11 @@ class UpdateOperationsMixin(SqlUpdatesMixin):
                         raise RuntimeError("Failed to fetch updated document")
                     updated_doc = self.collection._load(row[0], row[1])
                     return updated_doc, updated_doc != original_doc
-                except (sqlite3.IntegrityError, MalformedQueryException, ValueError):
+                except (
+                    sqlite3.IntegrityError,
+                    MalformedQueryException,
+                    ValueError,
+                ):
                     raise
                 except Exception as e:
                     logger.debug(
@@ -278,11 +285,15 @@ class UpdateOperationsMixin(SqlUpdatesMixin):
                                     _set_field_for_update(doc_to_update, k, [])
                                 elif slice_val > 0:
                                     _set_field_for_update(
-                                        doc_to_update, k, current_list[:slice_val]
+                                        doc_to_update,
+                                        k,
+                                        current_list[:slice_val],
                                     )
                                 else:
                                     _set_field_for_update(
-                                        doc_to_update, k, current_list[slice_val:]
+                                        doc_to_update,
+                                        k,
+                                        current_list[slice_val:],
                                     )
                         else:
                             current_list.append(v)
@@ -352,7 +363,9 @@ class UpdateOperationsMixin(SqlUpdatesMixin):
                                 if item not in values_to_remove
                             ]
                             if new_list != arr:
-                                _set_field_for_update(doc_to_update, k, new_list)
+                                _set_field_for_update(
+                                    doc_to_update, k, new_list
+                                )
                 case "$pop":
                     for k, v in value.items():
                         arr = _get_field_for_update(doc_to_update, k)

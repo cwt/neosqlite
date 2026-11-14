@@ -124,16 +124,12 @@ def _check_single_type(data: Any, t: str) -> bool:
         case "string":
             return isinstance(data, str)
         case "number":
-            return isinstance(data, (int, float)) and not isinstance(
-                data, bool
-            )
+            return isinstance(data, (int, float)) and not isinstance(data, bool)
         case "integer" | "int" | "long":
             # In Python, we treat large ints as long
             return isinstance(data, int) and not isinstance(data, bool)
         case "double" | "decimal":
-            return isinstance(data, (float, int)) and not isinstance(
-                data, bool
-            )
+            return isinstance(data, (float, int)) and not isinstance(data, bool)
         case "object":
             return isinstance(data, dict)
         case "array":

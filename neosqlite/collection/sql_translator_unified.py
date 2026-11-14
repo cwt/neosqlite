@@ -497,9 +497,15 @@ class SQLOperatorTranslator:
                     else:
                         return None, []
                 case "$all":
-                    if isinstance(value, list) and value and extracted is not None:
+                    if (
+                        isinstance(value, list)
+                        and value
+                        and extracted is not None
+                    ):
                         _, data_expr, json_path, _ = extracted
-                        all_clauses = [f"json_type({data_expr}, {json_path}) = 'array'"]
+                        all_clauses = [
+                            f"json_type({data_expr}, {json_path}) = 'array'"
+                        ]
                         all_params: list[Any] = []
                         for item in value:
                             if item is None:
@@ -735,9 +741,7 @@ class SQLOperatorTranslator:
                     types = json_types_for_values(non_null)
                     types_sql = "(" + ", ".join(repr(t) for t in types) + ")"
                     phs, p_list = serialize_in_values(non_null, each_is_jsonb)
-                    in_match = (
-                        f"(json_each.value IN ({phs}) AND json_each.type IN {types_sql})"
-                    )
+                    in_match = f"(json_each.value IN ({phs}) AND json_each.type IN {types_sql})"
                     if has_null:
                         in_match = f"({in_match} OR json_each.type = 'null')"
                     sub_clauses.append(
@@ -759,9 +763,7 @@ class SQLOperatorTranslator:
                         )
                         sub_params.append(p_val)
                 elif sub_op in cmp_map:
-                    if isinstance(
-                        sub_val, (list, tuple, re.Pattern)
-                    ) or (
+                    if isinstance(sub_val, (list, tuple, re.Pattern)) or (
                         sub_op != "$eq" and is_encoded_json_value(sub_val)
                     ):
                         return None, []

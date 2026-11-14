@@ -950,11 +950,9 @@ def execute_python_aggregation(
                             "$out requires non-empty collection name"
                         )
                     if out_db_name:
-                        target_coll = (
-                            query_engine.collection._database.client[
-                                out_db_name
-                            ][out_coll_name]
-                        )
+                        target_coll = query_engine.collection._database.client[
+                            out_db_name
+                        ][out_coll_name]
                     else:
                         target_coll = query_engine.collection._database[
                             out_coll_name
@@ -1087,9 +1085,7 @@ def execute_python_aggregation(
                 if isinstance(raw_partition, str):
                     partition_by = [raw_partition.lstrip("$")]
                 elif isinstance(raw_partition, list):
-                    partition_by = [
-                        str(pf).lstrip("$") for pf in raw_partition
-                    ]
+                    partition_by = [str(pf).lstrip("$") for pf in raw_partition]
                 else:
                     partition_by = []
                 output_spec = densify_spec.get("output", {})
@@ -1222,7 +1218,9 @@ def execute_python_aggregation(
                         for val in all_values:
                             if val not in existing_values:
                                 base_doc: dict[str, Any] = {}
-                                for pf, pk_val in zip(partition_by, partition_key):
+                                for pf, pk_val in zip(
+                                    partition_by, partition_key
+                                ):
                                     target = base_doc
                                     parts = pf.split(".")
                                     for part in parts[:-1]:

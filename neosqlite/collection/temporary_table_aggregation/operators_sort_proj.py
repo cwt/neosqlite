@@ -229,9 +229,7 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
                         expr_sql, expr_params = None, []
 
                     if expr_sql is not None:
-                        json_set_func = (
-                            f"{self.jsonb.json_function_prefix}_set"
-                        )
+                        json_set_func = f"{self.jsonb.json_function_prefix}_set"
                         data_expr = (
                             f"{json_set_func}({data_expr}, "
                             f"'{parse_json_path(new_field)}', {expr_sql})"
@@ -349,7 +347,9 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
         select_clause = "id"
         if has_underscore_id:
             select_clause += ", _id"
-        select_clause += f", {json_data_column(self.jsonb.jsonb_supported)} AS data"
+        select_clause += (
+            f", {json_data_column(self.jsonb.jsonb_supported)} AS data"
+        )
 
         cursor = self.db.execute(f"SELECT {select_clause} FROM {current_table}")
         rows = cursor.fetchall()

@@ -191,9 +191,11 @@ def build_graph_lookup_parts(
             f"ELSE {scalar_to} = {norm_val} END)"
         )
 
-    if start_with == "$_id" or (
-        isinstance(start_with, str) and start_with.startswith("$")
-    ) or isinstance(start_with, list):
+    if (
+        start_with == "$_id"
+        or (isinstance(start_with, str) and start_with.startswith("$"))
+        or isinstance(start_with, list)
+    ):
         p_subquery = (
             f"SELECT p.id AS _pid, ({start_sql}) AS _sw, "
             f"{is_arr_expr} AS _sw_arr FROM {source_table} p"
@@ -225,7 +227,9 @@ def build_graph_lookup_parts(
     """
 
     if connect_from_field == "_id":
-        rec_join_cond = f"r.found_id IS NOT NULL AND {target_match('r.found_id')}"
+        rec_join_cond = (
+            f"r.found_id IS NOT NULL AND {target_match('r.found_id')}"
+        )
     else:
         from_path = parse_json_path(connect_from_field)
         scalar_from = f"json_extract(r.found_data, '{from_path}')"
@@ -273,9 +277,7 @@ def build_graph_lookup_parts(
         f"FROM (SELECT found_id, found_data, MIN(depth) AS depth "
         f"FROM {recurse_cte} WHERE original_id = p.id GROUP BY found_id) sub), '[]'))"
     )
-    data_expr = (
-        f"json({json_set_func}(p.data, '{parse_json_path(str(as_field))}', {group_expr}))"
-    )
+    data_expr = f"json({json_set_func}(p.data, '{parse_json_path(str(as_field))}', {group_expr}))"
     select_parts = ["p.id AS id", "p._id AS _id", f"{data_expr} AS data"]
     if has_root:
         select_parts.append("p.root_data")
@@ -817,9 +819,7 @@ class StageBuildersMixin:
         Optimizes KEEP/PRUNE patterns into a WHERE clause.
         Falls back to Python for DESCEND pattern as it requires recursive JSON modification.
         """
-        where_clause, expr_params = build_redact_where_sql(
-            self.evaluator, spec
-        )
+        where_clause, expr_params = build_redact_where_sql(self.evaluator, spec)
         if where_clause is None:
             return None, []
 
@@ -1337,8 +1337,9 @@ class StageBuildersMixin:
                                 arg, (list, tuple)
                             ) or is_encoded_json_value(arg):
                                 return None, []
-                            if field == "_id" or op_translator._is_datetime_value(
-                                arg
+                            if (
+                                field == "_id"
+                                or op_translator._is_datetime_value(arg)
                             ):
                                 sql, params = op_translator.translate_operator(
                                     field_sql, op, arg
@@ -1599,7 +1600,9 @@ class StageBuildersMixin:
         src_cte = f"{context.cte_prefix}_glsrc_{uid}"
         rec_cte = f"{context.cte_prefix}_glrec_{uid}"
 
-        src_cols = "id, _id, data, root_data" if context.has_root else "id, _id, data"
+        src_cols = (
+            "id, _id, data, root_data" if context.has_root else "id, _id, data"
+        )
         context.add_pre_cte(src_cte, f"SELECT {src_cols} FROM {prev_stage}", [])
 
         parts = build_graph_lookup_parts(
@@ -1625,7 +1628,9 @@ class StageBuildersMixin:
 
         uid = context.next_aux_id()
         src_cte = f"{context.cte_prefix}_fsrc_{uid}"
-        context.add_pre_cte(src_cte, f"SELECT id, _id, data FROM {prev_stage}", [])
+        context.add_pre_cte(
+            src_cte, f"SELECT id, _id, data FROM {prev_stage}", []
+        )
 
         if not spec:
             select_parts = ["NULL AS id", "NULL AS _id", "json('{}') AS data"]

@@ -164,7 +164,9 @@ class QueryMethodsMixin(QueryEngineProtocol):
                 f"THEN {func_prefix}_extract(data, '$._id') ELSE {id_col} END"
             )
         else:
-            select_expr = f"{func_prefix}_extract(data, '{parse_json_path(key)}')"
+            select_expr = (
+                f"{func_prefix}_extract(data, '{parse_json_path(key)}')"
+            )
 
         cmd = f"SELECT DISTINCT {select_expr} FROM {table_name} {where_clause}"
         cursor = self.collection.db.execute(cmd, params)

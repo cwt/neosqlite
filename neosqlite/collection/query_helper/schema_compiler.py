@@ -296,9 +296,7 @@ def _compile_query_enum_check(
     params: list[Any] = []
     for item in enum_vals:
         if isinstance(item, bool):
-            arms.append(
-                f"{type_expr} = '{'true' if item else 'false'}'"
-            )
+            arms.append(f"{type_expr} = '{'true' if item else 'false'}'")
         elif isinstance(item, (int, float)):
             # Match Python's 1 == 1.0 enum equality while excluding booleans.
             arms.append(
@@ -360,7 +358,9 @@ def _compile_query_node(
             safe_path,
             target_type,
             type_expr_override=type_expr,
-            val_expr_override=val_expr if (val_override and path == "$") else None,
+            val_expr_override=(
+                val_expr if (val_override and path == "$") else None
+            ),
         )
         if type_sql is None:
             return None

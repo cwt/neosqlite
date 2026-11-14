@@ -609,8 +609,8 @@ class Cursor:
 
         from .index_manager import _load_index_keys
 
-        expected_suffix = (
-            "_" + "_".join(k.replace(".", "_") for k in target_keys)
+        expected_suffix = "_" + "_".join(
+            k.replace(".", "_") for k in target_keys
         )
         for idx_name in idx_names:
             if idx_name == id_idx:
@@ -689,9 +689,7 @@ class Cursor:
                     f"THEN {p_lit} ELSE '$.__neosqlite_noop__' END"
                 )
             obj_sql = f"json_object({', '.join(kv_pairs)})"
-            return (
-                f"json_remove({obj_sql}, {', '.join(missing_removals)})"
-            )
+            return f"json_remove({obj_sql}, {', '.join(missing_removals)})"
 
         remove_paths = [f"'{parse_json_path(k)}'" for k, _ in other_items]
         if not include_id:

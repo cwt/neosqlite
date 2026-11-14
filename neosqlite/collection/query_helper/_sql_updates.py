@@ -261,9 +261,7 @@ def _compile_elem_predicate(
         sub_path = f"'{parse_json_path(sub_field)}'"
         sub_type = f"json_type({safe_obj}, {sub_path})"
         sub_val = f"json_extract({safe_obj}, {sub_path})"
-        sub_safe_obj = (
-            f"(CASE WHEN {sub_type} = 'object' THEN json({sub_val}) ELSE NULL END)"
-        )
+        sub_safe_obj = f"(CASE WHEN {sub_type} = 'object' THEN json({sub_val}) ELSE NULL END)"
         if isinstance(expected, dict):
             if not all(k.startswith("$") for k in expected):
                 return None
@@ -1757,7 +1755,11 @@ class SqlUpdatesMixin:
     ) -> tuple[str, list[Any]] | None:
         """Compile a $set field path containing $[] or $[identifier] to SQL."""
         pos_idx = next(
-            (i for i, p in enumerate(parts) if p == "$[]" or p.startswith("$[")),
+            (
+                i
+                for i, p in enumerate(parts)
+                if p == "$[]" or p.startswith("$[")
+            ),
             -1,
         )
         if pos_idx <= 0:
@@ -1777,7 +1779,11 @@ class SqlUpdatesMixin:
         match_params: list[Any] = []
         if pos_seg == "$[]":
             match_sql = "1"
-        elif pos_seg.startswith("$[") and pos_seg.endswith("]") and len(pos_seg) > 3:
+        elif (
+            pos_seg.startswith("$[")
+            and pos_seg.endswith("]")
+            and len(pos_seg) > 3
+        ):
             identifier = pos_seg[2:-1]
             filter_spec = None
             if array_filters:
@@ -1801,7 +1807,9 @@ class SqlUpdatesMixin:
         unmatched_elem = _je_preserved_value_expr(je)
 
         if not tail_parts:
-            matched_elem_sql, matched_elem_params = _format_sql_value_expr(value)
+            matched_elem_sql, matched_elem_params = _format_sql_value_expr(
+                value
+            )
         elif any(p == "$[]" or p.startswith("$[") for p in tail_parts):
             inner_res = self._build_positional_set_expr(
                 f"json({je}.value)",
@@ -1825,7 +1833,9 @@ class SqlUpdatesMixin:
             val_sql, val_params = _format_sql_value_expr(value)
             inter_checks = [f"{je}.type = 'object'"]
             for depth in range(1, len(tail_parts)):
-                inter_path = f"'{parse_json_path('.'.join(tail_parts[:depth]))}'"
+                inter_path = (
+                    f"'{parse_json_path('.'.join(tail_parts[:depth]))}'"
+                )
                 inter_checks.append(
                     f"json_type((CASE WHEN {je}.type = 'object' "
                     f"THEN json({je}.value) ELSE NULL END), {inter_path}) = 'object'"
@@ -2107,7 +2117,9 @@ class SqlUpdatesMixin:
                 case "$unset":
                     paths = [f"'{parse_json_path(f)}'" for f in value]
                     if paths:
-                        cur_expr = f"{remove_func}({cur_expr}, {', '.join(paths)})"
+                        cur_expr = (
+                            f"{remove_func}({cur_expr}, {', '.join(paths)})"
+                        )
 
                 case "$inc" | "$mul":
                     arith = "+" if op == "$inc" else "*"
@@ -2115,13 +2127,16 @@ class SqlUpdatesMixin:
                         if not _is_numeric_value(operand):
                             return None
                         jp = f"'{parse_json_path(field)}'"
+
                         def _arith_body(
                             src: str,
                             p: str = jp,
                             a: str = arith,
                             val: Any = operand,
                         ) -> tuple[str, list[Any]]:
-                            expr = f"COALESCE({extract_func}({src}, {p}), 0) {a} ?"
+                            expr = (
+                                f"COALESCE({extract_func}({src}, {p}), 0) {a} ?"
+                            )
                             return f"{set_func}({src}, {p}, {expr})", [val]
 
                         cur_expr, cur_params = _wrap_single_eval(
@@ -2137,6 +2152,7 @@ class SqlUpdatesMixin:
                         ):
                             return None
                         jp = f"'{parse_json_path(field)}'"
+
                         def _cmp_body(
                             src: str,
                             p: str = jp,
@@ -2149,7 +2165,10 @@ class SqlUpdatesMixin:
                                 f"OR json_type({src}, {p}) = 'null' THEN ? "
                                 f"ELSE {f_name}({ext}, ?) END"
                             )
-                            return f"{set_func}({src}, {p}, {val_expr})", [val, val]
+                            return f"{set_func}({src}, {p}, {val_expr})", [
+                                val,
+                                val,
+                            ]
 
                         cur_expr, cur_params = _wrap_single_eval(
                             cur_expr, cur_params, _cmp_body, counter
@@ -2160,19 +2179,20 @@ class SqlUpdatesMixin:
                         if not isinstance(bit_spec, dict):
                             return None
                         jp = f"'{parse_json_path(field)}'"
+
                         def _bit_body(
                             src: str, p: str = jp, bs: dict[str, Any] = bit_spec
                         ) -> tuple[str, list[Any]]:
-                            bit_expr = f"COALESCE({extract_func}({src}, {p}), 0)"
+                            bit_expr = (
+                                f"COALESCE({extract_func}({src}, {p}), 0)"
+                            )
                             if "and" in bs:
                                 bit_expr = f"({bit_expr} & {int(bs['and'])})"
                             if "or" in bs:
                                 bit_expr = f"({bit_expr} | {int(bs['or'])})"
                             if "xor" in bs:
                                 xv = int(bs["xor"])
-                                bit_expr = (
-                                    f"(({bit_expr} | {xv}) & ~(({bit_expr}) & {xv}))"
-                                )
+                                bit_expr = f"(({bit_expr} | {xv}) & ~(({bit_expr}) & {xv}))"
                             return f"{set_func}({src}, {p}, {bit_expr})", []
 
                         cur_expr, cur_params = _wrap_single_eval(
@@ -2201,6 +2221,7 @@ class SqlUpdatesMixin:
                             continue
                         old_p = f"'{parse_json_path(old_field)}'"
                         new_p = f"'{parse_json_path(new_field)}'"
+
                         def _ren_body(
                             src: str, op_p: str = old_p, np_p: str = new_p
                         ) -> tuple[str, list[Any]]:
@@ -2223,7 +2244,9 @@ class SqlUpdatesMixin:
                 case "$pop":
                     pop_paths: list[str] = []
                     for field, pop_dir in value.items():
-                        if not _is_numeric_value(pop_dir) or int(pop_dir) not in (-1, 1):
+                        if not _is_numeric_value(pop_dir) or int(
+                            pop_dir
+                        ) not in (-1, 1):
                             return None
                         idx = "[0]" if int(pop_dir) < 0 else "[#-1]"
                         pop_paths.append(f"'{parse_json_path(field)}{idx}'")
@@ -2259,6 +2282,7 @@ class SqlUpdatesMixin:
                                 for v in values_to_push
                             ]
                             new_json = neosqlite_json_dumps(converted)
+
                             def _push_ps_body(
                                 src: str,
                                 f_name: str = field,
@@ -2271,7 +2295,10 @@ class SqlUpdatesMixin:
                                 )
                                 if built is None:
                                     return "", []
-                                return f"{set_func}({src}, {built[0]})", built[1]
+                                return (
+                                    f"{set_func}({src}, {built[0]})",
+                                    built[1],
+                                )
 
                             # Probe once with src to confirm supported
                             if (
@@ -2295,9 +2322,7 @@ class SqlUpdatesMixin:
                                 pairs.append(f"{append_path}, {v_sql}")
                                 push_params.extend(v_params)
                             if pairs:
-                                cur_expr = (
-                                    f"{set_func}({cur_expr}, {', '.join(pairs)})"
-                                )
+                                cur_expr = f"{set_func}({cur_expr}, {', '.join(pairs)})"
                                 cur_params.extend(push_params)
 
                 case "$addToSet":
@@ -2314,7 +2339,12 @@ class SqlUpdatesMixin:
                     tier = "tier2"
                     for field, pull_val in value.items():
                         res = self._build_pull_expr(
-                            cur_expr, cur_params, field, pull_val, jsonb, counter
+                            cur_expr,
+                            cur_params,
+                            field,
+                            pull_val,
+                            jsonb,
+                            counter,
                         )
                         if res is None:
                             return None
@@ -2324,7 +2354,12 @@ class SqlUpdatesMixin:
                     tier = "tier2"
                     for field, pull_vals in value.items():
                         res = self._build_pull_all_expr(
-                            cur_expr, cur_params, field, pull_vals, jsonb, counter
+                            cur_expr,
+                            cur_params,
+                            field,
+                            pull_vals,
+                            jsonb,
+                            counter,
                         )
                         if res is None:
                             return None

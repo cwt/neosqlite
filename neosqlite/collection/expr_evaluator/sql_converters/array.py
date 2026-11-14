@@ -131,7 +131,11 @@ class ArrayMixin(BaseSqlMixin):
                             f"ORDER BY CAST(key AS INTEGER) DESC LIMIT {abs(count_operand)})))"
                         )
                         return sql, array_params
-                    if has_skip_arg and count_operand >= 0 and skip_operand >= 0:
+                    if (
+                        has_skip_arg
+                        and count_operand >= 0
+                        and skip_operand >= 0
+                    ):
                         safe_arr = f"(CASE WHEN {is_arr_sql} THEN raw_arr ELSE json('[]') END)"
                         sql = (
                             f"json((WITH _sr_{s_id}(raw_arr) AS (SELECT {array_sql}) "
@@ -175,7 +179,9 @@ class ArrayMixin(BaseSqlMixin):
                     )
                     slice_params = array_params + count_params
 
-                safe_arr = f"(CASE WHEN {is_arr_sql} THEN raw_arr ELSE json('[]') END)"
+                safe_arr = (
+                    f"(CASE WHEN {is_arr_sql} THEN raw_arr ELSE json('[]') END)"
+                )
                 sql = (
                     f"json((WITH "
                     f"_sr_{s_id}(raw_arr) AS (SELECT {array_sql}), "

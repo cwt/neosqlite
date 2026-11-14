@@ -188,9 +188,7 @@ class TestNonAggregationTierTrackingAndQueries:
         for query in not_edge_queries:
             set_force_fallback(False)
             sql_docs = _normalize_docs(list(coll_not.find(query)))
-            assert qe_not.get_last_tier() == "tier1", (
-                f"fell back for {query}"
-            )
+            assert qe_not.get_last_tier() == "tier1", f"fell back for {query}"
 
             set_force_fallback(True)
             py_docs = _normalize_docs(list(coll_not.find(query)))
@@ -286,7 +284,9 @@ class TestObjectIdAndBinaryTierRouting:
         find_queries = [
             {"owner": oid1},
             {"owner": {"$eq": oid1}},
-            {"peers": {"$ne": oid1}},  # array $ne must exclude docs containing oid1
+            {
+                "peers": {"$ne": oid1}
+            },  # array $ne must exclude docs containing oid1
             {"owner": {"$in": [oid1, oid3]}},
             {"owner": {"$nin": [oid2]}},
             {"peers": {"$all": [oid1, oid2]}},
@@ -443,11 +443,16 @@ class TestExprAndTier1AggregationRouting:
                 {"_id": 2, "arr": [3], "mask": 2, "n": 7},
             ]
         )
-        c2.insert_many([{"_id": 3, "oid": oid, "arr": [4, 5], "mask": 6, "n": 20}])
+        c2.insert_many(
+            [{"_id": 3, "oid": oid, "arr": [4, 5], "mask": 6, "n": 20}]
+        )
 
         # $unionWith string shorthand and empty pipeline in Tier 1
         _assert_aggregate_parity(
-            c1, [{"$unionWith": "right_coll"}], expected_tier="tier1", ordered=True
+            c1,
+            [{"$unionWith": "right_coll"}],
+            expected_tier="tier1",
+            ordered=True,
         )
         _assert_aggregate_parity(
             c1,
@@ -510,7 +515,14 @@ class TestTier2AggregationOptimizations:
         # Scalar string + preserveNullAndEmptyArrays in Tier 2
         _assert_aggregate_parity(
             coll,
-            [{"$unwind": {"path": "$tags", "preserveNullAndEmptyArrays": True}}],
+            [
+                {
+                    "$unwind": {
+                        "path": "$tags",
+                        "preserveNullAndEmptyArrays": True,
+                    }
+                }
+            ],
             expected_tier="tier2",
         )
 
@@ -546,7 +558,11 @@ class TestTier2AggregationOptimizations:
         # Empty input: NeoSQLite $count emits 0 across Tier 1, Tier 2, and Tier 3
         res_empty_tail = _assert_aggregate_parity(
             coll,
-            [{"$match": {"_id": 999}}, {"$unwind": "$tags"}, {"$count": "total"}],
+            [
+                {"$match": {"_id": 999}},
+                {"$unwind": "$tags"},
+                {"$count": "total"},
+            ],
             expected_tier="tier2",
         )
         assert res_empty_tail == [{"total": 0}]
@@ -612,7 +628,9 @@ class TestTier2AggregationOptimizations:
             expected_tier="tier2",
         )
 
-    def test_group_param_keys_dict_accumulators_and_first_last_after_sort(self, conn):
+    def test_group_param_keys_dict_accumulators_and_first_last_after_sort(
+        self, conn
+    ):
         coll = conn.group_docs
         coll.insert_many(
             [
@@ -692,7 +710,9 @@ class TestBinarySqlUpdates:
             )
             is True
         )
-        assert qh._can_use_sql_updates({"$addToSet": {"arr": b2}}, 1, doc1) is True
+        assert (
+            qh._can_use_sql_updates({"$addToSet": {"arr": b2}}, 1, doc1) is True
+        )
 
         # Unsafe comparison / raw-JSON ops still decline SQL cleanly
         assert qh._can_use_sql_updates({"$min": {"bin": b2}}, 1, doc1) is False
@@ -700,7 +720,11 @@ class TestBinarySqlUpdates:
 
         ops = [
             {"$set": {"bin": b2}},
-            {"$push": {"arr": {"$each": [b2, b3], "$position": 0, "$slice": 2}}},
+            {
+                "$push": {
+                    "arr": {"$each": [b2, b3], "$position": 0, "$slice": 2}
+                }
+            },
             {"$addToSet": {"arr": b3}},
             {"$addToSet": {"arr": b1}},
         ]

@@ -402,7 +402,9 @@ class TemporaryTableAggregationProcessor(OperatorsMixin):
                         json_obj_func = (
                             f"{self.jsonb.json_function_prefix}_object"
                         )
-                        data_expr = f"{json_obj_func}('{escaped_field}', COUNT(*))"
+                        data_expr = (
+                            f"{json_obj_func}('{escaped_field}', COUNT(*))"
+                        )
                         current_table = create_temp(
                             stage,
                             f"SELECT 1 AS id, "

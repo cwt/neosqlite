@@ -826,9 +826,7 @@ class SqlQueryBuilderMixin:
                 order_field = f"{quote_table_name(self.collection.name)}._id"
             else:
                 json_path = f"'{parse_json_path(field)}'"
-                order_field = (
-                    f"{self.jsonb.json_function_prefix}_extract({data_col}, {json_path})"
-                )
+                order_field = f"{self.jsonb.json_function_prefix}_extract({data_col}, {json_path})"
 
             order_dir = "ASC" if direction == 1 else "DESC"
             clauses.append(f"{order_field}{collate_clause} {order_dir}")
@@ -1174,7 +1172,9 @@ class SqlQueryBuilderMixin:
                     if isinstance(op_val, (list, tuple)):
                         if not op_val:
                             return None, []
-                        clauses.append(f"json_type(data, {json_path}) = 'array'")
+                        clauses.append(
+                            f"json_type(data, {json_path}) = 'array'"
+                        )
                         for v in op_val:
                             if v is None:
                                 clauses.append(

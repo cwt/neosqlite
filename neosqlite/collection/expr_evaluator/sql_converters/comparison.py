@@ -224,9 +224,7 @@ class ComparisonMixin(BaseSqlMixin):
                 )
 
             norm_left, override_left = _date_norm_sql(operands[0], left_sql)
-            norm_right, override_right = _date_norm_sql(
-                operands[1], right_sql
-            )
+            norm_right, override_right = _date_norm_sql(operands[1], right_sql)
             final_left_params = (
                 override_left if override_left is not None else left_params
             )

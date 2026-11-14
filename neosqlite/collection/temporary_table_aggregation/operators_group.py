@@ -226,9 +226,13 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                             if expr_field == "_id"
                             else f"{json_extract}(data, '{parse_json_path(expr_field)}')"
                         )
-                        select_parts.append(f"{sql_func}({val_expr}) AS {field}")
+                        select_parts.append(
+                            f"{sql_func}({val_expr}) AS {field}"
+                        )
                     elif expr_sql is not None:
-                        select_parts.append(f"{sql_func}({expr_sql}) AS {field}")
+                        select_parts.append(
+                            f"{sql_func}({expr_sql}) AS {field}"
+                        )
                         select_params.extend(expr_params)
                     else:
                         raise NotImplementedError(

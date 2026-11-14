@@ -125,11 +125,8 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             sql_expr_res = self.helpers._build_set_data_expression(
                 update, array_filters
             )
-            if (
-                sql_expr_res is not None
-                and self.helpers._validate_inc_mul_sql(
-                    where_clause, params, update, limit_one=True
-                )
+            if sql_expr_res is not None and self.helpers._validate_inc_mul_sql(
+                where_clause, params, update, limit_one=True
             ):
                 data_expr, expr_params, op_tier = sql_expr_res
                 tbl = quote_table_name(self.collection.name)
@@ -379,11 +376,8 @@ class CRUDOperationsMixin(QueryEngineProtocol):
             sql_expr_res = self.helpers._build_set_data_expression(
                 update, array_filters
             )
-            if (
-                sql_expr_res is not None
-                and self.helpers._validate_inc_mul_sql(
-                    where_clause, where_params, update, limit_one=False
-                )
+            if sql_expr_res is not None and self.helpers._validate_inc_mul_sql(
+                where_clause, where_params, update, limit_one=False
             ):
                 data_expr, expr_params, op_tier = sql_expr_res
                 tbl = quote_table_name(self.collection.name)

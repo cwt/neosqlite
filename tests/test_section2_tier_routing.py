@@ -58,7 +58,9 @@ def _assert_aggregate_parity(
     expected_tier: str,
     *,
     ordered: bool = False,
-    canonicalize: Callable[[list[dict[str, Any]]], list[dict[str, Any]]] | None = None,
+    canonicalize: (
+        Callable[[list[dict[str, Any]]], list[dict[str, Any]]] | None
+    ) = None,
 ) -> list[dict[str, Any]]:
     """Run pipeline in SQL mode and kill-switch Python mode, asserting tier & parity."""
     qe = coll.query_engine
@@ -161,7 +163,11 @@ class TestSection2ExprFixes:
 
         res3 = _assert_find_parity(
             coll,
-            {"$expr": {"$gt": [{"$sigmoid": {"input": "$s", "onNull": 0.8}}, 0.6]}},
+            {
+                "$expr": {
+                    "$gt": [{"$sigmoid": {"input": "$s", "onNull": 0.8}}, 0.6]
+                }
+            },
             "tier1",
         )
         assert [d["_id"] for d in res3] == [2]
@@ -216,7 +222,9 @@ class TestSection2AAggregationStages:
             }
         ]
         # Tier-1 $facet (all sub-pipelines Tier-1 capable) & Tier-2 $facet (with prior Tier-2 stage)
-        facet_res = _assert_aggregate_parity(coll, facet_pipe, "tier1", ordered=True)
+        facet_res = _assert_aggregate_parity(
+            coll, facet_pipe, "tier1", ordered=True
+        )
         assert facet_res[0]["totals"] == [
             {"_id": "A", "cnt": 3},
             {"_id": "B", "cnt": 1},
@@ -243,7 +251,9 @@ class TestSection2AAggregationStages:
             },
             {"$sort": {"seq": 1}},
         ]
-        fill_res = _assert_aggregate_parity(coll, fill_pipe, "tier2", ordered=True)
+        fill_res = _assert_aggregate_parity(
+            coll, fill_pipe, "tier2", ordered=True
+        )
         assert [d["val"] for d in fill_res] == [10, 20.0, 40]
 
         win_pipe = [
@@ -262,7 +272,9 @@ class TestSection2AAggregationStages:
             },
             {"$sort": {"seq": 1}},
         ]
-        win_res = _assert_aggregate_parity(coll, win_pipe, "tier2", ordered=True)
+        win_res = _assert_aggregate_parity(
+            coll, win_pipe, "tier2", ordered=True
+        )
         assert [d["running"] for d in win_res] == [10, 10, 50]
 
         dens_pipe = [
@@ -275,7 +287,9 @@ class TestSection2AAggregationStages:
             },
             {"$sort": {"seq": 1}},
         ]
-        dens_res = _assert_aggregate_parity(coll, dens_pipe, "tier1", ordered=True)
+        dens_res = _assert_aggregate_parity(
+            coll, dens_pipe, "tier1", ordered=True
+        )
         assert [d["seq"] for d in dens_res] == [1, 2, 3, 4, 5]
 
         dens_t2_pipe = [
@@ -342,7 +356,9 @@ class TestSection2AAggregationStages:
                 }
             },
         ]
-        _assert_aggregate_parity(people, gl_pipe_t2, "tier2", canonicalize=_sort_chain)
+        _assert_aggregate_parity(
+            people, gl_pipe_t2, "tier2", canonicalize=_sort_chain
+        )
 
     def test_redact_out_merge_tier2(self, conn):
         src = conn.redact_src
@@ -366,7 +382,12 @@ class TestSection2AAggregationStages:
         assert [d["_id"] for d in red_res_t1] == [1]
 
         redact_pipe_t2 = [
-            {"$fill": {"sortBy": {"_id": 1}, "output": {"level": {"value": 1}}}},
+            {
+                "$fill": {
+                    "sortBy": {"_id": 1},
+                    "output": {"level": {"value": 1}},
+                }
+            },
             redact_sql_stage,
         ]
         red_res_t2 = _assert_aggregate_parity(src, redact_pipe_t2, "tier2")
@@ -506,11 +527,19 @@ class TestSection2BQueriesAndCursors:
                 "$jsonSchema": {
                     "anyOf": [
                         {"properties": {"role": {"enum": ["admin"]}}},
-                        {"properties": {"age": {"bsonType": "int", "maximum": 17}}},
+                        {
+                            "properties": {
+                                "age": {"bsonType": "int", "maximum": 17}
+                            }
+                        },
                     ]
                 }
             },
-            {"$jsonSchema": {"not": {"properties": {"role": {"enum": ["guest"]}}}}},
+            {
+                "$jsonSchema": {
+                    "not": {"properties": {"role": {"enum": ["guest"]}}}
+                }
+            },
         ]
         for q in schemas:
             res = _assert_find_parity(coll, q, "tier1")
@@ -533,18 +562,26 @@ class TestSection2BQueriesAndCursors:
     def test_hint_emits_indexed_by_and_handles_missing_safely(self, conn):
         coll = conn.hinted
         coll.insert_many(
-            [{"_id": 1, "age": 20}, {"_id": 2, "age": 30}, {"_id": 3, "age": 40}]
+            [
+                {"_id": 1, "age": 20},
+                {"_id": 2, "age": 30},
+                {"_id": 3, "age": 40},
+            ]
         )
         coll.create_index("age")
 
         cur = coll.find({"age": {"$gte": 25}}).hint("age_1")
         plan = str(cur.explain())
         assert "INDEXED BY" in plan or "USING INDEX" in plan
-        docs = _assert_find_parity(coll, {"age": {"$gte": 25}}, "tier1", hint="age_1")
+        docs = _assert_find_parity(
+            coll, {"age": {"$gte": 25}}, "tier1", hint="age_1"
+        )
         assert [d["_id"] for d in _normalize_docs(docs)] == [2, 3]
 
         # Non-existent index hint gracefully drops INDEXED BY rather than raising
-        docs_missing = list(coll.find({"age": {"$gte": 25}}).hint("does_not_exist"))
+        docs_missing = list(
+            coll.find({"age": {"$gte": 25}}).hint("does_not_exist")
+        )
         assert [d["_id"] for d in _normalize_docs(docs_missing)] == [2, 3]
 
     def test_sql_projection_pushdown_and_bool_preservation(self, conn):
@@ -649,7 +686,9 @@ class TestSection2CCRUDAndUpdates:
             assert qe.get_last_tier() == "tier1"
 
             # Tier-2 condition $pull without loading into Python
-            r2 = coll.update_one({"_id": 1}, {"$pull": {"scores": {"$gte": 50}}})
+            r2 = coll.update_one(
+                {"_id": 1}, {"$pull": {"scores": {"$gte": 50}}}
+            )
             assert r2.matched_count == 1
             assert r2.modified_count == 1
             assert qe.get_last_tier() == "tier2"
@@ -679,7 +718,13 @@ class TestSection2CCRUDAndUpdates:
                     "scores": [80, 95],
                     "nest": {"vals": [2, 8]},
                 },
-                {"_id": 3, "k": "g", "n": 5, "scores": [60], "nest": {"vals": [3]}},
+                {
+                    "_id": 3,
+                    "k": "g",
+                    "n": 5,
+                    "scores": [60],
+                    "nest": {"vals": [3]},
+                },
             ]
         )
 
@@ -766,7 +811,11 @@ class TestSection2CCRUDAndUpdates:
             ),
             ({"$set": {"scores.$[]": 1}}, None, "tier2"),
             ({"$addToSet": {"new_set": {"$each": [1, 1, 2]}}}, None, "tier2"),
-            ({"$rename": {"other": "renamed_other", "absent": "nope"}}, None, "tier1"),
+            (
+                {"$rename": {"other": "renamed_other", "absent": "nope"}},
+                None,
+                "tier1",
+            ),
         ]
 
         sql_c = conn.cmp_sql
