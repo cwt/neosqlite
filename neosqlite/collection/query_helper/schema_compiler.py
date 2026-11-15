@@ -167,7 +167,10 @@ _SUPPORTED_QUERY_SCHEMA_KEYS = frozenset(
 
 
 def compile_query_schema_to_sql(
-    schema: Any, data_column: str = "data", jsonb: bool = False
+    schema: Any,
+    data_column: str = "data",
+    jsonb: bool = False,
+    json_each_function: str = "json_each",
 ) -> tuple[str, list[Any]] | None:
     """Compile a MongoDB ``$jsonSchema`` query dict into parameterized SQL.
 
@@ -179,7 +182,9 @@ def compile_query_schema_to_sql(
     if not isinstance(schema, dict) or not schema:
         return None
     json_func = "jsonb_extract" if jsonb else "json_extract"
-    each_func = "jsonb_each" if jsonb else "json_each"
+    # jsonb_each() only exists in SQLite 3.51+; json_each() works with both
+    # TEXT JSON and JSONB, so callers on 3.45-3.50 must use it.
+    each_func = json_each_function
     compiled = _compile_query_node(
         schema,
         data_column,

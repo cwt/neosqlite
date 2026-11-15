@@ -1245,6 +1245,7 @@ class StageBuildersMixin:
                     value,
                     data_column="data",
                     jsonb=self.jsonb.jsonb_supported,
+                    json_each_function=self.jsonb.json_each_function,
                 )
                 if schema_res is None:
                     return None, []

@@ -759,6 +759,7 @@ class SqlQueryBuilderMixin:
                     value,
                     data_column="data",
                     jsonb=self.jsonb.jsonb_supported,
+                    json_each_function=self.jsonb.json_each_function,
                 )
                 if schema_res is None:
                     return None
@@ -955,6 +956,13 @@ class SqlQueryBuilderMixin:
                                 f"WHERE json_each.value = {each_ph}))"
                             )
                             params.extend([param_val, each_val])
+                        elif json_path == "value":
+                            # Comparing against a row from json_each(): object and
+                            # array values are TEXT unless jsonb_each() is in use,
+                            # so serialize accordingly (SQLite 3.45-3.50 has JSONB
+                            # but not jsonb_each()).
+                            clauses.append(f"value = {each_ph}")
+                            params.append(each_val)
                         else:
                             clauses.append(
                                 f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) = {scalar_ph}"
@@ -1134,6 +1142,11 @@ class SqlQueryBuilderMixin:
                                 f"WHERE json_each.type IN {types} AND json_each.value = {each_ph})))"
                             )
                             params.extend([param_val, each_val])
+                        elif json_path == "value":
+                            # See $eq: json_each.value is TEXT unless jsonb_each()
+                            # is available.
+                            clauses.append(f"value IS NOT {each_ph}")
+                            params.append(each_val)
                         else:
                             clauses.append(
                                 f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) IS NOT {scalar_ph}"

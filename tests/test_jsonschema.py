@@ -5,6 +5,7 @@ import pytest
 from neosqlite import Connection
 from neosqlite.binary import Binary
 from neosqlite.collection.query_helper.schema_compiler import (
+    compile_query_schema_to_sql,
     compile_schema_to_sql,
 )
 from neosqlite.collection.query_helper.schema_validator import (
@@ -458,6 +459,21 @@ class TestSchemaCompiler:
         schema = {"required": ["name"]}
         result = compile_schema_to_sql(schema, jsonb=True)
         assert "jsonb_extract" in result
+
+    def test_compile_query_schema_items_honors_json_each_function(self):
+        """Use jsonb_each when available; json_each on SQLite 3.45-3.50."""
+        schema = {"type": "array", "items": {"type": "integer"}}
+
+        legacy = compile_query_schema_to_sql(schema, jsonb=True)
+        assert legacy is not None
+        assert "json_each(" in legacy[0]
+        assert "jsonb_each" not in legacy[0]
+
+        modern = compile_query_schema_to_sql(
+            schema, jsonb=True, json_each_function="jsonb_each"
+        )
+        assert modern is not None
+        assert "jsonb_each(" in modern[0]
 
     def test_compile_schema_empty(self):
         """Test compile_schema_to_sql with empty schema."""

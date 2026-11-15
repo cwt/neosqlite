@@ -245,6 +245,44 @@ class TestNonAggregationTierTrackingAndQueries:
 class TestObjectIdAndBinaryTierRouting:
     """Verify ObjectId (non-_id and _id) and Binary work across SQL query/agg paths."""
 
+    def test_elem_match_objectid_without_jsonb_each(self, conn, monkeypatch):
+        """SQLite 3.45-3.50 has JSONB but no jsonb_each().
+
+        ``json_each()`` returns object elements as TEXT, so encoded values must
+        be bound as compact JSON text instead of ``jsonb(?)``.
+        """
+        from neosqlite.collection import jsonb_support
+
+        def _no_jsonb_each(_db):
+            return False
+
+        monkeypatch.setattr(
+            jsonb_support, "supports_jsonb_each", _no_jsonb_each
+        )
+        coll = conn.elem_match_jsonb46
+        oid1, oid2 = ObjectId(), ObjectId()
+        coll.insert_many(
+            [
+                {"_id": 1, "peers": [oid1]},
+                {"_id": 2, "peers": [oid2]},
+            ]
+        )
+        jsonb = coll.query_engine.jsonb
+        assert jsonb.jsonb_supported is True
+        assert jsonb.json_each_function == "json_each"
+
+        for query in (
+            {"peers": {"$elemMatch": {"$eq": oid1}}},
+            {"peers": {"$elemMatch": {"$ne": oid1}}},
+        ):
+            set_force_fallback(False)
+            sql_res = _normalize_docs(list(coll.find(query)))
+            assert coll.query_engine.get_last_tier() == "tier1"
+            set_force_fallback(True)
+            py_res = _normalize_docs(list(coll.find(query)))
+            assert coll.query_engine.get_last_tier() == "tier3"
+            assert sql_res == py_res
+
     def test_objectid_non_id_and_binary_find_count_distinct_and_agg(self, conn):
         coll = conn.typed_docs
         oid1, oid2, oid3 = ObjectId(), ObjectId(), ObjectId()

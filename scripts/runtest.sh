@@ -3,10 +3,15 @@ export PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring
 
 OS_NAME=$(uname -s)
 case "$OS_NAME" in
-  Darwin)  CPU_CORES=$(sysctl -n hw.physicalcpu);;
-  Linux)   CPU_CORES=$(lscpu | awk '/^Core\(s\) per socket:/ {c=$4} /^Socket\(s\):/ {s=$2; sum += c * s} END {print sum}');;
+  Darwin)  CPU_CORES=$(sysctl -n hw.physicalcpu 2>/dev/null || true);;
+  Linux)   CPU_CORES=$(lscpu 2>/dev/null | awk '/^Core\(s\) per socket:/ {c=$4} /^Socket\(s\):/ {s=$2; sum += c * s} END {print sum}');;
   *)       CPU_CORES=$(poetry run python3 -c "import multiprocessing; print(multiprocessing.cpu_count())");;
 esac
+
+# Minimal container images may not ship lscpu; fall back to getconf.
+if ! [[ "$CPU_CORES" =~ ^[1-9][0-9]*$ ]]; then
+  CPU_CORES=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)
+fi
 
 # cleanup
 rm -rf */__pycache__ .pytest_cache .coverage

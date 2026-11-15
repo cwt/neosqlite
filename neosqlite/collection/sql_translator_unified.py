@@ -1017,6 +1017,7 @@ class SQLClauseBuilder:
                     value,
                     data_column=self.data_column,
                     jsonb=self.field_accessor.jsonb_supported,
+                    json_each_function=self._json_each_function,
                 )
                 if schema_res is None:
                     return None, []
