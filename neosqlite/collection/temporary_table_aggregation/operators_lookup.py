@@ -70,13 +70,13 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
 
                 if not pipeline_result:
                     self.db.execute(
-                        f"CREATE TEMP TABLE {hash_table_name} (id INTEGER PRIMARY KEY, _id INTEGER, data TEXT, {join_key} TEXT)"
+                        f"CREATE TEMP TABLE {hash_table_name} (id INTEGER PRIMARY KEY, _id BLOB, data TEXT, {join_key} TEXT)"
                     )
                 else:
                     from ..json_helpers import neosqlite_json_dumps
 
                     self.db.execute(
-                        f"CREATE TEMP TABLE {hash_table_name} (id INTEGER PRIMARY KEY, _id INTEGER, data TEXT, {join_key} TEXT)"
+                        f"CREATE TEMP TABLE {hash_table_name} (id INTEGER PRIMARY KEY, _id BLOB, data TEXT, {join_key} TEXT)"
                     )
 
                     row_number = 0
@@ -190,7 +190,7 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
         # Create the hash table structure
         self.db.execute(
             f"CREATE TEMP TABLE {hash_table_name} "
-            f"(id INTEGER PRIMARY KEY, _id TEXT, data TEXT, {join_key} TEXT)"
+            f"(id INTEGER PRIMARY KEY, _id BLOB, data TEXT, {join_key} TEXT)"
         )
 
         # Read documents one by one

@@ -26,7 +26,7 @@ from ._sqlite import sqlite3
 from .connection import _is_internal_collection_name
 from .sql_utils import quote_identifier
 
-_ID_TYPE_RE = re.compile(r"\b_id\s+TEXT\b", re.IGNORECASE)
+_ID_TYPE_RE = re.compile(r"\b_id\s+(?:TEXT|JSONB)\b", re.IGNORECASE)
 
 # Recover the logical _id from the document JSON. ObjectIds are encoded as
 # {"__neosqlite_objectid__": true, "id": "<hex>"} and must stay as their hex
@@ -35,7 +35,7 @@ _ID_TYPE_RE = re.compile(r"\b_id\s+TEXT\b", re.IGNORECASE)
 # recoverable from a TEXT column alone.
 _MIGRATE_ID_EXPR = """
 CASE
-    WHEN json_valid(data) THEN
+    WHEN typeof(data) = 'blob' OR json_valid(data) THEN
         CASE
             WHEN json_type(data, '$._id') IS NULL THEN _id
             WHEN json_type(data, '$._id') = 'object'
@@ -109,7 +109,10 @@ def _is_collection_table(conn: sqlite3.Connection, table_name: str) -> bool:
     }
     if set(columns) != {"id", "_id", "data"}:
         return False
-    return columns["_id"] == "TEXT" and columns["data"] == "TEXT"
+    return columns["_id"] in ("TEXT", "JSONB") and columns["data"] in (
+        "TEXT",
+        "JSONB",
+    )
 
 
 def find_legacy_tables(conn: sqlite3.Connection) -> list[LegacyTable]:
@@ -134,7 +137,12 @@ def find_legacy_tables(conn: sqlite3.Connection) -> list[LegacyTable]:
         if _has_incoming_foreign_key(conn, table_name, all_tables):
             continue
 
-        new_sql = _ID_TYPE_RE.sub("_id BLOB", create_sql, count=1)
+        paren_idx = create_sql.find("(")
+        if paren_idx < 0:
+            continue
+        new_sql = create_sql[:paren_idx] + _ID_TYPE_RE.sub(
+            "_id BLOB", create_sql[paren_idx:], count=1
+        )
         if new_sql == create_sql:
             continue
 
@@ -303,6 +311,7 @@ def migrate_database(
             if legacy_tables:
                 # Keep view/trigger SQL stable while the table is temporarily
                 # renamed; triggers are saved and recreated explicitly.
+                conn.execute("PRAGMA foreign_keys=OFF")
                 conn.execute("PRAGMA legacy_alter_table=ON")
                 conn.execute("BEGIN IMMEDIATE")
                 try:

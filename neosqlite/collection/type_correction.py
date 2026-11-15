@@ -124,11 +124,14 @@ def get_integer_id_for_doc_id(
     column rather than assumed to already be SQLite primary keys.
     """
     quoted = quote_table_name(collection_name)
-    lookup_vals = (
-        (str(doc_id), doc_id)
-        if isinstance(doc_id, int) and not isinstance(doc_id, bool)
-        else (str(doc_id) if hasattr(doc_id, "__str__") else doc_id,)
-    )
+    if isinstance(doc_id, (int, float)) and not isinstance(doc_id, bool):
+        lookup_vals: tuple[Any, ...] = (doc_id, str(doc_id))
+    elif isinstance(doc_id, bytes):
+        lookup_vals = (doc_id, str(doc_id))
+    elif isinstance(doc_id, str):
+        lookup_vals = (doc_id,)
+    else:
+        lookup_vals = (str(doc_id) if hasattr(doc_id, "__str__") else doc_id,)
     for val in lookup_vals:
         cursor = db_connection.execute(
             f"SELECT id FROM {quoted} WHERE _id = ?",

@@ -152,3 +152,55 @@ def test_non_legacy_database_is_copied_unchanged(tmp_path):
     assert main([str(source), str(destination)]) == 0
     assert _table_id_type(str(destination)) == "BLOB"
     assert _read_rows(str(destination)) == [(1, "integer", "int")]
+
+
+def test_migrate_id_jsonb_table_to_blob(tmp_path):
+    """Migrate tables where _id was created with JSONB (NUMERIC) affinity."""
+    from neosqlite.collection.jsonb_support import supports_jsonb
+
+    source = tmp_path / "jsonb_legacy.db"
+    destination = tmp_path / "jsonb_migrated.db"
+    conn = sqlite3.connect(str(source))
+    try:
+        use_jsonb = supports_jsonb(conn)
+        data_col_type = "JSONB" if use_jsonb else "TEXT"
+        conn.execute(
+            "CREATE TABLE items ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "_id JSONB, "
+            f"data {data_col_type} NOT NULL"
+            ")"
+        )
+        rows = [
+            ("1", {"_id": "1", "kind": "str"}),
+            (2.5, {"_id": 2.5, "kind": "float"}),
+        ]
+        if use_jsonb:
+            conn.executemany(
+                "INSERT INTO items(_id, data) VALUES (?, jsonb(?))",
+                [(sid, neosqlite_json_dumps(doc)) for sid, doc in rows],
+            )
+        else:
+            conn.executemany(
+                "INSERT INTO items(_id, data) VALUES (?, ?)",
+                [(sid, neosqlite_json_dumps(doc)) for sid, doc in rows],
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert main([str(source), str(destination)]) == 0
+    assert _table_id_type(str(destination)) == "BLOB"
+
+    dest_conn = sqlite3.connect(str(destination))
+    try:
+        migrated = dest_conn.execute(
+            "SELECT _id, typeof(_id), json_extract(data, '$.kind') "
+            "FROM items ORDER BY id"
+        ).fetchall()
+        assert migrated == [
+            ("1", "text", "str"),
+            (2.5, "real", "float"),
+        ]
+    finally:
+        dest_conn.close()

@@ -93,6 +93,7 @@ class CRUDOperationsMixin:
                 (
                     generated_id
                     if isinstance(generated_id, (str, int, float, bytes))
+                    and not isinstance(generated_id, bool)
                     else str(generated_id)
                 ),
             ),

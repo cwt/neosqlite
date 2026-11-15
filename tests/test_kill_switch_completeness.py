@@ -592,3 +592,54 @@ def test_sql_trace_audit_under_kill_switch():
         assert (
             violations == []
         ), f"Unexpected logical SQL under kill switch: {violations}"
+
+
+def test_id_types_and_fallback_resolution():
+    """Verify float, bytes, int, and str _id isolation and Tier-3 fallback resolution."""
+    for fallback in (False, True):
+        with neosqlite.Connection(":memory:") as conn:
+            coll = conn["id_types"]
+            coll.insert_many(
+                [
+                    {"_id": 1, "kind": "int"},
+                    {"_id": "1", "kind": "str"},
+                    {"_id": 2.5, "kind": "float"},
+                    {"_id": b"abc", "kind": "bytes"},
+                ]
+            )
+            set_force_fallback(fallback)
+
+            # Updating integer _id 1 must not clobber string _id "1"
+            res_int = coll.update_one({"_id": 1}, {"$set": {"updated": "int"}})
+            assert res_int.matched_count == 1
+            res_float = coll.update_one(
+                {"_id": 2.5}, {"$set": {"updated": "float"}}
+            )
+            assert res_float.matched_count == 1
+            res_bytes = coll.update_one(
+                {"_id": b"abc"}, {"$set": {"updated": "bytes"}}
+            )
+            assert res_bytes.matched_count == 1
+
+            doc_int = coll.find_one({"_id": 1})
+            doc_str = coll.find_one({"_id": "1"})
+            doc_float = coll.find_one({"_id": 2.5})
+            doc_bytes = coll.find_one({"_id": b"abc"})
+            assert doc_int is not None and doc_int.get("updated") == "int"
+            assert doc_str is not None and "updated" not in doc_str
+            assert doc_float is not None and doc_float.get("updated") == "float"
+            assert doc_bytes is not None and doc_bytes.get("updated") == "bytes"
+
+            # Replace and delete float _id
+            rep_res = coll.replace_one(
+                {"_id": 2.5}, {"_id": 2.5, "kind": "float_replaced"}
+            )
+            assert rep_res.matched_count == 1
+            replaced_float = coll.find_one({"_id": 2.5})
+            assert (
+                replaced_float is not None
+                and replaced_float["kind"] == "float_replaced"
+            )
+            del_res = coll.delete_one({"_id": 2.5})
+            assert del_res.deleted_count == 1
+            assert coll.find_one({"_id": 2.5}) is None

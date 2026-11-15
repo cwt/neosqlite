@@ -339,7 +339,7 @@ class Collection:
             self.db.execute(f"""
                 CREATE TABLE IF NOT EXISTS {quote_table_name(self.name)} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    _id JSONB,
+                    _id BLOB,
                     data JSONB NOT NULL
                     {check_clause}
                 )""")
@@ -372,15 +372,10 @@ class Collection:
             column_exists = cursor.fetchone() is not None
 
             if not column_exists:
-                # Add the _id column using the same type as the data column
-                if self.query_engine.jsonb.jsonb_supported:
-                    self.db.execute(
-                        f"ALTER TABLE {quote_table_name(self.name)} ADD COLUMN _id JSONB"
-                    )
-                else:
-                    self.db.execute(
-                        f"ALTER TABLE {quote_table_name(self.name)} ADD COLUMN _id BLOB"
-                    )
+                # Add the _id column with BLOB affinity (storage-class neutral)
+                self.db.execute(
+                    f"ALTER TABLE {quote_table_name(self.name)} ADD COLUMN _id BLOB"
+                )
                 # Create unique index on _id column for faster lookups
                 create_unique_index_on_id(self.db, self.name)
         except Exception as e:
