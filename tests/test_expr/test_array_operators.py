@@ -186,11 +186,18 @@ class TestArrayOperatorsSQL:
 
     def test_arrayElemAt_negative_sql(self):
         """Test $arrayElemAt with negative index SQL conversion."""
+        from neosqlite.collection.query_helper.utils import (
+            _supports_relative_json_indexing,
+        )
+
         evaluator = ExprEvaluator()
         expr = {"$arrayElemAt": ["$items", -1]}
         sql, params = evaluator._evaluate_sql_tier1(expr)
         assert sql is not None
-        assert "#-1" in sql
+        if _supports_relative_json_indexing():
+            assert "#-1" in sql
+        else:
+            assert "json_array_length" in sql
 
     def test_first_sql(self):
         """Test $first SQL conversion."""
@@ -202,11 +209,18 @@ class TestArrayOperatorsSQL:
 
     def test_last_sql(self):
         """Test $last SQL conversion."""
+        from neosqlite.collection.query_helper.utils import (
+            _supports_relative_json_indexing,
+        )
+
         evaluator = ExprEvaluator()
         expr = {"$last": "$items"}
         sql, params = evaluator._evaluate_sql_tier1(expr)
         assert sql is not None
-        assert "#-1" in sql
+        if _supports_relative_json_indexing():
+            assert "#-1" in sql
+        else:
+            assert "json_array_length" in sql
 
     @pytest.mark.skipif(
         not supports_aggregate_order_by(),

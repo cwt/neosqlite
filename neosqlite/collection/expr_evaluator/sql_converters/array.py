@@ -626,11 +626,12 @@ class ArrayMixin(BaseSqlMixin):
             f"CASE WHEN type IN ('object', 'array') "
             f"THEN {jval}(value) ELSE value END"
         )
-        offset_clause = f" OFFSET {offset}" if offset > 0 else ""
         return (
-            f"(SELECT {elem_expr} FROM {self.json_each_function}("
-            f"(SELECT {safe_arr} FROM (SELECT {array_sql} AS raw_arr))) "
-            f"ORDER BY CAST(key AS INTEGER) DESC LIMIT 1{offset_clause})"
+            f"(SELECT {elem_expr} FROM "
+            f"(SELECT {safe_arr} AS arr FROM (SELECT {array_sql} AS raw_arr)) AS _ae, "
+            f"{self.json_each_function}(_ae.arr) "
+            f"WHERE CAST(key AS INTEGER) = json_array_length(_ae.arr) - {offset + 1} "
+            f"LIMIT 1)"
         )
 
     def _convert_extreme_n(

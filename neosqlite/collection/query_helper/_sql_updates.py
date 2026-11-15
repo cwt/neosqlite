@@ -91,8 +91,11 @@ def _wrap_single_eval(
     counter: list[int],
 ) -> tuple[str, list[Any]]:
     """Evaluate cur_expr once via a subquery alias when transforming conditionally."""
-    if cur_expr == "data":
-        return build_fn("data")
+    if cur_expr == "data" or (
+        cur_expr.startswith("_je") and cur_expr.endswith(".value")
+    ):
+        body_sql, body_params = build_fn(cur_expr)
+        return body_sql, cur_params + body_params
     alias = f"_d{counter[0]}"
     counter[0] += 1
     body_sql, body_params = build_fn(alias)
@@ -235,7 +238,7 @@ def _compile_elem_predicate(
     type_col = f"{je_alias}.type"
     val_col = f"{je_alias}.value"
     safe_obj = (
-        f"(CASE WHEN {type_col} = 'object' THEN json({val_col}) ELSE NULL END)"
+        f"(CASE WHEN {type_col} = 'object' THEN {val_col} ELSE NULL END)"
     )
 
     if not isinstance(filter_spec, dict):
@@ -261,7 +264,9 @@ def _compile_elem_predicate(
         sub_path = f"'{parse_json_path(sub_field)}'"
         sub_type = f"json_type({safe_obj}, {sub_path})"
         sub_val = f"json_extract({safe_obj}, {sub_path})"
-        sub_safe_obj = f"(CASE WHEN {sub_type} = 'object' THEN json({sub_val}) ELSE NULL END)"
+        sub_safe_obj = (
+            f"(CASE WHEN {sub_type} = 'object' THEN {sub_val} ELSE NULL END)"
+        )
         if isinstance(expected, dict):
             if not all(k.startswith("$") for k in expected):
                 return None
@@ -277,13 +282,13 @@ def _compile_elem_predicate(
                 )
                 if ops_res is None:
                     return None
-                clauses.append(f"({sub_type} IS NOT NULL AND ({ops_res[0]}))")
+                clauses.append(f"{sub_type} IS NOT NULL AND ({ops_res[0]})")
                 params.extend(ops_res[1])
         else:
             eq_res = _compile_json_scalar_eq(sub_type, sub_val, expected)
             if eq_res is None:
                 return None
-            clauses.append(f"({sub_type} IS NOT NULL AND ({eq_res[0]}))")
+            clauses.append(eq_res[0])
             params.extend(eq_res[1])
 
     return " AND ".join(clauses), params
@@ -1792,16 +1797,22 @@ class SqlUpdatesMixin:
 
         set_func = json_function("set", jsonb_supported)
         ga_func = json_function("group_array", jsonb_supported)
-        empty_arr = json_literal("[]", jsonb_supported)
         unmatched_elem = _je_preserved_value_expr(je)
 
         if not tail_parts:
-            matched_elem_sql, matched_elem_params = _format_sql_value_expr(
-                value
-            )
+            val_sql, val_params = _format_sql_value_expr(value)
+            if pos_seg == "$[]":
+                elem_expr_sql = val_sql
+                elem_params = val_params
+            else:
+                elem_expr_sql = (
+                    f"CASE WHEN {match_sql} "
+                    f"THEN {val_sql} ELSE {unmatched_elem} END"
+                )
+                elem_params = match_params + val_params
         elif any(p == "$[]" or p.startswith("$[") for p in tail_parts):
             inner_res = self._build_positional_set_expr(
-                f"json({je}.value)",
+                f"{je}.value",
                 [],
                 tail_parts,
                 value,
@@ -1812,11 +1823,16 @@ class SqlUpdatesMixin:
             if inner_res is None:
                 return None
             inner_sql, inner_params = inner_res
-            matched_elem_sql = (
-                f"CASE WHEN {je}.type = 'object' THEN {inner_sql} "
+            elem_cond = (
+                f"{je}.type = 'object'"
+                if pos_seg == "$[]"
+                else f"({match_sql}) AND {je}.type = 'object'"
+            )
+            elem_expr_sql = (
+                f"CASE WHEN {elem_cond} THEN {inner_sql} "
                 f"ELSE {unmatched_elem} END"
             )
-            matched_elem_params = inner_params
+            elem_params = match_params + inner_params
         else:
             tail_path = f"'{parse_json_path('.'.join(tail_parts))}'"
             val_sql, val_params = _format_sql_value_expr(value)
@@ -1827,31 +1843,39 @@ class SqlUpdatesMixin:
                 )
                 inter_checks.append(
                     f"json_type((CASE WHEN {je}.type = 'object' "
-                    f"THEN json({je}.value) ELSE NULL END), {inter_path}) = 'object'"
+                    f"THEN {je}.value ELSE NULL END), {inter_path}) = 'object'"
                 )
-            matched_elem_sql = (
-                f"CASE WHEN {' AND '.join(inter_checks)} "
+            cond_parts = (
+                inter_checks
+                if pos_seg == "$[]"
+                else [f"({match_sql})", *inter_checks]
+            )
+            elem_expr_sql = (
+                f"CASE WHEN {' AND '.join(cond_parts)} "
                 f"THEN {set_func}(json({je}.value), {tail_path}, {val_sql}) "
                 f"ELSE {unmatched_elem} END"
             )
-            matched_elem_params = val_params
+            elem_params = match_params + val_params
 
         arr_path = f"'{parse_json_path(prefix)}'"
 
         def _build_body(src: str) -> tuple[str, list[Any]]:
-            # WHEN matches SQL CASE order: match_params before matched_elem_params
+            target_src = (
+                f"json({src})"
+                if (src.startswith("_je") and src.endswith(".value"))
+                else src
+            )
             rebuilt = json_constructor(
-                f"COALESCE((SELECT {ga_func}(CASE WHEN ({match_sql}) "
-                f"THEN {matched_elem_sql} ELSE {unmatched_elem} END) "
-                f"FROM json_each({src}, {arr_path}) AS {je}), {empty_arr})",
+                f"(SELECT {ga_func}({elem_expr_sql}) "
+                f"FROM json_each({src}, {arr_path}) AS {je})",
                 jsonb_supported,
             )
             sql = (
                 f"CASE WHEN json_type({src}, {arr_path}) = 'array' "
-                f"THEN {set_func}({src}, {arr_path}, {rebuilt}) "
-                f"ELSE {src} END"
+                f"THEN {set_func}({target_src}, {arr_path}, {rebuilt}) "
+                f"ELSE {target_src} END"
             )
-            return sql, match_params + matched_elem_params
+            return sql, elem_params
 
         return _wrap_single_eval(cur_expr, cur_params, _build_body, counter)
 
