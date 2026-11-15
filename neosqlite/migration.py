@@ -158,10 +158,19 @@ def migrate_autovacuum(
             # auto_vacuum must be set on the snapshot BEFORE VACUUM so the
             # rebuilt output carries the target mode.
             snap_conn.execute(f"PRAGMA auto_vacuum={target_autovacuum}")
-            snap_conn.execute(f"VACUUM INTO '{escaped_dest}'")
+            if sqlite3.sqlite_version_info >= (3, 27, 0):
+                snap_conn.execute(f"VACUUM INTO '{escaped_dest}'")
+            else:
+                # VACUUM INTO was added in SQLite 3.27.0. Rebuild the
+                # snapshot in place, then copy the completed file.
+                snap_conn.execute("VACUUM")
+                snap_conn.close()
+                snap_conn = None
+                shutil.copy2(snapshot_path, temp_new_path)
         finally:
-            snap_conn.close()
-            snap_conn = None
+            if snap_conn is not None:
+                snap_conn.close()
+                snap_conn = None
         conn.close()
         conn = None
 

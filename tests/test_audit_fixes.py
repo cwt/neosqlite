@@ -9,6 +9,10 @@ from datetime import UTC
 import pytest
 
 import neosqlite
+from neosqlite.collection.query_helper.utils import (
+    _supports_relative_json_indexing,
+)
+from neosqlite.collection.sqlite_features import supports_aggregate_order_by
 from neosqlite.exceptions import MalformedQueryException
 
 
@@ -79,16 +83,25 @@ class TestMinMaxMissingField:
         assert c.find_one({"_id": 1})["score"] == 9
 
 
+@pytest.mark.skipif(
+    not _supports_relative_json_indexing(),
+    reason="SQL JSON append paths require SQLite 3.42+",
+)
 class TestAddToSetNoDocumentNesting:
     """#89: the fallback $addToSet clause assigned the whole document into
     the array field — for existing elements via THEN data, and for new ones
     because json_insert(data, ...) returns the full modified document."""
 
     def _apply_clause(self, connection, col, value):
+        from neosqlite.collection.jsonb_support import supports_jsonb
+
         clause, params = col.query_engine.helpers._build_sql_update_clause(
             "$addToSet", value
         )
-        wrapped = f"jsonb_set(data, {clause[0]})"
+        json_set_func = (
+            "jsonb_set" if supports_jsonb(connection.db) else "json_set"
+        )
+        wrapped = f"{json_set_func}(data, {clause[0]})"
         connection.db.execute(
             f"UPDATE {col.name} SET data = {wrapped} WHERE id = 1", params
         )
@@ -627,6 +640,10 @@ class TestUnwindScalars:
         assert isinstance(d6_t2["a"], dict)
         assert d6_t2["a"] == {"n": 1}
 
+    @pytest.mark.skipif(
+        not supports_aggregate_order_by(),
+        reason="SQLite < 3.44 has no aggregate ORDER BY",
+    )
     def test_sort_array_object_elements(self, docs):
         from neosqlite.collection.query_helper import set_force_fallback
         from neosqlite.collection.temporary_table_aggregation import (

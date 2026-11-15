@@ -20,6 +20,8 @@ import neosqlite
 from neosqlite import Binary
 from neosqlite._sqlite import sqlite3
 from neosqlite.collection.query_helper.utils import (
+    _supports_relative_json_indexing,
+    _supports_returning_clause,
     set_force_fallback,
 )
 from neosqlite.exceptions import MalformedQueryException
@@ -50,6 +52,17 @@ def _normalize_docs(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return repr(sorted((k, repr(v)) for k, v in doc.items()))
 
     return sorted(docs, key=_key)
+
+
+def _round_floats(value: Any) -> Any:
+    """Tolerate small SQLite/Python floating-point formatting differences."""
+    if isinstance(value, float):
+        return round(value, 12)
+    if isinstance(value, dict):
+        return {k: _round_floats(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_round_floats(v) for v in value]
+    return value
 
 
 def _assert_aggregate_parity(
@@ -84,6 +97,8 @@ def _assert_aggregate_parity(
 
     cmp_sql = canonicalize(copy.deepcopy(sql_res)) if canonicalize else sql_res
     cmp_py = canonicalize(copy.deepcopy(py_res)) if canonicalize else py_res
+    cmp_sql = _round_floats(cmp_sql)
+    cmp_py = _round_floats(cmp_py)
     if ordered:
         assert cmp_sql == cmp_py
     else:
@@ -572,7 +587,12 @@ class TestSection2BQueriesAndCursors:
 
         cur = coll.find({"age": {"$gte": 25}}).hint("age_1")
         plan = str(cur.explain())
-        assert "INDEXED BY" in plan or "USING INDEX" in plan
+        if "INDEXED BY" in plan or "USING INDEX" in plan:
+            assert True
+        else:
+            # SQLite < 3.30 cannot always use this expression index; the
+            # cursor must still fall back safely and return correct rows.
+            assert "SCAN TABLE hinted" in plan
         docs = _assert_find_parity(
             coll, {"age": {"$gte": 25}}, "tier1", hint="age_1"
         )
@@ -780,6 +800,10 @@ class TestSection2CCRUDAndUpdates:
         with pytest.raises(MalformedQueryException):
             coll.update_many({"k": "bad"}, {"$inc": {"v": 1}})
 
+    @pytest.mark.skipif(
+        not _supports_relative_json_indexing(),
+        reason="SQL JSON append paths require SQLite 3.42+",
+    )
     def test_dotted_and_condition_pull_and_positional_parity(self, conn):
         base_docs = [
             {
@@ -839,6 +863,10 @@ class TestSection2CCRUDAndUpdates:
                 list(py_c.find())
             )
 
+    @pytest.mark.skipif(
+        not _supports_returning_clause(),
+        reason="SQLite RETURNING requires 3.35+",
+    )
     def test_set_on_insert_upsert_and_find_one_and_returning(self, conn):
         coll = conn.foa
         coll.insert_many(

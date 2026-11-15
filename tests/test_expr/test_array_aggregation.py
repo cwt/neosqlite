@@ -4,8 +4,11 @@ Tests for $expr array aggregation operators.
 Covers: $sum, $avg, $min, $max, $slice
 """
 
+import pytest
+
 import neosqlite
 from neosqlite.collection.expr_evaluator import ExprEvaluator
+from neosqlite.collection.sqlite_features import supports_aggregate_order_by
 
 
 class TestArrayAggregationPython:
@@ -80,6 +83,10 @@ class TestArrayAggregationSQL:
         assert sql is not None
         assert "AVG" in sql
 
+    @pytest.mark.skipif(
+        not supports_aggregate_order_by(),
+        reason="SQLite < 3.44 has no aggregate ORDER BY",
+    )
     def test_slice_sql(self):
         """Test $slice SQL conversion."""
         evaluator = ExprEvaluator()

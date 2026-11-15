@@ -23,7 +23,7 @@ from .expr_evaluator import (
 from .json_helpers import neosqlite_json_dumps
 from .json_path_utils import parse_json_path
 from .pipeline_context import PipelineContext
-from .query_helper.utils import _get_json_function
+from .query_helper.utils import _check_sqlite_version, _get_json_function
 
 
 def _graph_lookup_scalar_or_oid(expr_sql: str) -> str:
@@ -921,12 +921,37 @@ class StageBuildersMixin:
             )
         )
 
+        if _check_sqlite_version("3.30.0"):
+            joined_data_expr = (
+                f"json_group_array("
+                f"json(CASE "
+                f"WHEN json_type(t2.data, '$._id') IS NOT NULL THEN t2.data "
+                f"ELSE {json_set_func}(t2.data, '$._id', t2._id) END)"
+                f") FILTER (WHERE t2.id IS NOT NULL)"
+            )
+            data_expr = f"json({json_set_func}(t1.data, '{parse_json_path(as_field)}', json({joined_data_expr})))"
+
+            select_parts = ["t1.id", "t1._id", f"{data_expr} AS data"]
+            if context.has_root:
+                select_parts.append("t1.root_data")
+
+            sql = f"""
+                SELECT {", ".join(select_parts)}
+                FROM {prev_stage} AS t1
+                LEFT JOIN {quote_table_name(from_coll)} AS t2 ON {local_expr} = {foreign_expr}
+                GROUP BY t1.id
+            """
+            return sql, []
+
+        # SQLite < 3.30 has no aggregate FILTER clause. A correlated
+        # subquery naturally excludes non-matching rows and is equivalent.
         joined_data_expr = (
-            f"json_group_array("
+            f"(SELECT json_group_array("
             f"json(CASE "
             f"WHEN json_type(t2.data, '$._id') IS NOT NULL THEN t2.data "
             f"ELSE {json_set_func}(t2.data, '$._id', t2._id) END)"
-            f") FILTER (WHERE t2.id IS NOT NULL)"
+            f") FROM {quote_table_name(from_coll)} AS t2 "
+            f"WHERE {local_expr} = {foreign_expr})"
         )
         data_expr = f"json({json_set_func}(t1.data, '{parse_json_path(as_field)}', json({joined_data_expr})))"
 
@@ -937,8 +962,6 @@ class StageBuildersMixin:
         sql = f"""
             SELECT {", ".join(select_parts)}
             FROM {prev_stage} AS t1
-            LEFT JOIN {quote_table_name(from_coll)} AS t2 ON {local_expr} = {foreign_expr}
-            GROUP BY t1.id
         """
         return sql, []
 

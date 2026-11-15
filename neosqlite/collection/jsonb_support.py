@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Self
 
-from .._sqlite import sqlite3
+from .._sqlite import sqlite3  # noqa: F401  (re-exported for compatibility)
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,10 @@ def supports_jsonb(db_connection) -> bool:
         try:
             db_connection.execute('SELECT jsonb(\'{"test": "value"}\')')
             cache["jsonb_supported"] = True
-        except sqlite3.OperationalError as e:
+        except Exception as e:
+            # The connection may come from a different DB-API module
+            # (stdlib sqlite3 vs pysqlite3), so do not assume the exception
+            # class matches our imported module.
             logger.debug(f"JSONB not supported: {e}")
             cache["jsonb_supported"] = False
 
@@ -141,7 +144,9 @@ def supports_jsonb_each(db_connection) -> bool:
                 "SELECT key, value FROM jsonb_each('[1,2,3]')"
             )
             cache["jsonb_each_supported"] = True
-        except sqlite3.OperationalError as e:
+        except Exception as e:
+            # See supports_jsonb(): the connection may use a foreign DB-API
+            # module whose exception classes are not ours.
             logger.debug(f"jsonb_each not supported: {e}")
             cache["jsonb_each_supported"] = False
 

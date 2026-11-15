@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -223,6 +224,90 @@ class Connection:
         self.db.create_function("REGEXP_FIND", 2, _regexp_find)
         self.db.create_function("REGEXP_FIND_ALL", 2, _regexp_find_all)
         self.db.create_function("REGEXP_REPLACE", 4, _regexp_replace)
+        self._register_math_functions()
+
+    def _register_math_functions(self) -> None:
+        """Provide the SQLite 3.35+ math functions on older builds.
+
+        SQLite math functions are a compile-time option and are absent from
+        the system SQLite shipped by older distributions (for example
+        AlmaLinux/RHEL 8). Registering Python equivalents keeps the SQL
+        tiers usable instead of forcing every math expression to Tier 3.
+        """
+        try:
+            self.db.execute("SELECT exp(1), sin(0), pow(2, 3), pi()")
+            return
+        except Exception:
+            pass
+
+        def _unary(func):
+            def wrapper(value):
+                if value is None:
+                    return None
+                try:
+                    return func(value)
+                except (TypeError, ValueError, OverflowError):
+                    return None
+
+            return wrapper
+
+        def _binary(func):
+            def wrapper(left, right):
+                if left is None or right is None:
+                    return None
+                try:
+                    return func(left, right)
+                except (TypeError, ValueError, OverflowError):
+                    return None
+
+            return wrapper
+
+        def _log_two(base, number):
+            if base is None or number is None:
+                return None
+            try:
+                return math.log(number, base)
+            except (TypeError, ValueError, OverflowError):
+                return None
+
+        def _pi():
+            return math.pi
+
+        unary_functions = {
+            "exp": math.exp,
+            "ln": math.log,
+            "log10": math.log10,
+            "log2": math.log2,
+            "sqrt": math.sqrt,
+            "ceil": math.ceil,
+            "floor": math.floor,
+            "sin": math.sin,
+            "cos": math.cos,
+            "tan": math.tan,
+            "asin": math.asin,
+            "acos": math.acos,
+            "atan": math.atan,
+            "sinh": math.sinh,
+            "cosh": math.cosh,
+            "tanh": math.tanh,
+            "asinh": math.asinh,
+            "acosh": math.acosh,
+            "atanh": math.atanh,
+            "degrees": math.degrees,
+            "radians": math.radians,
+        }
+        binary_functions = {
+            "pow": math.pow,
+            "atan2": math.atan2,
+            "mod": math.fmod,
+        }
+        for unary_name, unary_func in unary_functions.items():
+            self.db.create_function(unary_name, 1, _unary(unary_func))
+        for binary_name, binary_func in binary_functions.items():
+            self.db.create_function(binary_name, 2, _binary(binary_func))
+        self.db.create_function("log", 1, _unary(math.log10))
+        self.db.create_function("log", 2, _log_two)
+        self.db.create_function("pi", 0, _pi)
 
     def _check_and_migrate_autovacuum(self, *args: Any, **kwargs: Any) -> None:
         """

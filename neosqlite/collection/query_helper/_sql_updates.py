@@ -388,6 +388,14 @@ class SqlUpdatesMixin:
         if has_pop and not _supports_relative_json_indexing():
             return False
 
+        # $push/$addToSet use the JSON append path [#], which also requires
+        # the relative JSON indexing support introduced in SQLite 3.42.
+        # Fall back to the Python tier on older SQLite builds.
+        if any(op in update_spec for op in ("$push", "$addToSet")) and not (
+            _supports_relative_json_indexing()
+        ):
+            return False
+
         # Check for $addToSet operator - now supports $each in SQL
         # Note: We no longer return False for $each since we have SQL implementation
 
@@ -2033,6 +2041,13 @@ class SqlUpdatesMixin:
         ``"tier2"``, or ``None`` if Python fallback is required.
         """
         if not isinstance(update_spec, dict) or not update_spec:
+            return None
+
+        # $push/$addToSet use the JSON append path [#], which requires
+        # SQLite 3.42+ (same relative-indexing feature gate as $pop).
+        if any(op in update_spec for op in ("$push", "$addToSet")) and not (
+            _supports_relative_json_indexing()
+        ):
             return None
 
         supported_ops = {

@@ -27,8 +27,13 @@ PYTHONPATH=. poetry run pytest tests/ -n $CPU_CORES --cov=neosqlite --cov-report
 # NX-27017
 cd packages/nx_27017
 
-# install current project as editable
-poetry run pip install -q -e .[speed]
+# Install both the local NeoSQLite tree and nx-27017 as editable, plus the
+# test runner. A plain `pip install -e .[speed]` does not install the dev
+# group, so `poetry run pytest` previously failed with "Command not found".
+poetry run pip install -q \
+    -e ../.. \
+    -e .[speed] \
+    pytest pytest-asyncio pytest-cov pytest-xdist
 
 # regenerate poetry.lock based on installed/updated packages
 rm -f poetry.lock && poetry lock --no-cache

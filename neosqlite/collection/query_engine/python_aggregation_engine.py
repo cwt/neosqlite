@@ -378,10 +378,8 @@ def execute_python_aggregation(
                         match_doc, foreign_field
                     )
                     key = _hashable_group_key(foreign_value)
-                    stripped = {
-                        k: v for k, v in match_doc.items() if k != "_id"
-                    }
-                    foreign_index.setdefault(key, []).append(stripped)
+                    # MongoDB $lookup includes the foreign document's _id.
+                    foreign_index.setdefault(key, []).append(match_doc.copy())
 
                 # Element-wise local values (arrays expand like MongoDB)
                 def _local_candidates(doc: dict[str, Any]) -> list[Any]:

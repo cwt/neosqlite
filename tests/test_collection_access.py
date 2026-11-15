@@ -92,7 +92,7 @@ def test_find_returns_list(conn):
 
 def test_db_is_sqlite_connection_not_collection(conn):
     """conn.db returns the underlying sqlite3.Connection, NOT a Collection."""
-    import sqlite3
+    from neosqlite._sqlite import sqlite3
 
     assert isinstance(conn.db, sqlite3.Connection)
     assert not isinstance(conn.db, Collection)
@@ -109,7 +109,7 @@ def test_collection_named_like_real_attribute(conn):
     """A collection named 'db' must be accessed via dict-style only."""
     # Create a collection called 'db'
     conn["db"].insert_one({"x": 1})
-    import sqlite3
+    from neosqlite._sqlite import sqlite3
 
     # Attribute style returns the real sqlite3.Connection, not the collection
     assert isinstance(conn.db, sqlite3.Connection)

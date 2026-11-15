@@ -2,12 +2,12 @@
 Tests for neosqlite connection functionality and context manager error handling.
 """
 
-import sqlite3
 from unittest.mock import patch
 
 import pytest
 
 import neosqlite
+from neosqlite._sqlite import sqlite3
 from neosqlite.collection.query_helper import (
     get_force_fallback,
     set_force_fallback,

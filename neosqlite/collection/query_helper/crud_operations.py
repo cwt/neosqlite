@@ -91,9 +91,9 @@ class CRUDOperationsMixin:
             (
                 json_str,
                 (
-                    str(generated_id)
-                    if hasattr(generated_id, "__str__")
-                    else generated_id
+                    generated_id
+                    if isinstance(generated_id, (str, int, float, bytes))
+                    else str(generated_id)
                 ),
             ),
         )

@@ -56,6 +56,10 @@ This release is **not backward compatible for Python 3.10/3.11 users**; stay on 
 
 NeoSQLite supports Python 3.12, 3.13, 3.14, and 3.15.
 
+SQLite 3.26+ is supported. JSONB, aggregate ORDER BY, `RETURNING`, and the
+3.35+ math functions are used when available; older SQLite builds fall back to
+the Python tier or register compatible SQL functions automatically.
+
 ```bash
 pip install neosqlite
 ```

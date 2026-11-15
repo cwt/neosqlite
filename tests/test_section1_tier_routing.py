@@ -18,6 +18,7 @@ import pytest
 import neosqlite
 from neosqlite import Binary
 from neosqlite.collection.query_helper.utils import (
+    _supports_relative_json_indexing,
     get_force_fallback,
     set_force_fallback,
 )
@@ -687,6 +688,10 @@ class TestTier2AggregationOptimizations:
 class TestBinarySqlUpdates:
     """Verify Binary values take SQL update path where safe and match Python fallback."""
 
+    @pytest.mark.skipif(
+        not _supports_relative_json_indexing(),
+        reason="SQL JSON append paths require SQLite 3.42+",
+    )
     def test_binary_updates_use_sql_and_match_fallback(self, conn):
         coll = conn.bin_updates
         qh = coll.query_engine.helpers

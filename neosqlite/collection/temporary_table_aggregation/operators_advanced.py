@@ -12,6 +12,7 @@ from .._stage_builders import (
     build_redact_where_sql,
 )
 from ..json_path_utils import parse_json_path
+from ..query_helper.utils import _check_sqlite_version
 from .operators_base import OperatorsBaseMixin
 
 logger = logging.getLogger(__name__)
@@ -867,6 +868,10 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                     all_params.extend(op_params)
                     win_expr = f"{func}({op_col}) {over_clause}"
                 case "$push":
+                    if not _check_sqlite_version("3.30.0"):
+                        raise NotImplementedError(
+                            "$push window operator requires SQLite 3.30+"
+                        )
                     op_sql, op_params = (
                         self.expr_evaluator.build_select_expression(op_val)
                     )

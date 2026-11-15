@@ -17,6 +17,31 @@ This document records the chronological history of structural changes, additions
 
 ---
 
+## 2026-11-15 — SQLite 3.26 / AlmaLinux 8 Compatibility
+
+### Summary
+Fixed the failures seen when running the suite on AlmaLinux 8 with Python 3.12 and a source-built `pysqlite3` linked against SQLite 3.26.0. The root causes were the test harness connecting through the wrong DB-API module, and SQL features newer than SQLite 3.26 being emitted without feature-gated fallbacks.
+
+### Key Modifications
+1. **Test harness**: Track connections per DB-API module (`stdlib sqlite3` vs `pysqlite3`) so neosqlite uses the same module and exception classes as the test environment. Updated tests that hard-coded stdlib `sqlite3` exceptions/connection types.
+2. **SQLite feature fallbacks**:
+   - `VACUUM INTO` → `VACUUM` + file copy on SQLite < 3.27.
+   - Aggregate `FILTER` → correlated subquery on SQLite < 3.30.
+   - `[#]` JSON append and aggregate `ORDER BY` paths → Python Tier 3 on older SQLite.
+   - Registered Python fallbacks for the optional SQLite 3.35+ math functions.
+3. **Data-shape fixes**:
+   - Preserve scalar `_id` types on non-JSONB schemas by using `BLOB` affinity and binding values without stringifying them.
+   - Include foreign `_id` values in Python `$lookup` results.
+   - Wrap JSON array aggregates before embedding them in `$group` output and preserve array/object group keys.
+   - Fall back from `INDEXED BY` / `EXPLAIN QUERY PLAN` when SQLite reports `no query solution`.
+4. **Test runner**: `scripts/runtest.sh` now installs the local NeoSQLite tree plus `pytest`, `pytest-asyncio`, `pytest-cov`, and `pytest-xdist` in the nx-27017 Poetry environment.
+
+### Verification
+- AlmaLinux 8 (SQLite 3.26.0, Python 3.12.15, source-built pysqlite3): **3,068 passed, 32 skipped** with 80.70% coverage; nx-27017 **180 passed, 1 skipped**.
+- AlmaLinux 8 stdlib SQLite 3.26.0 via `runtest.sh`: **3,078 passed, 22 skipped**, 80.68% coverage.
+- macOS Python 3.14.10 / SQLite 3.54.1: **3,100 passed**; Python 3.12.14 and 3.15.2: **3,090 passed, 10 skipped**.
+- Ruff, mypy, and Black clean.
+
 ## 2026-11-14 — Release v1.18.0 / nx-27017 v0.9.0
 
 ### Summary

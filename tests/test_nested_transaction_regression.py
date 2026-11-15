@@ -7,7 +7,7 @@ discarding everything the outer transaction had done. Nesting is now
 refused before any connection state is touched.
 """
 
-import sqlite3
+from neosqlite._sqlite import sqlite3
 
 
 def test_nested_transaction_does_not_destroy_outer_work(connection):

@@ -30,16 +30,27 @@ def _auto_cleanup_nx_resources(monkeypatch):
 
     from neosqlite._sqlite import sqlite3 as _neo_sqlite3
 
-    orig_connect = _stdlib_sqlite3.connect
+    def _make_tracked_connect(module):
+        orig_connect = module.connect
 
-    def tracked_connect(*args, **kwargs):
-        conn = orig_connect(*args, **kwargs)
-        raw_connections.append(conn)
-        return conn
+        def tracked_connect(*args, **kwargs):
+            conn = orig_connect(*args, **kwargs)
+            raw_connections.append(conn)
+            return conn
 
-    monkeypatch.setattr(_stdlib_sqlite3, "connect", tracked_connect)
+        return tracked_connect
+
+    monkeypatch.setattr(
+        _stdlib_sqlite3,
+        "connect",
+        _make_tracked_connect(_stdlib_sqlite3),
+    )
     if _neo_sqlite3 is not _stdlib_sqlite3:
-        monkeypatch.setattr(_neo_sqlite3, "connect", tracked_connect)
+        monkeypatch.setattr(
+            _neo_sqlite3,
+            "connect",
+            _make_tracked_connect(_neo_sqlite3),
+        )
 
     yield
 

@@ -709,7 +709,9 @@ class Cursor:
         except sqlite3.OperationalError as e:
             msg = str(e).lower()
             if cmd_with_hint != cmd_without_hint and (
-                "cannot use index" in msg or "no such index" in msg
+                "cannot use index" in msg
+                or "no such index" in msg
+                or "no query solution" in msg
             ):
                 return self._collection.db.execute(cmd_without_hint, params)
             raise
@@ -837,7 +839,9 @@ class Cursor:
             except sqlite3.OperationalError as e:
                 msg = str(e).lower()
                 if "sql_plain" in locals() and (
-                    "cannot use index" in msg or "no such index" in msg
+                    "cannot use index" in msg
+                    or "no such index" in msg
+                    or "no query solution" in msg
                 ):
                     plan_rows = self._collection.db.execute(
                         f"EXPLAIN QUERY PLAN {sql_plain}", params

@@ -5,8 +5,11 @@ Basic: $size, $in, $isArray, $arrayElemAt, $first, $last
 Extended: $slice, $indexOfArray
 """
 
+import pytest
+
 import neosqlite
 from neosqlite.collection.expr_evaluator import ExprEvaluator
+from neosqlite.collection.sqlite_features import supports_aggregate_order_by
 
 
 class TestArrayOperatorsPython:
@@ -205,6 +208,10 @@ class TestArrayOperatorsSQL:
         assert sql is not None
         assert "#-1" in sql
 
+    @pytest.mark.skipif(
+        not supports_aggregate_order_by(),
+        reason="SQLite < 3.44 has no aggregate ORDER BY",
+    )
     def test_firstN_sql(self):
         """Test $firstN SQL conversion."""
         evaluator = ExprEvaluator()
@@ -214,6 +221,10 @@ class TestArrayOperatorsSQL:
         assert "json_each" in sql
         assert "LIMIT 3" in sql
 
+    @pytest.mark.skipif(
+        not supports_aggregate_order_by(),
+        reason="SQLite < 3.44 has no aggregate ORDER BY",
+    )
     def test_lastN_sql(self):
         """Test $lastN SQL conversion."""
         evaluator = ExprEvaluator()
@@ -223,6 +234,10 @@ class TestArrayOperatorsSQL:
         assert "json_each" in sql
         assert "DESC" in sql
 
+    @pytest.mark.skipif(
+        not supports_aggregate_order_by(),
+        reason="SQLite < 3.44 has no aggregate ORDER BY",
+    )
     def test_sortArray_sql(self):
         """Test $sortArray SQL conversion."""
         evaluator = ExprEvaluator()
@@ -232,6 +247,10 @@ class TestArrayOperatorsSQL:
         assert "json_group_array" in sql
         assert "ORDER BY value ASC" in sql
 
+    @pytest.mark.skipif(
+        not supports_aggregate_order_by(),
+        reason="SQLite < 3.44 has no aggregate ORDER BY",
+    )
     def test_sortArray_with_sortby_sql(self):
         """Test $sortArray with sortBy SQL conversion."""
         evaluator = ExprEvaluator()
@@ -241,6 +260,10 @@ class TestArrayOperatorsSQL:
         assert "json_extract" in sql
         assert "DESC" in sql
 
+    @pytest.mark.skipif(
+        not supports_aggregate_order_by(),
+        reason="SQLite < 3.44 has no aggregate ORDER BY",
+    )
     def test_sortArray_with_numeric_sortby_sql(self):
         """Test $sortArray with numeric sortBy (1/-1) SQL conversion."""
         evaluator = ExprEvaluator()
@@ -250,6 +273,10 @@ class TestArrayOperatorsSQL:
             assert sql is not None
             assert f"ORDER BY value {expected_order}" in sql
 
+    @pytest.mark.skipif(
+        not supports_aggregate_order_by(),
+        reason="SQLite < 3.44 has no aggregate ORDER BY",
+    )
     def test_maxN_sql(self):
         """Test $maxN SQL conversion."""
         evaluator = ExprEvaluator()
@@ -258,6 +285,10 @@ class TestArrayOperatorsSQL:
         assert sql is not None
         assert "ORDER BY value DESC" in sql
 
+    @pytest.mark.skipif(
+        not supports_aggregate_order_by(),
+        reason="SQLite < 3.44 has no aggregate ORDER BY",
+    )
     def test_minN_sql(self):
         """Test $minN SQL conversion."""
         evaluator = ExprEvaluator()

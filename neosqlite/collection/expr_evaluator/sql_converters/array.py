@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     pass
 
 
+from ...sqlite_features import supports_aggregate_order_by
 from .base import BaseSqlMixin
 
 
@@ -91,6 +92,10 @@ class ArrayMixin(BaseSqlMixin):
                     sql = f"(SELECT {sql_agg}(value) FROM {json_each}({array_sql}))"
                 return sql, array_params
             case "$slice":
+                if not supports_aggregate_order_by():
+                    raise NotImplementedError(
+                        "JSON aggregate ORDER BY requires SQLite 3.44+"
+                    )
                 if not isinstance(operands, list) or len(operands) < 2:
                     raise ValueError("$slice requires array and count/position")
                 array_operand = operands[0]
@@ -251,6 +256,10 @@ class ArrayMixin(BaseSqlMixin):
                 sql = f"{jfx}({array_sql}, '$[#-1]')"
                 return sql, array_params
             case "$firstN":
+                if not supports_aggregate_order_by():
+                    raise NotImplementedError(
+                        "JSON aggregate ORDER BY requires SQLite 3.44+"
+                    )
                 # MongoDB: { $firstN: { input: <array>, n: <number> } }
                 # Also accepts positional: [<array>, <number>]
                 if isinstance(operands, dict):
@@ -285,6 +294,10 @@ class ArrayMixin(BaseSqlMixin):
                 )
                 return sql, array_params + n_params
             case "$lastN":
+                if not supports_aggregate_order_by():
+                    raise NotImplementedError(
+                        "JSON aggregate ORDER BY requires SQLite 3.44+"
+                    )
                 # MongoDB: { $lastN: { input: <array>, n: <number> } }
                 if isinstance(operands, dict):
                     array_operand = operands.get("input")
@@ -317,6 +330,10 @@ class ArrayMixin(BaseSqlMixin):
                 )
                 return sql, array_params + n_params
             case "$sortArray":
+                if not supports_aggregate_order_by():
+                    raise NotImplementedError(
+                        "JSON aggregate ORDER BY requires SQLite 3.44+"
+                    )
                 # MongoDB: { $sortArray: { input: <array>, sortBy: <spec> } }
                 # where <spec> is { <field>: <dir> }, 1, or -1.
                 if not isinstance(operands, dict):
@@ -389,6 +406,11 @@ class ArrayMixin(BaseSqlMixin):
         variable mechanism to substitute $$var references with the current
         element column (\"value\") in the SQL expression.
         """
+        if not supports_aggregate_order_by():
+            raise NotImplementedError(
+                "JSON aggregate ORDER BY requires SQLite 3.44+; "
+                "use the Python tier"
+            )
         if not isinstance(operands, dict):
             raise ValueError(f"{operator} requires a dictionary")
 
@@ -566,6 +588,11 @@ class ArrayMixin(BaseSqlMixin):
         self, operands: Any, direction: str
     ) -> tuple[str, list[Any]]:
         """Convert $maxN / $minN to SQL (shared implementation)."""
+        if not supports_aggregate_order_by():
+            raise NotImplementedError(
+                "JSON aggregate ORDER BY requires SQLite 3.44+; "
+                "use the Python tier"
+            )
         if isinstance(operands, dict):
             array_operand = operands.get("input")
             n_operand = operands.get("n")

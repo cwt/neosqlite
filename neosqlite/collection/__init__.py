@@ -347,7 +347,7 @@ class Collection:
             self.db.execute(f"""
                 CREATE TABLE IF NOT EXISTS {quote_table_name(self.name)} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    _id TEXT,
+                    _id BLOB,
                     data TEXT NOT NULL
                     {check_clause}
                 )
@@ -379,7 +379,7 @@ class Collection:
                     )
                 else:
                     self.db.execute(
-                        f"ALTER TABLE {quote_table_name(self.name)} ADD COLUMN _id TEXT"
+                        f"ALTER TABLE {quote_table_name(self.name)} ADD COLUMN _id BLOB"
                     )
                 # Create unique index on _id column for faster lookups
                 create_unique_index_on_id(self.db, self.name)

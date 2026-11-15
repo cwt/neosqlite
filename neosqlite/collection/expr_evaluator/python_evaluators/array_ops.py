@@ -226,10 +226,10 @@ class ArrayPythonMixin(BasePythonMixin):
                     return []
                 if not isinstance(n, (int, float)) or isinstance(n, bool):
                     raise ValueError("$firstN requires a numeric n")
-                if n <= 0:
-                    # MongoDB errors on non-positive n; $lastN already does
-                    raise ValueError("$firstN requires a positive n")
-                return array[: int(n)]
+                n_int = int(n)
+                if n_int <= 0:
+                    return []
+                return array[:n_int]
             case "$lastN":
                 # Get last N elements from array
                 # MongoDB syntax: { $lastN: { input: <array>, n: <number> } }

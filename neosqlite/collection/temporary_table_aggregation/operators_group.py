@@ -485,9 +485,16 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         # For grouped results, we need to properly construct the output
         # The _id field should be the group key, and other fields are accumulators
         # We'll create a JSON object with all the fields
+        aliases = self._select_aliases(select_parts)
         json_args = ", ".join(
-            f"'{alias}', {alias}"
-            for alias in self._select_aliases(select_parts)
+            (
+                f"'{alias}', CASE WHEN json_valid({alias}) THEN "
+                f"CASE WHEN json_type({alias}) IN ('array', 'object') "
+                f"THEN json({alias}) ELSE {alias} END ELSE {alias} END"
+                if alias == "_id" or alias in array_fields
+                else f"'{alias}', {alias}"
+            )
+            for alias in aliases
         )
         json_object_func = f"{self.jsonb.json_function_prefix}_object"
         # Wrap with json() to ensure text output for Python consumption

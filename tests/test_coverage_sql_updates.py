@@ -14,6 +14,9 @@ from neosqlite.collection.query_helper._sql_updates import (
     _je_preserved_value_expr,
     _wrap_single_eval,
 )
+from neosqlite.collection.query_helper.utils import (
+    _supports_relative_json_indexing,
+)
 from neosqlite.objectid import ObjectId
 
 
@@ -183,6 +186,10 @@ class TestSqlUpdateModuleHelpers:
 class TestLegacyAndDirectSqlUpdateMethods:
     """Cover _can_use_sql_updates, _perform_sql_update, _perform_enhanced_sql_update, clauses & validators."""
 
+    @pytest.mark.skipif(
+        not _supports_relative_json_indexing(),
+        reason="SQL JSON append paths require SQLite 3.42+",
+    )
     def test_can_use_sql_updates_and_clauses(self):
         with neosqlite.Connection(":memory:") as conn:
             coll = conn.items
@@ -278,6 +285,10 @@ class TestLegacyAndDirectSqlUpdateMethods:
                 )
                 assert b_clauses and b_params
 
+    @pytest.mark.skipif(
+        not _supports_relative_json_indexing(),
+        reason="SQL JSON append paths require SQLite 3.42+",
+    )
     def test_perform_enhanced_and_standard_sql_update_and_inc_mul_validation(
         self,
     ):
