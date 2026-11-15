@@ -6,8 +6,8 @@ tags:
   - index
   - releases
   - changelog
-timestamp: 2026-11-12T00:00:00Z
-version: "1.18.0"
+timestamp: 2026-11-16T00:00:00Z
+version: "1.18.1"
 lifecycle: active
 ---
 
@@ -19,7 +19,8 @@ This directory contains individual release notes and detailed changelogs for eac
 
 | Version | Release Date | Highlights & Summary |
 | :--- | :--- | :--- |
-| [v1.18.0](./v1.18.0.md) | 2026-11-14 | NeoSQLite v1.18.0 is a cumulative correctness, SQL-tier parity, SQLite 3.26–3.54 compatibility (including `_id BLOB` affinity and `neosqlite-migration`), and Python 3.12 modernization release rolling up all changes since v1.17.4, raising the minimum runtime to Python 3.12, and fixing optional-dependency metadata. |
+| [v1.18.1](./v1.18.1.md) | 2026-11-16 | NeoSQLite v1.18.1 is a cumulative correctness, SQL-tier parity, SQLite 3.26–3.54 compatibility (including `_id BLOB` affinity and `neosqlite-migration`), and Python 3.12 modernization release rolling up all changes since v1.17.4, raising the minimum runtime to Python 3.12, and fixing optional-dependency metadata. Supersedes unpublished v1.18.0. |
+| [v1.18.0](./v1.18.0.md) | 2026-11-14 | NeoSQLite v1.18.0 is a cumulative correctness, SQL-tier parity, and Python 3.12 modernization release rolling up all changes since v1.17.4, raising the minimum runtime to Python 3.12, and fixing optional-dependency metadata. Tagged but never published on PyPI. |
 | [v1.17.4](./v1.17.4.md) | 2026-11-12 | NeoSQLite v1.17.4 is a critical correctness and SQLite engine compatibility release resolving scalar subquery JSON subtype loss in SQLite >= 3.54, eliminating connection ResourceWarnings, and ensuring seamless operation across both modern and legacy SQLite versions. |
 | [v1.17.3](./v1.17.3.md) | 2026-11-11 | NeoSQLite v1.17.3 is a major correctness, MongoDB parity, and runtime compatibility release delivering full MongoDB semantics for $ne: null, $exists, existential array comparisons, cross-type query operators, and $expr BSON type ordering, alongside NX-27017 GridFS aggregation support and official Python 3.15 compatibility. |
 | [v1.17.2](./v1.17.2.md) | 2026-10-14 | NeoSQLite v1.17.2 is a correctness and PyMongo API parity release delivering native FTS5 BM25 text relevance scoring in find(), multi-field text index creation, fluent GridFS cursor pagination and sorting, direct Connection support in GridFSBucket, and 100% differential API compatibility. |

@@ -1199,7 +1199,7 @@ description = "DB-API 2.0 interface for Sqlite 3.x"
 optional = true
 python-versions = "*"
 groups = ["main"]
-markers = "python_version < \"3.15\" and extra == \"jsonb\""
+markers = "sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_version < \"3.14\" and extra == \"jsonb\""
 files = [
     {file = "pysqlite3_binary-0.5.4.post2-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:7f8171c8dd11dfc6fe5321394903782df9610f51d457a3ebe8c972c0bc4606fb"},
     {file = "pysqlite3_binary-0.5.4.post2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:3060a56666ede382c9af3e4b086e30c9ffb65133b3fa606c2d1b9fbff512f241"},
@@ -1697,4 +1697,4 @@ nx27017-speed = ["nx-27017", "pymongo", "uvloop"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12, <3.16"
-content-hash = "5b2fad6680584cff1e56979a5f0e27600aa6be8155d3084a4d8f73a6af55e0a2"
+content-hash = "b19fa45797776331763b474ebe4df3489ca481e8c86da90d0705a36841de3b05"

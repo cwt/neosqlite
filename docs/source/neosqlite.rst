@@ -24,6 +24,7 @@ Submodules
    neosqlite.exceptions
    neosqlite.index_model
    neosqlite.migration
+   neosqlite.migration_cli
    neosqlite.objectid
    neosqlite.options
    neosqlite.query_operators

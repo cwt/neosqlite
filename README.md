@@ -38,9 +38,9 @@
 
 See [Release Notes](documents/releases/) for the full history.
 
-## Latest Release: v1.18.0
+## Latest Release: v1.18.1
 
-NeoSQLite v1.18.0 is a **cumulative correctness, SQL-tier parity, and runtime modernization release**. It rolls up every change since v1.17.4 and raises the minimum supported Python version to **3.12**.
+NeoSQLite v1.18.1 is a **cumulative correctness, SQL-tier parity, SQLite 3.26–3.54 compatibility, and runtime modernization release**. It rolls up every change since v1.17.4 and raises the minimum supported Python version to **3.12**.
 
 **Key Highlights:**
 - **Cumulative Fixes Since v1.17.4** — Complete kill-switch coverage, Tier-1/Tier-2 SQL parity hardening, expanded Tier-3 promotion, CRUD/write parity, and coverage-driven bug fixes across aggregation, queries, cursors, and writes.
@@ -51,7 +51,7 @@ NeoSQLite v1.18.0 is a **cumulative correctness, SQL-tier parity, and runtime mo
 - **Packaging Fixes** — `pymongo` and `uvloop` are declared by the correct extras, and `pysqlite3-binary` is conditional on Python `< 3.15`.
 - **Verification** — 3,122 tests pass (83.64% coverage) on macOS Python 3.14.10 / SQLite 3.54.1, and 3,099 pass with 23 skips (80.98% coverage) on AlmaLinux 8 Python 3.12.15 / SQLite 3.26.0. The NX-27017 suite passes 180 tests with 1 skip on both platforms.
 
-This release is **not backward compatible for Python 3.10/3.11 users**; stay on v1.17.4 for those interpreters. For full details, see [documents/releases/v1.18.0.md](documents/releases/v1.18.0.md). Previous release highlights are in [documents/releases/v1.17.4.md](documents/releases/v1.17.4.md).
+This release is **not backward compatible for Python 3.10/3.11 users**; stay on v1.17.4 for those interpreters. v1.18.0 was tagged but never published on PyPI; v1.18.1 supersedes it. For full details, see [documents/releases/v1.18.1.md](documents/releases/v1.18.1.md). Previous release highlights are in [documents/releases/v1.17.4.md](documents/releases/v1.17.4.md).
 
 ## Installation
 
@@ -79,8 +79,10 @@ pip install "neosqlite[nx27017]"          # Core
 pip install "neosqlite[nx27017-speed]"    # With uvloop (Linux/macOS)
 ```
 
-> On Python 3.15 the `jsonb` extra installs no additional SQLite driver; the
-> standard library SQLite already provides JSONB support.
+> The `jsonb` extra installs `pysqlite3-binary` only on Linux x86_64 with
+> Python `< 3.14`, where upstream publishes `manylinux_x86_64` wheels
+> (cp312-cp313). On Python 3.14/3.15, macOS, Windows, or ARM the extra
+> installs no additional driver; the standard library SQLite is used.
 
 ### Migrating legacy `_id TEXT` databases
 

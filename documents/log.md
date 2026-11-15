@@ -6,14 +6,26 @@ tags:
   - log
   - bundle
   - changelog
-timestamp: 2026-11-14T10:48:46Z
-version: "1.18.0"
+timestamp: 2026-11-16T00:00:00Z
+version: "1.18.1"
 lifecycle: active
 ---
 
 # NeoSQLite Knowledge Base Bundle Log
 
 This document records the chronological history of structural changes, additions, deprecations, and refactoring operations performed on the NeoSQLite Open Knowledge Format (OKF) bundle.
+
+---
+
+## 2026-11-16 — Release v1.18.1 (supersedes unpublished v1.18.0)
+
+### Summary
+Promote the post-v1.18.0 regression and AlmaLinux 8 verification fixes to v1.18.1 for PyPI publication. v1.18.0 was tagged but never published.
+
+### Key Modifications
+1. **Reverted `releases/v1.18.0.md`** to its tag origin (cumulative fixes since v1.17.4, Python 3.12 minimum, 3,100 / 3,090 + 10 skipped verification).
+2. **Added `releases/v1.18.1.md`** containing everything from v1.18.0 plus SQLite 3.26–3.54 compatibility, `_id BLOB` affinity, `neosqlite-migration` CLI, JSONB centralization, Tier-2 `$$CURRENT`/`$project`/`$lookup`/window fixes, and updated verification (3,122 passed / 3,099 + 23 skipped).
+3. **Bumped `pyproject.toml` to `1.18.1`**, updated `README.md` latest-release section, `releases/index.md`, and OKF frontmatter versions to `1.18.1`.
 
 ---
 

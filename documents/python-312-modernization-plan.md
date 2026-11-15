@@ -11,7 +11,7 @@ tags:
 generated:
   by: antigravity
   at: 2026-11-14T10:48:46Z
-version: "1.18.0"
+version: "1.18.1"
 lifecycle: completed
 status: stable
 sources:
