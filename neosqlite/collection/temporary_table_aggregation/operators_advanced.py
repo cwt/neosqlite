@@ -232,9 +232,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
         # Extract input documents from current temp table
         # IMPORTANT: _id is stored as a separate column, not in the data JSON
         data_col = self.jsonb.data_column()
-        cursor = self.db.execute(
-            f"SELECT _id, {data_col} FROM {current_table}"
-        )
+        cursor = self.db.execute(f"SELECT _id, {data_col} FROM {current_table}")
 
         input_docs = []
         skipped_count = 0

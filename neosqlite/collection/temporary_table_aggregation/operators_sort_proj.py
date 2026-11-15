@@ -345,9 +345,7 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
         select_clause = "id"
         if has_underscore_id:
             select_clause += ", _id"
-        select_clause += (
-            f", {self.jsonb.data_column()} AS data"
-        )
+        select_clause += f", {self.jsonb.data_column()} AS data"
 
         cursor = self.db.execute(f"SELECT {select_clause} FROM {current_table}")
         rows = cursor.fetchall()
@@ -526,9 +524,7 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
         else:
             data_expr = "data"
 
-        select_cols.append(
-            f"{self.jsonb.data_column(data_expr)} AS data"
-        )
+        select_cols.append(f"{self.jsonb.data_column(data_expr)} AS data")
 
         sql = f"SELECT {', '.join(select_cols)} FROM {current_table}"
         project_stage = {"$project": project_spec}
