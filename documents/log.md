@@ -35,6 +35,7 @@ Fixed the failures seen when running the suite on AlmaLinux 8 with Python 3.12 a
    - Wrap JSON array aggregates before embedding them in `$group` output and preserve array/object group keys.
    - Fall back from `INDEXED BY` / `EXPLAIN QUERY PLAN` when SQLite reports `no query solution`.
 4. **Test runner**: `scripts/runtest.sh` now installs the local NeoSQLite tree plus `pytest`, `pytest-asyncio`, `pytest-cov`, and `pytest-xdist` in the nx-27017 Poetry environment.
+5. **Migration CLI**: Added the `neosqlite-migration` console script to copy a database to a new file and rebuild legacy `_id TEXT` collection tables with `_id BLOB`, recovering integer/string/float/ObjectId values from the document JSON while preserving indexes and triggers.
 
 ### Verification
 - AlmaLinux 8 (SQLite 3.26.0, Python 3.12.15, source-built pysqlite3): **3,068 passed, 32 skipped** with 80.70% coverage; nx-27017 **180 passed, 1 skipped**.

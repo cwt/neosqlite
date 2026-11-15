@@ -37,6 +37,9 @@ memory-constrained = ["quez"]
 nx27017 = ["pymongo", "nx-27017"]
 nx27017_speed = ["pymongo", "nx-27017", "uvloop"]
 
+[tool.poetry.scripts]
+neosqlite-migration = "neosqlite.migration_cli:main"
+
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.1.1"
 pytest-cov = "^7.1"

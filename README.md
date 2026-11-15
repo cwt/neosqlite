@@ -81,6 +81,23 @@ pip install "neosqlite[nx27017-speed]"    # With uvloop (Linux/macOS)
 > On Python 3.15 the `jsonb` extra installs no additional SQLite driver; the
 > standard library SQLite already provides JSONB support.
 
+### Migrating legacy `_id TEXT` databases
+
+Databases created by NeoSQLite 1.17.4 and earlier on non-JSONB SQLite store
+`_id` values in a `TEXT` column. That loses the distinction between values such
+as integer `1` and string `"1"`. The migration command copies the database to a
+new file and rebuilds those collection tables with `_id BLOB`:
+
+```bash
+neosqlite-migration old.db new.db
+```
+
+The source file is never modified. Use `--dry-run` to list affected tables,
+and `--overwrite` to replace an existing destination atomically. After the
+migration succeeds, point the application at `new.db`. The command preserves
+collection indexes and triggers; tables with foreign keys, extra columns, or
+non-standard schemas are left untouched.
+
 ## Quickstart
 
 ```python
