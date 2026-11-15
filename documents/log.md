@@ -37,10 +37,14 @@ Fixed the failures seen when running the suite on AlmaLinux 8 with Python 3.12 a
 4. **Test runner**: `scripts/runtest.sh` now installs the local NeoSQLite tree plus `pytest`, `pytest-asyncio`, `pytest-cov`, and `pytest-xdist` in the nx-27017 Poetry environment.
 5. **Migration CLI**: Added the `neosqlite-migration` console script to copy a database to a new file and rebuild legacy `_id TEXT` collection tables with `_id BLOB`, recovering integer/string/float/ObjectId values from the document JSON while preserving indexes and triggers.
 
+6. **Post-tag SQLite 3.26 / 3.54 & SQL-tier regression fixes (2026-11-16)**:
+   - Completed `_id BLOB` / float / int / bool / bytes fallback resolution across CRUD, cursors, raw batches, temp-table `$lookup`, and `neosqlite-migration`.
+   - Fixed SQLite 3.54 JSON subtype wrapping in `$bucket`/`$bucketAuto`, `$group` (`json_valid(_id, 4)`), `_ranked_group_query`, and SQL updates; avoided ephemeral sorter subtype stripping in SQLite 3.26 `$arrayElemAt`/`$last`; and reduced nested positional `$[]`/`$[id]` SQL parser depth so SQLite 3.26.0 does not hit parser stack overflow.
+   - Gated numeric `RANGE` window frames on SQLite >= 3.28.0 and fixed SQL/Python tier regressions across array containment, `$jsonSchema`, `$addFields` Stage-0 `root_data`, `$project` dotted paths & `$$ROOT`/`$$CURRENT`, `$lookup`, `$setWindowFields`, `$graphLookup`, `$fill` `partitionByFields`, `$redact`, and `$min`/`$max`/`$rename` updates.
+
 ### Verification
-- AlmaLinux 8 (SQLite 3.26.0, Python 3.12.15, source-built pysqlite3): **3,068 passed, 32 skipped** with 80.70% coverage; nx-27017 **180 passed, 1 skipped**.
-- AlmaLinux 8 stdlib SQLite 3.26.0 via `runtest.sh`: **3,078 passed, 22 skipped**, 80.68% coverage.
-- macOS Python 3.14.10 / SQLite 3.54.1: **3,100 passed**; Python 3.12.14 and 3.15.2: **3,090 passed, 10 skipped**.
+- AlmaLinux 8 container (`python3.12-devel`, venv + poetry, SQLite 3.26.0, Python 3.12.15 via `runtest.sh`): **3,099 passed, 23 skipped** with **80.98%** coverage; nx-27017 **180 passed, 1 skipped**.
+- macOS Python 3.14.10 / SQLite 3.54.1 via `runtest.sh`: **3,122 passed** with **83.64%** coverage; nx-27017 **180 passed, 1 skipped**.
 - Ruff, mypy, and Black clean.
 
 ## 2026-11-14 — Release v1.18.0 / nx-27017 v0.9.0

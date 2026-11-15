@@ -44,11 +44,12 @@ NeoSQLite v1.18.0 is a **cumulative correctness, SQL-tier parity, and runtime mo
 
 **Key Highlights:**
 - **Cumulative Fixes Since v1.17.4** — Complete kill-switch coverage, Tier-1/Tier-2 SQL parity hardening, expanded Tier-3 promotion, CRUD/write parity, and coverage-driven bug fixes across aggregation, queries, cursors, and writes.
+- **SQLite 3.26–3.54 Compatibility & Migration** — Preserves scalar `_id` types via `BLOB` affinity (plus `neosqlite-migration` for legacy `_id TEXT` collections), maintains SQLite 3.26 compatibility (AlmaLinux/RHEL 8), and preserves JSON subtypes on SQLite 3.54+.
 - **Python 3.12 Minimum** — Python 3.10 and 3.11 are no longer supported. `nx-27017` v0.9.0 follows the same runtime floor.
 - **Python 3.11/3.12 Adoption** — Native `Z` parsing, `datetime.UTC`, `itertools.batched()`, `math.sumprod()`, `asyncio.run(..., loop_factory=...)`, `typing.Self`, `@override`, PEP 695 `type` aliases, PEP 701 f-strings, and `slots=True`.
 - **Hardening** — Removed the deprecated `sqlite3.version` report from `serverStatus`, finished fluent-typing coverage, hoisted hot-path imports, and now enforce Python 3.12 Ruff rules.
 - **Packaging Fixes** — `pymongo` and `uvloop` are declared by the correct extras, and `pysqlite3-binary` is conditional on Python `< 3.15`.
-- **Verification** — 3,100 tests pass on Python 3.14.10; 3,090 pass with 10 optional-Quez skips on Python 3.12.14 and 3.15.2. The NX-27017 suite passes 180 tests with 1 skip.
+- **Verification** — 3,122 tests pass (83.64% coverage) on macOS Python 3.14.10 / SQLite 3.54.1, and 3,099 pass with 23 skips (80.98% coverage) on AlmaLinux 8 Python 3.12.15 / SQLite 3.26.0. The NX-27017 suite passes 180 tests with 1 skip on both platforms.
 
 This release is **not backward compatible for Python 3.10/3.11 users**; stay on v1.17.4 for those interpreters. For full details, see [documents/releases/v1.18.0.md](documents/releases/v1.18.0.md). Previous release highlights are in [documents/releases/v1.17.4.md](documents/releases/v1.17.4.md).
 
