@@ -17,18 +17,34 @@ def process_fill(
     Python fallback implementation of $fill.
     """
     partition_by = spec.get("partitionBy")
+    partition_by_fields = spec.get("partitionByFields")
     sort_by = spec.get("sortBy", {})
     output = spec.get("output", {})
 
     # 1. Partitioning
     partitions: dict[Any, list[int]] = {}
     for i, dc in enumerate(docs_with_context):
-        if partition_by is None:
-            key = None
-        else:
-            key = evaluator._evaluate_operand_python(
-                partition_by, dc["__doc__"]
+        doc = dc["__doc__"]
+        key: Any
+        if partition_by is None and partition_by_fields is not None:
+            key = tuple(
+                str(v) if isinstance(v := collection._get_val(doc, f.lstrip("$")), (dict, list)) else v
+                for f in partition_by_fields
             )
+        elif partition_by is None:
+            key = None
+        elif isinstance(partition_by, dict) and not any(
+            k.startswith("$") for k in partition_by
+        ):
+            parts = []
+            for v_expr in partition_by.values():
+                pv = evaluator._evaluate_operand_python(v_expr, doc)
+                if isinstance(pv, (dict, list)):
+                    pv = str(pv)
+                parts.append(pv)
+            key = tuple(parts)
+        else:
+            key = evaluator._evaluate_operand_python(partition_by, doc)
             if isinstance(key, (dict, list)):
                 key = str(key)
 

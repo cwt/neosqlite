@@ -238,15 +238,19 @@ def _compile_query_type_check(
                 arms.append(f"{type_expr} = 'null'")
             case "object":
                 if val_expr_override is not None:
+                    safe_obj = (
+                        f"(CASE WHEN {type_expr} = 'object' "
+                        f"THEN {val_expr_override} ELSE NULL END)"
+                    )
                     oid_ext = (
-                        f"json_extract({val_expr_override}, "
+                        f"json_extract({safe_obj}, "
                         f"'$.__neosqlite_objectid__')"
                     )
                     bin_ext = (
-                        f"json_extract({val_expr_override}, "
+                        f"json_extract({safe_obj}, "
                         f"'$.__neosqlite_binary__')"
                     )
-                    date_tp = f"json_type({val_expr_override}, '$.$date')"
+                    date_tp = f"json_type({safe_obj}, '$.$date')"
                 else:
                     prefix = safe_path
                     oid_ext = (
@@ -259,15 +263,19 @@ def _compile_query_type_check(
                     )
                     date_tp = f"json_type({data_expr}, '{prefix}.$date')"
                 arms.append(
-                    f"({type_expr} = 'object' AND "
-                    f"COALESCE({oid_ext}, 0) != 1 AND "
+                    f"(CASE WHEN {type_expr} = 'object' THEN "
+                    f"(COALESCE({oid_ext}, 0) != 1 AND "
                     f"COALESCE({bin_ext}, 0) != 1 AND "
-                    f"{date_tp} IS NULL)"
+                    f"{date_tp} IS NULL) ELSE 0 END)"
                 )
             case "objectId":
                 if val_expr_override is not None:
+                    safe_obj = (
+                        f"(CASE WHEN {type_expr} = 'object' "
+                        f"THEN {val_expr_override} ELSE NULL END)"
+                    )
                     oid_ext = (
-                        f"json_extract({val_expr_override}, "
+                        f"json_extract({safe_obj}, "
                         f"'$.__neosqlite_objectid__')"
                     )
                     text_val = val_expr_override
@@ -279,9 +287,10 @@ def _compile_query_type_check(
                     )
                     text_val = f"json_extract({data_expr}, '{safe_path}')"
                 arms.append(
-                    f"(({type_expr} = 'object' AND {oid_ext} = 1) OR "
-                    f"({type_expr} = 'text' AND length({text_val}) = 24 AND "
-                    f"{text_val} REGEXP '^[0-9a-fA-F]{{24}}$'))"
+                    f"(CASE WHEN {type_expr} = 'object' THEN ({oid_ext} = 1) "
+                    f"WHEN {type_expr} = 'text' THEN "
+                    f"(length({text_val}) = 24 AND "
+                    f"{text_val} REGEXP '^[0-9a-fA-F]{{24}}$') ELSE 0 END)"
                 )
             case _:
                 return None
@@ -478,7 +487,7 @@ def _compile_query_node(
             if isinstance(bound, bool) or not isinstance(bound, int):
                 return None
             clauses.append(
-                f"(CASE WHEN {type_expr} = 'array' THEN json_array_length({val_expr}) {sql_op} ? ELSE 1 END)"
+                f"(CASE WHEN {type_expr} = 'array' THEN json_array_length(CASE WHEN {type_expr} = 'array' THEN {val_expr} ELSE NULL END) {sql_op} ? ELSE 1 END)"
             )
             params.append(bound)
 
@@ -489,7 +498,7 @@ def _compile_query_node(
             aux_counter[0] += 1
             compiled_item = _compile_query_node(
                 items_schema,
-                f"{alias}.value",
+                f"(CASE WHEN {alias}.type IN ('object', 'array') THEN {alias}.value ELSE NULL END)",
                 "$",
                 "json_extract",
                 each_func,
@@ -503,7 +512,7 @@ def _compile_query_node(
             item_sql, item_params = compiled_item
             if item_sql != "1":
                 each_source = (
-                    f"{each_func}({val_override})"
+                    f"{each_func}((CASE WHEN {type_expr} = 'array' THEN {val_override} ELSE '[]' END))"
                     if (val_override is not None and path == "$")
                     else f"{each_func}({data_expr}, '{safe_path}')"
                 )

@@ -2075,7 +2075,12 @@ class SqlUpdatesMixin:
 
             if op != "$set":
                 for field in value:
-                    if not field or "$" in field or field == "_id":
+                    if (
+                        not isinstance(field, str)
+                        or not field
+                        or "$" in field
+                        or field == "_id"
+                    ):
                         return None
 
             match op:
@@ -2151,18 +2156,29 @@ class SqlUpdatesMixin:
                         ):
                             return None
                         jp = f"'{parse_json_path(field)}'"
+                        allowed_types = (
+                            "('integer', 'real')"
+                            if _is_numeric_value(field_val)
+                            else "('text')"
+                        )
 
                         def _cmp_body(
                             src: str,
                             p: str = jp,
                             f_name: str = fn,
                             val: Any = field_val,
+                            types_sql: str = allowed_types,
                         ) -> tuple[str, list[Any]]:
                             ext = f"{extract_func}({src}, {p})"
+                            preserved = _extract_preserved_json_expr(
+                                extract_func, src, p
+                            )
                             val_expr = (
                                 f"CASE WHEN json_type({src}, {p}) IS NULL "
                                 f"OR json_type({src}, {p}) = 'null' THEN ? "
-                                f"ELSE {f_name}({ext}, ?) END"
+                                f"WHEN json_type({src}, {p}) IN {types_sql} "
+                                f"THEN {f_name}({ext}, ?) "
+                                f"ELSE {preserved} END"
                             )
                             return f"{set_func}({src}, {p}, {val_expr})", [
                                 val,
@@ -2214,7 +2230,12 @@ class SqlUpdatesMixin:
 
                 case "$rename":
                     for old_field, new_field in value.items():
-                        if not new_field or "$" in new_field:
+                        if (
+                            not isinstance(new_field, str)
+                            or not new_field
+                            or "$" in new_field
+                            or new_field == "_id"
+                        ):
                             return None
                         if old_field == new_field:
                             continue
@@ -2228,8 +2249,8 @@ class SqlUpdatesMixin:
                                 extract_func, src, op_p
                             )
                             renamed = (
-                                f"{remove_func}({set_func}({src}, {np_p}, "
-                                f"{preserved}), {op_p})"
+                                f"{set_func}({remove_func}({src}, {op_p}), "
+                                f"{np_p}, {preserved})"
                             )
                             return (
                                 f"CASE WHEN json_type({src}, {op_p}) IS NOT NULL "

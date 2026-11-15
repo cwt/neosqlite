@@ -397,7 +397,9 @@ class StageBuildersMixin:
             case "$redact":
                 return self._build_redact_sql(stage_spec, prev_stage, context)
             case "$lookup":
-                return self._build_lookup_sql(stage_spec, prev_stage, context)
+                return self._build_lookup_sql(
+                    stage_spec, prev_stage, context, preserve_root
+                )
             case "$merge":
                 return self._build_merge_sql(stage_spec, prev_stage, context)
             case "$densify":
@@ -418,10 +420,22 @@ class StageBuildersMixin:
             if _is_aggregation_variable(expr):
                 json_set_func = self._get_json_set()
                 if expr == "$$CURRENT":
-                    expr_sql = f"json({json_set_func}(data, '$._id', _id))"
+                    expr_sql = (
+                        f"json(CASE WHEN json_type(data, '$._id') IS NOT NULL "
+                        f"OR _id IS NULL THEN data "
+                        f"ELSE {json_set_func}(data, '$._id', _id) END)"
+                    )
                 elif expr == "$$ROOT":
-                    context.preserve_root()
-                    expr_sql = f"json({json_set_func}(root_data, '$._id', _id))"
+                    root_source = (
+                        "root_data"
+                        if (context.has_root and not preserve_root)
+                        else "data"
+                    )
+                    expr_sql = (
+                        f"json(CASE WHEN json_type({root_source}, '$._id') IS NOT NULL "
+                        f"OR _id IS NULL THEN {root_source} "
+                        f"ELSE {json_set_func}({root_source}, '$._id', _id) END)"
+                    )
                 else:
                     return None, []
             else:
@@ -451,6 +465,8 @@ class StageBuildersMixin:
         return f"SELECT {', '.join(select_parts)} FROM {prev_stage}", all_params
 
     def _build_project_sql(self, spec, prev_stage, context, preserve_root):
+        if any("." in k for k in spec if k != "_id"):
+            return None, []
         all_params = []
         select_parts = ["id"]
 
@@ -510,6 +526,23 @@ class StageBuildersMixin:
                     json_parts.append(f"'{field}'")
                     json_parts.append(expr_sql)
                     context.add_computed_field(field, expr_sql)
+                elif value in ("$$ROOT", "$$CURRENT"):
+                    json_set_func = self._get_json_set()
+                    src_col = (
+                        "root_data"
+                        if (
+                            value == "$$ROOT"
+                            and context.has_root
+                            and not preserve_root
+                        )
+                        else "data"
+                    )
+                    json_parts.append(f"'{field}'")
+                    json_parts.append(
+                        f"json(CASE WHEN json_type({src_col}, '$._id') IS NOT NULL "
+                        f"OR _id IS NULL THEN {src_col} "
+                        f"ELSE {json_set_func}({src_col}, '$._id', _id) END)"
+                    )
                 elif isinstance(value, str) and value.startswith("$"):
                     source_field = value[1:]
                     if source_field == "_id":
@@ -845,7 +878,9 @@ class StageBuildersMixin:
             sql = f"{sql} {where_clause}"
         return sql, expr_params
 
-    def _build_lookup_sql(self, spec, prev_stage, context):
+    def _build_lookup_sql(
+        self, spec, prev_stage, context, preserve_root: bool = False
+    ):
         from ..sql_utils import quote_table_name
 
         from_coll = spec.get("from")
@@ -893,21 +928,24 @@ class StageBuildersMixin:
             )
 
             joined_data_expr = f"""
-                (SELECT json_group_array(
+                COALESCE((SELECT json_group_array(
                     json(CASE
                         WHEN json_type(pipeline_result.data, '$._id') IS NOT NULL
+                            OR pipeline_result._id IS NULL
                         THEN pipeline_result.data
-                        ELSE json_set(pipeline_result.data, '$._id', pipeline_result._id)
+                        ELSE {json_set_func}(pipeline_result.data, '$._id', pipeline_result._id)
                     END)
                  )
                  FROM ({pipeline_sql}) AS pipeline_result
-                 WHERE {foreign_expr} = {local_expr})
+                 WHERE {foreign_expr} = {local_expr}), '[]')
             """
 
             data_expr = f"json({json_set_func}(t1.data, '{parse_json_path(as_field)}', json({joined_data_expr})))"
 
             select_parts = ["t1.id", "t1._id", f"{data_expr} AS data"]
-            if context.has_root:
+            if preserve_root:
+                select_parts.append("t1.data AS root_data")
+            elif context.has_root:
                 select_parts.append("t1.root_data")
 
             sql = f"""
@@ -936,16 +974,18 @@ class StageBuildersMixin:
 
         if _check_sqlite_version("3.30.0"):
             joined_data_expr = (
-                f"json_group_array("
+                f"COALESCE(json_group_array("
                 f"json(CASE "
-                f"WHEN json_type(t2.data, '$._id') IS NOT NULL THEN t2.data "
+                f"WHEN json_type(t2.data, '$._id') IS NOT NULL OR t2._id IS NULL THEN t2.data "
                 f"ELSE {json_set_func}(t2.data, '$._id', t2._id) END)"
-                f") FILTER (WHERE t2.id IS NOT NULL)"
+                f") FILTER (WHERE t2.id IS NOT NULL), '[]')"
             )
             data_expr = f"json({json_set_func}(t1.data, '{parse_json_path(as_field)}', json({joined_data_expr})))"
 
             select_parts = ["t1.id", "t1._id", f"{data_expr} AS data"]
-            if context.has_root:
+            if preserve_root:
+                select_parts.append("t1.data AS root_data")
+            elif context.has_root:
                 select_parts.append("t1.root_data")
 
             sql = f"""
@@ -959,17 +999,19 @@ class StageBuildersMixin:
         # SQLite < 3.30 has no aggregate FILTER clause. A correlated
         # subquery naturally excludes non-matching rows and is equivalent.
         joined_data_expr = (
-            f"(SELECT json_group_array("
+            f"COALESCE((SELECT json_group_array("
             f"json(CASE "
-            f"WHEN json_type(t2.data, '$._id') IS NOT NULL THEN t2.data "
+            f"WHEN json_type(t2.data, '$._id') IS NOT NULL OR t2._id IS NULL THEN t2.data "
             f"ELSE {json_set_func}(t2.data, '$._id', t2._id) END)"
             f") FROM {quote_table_name(from_coll)} AS t2 "
-            f"WHERE {local_expr} = {foreign_expr})"
+            f"WHERE {local_expr} = {foreign_expr}), '[]')"
         )
         data_expr = f"json({json_set_func}(t1.data, '{parse_json_path(as_field)}', json({joined_data_expr})))"
 
         select_parts = ["t1.id", "t1._id", f"{data_expr} AS data"]
-        if context.has_root:
+        if preserve_root:
+            select_parts.append("t1.data AS root_data")
+        elif context.has_root:
             select_parts.append("t1.root_data")
 
         sql = f"""
@@ -1558,6 +1600,11 @@ class StageBuildersMixin:
         all_params = []
         partition_clause = ""
         if partition_by:
+            if isinstance(partition_by, dict) and not (
+                len(partition_by) == 1
+                and next(iter(partition_by)).startswith("$")
+            ):
+                return None, []
             expr_sql, expr_params = self.evaluator.build_select_expression(
                 partition_by
             )
@@ -1585,6 +1632,8 @@ class StageBuildersMixin:
 
         json_set_args = []
         for i, (field, window_op) in enumerate(output.items()):
+            if "window" in window_op or len(window_op) != 1:
+                return None, []
             op_name, op_spec = next(iter(window_op.items()))
             sql_func = self._map_window_op_to_sql(op_name)
             if not sql_func:
@@ -1651,7 +1700,6 @@ class StageBuildersMixin:
         src_cols = (
             "id, _id, data, root_data" if context.has_root else "id, _id, data"
         )
-        context.add_pre_cte(src_cte, f"SELECT {src_cols} FROM {prev_stage}", [])
 
         parts = build_graph_lookup_parts(
             self.collection,
@@ -1665,6 +1713,7 @@ class StageBuildersMixin:
             return None, []
 
         recurse_sql, select_sql, rec_params = parts
+        context.add_pre_cte(src_cte, f"SELECT {src_cols} FROM {prev_stage}", [])
         context.add_pre_cte(rec_cte, recurse_sql, rec_params)
         context.mark_recursive()
         return select_sql, []

@@ -1006,6 +1006,16 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
     ) -> str:
         """Process $fill stage including constant value, locf, and linear interpolation."""
         partition_by = spec.get("partitionBy")
+        partition_by_fields = spec.get("partitionByFields")
+        if partition_by is None and partition_by_fields is not None:
+            if not isinstance(partition_by_fields, list) or not all(
+                isinstance(f, str) for f in partition_by_fields
+            ):
+                raise NotImplementedError("Invalid partitionByFields in $fill")
+            partition_by = {
+                f"f{i}": f"${f.lstrip('$')}"
+                for i, f in enumerate(partition_by_fields)
+            }
         sort_by: dict[str, int] = spec.get("sortBy", {})
         output: dict[str, Any] = spec.get("output", {})
         if not output:

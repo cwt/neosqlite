@@ -1219,3 +1219,236 @@ class TestStep2Sqlite354And326Fixes:
             ],
             "tier3",
         )
+
+
+class TestStep3SqlTierRegressions:
+    """Regression tests for Step 3 SQL-tier fixes and Tier-3 parity."""
+
+    def test_containment_and_schema_items_mixed_scalar_elements(self, conn):
+        coll = conn.mixed_arr
+        coll.insert_many(
+            [
+                {"_id": 1, "tags": ["not{json", {"k": "v"}]},
+                {"_id": 2, "tags": ["plain", 123]},
+            ]
+        )
+        assert [d["_id"] for d in coll.find({"tags.k": "v"})] == [1]
+
+        # $jsonSchema items query must not crash on scalar string elements
+        schema_no_type = {
+            "properties": {
+                "arr": {
+                    "type": "array",
+                    "items": {"properties": {"a": {"type": "number"}}},
+                }
+            }
+        }
+        schema_with_type = {
+            "properties": {
+                "arr": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {"a": {"type": "number"}},
+                    },
+                }
+            }
+        }
+        items_coll = conn.items_schema
+        items_coll.insert_many(
+            [
+                {"_id": 1, "arr": [{"a": 1}]},
+                {"_id": 2, "arr": ["bad{string"]},
+            ]
+        )
+        assert [d["_id"] for d in items_coll.find({"$jsonSchema": schema_no_type})] == [
+            1,
+            2,
+        ]
+        assert [d["_id"] for d in items_coll.find({"$jsonSchema": schema_with_type})] == [
+            1
+        ]
+
+    def test_projections_root_current_and_dotted_paths_parity(self, conn):
+        coll = conn.proj_test
+        coll.insert_many(
+            [
+                {"_id": 1, "x": 10, "meta": {"a": 1, "b": 2}},
+                {"_id": 2, "x": 20, "meta": {"a": 3, "b": 4}},
+            ]
+        )
+        # Stage 0 $addFields with $$ROOT and $$CURRENT (both Tier 1)
+        _assert_aggregate_parity(
+            coll,
+            [{"$addFields": {"root_copy": "$$ROOT"}}],
+            "tier1",
+        )
+        _assert_aggregate_parity(
+            coll,
+            [{"$addFields": {"cur_copy": "$$CURRENT"}}],
+            "tier1",
+        )
+        # Multi-stage $addFields + $project with $$ROOT and $$CURRENT
+        _assert_aggregate_parity(
+            coll,
+            [
+                {"$addFields": {"x": {"$add": ["$x", 5]}}},
+                {
+                    "$project": {
+                        "orig": "$$ROOT",
+                        "now": "$$CURRENT",
+                        "x": 1,
+                    }
+                },
+            ],
+            "tier1",
+        )
+        # Dotted inclusion and exclusion fallback cleanly to Tier 3 and match Python
+        _assert_aggregate_parity(
+            coll, [{"$project": {"meta.a": 1, "_id": 0}}], "tier3"
+        )
+        _assert_aggregate_parity(
+            coll, [{"$project": {"meta.b": 0}}], "tier3"
+        )
+        # Inclusion with _id: 1 and field exclusion {"_id": 1, "x": 0}
+        _assert_aggregate_parity(
+            coll, [{"$project": {"_id": 1, "x": 0}}], "tier1"
+        )
+        # Tier-2 preceded by Tier-2 $fill with $$ROOT in $project falls back to Tier 3 cleanly
+        _assert_aggregate_parity(
+            coll,
+            [
+                {"$fill": {"sortBy": {"_id": 1}, "output": {"x": {"value": 0}}}},
+                {"$project": {"orig": "$$ROOT", "x": 1}},
+            ],
+            "tier3",
+        )
+
+    def test_lookup_root_propagation_and_sqlite326_branch(
+        self, conn, monkeypatch
+    ):
+        from neosqlite.collection import _stage_builders
+
+        orders = conn.orders
+        users = conn.users
+        users.insert_many([{"_id": 10, "name": "Alice"}])
+        orders.insert_many([{"_id": 1, "uid": 10, "amt": 5}])
+        pipe = [
+            {
+                "$lookup": {
+                    "from": "users",
+                    "localField": "uid",
+                    "foreignField": "_id",
+                    "as": "u",
+                }
+            },
+            {"$addFields": {"orig": "$$ROOT"}},
+        ]
+        _assert_aggregate_parity(orders, pipe, "tier1")
+
+        # Also exercise SQLite < 3.30 correlated $lookup subquery branch
+        orig_check = _stage_builders._check_sqlite_version
+        monkeypatch.setattr(
+            _stage_builders,
+            "_check_sqlite_version",
+            lambda ver: False if ver == "3.30.0" else orig_check(ver),
+        )
+        _assert_aggregate_parity(orders, pipe, "tier1")
+
+    def test_window_fields_fill_partition_by_fields_and_redact(self, conn):
+        coll = conn.winfill
+        coll.insert_many(
+            [
+                {"_id": 1, "cat": "a", "sub": 1, "x": 1, "v": 10},
+                {"_id": 2, "cat": "a", "sub": 1, "x": 2, "v": None},
+                {"_id": 3, "cat": "a", "sub": 2, "x": 3, "v": 30},
+            ]
+        )
+        # Custom window frame in $setWindowFields declines Tier 1 and runs in Tier 2
+        _assert_aggregate_parity(
+            coll,
+            [
+                {
+                    "$setWindowFields": {
+                        "partitionBy": {"c": "$cat", "s": "$sub"},
+                        "sortBy": {"x": 1},
+                        "output": {
+                            "total": {
+                                "$sum": "$v",
+                                "window": {"documents": ["unbounded", "current"]},
+                            }
+                        },
+                    }
+                }
+            ],
+            "tier2",
+        )
+        # $fill with partitionByFields
+        _assert_aggregate_parity(
+            coll,
+            [
+                {
+                    "$fill": {
+                        "partitionByFields": ["cat", "sub"],
+                        "sortBy": {"x": 1},
+                        "output": {"v": {"method": "locf"}},
+                    }
+                }
+            ],
+            "tier2",
+        )
+        # $redact with nested $cond & $$ROOT
+        _assert_aggregate_parity(
+            coll,
+            [
+                {
+                    "$redact": {
+                        "$cond": {
+                            "if": {"$eq": ["$$ROOT.cat", "a"]},
+                            "then": {
+                                "$cond": {
+                                    "if": {"$eq": ["$sub", 2]},
+                                    "then": "$$PRUNE",
+                                    "else": "$$DESCEND",
+                                }
+                            },
+                            "else": "$$PRUNE",
+                        }
+                    }
+                }
+            ],
+            "tier3",
+        )
+
+    def test_min_max_type_guard_and_rename_ordering(self, conn):
+        coll = conn.upd_fix
+        coll.insert_many(
+            [
+                {"_id": 1, "x": "hello", "y": None, "a": {"k": 1}},
+                {"_id": 2, "x": 10, "a": {"b": 2}},
+            ]
+        )
+        # Cross-type $min must NOT clobber existing string "hello" with numeric 5
+        coll.update_one({"_id": 1}, {"$min": {"x": 5}})
+        assert coll.find_one({"_id": 1})["x"] == "hello"
+
+        # Matching-type $min/$max + null replacement work cleanly
+        coll.update_one({"_id": 1}, {"$min": {"y": 7}})
+        assert coll.find_one({"_id": 1})["y"] == 7
+        coll.update_one({"_id": 2}, {"$min": {"x": 4}, "$max": {"missing": 9}})
+        d2 = coll.find_one({"_id": 2})
+        assert d2["x"] == 4 and d2["missing"] == 9
+
+        # Parent -> child $rename {"a": "a.b"} and child -> parent {"a.b": "a"}
+        coll.update_one({"_id": 1}, {"$rename": {"a": "a.b"}})
+        assert coll.find_one({"_id": 1})["a"] == {"b": {"k": 1}}
+        coll.update_one({"_id": 2}, {"$rename": {"a.b": "a"}})
+        assert coll.find_one({"_id": 2})["a"] == 2
+
+        # Reject invalid _id target on $rename cleanly (no-op / fallback)
+        assert (
+            coll.query_engine.helpers._build_set_data_expression(
+                {"$rename": {"x": "_id"}}
+            )
+            is None
+        )

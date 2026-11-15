@@ -429,7 +429,10 @@ class SqlQueryBuilderMixin:
             rest = segs[k:]
             if rest:
                 leaf_path = "$." + ".".join(rest)
-                elem_pred = "json_extract(value, '" + leaf_path + "') = ?"
+                elem_pred = (
+                    "CASE WHEN type = 'object' THEN "
+                    "json_extract(value, '" + leaf_path + "') = ? ELSE 0 END"
+                )
                 arm_param = text_val
             else:
                 elem_pred = f"value = {each_ph}"

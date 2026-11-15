@@ -530,6 +530,7 @@ class AggregationMixin(SqlAggregationMixin):
         self,
         projection: dict[str, Any],
         document: dict[str, Any],
+        root: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Applies the projection to the document, selecting or excluding fields
@@ -539,6 +540,7 @@ class AggregationMixin(SqlAggregationMixin):
             projection (dict[str, Any]): A dictionary specifying which fields to
                                          include or exclude.
             document (dict[str, Any]): The document to apply the projection to.
+            root (dict[str, Any] | None): Optional original root document for ``$$ROOT``.
 
         Returns:
             dict[str, Any]: The document with fields applied based on the projection.
@@ -551,8 +553,15 @@ class AggregationMixin(SqlAggregationMixin):
             return document
 
         doc = deepcopy(document)
+        root_doc = root if root is not None else document
         projected_doc: dict[str, Any] = {}
         include_id = projection.get("_id", 1) == 1
+
+        def _assign(target: dict[str, Any], field_key: str, val: Any) -> None:
+            if "." in field_key:
+                self.collection._set_val(target, field_key, val)
+            else:
+                target[field_key] = val
 
         # Check if this is an inclusion projection with expressions or aggregation variables
         has_expressions = any(
@@ -568,6 +577,11 @@ class AggregationMixin(SqlAggregationMixin):
             )
             ctx = AggregationContext()
             ctx.bind_document(document)
+            eval_doc = {
+                **document,
+                "$$ROOT": root_doc,
+                "$$CURRENT": document,
+            }
 
             for key, value in projection.items():
                 if key == "_id":
@@ -578,38 +592,42 @@ class AggregationMixin(SqlAggregationMixin):
                 if _is_expression(value):
                     # Evaluate expression
                     projected_value = evaluator._evaluate_expr_python(
-                        value, document
+                        value, eval_doc
                     )
                     # Check for $$REMOVE sentinel
                     if projected_value is REMOVE_SENTINEL:
                         # Skip this field (remove it)
                         continue
-                    projected_doc[key] = projected_value
+                    _assign(projected_doc, key, projected_value)
                 elif isinstance(value, str) and value.startswith("$"):
                     # Field reference or aggregation variable
                     if value.startswith("$$"):
                         # Aggregation variable
                         if value == "$$ROOT":
-                            projected_doc[key] = document.copy()
+                            _assign(projected_doc, key, deepcopy(root_doc))
                         elif value == "$$CURRENT":
-                            projected_doc[key] = document.copy()
+                            _assign(projected_doc, key, deepcopy(document))
                         elif value == "$$REMOVE":
                             # Skip this field (remove it)
                             continue
                         else:
-                            projected_doc[key] = None
+                            _assign(projected_doc, key, None)
                     else:
                         # Regular field reference
                         field_name = value[1:]
                         if self._field_exists(document, field_name):
-                            projected_doc[key] = self.collection._get_val(
-                                document, field_name
+                            _assign(
+                                projected_doc,
+                                key,
+                                self.collection._get_val(document, field_name),
                             )
                 elif value == 1:
                     # Simple inclusion
                     if self._field_exists(document, key):
-                        projected_doc[key] = self.collection._get_val(
-                            document, key
+                        _assign(
+                            projected_doc,
+                            key,
+                            self.collection._get_val(document, key),
                         )
                 # value == 0 is exclusion, skip it
 
@@ -619,18 +637,36 @@ class AggregationMixin(SqlAggregationMixin):
             return projected_doc
 
         # Inclusion mode (no expressions)
-        if any(v == 1 for v in projection.values()):
+        if any(v == 1 for k, v in projection.items() if k != "_id") or (
+            list(projection.keys()) == ["_id"] and include_id
+        ):
             for key, value in projection.items():
                 if value == 1 and self._field_exists(document, key):
-                    projected_doc[key] = self.collection._get_val(document, key)
+                    _assign(
+                        projected_doc,
+                        key,
+                        self.collection._get_val(document, key),
+                    )
             if include_id and "_id" in doc:
                 projected_doc["_id"] = doc["_id"]
             return projected_doc
 
         # Exclusion mode
         for key, value in projection.items():
-            if value == 0 and key in doc:
-                doc.pop(key, None)
+            if value == 0:
+                if "." in key:
+                    parts = key.split(".")
+                    curr: Any = doc
+                    for part in parts[:-1]:
+                        if isinstance(curr, dict) and part in curr:
+                            curr = curr[part]
+                        else:
+                            curr = None
+                            break
+                    if isinstance(curr, dict):
+                        curr.pop(parts[-1], None)
+                elif key in doc:
+                    doc.pop(key, None)
         if not include_id and "_id" in doc:
             doc.pop("_id", None)
         return doc

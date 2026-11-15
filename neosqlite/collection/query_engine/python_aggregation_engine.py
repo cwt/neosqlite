@@ -224,7 +224,7 @@ def execute_python_aggregation(
                 docs_with_context = [
                     {
                         "__doc__": query_engine.helpers._apply_projection(
-                            projection, dc["__doc__"]
+                            projection, dc["__doc__"], dc["__root__"]
                         ),
                         "__root__": dc["__root__"],
                     }
@@ -983,7 +983,7 @@ def execute_python_aggregation(
                     data_column="data", db_connection=query_engine.collection.db
                 )
 
-                def apply_redact(doc, spec):
+                def apply_redact(doc, spec, root):
                     """Recursively apply redaction to a document."""
                     if not isinstance(doc, dict):
                         return doc
@@ -992,7 +992,7 @@ def execute_python_aggregation(
                     for key, value in doc.items():
                         # Evaluate the redact condition for this field
                         redact_action = evaluate_redact_condition(
-                            spec, doc, key, value
+                            spec, doc, root
                         )
 
                         if redact_action == "$$KEEP":
@@ -1001,11 +1001,11 @@ def execute_python_aggregation(
                         elif redact_action == "$$DESCEND":
                             # Keep and process sub-fields
                             if isinstance(value, dict):
-                                result[key] = apply_redact(value, spec)
+                                result[key] = apply_redact(value, spec, root)
                             elif isinstance(value, list):
                                 result[key] = [
                                     (
-                                        apply_redact(item, spec)
+                                        apply_redact(item, spec, root)
                                         if isinstance(item, dict)
                                         else item
                                     )
@@ -1019,43 +1019,24 @@ def execute_python_aggregation(
 
                     return result
 
-                def evaluate_redact_condition(spec, doc, key, value):
+                def evaluate_redact_condition(spec, doc, root):
                     """Evaluate the redact condition and return KEEP/DESCEND/PRUNE."""
-                    if "$cond" in spec:
-                        cond = spec["$cond"]
-                        if_expr = cond.get("if", {})
-                        then_expr = cond.get("then", "$$DESCEND")
-                        else_expr = cond.get("else", "$$DESCEND")
-
-                        # Evaluate the condition
-                        try:
-                            cond_result = (
-                                evaluator_redact._evaluate_expr_python(
-                                    if_expr, doc
-                                )
-                            )
-                            if cond_result:
-                                return then_expr
-                            else:
-                                return else_expr
-                        except Exception as e:
-                            logger.debug(f"Redaction evaluation failed: {e}")
-                            return "$$DESCEND"
-
-                    # If spec is a direct expression, evaluate it
-                    if spec.startswith("$") if isinstance(spec, str) else False:
-                        try:
-                            result = evaluator_redact._evaluate_expr_python(
-                                spec, doc
-                            )
-                            if result in ("$$KEEP", "$$DESCEND", "$$PRUNE"):
-                                return result
-                        except Exception as e:
-                            logger.debug(
-                                f"Redaction expression evaluation failed: {e}"
-                            )
-                            pass
-
+                    eval_doc = {
+                        **doc,
+                        "$$ROOT": root,
+                        "$$CURRENT": doc,
+                        "$$KEEP": "$$KEEP",
+                        "$$DESCEND": "$$DESCEND",
+                        "$$PRUNE": "$$PRUNE",
+                    }
+                    try:
+                        result = evaluator_redact._evaluate_operand_python(
+                            spec, eval_doc
+                        )
+                        if result in ("$$KEEP", "$$DESCEND", "$$PRUNE"):
+                            return result
+                    except Exception as e:
+                        logger.debug(f"Redaction evaluation failed: {e}")
                     return "$$DESCEND"
 
                 # Apply redaction to each document
@@ -1065,7 +1046,7 @@ def execute_python_aggregation(
                     root = dc["__root__"]
 
                     # Apply redaction
-                    redacted_doc = apply_redact(doc, redact_spec)
+                    redacted_doc = apply_redact(doc, redact_spec, root)
 
                     # Check if document should be kept (not fully pruned)
                     if redacted_doc:  # Non-empty document

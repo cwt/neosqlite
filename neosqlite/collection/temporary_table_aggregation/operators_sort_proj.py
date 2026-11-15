@@ -480,6 +480,12 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
 
         # Determine mode: inclusion vs exclusion
         # Inclusion mode if any value == 1 or is an expression/field ref
+        # Dotted field paths produce nested dicts; decline to Tier-3 Python
+        if any("." in k for k in project_spec if k != "_id"):
+            raise NotImplementedError(
+                "Dotted field paths in $project require Python tier"
+            )
+
         # Exclusion mode if all non-_id values are 0
         non_id_values = {k: v for k, v in project_spec.items() if k != "_id"}
         is_exclusion_mode = all(v == 0 for v in non_id_values.values())
@@ -606,6 +612,18 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
                     json_parts.append(f"'{field}'")
                     json_parts.append(expr_sql)
 
+            elif value == "$$ROOT":
+                raise NotImplementedError(
+                    "$$ROOT in Tier-2 $project requires Python tier"
+                )
+            elif value == "$$CURRENT":
+                json_set_func = "jsonb_set" if self.jsonb_supported else "json_set"
+                json_parts.append(f"'{field}'")
+                json_parts.append(
+                    f"json(CASE WHEN json_type(data, '$._id') IS NOT NULL "
+                    f"OR _id IS NULL THEN data "
+                    f"ELSE {json_set_func}(data, '$._id', _id) END)"
+                )
             elif isinstance(value, str) and value.startswith("$"):
                 # Field reference: "$some.path"
                 source_field = value[1:]
