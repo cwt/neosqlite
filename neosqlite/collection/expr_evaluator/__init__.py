@@ -197,13 +197,7 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
         if db_connection is not None:
             self.jsonb = JSONBContext.from_db(db_connection)
         else:
-            self.jsonb = JSONBContext(
-                jsonb_supported=False,
-                jsonb_each_supported=False,
-                json_function_prefix="json",
-                json_each_function="json_each",
-                json_group_array_function="json_group_array",
-            )
+            self.jsonb = JSONBContext.disabled()
 
     @property
     def json_function_prefix(self) -> str:
@@ -443,17 +437,10 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
                             and len(var_val) == 2
                             and isinstance(var_val[0], str)
                         ):
-                            from ..json_path_utils import (
-                                build_json_extract_expression,
+                            expr_sql = (
+                                f"{self.jsonb.function('extract')}("
+                                f"{var_val[0]}, '{parse_json_path(sub_path)}')"
                             )
-
-                            expr_sql = build_json_extract_expression(
-                                var_val[0], sub_path
-                            )
-                            if self.jsonb.jsonb_supported:
-                                expr_sql = expr_sql.replace(
-                                    "json_extract", "jsonb_extract"
-                                )
                             return expr_sql, list(var_val[1])
 
                 # Unknown variable

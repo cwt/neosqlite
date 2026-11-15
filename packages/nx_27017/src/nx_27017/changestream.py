@@ -371,13 +371,10 @@ class ChangeStreamManager:
         try:
             # Updated documents may be stored as JSONB binary blobs
             # (pysqlite3 builds); convert to text like normal reads do.
-            from neosqlite.collection.jsonb_support import (
-                json_data_column,
-                supports_jsonb,
-            )
+            from neosqlite.collection.jsonb_support import JSONBContext
 
-            data_expr = json_data_column(
-                supports_jsonb(collection.db), "document_data"
+            data_expr = JSONBContext.from_db(collection.db).data_column(
+                "document_data"
             )
             rows = collection.db.execute(
                 "SELECT id, operation, document_id, "

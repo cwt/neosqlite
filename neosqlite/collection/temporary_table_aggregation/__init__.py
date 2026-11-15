@@ -7,7 +7,7 @@ from typing import Any
 from ...sql_utils import quote_table_name
 from ..expr_evaluator import ExprEvaluator
 from ..json_path_utils import parse_json_path
-from ..jsonb_support import JSONBContext, json_data_column
+from ..jsonb_support import JSONBContext
 from ..sql_translator_unified import SQLTranslator
 from .core import (
     can_process_with_temporary_tables,
@@ -62,9 +62,8 @@ class TemporaryTableAggregationProcessor(OperatorsMixin):
             collection.name,
             "data",
             "id",
-            self.jsonb.jsonb_supported,
-            self.jsonb.json_each_function,
             db_connection=collection.db,
+            jsonb_context=self.jsonb,
         )
         # Track if pipeline has $sort stage (for $first/$last limitation)
         self._has_sort_stage = False
@@ -319,16 +318,12 @@ class TemporaryTableAggregationProcessor(OperatorsMixin):
                             unset_fields = unset_spec
                         # Build json_remove expressions
                         data_expr = "data"
+                        json_remove_func = self.jsonb.function("remove")
                         for field in unset_fields:
                             json_path = parse_json_path(field)
-                            if self.jsonb.jsonb_supported:
-                                data_expr = (
-                                    f"jsonb_remove({data_expr}, '{json_path}')"
-                                )
-                            else:
-                                data_expr = (
-                                    f"json_remove({data_expr}, '{json_path}')"
-                                )
+                            data_expr = (
+                                f"{json_remove_func}({data_expr}, '{json_path}')"
+                            )
                         unset_stage = {"$unset": unset_spec}
                         new_table = create_temp(
                             unset_stage,
@@ -408,7 +403,7 @@ class TemporaryTableAggregationProcessor(OperatorsMixin):
                         current_table = create_temp(
                             stage,
                             f"SELECT 1 AS id, "
-                            f"{json_data_column(self.jsonb.jsonb_supported, data_expr)} AS data "
+                            f"{self.jsonb.data_column(data_expr)} AS data "
                             f"FROM {quote_table_name(current_table)}",
                         )
                         i += 1

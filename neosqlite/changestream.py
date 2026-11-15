@@ -293,21 +293,11 @@ class ChangeStream:
         # Store normalized JSON text in changelog so JSONB writes remain readable
         # by change stream JSON decoders (including fullDocument=updateLookup).
         if first:
-            from .collection.jsonb_support import json_data_column
+            from .collection.jsonb_support import JSONBContext
 
-            jsonb_supported = bool(
-                getattr(
-                    getattr(
-                        getattr(self._collection, "query_engine", None),
-                        "jsonb",
-                        None,
-                    ),
-                    "jsonb_supported",
-                    False,
-                )
-            )
-            new_data_expr = json_data_column(jsonb_supported, "NEW.data")
-            old_data_expr = json_data_column(jsonb_supported, "OLD.data")
+            jsonb = JSONBContext.from_db(self._collection.db)
+            new_data_expr = jsonb.data_column("NEW.data")
+            old_data_expr = jsonb.data_column("OLD.data")
 
             # Insert trigger
             self._collection.db.execute(f"""

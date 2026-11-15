@@ -8,9 +8,6 @@ from collections.abc import Callable
 from typing import Any
 
 from ...sql_utils import quote_table_name
-from ..jsonb_support import (
-    _get_json_tree_function,
-)
 from ..query_helper.utils import sanitize_fts_query
 from .operators_base import OperatorsBaseMixin
 
@@ -102,9 +99,7 @@ class OperatorsTextMixin(OperatorsBaseMixin):
         # Use json_tree/jsonb_tree to recursively extract ALL string values from
         # the JSON object at any depth, then concatenate them for FTS indexing.
         # This handles any unwound object/array structure without hardcoded paths.
-        json_tree_func = _get_json_tree_function(
-            self.jsonb.jsonb_supported, self.jsonb.jsonb_each_supported
-        )
+        json_tree_func = self.jsonb.json_tree_function
 
         self.db.execute(f"""
             INSERT INTO {fts_table_name}(src_rowid, id, content)

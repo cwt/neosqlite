@@ -22,8 +22,9 @@ from .expr_evaluator import (
 )
 from .json_helpers import neosqlite_json_dumps
 from .json_path_utils import parse_json_path
+from .jsonb_support import JSONBContext
 from .pipeline_context import PipelineContext
-from .query_helper.utils import _check_sqlite_version, _get_json_function
+from .query_helper.utils import _check_sqlite_version
 
 
 def _graph_lookup_scalar_or_oid(expr_sql: str) -> str:
@@ -78,7 +79,7 @@ def build_redact_where_sql(
 
 def build_graph_lookup_parts(
     collection: Any,
-    jsonb_supported: bool,
+    jsonb: JSONBContext,
     source_table: str,
     recurse_cte: str,
     spec: dict[str, Any],
@@ -264,7 +265,7 @@ def build_graph_lookup_parts(
         + restrict_params
     )
 
-    json_set_func = "jsonb_set" if jsonb_supported else "json_set"
+    json_set_func = jsonb.function("set")
     inner_doc = (
         f"{json_set_func}(sub.found_data, '{parse_json_path(str(depth_field))}', sub.depth)"
         if depth_field
@@ -550,9 +551,7 @@ class StageBuildersMixin:
 
     def _build_unset_sql(self, spec, prev_stage, context, preserve_root):
         fields = [spec] if isinstance(spec, str) else spec
-        json_remove_func = _get_json_function(
-            "remove", self.jsonb.jsonb_supported
-        )
+        json_remove_func = self.jsonb.function("remove")
         json_set_func = self._get_json_set()
         json_paths = [f"'{parse_json_path(f)}'" for f in fields]
         data_expr = f"json({json_set_func}({json_remove_func}(data, {', '.join(json_paths)}), '$._id', _id))"
@@ -1202,9 +1201,8 @@ class StageBuildersMixin:
                 self.collection.name,
                 "data",
                 "id",
-                self.jsonb.jsonb_supported,
-                self.jsonb.json_each_function,
                 db_connection=self.collection.db,
+                jsonb_context=self.jsonb,
             )
             self._match_sql_translator = translator
         return translator
@@ -1629,7 +1627,7 @@ class StageBuildersMixin:
 
         parts = build_graph_lookup_parts(
             self.collection,
-            self.jsonb.jsonb_supported,
+            self.jsonb,
             src_cte,
             rec_cte,
             spec,

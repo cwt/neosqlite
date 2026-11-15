@@ -231,13 +231,10 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
 
         # Extract input documents from current temp table
         # IMPORTANT: _id is stored as a separate column, not in the data JSON
-        # When JSONB is supported, data column stores JSONB BLOB — convert to text
-        if self.jsonb.jsonb_supported:
-            cursor = self.db.execute(
-                f"SELECT _id, json(data) FROM {current_table}"
-            )
-        else:
-            cursor = self.db.execute(f"SELECT _id, data FROM {current_table}")
+        data_col = self.jsonb.data_column()
+        cursor = self.db.execute(
+            f"SELECT _id, {data_col} FROM {current_table}"
+        )
 
         input_docs = []
         skipped_count = 0
@@ -318,9 +315,10 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                 "SELECT NULL AS id, NULL AS _id, '{}' AS data WHERE 0",
             )
             data_val = neosqlite_json_dumps(result_doc)
+            data_placeholder = self.jsonb.json_placeholder()
             if self.jsonb.jsonb_supported:
                 self.db.execute(
-                    f"INSERT INTO {result_table} (_id, data) VALUES (?, jsonb(?))",
+                    f"INSERT INTO {result_table} (_id, data) VALUES (?, {data_placeholder})",
                     (None, data_val),
                 )
             else:
@@ -915,9 +913,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             json_set_args.append(f"'{parse_json_path(field)}'")
             json_set_args.append(win_expr)
 
-        json_set_func = (
-            "jsonb_set" if self.jsonb.jsonb_supported else "json_set"
-        )
+        json_set_func = self.jsonb.function("set")
         outer_cols = [c for c in ("id", "_id") if c in column_names]
         if json_set_args:
             data_expr = f"json({json_set_func}(data, {', '.join(json_set_args)})) AS data"
@@ -984,7 +980,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
         rec_cte = "graph_recurse_tier2"
         parts = build_graph_lookup_parts(
             self.collection,
-            self.jsonb.jsonb_supported,
+            self.jsonb,
             current_table,
             rec_cte,
             spec,
@@ -1084,9 +1080,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             all_params.extend(fparams)
             f0_fields.append((idx, field, parse_json_path(field), fill_spec))
 
-        json_set_func = (
-            "jsonb_set" if self.jsonb.jsonb_supported else "json_set"
-        )
+        json_set_func = self.jsonb.function("set")
 
         if not has_locf and not has_linear:
             # Simple constant value fill

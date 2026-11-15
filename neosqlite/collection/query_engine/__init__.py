@@ -58,9 +58,8 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
             collection.name,
             "data",
             "id",
-            self.jsonb.jsonb_supported,
-            self.jsonb.json_each_function,
             db_connection=collection.db,
+            jsonb_context=self.jsonb,
         )
         # Get translation cache size from connection (default: 100, 0 to disable)
         # collection._database is the NeoSQLite Connection, collection.db is sqlite3

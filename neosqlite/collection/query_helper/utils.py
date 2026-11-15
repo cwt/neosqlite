@@ -13,6 +13,9 @@ from ...exceptions import MalformedQueryException
 from ..jsonb_support import (
     _get_json_function_prefix as _get_json_function_prefix,
 )
+from ..jsonb_support import (
+    json_function as _json_function,
+)
 
 # Import type checking helpers from shared module to avoid duplication
 from ..type_utils import _is_numeric_value as _is_numeric_value
@@ -113,8 +116,7 @@ def _get_json_function(name: str, jsonb_supported: bool) -> str:
     Returns:
         str: The full function name with appropriate prefix
     """
-    prefix = _get_json_function_prefix(jsonb_supported)
-    return f"{prefix}_{name}"
+    return _json_function(name, jsonb_supported)
 
 
 # Global flag to force fallback - for benchmarking and debugging

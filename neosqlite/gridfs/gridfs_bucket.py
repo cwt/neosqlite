@@ -5,7 +5,7 @@ import logging
 from typing import Any
 
 # Import JSONB support utilities to reuse existing implementation
-from ..collection.jsonb_support import supports_jsonb
+from ..collection.jsonb_support import JSONBContext
 from ..collection.schema_utils import column_exists
 
 # Import the centralized ID normalization and lookup functions
@@ -159,40 +159,24 @@ class GridFSBucket:
 
     def _create_collections(self):
         """Create the files and chunks collections (tables) if they don't exist."""
-        jsonb_supported = supports_jsonb(self._db)
+        json_type = JSONBContext.from_db(self._db).storage_type
         files_coll = quote_table_name(self._files_collection)
         chunks_coll = quote_table_name(self._chunks_collection)
 
-        if jsonb_supported:
-            self._db.execute(f"""
-                CREATE TABLE IF NOT EXISTS {files_coll} (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    _id JSONB,
-                    filename TEXT,
-                    length INTEGER,
-                    chunkSize INTEGER,
-                    uploadDate TEXT,
-                    md5 TEXT,
-                    metadata JSONB,
-                    content_type TEXT,
-                    aliases JSONB
-                )
-            """)
-        else:
-            self._db.execute(f"""
-                CREATE TABLE IF NOT EXISTS {files_coll} (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    _id TEXT,
-                    filename TEXT,
-                    length INTEGER,
-                    chunkSize INTEGER,
-                    uploadDate TEXT,
-                    md5 TEXT,
-                    metadata TEXT,
-                    content_type TEXT,
-                    aliases TEXT
-                )
-                """)
+        self._db.execute(f"""
+            CREATE TABLE IF NOT EXISTS {files_coll} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                _id {json_type},
+                filename TEXT,
+                length INTEGER,
+                chunkSize INTEGER,
+                uploadDate TEXT,
+                md5 TEXT,
+                metadata {json_type},
+                content_type TEXT,
+                aliases {json_type}
+            )
+        """)
 
         self._db.execute(f"""
             CREATE TABLE IF NOT EXISTS {chunks_coll} (
@@ -247,8 +231,7 @@ class GridFSBucket:
                 )
 
             if not column_exists(self._db, self._files_collection, "aliases"):
-                jsonb_supported = supports_jsonb(self._db)
-                column_type = "JSONB" if jsonb_supported else "TEXT"
+                column_type = JSONBContext.from_db(self._db).storage_type
                 self._db.execute(
                     f"ALTER TABLE {files_coll} ADD COLUMN aliases {column_type}"
                 )

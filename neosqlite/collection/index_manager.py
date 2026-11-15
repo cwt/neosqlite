@@ -6,11 +6,7 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 from .._sqlite import sqlite3
 from ..sql_utils import quote_identifier, quote_table_name
 from .json_path_utils import parse_json_path
-from .jsonb_support import (
-    JSONBContext,
-    _get_json_tree_function,
-    supports_jsonb_each,
-)
+from .jsonb_support import JSONBContext
 
 if TYPE_CHECKING:
     from ..index_model import IndexModel
@@ -443,10 +439,7 @@ class IndexManager:
         else:
             # Nested field - use json_tree/jsonb_tree to find all matching values including array elements
             # Concatenate all text values with spaces for FTS indexing
-            jsonb_each_supported = supports_jsonb_each(self.collection.db)
-            json_tree_func = _get_json_tree_function(
-                self.jsonb.jsonb_supported, jsonb_each_supported
-            )
+            json_tree_func = self.jsonb.json_tree_function
             last_key = field_parts[-1]
             self.collection.db.execute(
                 f"""
@@ -481,10 +474,7 @@ class IndexManager:
                 """)
         else:
             # Nested field - use json_tree/jsonb_tree with GROUP BY
-            jsonb_each_supported = supports_jsonb_each(self.collection.db)
-            json_tree_func = _get_json_tree_function(
-                self.jsonb.jsonb_supported, jsonb_each_supported
-            )
+            json_tree_func = self.jsonb.json_tree_function
             self.collection.db.execute(f"""
                 CREATE TRIGGER IF NOT EXISTS {quote_table_name(self.collection.name)}_{index_name}_fts_insert
                 AFTER INSERT ON {quote_table_name(self.collection.name)}
@@ -515,10 +505,7 @@ class IndexManager:
                 """)
         else:
             # Nested field - use json_tree/jsonb_tree with GROUP BY
-            jsonb_each_supported = supports_jsonb_each(self.collection.db)
-            json_tree_func = _get_json_tree_function(
-                self.jsonb.jsonb_supported, jsonb_each_supported
-            )
+            json_tree_func = self.jsonb.json_tree_function
             self.collection.db.execute(f"""
                 CREATE TRIGGER IF NOT EXISTS {quote_table_name(self.collection.name)}_{index_name}_fts_update
                 AFTER UPDATE ON {quote_table_name(self.collection.name)}

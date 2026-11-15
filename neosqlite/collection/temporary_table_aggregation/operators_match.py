@@ -84,9 +84,7 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
 
         # Create filtered temporary table for regular match operations
         match_stage = {"$match": match_spec}
-        json_set_func = (
-            "jsonb_set" if self.jsonb.jsonb_supported else "json_set"
-        )
+        json_set_func = self.jsonb.function("set")
 
         # Check what columns the current table has (similar to _process_add_fields_stage)
         columns = self.db.execute(

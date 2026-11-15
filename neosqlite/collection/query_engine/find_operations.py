@@ -10,12 +10,10 @@ if TYPE_CHECKING:
 from ...sql_utils import quote_table_name
 from ..cursor import Cursor
 from ..json_helpers import neosqlite_json_dumps
-from ..jsonb_support import json_data_column
 
 # Import feature detection
 from ..query_helper import (
     _convert_bytes_to_binary,
-    _get_json_function,
     _supports_returning_clause,
     get_force_fallback,
 )
@@ -203,8 +201,7 @@ class FindOperationsMixin(QueryEngineProtocol):
             # Tier-1: Use RETURNING clause for atomic find-and-delete
             # Note: SQLite doesn't support LIMIT with DELETE RETURNING directly
             # We need to use a subquery approach
-            jsonb = self.jsonb.jsonb_supported
-            data_col = json_data_column(jsonb)
+            data_col = self.jsonb.data_column()
             cmd = (
                 f"DELETE FROM {quote_table_name(self.collection.name)} "
                 f"WHERE id = (SELECT id FROM {quote_table_name(self.collection.name)} "
@@ -224,9 +221,8 @@ class FindOperationsMixin(QueryEngineProtocol):
         else:
             # Tier-1 (Fallback): Two-step process (SELECT then DELETE)
             # Used when RETURNING clause is not supported (SQLite < 3.35.0)
-            jsonb = self.jsonb.jsonb_supported
             cmd = (
-                f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                f"SELECT id, _id, {self.jsonb.data_column()} as data "
                 f"FROM {quote_table_name(self.collection.name)} "
                 f"{where_clause} {order_by} LIMIT 1"
             )
@@ -314,18 +310,17 @@ class FindOperationsMixin(QueryEngineProtocol):
 
         if use_returning:
             # Tier-1: Use RETURNING clause for atomic find-and-replace
-            jsonb = self.jsonb.jsonb_supported
+            data_col = self.jsonb.data_column()
             tbl = quote_table_name(self.collection.name)
-            data_col = json_data_column(jsonb)
             if return_document:
                 replacement_copy = _convert_bytes_to_binary(dict(replacement))
                 repl_json = neosqlite_json_dumps(replacement_copy)
-                json_val_expr = "jsonb(?)" if jsonb else "json(?)"
+                json_val_expr = self.jsonb.json_placeholder(wrap_text=True)
                 if "_id" in replacement_copy:
                     set_data_sql = json_val_expr
                 else:
-                    set_func = _get_json_function("set", jsonb)
-                    extract_func = _get_json_function("extract", jsonb)
+                    set_func = self.jsonb.function("set")
+                    extract_func = self.jsonb.function("extract")
                     preserved_id = _extract_preserved_json_expr(
                         extract_func, "data", "'$._id'"
                     )
@@ -380,9 +375,8 @@ class FindOperationsMixin(QueryEngineProtocol):
         else:
             # Tier-1 (Fallback): Two-step process
             # Used when RETURNING clause is not supported (SQLite < 3.35.0)
-            jsonb = self.jsonb.jsonb_supported
             cmd = (
-                f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                f"SELECT id, _id, {self.jsonb.data_column()} as data "
                 f"FROM {quote_table_name(self.collection.name)} "
                 f"{where_clause} {order_by} LIMIT 1"
             )
@@ -502,9 +496,8 @@ class FindOperationsMixin(QueryEngineProtocol):
 
         if use_returning:
             # Atomic single-statement RETURNING when returning AFTER doc and SQL-capable
-            jsonb = self.jsonb.jsonb_supported
             tbl = quote_table_name(self.collection.name)
-            data_col = json_data_column(jsonb)
+            data_col = self.jsonb.data_column()
             sql_expr_res = self.helpers._build_set_data_expression(
                 update, array_filters
             )
@@ -594,9 +587,8 @@ class FindOperationsMixin(QueryEngineProtocol):
             return None
         else:
             # Fallback: Two-step process when RETURNING is not supported
-            jsonb = self.jsonb.jsonb_supported
             cmd = (
-                f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                f"SELECT id, _id, {self.jsonb.data_column()} as data "
                 f"FROM {quote_table_name(self.collection.name)} "
                 f"{where_clause} {order_by} LIMIT 1"
             )

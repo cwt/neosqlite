@@ -4,7 +4,7 @@ Tests for the SQL translator unified module.
 
 from neosqlite.collection import sqlite3
 from neosqlite.collection.json_path_utils import parse_json_path
-from neosqlite.collection.jsonb_support import supports_jsonb
+from neosqlite.collection.jsonb_support import JSONBContext, supports_jsonb
 from neosqlite.collection.sql_translator_unified import (
     SQLClauseBuilder,
     SQLFieldAccessor,
@@ -573,6 +573,26 @@ class TestSQLTranslator:
         assert translator.table_name == "users"
         assert translator.data_column == "json_data"
         assert translator.id_column == "user_id"
+
+    def test_init_jsonb_context_overrides_capability_flags(self):
+        """A JSONBContext is the single source of capability flags."""
+        context = JSONBContext(
+            jsonb_supported=True,
+            jsonb_each_supported=True,
+            json_function_prefix="jsonb",
+            json_each_function="jsonb_each",
+            json_group_array_function="jsonb_group_array",
+        )
+        translator = SQLTranslator(
+            table_name="users",
+            jsonb_supported=False,
+            json_each_function="json_each",
+            jsonb_context=context,
+        )
+
+        assert translator.jsonb_supported is True
+        assert translator._json_each_function == "jsonb_each"
+        assert translator.field_accessor.jsonb_supported is True
 
     def test_translate_match_simple(self):
         """Test translating simple $match stage."""

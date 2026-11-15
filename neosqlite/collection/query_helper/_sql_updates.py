@@ -17,7 +17,7 @@ from ..json_helpers import (
     neosqlite_json_loads,
 )
 from ..json_path_utils import parse_json_path
-from ..jsonb_support import json_data_column
+from ..jsonb_support import json_function, json_literal
 from ..type_utils import (
     _is_numeric_value,
     build_bson_type_sql,
@@ -25,7 +25,6 @@ from ..type_utils import (
 )
 from .utils import (
     _convert_bytes_to_binary,
-    _get_json_function,
     _supports_relative_json_indexing,
     get_force_fallback,
 )
@@ -475,7 +474,7 @@ class SqlUpdatesMixin:
 
         if unset_clauses:
             # Handle $unset operations with json_remove
-            func_name = _get_json_function("remove", self.jsonb.jsonb_supported)
+            func_name = self.jsonb.function("remove")
             current_data = (
                 f"{func_name}({current_data}, {', '.join(unset_clauses)})"
             )
@@ -483,7 +482,7 @@ class SqlUpdatesMixin:
 
         if set_clauses:
             # Handle other operations with json_set
-            func_name = _get_json_function("set", self.jsonb.jsonb_supported)
+            func_name = self.jsonb.function("set")
             current_data = (
                 f"{func_name}({current_data}, {', '.join(set_clauses)})"
             )
@@ -505,10 +504,9 @@ class SqlUpdatesMixin:
             raise RuntimeError("No valid operations to perform")
 
         # Fetch and return the updated document
-        # Use the instance's JSONB support flag to determine how to select data
-        jsonb = self.jsonb.jsonb_supported
+        data_col = self.jsonb.data_column()
         cmd = (
-            f"SELECT id, {json_data_column(jsonb)} as data "
+            f"SELECT id, {data_col} as data "
             f"FROM {quote_table_name(self.collection.name)} WHERE id = ?"
         )
 
@@ -802,9 +800,7 @@ class SqlUpdatesMixin:
                         unset_clauses.append(json_path)
                 case "$addToSet":
                     # Tier 2: $addToSet (with or without $each) can use conditional SQL
-                    insert_func = _get_json_function(
-                        "insert", self.jsonb.jsonb_supported
-                    )
+                    insert_func = self.jsonb.function("insert")
                     for field, val in value.items():
                         json_path = f"'{parse_json_path(field)}'"
 
@@ -862,9 +858,7 @@ class SqlUpdatesMixin:
                     # Tier 2: $bit using bitwise operators
                     for field, bit_spec in value.items():
                         json_path = f"'{parse_json_path(field)}'"
-                        extract_func = _get_json_function(
-                            "extract", self.jsonb.jsonb_supported
-                        )
+                        extract_func = self.jsonb.function("extract")
                         current_expr = (
                             f"COALESCE({extract_func}(data, {json_path}), 0)"
                         )
@@ -879,9 +873,7 @@ class SqlUpdatesMixin:
                         set_clauses.append(f"{json_path}, {bit_expr}")
                 case "$currentDate":
                     # SQL implementation for $currentDate
-                    json_obj_func = _get_json_function(
-                        "object", self.jsonb.jsonb_supported
-                    )
+                    json_obj_func = self.jsonb.function("object")
                     for field in value.keys():
                         json_path = f"'{parse_json_path(field)}'"
                         set_clauses.append(
@@ -893,9 +885,7 @@ class SqlUpdatesMixin:
                     for old_field, new_field in value.items():
                         old_json_path = f"'{parse_json_path(old_field)}'"
                         new_json_path = f"'{parse_json_path(new_field)}'"
-                        extract_func = _get_json_function(
-                            "extract", self.jsonb.jsonb_supported
-                        )
+                        extract_func = self.jsonb.function("extract")
                         # First set the new field, then remove the old field
                         # We need to nest the operations: json_remove(json_set(data, new_path, value), old_path)
                         # This requires special handling - we'll use a combined approach
@@ -921,10 +911,8 @@ class SqlUpdatesMixin:
         # Special handling for $rename: combine json_set and json_remove logic
         has_rename = any(op == "$rename" for op in update_spec.keys())
         if has_rename and set_clauses and unset_clauses:
-            set_func = _get_json_function("set", self.jsonb.jsonb_supported)
-            remove_func = _get_json_function(
-                "remove", self.jsonb.jsonb_supported
-            )
+            set_func = self.jsonb.function("set")
+            remove_func = self.jsonb.function("remove")
             current_data = f"{remove_func}({set_func}({current_data}, {', '.join(set_clauses)}), {', '.join(unset_clauses)})"
             all_params.extend(set_params)
             # Clear them so we don't process them again below
@@ -933,30 +921,28 @@ class SqlUpdatesMixin:
 
         # Process remaining clauses in order to build a single nested expression
         if unset_clauses:
-            func_name = _get_json_function("remove", self.jsonb.jsonb_supported)
+            func_name = self.jsonb.function("remove")
             current_data = (
                 f"{func_name}({current_data}, {', '.join(unset_clauses)})"
             )
             all_params.extend(unset_params)
 
         if insert_clauses:
-            func_name = _get_json_function("insert", self.jsonb.jsonb_supported)
+            func_name = self.jsonb.function("insert")
             current_data = (
                 f"{func_name}({current_data}, {', '.join(insert_clauses)})"
             )
             all_params.extend(insert_params)
 
         if replace_clauses:
-            func_name = _get_json_function(
-                "replace", self.jsonb.jsonb_supported
-            )
+            func_name = self.jsonb.function("replace")
             current_data = (
                 f"{func_name}({current_data}, {', '.join(replace_clauses)})"
             )
             all_params.extend(replace_params)
 
         if set_clauses:
-            func_name = _get_json_function("set", self.jsonb.jsonb_supported)
+            func_name = self.jsonb.function("set")
             current_data = (
                 f"{func_name}({current_data}, {', '.join(set_clauses)})"
             )
@@ -974,9 +960,9 @@ class SqlUpdatesMixin:
             pass
 
         # Fetch updated document
-        jsonb = self.jsonb.jsonb_supported
+        data_col = self.jsonb.data_column()
         cmd = (
-            f"SELECT id, {json_data_column(jsonb)} as data "
+            f"SELECT id, {data_col} as data "
             f"FROM {quote_table_name(self.collection.name)} WHERE id = ?"
         )
 
@@ -1002,9 +988,9 @@ class SqlUpdatesMixin:
         int_doc_id = self._get_integer_id_for_oid(doc_id)
 
         # Fetch the document data
-        jsonb = self.jsonb.jsonb_supported
+        data_col = self.jsonb.data_column()
         cmd = (
-            f"SELECT {json_data_column(jsonb)} as data "
+            f"SELECT {data_col} as data "
             f"FROM {quote_table_name(self.collection.name)} WHERE id = ?"
         )
 
@@ -1014,9 +1000,7 @@ class SqlUpdatesMixin:
 
         # Parse the JSON to get field names
         try:
-            doc_data = neosqlite_json_loads(
-                row[0] if self.jsonb.jsonb_supported else row[0]
-            )
+            doc_data = neosqlite_json_loads(row[0])
             if isinstance(doc_data, dict):
                 return set(doc_data.keys())
             else:
@@ -1094,9 +1078,7 @@ class SqlUpdatesMixin:
                         set_clauses.append(json_path)
                     # json_remove has a different syntax
                     if set_clauses:
-                        func_name = _get_json_function(
-                            "remove", self.jsonb.jsonb_supported
-                        )
+                        func_name = self.jsonb.function("remove")
                         return (
                             f"data = {func_name}(data, {', '.join(set_clauses)})",
                             params,
@@ -1105,9 +1087,7 @@ class SqlUpdatesMixin:
                         # No fields to unset
                         return None
                 case "$currentDate":
-                    json_obj_func = _get_json_function(
-                        "object", self.jsonb.jsonb_supported
-                    )
+                    json_obj_func = self.jsonb.function("object")
                     for field in value.keys():
                         json_path = f"'{parse_json_path(field)}'"
                         set_clauses.append(
@@ -1126,9 +1106,7 @@ class SqlUpdatesMixin:
                         set_clauses.append(json_path)
                     # json_remove has a different syntax
                     if set_clauses:
-                        func_name = _get_json_function(
-                            "remove", self.jsonb.jsonb_supported
-                        )
+                        func_name = self.jsonb.function("remove")
                         return (
                             f"data = {func_name}(data, {', '.join(set_clauses)})",
                             params,
@@ -1303,7 +1281,7 @@ class SqlUpdatesMixin:
 
         # For $unset, we already returned above
         if "$unset" not in update:
-            func_name = _get_json_function("set", self.jsonb.jsonb_supported)
+            func_name = self.jsonb.function("set")
             return f"data = {func_name}(data, {', '.join(set_clauses)})", params
         else:
             # This case should have been handled above
@@ -1518,9 +1496,7 @@ class SqlUpdatesMixin:
 
                     if not use_json:
                         # Build SQL that only inserts if value not in array
-                        insert_func = _get_json_function(
-                            "insert", self.jsonb.jsonb_supported
-                        )
+                        insert_func = self.jsonb.function("insert")
                         array_path = json_path
 
                         # Use a CASE expression returning the resulting array.
@@ -1599,9 +1575,7 @@ class SqlUpdatesMixin:
                         params.extend(converted_values)
             case "$currentDate":
                 # SQL implementation for $currentDate
-                json_obj_func = _get_json_function(
-                    "object", self.jsonb.jsonb_supported
-                )
+                json_obj_func = self.jsonb.function("object")
                 for field in value.keys():
                     json_path = f"'{parse_json_path(field)}'"
                     clauses.append(
@@ -1810,9 +1784,9 @@ class SqlUpdatesMixin:
         else:
             return None
 
-        set_func = _get_json_function("set", jsonb_supported)
-        ga_func = _get_json_function("group_array", jsonb_supported)
-        empty_arr = "jsonb('[]')" if jsonb_supported else "json('[]')"
+        set_func = json_function("set", jsonb_supported)
+        ga_func = json_function("group_array", jsonb_supported)
+        empty_arr = json_literal("[]", jsonb_supported)
         unmatched_elem = _je_preserved_value_expr(je)
 
         if not tail_parts:
@@ -1893,9 +1867,9 @@ class SqlUpdatesMixin:
             return None
         pred_sql, pred_params = pred
         json_path = f"'{parse_json_path(field)}'"
-        set_func = _get_json_function("set", jsonb_supported)
-        ga_func = _get_json_function("group_array", jsonb_supported)
-        empty_arr = "jsonb('[]')" if jsonb_supported else "json('[]')"
+        set_func = json_function("set", jsonb_supported)
+        ga_func = json_function("group_array", jsonb_supported)
+        empty_arr = json_literal("[]", jsonb_supported)
 
         def _build_body(src: str) -> tuple[str, list[Any]]:
             filtered = (
@@ -1940,9 +1914,9 @@ class SqlUpdatesMixin:
             cond_params.extend(eq_res[1])
         combined = " OR ".join(cond_sqls)
         json_path = f"'{parse_json_path(field)}'"
-        set_func = _get_json_function("set", jsonb_supported)
-        ga_func = _get_json_function("group_array", jsonb_supported)
-        empty_arr = "jsonb('[]')" if jsonb_supported else "json('[]')"
+        set_func = json_function("set", jsonb_supported)
+        ga_func = json_function("group_array", jsonb_supported)
+        empty_arr = json_literal("[]", jsonb_supported)
 
         def _build_body(src: str) -> tuple[str, list[Any]]:
             filtered = (
@@ -1983,9 +1957,9 @@ class SqlUpdatesMixin:
 
         json_path = f"'{parse_json_path(field)}'"
         append_path = f"'{parse_json_path(field)}[#]'"
-        set_func = _get_json_function("set", jsonb_supported)
-        insert_func = _get_json_function("insert", jsonb_supported)
-        array_func = _get_json_function("array", jsonb_supported)
+        set_func = json_function("set", jsonb_supported)
+        insert_func = json_function("insert", jsonb_supported)
+        array_func = json_function("array", jsonb_supported)
 
         for item in values_to_add:
             converted = _convert_bytes_to_binary(item)
@@ -2073,9 +2047,9 @@ class SqlUpdatesMixin:
             return None
 
         jsonb = self.jsonb.jsonb_supported
-        set_func = _get_json_function("set", jsonb)
-        remove_func = _get_json_function("remove", jsonb)
-        extract_func = _get_json_function("extract", jsonb)
+        set_func = json_function("set", jsonb)
+        remove_func = json_function("remove", jsonb)
+        extract_func = json_function("extract", jsonb)
 
         cur_expr = "data"
         cur_params: list[Any] = []

@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any
 
 from ...sql_utils import quote_table_name
 from ..json_path_utils import parse_json_path
-from ..jsonb_support import json_data_column
 from ..type_correction import normalize_id_query_for_db
 from .utils import sanitize_fts_query
 
@@ -232,8 +231,8 @@ class SqlQueryBuilderMixin:
             return None
 
         sanitized_term = sanitize_fts_query(search_term)
-        jsonb = self.collection.query_engine.jsonb.jsonb_supported
-        json_col = json_data_column(jsonb)
+        jsonb = self.collection.query_engine.jsonb
+        json_col = jsonb.data_column()
         table_name = quote_table_name(self.collection.name)
 
         if not sanitized_term:

@@ -21,7 +21,7 @@ from typing import Any
 from ..sql_utils import quote_table_name
 
 logger = logging.getLogger(__name__)
-from .jsonb_support import JSONBContext, json_data_column
+from .jsonb_support import JSONBContext
 from .query_helper import QueryHelper
 from .sql_translator_unified import SQLFieldAccessor, SQLTranslator
 from .temporary_table_aggregation import (
@@ -59,11 +59,15 @@ class DateTimeQueryProcessor:
         self.helpers = (
             query_engine.helpers if query_engine else QueryHelper(collection)
         )
-        self.sql_translator = SQLTranslator(
-            collection.name, "data", "id", db_connection=collection.db
-        )
         # Initialize JSONB capabilities
         self.jsonb = JSONBContext.from_db(self.db)
+        self.sql_translator = SQLTranslator(
+            collection.name,
+            "data",
+            "id",
+            db_connection=collection.db,
+            jsonb_context=self.jsonb,
+        )
         # Configuration for kill switch behavior - DEFAULT TO LOCAL for better isolation
         self._use_global_kill_switch = use_global_kill_switch
         # Local kill switch state (isolated to this instance)
@@ -292,7 +296,7 @@ class DateTimeQueryProcessor:
 
         # Build the SQL query using json_* functions for datetime comparison
         cmd = (
-            f"SELECT id, _id, {json_data_column(self.jsonb.jsonb_supported)} as data "
+            f"SELECT id, _id, {self.jsonb.data_column()} as data "
             f"FROM {quote_table_name(self.collection.name)} {where_clause}"
         )
 
@@ -337,7 +341,7 @@ class DateTimeQueryProcessor:
                 base_stage = {"_base": True}
                 temp_table = create_temp(
                     base_stage,
-                    f"SELECT id, _id, {json_data_column(self.jsonb.jsonb_supported)} as data "
+                    f"SELECT id, _id, {self.jsonb.data_column()} as data "
                     f"FROM {quote_table_name(self.collection.name)}",
                 )
 
@@ -378,7 +382,7 @@ class DateTimeQueryProcessor:
 
                 # Retrieve results from the filtered table
                 cursor = self.db.execute(
-                    f"SELECT id, _id, {json_data_column(self.jsonb.jsonb_supported)} as data "
+                    f"SELECT id, _id, {self.jsonb.data_column()} as data "
                     f"FROM {result_table}"
                 )
                 results = [
@@ -410,7 +414,7 @@ class DateTimeQueryProcessor:
         # Tier-3 fallback does not emit a spurious Tier-1 cursor event.
         if hasattr(self.collection, "_load_with_stored_id"):
             cmd = (
-                f"SELECT id, _id, {json_data_column(self.jsonb.jsonb_supported)} as data "
+                f"SELECT id, _id, {self.jsonb.data_column()} as data "
                 f"FROM {quote_table_name(self.collection.name)}"
             )
             cursor = self.db.execute(cmd)

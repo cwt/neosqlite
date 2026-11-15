@@ -16,7 +16,6 @@ from ...sql_utils import quote_table_name
 from ..json_helpers import (
     neosqlite_json_dumps,
 )
-from ..jsonb_support import json_data_column
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +148,7 @@ class UpdateOperationsMixin(SqlUpdatesMixin):
                         raise RuntimeError(
                             f"No rows updated for doc_id {doc_id}"
                         )
-                    data_col = json_data_column(self.jsonb.jsonb_supported)
+                    data_col = self.jsonb.data_column()
                     row = self.collection.db.execute(
                         f"SELECT id, {data_col} as data FROM {tbl} WHERE id = ?",
                         (int_doc_id,),

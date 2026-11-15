@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any, Self
 from .._sqlite import sqlite3
 from ..sql_utils import quote_table_name
 from .json_path_utils import parse_json_path
-from .jsonb_support import json_data_column
 from .type_utils import bson_sort_key, validate_session
 
 if TYPE_CHECKING:
@@ -652,17 +651,15 @@ class Cursor:
         if len(other_items) > 40:
             return None
 
-        jsonb = self._collection.query_engine.jsonb.jsonb_supported
-        ext_fn = "jsonb_extract" if jsonb else "json_extract"
-        rm_fn = "jsonb_remove" if jsonb else "json_remove"
+        jsonb = self._collection.query_engine.jsonb
+        ext_fn = jsonb.function("extract")
+        rm_fn = jsonb.function("remove")
         include_id = int(self._projection.get("_id", 1)) == 1
 
         if not other_items:
             if include_id:
                 return "'{}'"
-            if jsonb:
-                return f"json({rm_fn}({data_col}, '$._id'))"
-            return f"{rm_fn}({data_col}, '$._id')"
+            return jsonb.json_text(f"{rm_fn}({data_col}, '$._id')")
 
         has_inc = any(v == 1 for _, v in other_items)
         has_exc = any(v == 0 for _, v in other_items)
@@ -693,9 +690,9 @@ class Cursor:
         remove_paths = [f"'{parse_json_path(k)}'" for k, _ in other_items]
         if not include_id:
             remove_paths.append("'$._id'")
-        if jsonb:
-            return f"json({rm_fn}({data_col}, {', '.join(remove_paths)}))"
-        return f"{rm_fn}({data_col}, {', '.join(remove_paths)})"
+        return jsonb.json_text(
+            f"{rm_fn}({data_col}, {', '.join(remove_paths)})"
+        )
 
     def _execute_sql_with_hint(
         self,
@@ -767,15 +764,15 @@ class Cursor:
                 )
                 if where_result is not None:
                     where_clause, params, tables = where_result
-                    jsonb = self._collection.query_engine.jsonb.jsonb_supported
+                    jsonb = self._collection.query_engine.jsonb
                     sql = (
-                        f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                        f"SELECT id, _id, {jsonb.data_column()} as data "
                         f"FROM {quote_table_name(self._collection.name)} {where_clause}{sort_clause}{pagination_clause}"
                     )
                 else:
-                    jsonb = self._collection.query_engine.jsonb.jsonb_supported
+                    jsonb = self._collection.query_engine.jsonb
                     sql = (
-                        f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                        f"SELECT id, _id, {jsonb.data_column()} as data "
                         f"FROM {quote_table_name(self._collection.name)}{sort_clause}{pagination_clause}"
                     )
                     params = []
@@ -794,7 +791,7 @@ class Cursor:
 
             if where_result is not None:
                 where_clause, params, tables = where_result
-                jsonb = self._collection.query_engine.jsonb.jsonb_supported
+                jsonb = self._collection.query_engine.jsonb
                 table_name = quote_table_name(self._collection.name)
                 hint_idx = self._resolve_hint_index()
                 indexed_by = (
@@ -803,16 +800,16 @@ class Cursor:
                     else ""
                 )
                 sql_plain = (
-                    f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                    f"SELECT id, _id, {jsonb.data_column()} as data "
                     f"FROM {table_name} {where_clause}{sort_clause}{pagination_clause}"
                 )
                 sql = (
-                    f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                    f"SELECT id, _id, {jsonb.data_column()} as data "
                     f"FROM {table_name}{indexed_by} {where_clause}{sort_clause}{pagination_clause}"
                 )
             else:
                 # No filter - simple select
-                jsonb = self._collection.query_engine.jsonb.jsonb_supported
+                jsonb = self._collection.query_engine.jsonb
                 table_name = quote_table_name(self._collection.name)
                 hint_idx = self._resolve_hint_index()
                 indexed_by = (
@@ -821,11 +818,11 @@ class Cursor:
                     else ""
                 )
                 sql_plain = (
-                    f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                    f"SELECT id, _id, {jsonb.data_column()} as data "
                     f"FROM {table_name}{sort_clause}{pagination_clause}"
                 )
                 sql = (
-                    f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                    f"SELECT id, _id, {jsonb.data_column()} as data "
                     f"FROM {table_name}{indexed_by}{sort_clause}{pagination_clause}"
                 )
                 params = []
@@ -1071,7 +1068,7 @@ class Cursor:
                 self._sql_handled_pagination = True
 
             # Use the collection's JSONB support flag to determine how to select data
-            jsonb = self._collection.query_engine.jsonb.jsonb_supported
+            jsonb = self._collection.query_engine.jsonb
             table_name = quote_table_name(self._collection.name)
             hint_idx = self._resolve_hint_index()
             indexed_by = (
@@ -1084,7 +1081,7 @@ class Cursor:
                 select_data = f"{proj_expr} as data"
                 self._sql_handled_projection = True
             else:
-                select_data = f"{json_data_column(jsonb)} as data"
+                select_data = f"{jsonb.data_column()} as data"
 
             suffix = f" {where_clause}{sort_clause}{pagination_clause}"
             cmd_without_hint = (
@@ -1160,9 +1157,9 @@ class Cursor:
         pagination_clause = ""
 
         # Use the collection's JSONB support flag to determine how to select data
-        jsonb = self._collection.query_engine.jsonb.jsonb_supported
+        jsonb = self._collection.query_engine.jsonb
         cmd = (
-            f"SELECT id, _id, {json_data_column(jsonb)} as data "
+            f"SELECT id, _id, {jsonb.data_column()} as data "
             f"FROM {quote_table_name(self._collection.name)}"
         )
 
@@ -1284,7 +1281,7 @@ class Cursor:
                 if pagination_clause:
                     self._sql_handled_pagination = True
 
-                jsonb = self._collection.query_engine.jsonb.jsonb_supported
+                jsonb = self._collection.query_engine.jsonb
                 table_name = quote_table_name(self._collection.name)
                 hint_idx = self._resolve_hint_index()
                 indexed_by = (
@@ -1299,7 +1296,7 @@ class Cursor:
                     select_data = f"{proj_expr} as data"
                     self._sql_handled_projection = True
                 else:
-                    select_data = f"{json_data_column(jsonb)} as data"
+                    select_data = f"{jsonb.data_column()} as data"
 
                 suffix = f" {where_clause}{sort_clause}{pagination_clause}"
                 cmd_without_hint = (
@@ -1357,9 +1354,9 @@ class Cursor:
             pagination_clause = ""
 
             # Get all documents
-            jsonb = self._collection.query_engine.jsonb.jsonb_supported
+            jsonb = self._collection.query_engine.jsonb
             cmd = (
-                f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                f"SELECT id, _id, {jsonb.data_column()} as data "
                 f"FROM {quote_table_name(self._collection.name)}{sort_clause}{pagination_clause}"
             )
 
@@ -1447,8 +1444,8 @@ class Cursor:
         additional_conditions = []
         additional_params = list(params)
 
-        jsonb = self._collection.query_engine.jsonb.jsonb_supported
-        json_func = "jsonb" if jsonb else "json"
+        jsonb = self._collection.query_engine.jsonb
+        json_func = jsonb.json_function_prefix
 
         # Add minimum bounds
         if min_spec:

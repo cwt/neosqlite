@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from ...json_path_utils import build_json_extract_expression
+from ...json_path_utils import parse_json_path
 
 if TYPE_CHECKING:
     pass
@@ -230,16 +230,10 @@ class CoreMixin(BaseSqlMixin):
             case str() if operand.startswith("$"):
                 # Field reference
                 field_path = operand[1:]  # Remove $
-                # Use dynamic json/jsonb prefix based on support
-                json_path_expr = build_json_extract_expression(
-                    self.data_column, field_path
-                )
-                # Replace hardcoded "json_extract" with dynamic prefix
-                if self.jsonb.jsonb_supported:
-                    json_path_expr = json_path_expr.replace(
-                        "json_extract", "jsonb_extract"
-                    )
-                return json_path_expr, []
+                return (
+                    f"{self.jsonb.function('extract')}("
+                    f"{self.data_column}, '{parse_json_path(field_path)}')"
+                ), []
 
             case list() | dict():
                 # Check if it's an expression (dict with single key starting with $)

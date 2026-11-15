@@ -10,7 +10,6 @@ logger = logging.getLogger(__name__)
 from ..sql_utils import quote_table_name
 from .json_helpers import neosqlite_json_dumps
 from .json_path_utils import parse_json_path
-from .jsonb_support import json_data_column
 
 if TYPE_CHECKING:
     from ..client_session import ClientSession
@@ -106,9 +105,9 @@ class RawBatchCursor:
             if tables:
                 self._tables_to_cleanup.extend(tables)
 
-            # Use the collection's JSONB support flag to determine how to select data
-            jsonb = self._collection.query_engine.jsonb.jsonb_supported
-            json_func = "jsonb" if jsonb else "json"
+            # Use the collection's JSONB context to select data
+            jsonb = self._collection.query_engine.jsonb
+            json_func = jsonb.json_function_prefix
 
             # Build ORDER BY clause. With no explicit sort we still order
             # by the rowid so OFFSET pagination is deterministic across
@@ -138,12 +137,12 @@ class RawBatchCursor:
             # Build the full query with proper WHERE clause handling
             if where_clause and where_clause.strip():
                 cmd = (
-                    f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                    f"SELECT id, _id, {jsonb.data_column()} as data "
                     f"FROM {quote_table_name(self._collection.name)} {where_clause} {order_by}"
                 )
             else:
                 cmd = (
-                    f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                    f"SELECT id, _id, {jsonb.data_column()} as data "
                     f"FROM {quote_table_name(self._collection.name)} {order_by}"
                 )
 

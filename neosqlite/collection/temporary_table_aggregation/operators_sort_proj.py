@@ -13,9 +13,6 @@ from ..expr_evaluator import (
     _is_expression as _is_expression_module,
 )
 from ..json_path_utils import parse_json_path
-from ..jsonb_support import (
-    json_data_column,
-)
 from .operators_base import OperatorsBaseMixin
 
 logger = logging.getLogger(__name__)
@@ -278,7 +275,7 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
             select_cols = ""
 
         # When using JSONB, we need to convert final output to text JSON for Python
-        jsonb = self.jsonb.jsonb_supported
+        jsonb = self.jsonb
 
         # If we have parameters, use a subquery to avoid duplicating
         # placeholder expressions in json_data_column()'s CASE statement.
@@ -287,16 +284,16 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
                 inner_query = f"SELECT {select_cols}, {data_expr} as data FROM {current_table}"
             else:
                 inner_query = f"SELECT {data_expr} as data FROM {current_table}"
-            outer_data = json_data_column(jsonb, "data")
+            outer_data = jsonb.data_column("data")
             if select_cols:
                 query = f"SELECT {select_cols}, {outer_data} as data FROM ({inner_query})"
             else:
                 query = f"SELECT {outer_data} as data FROM ({inner_query})"
         else:
             if select_cols:
-                query = f"SELECT {select_cols}, {json_data_column(jsonb, data_expr)} as data FROM {current_table}"
+                query = f"SELECT {select_cols}, {jsonb.data_column(data_expr)} as data FROM {current_table}"
             else:
-                query = f"SELECT {json_data_column(jsonb, data_expr)} as data FROM {current_table}"
+                query = f"SELECT {jsonb.data_column(data_expr)} as data FROM {current_table}"
 
         new_table = create_temp(
             add_fields_stage,
@@ -349,7 +346,7 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
         if has_underscore_id:
             select_clause += ", _id"
         select_clause += (
-            f", {json_data_column(self.jsonb.jsonb_supported)} AS data"
+            f", {self.jsonb.data_column()} AS data"
         )
 
         cursor = self.db.execute(f"SELECT {select_clause} FROM {current_table}")
@@ -530,7 +527,7 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
             data_expr = "data"
 
         select_cols.append(
-            f"{json_data_column(self.jsonb.jsonb_supported, data_expr)} AS data"
+            f"{self.jsonb.data_column(data_expr)} AS data"
         )
 
         sql = f"SELECT {', '.join(select_cols)} FROM {current_table}"
@@ -551,8 +548,8 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
         - Field references: ``{"alias": "$some.path"}``
         - Expression projections: ``{"alias": {$concat: [...]}}``
         """
-        jsonb = self.jsonb.jsonb_supported
-        json_obj_func = "jsonb_object" if jsonb else "json_object"
+        jsonb = self.jsonb
+        json_obj_func = self.jsonb.function("object")
         json_extract_func = f"{self.jsonb.json_function_prefix}_extract"
 
         # Determine if projection uses expressions or field references.
@@ -666,13 +663,13 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
             inner_cols.append(f"{data_expr} AS data")
             inner_sql = f"SELECT {', '.join(inner_cols)} FROM {current_table}"
             # Outer query: apply json_data_column wrapper to the pre-computed data
-            outer_data = json_data_column(jsonb, "data")
+            outer_data = jsonb.data_column("data")
             sql = (
                 f"SELECT id{', _id' if include_id else ''}, {outer_data} AS data "
                 f"FROM ({inner_sql})"
             )
         else:
-            select_cols.append(f"{json_data_column(jsonb, data_expr)} AS data")
+            select_cols.append(f"{jsonb.data_column(data_expr)} AS data")
             sql = f"SELECT {', '.join(select_cols)} FROM {current_table}"
 
         project_stage = {"$project": project_spec}

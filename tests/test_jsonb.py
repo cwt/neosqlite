@@ -206,9 +206,14 @@ Tests for JSONB support utilities to improve coverage.
 from unittest.mock import Mock
 
 from neosqlite.collection.jsonb_support import (
+    JSONBContext,
     _contains_text_operator,
     _get_json_function_prefix,
     clear_jsonb_cache,
+    json_constructor,
+    json_function,
+    json_literal,
+    json_text_conversion,
     should_use_json_functions,
     sqlite3,  # Import the same sqlite3 that the module uses
     supports_jsonb,
@@ -219,6 +224,64 @@ def test_get_json_function_prefix():
     """Test the _get_json_function_prefix function."""
     assert _get_json_function_prefix(True) == "jsonb"
     assert _get_json_function_prefix(False) == "json"
+
+
+def test_jsonb_context_disabled_helpers():
+    """The disabled context must emit portable json_* functions."""
+    ctx = JSONBContext.disabled()
+
+    assert ctx.jsonb_supported is False
+    assert ctx.jsonb_each_supported is False
+    assert ctx.function("set") == "json_set"
+    assert ctx.json_value_function == "json"
+    assert ctx.json_placeholder() == "?"
+    assert ctx.json_placeholder(wrap_text=True) == "json(?)"
+    assert ctx.json_literal("[]") == "json('[]')"
+    assert ctx.json_text("data") == "data"
+    assert ctx.storage_type == "TEXT"
+    assert ctx.json_tree_function == "json_tree"
+
+
+def test_jsonb_context_selects_capability_specific_functions():
+    """JSONB and jsonb_each capabilities are selected independently."""
+    legacy_context = JSONBContext(
+        jsonb_supported=True,
+        jsonb_each_supported=False,
+        json_function_prefix="jsonb",
+        json_each_function="json_each",
+        json_group_array_function="jsonb_group_array",
+    )
+
+    assert legacy_context.function("set") == "jsonb_set"
+    assert legacy_context.json_each_function == "json_each"
+    assert legacy_context.json_tree_function == "json_tree"
+    assert legacy_context.json_placeholder() == "jsonb(?)"
+    assert legacy_context.json_literal("[]") == "jsonb('[]')"
+    assert legacy_context.json_text("data") == "json(data)"
+    assert legacy_context.storage_type == "JSONB"
+
+    modern_context = JSONBContext(
+        jsonb_supported=True,
+        jsonb_each_supported=True,
+        json_function_prefix="jsonb",
+        json_each_function="jsonb_each",
+        json_group_array_function="jsonb_group_array",
+    )
+
+    assert modern_context.json_each_function == "jsonb_each"
+    assert modern_context.json_tree_function == "jsonb_tree"
+
+
+def test_jsonb_function_helpers():
+    """Module-level helpers agree with JSONBContext function selection."""
+    assert json_function("extract", True) == "jsonb_extract"
+    assert json_function("extract", False) == "json_extract"
+    assert json_constructor("?", True) == "jsonb(?)"
+    assert json_constructor("?", False) == "json(?)"
+    assert json_text_conversion("data", True) == "json(data)"
+    assert json_text_conversion("data", False) == "data"
+    assert json_literal("[]", True) == "jsonb('[]')"
+    assert json_literal("[]", False) == "json('[]')"
 
 
 def test_should_use_json_functions_jsonb_not_supported():

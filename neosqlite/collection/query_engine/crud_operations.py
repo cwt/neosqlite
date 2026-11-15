@@ -21,10 +21,8 @@ from ...results import (
 )
 from ...sql_utils import quote_table_name
 from ..json_path_utils import parse_json_path
-from ..jsonb_support import json_data_column
 from ..query_helper import (
     _convert_bytes_to_binary,
-    _get_json_function,
     get_force_fallback,
 )
 from ..query_helper.utils import build_upsert_base_document
@@ -168,9 +166,8 @@ class CRUDOperationsMixin(QueryEngineProtocol):
                 )
 
             # Fallback for non-SQL update expressions or $inc/$mul type errors
-            jsonb = self.jsonb.jsonb_supported
             cmd = (
-                f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                f"SELECT id, _id, {self.jsonb.data_column()} as data "
                 f"FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
             )
             cursor = self.collection.db.execute(cmd, params)
@@ -264,16 +261,13 @@ class CRUDOperationsMixin(QueryEngineProtocol):
                 if key == "metadata":
                     # Update entire metadata column directly
                     # Use jsonb_set for consistency and gradual migration to JSONB storage
-                    func_name = _get_json_function(
-                        "set", self.jsonb.jsonb_supported
-                    )
+                    func_name = self.jsonb.function("set")
 
                     # Need to serialize dict/list to JSON for SQLite storage
                     if isinstance(value, (dict, list)):
                         set_clauses.append(
-                            "metadata = jsonb(?)"
-                            if self.jsonb.jsonb_supported
-                            else "metadata = json(?)"
+                            "metadata = "
+                            + self.jsonb.json_placeholder(wrap_text=True)
                         )
                         set_params.append(neosqlite_json_dumps_for_sql(value))
                     else:
@@ -290,9 +284,7 @@ class CRUDOperationsMixin(QueryEngineProtocol):
                     converted_val = _convert_bytes_to_binary(value)
 
                     # Determine if we should use jsonb_* or json_* functions
-                    func_name = _get_json_function(
-                        "set", self.jsonb.jsonb_supported
-                    )
+                    func_name = self.jsonb.function("set")
                     meta_expr = "COALESCE(metadata, json('{}'))"
 
                     if isinstance(converted_val, (dict, list, Binary)):
@@ -431,9 +423,8 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         modified_count = 0
         for int_doc_id in ids:
             # Get the document using the integer ID for the update
-            jsonb = self.jsonb.jsonb_supported
             cmd = (
-                f"SELECT id, _id, {json_data_column(jsonb)} as data "
+                f"SELECT id, _id, {self.jsonb.data_column()} as data "
                 f"FROM {quote_table_name(self.collection.name)} WHERE id = ?"
             )
             cursor = self.collection.db.execute(cmd, (int_doc_id,))
@@ -580,10 +571,8 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         # Find the document using the filter, but get the integer ID for internal operations
         where_clause, params = self.sql_translator.translate_match(filter)
         if where_clause is not None and not get_force_fallback():
-            if self.jsonb.jsonb_supported:
-                cmd = f"SELECT id, _id, json(data) as data FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
-            else:
-                cmd = f"SELECT id, _id, data FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
+            data_col = self.jsonb.data_column()
+            cmd = f"SELECT id, _id, {data_col} as data FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
             cursor = self.collection.db.execute(cmd, params)
             if row := cursor.fetchone():
                 int_id, stored_id, data = row

@@ -17,6 +17,8 @@ from ..query_operators import _convert_to_bitmask
 from .cursor import DESCENDING
 from .json_path_utils import parse_json_path
 from .jsonb_support import (
+    JSONBContext,
+    json_function,
     should_use_json_functions,
 )
 
@@ -97,7 +99,7 @@ class SQLFieldAccessor:
 
             # Determine whether to use json_* or jsonb_* functions
             use_json = should_use_json_functions(query, self.jsonb_supported)
-            function_name = "json_extract" if use_json else "jsonb_extract"
+            function_name = json_function("extract", not use_json)
 
             return f"{function_name}({self.data_column}, '{json_path}')"
 
@@ -1269,6 +1271,7 @@ class SQLTranslator:
         jsonb_supported: bool = False,
         json_each_function: str | None = None,
         db_connection: Any = None,
+        jsonb_context: JSONBContext | None = None,
     ):
         """
         Initialize the SQLTranslator with table and column names.
@@ -1281,7 +1284,13 @@ class SQLTranslator:
             json_each_function: The json_each function to use ('jsonb_each' or 'json_each').
                               If None, defaults to 'json_each'.
             db_connection: Optional SQLite connection for $expr Tier-1 translation.
+            jsonb_context: Optional capability context.  When provided, it
+                overrides jsonb_supported/json_each_function so callers do not
+                have to repeat the two capability flags.
         """
+        if jsonb_context is not None:
+            jsonb_supported = jsonb_context.jsonb_supported
+            json_each_function = jsonb_context.json_each_function
         self.table_name = table_name or "collection"
         self.data_column = data_column
         self.id_column = id_column

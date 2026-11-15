@@ -13,6 +13,8 @@ import re
 from datetime import datetime
 from typing import Any
 
+from .jsonb_support import json_constructor
+
 # =============================================================================
 # Type Conversion Functions
 # =============================================================================
@@ -381,7 +383,9 @@ def serialize_sql_query_value(
     if is_encoded_json_value(value):
         from .json_helpers import neosqlite_json_dumps_for_sql
 
-        placeholder = "jsonb(?)" if jsonb_supported else "?"
+        placeholder = (
+            json_constructor("?", jsonb_supported) if jsonb_supported else "?"
+        )
         return neosqlite_json_dumps_for_sql(value), placeholder
     return value, "?"
 

@@ -6,6 +6,8 @@ Translates MongoDB $jsonSchema rules into native SQLite SQL expressions.
 import re
 from typing import Any
 
+from ..jsonb_support import json_function
+
 
 def compile_schema_to_sql(
     schema: dict[str, Any], data_column: str = "data", jsonb: bool = False
@@ -13,7 +15,7 @@ def compile_schema_to_sql(
     """
     Compile a JSON Schema into a SQL expression for use in a CHECK constraint.
     """
-    json_func = "jsonb_extract" if jsonb else "json_extract"
+    json_func = json_function("extract", jsonb)
     return _compile_node(schema, data_column, json_func)
 
 
@@ -181,7 +183,7 @@ def compile_query_schema_to_sql(
     """
     if not isinstance(schema, dict) or not schema:
         return None
-    json_func = "jsonb_extract" if jsonb else "json_extract"
+    json_func = json_function("extract", jsonb)
     # jsonb_each() only exists in SQLite 3.51+; json_each() works with both
     # TEXT JSON and JSONB, so callers on 3.45-3.50 must use it.
     each_func = json_each_function

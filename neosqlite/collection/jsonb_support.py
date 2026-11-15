@@ -20,9 +20,11 @@ logger = logging.getLogger(__name__)
 class JSONBContext:
     """Immutable snapshot of JSONB capabilities for a database connection.
 
-    Replaces the scattered ``_jsonb_supported`` / ``_jsonb_each_supported`` /
-    ``_json_function_prefix`` / ``_json_each_function`` attributes that were
-    previously duplicated across 9 constructors.
+    This is the single source of truth for deciding which SQLite JSON
+    functions to emit.  ``jsonb_*`` scalar functions exist from SQLite 3.45,
+    but the table-valued ``jsonb_each()``/``jsonb_tree()`` functions were only
+    added in 3.51.  Keep both capabilities separate and expose the resulting
+    function names here instead of probing or hard-coding them at call sites.
     """
 
     jsonb_supported: bool
@@ -43,6 +45,65 @@ class JSONBContext:
             json_each_function=_get_json_each_function(b, be),
             json_group_array_function=_get_json_group_array_function(b),
         )
+
+    @classmethod
+    def disabled(cls) -> Self:
+        """Return the portable json_* context used when no DB is available."""
+        return cls(
+            jsonb_supported=False,
+            jsonb_each_supported=False,
+            json_function_prefix="json",
+            json_each_function="json_each",
+            json_group_array_function="json_group_array",
+        )
+
+    @property
+    def json_tree_function(self) -> str:
+        """Return ``json_tree`` or ``jsonb_tree`` for this connection."""
+        return _get_json_tree_function(
+            self.jsonb_supported, self.jsonb_each_supported
+        )
+
+    @property
+    def json_value_function(self) -> str:
+        """Return the JSON value constructor: ``json`` or ``jsonb``."""
+        return json_value_function(self.jsonb_supported)
+
+    @property
+    def storage_type(self) -> str:
+        """Return the SQLite column type used for JSON documents."""
+        return "JSONB" if self.jsonb_supported else "TEXT"
+
+    def function(self, name: str) -> str:
+        """Return ``json_<name>`` or ``jsonb_<name>`` for this connection."""
+        return json_function(name, self.jsonb_supported)
+
+    def data_column(self, source: str = "data") -> str:
+        """Wrap *source* so JSONB blobs are converted back to JSON text."""
+        return json_data_column(self.jsonb_supported, source)
+
+    def json_constructor(self, expression: str) -> str:
+        """Wrap *expression* in ``json()`` or ``jsonb()``."""
+        return json_constructor(expression, self.jsonb_supported)
+
+    def json_text(self, expression: str) -> str:
+        """Convert JSONB output to TEXT for Python consumers."""
+        return json_text_conversion(expression, self.jsonb_supported)
+
+    def json_placeholder(self, *, wrap_text: bool = False) -> str:
+        """Return a bind placeholder for a JSON value.
+
+        With JSONB support this is always ``jsonb(?)``.  Without JSONB,
+        callers that need an explicit ``json()`` conversion can set
+        *wrap_text*; otherwise a plain ``?`` preserves the stored text.
+        """
+        if self.jsonb_supported:
+            return "jsonb(?)"
+        return "json(?)" if wrap_text else "?"
+
+    def json_literal(self, literal: str) -> str:
+        """Return a JSON literal such as ``json('[]')`` or ``jsonb('[]')``."""
+        return json_literal(literal, self.jsonb_supported)
 
 
 # Module-level cache for JSONB support detection results.
@@ -164,6 +225,36 @@ def _get_json_function_prefix(jsonb_supported: bool) -> str:
         str: "jsonb" if JSONB is supported, "json" otherwise
     """
     return "jsonb" if jsonb_supported else "json"
+
+
+def json_function(name: str, jsonb_supported: bool) -> str:
+    """Return ``json_<name>`` or ``jsonb_<name>`` based on JSONB support.
+
+    Prefer ``JSONBContext.function()`` when a context is available; this
+    helper exists for the few standalone call sites that only carry the
+    capability flag.
+    """
+    return f"{_get_json_function_prefix(jsonb_supported)}_{name}"
+
+
+def json_value_function(jsonb_supported: bool) -> str:
+    """Return the JSON value constructor name: ``json`` or ``jsonb``."""
+    return "jsonb" if jsonb_supported else "json"
+
+
+def json_constructor(expression: str, jsonb_supported: bool) -> str:
+    """Wrap *expression* in ``json()`` or ``jsonb()``."""
+    return f"{json_value_function(jsonb_supported)}({expression})"
+
+
+def json_text_conversion(expression: str, jsonb_supported: bool) -> str:
+    """Convert JSONB output to TEXT for Python consumers."""
+    return f"json({expression})" if jsonb_supported else expression
+
+
+def json_literal(literal: str, jsonb_supported: bool) -> str:
+    """Return a JSON literal such as ``json('[]')`` or ``jsonb('[]')``."""
+    return json_constructor(f"'{literal}'", jsonb_supported)
 
 
 def _get_json_each_function(

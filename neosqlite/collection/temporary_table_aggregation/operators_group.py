@@ -9,9 +9,6 @@ from typing import Any
 from ...sql_utils import quote_table_name
 from ..expr_evaluator import AggregationContext, _is_expression
 from ..json_path_utils import parse_json_path
-from ..jsonb_support import (
-    _get_json_group_array_function,
-)
 from .operators_base import OperatorsBaseMixin
 
 logger = logging.getLogger(__name__)
@@ -946,9 +943,7 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                     output_fields.append(f"MAX({last_expr}) AS {field_name}")
                 case {"$push": push_expr}:
                     # Use json_group_array for push
-                    json_group_func = _get_json_group_array_function(
-                        self.jsonb.jsonb_supported
-                    )
+                    json_group_func = self.jsonb.json_group_array_function
                     output_fields.append(
                         f"{json_group_func}({push_expr}) AS {field_name}"
                     )
@@ -1040,10 +1035,8 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
 
         # Group by bucket and create the _id object with min/max using json_object
         # Wrap with json() to ensure text output (not JSONB binary)
-        json_set_func = (
-            "jsonb_object" if self.jsonb.jsonb_supported else "json_object"
-        )
-        select_clause = f"json({json_set_func}('min', MIN(s.val), 'max', MAX(s.val))) AS _id"
+        json_object_func = self.jsonb.function("object")
+        select_clause = f"json({json_object_func}('min', MIN(s.val), 'max', MAX(s.val))) AS _id"
         if agg_fields:
             select_clause += ", " + ", ".join(agg_fields)
 

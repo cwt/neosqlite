@@ -190,11 +190,7 @@ class ComparisonMixin(BaseSqlMixin):
         ):
             from ...json_path_utils import parse_json_path
 
-            prefix = (
-                "jsonb_extract"
-                if getattr(self, "jsonb", None) and self.jsonb.jsonb_supported
-                else "json_extract"
-            )
+            prefix = self.jsonb.function("extract")
 
             def _date_norm_sql(
                 op_val: Any, op_sql: str

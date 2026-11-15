@@ -408,11 +408,11 @@ class TempTableExprEvaluator:
         # populated the cache — no re-extraction needed.
         params = list(param_values)
 
-        # Build SELECT with json() conversion for Python-space data
-        if self.jsonb.jsonb_supported:
-            select_data = f"json({collection_name}.{self.data_column}) as data"
-        else:
-            select_data = f"{collection_name}.data as data"
+        # Build SELECT with JSON text conversion for Python-space data
+        select_data = self.jsonb.data_column(
+            f"{collection_name}.{self.data_column}"
+        )
+        select_data = f"{select_data} as data"
 
         # Build the final query
         query = f"""
@@ -502,10 +502,10 @@ class TempTableExprEvaluator:
             col_name = self._sanitize_field_name(field)
 
             # Build JSON extract expression
-            if self.jsonb.jsonb_supported:
-                extract_expr = f"jsonb_extract({self.data_column}, '{parse_json_path(field)}') as {col_name}"
-            else:
-                extract_expr = f"json_extract({self.data_column}, '{parse_json_path(field)}') as {col_name}"
+            extract_expr = (
+                f"{self.jsonb.function('extract')}("
+                f"{self.data_column}, '{parse_json_path(field)}') as {col_name}"
+            )
 
             select_exprs.append(extract_expr)
 
@@ -546,12 +546,11 @@ class TempTableExprEvaluator:
             expr, temp_table
         )
 
-        # Build SELECT with json() conversion for Python-space data
-        if self.jsonb.jsonb_supported:
-            # Use json() to convert jsonb to regular JSON for Python space
-            select_data = f"json({collection_name}.{self.data_column}) as data"
-        else:
-            select_data = f"{collection_name}.data as data"
+        # Build SELECT with JSON text conversion for Python-space data
+        select_data = self.jsonb.data_column(
+            f"{collection_name}.{self.data_column}"
+        )
+        select_data = f"{select_data} as data"
 
         # Honor the optional extra filter (AND-ed into the WHERE) (#146)
         if filter_expr:
