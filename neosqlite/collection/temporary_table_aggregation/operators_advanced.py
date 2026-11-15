@@ -958,6 +958,13 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
 
         if "range" in window_spec:
             lower, upper = window_spec["range"]
+            if any(
+                isinstance(b, (int, float)) and not isinstance(b, bool)
+                for b in (lower, upper)
+            ) and not _check_sqlite_version("3.28.0"):
+                raise NotImplementedError(
+                    "Numeric RANGE window frames require SQLite 3.28+"
+                )
             l_bound = map_bound(lower, False, True)
             u_bound = map_bound(upper, True, True)
             if not l_bound or not u_bound:

@@ -635,6 +635,7 @@ class StageBuildersMixin:
         # column, so it is named __bucket_id and projected as _id outside.
         sub_parts = [f"{bucket_id_sql} AS __bucket_id"]
         output_fields: list[str] = []
+        array_fields: set[str] = set()
         for field, acc_spec in output.items():
             op, expr = next(iter(acc_spec.items()))
             agg_result = self._map_accumulator_to_sql(op)
@@ -646,11 +647,17 @@ class StageBuildersMixin:
             distinct_str = "DISTINCT " if use_distinct else ""
             sub_parts.append(f"{sql_agg}({distinct_str}{expr_sql}) AS {field}")
             output_fields.append(field)
+            if sql_agg == "json_group_array":
+                array_fields.add(field)
 
         json_args = ", ".join(
             ["'_id', __bucket_id"]
             + [
-                f"'{f.replace(chr(39), chr(39) * 2)}', {f}"
+                (
+                    f"'{f.replace(chr(39), chr(39) * 2)}', json({f})"
+                    if f in array_fields
+                    else f"'{f.replace(chr(39), chr(39) * 2)}', {f}"
+                )
                 for f in output_fields
             ]
         )
@@ -706,6 +713,7 @@ class StageBuildersMixin:
             "MAX(val) AS __bmax",
         ]
         output_fields: list[str] = []
+        array_fields: set[str] = set()
         for field, acc_spec in output.items():
             op, expr = next(iter(acc_spec.items()))
             agg_result = self._map_accumulator_to_sql(op)
@@ -719,6 +727,8 @@ class StageBuildersMixin:
                 f"{sql_agg}({distinct_str}{expr_sql}) AS {field}"
             )
             output_fields.append(field)
+            if sql_agg == "json_group_array":
+                array_fields.add(field)
 
         # Wrap the grouped SELECT in an outer projection: json_object must
         # reference the accumulator aliases from an enclosing level (#94).
@@ -727,7 +737,11 @@ class StageBuildersMixin:
         json_args = ", ".join(
             ["'_id', json_object('min', __bmin, 'max', __bmax)"]
             + [
-                f"'{f.replace(chr(39), chr(39) * 2)}', {f}"
+                (
+                    f"'{f.replace(chr(39), chr(39) * 2)}', json({f})"
+                    if f in array_fields
+                    else f"'{f.replace(chr(39), chr(39) * 2)}', {f}"
+                )
                 for f in output_fields
             ]
         )
@@ -1141,8 +1155,22 @@ class StageBuildersMixin:
         )
 
         # Reference the inner aliases from the wrapping SELECT level.
+        if self.jsonb.jsonb_supported:
+            id_json_arg = (
+                "'_id', CASE WHEN typeof(_id) = 'blob' AND json_valid(_id, 4) "
+                "THEN json(_id) "
+                "WHEN typeof(_id) = 'text' AND json_valid(_id) "
+                "AND json_type(_id) IN ('array', 'object') THEN json(_id) "
+                "ELSE _id END"
+            )
+        else:
+            id_json_arg = (
+                "'_id', CASE WHEN typeof(_id) = 'text' AND json_valid(_id) "
+                "AND json_type(_id) IN ('array', 'object') THEN json(_id) "
+                "ELSE _id END"
+            )
         json_args = ", ".join(
-            ["'_id', _id"]
+            [id_json_arg]
             + [
                 (
                     f"'{f.replace(chr(39), chr(39) * 2)}', json({f})"

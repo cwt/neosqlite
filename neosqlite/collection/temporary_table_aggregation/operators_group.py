@@ -576,7 +576,8 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         the group key; $first/$last become MAX(CASE WHEN rn/rd = 1 ...)
         aggregates over that ranking.
         """
-        json_extract = f"{self.jsonb.json_function_prefix}_extract"
+        # Text extraction prevents SQLite from returning a raw JSONB blob when
+        # aggregate MAX() discards the subtype on $first/$last fields.
         gk_expr = getattr(self, "_group_key_expr", None) or (
             group_by_parts[0] if group_by_parts else None
         )
@@ -608,16 +609,12 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                 value_sql = expr_val
             elif expr_val == "_id":
                 value_sql = (
-                    "_id"
-                    if has_underscore_id
-                    else f"{json_extract}(data, '$._id')"
+                    "_id" if has_underscore_id else "json_extract(data, '$._id')"
                 )
             elif expr_val in ("$$ROOT", "$$CURRENT"):
                 value_sql = "json(data)"
             else:
-                value_sql = (
-                    f"{json_extract}(data, '{parse_json_path(expr_val)}')"
-                )
+                value_sql = f"json_extract(data, '{parse_json_path(expr_val)}')"
             flag = "rd" if is_last else "rn"
             agg_parts.append(
                 f"MAX(CASE WHEN {flag} = 1 THEN {value_sql} END) AS {field}"
@@ -635,7 +632,22 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         aliases = self._select_aliases(select_parts) + [
             f for f, _, _, _ in self._first_last_fields
         ]
-        local_json_args = ", ".join(f"'{a}', {a}" for a in aliases)
+        if self.jsonb.jsonb_supported:
+            local_json_args = ", ".join(
+                f"'{a}', CASE WHEN typeof({a}) = 'blob' AND json_valid({a}, 4) "
+                f"THEN json({a}) "
+                f"WHEN typeof({a}) = 'text' AND json_valid({a}) "
+                f"AND json_type({a}) IN ('array', 'object') THEN json({a}) "
+                f"ELSE {a} END"
+                for a in aliases
+            )
+        else:
+            local_json_args = ", ".join(
+                f"'{a}', CASE WHEN typeof({a}) = 'text' AND json_valid({a}) "
+                f"AND json_type({a}) IN ('array', 'object') THEN json({a}) "
+                f"ELSE {a} END"
+                for a in aliases
+            )
 
         query = (
             f"{cte} SELECT ROW_NUMBER() OVER () as id, "

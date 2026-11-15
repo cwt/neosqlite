@@ -5,11 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ...json_path_utils import parse_json_path
-
-if TYPE_CHECKING:
-    pass
-
-
+from ...jsonb_support import json_literal, json_value_function
 from ...sqlite_features import supports_aggregate_order_by
 from .base import BaseSqlMixin
 
@@ -220,20 +216,47 @@ class ArrayMixin(BaseSqlMixin):
                 )
                 # Literal index: use SQLite JSON path $[N] / $[#-N] directly
                 jfx = self.json_function_prefix + "_extract"
-                if isinstance(operands[1], int):
+                if isinstance(operands[1], int) and not isinstance(
+                    operands[1], bool
+                ):
                     idx = operands[1]
                     if idx >= 0:
                         sql = f"{jfx}({array_sql}, '$[{idx}]')"
                     else:
-                        sql = f"{jfx}({array_sql}, '$[#-{abs(idx)}]')"
+                        from ...query_helper.utils import (
+                            _supports_relative_json_indexing,
+                        )
+
+                        if _supports_relative_json_indexing():
+                            sql = f"{jfx}({array_sql}, '$[#-{abs(idx)}]')"
+                        else:
+                            sql = self._neg_index_elem_sql(
+                                operands[0], array_sql, abs(idx) - 1
+                            )
                     return sql, array_params
-                # Dynamic index: use json_each to avoid parameter duplication
+                # Dynamic index: single-eval derived table supports >= 0 and < 0
                 idx_sql, idx_params = self._convert_operand_to_sql(operands[1])
                 json_each = self.json_each_function
+                is_arr_sql = self._array_type_check_sql(operands[0], "raw_arr")
+                empty_lit = json_literal("[]", self.jsonb.jsonb_supported)
+                safe_arr = (
+                    f"(CASE WHEN {is_arr_sql} THEN raw_arr ELSE {empty_lit} END)"
+                )
+                jval = json_value_function(self.jsonb.jsonb_supported)
+                elem_expr = (
+                    f"CASE WHEN type IN ('object', 'array') "
+                    f"THEN {jval}(value) ELSE value END"
+                )
                 sql = (
-                    f"(SELECT value FROM {json_each}({array_sql})"
-                    f" WHERE CAST(key AS INTEGER) = CAST({idx_sql} AS INTEGER)"
-                    f" LIMIT 1)"
+                    f"(SELECT {elem_expr} FROM "
+                    f"(SELECT {safe_arr} AS arr, idx "
+                    f"FROM (SELECT {array_sql} AS raw_arr, "
+                    f"CAST({idx_sql} AS INTEGER) AS idx)) AS _ae, "
+                    f"{json_each}(_ae.arr) "
+                    f"WHERE CASE WHEN _ae.idx >= 0 "
+                    f"THEN CAST(key AS INTEGER) = _ae.idx "
+                    f"ELSE CAST(key AS INTEGER) = json_array_length(_ae.arr) + _ae.idx END "
+                    f"LIMIT 1)"
                 )
                 return sql, array_params + idx_params
             case "$first":
@@ -251,9 +274,16 @@ class ArrayMixin(BaseSqlMixin):
                 array_sql, array_params = self._convert_operand_to_sql(
                     operands[0]
                 )
-                jfx = self.json_function_prefix + "_extract"
-                # Negative index -1 for last element (SQLite JSON path supports #-1)
-                sql = f"{jfx}({array_sql}, '$[#-1]')"
+                from ...query_helper.utils import (
+                    _supports_relative_json_indexing,
+                )
+
+                if _supports_relative_json_indexing():
+                    jfx = self.json_function_prefix + "_extract"
+                    # Negative index -1 for last element (SQLite JSON path supports #-1)
+                    sql = f"{jfx}({array_sql}, '$[#-1]')"
+                else:
+                    sql = self._neg_index_elem_sql(operands[0], array_sql, 0)
                 return sql, array_params
             case "$firstN":
                 if not supports_aggregate_order_by():
@@ -583,6 +613,25 @@ class ArrayMixin(BaseSqlMixin):
                     )
             return True
         return False
+
+    def _neg_index_elem_sql(
+        self, array_operand: Any, array_sql: str, offset: int
+    ) -> str:
+        """Build SQL for negative literal array indexing on SQLite < 3.42."""
+        is_arr_sql = self._array_type_check_sql(array_operand, "raw_arr")
+        empty_lit = json_literal("[]", self.jsonb.jsonb_supported)
+        safe_arr = f"(CASE WHEN {is_arr_sql} THEN raw_arr ELSE {empty_lit} END)"
+        jval = json_value_function(self.jsonb.jsonb_supported)
+        elem_expr = (
+            f"CASE WHEN type IN ('object', 'array') "
+            f"THEN {jval}(value) ELSE value END"
+        )
+        offset_clause = f" OFFSET {offset}" if offset > 0 else ""
+        return (
+            f"(SELECT {elem_expr} FROM {self.json_each_function}("
+            f"(SELECT {safe_arr} FROM (SELECT {array_sql} AS raw_arr))) "
+            f"ORDER BY CAST(key AS INTEGER) DESC LIMIT 1{offset_clause})"
+        )
 
     def _convert_extreme_n(
         self, operands: Any, direction: str

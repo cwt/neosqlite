@@ -46,6 +46,75 @@ def _resolve_target_collection(
     return db[coll_name]
 
 
+def _compute_bucket_output(
+    query_engine: QueryEngine,
+    bucket_id: Any,
+    bucket_docs: list[dict[str, Any]],
+    output_spec: dict[str, Any],
+) -> dict[str, Any]:
+    """Compute the output document for a single $bucket / $bucketAuto bucket."""
+    output_doc: dict[str, Any] = {"_id": bucket_id}
+    for field_name, accumulator in output_spec.items():
+        if "$sum" in accumulator:
+            sum_field = accumulator["$sum"]
+            if sum_field == 1:
+                output_doc[field_name] = len(bucket_docs)
+            else:
+                sum_field = sum_field.lstrip("$")
+                output_doc[field_name] = sum(
+                    query_engine.collection._get_val(d, sum_field) or 0
+                    for d in bucket_docs
+                )
+        elif "$avg" in accumulator:
+            avg_field = accumulator["$avg"].lstrip("$")
+            values = [
+                v
+                for d in bucket_docs
+                if (v := query_engine.collection._get_val(d, avg_field))
+                is not None
+            ]
+            output_doc[field_name] = sum(values) / len(values) if values else 0
+        elif "$count" in accumulator:
+            output_doc[field_name] = len(bucket_docs)
+        elif "$min" in accumulator:
+            min_field = accumulator["$min"].lstrip("$")
+            values = [
+                v
+                for d in bucket_docs
+                if (v := query_engine.collection._get_val(d, min_field))
+                is not None
+            ]
+            output_doc[field_name] = min(values) if values else None
+        elif "$max" in accumulator:
+            max_field = accumulator["$max"].lstrip("$")
+            values = [
+                v
+                for d in bucket_docs
+                if (v := query_engine.collection._get_val(d, max_field))
+                is not None
+            ]
+            output_doc[field_name] = max(values) if values else None
+        elif "$push" in accumulator:
+            push_field = accumulator["$push"].lstrip("$")
+            output_doc[field_name] = [
+                v
+                for d in bucket_docs
+                if (v := query_engine.collection._get_val(d, push_field))
+                is not None
+            ]
+        elif "$addToSet" in accumulator:
+            set_field = accumulator["$addToSet"].lstrip("$")
+            seen: list[Any] = []
+            for d in bucket_docs:
+                v = query_engine.collection._get_val(d, set_field)
+                if v is not None and v not in seen:
+                    seen.append(v)
+            output_doc[field_name] = seen
+        else:
+            output_doc[field_name] = len(bucket_docs)
+    return output_doc
+
+
 def execute_python_aggregation(
     query_engine: QueryEngine,
     pipeline: list[dict[str, Any]],
@@ -634,57 +703,14 @@ def execute_python_aggregation(
                     return (3, str(key))
 
                 # Build output documents
-                new_docs = []
-                for bucket_id, bucket_docs in sorted(
-                    buckets.items(), key=_bucket_sort_key
-                ):
-                    output_doc: dict[str, Any] = {"_id": bucket_id}
-                    for field_name, accumulator in output_spec.items():
-                        if "$sum" in accumulator:
-                            sum_field = accumulator["$sum"]
-                            if sum_field == 1:
-                                output_doc[field_name] = len(bucket_docs)
-                            else:
-                                sum_field = sum_field.lstrip("$")
-                                output_doc[field_name] = sum(
-                                    query_engine.collection._get_val(
-                                        d, sum_field
-                                    )
-                                    or 0
-                                    for d in bucket_docs
-                                )
-                        elif "$avg" in accumulator:
-                            avg_field = accumulator["$avg"].lstrip("$")
-                            values = [
-                                query_engine.collection._get_val(d, avg_field)
-                                for d in bucket_docs
-                            ]
-                            output_doc[field_name] = (
-                                sum(values) / len(values) if values else 0
-                            )
-                        elif "$count" in accumulator:
-                            output_doc[field_name] = len(bucket_docs)
-                        elif "$min" in accumulator:
-                            min_field = accumulator["$min"].lstrip("$")
-                            values = [
-                                query_engine.collection._get_val(d, min_field)
-                                for d in bucket_docs
-                            ]
-                            output_doc[field_name] = (
-                                min(values) if values else None
-                            )
-                        elif "$max" in accumulator:
-                            max_field = accumulator["$max"].lstrip("$")
-                            values = [
-                                query_engine.collection._get_val(d, max_field)
-                                for d in bucket_docs
-                            ]
-                            output_doc[field_name] = (
-                                max(values) if values else None
-                            )
-                        else:
-                            output_doc[field_name] = len(bucket_docs)
-                    new_docs.append(output_doc)
+                new_docs = [
+                    _compute_bucket_output(
+                        query_engine, bucket_id, bucket_docs, output_spec
+                    )
+                    for bucket_id, bucket_docs in sorted(
+                        buckets.items(), key=_bucket_sort_key
+                    )
+                ]
 
                 docs_with_context = [
                     {"__doc__": doc, "__root__": doc} for doc in new_docs
@@ -756,42 +782,18 @@ def execute_python_aggregation(
                     )
 
                 # Build output documents
-                new_docs = []
-                for i, bucket_docs in enumerate(bucket_list):
-                    output_doc2: dict[str, Any] = {
-                        "_id": {
+                new_docs = [
+                    _compute_bucket_output(
+                        query_engine,
+                        {
                             "min": bucket_bounds[i][0],
                             "max": bucket_bounds[i][1],
-                        }
-                    }
-                    for field_name, accumulator in output_spec.items():
-                        if "$sum" in accumulator:
-                            sum_field = accumulator["$sum"]
-                            if sum_field == 1:
-                                output_doc2[field_name] = len(bucket_docs)
-                            else:
-                                sum_field = sum_field.lstrip("$")
-                                output_doc2[field_name] = sum(
-                                    query_engine.collection._get_val(
-                                        d, sum_field
-                                    )
-                                    or 0
-                                    for d in bucket_docs
-                                )
-                        elif "$avg" in accumulator:
-                            avg_field = accumulator["$avg"].lstrip("$")
-                            values = [
-                                query_engine.collection._get_val(d, avg_field)
-                                for d in bucket_docs
-                            ]
-                            output_doc2[field_name] = (
-                                sum(values) / len(values) if values else 0
-                            )
-                        elif "$count" in accumulator:
-                            output_doc2[field_name] = len(bucket_docs)
-                        else:
-                            output_doc2[field_name] = len(bucket_docs)
-                    new_docs.append(output_doc2)
+                        },
+                        bucket_docs,
+                        output_spec,
+                    )
+                    for i, bucket_docs in enumerate(bucket_list)
+                ]
 
                 docs_with_context = [
                     {"__doc__": doc, "__root__": doc} for doc in new_docs

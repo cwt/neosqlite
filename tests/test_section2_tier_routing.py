@@ -983,3 +983,239 @@ class TestSection2CCRUDAndUpdates:
             validated.find_one_and_update(
                 {"_id": 1}, {"$set": {"age": 10}}, return_document=True
             )
+
+
+class TestStep2Sqlite354And326Fixes:
+    """Regression tests for SQLite 3.54 JSON subtypes and SQLite 3.26 gaps."""
+
+    def test_tier1_group_array_and_object_ids_and_bucket_arrays(
+        self, conn, monkeypatch
+    ):
+        from neosqlite.collection import jsonb_support
+
+        docs = [
+            {
+                "_id": 1,
+                "k_obj": {"b": 2},
+                "k_arr": ["x", "y"],
+                "v": 5,
+                "s": "a",
+            },
+            {
+                "_id": 2,
+                "k_obj": {"b": 2},
+                "k_arr": ["x", "y"],
+                "v": 15,
+                "s": "b",
+            },
+            {"_id": 3, "k_obj": {"b": 3}, "k_arr": ["z"], "v": 25, "s": "c"},
+        ]
+
+        # Normal mode (JSONB if supported) and forced TEXT-JSON mode
+        for force_no_jsonb in (False, True):
+            with monkeypatch.context() as mp:
+                if force_no_jsonb:
+                    mp.setattr(jsonb_support, "supports_jsonb", lambda _db: False)
+                with neosqlite.Connection(":memory:") as c:
+                    coll = c.items
+                    coll.insert_many(copy.deepcopy(docs))
+
+                    # Tier-1 $group with object _id
+                    _assert_aggregate_parity(
+                        coll,
+                        [{"$group": {"_id": "$k_obj", "total": {"$sum": "$v"}}}],
+                        "tier1",
+                    )
+                    # Tier-1 $group with array _id
+                    _assert_aggregate_parity(
+                        coll,
+                        [{"$group": {"_id": "$k_arr", "total": {"$sum": "$v"}}}],
+                        "tier1",
+                    )
+                    # Tier-1 $bucket with $push and $addToSet
+                    _assert_aggregate_parity(
+                        coll,
+                        [
+                            {
+                                "$bucket": {
+                                    "groupBy": "$v",
+                                    "boundaries": [0, 20, 100],
+                                    "default": "other",
+                                    "output": {
+                                        "pushed": {"$push": "$s"},
+                                        "uniq": {"$addToSet": "$s"},
+                                    },
+                                }
+                            }
+                        ],
+                        "tier1",
+                    )
+                    # Tier-1 $bucketAuto with $push
+                    _assert_aggregate_parity(
+                        coll,
+                        [
+                            {
+                                "$bucketAuto": {
+                                    "groupBy": "$v",
+                                    "buckets": 2,
+                                    "output": {"pushed": {"$push": "$s"}},
+                                }
+                            }
+                        ],
+                        "tier1",
+                    )
+
+    def test_tier2_ranked_group_root_preservation(self, conn, monkeypatch):
+        from neosqlite.collection import jsonb_support
+
+        docs = [
+            {"_id": 1, "cat": "a", "score": 10, "nested": {"x": 1}},
+            {"_id": 2, "cat": "a", "score": 30, "nested": {"x": 2}},
+            {"_id": 3, "cat": "b", "score": 20, "nested": {"x": 3}},
+        ]
+        for force_no_jsonb in (False, True):
+            with monkeypatch.context() as mp:
+                if force_no_jsonb:
+                    mp.setattr(jsonb_support, "supports_jsonb", lambda _db: False)
+                with neosqlite.Connection(":memory:") as c:
+                    coll = c.events
+                    coll.insert_many(copy.deepcopy(docs))
+                    # $sort before $group with $first/$last "$$ROOT" triggers Tier-2 ranked group
+                    _assert_aggregate_parity(
+                        coll,
+                        [
+                            {"$sort": {"score": -1}},
+                            {
+                                "$group": {
+                                    "_id": "$cat",
+                                    "top_doc": {"$first": "$$ROOT"},
+                                    "bot_doc": {"$last": "$$ROOT"},
+                                }
+                            },
+                        ],
+                        "tier2",
+                    )
+
+    def test_sql_updates_array_filters_pull_without_jsonb(
+        self, conn, monkeypatch
+    ):
+        from neosqlite.collection import jsonb_support
+
+        monkeypatch.setattr(jsonb_support, "supports_jsonb", lambda _db: False)
+        with neosqlite.Connection(":memory:") as c:
+            coll = c.docs
+            coll.insert_many(
+                [
+                    {
+                        "_id": 1,
+                        "tags": ["a", "b", "c"],
+                        "items": [{"k": 1, "v": 10}, {"k": 2, "v": 20}],
+                    },
+                    {
+                        "_id": 2,
+                        "tags": ["b", "c", "d"],
+                        "items": [{"k": 1, "v": 30}, {"k": 2, "v": 40}],
+                    },
+                ]
+            )
+            # Positional $[elem] update under jsonb_supported=False
+            coll.update_many(
+                {},
+                {"$set": {"items.$[it].v": 99}},
+                array_filters=[{"it": {"k": 2}}],
+            )
+            assert coll.find_one({"_id": 1})["items"] == [
+                {"k": 1, "v": 10},
+                {"k": 2, "v": 99},
+            ]
+            # $pull update under jsonb_supported=False must remain a list, not escaped JSON string
+            coll.update_one({"_id": 1}, {"$pull": {"tags": "b"}})
+            assert coll.find_one({"_id": 1})["tags"] == ["a", "c"]
+            # $pullAll update under jsonb_supported=False must remain a list
+            coll.update_one({"_id": 2}, {"$pullAll": {"tags": ["b", "d"]}})
+            assert coll.find_one({"_id": 2})["tags"] == ["c"]
+
+    def test_array_elem_at_and_last_sqlite326_fallback(self, conn, monkeypatch):
+        from neosqlite.collection.query_helper import (
+            _sql_updates,
+            utils as qh_utils,
+        )
+
+        coll = conn.arrtest
+        coll.insert_many(
+            [
+                {"_id": 1, "arr": [10, 20, 30], "idx": -1, "pos": 1},
+                {"_id": 2, "arr": [], "idx": -1, "pos": 0},
+                {"_id": 3, "arr": "not-an-array", "idx": -1, "pos": 0},
+                {"_id": 4, "arr": [{"a": 1}, {"a": 2}], "idx": -2, "pos": -5},
+            ]
+        )
+        # Patch _supports_relative_json_indexing False to exercise SQLite 3.26 paths
+        monkeypatch.setattr(
+            qh_utils, "_supports_relative_json_indexing", lambda: False
+        )
+        monkeypatch.setattr(
+            _sql_updates, "_supports_relative_json_indexing", lambda: False
+        )
+
+        _assert_aggregate_parity(
+            coll,
+            [
+                {
+                    "$project": {
+                        "last_op": {"$last": "$arr"},
+                        "neg1": {"$arrayElemAt": ["$arr", -1]},
+                        "neg3": {"$arrayElemAt": ["$arr", -3]},
+                        "dyn_neg": {"$arrayElemAt": ["$arr", "$idx"]},
+                        "dyn_pos": {"$arrayElemAt": ["$arr", "$pos"]},
+                    }
+                }
+            ],
+            "tier1",
+        )
+
+        # $push append and $addToSet SQL updates must safely fall back to Python when <3.42
+        coll.update_one({"_id": 1}, {"$push": {"arr": 40}})
+        assert coll.find_one({"_id": 1})["arr"] == [10, 20, 30, 40]
+        coll.update_one({"_id": 1}, {"$addToSet": {"arr": 50}})
+        assert coll.find_one({"_id": 1})["arr"] == [10, 20, 30, 40, 50]
+
+    def test_set_window_fields_numeric_range_sqlite326_fallback(
+        self, conn, monkeypatch
+    ):
+        from neosqlite.collection.temporary_table_aggregation import (
+            operators_advanced,
+        )
+
+        coll = conn.win
+        coll.insert_many(
+            [
+                {"_id": 1, "k": "a", "x": 10, "v": 1},
+                {"_id": 2, "k": "a", "x": 15, "v": 2},
+                {"_id": 3, "k": "a", "x": 30, "v": 4},
+            ]
+        )
+        orig_check = operators_advanced._check_sqlite_version
+        monkeypatch.setattr(
+            operators_advanced,
+            "_check_sqlite_version",
+            lambda ver: False if ver == "3.28.0" else orig_check(ver),
+        )
+        _assert_aggregate_parity(
+            coll,
+            [
+                {
+                    "$setWindowFields": {
+                        "partitionBy": "$k",
+                        "sortBy": {"x": 1},
+                        "output": {
+                            "winSum": {
+                                "$sum": "$v",
+                                "window": {"range": [-10, 0]},
+                            }
+                        },
+                    }
+                }
+            ],
+            "tier3",
+        )

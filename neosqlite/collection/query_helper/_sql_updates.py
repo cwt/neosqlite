@@ -17,7 +17,7 @@ from ..json_helpers import (
     neosqlite_json_loads,
 )
 from ..json_path_utils import parse_json_path
-from ..jsonb_support import json_function, json_literal
+from ..jsonb_support import json_constructor, json_function, json_literal
 from ..type_utils import (
     _is_numeric_value,
     build_bson_type_sql,
@@ -1189,6 +1189,8 @@ class SqlUpdatesMixin:
                             else:
                                 return None  # builder declined: Python tier
                         else:
+                            if not _supports_relative_json_indexing():
+                                return None
                             # No $position or $slice - just append values
                             append_path = f"'{parse_json_path(field)}[#]'"
                             for val in values_to_push:
@@ -1451,6 +1453,8 @@ class SqlUpdatesMixin:
                             clauses.append(clause)
                             params.extend(extra)
                         else:
+                            if not _supports_relative_json_indexing():
+                                return [], []
                             # No $position or $slice - just append values
                             append_path = f"'{parse_json_path(field)}[#]'"
                             for val in values_to_push:
@@ -1479,6 +1483,8 @@ class SqlUpdatesMixin:
                     json_path = f"'{parse_json_path(field)}{index_path}'"
                     clauses.append(json_path)
             case "$addToSet":
+                if not _supports_relative_json_indexing():
+                    return [], []
                 # Tier 2: $addToSet (without $each) can use conditional SQL
                 for field, val in value.items():
                     json_path = f"'{parse_json_path(field)}'"
@@ -1834,10 +1840,11 @@ class SqlUpdatesMixin:
 
         def _build_body(src: str) -> tuple[str, list[Any]]:
             # WHEN matches SQL CASE order: match_params before matched_elem_params
-            rebuilt = (
+            rebuilt = json_constructor(
                 f"COALESCE((SELECT {ga_func}(CASE WHEN ({match_sql}) "
                 f"THEN {matched_elem_sql} ELSE {unmatched_elem} END) "
-                f"FROM json_each({src}, {arr_path}) AS {je}), {empty_arr})"
+                f"FROM json_each({src}, {arr_path}) AS {je}), {empty_arr})",
+                jsonb_supported,
             )
             sql = (
                 f"CASE WHEN json_type({src}, {arr_path}) = 'array' "
@@ -1872,10 +1879,11 @@ class SqlUpdatesMixin:
         empty_arr = json_literal("[]", jsonb_supported)
 
         def _build_body(src: str) -> tuple[str, list[Any]]:
-            filtered = (
+            filtered = json_constructor(
                 f"COALESCE((SELECT {ga_func}({_je_preserved_value_expr(je)}) "
                 f"FROM json_each({src}, {json_path}) AS {je} "
-                f"WHERE NOT COALESCE(({pred_sql}), 0)), {empty_arr})"
+                f"WHERE NOT COALESCE(({pred_sql}), 0)), {empty_arr})",
+                jsonb_supported,
             )
             sql = (
                 f"CASE WHEN json_type({src}, {json_path}) = 'array' "
@@ -1919,10 +1927,11 @@ class SqlUpdatesMixin:
         empty_arr = json_literal("[]", jsonb_supported)
 
         def _build_body(src: str) -> tuple[str, list[Any]]:
-            filtered = (
+            filtered = json_constructor(
                 f"COALESCE((SELECT {ga_func}({_je_preserved_value_expr(je)}) "
                 f"FROM json_each({src}, {json_path}) AS {je} "
-                f"WHERE NOT COALESCE(({combined}), 0)), {empty_arr})"
+                f"WHERE NOT COALESCE(({combined}), 0)), {empty_arr})",
+                jsonb_supported,
             )
             sql = (
                 f"CASE WHEN json_type({src}, {json_path}) = 'array' "
