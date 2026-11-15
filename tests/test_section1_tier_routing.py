@@ -253,6 +253,11 @@ class TestObjectIdAndBinaryTierRouting:
         """
         from neosqlite.collection import jsonb_support
 
+        if not jsonb_support.supports_jsonb(conn.db):
+            pytest.skip(
+                "JSONB support is required to exercise the 3.45-3.50 fallback"
+            )
+
         def _no_jsonb_each(_db):
             return False
 
