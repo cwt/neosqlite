@@ -609,7 +609,9 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                 value_sql = expr_val
             elif expr_val == "_id":
                 value_sql = (
-                    "_id" if has_underscore_id else "json_extract(data, '$._id')"
+                    "_id"
+                    if has_underscore_id
+                    else "json_extract(data, '$._id')"
                 )
             elif expr_val in ("$$ROOT", "$$CURRENT"):
                 value_sql = "json(data)"

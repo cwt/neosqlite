@@ -617,7 +617,7 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
                     "$$ROOT in Tier-2 $project requires Python tier"
                 )
             elif value == "$$CURRENT":
-                json_set_func = "jsonb_set" if self.jsonb_supported else "json_set"
+                json_set_func = self.jsonb.function("set")
                 json_parts.append(f"'{field}'")
                 json_parts.append(
                     f"json(CASE WHEN json_type(data, '$._id') IS NOT NULL "

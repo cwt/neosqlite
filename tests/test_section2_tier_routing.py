@@ -1015,7 +1015,9 @@ class TestStep2Sqlite354And326Fixes:
         for force_no_jsonb in (False, True):
             with monkeypatch.context() as mp:
                 if force_no_jsonb:
-                    mp.setattr(jsonb_support, "supports_jsonb", lambda _db: False)
+                    mp.setattr(
+                        jsonb_support, "supports_jsonb", lambda _db: False
+                    )
                 with neosqlite.Connection(":memory:") as c:
                     coll = c.items
                     coll.insert_many(copy.deepcopy(docs))
@@ -1023,13 +1025,27 @@ class TestStep2Sqlite354And326Fixes:
                     # Tier-1 $group with object _id
                     _assert_aggregate_parity(
                         coll,
-                        [{"$group": {"_id": "$k_obj", "total": {"$sum": "$v"}}}],
+                        [
+                            {
+                                "$group": {
+                                    "_id": "$k_obj",
+                                    "total": {"$sum": "$v"},
+                                }
+                            }
+                        ],
                         "tier1",
                     )
                     # Tier-1 $group with array _id
                     _assert_aggregate_parity(
                         coll,
-                        [{"$group": {"_id": "$k_arr", "total": {"$sum": "$v"}}}],
+                        [
+                            {
+                                "$group": {
+                                    "_id": "$k_arr",
+                                    "total": {"$sum": "$v"},
+                                }
+                            }
+                        ],
                         "tier1",
                     )
                     # Tier-1 $bucket with $push and $addToSet
@@ -1076,7 +1092,9 @@ class TestStep2Sqlite354And326Fixes:
         for force_no_jsonb in (False, True):
             with monkeypatch.context() as mp:
                 if force_no_jsonb:
-                    mp.setattr(jsonb_support, "supports_jsonb", lambda _db: False)
+                    mp.setattr(
+                        jsonb_support, "supports_jsonb", lambda _db: False
+                    )
                 with neosqlite.Connection(":memory:") as c:
                     coll = c.events
                     coll.insert_many(copy.deepcopy(docs))
@@ -1138,6 +1156,8 @@ class TestStep2Sqlite354And326Fixes:
     def test_array_elem_at_and_last_sqlite326_fallback(self, conn, monkeypatch):
         from neosqlite.collection.query_helper import (
             _sql_updates,
+        )
+        from neosqlite.collection.query_helper import (
             utils as qh_utils,
         )
 
@@ -1261,13 +1281,15 @@ class TestStep3SqlTierRegressions:
                 {"_id": 2, "arr": ["bad{string"]},
             ]
         )
-        assert [d["_id"] for d in items_coll.find({"$jsonSchema": schema_no_type})] == [
+        assert [
+            d["_id"] for d in items_coll.find({"$jsonSchema": schema_no_type})
+        ] == [
             1,
             2,
         ]
-        assert [d["_id"] for d in items_coll.find({"$jsonSchema": schema_with_type})] == [
-            1
-        ]
+        assert [
+            d["_id"] for d in items_coll.find({"$jsonSchema": schema_with_type})
+        ] == [1]
 
     def test_projections_root_current_and_dotted_paths_parity(self, conn):
         coll = conn.proj_test
@@ -1307,9 +1329,7 @@ class TestStep3SqlTierRegressions:
         _assert_aggregate_parity(
             coll, [{"$project": {"meta.a": 1, "_id": 0}}], "tier3"
         )
-        _assert_aggregate_parity(
-            coll, [{"$project": {"meta.b": 0}}], "tier3"
-        )
+        _assert_aggregate_parity(coll, [{"$project": {"meta.b": 0}}], "tier3")
         # Inclusion with _id: 1 and field exclusion {"_id": 1, "x": 0}
         _assert_aggregate_parity(
             coll, [{"$project": {"_id": 1, "x": 0}}], "tier1"
@@ -1318,10 +1338,29 @@ class TestStep3SqlTierRegressions:
         _assert_aggregate_parity(
             coll,
             [
-                {"$fill": {"sortBy": {"_id": 1}, "output": {"x": {"value": 0}}}},
+                {
+                    "$fill": {
+                        "sortBy": {"_id": 1},
+                        "output": {"x": {"value": 0}},
+                    }
+                },
                 {"$project": {"orig": "$$ROOT", "x": 1}},
             ],
             "tier3",
+        )
+        # Tier-2 $fill followed by $project with $$CURRENT stays in Tier 2
+        _assert_aggregate_parity(
+            coll,
+            [
+                {
+                    "$fill": {
+                        "sortBy": {"_id": 1},
+                        "output": {"x": {"value": 0}},
+                    }
+                },
+                {"$project": {"cur": "$$CURRENT", "x": 1}},
+            ],
+            "tier2",
         )
 
     def test_lookup_root_propagation_and_sqlite326_branch(
@@ -1375,7 +1414,9 @@ class TestStep3SqlTierRegressions:
                         "output": {
                             "total": {
                                 "$sum": "$v",
-                                "window": {"documents": ["unbounded", "current"]},
+                                "window": {
+                                    "documents": ["unbounded", "current"]
+                                },
                             }
                         },
                     }

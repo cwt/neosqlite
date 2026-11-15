@@ -28,7 +28,14 @@ def process_fill(
         key: Any
         if partition_by is None and partition_by_fields is not None:
             key = tuple(
-                str(v) if isinstance(v := collection._get_val(doc, f.lstrip("$")), (dict, list)) else v
+                (
+                    str(v)
+                    if isinstance(
+                        v := collection._get_val(doc, f.lstrip("$")),
+                        (dict, list),
+                    )
+                    else v
+                )
                 for f in partition_by_fields
             )
         elif partition_by is None:

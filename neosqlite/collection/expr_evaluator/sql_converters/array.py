@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from ...json_path_utils import parse_json_path
 from ...jsonb_support import json_literal, json_value_function
@@ -239,9 +239,7 @@ class ArrayMixin(BaseSqlMixin):
                 json_each = self.json_each_function
                 is_arr_sql = self._array_type_check_sql(operands[0], "raw_arr")
                 empty_lit = json_literal("[]", self.jsonb.jsonb_supported)
-                safe_arr = (
-                    f"(CASE WHEN {is_arr_sql} THEN raw_arr ELSE {empty_lit} END)"
-                )
+                safe_arr = f"(CASE WHEN {is_arr_sql} THEN raw_arr ELSE {empty_lit} END)"
                 jval = json_value_function(self.jsonb.jsonb_supported)
                 elem_expr = (
                     f"CASE WHEN type IN ('object', 'array') "

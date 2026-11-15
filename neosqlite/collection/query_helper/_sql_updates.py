@@ -237,9 +237,7 @@ def _compile_elem_predicate(
     """Compile an array-element filter (used by $pull and $[id] arrayFilters)."""
     type_col = f"{je_alias}.type"
     val_col = f"{je_alias}.value"
-    safe_obj = (
-        f"(CASE WHEN {type_col} = 'object' THEN {val_col} ELSE NULL END)"
-    )
+    safe_obj = f"(CASE WHEN {type_col} = 'object' THEN {val_col} ELSE NULL END)"
 
     if not isinstance(filter_spec, dict):
         return _compile_json_scalar_eq(type_col, val_col, filter_spec)
