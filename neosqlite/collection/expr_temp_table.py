@@ -242,6 +242,11 @@ class TempTableExprEvaluator:
         except Exception:
             return True
 
+        # Without field references there is nothing to materialize in a temp table;
+        # Tier 1 can evaluate constant expressions directly without join overhead.
+        if not fields:
+            return True
+
         seen_cols: set[str] = set()
         for field in fields:
             if not field or field.startswith("$"):
@@ -442,9 +447,10 @@ class TempTableExprEvaluator:
         Build a Tier 2 query using temporary tables.
 
         Strategy:
-        1. Create temp table with document IDs and intermediate calculations
-        2. Populate temp table with JSON-extracted values
-        3. Query main table joined with temp table using calculated values
+        1. Compile the main query first so unsupported operators fail before
+           allocating a temporary table
+        2. Create temp table with document IDs and JSON-extracted values
+        3. Return the query joined against the populated temporary table
 
         Args:
             expr: The $expr expression
@@ -456,18 +462,20 @@ class TempTableExprEvaluator:
         """
         # Generate unique temp table name
         temp_table = f"temp_expr_{uuid.uuid4().hex[:8]}"
-        self._temp_tables.append(temp_table)
 
         # Extract all field references from expression
         fields = self._extract_field_references(expr)
 
-        # Create temp table to store intermediate results
-        self._create_temp_table(temp_table, collection_name, fields)
-
-        # Build the main query
+        # Build the main query before creating the temp table so unsupported
+        # expressions fail fast without allocating/dropping a phantom table.
         sql, params = self._build_main_query(
             expr, collection_name, temp_table, filter_expr
         )
+
+        # Create temp table to store intermediate results
+        self._temp_tables.append(temp_table)
+        self._create_temp_table(temp_table, collection_name, fields)
+
         return sql, params, [temp_table]
 
     def _create_temp_table(

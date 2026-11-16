@@ -205,6 +205,37 @@ class TestEvaluate:
             # Temp tables should be cleaned up
             assert evaluator._temp_tables == []
 
+    def test_unsupported_expr_does_not_create_phantom_temp_table(self):
+        """Unsupported Tier-2 expressions must fail before creating temp tables."""
+        with neosqlite.Connection(":memory:") as conn:
+            conn["items"].insert_many([{"x": 1, "age": 30}])
+            executed_sql: list[str] = []
+
+            def record_sql(stmt: str) -> None:
+                executed_sql.append(stmt)
+
+            conn.db.set_trace_callback(record_sql)
+            evaluator = TempTableExprEvaluator(conn.db)
+
+            # Unsupported operator with field reference ($exp)
+            exp_expr = {
+                "$and": [
+                    {"$gte": [{"$exp": "$x"}, 2]},
+                    {"$lt": [{"$exp": "$x"}, 10]},
+                ]
+            }
+            assert evaluator.evaluate(exp_expr, "items") == (None, [], [])
+
+            # Array-form $cond (dict-only in Tier 2)
+            cond_expr = {"$cond": [{"$gt": ["$age", 28]}, "senior", "junior"]}
+            assert evaluator.evaluate(cond_expr, "items") == (None, [], [])
+
+            # Constant expression with no field references
+            const_expr = {"$and": [{"$gt": [1, 0]}, {"$lt": [2, 3]}]}
+            assert evaluator.evaluate(const_expr, "items") == (None, [], [])
+
+            assert executed_sql == []
+
 
 class TestConvertExprToTempSql:
     """Test expression to SQL conversion for temp tables."""
