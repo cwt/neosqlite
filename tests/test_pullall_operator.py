@@ -205,9 +205,62 @@ class TestPullAllOperator:
             )
 
             assert result.modified_count == 1
+            assert coll.query_engine.get_last_tier() == "tier2"
             doc = coll.find_one({"name": "test"})
             # Nested arrays should be compared as whole objects
             assert doc["nested"] == [[3, 4]]
+
+    def test_pullall_nested_mixed_and_legacy_sql_no_fallback_crash(self):
+        """Mixed nested-array $pullAll and legacy SQL helpers must not crash."""
+        import logging
+
+        with neosqlite.Connection(":memory:") as conn:
+            coll = conn.test_collection
+            coll.insert_one(
+                {
+                    "_id": 1,
+                    "mixed": [[1, 2], "keep", 5, None, [3, 4], [1, 2]],
+                    "pairs": [[1, 2], [5, 6]],
+                }
+            )
+
+            sql_logger = logging.getLogger("neosqlite")
+            errors: list[str] = []
+
+            class _CaptureHandler(logging.Handler):
+                def emit(self, record: logging.LogRecord) -> None:
+                    msg = record.getMessage()
+                    if "failed" in msg.lower():
+                        errors.append(msg)
+
+            handler = _CaptureHandler()
+            sql_logger.addHandler(handler)
+            try:
+                res = coll.update_one(
+                    {"_id": 1}, {"$pullAll": {"mixed": [[1, 2], None]}}
+                )
+                assert res.modified_count == 1
+                assert coll.query_engine.get_last_tier() == "tier2"
+                doc = coll.find_one({"_id": 1})
+                assert doc["mixed"] == ["keep", 5, [3, 4]]
+
+                # Directly exercise legacy SQL update methods with nested lists
+                qh = coll.query_engine.helpers
+                updated = qh._perform_enhanced_sql_update(
+                    1,
+                    {"$pullAll": {"pairs": [[1, 2]]}},
+                    doc,
+                )
+                assert updated["pairs"] == [[5, 6]]
+
+                updated_std = qh._perform_sql_update(
+                    1, {"$pull": {"mixed": [3, 4]}}
+                )
+                assert updated_std["mixed"] == ["keep", 5]
+            finally:
+                sql_logger.removeHandler(handler)
+
+            assert errors == []
 
     def test_pullall_non_array_field(self):
         """Test $pullAll on a non-array field (should be no-op)."""

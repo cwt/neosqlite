@@ -122,6 +122,89 @@ def _compile_json_scalar_eq(
     return None
 
 
+def _is_sql_exact_json_array(value: Any) -> bool:
+    """Return True when a nested list can be compared accurately via JSON text.
+
+    Restricts leaves to None, exact int (excluding bool), str, and nested lists
+    so SQLite JSON text equality matches Python/MongoDB semantics (avoiding 1 vs
+    1.0 or dict key-order ambiguities).
+    """
+    if not isinstance(value, list):
+        return False
+    for item in value:
+        if isinstance(item, list):
+            if not _is_sql_exact_json_array(item):
+                return False
+        elif not (item is None or type(item) is int or isinstance(item, str)):
+            return False
+    return True
+
+
+def _compile_json_value_eq(
+    type_expr: str, val_expr: str, expected: Any
+) -> tuple[str, list[Any]] | None:
+    """Compile scalar or exact nested-array equality on (json_type, value)."""
+    scalar_eq = _compile_json_scalar_eq(type_expr, val_expr, expected)
+    if scalar_eq is not None:
+        return scalar_eq
+    if _is_sql_exact_json_array(expected):
+        return (
+            f"{type_expr} = 'array' AND {val_expr} = json(?)",
+            [neosqlite_json_dumps(expected)],
+        )
+    return None
+
+
+def _build_legacy_pull_sql_pairs(
+    value: dict[str, Any], *, is_pull_all: bool
+) -> tuple[list[str], list[Any]] | None:
+    """Build parameterized json_set (path, expr) pairs for legacy $pull/$pullAll."""
+    clauses: list[str] = []
+    params: list[Any] = []
+    preserved_val = _je_preserved_value_expr("json_each")
+    for field, raw_target in value.items():
+        if not is_pull_all and isinstance(raw_target, dict):
+            return None
+        targets = (
+            raw_target
+            if (is_pull_all and isinstance(raw_target, list))
+            else [raw_target]
+        )
+        if not targets:
+            continue
+        json_path = f"'{parse_json_path(field)}'"
+        negated_conds: list[str] = []
+        cond_params: list[Any] = []
+        for target in targets:
+            converted = _convert_bytes_to_binary(target)
+            eq_res = _compile_json_value_eq(
+                "json_each.type", "json_each.value", converted
+            )
+            if eq_res is not None:
+                negated_conds.append(f"NOT COALESCE(({eq_res[0]}), 0)")
+                cond_params.extend(eq_res[1])
+            elif isinstance(converted, (dict, list, Binary)):
+                expected_type = (
+                    "array" if isinstance(converted, list) else "object"
+                )
+                negated_conds.append(
+                    f"NOT (json_each.type = '{expected_type}' AND json_each.value = json(?))"
+                )
+                cond_params.append(neosqlite_json_dumps(converted))
+            else:
+                negated_conds.append("json_each.value != ?")
+                cond_params.append(converted)
+
+        where_cond = " AND ".join(negated_conds)
+        clauses.append(
+            f"{json_path}, json(COALESCE((SELECT json_group_array({preserved_val}) "
+            f"FROM json_each(json_extract(data, {json_path})) "
+            f"WHERE {where_cond}), '[]'))"
+        )
+        params.extend(cond_params)
+    return clauses, params
+
+
 def _compile_json_value_operators(
     type_expr: str,
     val_expr: str,
@@ -240,7 +323,7 @@ def _compile_elem_predicate(
     safe_obj = f"(CASE WHEN {type_col} = 'object' THEN {val_col} ELSE NULL END)"
 
     if not isinstance(filter_spec, dict):
-        return _compile_json_scalar_eq(type_col, val_col, filter_spec)
+        return _compile_json_value_eq(type_col, val_col, filter_spec)
     if not filter_spec:
         return "1", []
     if all(k.startswith("$") for k in filter_spec):
@@ -1166,11 +1249,6 @@ class SqlUpdatesMixin:
                                 _convert_bytes_to_binary(v)
                                 for v in values_to_push
                             ]
-                            # Check if any values are complex
-                            has_complex = any(
-                                isinstance(v, (dict, list, Binary))
-                                for v in converted_values
-                            )
 
                             # Build JSON array of new values
                             new_values_json = neosqlite_json_dumps(
@@ -1219,65 +1297,14 @@ class SqlUpdatesMixin:
                     # $rename is handled in _perform_enhanced_sql_update for proper
                     # set + unset ordering. Return None here to use enhanced path.
                     return None
-                case "$pull":
-                    # SQL optimization for $pull: filter array elements using json_each
-                    for field, pull_value in value.items():
-                        if isinstance(pull_value, dict):
-                            return None
-                        json_path = f"'{parse_json_path(field)}'"
-                        converted_val = _convert_bytes_to_binary(pull_value)
-                        if isinstance(converted_val, (dict, list, Binary)):
-                            pull_value_json = neosqlite_json_dumps(
-                                converted_val
-                            )
-                            set_clauses.append(
-                                f"{json_path}, json((SELECT json_group_array(json(value)) FROM json_each(json_extract(data, {json_path})) WHERE json(value) != {pull_value_json} OR json(value) IS NULL))"
-                            )
-                        else:
-                            set_clauses.append(
-                                f"{json_path}, json((SELECT json_group_array(value) FROM json_each(json_extract(data, {json_path})) WHERE value != ?))"
-                            )
-                            params.append(converted_val)
-                case "$pullAll":
-                    # SQL optimization for $pullAll: filter multiple values from array
-                    for field, pull_values in value.items():
-                        if not isinstance(pull_values, list):
-                            pull_values = [pull_values]
-                        json_path = f"'{parse_json_path(field)}'"
-
-                        has_complex = any(
-                            isinstance(
-                                _convert_bytes_to_binary(v),
-                                (dict, list, Binary),
-                            )
-                            for v in pull_values
-                        )
-
-                        if has_complex:
-                            pull_values_json = [
-                                neosqlite_json_dumps(
-                                    _convert_bytes_to_binary(v)
-                                )
-                                for v in pull_values
-                            ]
-                            conditions = " OR ".join(
-                                [
-                                    f"json(value) != {v}"
-                                    for v in pull_values_json
-                                ]
-                            )
-                            set_clauses.append(
-                                f"{json_path}, json((SELECT json_group_array(json(value)) FROM json_each(json_extract(data, {json_path})) WHERE {conditions} OR json(value) IS NULL))"
-                            )
-                        else:
-                            placeholders = ", ".join(["?" for _ in pull_values])
-                            converted_values = [
-                                _convert_bytes_to_binary(v) for v in pull_values
-                            ]
-                            set_clauses.append(
-                                f"{json_path}, json((SELECT json_group_array(value) FROM json_each(json_extract(data, {json_path})) WHERE value NOT IN ({placeholders})))"
-                            )
-                            params.extend(converted_values)
+                case "$pull" | "$pullAll":
+                    pull_res = _build_legacy_pull_sql_pairs(
+                        value, is_pull_all=(op == "$pullAll")
+                    )
+                    if pull_res is None:
+                        return None
+                    set_clauses.extend(pull_res[0])
+                    params.extend(pull_res[1])
                 case _:
                     return None  # Fallback for unsupported operators
 
@@ -1528,60 +1555,13 @@ class SqlUpdatesMixin:
                 for field in value:
                     json_path = f"'{parse_json_path(field)}'"
                     clauses.append(json_path)
-            case "$pull":
-                # SQL optimization for $pull: filter array elements using json_each
-                for field, pull_value in value.items():
-                    json_path = f"'{parse_json_path(field)}'"
-                    converted_val = _convert_bytes_to_binary(pull_value)
-                    if isinstance(converted_val, (dict, list, Binary)):
-                        # For complex values, serialize to JSON for comparison
-                        pull_value_json = neosqlite_json_dumps(converted_val)
-                        clauses.append(
-                            f"{json_path}, json((SELECT json_group_array(json(value)) FROM json_each(json_extract(data, {json_path})) WHERE json(value) != {pull_value_json} OR json(value) IS NULL))"
-                        )
-                    else:
-                        # For simple values, compare directly
-                        clauses.append(
-                            f"{json_path}, json((SELECT json_group_array(value) FROM json_each(json_extract(data, {json_path})) WHERE value != ?))"
-                        )
-                        params.append(converted_val)
-            case "$pullAll":
-                # SQL optimization for $pullAll: filter multiple values from array
-                for field, pull_values in value.items():
-                    if not isinstance(pull_values, list):
-                        pull_values = [pull_values]
-                    json_path = f"'{parse_json_path(field)}'"
-
-                    # Check if any values are complex (dict, list, Binary)
-                    has_complex = any(
-                        isinstance(
-                            _convert_bytes_to_binary(v), (dict, list, Binary)
-                        )
-                        for v in pull_values
-                    )
-
-                    if has_complex:
-                        # For complex values, serialize each and build JSON comparison
-                        pull_values_json = [
-                            neosqlite_json_dumps(_convert_bytes_to_binary(v))
-                            for v in pull_values
-                        ]
-                        conditions = " OR ".join(
-                            [f"json(value) != {v}" for v in pull_values_json]
-                        )
-                        clauses.append(
-                            f"{json_path}, json((SELECT json_group_array(json(value)) FROM json_each(json_extract(data, {json_path})) WHERE {conditions} OR json(value) IS NULL))"
-                        )
-                    else:
-                        # For simple values, use IN clause
-                        placeholders = ", ".join(["?" for _ in pull_values])
-                        converted_values = [
-                            _convert_bytes_to_binary(v) for v in pull_values
-                        ]
-                        clauses.append(
-                            f"{json_path}, json((SELECT json_group_array(value) FROM json_each(json_extract(data, {json_path})) WHERE value NOT IN ({placeholders})))"
-                        )
-                        params.extend(converted_values)
+            case "$pull" | "$pullAll":
+                pull_res = _build_legacy_pull_sql_pairs(
+                    value, is_pull_all=(op == "$pullAll")
+                )
+                if pull_res is not None:
+                    clauses.extend(pull_res[0])
+                    params.extend(pull_res[1])
             case "$currentDate":
                 # SQL implementation for $currentDate
                 json_obj_func = self.jsonb.function("object")
@@ -1937,7 +1917,7 @@ class SqlUpdatesMixin:
         cond_sqls: list[str] = []
         cond_params: list[Any] = []
         for pv in pull_values:
-            eq_res = _compile_json_scalar_eq(f"{je}.type", f"{je}.value", pv)
+            eq_res = _compile_json_value_eq(f"{je}.type", f"{je}.value", pv)
             if eq_res is None:
                 return None
             cond_sqls.append(f"({eq_res[0]})")
