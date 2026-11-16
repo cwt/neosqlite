@@ -1024,20 +1024,23 @@ files = [
 
 [[package]]
 name = "nx-27017"
-version = "0.8.2"
+version = "0.9.0"
 description = "NeoSQLite Experimental Project 27017 - MongoDB Wire Protocol Server"
 optional = true
-python-versions = "<3.16,>=3.10"
+python-versions = "<3.16,>=3.12"
 groups = ["main"]
 markers = "extra == \"nx27017\" or extra == \"nx27017-speed\""
 files = [
-    {file = "nx_27017-0.8.2-py3-none-any.whl", hash = "sha256:8048e5952bcfa6d006bf3fd0bc49550c526f2d0f908ad3e389cb8bfd9927371d"},
-    {file = "nx_27017-0.8.2.tar.gz", hash = "sha256:92b5acac3cc2bbbaf5de35d55c6dc8c38088a9d4b8eb8f78a66e5bc2433b775a"},
+    {file = "nx_27017-0.9.0-py3-none-any.whl", hash = "sha256:ff78c250c54696d9a92273942d870221eb56b5fb1d5d3183d75767f097fbb166"},
+    {file = "nx_27017-0.9.0.tar.gz", hash = "sha256:3702c94e59724107158696eee0a03c1181ecc996e22da2962e69757d7a97c8f6"},
 ]
 
 [package.dependencies]
-neosqlite = ">=1.17.2,<2.0.0"
-pymongo = ">=4.18.0,<5.0.0"
+neosqlite = ">=1.17.4,<2.0.0"
+pymongo = ">=4.19.0,<5.0.0"
+
+[package.extras]
+speed = ["uvloop (>=0.23.0,<0.24.0)"]
 
 [[package]]
 name = "packaging"
@@ -1199,7 +1202,7 @@ description = "DB-API 2.0 interface for Sqlite 3.x"
 optional = true
 python-versions = "*"
 groups = ["main"]
-markers = "sys_platform == \"linux\" and platform_machine == \"x86_64\" and python_version < \"3.14\" and extra == \"jsonb\""
+markers = "sys_platform == \"linux\" and platform_machine == \"x86_64\" and extra == \"jsonb\" and python_version < \"3.15\""
 files = [
     {file = "pysqlite3_binary-0.5.4.post2-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:7f8171c8dd11dfc6fe5321394903782df9610f51d457a3ebe8c972c0bc4606fb"},
     {file = "pysqlite3_binary-0.5.4.post2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:3060a56666ede382c9af3e4b086e30c9ffb65133b3fa606c2d1b9fbff512f241"},
@@ -1697,4 +1700,4 @@ nx27017-speed = ["nx-27017", "pymongo", "uvloop"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12, <3.16"
-content-hash = "b19fa45797776331763b474ebe4df3489ca481e8c86da90d0705a36841de3b05"
+content-hash = "7a2eb620160816b265d085b475f78d012da409581bd2e6b984046ab4cdc61ef2"
