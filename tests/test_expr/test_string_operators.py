@@ -351,6 +351,25 @@ class TestStringOperatorsSQL:
         assert sql is not None
         assert "length(" in sql
 
+    def test_strLenBytes_single_operand_sql_tier1(self, collection):
+        """Test $strLenBytes with non-list operand runs in Tier-1 SQL."""
+        evaluator = ExprEvaluator()
+        sql, _ = evaluator._evaluate_sql_tier1({"$strLenBytes": "$text"})
+        assert sql is not None
+        assert "length(" in sql
+
+        collection.insert_many(
+            [
+                {"name": "Alice"},
+                {"name": "café"},
+                {"name": ""},
+                {"name": None},
+            ]
+        )
+        res = list(collection.find({"$expr": {"$strLenBytes": "$name"}}))
+        assert [d["name"] for d in res] == ["Alice", "café"]
+        assert collection.query_engine.get_last_tier() == "tier1"
+
     def test_substr_sql(self):
         """Test $substr SQL conversion."""
         evaluator = ExprEvaluator()

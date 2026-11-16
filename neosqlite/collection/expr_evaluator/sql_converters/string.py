@@ -73,6 +73,8 @@ class StringMixin(BaseSqlMixin):
                 sql = f"upper({value_sql})"
                 return sql, value_params
             case "$strLenBytes":
+                if not isinstance(operands, list):
+                    operands = [operands]
                 if len(operands) != 1:
                     raise ValueError("$strLenBytes requires exactly 1 operand")
                 value_sql, value_params = self._convert_operand_to_sql(
